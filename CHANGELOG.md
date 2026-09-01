@@ -16,6 +16,15 @@ split by subsystem.
 
 ### Added
 
+- **A place of your own for spellcheck dictionaries.** In an installed (not
+  portable) build the dictionaries that come with mindfork live next to the
+  program, in a folder you are not meant to write to — so the data folder now
+  gets its own `dictionaries/` at startup, with a short `README.txt` in your
+  language: which two files a dictionary is (`<name>.aff` + `<name>.dic`),
+  where ready-made ones are published, and that a dictionary you add under the
+  name of a bundled one replaces it. The file is written once, when the folder
+  is created: delete it or edit it and it stays that way.
+
 - **The assistant can name its language model — and tell you when it changed.**
   Two new tools, on by default: `get_llm_name` answers "which model are you?"
   with the model actually generating the reply (or says honestly that the

@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (29)
+## Entries (30)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -41,6 +41,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Release 0.9.8 (prepared)
 - Post-M9: `artwork/` renamed to `assets/` (done)
 - Post-M9: the dictionaries are copied more than once (done)
+- Post-M9: a place for the user's own dictionaries (done)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -1545,6 +1546,59 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   128 in CLAUDE.md's status header is the Windows count, which includes the
   `cfg(windows)` tests a Linux container cannot run); unmoved either way, since a
   build script has no test target. The documentation gates
+  (`cyrillic_scan`, `link_check`, `doc_index_check`, `list_scroll_check`,
+  `wizard_rtf --check`) green. No live run needed — nothing on an engine, memory
+  or tool path is touched.
+
+### Post-M9: a place for the user's own dictionaries (done)
+- **The gap installers stage 1 left.** P1 (the entry above) made the *bundled*
+  dictionaries load under a `system`/`path` install by falling back to
+  `exe_dir/data/dictionaries`, and stated the rule that a dictionary of the same
+  name in the data root wins. What it did not do was give the data root a
+  `dictionaries/` at all. On Windows the installed layout puts the bundled ones
+  under `…\AppData\Local\Programs\mindfork-rs` — the right place for files the
+  installer put there and the wrong place for the user's own, since an update or
+  an uninstall owns that folder — and the data
+  folder simply had no such directory, so the "a user dictionary of the same name
+  wins" rule had nowhere to be exercised and adding a language nobody ships meant
+  guessing.
+- **`Paths::ensure_dirs` now creates it and seeds it once.** The same
+  discoverability argument the empty `locales/` has carried since external
+  locales — an empty directory says "put files here" — plus the part a directory
+  cannot say: a `README.txt` naming the `*.aff` + `*.dic` convention, pointing at
+  the LibreOffice dictionary repository, and stating that a dictionary added under
+  a bundled one's name replaces it.
+- **Only when the directory is created**, never into one that already exists, and
+  that single rule buys both halves: a portable install (where the directory
+  arrives with the dictionaries already in it) is left untouched, and after the
+  first launch the file is the user's — a deleted README stays deleted, an edited
+  one is not overwritten on the next start. Both are tests, because "written
+  once" is exactly the kind of property a later refactor turns into "written
+  every time" without any visible symptom.
+- **The language is the caller's locale, not `default_language` read again.**
+  The requirement was the language from `defaults.json`, and on a fresh install
+  that is precisely what arrives: `main` resolves the CLI language as *settings
+  language → `default_language` → the OS locale*, and a fresh install has no
+  `settings.json`. Taking the resolved `&Locale` instead of re-reading the field
+  differs in exactly one case, and there it is the better answer: a user who has
+  since switched the interface to English gets an English file rather than the
+  language the installer once wrote. It also keeps `paths.rs` from reaching into
+  the i18n registry on a startup path that runs before logging.
+- **Platform line endings** (`\r\n` on Windows): unlike everything else the app
+  writes, this file exists to be opened in whatever text editor the OS puts in
+  front of the user. The bundles hold plain `\n`; the substitution is at the
+  write.
+- **The invitation is not a dictionary.** The loader takes `*.aff` files with a
+  matching `.dic` and ignores everything else, so a `README.txt` beside real
+  dictionaries is walked past — pinned by a test in `features/spellcheck/dict.rs`
+  rather than left as a property of the current `load_entry`. It does ride along
+  into backups, which pack `dictionaries/` whole; at ~700 bytes that is not worth
+  an exclusion.
+- **Gates**: `cargo fmt --check` / `cargo clippy --all-targets -- -D warnings` /
+  `cargo test` green — **2733 unit tests (+5), 125 `#[ignore]`** on Linux; the
+  status header goes 2735 → **2740**, its Windows count carried forward by the
+  same +5 (all five are platform-neutral) plus the `cfg(windows)` tests a Linux
+  container cannot run. The documentation gates
   (`cyrillic_scan`, `link_check`, `doc_index_check`, `list_scroll_check`,
   `wizard_rtf --check`) green. No live run needed — nothing on an engine, memory
   or tool path is touched.

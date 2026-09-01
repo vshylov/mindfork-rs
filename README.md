@@ -337,7 +337,10 @@ a draft model, including `draft-mtp` for MTP models — a multiplier speed-up).
   clear message — everything else keeps working.
 - **Spellcheck dictionaries** (Hunspell `en_US`, `en_GB`, `ru_RU`) ship with
   the repository and the release archives; the build copies them next to the
-  binary. No dictionaries directory → spellcheck simply stays off.
+  binary. No dictionaries directory → spellcheck simply stays off. Your own go
+  in the data directory's `dictionaries/`, which the app creates and explains in
+  a `README.txt` when it is missing; a dictionary named like a bundled one
+  replaces it.
 - **Python sandbox**: `mindfork sandbox setup` provisions the isolated WASIX
   environment in one command (everything downloaded from a lock list with
   sha256 verification).

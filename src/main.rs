@@ -107,7 +107,7 @@ fn real_main(
     if matches!(command, CliCommand::Demo) {
         return run_demo(loc, locale_warnings);
     }
-    paths.ensure_dirs().with_context(|| {
+    paths.ensure_dirs(loc).with_context(|| {
         loc.tf(
             "cli.ctx.ensure_dirs",
             &[("path", &paths.root().display().to_string())],
@@ -196,7 +196,7 @@ fn run_tui(paths: &Paths, loc: &Locale) -> anyhow::Result<ExitCode> {
 fn run_demo(loc: &Locale, locale_warnings: &[String]) -> anyhow::Result<ExitCode> {
     let root = std::env::temp_dir().join(format!("mindfork-demo-{}", std::process::id()));
     let paths = Paths::with_root(&root);
-    paths.ensure_dirs().with_context(|| {
+    paths.ensure_dirs(loc).with_context(|| {
         loc.tf(
             "cli.ctx.ensure_dirs",
             &[("path", &root.display().to_string())],

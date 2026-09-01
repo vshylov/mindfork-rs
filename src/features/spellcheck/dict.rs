@@ -186,6 +186,26 @@ mod tests {
     }
 
     #[test]
+    fn the_invitation_file_is_not_a_dictionary() {
+        // `Paths::ensure_dirs` seeds a freshly created `dictionaries/` with a
+        // README inviting the user to add their own pairs. It shares the
+        // directory with real dictionaries, so the loader has to walk past it.
+        let dir = tempfile::tempdir().unwrap();
+        write(
+            dir.path(),
+            crate::shared::paths::DICTIONARIES_README,
+            "put your dictionaries here\n",
+        );
+        assert!(!load_all(dir.path()).is_enabled());
+
+        write(dir.path(), "en.aff", AFF);
+        write(dir.path(), "en.dic", DIC);
+        let checker = load_all(dir.path());
+        assert!(checker.is_enabled());
+        assert!(checker.check_word("hello"));
+    }
+
+    #[test]
     fn aff_without_dic_is_skipped() {
         let dir = tempfile::tempdir().unwrap();
         write(dir.path(), "en.aff", AFF); // no en.dic

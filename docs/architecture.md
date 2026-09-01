@@ -626,7 +626,8 @@ src/
    │                       per machine, put_key/stored_key/is_ours): DPAPI (Windows) and
    │                       HKDF(machine-id)+ChaCha20-Poly1305 (Linux). See §12
    ├─ paths.rs             data location (defaults.json) + scaffold/interface language
-   │                       (Option<Lang>: explicit or from the OS locale) + dictionary fallback next to the binary
+   │                       (Option<Lang>: explicit or from the OS locale) + dictionary fallback next to the binary;
+   │                       ensure_dirs() also seeds a missing dictionaries/ with a localized README (spec §11.5)
    ├─ instance.rs          single-instance
    └─ logging.rs           tracing to a file (stdout is used by the TUI)
 ```

@@ -1720,6 +1720,7 @@
   "migrate.err.downgrade": "Data ({file}) was created by a newer version of mindfork (schema {found}, supported {current}). Update the app or restore a backup.",
   "migrate.err.backup_failed": "Could not create a backup before migrating data: {err}. Migration aborted, data unchanged.",
   "migrate.err.control_parse": "Migrating {file} produced an unparseable result — the file was left unchanged. This is a migration bug; please report it.",
+  "dictionaries.readme": "mindfork — spellcheck dictionaries\n\nPut your own Hunspell dictionaries in this folder: two files with the same name, <name>.aff and <name>.dic — for example, de_DE.aff and de_DE.dic. They are picked up the next time mindfork starts.\n\nReady-made dictionaries for most languages are published by the LibreOffice project: https://github.com/LibreOffice/dictionaries\n\nThe dictionaries that ship with mindfork keep working alongside them; one you put here under the same name replaces the shipped one.\n\nWhich of them are used is chosen in Settings (Ctrl+P) -> Spelling.\n\nThis file is not a dictionary: it is ignored, and you can delete it.\n",
   "import.ctx.parse": "parsing mindfork-import file",
   "import.ctx.read": "reading {path}",
   "import.err.not_import_file": "not a mindfork-import file: format field = {found} (see docs/import-format.md)",
