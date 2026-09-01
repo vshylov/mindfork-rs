@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::shared::i18n::Lang;
+use crate::shared::i18n::{Lang, Locale};
 
 /// Name of the installation-defaults file (always lives next to the binary, not in `data/`).
 pub const DEFAULTS_MARKER: &str = "defaults.json";
@@ -25,6 +25,11 @@ pub const LEGACY_LOCATION_MARKER: &str = "location.json";
 
 /// Data subdirectory in portable mode (next to the binary).
 pub const PORTABLE_DATA_SUBDIR: &str = "data";
+
+/// The invitation file [`Paths::ensure_dirs`] leaves in a freshly created
+/// `dictionaries/`. Not a dictionary: the loader reads `*.aff`/`*.dic` pairs and
+/// ignores everything else (`features/spellcheck/dict.rs`).
+pub const DICTIONARIES_README: &str = "README.txt";
 
 /// Storage mode for user data, set by the `defaults.json` defaults file next
 /// to the executable (the `mode` field, plus `path` for `path`). No/empty
@@ -179,18 +184,61 @@ impl Paths {
         Ok(paths)
     }
 
-    /// Creates the data directories (root + the external-locales directory).
-    /// Called before working with data (not for `--help`/`--version`).
-    /// Idempotent. The localized error context is added by the caller
-    /// (`main`) — here a raw io error propagates outward.
-    pub fn ensure_dirs(&self) -> Result<()> {
+    /// Creates the data directories (root + the external-locales and
+    /// dictionaries directories). Called before working with data (not for
+    /// `--help`/`--version`). Idempotent. The localized error context is added
+    /// by the caller (`main`) — here a raw io error propagates outward.
+    ///
+    /// `loc` is the locale the invitation file in a freshly created
+    /// `dictionaries/` is written in ([`Paths::seed_dictionaries_dir`]).
+    pub fn ensure_dirs(&self, loc: &Locale) -> Result<()> {
         std::fs::create_dir_all(&self.root)?;
         // The external-locales directory is created for discoverability (an
         // empty directory signals "put files here"); creation errors aren't
         // escalated — external locales are optional, built-in bundles work
         // without them.
         let _ = std::fs::create_dir_all(self.locales_dir());
+        self.seed_dictionaries_dir(loc);
         Ok(())
+    }
+
+    /// Creates `dictionaries/` under the data root when it is missing, with a
+    /// `README.txt` in it inviting the user to add their own Hunspell pairs.
+    ///
+    /// **Why it has to exist at all.** Where the shipped dictionaries land
+    /// depends on the storage mode: portable puts them in this very directory,
+    /// while `system`/`path` leaves them next to the binary
+    /// ([`Paths::bundled_dictionaries_dir`], installers.md §4.2) — the install
+    /// folder (`…\AppData\Local\Programs\mindfork-rs` on Windows), which is
+    /// the right place for files the installer put there and the wrong place
+    /// for the user's own, since an update or an uninstall owns it. Under a
+    /// system install the data root then had **no** `dictionaries/` at all, so
+    /// there was nowhere obvious to add one. The
+    /// empty directory is the same discoverability argument as `locales/`
+    /// above; the file in it is what a directory alone cannot say — the file
+    /// naming convention, and that the shipped dictionaries stay loaded.
+    ///
+    /// **Only when the directory is missing entirely**, never into one that
+    /// already exists: after the first launch the file is the user's — deleting
+    /// it has to stick, and an edited copy must not be overwritten on the next
+    /// start. Which also means a portable install (where the directory arrives
+    /// with the dictionaries in it) is left exactly as it was.
+    ///
+    /// Failures are not escalated, for the same reason as `locales/`: the
+    /// bundled dictionaries load either way, and a startup that dies over an
+    /// unwritable hint would be worse than the hint being missing.
+    fn seed_dictionaries_dir(&self, loc: &Locale) {
+        let dir = self.dictionaries_dir();
+        if dir.exists() || std::fs::create_dir_all(&dir).is_err() {
+            return;
+        }
+        let text = loc.t("dictionaries.readme");
+        // Platform line endings: this file exists to be opened in whatever
+        // editor the OS puts in front of the user, and on Windows that is still
+        // Notepad's world. The bundles hold plain `\n`.
+        #[cfg(windows)]
+        let text = text.replace('\n', "\r\n");
+        let _ = std::fs::write(dir.join(DICTIONARIES_README), text.as_bytes());
     }
 
     /// Creates a path set from an arbitrary root (used in tests). The
@@ -545,5 +593,79 @@ mod tests {
     fn with_root_has_no_bundled_dictionaries() {
         // The binary's directory is unknown in the test constructor → no fallback dictionaries.
         assert_eq!(Paths::with_root("r").bundled_dictionaries_dir(), None);
+    }
+
+    /// A `Paths` over a not-yet-existing root inside a temp directory — what a
+    /// first launch under `system`/`path` storage actually sees.
+    fn fresh_root(dir: &tempfile::TempDir) -> Paths {
+        Paths::with_root(dir.path().join("data"))
+    }
+
+    #[test]
+    fn ensure_dirs_creates_a_dictionaries_directory_with_an_invitation() {
+        // Under a system install the shipped dictionaries live next to the
+        // binary, so without this the data root had no `dictionaries/` at all
+        // and the user had nowhere to put their own.
+        let dir = tempfile::tempdir().unwrap();
+        let paths = fresh_root(&dir);
+        paths
+            .ensure_dirs(crate::shared::i18n::locale(Lang::En))
+            .unwrap();
+
+        let readme = paths.dictionaries_dir().join(DICTIONARIES_README);
+        let text = std::fs::read_to_string(&readme).unwrap();
+        // The invitation names the convention the loader actually reads
+        // (`features/spellcheck/dict.rs`): a `*.aff` + `*.dic` pair.
+        assert!(text.contains(".aff") && text.contains(".dic"), "{text}");
+    }
+
+    #[test]
+    fn the_invitation_is_written_in_the_given_language() {
+        // The language is the caller's (`main`: the settings language, or
+        // `default_language` from defaults.json on a fresh install) — the file
+        // is the first thing an installed build says about dictionaries.
+        let mut texts = Vec::new();
+        for lang in [Lang::En, Lang::Ru] {
+            let dir = tempfile::tempdir().unwrap();
+            let paths = fresh_root(&dir);
+            paths
+                .ensure_dirs(crate::shared::i18n::locale(lang))
+                .unwrap();
+            texts.push(
+                std::fs::read_to_string(paths.dictionaries_dir().join(DICTIONARIES_README))
+                    .unwrap(),
+            );
+        }
+        assert_ne!(texts[0], texts[1]);
+        assert!(!texts[0].chars().any(|c| ('а'..='я').contains(&c)));
+        assert!(texts[1].chars().any(|c| ('а'..='я').contains(&c)));
+    }
+
+    #[test]
+    fn an_existing_dictionaries_directory_is_left_alone() {
+        // A portable install arrives with the directory already full; writing
+        // into it would drop a file next to dictionaries that are not ours.
+        let dir = tempfile::tempdir().unwrap();
+        let paths = fresh_root(&dir);
+        std::fs::create_dir_all(paths.dictionaries_dir()).unwrap();
+        paths
+            .ensure_dirs(crate::shared::i18n::locale(Lang::En))
+            .unwrap();
+        assert!(!paths.dictionaries_dir().join(DICTIONARIES_README).exists());
+    }
+
+    #[test]
+    fn a_deleted_invitation_stays_deleted() {
+        // After the first launch the file is the user's: the directory exists,
+        // so no later start writes into it again.
+        let dir = tempfile::tempdir().unwrap();
+        let paths = fresh_root(&dir);
+        let loc = crate::shared::i18n::locale(Lang::En);
+        paths.ensure_dirs(loc).unwrap();
+        let readme = paths.dictionaries_dir().join(DICTIONARIES_README);
+        std::fs::remove_file(&readme).unwrap();
+
+        paths.ensure_dirs(loc).unwrap();
+        assert!(!readme.exists());
     }
 }

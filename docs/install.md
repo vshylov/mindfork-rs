@@ -165,6 +165,10 @@ executable** (the file itself always lives next to the binary, **not** inside
   first in the data directory, then in the portable layout **next to the binary**
   (`data/dictionaries/` — where the installer/package places them), so spellcheck
   works under a system install too.
+- **Your own dictionaries** go in the data directory's `dictionaries/`, which the app
+  creates on startup if it is missing and seeds with a `README.txt` (in the interface
+  language) explaining what to put there. The bundled dictionaries keep loading; one
+  you add under the same name replaces the bundled one. See [§4](#4-spellcheck-dictionaries).
 
 ### 2.2. Backup and restore
 
@@ -543,6 +547,15 @@ The app reads dictionaries from `dictionaries/` **in the data directory**
 `build.rs` copies them into `<profile>/data/dictionaries/` at build time, so
 `cargo run` sees spellcheck right away. No directory → spellcheck is simply off.
 Active dictionary selection is on the settings screen ("Interface" section).
+
+**Adding your own.** Drop a Hunspell pair `<name>.aff` + `<name>.dic` into the data
+directory's `dictionaries/` and restart — ready-made dictionaries for most languages
+are published by the [LibreOffice project](https://github.com/LibreOffice/dictionaries).
+The app creates that directory on startup when it is missing (which is the normal case
+under an installed `system`/`path` build, where the bundled dictionaries live next to
+the binary instead) and puts a `README.txt` in it saying the same thing in the interface
+language. That file is written once, at creation: delete it and it stays deleted. A
+dictionary added under a bundled one's name replaces it (§2.1).
 
 ## 4.1. Python sandbox (`python_exec`)
 
