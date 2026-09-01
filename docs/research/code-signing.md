@@ -1,6 +1,12 @@
 # Windows code signing, and the privacy policy that comes with it
 
-Status: **research, forks open** — F1–F8 await the user's decision.
+Status: **accepted 2026-09-01** — all eight forks decided by the user: SignPath
+Foundation (F1a); apply once the repository is public **and the site's IP filter
+is lifted** (F2); `mindfork` as the product name (F3); sign the binary, the
+installer **and the uninstaller** (F4 + `unins000.exe`, §6.6); one workflow with
+raised timeouts (F5a); the policy in the repository and rendered on the site
+(F6a); shipped with the release, **plus a wizard page of its own** (F7a+, §8.1);
+and the web tools become opt-in with the sandbox digest checked (F8a).
 Date: 2026-09-01.
 
 Subject: how `mindfork.exe` and `mindfork-rs-vX.Y.Z-x86_64-setup.exe` get an
@@ -35,9 +41,11 @@ in closed code, or dual licensing — none of which is on this project's roadmap
 
 The work is smaller than the survey implied, and it is not in the signing call:
 
-- **two signing requests** in [release.yml](../../.github/workflows/release.yml),
-  at the two points where a PE file already exists and nothing downstream has
-  hashed it yet (§6.1) — the job graph already has the right shape;
+- **two signing requests per release** in
+  [release.yml](../../.github/workflows/release.yml), at the two points where a
+  PE file already exists and nothing downstream has hashed it yet (§6.1) — the
+  job graph already has the right shape — plus an occasional third, out of band,
+  for the uninstaller stub (§6.6);
 - **the metadata is wrong today, and measurably so** (§6.2): the built `.exe`
   says `ProductName = mindfork-rs`, the installer will say `mindfork` with
   version `0.0.0.0`. SignPath enforces product name and version through file
@@ -55,8 +63,8 @@ up **two sentences in [SECURITY.md](../../SECURITY.md) that the code does not
 keep** — the web tools ship *on*, not "when you explicitly enable" them, and one
 sandbox download is not covered by the sha256 lock list (§3.2). Both sit under
 the condition about transfers to systems the user did not specify, so they are
-worth settling before a stranger reads the repository with the terms in hand
-(F8).
+worth settling before a stranger reads the repository with the terms in hand.
+Decided: fix the code, not the sentences (F8a).
 
 ## 2. What moved since the July survey
 
@@ -87,7 +95,7 @@ already is.
 | Actively maintained, already released in the form to be signed | 2740 tests, releases exist ✔ (the releases become *public* with the repo) |
 | Documented on the download page | mindfork.io + [README.md](../../README.md) ✔ |
 | No hacking tools — no scanning for or exploiting vulnerabilities of the execution environment | mindfork is an agent, not a scanner: `python_exec` is sandboxed, `fs_*` optionally jailed, `web_search`/`fetch_url` closed to non-routable addresses. Their list already carries close relatives (OpenCode, better-ccflare, shob), so the category is accepted — but the application should say this rather than let a reviewer guess (§9, F2) |
-| Respect user privacy; software that transfers user data to systems **not specified by the user** needs a privacy policy, shown during installation, with an option to disable | the comfortable answer — "everything goes where the user pointed it" — turns out to be **false for one subsystem** (§3.2) → |
+| Respect user privacy; software that transfers user data to systems **not specified by the user** needs a privacy policy, shown during installation, with an option to disable | the comfortable answer — "everything goes where the user pointed it" — was **false for one subsystem** (§3.2); F8a makes it true, so the condition is satisfied by design rather than by disclosure → |
 | MFA on GitHub and SignPath | to confirm before applying → |
 | Team roles: Authors / Reviewers / Approvers | a solo maintainer states himself in all three; the page has to say so → |
 | "Code signing policy" on the home page, with their attribution line, roles and privacy statement | **to write** (§7) → |
@@ -160,7 +168,10 @@ because "no malware" and "respect user security" are conditions someone may chec
 against the same document.
 
 Neither of these is a signing problem. Both are things to settle *before* a
-stranger reads the repository with the terms in hand.
+stranger reads the repository with the terms in hand. **Decided (F8a,
+2026-09-01): settle them in the code** — the web tools become opt-in and the
+digest is checked, so SECURITY.md's two sentences become true instead of being
+edited to say less.
 
 ## 4. Donations do not cost the subscription
 
@@ -302,6 +313,47 @@ SmartScreen either, which is why the roadmap's winget item is pinned to the
 portable zip. Once the setup executable is signed, the winget manifest can point
 at the installer, and that groundwork item stops being blocked.
 
+### 6.6 The uninstaller: one signature, signed rarely (F4)
+
+`unins000.exe` is not an artifact the workflow can hand over like the other two —
+the compiler builds it from a stub of its own, at install time. Inno's
+`SignedUninstaller` directive has two modes, and only one of them works with a
+remote signer:
+
+- **With `SignTool` set**, the compiler invokes a local signing command on the
+  fly. That is the mode every tutorial shows, and it is the wrong one here:
+  SignPath signs remotely, one approved request at a time, with origin
+  verification tied to an artifact that GitHub Actions itself uploaded. A
+  compiler shelling out mid-build fits none of that.
+- **With no `SignTool`**, Inno documents an offline route. The first compile with
+  `SignedUninstaller=yes` writes a uniquely-named copy of the uninstaller
+  executable into `SignedUninstallerDir` (the output directory by default) and
+  asks for it to be signed externally; every later compile embeds the signature
+  from that file without prompting.
+
+So the uninstaller costs **one signing request per stub, not per release**: sign
+that file once through SignPath, keep the signed copy in the repository, and
+release builds pick it up. Four things bite, in this order:
+
+1. `SignedUninstaller` **defaults to `no` when no `SignTool` is set**, which is
+   our case — it has to be turned on explicitly.
+2. **The stub changes identity** when Inno is upgraded *or when `[Setup]`
+   directives that affect the uninstaller change — the documentation names the
+   `VersionInfo` directives specifically*. Stage 3 changes exactly those. The
+   signed stub must therefore be produced **after** the metadata work, never
+   before, or the first release build will look for a name that no longer exists.
+3. **A missing stub makes the compiler prompt**, which on a headless runner is at
+   best an error and at worst a hang. The installer job should assert the
+   expected file is present before `ISCC` runs, so the failure says what is wrong
+   instead of quietly shipping an unsigned uninstaller.
+4. **A signed uninstaller changes what is installed**: the language messages move
+   out of the executable into a separate `unins???.msg` file, because embedding
+   them would break the signature. One more file beside `unins000.exe` and
+   `unins000.dat` — harmless, but it is a packaging change, not just a signature.
+
+As a bonus, the same directive signs the temporary self-copies Setup makes while
+running.
+
 ## 7. What the site must carry
 
 A page headed exactly **"Code signing policy"**, linked from the home page and
@@ -368,6 +420,34 @@ to F7 — where the installer is being touched anyway and the answer to "does th
 policy ship with the release" is already known. README and SECURITY.md, which
 have no such machinery behind them, carry the links today.
 
+### 8.1 The wizard page (F7)
+
+The user asked for the policy to be readable during installation as well. Worth
+knowing what that costs, because the installer's legal pages are not a list you
+append to: Inno has exactly **one** `InfoBeforeFile` and one `InfoAfterFile`, and
+[mindfork.iss](../../packaging/windows/mindfork.iss) already spends the first on
+the disclaimer, with the MIT text on Inno's own licence page before it. A third
+read-only page is therefore either appended to the disclaimer's text — which
+merges two documents that are deliberately separate — or a custom page in
+`[Code]`, which is what Inno's own info pages are underneath.
+
+The custom page is the right shape: read-only, `Next` continues, no second
+acceptance — the same contract the disclaimer page already has, since the policy
+describes behaviour rather than granting rights. It is skipped automatically in
+a silent install, which is correct.
+
+The real cost is the text pipeline, not the page. Everything shown in the wizard
+goes through `tools/wizard_rtf.py` (a Markdown subset rendered to RTF, verified
+in CI by `--check`), and which text a page shows is a per-language choice made in
+`[Languages]`. So the page brings with it a `docs/legal/PRIVACY.ru.md` and a
+second pair of generated RTFs, exactly as the licence and the disclaimer have.
+That is the same edit that finally lets DISCLAIMER.md §5 link the policy (§8),
+so both belong in one stage.
+
+Note that after F8's answer this page is a **choice, not a requirement**: with the
+web tools opt-in, the condition that would have demanded an install-time privacy
+notice with an off switch no longer applies.
+
 ## 9. Forks
 
 **F1 — the certificate.**
@@ -378,6 +458,7 @@ have no such machinery behind them, carry the links today.
  fallback if (a) is refused.
  (c) Azure Artifact Signing — ruled out for an individual outside the US/Canada.
  (d) Stay unsigned — every release yellow, Smart App Control blocks outright.
+ **User's decision (2026-09-01): (a).**
 
 **F2 — when to apply.**
  (a) **After the repository is public and one or two public releases exist**, so
@@ -385,6 +466,12 @@ have no such machinery behind them, carry the links today.
  application can point at the site, the policy page and SECURITY.md. *Recommended.*
  (b) Immediately on going public — faster, and risks a refusal that is awkward to
  appeal ("we generally don't discuss policy").
+ **User's decision (2026-09-01): (a), with a second precondition of his own —
+ the site's maintenance IP allowlist comes off first.** That is the right
+ instinct: the application names the home page, and a reviewer who cannot open
+ it is a reviewer who cannot check the "Code signing policy" condition at all.
+ The allowlist is the `AllowedIps` parameter of `infra/website.cfn.yaml`; set it
+ empty to reopen.
 
 **F3 — the product name in the metadata.**
  (a) **`mindfork`** — the brand, matching `AppName`, the shortcut and the binary;
@@ -395,10 +482,19 @@ have no such machinery behind them, carry the links today.
  the one the artifact names use.
  Whichever is chosen must be the same in the `.exe` and in the setup, and is then
  frozen by the metadata restriction.
+ **User's decision (2026-09-01): (a) — `mindfork`.** So `build.rs` sets
+ `ProductName` and `FileDescription` explicitly instead of inheriting
+ `package.name`, and the `.iss` sets `VersionInfoProductName` to match rather
+ than leaning on the `AppName` default.
 
 **F4 — what gets signed now.**
  (a) **`mindfork.exe` + the setup executable.** *Recommended.*
  (b) Also GPG-sign the Linux packages — a separate key, a separate track.
+ **User's decision (2026-09-01): (a) plus the uninstaller.** `unins000.exe` is
+ not ours to submit like the other two — it is produced by the compiler, and
+ Inno has its own mechanism for it. It does work with a remote signer, at the
+ cost of one extra artifact tracked in the repository; the mechanics, the
+ ordering constraint and the trap are §6.6.
 
 **F5 — how the workflow waits for approval.**
  (a) **One workflow, `wait-for-completion: true`, timeout raised** (e.g. 3600 s)
@@ -407,11 +503,13 @@ have no such machinery behind them, carry the links today.
  *Recommended.*
  (b) Split: build → publish unsigned draft → sign in a re-dispatched job. More
  moving parts, no benefit while a single person approves.
+ **User's decision (2026-09-01): (a).**
 
 **F6 — where the privacy policy lives.**
  (a) **`PRIVACY.md` in the repository, rendered as `/privacy` on the site.**
  One text, two surfaces. *Recommended.*
  (b) Site only — then the repository and the offline installer have no copy.
+ **User's decision (2026-09-01): (a).** Done in this branch.
 
 **F7 — does `PRIVACY.md` ship with the release?**
  (a) **Yes** — one more entry in the `DOCS=(…)` array in `release.yml`'s archive
@@ -419,6 +517,11 @@ have no such machinery behind them, carry the links today.
  translations already are, plus the installer's `[Files]`. *Recommended.*
  (b) No — a link on the site is enough. Cheaper, but an offline user has the
  disclaimer and not the policy, which is an odd pair.
+ **User's decision (2026-09-01): (a), and a wizard page for it as well** — so
+ the policy is read at install time rather than only found in the archive.
+ That page is not free (the disclaimer's machinery has to grow a second
+ subject, and a Russian translation with it) and it is no longer *required*
+ once F8 goes to (a); it is a deliberate choice to show it anyway. §8.1.
 
 **F8 — the web tools' default, and the two SECURITY.md sentences (§3.2).**
  (a) **Make `tools.web_enabled` opt-in**, so that "everything goes where you
@@ -436,34 +539,63 @@ have no such machinery behind them, carry the links today.
  promise contradicted by the code in the same repository the reviewer is reading.
  Either way `TAVILY_API_KEY` should stop being a default env name; a key found in
  the ambient environment is not a decision the user made in this app.
+ **User's decision (2026-09-01): (a).** `tools.web_enabled` becomes `false` by
+ default, `python.webc` is verified against the digest that is already written
+ down next to the code, and `web_tavily_key_env` stops defaulting to a name.
+ SECURITY.md then says what the code does without being edited to say less, and
+ PRIVACY.md §3.3 and §4 move the web tools from the "on" column to the "off"
+ one — that edit belongs to the same PR as the default change, not to this one.
 
 ## 10. Stages
 
-1. **This branch (docs only).** This document and `PRIVACY.md`, with links from
+The order is not a preference: three constraints fix most of it. F8's default
+change rewrites two sections of `PRIVACY.md`, the metadata change invalidates any
+uninstaller stub signed before it (§6.6), and the application wants every visible
+surface already in place (F2).
+
+1. **This branch (docs only)** — this document and `PRIVACY.md`, with links from
    README and SECURITY.md and a pointer from the roadmap. No code, no pipeline
    change, no journal entry (AGENTS.md §4 exempts a pure-docs PR). `PRIVACY.md`
-   describes the software **as it behaves today**, §3.2 included — so if F8 goes
-   to (a), its §3.3 and §4 change with the default.
-2. **F8's answer** (§3.2) — whichever of the two it is, this is the only stage
-   that touches a published promise, and it should land before the application
-   rather than after: either `feat/web-tools-opt-in` plus the sandbox digest
-   check, or the SECURITY.md correction plus the installer's privacy page.
-3. **`feat/release-metadata`** — the product name, description, company and
-   version fields in `build.rs` and `mindfork.iss` (§6.2), plus `PRIVACY.md` in
-   the archive and the installer (F7). Independently useful, and a prerequisite
-   for the artifact configuration.
-4. **`docs/dictionary-provenance`** — `dictionaries/SOURCES.md` in the shape of
-   `syntaxes/SOURCES.md` (§3.1). Independent of the rest, and the one item that
-   could turn into a question mid-review.
-5. **The site pages** — "Code signing policy" and "Privacy" (§7, F6).
-6. **The application**, once 1–5 are visible on a public repository (F2).
-7. **`feat/code-signing`** — the two signing steps, the artifact configurations,
-   the approval step in the release checklist, a journal entry in
+   describes the software **as it behaves today**, §3.2 included.
+2. **`feat/web-tools-opt-in`** (F8a) — `tools.web_enabled` defaults to `false`,
+   `python.webc` is verified against the digest already written beside the code,
+   `web_tavily_key_env` loses its default name; `PRIVACY.md` §3.3 and §4 move the
+   web tools to the "off" column in the same PR, since the policy must never
+   describe a version that does not exist. Touches tools, so it needs a live run
+   (AGENTS.md §3), a `CHANGELOG.md` entry under **Changed**/**Security**, and a
+   journal entry in [tools.md](../journal/tools.md).
+3. **`feat/release-metadata`** (F3) — `ProductName`, `FileDescription`,
+   `CompanyName`, `LegalCopyright` and `OriginalFilename` set explicitly in
+   `build.rs`; `VersionInfoVersion`, `VersionInfoProductName` and friends in the
+   `.iss` (§6.2). Pure packaging, no live run.
+4. **`feat/installer-privacy-page`** (F7a, §8.1) — `PRIVACY.md` into
+   `release.yml`'s `DOCS=(…)` and the installer's `[Files]`; the custom wizard
+   page; `docs/legal/PRIVACY.ru.md` and its two generated RTFs; and, on the back
+   of the same machinery, the pointer from DISCLAIMER.md §5. Stages 3 and 4 are
+   both the installer and could share one branch if that reads better than two
+   PRs a day apart.
+5. **`docs/dictionary-provenance`** — `dictionaries/SOURCES.md` in the shape of
+   `syntaxes/SOURCES.md` (§3.1). Independent of everything else; the one item
+   most likely to become a question mid-review.
+6. **The site, and the door opened** — the "Code signing policy" and "Privacy"
+   pages (§7), and `AllowedIps` emptied so the stack stops answering 403 to
+   everyone but you. F2's own precondition, and the one thing on this list that
+   is not a pull request.
+7. **The application** (F1a, F2), once 1–6 are visible on a public repository.
+   Say in it what §3's "no hacking tools" row says: an agent with a sandbox, not
+   a scanner.
+8. **`feat/code-signing`** — the two per-release signing requests with raised
+   timeouts (F5a), the artifact configurations and their metadata restrictions,
+   `SignedUninstaller` plus the once-signed stub committed and asserted present
+   before `ISCC` (§6.6), the approval step added to the release checklist in
+   AGENTS.md §6, a journal entry in
    [docs/journal/release.md](../journal/release.md), and R8 closed in the
    roadmap.
 
-Stages 2–5 do not depend on the application's outcome and are worth doing
-regardless; stage 7 is the only one that does.
+Stages 2–5 stand on their own merits and do not depend on the application's
+outcome; stage 8 is the only one that does. If the application is refused, F1's
+fallback (Certum, a certificate in your own name) reuses stages 2–6 unchanged and
+rewrites only stage 8.
 
 ## 11. Sources
 
@@ -475,8 +607,11 @@ Signing: [SignPath Foundation conditions](https://signpath.org/terms) ·
 [Microsoft — SmartScreen reputation](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/smartscreen-reputation) ·
 [Certum Open Source Code Signing](https://shop.certum.eu/open-source-code-signing.html).
 
-Metadata: [Inno Setup — VersionInfoVersion](https://jrsoftware.org/ishelp/topic_setup_versioninfoversion.htm)
-and the neighbouring `VersionInfo*` topics (defaults quoted in §6.2);
+Metadata and the uninstaller:
+[Inno Setup — VersionInfoVersion](https://jrsoftware.org/ishelp/topic_setup_versioninfoversion.htm)
+and the neighbouring `VersionInfo*` topics (defaults quoted in §6.2) ·
+[SignedUninstaller](https://jrsoftware.org/ishelp/topic_setup_signeduninstaller.htm)
+and [SignTool](https://jrsoftware.org/ishelp/topic_setup_signtool.htm) (§6.6);
 `winresource` 0.1.31 `lib.rs` (the Cargo-metadata defaults), verified against the
 built `target/debug/mindfork.exe`.
 
