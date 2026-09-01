@@ -57,6 +57,31 @@ split by subsystem.
   starts from the newest or the oldest one. Newest first is the default — what
   the assistant noticed last is usually what you opened the screen for.
 
+
+### Security
+
+- **The web tools are now off until you turn them on.** `web_search`,
+  `fetch_url` and `youtube_watch` used to be enabled in a fresh installation.
+  Everything else mindfork connects to is an address you chose — your model
+  server, your embedder, your MCP servers — but the search engines behind
+  `web_search` are picked by the app, and the query it sends is built from your
+  conversation. Now nothing goes to them until you switch the tools on in
+  Settings → Tools. An existing installation keeps whatever your settings
+  already say.
+
+- **A search key is only used where you put it.** The app no longer assumes the
+  environment variable `TAVILY_API_KEY`: if a key for a paid search provider was
+  sitting in your environment for some other program, mindfork could route
+  searches through it — and spend its credits — without you deciding anything
+  here. Name the variable in Settings → Tools, or enter the key there, and it
+  works as before.
+
+- **The Python sandbox's largest download is now checked too.** `mindfork
+  sandbox setup` verified every file it downloaded itself against a pinned
+  checksum, except the Python distribution, which `wasmer` fetches on its
+  behalf. That file is now verified as well, and one that does not match is
+  replaced instead of used.
+
 ### Fixed
 
 - **In KDE Konsole the input box promised a key the terminal cannot send.** The

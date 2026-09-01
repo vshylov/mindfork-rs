@@ -166,10 +166,10 @@ Backend selection: `MINDFORK_ENGINE_URL` (external, any OpenAI server) OR
 rented instead of hosted — `python tools/e2e_hf.py run`, see
 `docs/history/remote-e2e-hf.md`.
 
-## Status (2026-09-01, version 0.9.8)
+## Status (2026-09-02, version 0.9.8)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2740 unit tests
-green, 128 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **2743 unit tests
+green, 129 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -180,6 +180,21 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 `tools/doc_index_check.py`. A new track adds a line; a line that has stopped
 being recent is dropped, not shortened.
 
+- **The web tools became opt-in, and the last unhashed download got a hash** —
+  writing a privacy policy for the code-signing track meant inventorying every
+  outbound connection rather than trusting SECURITY.md's summary, and the
+  summary lost twice: `web_search` shipped **on** although the engines it
+  queries are picked by the app and the query is built from the conversation
+  (every other address in the app is one the user chose), and
+  `TAVILY_API_KEY` was assumed by default, so a key exported for an unrelated
+  tool routed the model's searches and spent its credits. Both are decisions
+  the user makes now. `python.webc`, fetched by `wasmer` and therefore
+  coverable by no lock-list row, is verified against the digest that had sat
+  quoted in a comment since August — re-verified live against a fresh registry
+  download. Signing, donations and the policy itself:
+  [docs/research/code-signing.md](docs/research/code-signing.md),
+  [PRIVACY.md](PRIVACY.md),
+  [docs/journal/tools.md](docs/journal/tools.md).
 - **One hint grid, and footers that name only the keys that work** — the four
   screens the chat bar's two recent reworks never reached (chat list, search,
   `F3`, `F4`) were drawing their hints through a **second, left-aligned**

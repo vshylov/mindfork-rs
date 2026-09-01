@@ -53,6 +53,17 @@ pub const WASMER_VERSION: &str = "7.2.0";
 /// an existing sandbox keeps working across a bad publish, so only a fresh one
 /// can tell you.
 const PYTHON_PACKAGE: &str = "python/python@=3.13.5";
+/// sha256 of the `python.webc` that [`PYTHON_PACKAGE`] resolves to — the digest
+/// the comment above has been quoting since the August 2026 incident.
+///
+/// It is checked on the **finished file**, not on a download, because this one
+/// asset is fetched by the `wasmer` binary rather than by our client: there is
+/// no URL for the lock list to pin. Until this constant existed the only
+/// post-condition was that the file had been created, which was the single gap
+/// in the promise SECURITY.md makes about this command
+/// ([docs/research/code-signing.md](../../docs/research/code-signing.md) §3.2).
+const PYTHON_PACKAGE_SHA256: &str =
+    "c03ebe0946e66edf598fd7a1f192101f60e4e9c0095aecd04e049989692bdcab";
 /// User-Agent for downloads (GitHub/PyPI sometimes reject an empty UA).
 const USER_AGENT: &str = "mindfork-sandbox-setup";
 
@@ -299,7 +310,15 @@ async fn ensure_wasmer(
     })
 }
 
-/// Ensures `python.webc` is present (downloaded by `wasmer` itself from the registry).
+/// Ensures `python.webc` is present **and is the pinned build** (downloaded by
+/// `wasmer` itself from the registry, verified here against
+/// [`PYTHON_PACKAGE_SHA256`]).
+///
+/// A file that is present but does not match is replaced rather than refused:
+/// this command is provisioning, and a stale or truncated asset is exactly what
+/// it exists to fix. Only a *freshly downloaded* file that still mismatches is
+/// fatal — at that point the registry is serving something other than what we
+/// pinned, and continuing would defeat the check.
 async fn ensure_python_webc(
     dir: &Path,
     wasmer: &Path,
@@ -309,8 +328,15 @@ async fn ensure_python_webc(
 ) -> Result<()> {
     let webc = dir.join("python.webc");
     if webc.is_file() && !opts.force {
-        progress(loc.t("sandbox.setup.webc.present"));
-        return Ok(());
+        match verify_file_sha256(&webc, PYTHON_PACKAGE_SHA256, PYTHON_PACKAGE, loc).await {
+            Ok(()) => {
+                progress(loc.t("sandbox.setup.webc.present"));
+                return Ok(());
+            }
+            Err(err) => {
+                progress(&loc.tf("sandbox.setup.webc.stale", &[("reason", &err.to_string())]))
+            }
+        }
     }
     progress(&loc.tf("sandbox.setup.webc.downloading", &[("pkg", PYTHON_PACKAGE)]));
     // wasmer's home/cache — under the sandbox directory (self-contained, not in ~/.wasmer).
@@ -346,7 +372,7 @@ async fn ensure_python_webc(
         "{}",
         loc.t("sandbox.setup.webc.not_created")
     );
-    Ok(())
+    verify_file_sha256(&webc, PYTHON_PACKAGE_SHA256, PYTHON_PACKAGE, loc).await
 }
 
 /// Ensures all wheels are unpacked into `site-packages/`.
@@ -461,6 +487,34 @@ async fn download_bytes(
     hasher.update(&bytes);
     verify_sha256(&hasher.finalize(), expected, url, loc)?;
     Ok(bytes.to_vec())
+}
+
+/// Verifies a file already on disk against an expected sha256, streaming it in
+/// chunks — `python.webc` is ~45 MB, and the two callers
+/// ([`ensure_python_webc`]) have no bytes in hand to hash on the way past.
+/// `label` names the subject in an error, the way a URL does for a download.
+async fn verify_file_sha256(path: &Path, expected: &str, label: &str, loc: &Locale) -> Result<()> {
+    use tokio::io::AsyncReadExt;
+
+    let mut file = tokio::fs::File::open(path).await.with_context(|| {
+        loc.tf(
+            "sandbox.setup.open_file",
+            &[("path", &path.display().to_string())],
+        )
+    })?;
+    let mut hasher = Sha256::new();
+    let mut buf = vec![0u8; 64 * 1024];
+    loop {
+        let read = file
+            .read(&mut buf)
+            .await
+            .with_context(|| loc.t("sandbox.setup.read_file").to_string())?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buf[..read]);
+    }
+    verify_sha256(&hasher.finalize(), expected, label, loc)
 }
 
 /// Verifies the hash (raw digest bytes) against the expected hex; the error names the URL.
@@ -672,5 +726,80 @@ mod tests {
         let dest = tempfile::tempdir().unwrap();
         extract_targz(&apath, dest.path(), ru()).unwrap();
         assert!(dest.path().join("bin/wasmer").is_file());
+    }
+
+    /// The one asset no lock-list row can cover reads its digest from a hand-copied
+    /// constant, so the shape of that constant is worth a test: a truncated or
+    /// upper-cased paste would only be discovered by a user whose `sandbox setup`
+    /// suddenly refuses a perfectly good download.
+    #[test]
+    fn the_python_package_digest_is_a_well_formed_sha256() {
+        assert_eq!(PYTHON_PACKAGE_SHA256.len(), 64);
+        assert!(
+            PYTHON_PACKAGE_SHA256
+                .chars()
+                .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)),
+            "expected 64 lowercase hex characters, got `{PYTHON_PACKAGE_SHA256}`"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_file_is_verified_against_its_own_digest() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("payload.bin");
+        // Larger than the 64 KB read buffer, so the streaming loop runs more than once.
+        let body: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
+        std::fs::write(&path, &body).unwrap();
+        let digest = hex_lower(&Sha256::digest(&body));
+
+        verify_file_sha256(&path, &digest, "payload", ru())
+            .await
+            .expect("the digest of the bytes just written must match");
+
+        let err = verify_file_sha256(&path, &"0".repeat(64), "payload", ru())
+            .await
+            .expect_err("a wrong digest must be refused");
+        assert!(err.to_string().contains("payload"), "got: {err}");
+    }
+
+    /// The digest above is only useful if the registry still serves the build it
+    /// names — a pin that has drifted turns every fresh `sandbox setup` into a
+    /// refusal, which is a worse failure than the one it guards against. So this
+    /// downloads `python.webc` for real, into an empty directory, and verifies it.
+    ///
+    /// Needs a `wasmer` binary, which it borrows from a sandbox this machine has
+    /// already provisioned (`MINDFORK_SANDBOX_DIR`, else `target/debug/data/sandbox`);
+    /// it never touches that directory's own `python.webc`. Run it when bumping
+    /// [`PYTHON_PACKAGE`], together with `runs_real_python_in_sandbox`.
+    #[tokio::test]
+    #[ignore = "downloads ~45 MB from the Wasmer registry"]
+    async fn live_the_registry_still_serves_the_pinned_python_build() {
+        let host = std::env::var("MINDFORK_SANDBOX_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("target/debug/data/sandbox"));
+        let Some(wasmer) = locate_wasmer(&host) else {
+            eprintln!("skip: no wasmer under {}", host.display());
+            return;
+        };
+        let fresh = tempfile::tempdir().unwrap();
+        ensure_python_webc(
+            fresh.path(),
+            &wasmer,
+            &SetupOptions { force: false },
+            ru(),
+            &mut |m: &str| eprintln!("{m}"),
+        )
+        .await
+        .expect("a fresh download must match PYTHON_PACKAGE_SHA256");
+    }
+
+    #[tokio::test]
+    async fn verifying_a_missing_file_names_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("absent.bin");
+        let err = verify_file_sha256(&path, &"0".repeat(64), "absent", ru())
+            .await
+            .expect_err("a missing file cannot verify");
+        assert!(err.to_string().contains("absent.bin"), "got: {err:#}");
     }
 }
