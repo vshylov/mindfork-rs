@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (28)
+## Entries (29)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -40,6 +40,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: the binary/command renamed to `mindfork` (done)
 - Release 0.9.8 (prepared)
 - Post-M9: `artwork/` renamed to `assets/` (done)
+- Post-M9: the dictionaries are copied more than once (done)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -1493,3 +1494,57 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   `tools/site_sync_assets.py` re-run by hand mirrors its 25 files from the new
   path. No live run needed — nothing on an engine, memory or tool path is
   touched.
+
+### Post-M9: the dictionaries are copied more than once (done)
+- **The report**: `cargo run -r` does not copy `dictionaries/` into `data/`. It
+  does — exactly once. `build.rs` copies the six checked-in Hunspell files into
+  `target/<profile>/data/dictionaries/` so a development build has spellcheck with
+  no manual step, and on a profile directory that has never been built that is
+  what happens (measured: a first `cargo check --release` on a clean tree produced
+  all six, ~5 MB). What it never did was copy them **again**.
+- **Cause — the script's output was not one of its inputs.** Cargo re-runs a build
+  script only for the paths it declares, and this one declared `dictionaries/`,
+  `assets/mindfork.ico`, `syntaxes/` and `SOURCE_DATE_EPOCH`: four sources, no
+  destination. Delete `target/<profile>/data` — the ordinary way to put the app
+  back to a fresh install, since settings, chats, `data.db` and `logs/` all live
+  there and are all disposable — and nothing brings the dictionaries back.
+  Measured on 1.96.0, on this tree: `rm -rf target/release/data`, then
+  `cargo check --release` — not restored. Measured on a minimal probe crate with
+  the same declaration shape, because reproducing it here would have touched
+  `build.rs` and re-run the script by that alone: a `src/main.rs` edit that
+  recompiles the crate does not restore it, nor does a `Cargo.toml` touch; only
+  touching a **declared** input does. The build then runs with spellcheck silently
+  off while `dictionaries/` sits in the repository looking innocent, until one of
+  those four inputs happens to move for a reason of its own.
+- **The fix is the destination declared as `rerun-if-changed` too**: a declared
+  path that does not exist counts as changed, so a missing `data/dictionaries` is
+  itself the reason to re-run. Declared naively that is a re-run on *every* build,
+  because the copy stamps "now" on the very files cargo then compares against the
+  fingerprint (measured on the probe: three consecutive no-op builds, three runs).
+  So the copy became conditional — a file already there with the same length and
+  no older than its source is skipped, and one that is copied is given its
+  source's modification time — which leaves the destination still and cargo quiet.
+  After the fix, on this tree: `rm -rf target/release/data` + a no-op
+  `cargo check --release` restores all six; the build after that re-runs the
+  script once (the directory was recreated, 13.9 s), and the two after **that**
+  finish in 0.26 s with the syntax dump's mtime unmoved — the script did not run.
+- **Why one spurious re-run is worth avoiding at all**: each run of this script
+  re-stamps `MINDFORK_BUILD_EPOCH`, and a changed `rustc-env` rebuilds the crate —
+  in release that is LTO with a single codegen unit, minutes of work for a build
+  with no source change.
+- **The destination is declared only when there is something to copy** (a
+  `dictionaries/` directory in the tree): a declared path that never gets created
+  would re-run the script on every build for good, which is the failure the
+  conditional copy exists to avoid.
+- **No unit test**: `cargo test` does not run `#[cfg(test)]` inside a build script
+  — a build script is not a test target — so what stands in for one is the
+  measured before/after above, plus the probe crate that isolates cargo's
+  freshness rules from this repository's build.
+- **Gates**: `cargo fmt --check` / `cargo clippy --all-targets -- -D warnings` /
+  `cargo test` green — **2728 unit tests, 125 `#[ignore]`** on Linux (the 2735 /
+  128 in CLAUDE.md's status header is the Windows count, which includes the
+  `cfg(windows)` tests a Linux container cannot run); unmoved either way, since a
+  build script has no test target. The documentation gates
+  (`cyrillic_scan`, `link_check`, `doc_index_check`, `list_scroll_check`,
+  `wizard_rtf --check`) green. No live run needed — nothing on an engine, memory
+  or tool path is touched.

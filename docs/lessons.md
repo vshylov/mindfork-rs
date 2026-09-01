@@ -146,6 +146,20 @@ filesystem owns: the executable's mtime is accurate until a copy, a backup resto
 or a rewriting tool turns "built on" into "touched on", with no way to tell.
 — *the build date on the "About" tab*.
 
+**A build script's output outside `OUT_DIR` is also one of its inputs — declare it.**
+`build.rs` copies `dictionaries/` into `target/<profile>/data/dictionaries/` so a dev
+build has spellcheck, and it declared only the *source* as `rerun-if-changed`. Delete
+the destination — wiping `data/` is the ordinary way to get the app back to a fresh
+install — and nothing ever recreates it: cargo re-runs a build script for its declared
+paths alone, so neither a no-op build nor one that recompiles and relinks the whole
+binary for a `src/` edit touches it, and the build quietly runs with spellcheck off.
+A declared path that does not exist counts as changed, so naming the destination is
+the fix; naming it *naively* costs a re-run on every build, because the copy stamps
+"now" on files cargo then compares against the fingerprint. Copy only what differs and
+give the copy its source's timestamp, and the destination settles. The same shape
+applies to anything a script writes where cargo is not looking.
+— *the dictionaries that were copied exactly once*.
+
 **A top-level directory here is a build input, so renaming one is not a docs edit.**
 `assets/` (ex-`artwork/`) reaches the `.exe` through `build.rs` (`rerun-if-changed`
 plus the `winresource` icon), the Linux packages through `nfpm.yaml`, the Windows
