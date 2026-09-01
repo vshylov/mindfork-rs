@@ -38,11 +38,14 @@ AppPublisher=Vladimir Shylov
 AppPublisherURL=https://mindfork.io
 AppSupportURL=https://github.com/vshylov/mindfork-rs/issues
 AppUpdatesURL=https://github.com/vshylov/mindfork-rs/releases
-; The two legal pages, in the order the wizard shows them:
+; The legal pages, in the order the wizard shows them:
 ;  * the MIT text on Inno's own license page (accept/decline gates Next);
 ;  * the disclaimer on the "info before install" page: read-only, Next continues.
 ;    It is a supplement to the license, not a second contract, so it gets one
-;    acceptance rather than two.
+;    acceptance rather than two;
+;  * the privacy policy, read-only as well. Inno has only one InfoBeforeFile, so
+;    that page is built in [Code] (PrivacyPage) rather than declared here, and
+;    picks its language there instead of in [Languages].
 ; WHICH text each page shows is a per-language choice, so it lives in [Languages]
 ; below, on the same line as that language's message file — one place to look,
 ; rather than a default here and an override there. What the entries point at:
@@ -57,7 +60,7 @@ AppUpdatesURL=https://github.com/vshylov/mindfork-rs/releases
 ;    (docs/history/legal-ru-translations.md). Generated for the markdown, and for the
 ;    encoding: an RTF of \uNNNN? escapes is pure ASCII, where a Cyrillic .txt
 ;    would leave the compiler guessing.
-; All three .rtf files come from tools/wizard_rtf.py, kept in step with their
+; All five .rtf files come from tools/wizard_rtf.py, kept in step with their
 ; sources by `--check` in CI's lint job. Never edit one by hand: the installer
 ; would then present a different text than the repository, the release archives
 ; and the app's F1 tabs.
@@ -125,9 +128,12 @@ Name: "ru"; MessagesFile: "compiler:Languages\Russian.isl"; \
 ; whose closing line says not to use the software if you disagree with it. Naming the
 ; page after what it holds is also what makes the license → disclaimer pair legible as
 ; two steps rather than one page plus a stray readme. The ru caption is the borrowed
-; "дисклеймер" (cyrillic-ok: the ru caption itself), the same word the app's F1
-; tab settled on (locales/ru.json, ui.help.tab.disclaimer): the native alternative
-; mostly means a slip of the tongue. The text on the page is Russian too now
+; "дисклеймер" (cyrillic-ok: the ru caption itself): the native alternative mostly
+; means a slip of the tongue. The app's F1 tab used to carry the same word and is now
+; the "Legal" tab (ui.help.tab.legal) — not a divergence but the same rule applied twice:
+; this page holds one document and is named after it, that tab holds two (the
+; disclaimer and the privacy policy) and is named after what they have in common.
+; The text on the page is Russian too now
 ; (see [Languages]); before this, only the caption ever was.
 ; InfoBeforeClickLabel ("When you are ready to continue with Setup, click Next") is
 ; left at Inno's default — it says the right thing already.

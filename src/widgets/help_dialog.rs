@@ -32,9 +32,15 @@ pub enum HelpTab {
     Commands,
     /// The application's license text (MIT).
     License,
-    /// The disclaimer covering model output, tools and automated actions
-    /// (`DISCLAIMER.md`) — a supplement to the license, not part of it.
-    Disclaimer,
+    /// The two documents that are neither the license nor about it: the
+    /// disclaimer covering model output, tools and automated actions
+    /// (`DISCLAIMER.md`), and the privacy policy (`PRIVACY.md`), in that order.
+    ///
+    /// One tab rather than two because the tab strip has no room for a seventh:
+    /// the `ru` strip already measures exactly [`HELP_MIN_WIDTH`], and the gate
+    /// test below holds it there. Hence the name — a tab called "Disclaimer"
+    /// holding a privacy policy is a tab nobody looks in for one.
+    Legal,
     /// Third-party components, their versions and licenses.
     Components,
 }
@@ -46,7 +52,7 @@ impl HelpTab {
         Self::Hotkeys,
         Self::Commands,
         Self::License,
-        Self::Disclaimer,
+        Self::Legal,
         Self::Components,
     ];
 
@@ -62,7 +68,7 @@ impl HelpTab {
             Self::Hotkeys => "ui.help.tab.hotkeys",
             Self::Commands => "ui.help.tab.commands",
             Self::License => "ui.help.tab.license",
-            Self::Disclaimer => "ui.help.tab.disclaimer",
+            Self::Legal => "ui.help.tab.legal",
             Self::Components => "ui.help.tab.components",
         }
     }
@@ -484,7 +490,7 @@ pub fn render_help(
             inner_w,
         ),
         HelpTab::License => license_lines(palette, loc, inner_w),
-        HelpTab::Disclaimer => disclaimer_lines(palette, loc, inner_w),
+        HelpTab::Legal => legal_lines(palette, loc, inner_w),
         HelpTab::Components => component_lines(palette, loc, inner_w),
     };
     let total = content.len();
@@ -914,24 +920,35 @@ fn license_lines(palette: &Palette, loc: &'static Locale, width: usize) -> Vec<L
     lines
 }
 
-/// The "Disclaimer" tab: `DISCLAIMER.md` — what the author does not answer for
-/// when a model, chosen and downloaded by the user, writes every word on screen
-/// (see spec §11.7). A supplement to the license, which is why it is a tab of
-/// its own rather than a tail on the "License" tab.
+/// The "Legal" tab: `DISCLAIMER.md` — what the author does not answer for when a
+/// model, chosen and downloaded by the user, writes every word on screen — and
+/// then `PRIVACY.md`, what the program keeps and what it sends where (see spec
+/// §11.7). Neither belongs on the "License" tab: one supplements the licence,
+/// the other describes behaviour, and the licence text is kept byte-identical to
+/// the canonical MIT for the scanners ([`credits::LICENSE_TEXT`]).
+///
+/// **The two are rendered as one document, separated by a rule.** Both are
+/// markdown and both open with their own `#` heading, so the boundary is visible
+/// without a second scroll position to remember or a mode to be in. The
+/// alternative — a seventh tab — does not fit: see [`HelpTab::Legal`].
 ///
 /// Unlike the license, the source is markdown, so it goes through our own
-/// renderer (ADR 0003) — headings, emphasis and bullets survive. The renderer
-/// deliberately does not wrap paragraphs (that is the feed's job), so the
-/// logical lines it returns are wrapped here, exactly as
+/// renderer (ADR 0003) — headings, emphasis, bullets and tables survive. The
+/// renderer deliberately does not wrap paragraphs (that is the feed's job), so
+/// the logical lines it returns are wrapped here, exactly as
 /// [`crate::widgets::message_feed`] does it.
 ///
-/// Which of the two texts, like the license tab's: the interface language picks
-/// it, and the translation is written to the same markdown subset, so nothing
-/// new reaches the renderer.
-fn disclaimer_lines(palette: &Palette, loc: &'static Locale, width: usize) -> Vec<Line<'static>> {
+/// Which of the texts, like the license tab's: the interface language picks
+/// them, and the translations are written to the same markdown subset, so
+/// nothing new reaches the renderer.
+fn legal_lines(palette: &Palette, loc: &'static Locale, width: usize) -> Vec<Line<'static>> {
     let body_w = width.saturating_sub(HELP_PAD.len()).max(1);
-    let rendered =
-        crate::shared::markdown::render(credits::disclaimer_text(loc.lang()), body_w, palette);
+    let both = format!(
+        "{}\n\n---\n\n{}",
+        credits::disclaimer_text(loc.lang()),
+        credits::privacy_text(loc.lang()),
+    );
+    let rendered = crate::shared::markdown::render(&both, body_w, palette);
     let mut lines = vec![Line::raw("")];
     for line in rendered.lines {
         // A wrapped list item is indented under its own marker: the feed can
@@ -1767,6 +1784,60 @@ mod tests {
         }
     }
 
+    /// The "Legal" tab carries **two** documents, and both follow the interface
+    /// language. Read through [`legal_lines`] rather than a drawn frame: the
+    /// second document starts ~130 rendered rows down, so no test viewport ever
+    /// shows it, and a viewport-based assertion would silently pass on an empty
+    /// second half.
+    #[test]
+    fn the_legal_tab_carries_both_documents_in_the_interface_language() {
+        use crate::shared::i18n::{Lang, locale};
+
+        let text_for = |lang: Lang| -> String {
+            legal_lines(&Palette::default(), locale(lang), 88)
+                .iter()
+                .map(|l| {
+                    l.spans
+                        .iter()
+                        .map(|s| s.content.as_ref())
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+
+        // `(language, from the disclaimer, from the policy, what must not show)`.
+        let cases = [
+            (
+                Lang::En,
+                "mindfork is a client",
+                "Privacy policy",
+                "Неофициальный перевод",
+            ),
+            (
+                Lang::Ru,
+                "это клиент",
+                "Политика конфиденциальности",
+                "no telemetry",
+            ),
+        ];
+        for (lang, disclaimer, privacy, unwanted) in cases {
+            let text = text_for(lang);
+            for wanted in [disclaimer, privacy] {
+                assert!(
+                    text.contains(wanted),
+                    "the {} Legal tab does not show {wanted:?}",
+                    lang.code()
+                );
+            }
+            assert!(
+                !text.contains(unwanted),
+                "the {} Legal tab shows {unwanted:?} from the other language",
+                lang.code()
+            );
+        }
+    }
+
     /// The legal tabs are the one place where a whole *document*, not a UI
     /// string, follows the interface language: `ru` gets the translations
     /// under `docs/legal/`, every other language the authoritative English
@@ -1789,13 +1860,6 @@ mod tests {
                 "неофициальный перевод",
                 "MIT License",
             ),
-            (
-                Lang::En,
-                HelpTab::Disclaimer,
-                "mindfork is a client",
-                "клиент",
-            ),
-            (Lang::Ru, HelpTab::Disclaimer, "это клиент", "is a client"),
         ];
         for (lang, tab, wanted, unwanted) in cases {
             let text = text_for(lang, tab);
@@ -1818,13 +1882,13 @@ mod tests {
     /// ran out to the left of the heading's text. The style belongs on the
     /// content spans; the indent stays blank. Reported from a real screenshot.
     #[test]
-    fn the_disclaimer_indent_does_not_inherit_the_heading_style() {
+    fn the_legal_tab_indent_does_not_inherit_the_heading_style() {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
         use ratatui::style::Modifier;
 
         let palette = Palette::default();
-        let mut help = HelpState::open(HelpTab::Disclaimer);
+        let mut help = HelpState::open(HelpTab::Legal);
         let mut term = Terminal::new(TestBackend::new(90, 40)).unwrap();
         term.draw(|f| render_help(f, &mut help, NO_SECTIONS, &palette, ru()))
             .unwrap();
@@ -1878,7 +1942,7 @@ mod tests {
             "Клавиши",
             "Команды",
             "Лицензия",
-            "Дисклеймер",
+            "Правовое",
             "Компоненты",
         ] {
             assert!(about.contains(label), "missing the \"{label}\" tab label");
@@ -1934,19 +1998,19 @@ mod tests {
             "the disclaimer leaked into the license tab"
         );
 
-        // "Disclaimer": rendered through our own markdown renderer — headings
-        // keep their styled `#` prefix, but emphasis markers are consumed.
-        let disclaimer = text_for(HelpTab::Disclaimer);
+        // "Legal": both documents, rendered through our own markdown renderer —
+        // headings keep their styled `#` prefix, but emphasis markers are consumed.
+        let legal = text_for(HelpTab::Legal);
         assert!(
-            disclaimer.contains("Дисклеймер"),
+            legal.contains("Дисклеймер"),
             "missing the disclaimer heading"
         );
+        assert!(legal.contains("это клиент"), "missing the disclaimer body");
+        // The tab's second document starts far below any test viewport, so that
+        // it is there at all is asserted on the lines rather than on a frame —
+        // `the_legal_tab_carries_both_documents_in_the_interface_language`.
         assert!(
-            disclaimer.contains("это клиент"),
-            "missing the disclaimer body"
-        );
-        assert!(
-            !disclaimer.contains("**"),
+            !legal.contains("**"),
             "raw markdown emphasis markers on screen — the renderer was bypassed"
         );
 

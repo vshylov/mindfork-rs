@@ -2995,9 +2995,13 @@ mirrored right margin, because a value column left-aligned one step past the wid
 label left the right ~30 columns of a wide dialog empty),
 **"Hotkeys"** (this table, presented as per-screen sections — below), **"Commands"** (input-box commands `/rag …`/
 `/tts …` — kept out of the keybindings list so it doesn't clutter it), **"License"** (the MIT text),
-**"Disclaimer"** (`DISCLAIMER.md` — what the author does not answer for when the model that
-writes every word on screen was chosen and downloaded by the user: generated output,
-third-party models and providers, the tools a model can invoke, cloud egress),
+**"Legal"** (two documents, one after the other, separated by a rule: `DISCLAIMER.md` — what the
+author does not answer for when the model that writes every word on screen was chosen and
+downloaded by the user: generated output, third-party models and providers, the tools a model can
+invoke, cloud egress — and then `PRIVACY.md`, what the program keeps on the machine, what leaves it
+and under which setting of the user's, and what reaches the author (nothing). **One tab, not two**,
+for the width reason below — and named after what it holds, since a tab called "Disclaimer"
+carrying a privacy policy is a tab nobody would look in for one),
 **"Components"** (third-party dependencies — **name, version, license**; the list is checked
 against `Cargo.toml` (names) and `Cargo.lock` (versions) by `shared::credits` gate tests;
 the tab is laid out as **leader tables** (the geometry shared with "About"): the name on the left margin, the version and
@@ -3014,20 +3018,22 @@ every tab, so the window doesn't "jump" on switching: the maximum caps line leng
 for readability on a wide screen, and below the minimum the dialog is clamped to
 the screen instead of shrinking further (a hard degradation). The logo is drawn only
 when there's enough height/width (a hard degradation, docs/branding.md §5); the license
-text wraps by word to the dialog's width, and the disclaimer — markdown at the source —
-goes through our own renderer (ADR 0003), with wrapped list items hung under their marker.
-The "License"/"Disclaimer"/"Components" tabs' data comes straight from
+text wraps by word to the dialog's width, and the "Legal" tab's two documents — markdown at the
+source — go through our own renderer (ADR 0003), with wrapped list items hung under their marker.
+The "License"/"Legal"/"Components" tabs' data comes straight from
 `shared/credits.rs`, bypassing the locale bundles — "Components" because it is language-neutral
 (names/versions/SPDX), the two legal tabs because they are whole **documents**: `ru` shows the
 translations under `docs/legal/` and every other language (an external bundle included) the
-authoritative English original, chosen by `credits::license_text`/`disclaimer_text`. The
+authoritative English original, chosen by
+`credits::license_text`/`disclaimer_text`/`privacy_text`. The
 translations are unofficial and say so in their own first paragraph — the English text governs, and
 a locale bundle cannot bring legal text of its own. A separate pair of tabs for them was never an
 option: the `ru` strip already measures exactly the dialog's minimum width (below).
-The **disclaimer is a tab of its own, not a tail on "License"**: the `LICENSE` file must stay
-byte-identical to the canonical MIT text or the `MIT` SPDX identifier we publish stops being
-truthful and license scanners start reporting "Other" (a `shared::credits` gate test holds
-that line). The strip's labels are width-budgeted — a `screens::chat` gate test checks that
+The **disclaimer and the policy are their own tab, not a tail on "License"**: the `LICENSE` file
+must stay byte-identical to the canonical MIT text or the `MIT` SPDX identifier we publish stops
+being truthful and license scanners start reporting "Other" (a `shared::credits` gate test holds
+that line). Within that tab they are one scroll rather than a mode: both open with their own `#`
+heading, so the boundary is visible without a second scroll position to remember. The strip's labels are width-budgeted — a `screens::chat` gate test checks that
 it fits the dialog's **minimum** width in **every** bundled locale, since the tab that
 overflows is the rightmost one and would be silently truncated for one language only.
 The **"Hotkeys" tab is a list of per-screen sections**

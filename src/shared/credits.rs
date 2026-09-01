@@ -113,6 +113,19 @@ pub const DISCLAIMER_TEXT: &str = include_str!("../../DISCLAIMER.md");
 /// converter (`tools/wizard_rtf.py`) meet nothing new.
 pub const DISCLAIMER_TEXT_RU: &str = include_str!("../../docs/legal/DISCLAIMER.ru.md");
 
+/// The privacy policy — from `PRIVACY.md` at the repository root: what the app
+/// keeps on the machine, what leaves it and under which setting, and what
+/// reaches the author (nothing). Shown on the help dialog's "Legal" tab under
+/// the disclaimer, and by the Windows wizard as a page of its own
+/// (docs/research/code-signing.md §8.1). The authoritative text; the Russian
+/// rendering is [`PRIVACY_TEXT_RU`].
+pub const PRIVACY_TEXT: &str = include_str!("../../PRIVACY.md");
+
+/// The privacy policy in Russian — `docs/legal/PRIVACY.ru.md`, an unofficial
+/// translation on the same terms as [`LICENSE_TEXT_RU`] and
+/// [`DISCLAIMER_TEXT_RU`].
+pub const PRIVACY_TEXT_RU: &str = include_str!("../../docs/legal/PRIVACY.ru.md");
+
 /// The license text for an interface language: Russian for [`Lang::Ru`],
 /// English for everything else — an external `data/locales/<code>.json` bundle
 /// included, since a user-supplied bundle cannot bring legal text we would then
@@ -133,6 +146,14 @@ pub fn disclaimer_text(lang: Lang) -> &'static str {
     match lang {
         Lang::Ru => DISCLAIMER_TEXT_RU,
         _ => DISCLAIMER_TEXT,
+    }
+}
+
+/// The privacy policy for an interface language — same rule as [`license_text`].
+pub fn privacy_text(lang: Lang) -> &'static str {
+    match lang {
+        Lang::Ru => PRIVACY_TEXT_RU,
+        _ => PRIVACY_TEXT,
     }
 }
 

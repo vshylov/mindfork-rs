@@ -16,6 +16,12 @@ split by subsystem.
 
 ### Added
 
+- **The privacy policy is readable in the app.** `F1` → the tab that used to be
+  "Disclaimer" is now **"Legal"** and carries both documents — the disclaimer
+  first, then the policy, in the interface language. One tab rather than two
+  because the tab strip has no room for a seventh, and renamed because a tab
+  called "Disclaimer" holding a privacy policy is a tab nobody looks in for one.
+
 - **A privacy policy, and the installer shows it.** `PRIVACY.md` says what the
   program keeps on your machine, what leaves it and which setting of yours has
   to be on first, and what reaches the author — which is nothing. The Windows

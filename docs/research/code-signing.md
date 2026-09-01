@@ -468,6 +468,14 @@ Note that after F8's answer this page is a **choice, not a requirement**: with t
 web tools opt-in, the condition that would have demanded an install-time privacy
 notice with an off switch no longer applies.
 
+**And the app shows it too** (2026-09-02, at the user's request): the `F1` help
+dialog's "Disclaimer" tab became **"Legal"** and carries the disclaimer followed
+by the policy. A seventh tab was not available — the `ru` tab strip already
+measures exactly the dialog's minimum width, a constraint spec §11.7 had recorded
+and this is the first change to hit — so the tab was renamed after what it now
+holds, the same rule by which this installer's wizard page stopped being called
+"Information".
+
 ## 9. Forks
 
 **F1 — the certificate.**
