@@ -1595,9 +1595,10 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   into backups, which pack `dictionaries/` whole; at ~700 bytes that is not worth
   an exclusion.
 - **Gates**: `cargo fmt --check` / `cargo clippy --all-targets -- -D warnings` /
-  `cargo test` green — **2733 unit tests (+5), 125 `#[ignore]`** on Linux (the
-  status header's 2735/128 is the Windows count, which includes the
-  `cfg(windows)` tests a Linux container cannot run); the documentation gates
+  `cargo test` green — **2733 unit tests (+5), 125 `#[ignore]`** on Linux; the
+  status header goes 2735 → **2740**, its Windows count carried forward by the
+  same +5 (all five are platform-neutral) plus the `cfg(windows)` tests a Linux
+  container cannot run. The documentation gates
   (`cyrillic_scan`, `link_check`, `doc_index_check`, `list_scroll_check`,
   `wizard_rtf --check`) green. No live run needed — nothing on an engine, memory
   or tool path is touched.
