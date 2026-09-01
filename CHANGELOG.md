@@ -162,6 +162,10 @@ split by subsystem.
   chat with one question and one tool-assisted answer could say "34 msg".
   Subagent transcript rows count the same way.
 
+- **The Russian settings screen names spellchecking in Russian.** The toggle
+  under *Орфография* now reads *Проверять орфографию* instead of the <!-- cyrillic-ok -->
+  transliterated *Спелл-чек*. The English label is unchanged. <!-- cyrillic-ok -->
+
 - **One word for a subagent, in both languages.** Each interface spelled it
   more than one way, and two spellings could show on the same screen: the role
   header over a subagent's reply disagreed with the label on the tool card that
