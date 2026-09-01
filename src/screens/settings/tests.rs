@@ -239,9 +239,12 @@ fn toggle_web_emits_save_with_flipped_value() {
     // Go to Tools, to the web-search toggle.
     goto_section(&mut s, Section::Tools);
     goto_field(&mut s, FieldId::TWeb);
+    // Against the value the screen started with, whatever the default is — the
+    // toggle's contract is the flip, not a particular resulting value.
+    let before = s.config.tools.web_enabled;
     let intent = s.handle_key(key(KeyCode::Char(' ')));
     match intent {
-        Some(SettingsIntent::SaveConfig(c)) => assert!(!c.tools.web_enabled),
+        Some(SettingsIntent::SaveConfig(c)) => assert_eq!(c.tools.web_enabled, !before),
         other => panic!("expected SaveConfig, got {other:?}"),
     }
 }

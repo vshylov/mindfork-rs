@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (39)
+## Entries (40)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -51,6 +51,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: `get_llm_name`/`get_llm_history` — the language model, named and dated (done)
 - Post-M9: the Python package pinned exactly — a selector is a range (done)
 - Post-M9: the language-model history, seeded from the chats that predate it (done)
+- Post-M9: the web tools become opt-in, and the one download outside the lock list (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -3006,3 +3007,55 @@ the tag `probe/code-search-stage5`.
   in `data.db` — the middle duplicate collapsed, both dates the replies' own —
   and the third added nothing and logged nothing (one `seeded the
   language-model history … records=2` line in the whole log).
+
+### Post-M9: the web tools become opt-in, and the one download outside the lock list (done)
+- **Trigger**: writing `PRIVACY.md` for the code-signing track
+  ([docs/research/code-signing.md](../research/code-signing.md) §3.2) meant
+  inventorying every `reqwest` client construction in the binary instead of
+  trusting the summary in SECURITY.md. Nine production sites; the summary was
+  wrong about two of them.
+- **What was wrong (1): `web_enabled` defaulted to `true`.** Every other
+  outbound address in the app is one the user typed or picked — engine,
+  embedder, TTS, MCP. The `web_search` chain is not: `lite.duckduckgo.com`,
+  `html.duckduckgo.com`, `www.mojeek.com`, `www.ecosia.org` are picked by *us*,
+  and the query is derived from the conversation. So the app's own promise
+  ("only the endpoints you configure") had exactly one exception and it shipped
+  on, while SECURITY.md said "when you explicitly enable the web tools".
+- **(2): `web_tavily_key_env` defaulted to `TAVILY_API_KEY`**, and keyed
+  backends are tried *first*. A key exported for some unrelated tool therefore
+  routed the model's searches to `api.tavily.com` and spent that key's credits
+  with no decision made anywhere in this app. The asymmetry was accidental —
+  cloud `api_key_env` has always defaulted to `None`.
+- **(3): `python.webc` was never hash-checked.** It is fetched by the `wasmer`
+  binary rather than by our client, so no lock-list row can cover it (there is
+  no URL to pin), and the only post-condition was `webc.is_file()`. The
+  known-good digest had been sitting in the doc comment above `PYTHON_PACKAGE`
+  since the August pinning incident, quoted and never compared.
+- **The fix, in one PR because they are one claim**: `web_enabled: false`,
+  `web_tavily_key_env: None`, and `PYTHON_PACKAGE_SHA256` checked by a new
+  `verify_file_sha256` that streams the finished file (45 MB — no reason to hold
+  it). A file that is *present* but mismatching is replaced rather than refused,
+  since this command is provisioning and a stale asset is what it exists to fix;
+  a *freshly downloaded* mismatch is fatal, because at that point the registry
+  is serving something other than what we pinned.
+- **Why the default rather than the sentence.** SignPath Foundation's conditions
+  require software that transfers user data to systems the user did not specify
+  to carry a privacy policy shown *during installation*, with an off switch
+  there. Honest defaults satisfy that by design; editing SECURITY.md to promise
+  less would have satisfied nothing (F8a, decided by the user 2026-09-01).
+- **Not a migration.** The container's `#[serde(default)]` only fills a *missing*
+  field, and settings are written in full — so an existing `settings.json` keeps
+  whatever it says and only new installations see the change. The migration test
+  that pins `web_enabled: true` through the v1→v2 step is exactly this property
+  and was left alone.
+- **Measured**: the demo-shot gate caught the change immediately —
+  `settings-tools-{dark,light}-en` drift by precisely the toggle, the section
+  counter (`2` → `1`) and the Tavily row (`TAVILY_API_KEY` → `—`); dumps
+  regenerated and the four assets re-rendered.
+- **Live — GO.** The pinned digest was verified twice: against the
+  44,680,028-byte `python.webc` this machine has been running since August
+  (identical), and by a **fresh** registry download into an empty directory —
+  the new `#[ignore]` smoke `live_the_registry_still_serves_the_pinned_python_build`,
+  which exists because a pin that has drifted turns every `sandbox setup` into a
+  refusal, a worse failure than the one it guards. 2743 unit tests green,
+  129 `#[ignore]`.

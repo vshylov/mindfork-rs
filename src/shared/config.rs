@@ -769,10 +769,6 @@ pub const DEFAULT_DIALOGUE_RUN_TIMEOUT_SECS: u64 = 1800;
 /// See docs/research/python-wasmer-sandbox.md.
 pub const DEFAULT_PYTHON_WASM_TIMEOUT_SECS: u64 = 30;
 
-/// Default env-variable name for the keyed search provider, matching the
-/// vendor's own documentation so an existing shell already works.
-pub const DEFAULT_TAVILY_KEY_ENV: &str = "TAVILY_API_KEY";
-
 /// Which `web_search` backend to prefer (spec §9.3.1,
 /// docs/research/web-search-keyed-providers.md).
 ///
@@ -845,7 +841,17 @@ impl PythonMode {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ToolSettings {
-    /// Web search (DuckDuckGo). Enabled by default (read-only).
+    /// The web tools — `web_search`, `fetch_url`, `youtube_watch`. **Off by
+    /// default.**
+    ///
+    /// It shipped on until 0.9.9, which made this the one subsystem that
+    /// contradicted the app's own promise: the search engines the chain queries
+    /// are picked by *us*, not by the user, so a fresh install could send a
+    /// query derived from the conversation to a destination nobody chose. Every
+    /// other outbound address in the app is one the user configured. See
+    /// [docs/research/code-signing.md](../../docs/research/code-signing.md) §3.2
+    /// and PRIVACY.md §3.3; an existing `settings.json` keeps whatever it
+    /// already says, so this changes new installations only.
     pub web_enabled: bool,
     /// Fetch result pages, extract text, and reorder by
     /// relevance (`web_search`, spec §9.3.1). Enabled by default; gives the model
@@ -871,6 +877,14 @@ pub struct ToolSettings {
     /// machine-encrypted under [`crate::shared::secrets::SearchSlot::Tavily`]
     /// **wins** over the variable named here (ADR 0008 §3, and the same
     /// precedence `api_key_env` already has).
+    ///
+    /// **`None` by default**, and that is the whole point. It used to default to
+    /// `"TAVILY_API_KEY"` — the vendor's own documented name, chosen so that an
+    /// existing shell "already worked" — which meant a key exported for some
+    /// unrelated tool silently routed the model's searches to that vendor and
+    /// spent its credits, with no decision made anywhere in this app. Naming
+    /// the variable is now the decision, typed into the settings field, which
+    /// is where it belongs.
     #[serde(default)]
     pub web_tavily_key_env: Option<String>,
     /// Python execution. Off by default (the tool's master gate).
@@ -932,11 +946,11 @@ pub struct ToolSettings {
 impl Default for ToolSettings {
     fn default() -> Self {
         Self {
-            web_enabled: true,
+            web_enabled: false,
             web_fetch_content: true,
             web_allow_private: false,
             web_provider: WebProvider::default(),
-            web_tavily_key_env: Some(DEFAULT_TAVILY_KEY_ENV.into()),
+            web_tavily_key_env: None,
             python_enabled: false,
             python_mode: PythonMode::default(),
             python_path: None,

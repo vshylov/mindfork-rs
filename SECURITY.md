@@ -32,9 +32,12 @@ there are no backport branches.
 
 - **No telemetry.** The app makes network requests only to the endpoints you
   configure (inference server, embedder, TTS, MCP servers) — plus, when you
-  explicitly enable the web tools, the search engines and pages they fetch,
-  and the one-time Python-sandbox setup downloads, which are verified against
-  a sha256 lock list.
+  explicitly enable the web tools (**off by default**), the search engines and
+  pages they fetch, and the one-time Python-sandbox setup downloads, every one
+  of which is verified against a pinned sha256: the lock list for what the app
+  downloads itself, and `PYTHON_PACKAGE_SHA256` for `python.webc`, which
+  `wasmer` fetches on our behalf and which is therefore checked as a finished
+  file.
 - **Secrets are stored encrypted and machine-bound**: cloud API keys and MCP
   server tokens entered in settings are encrypted with DPAPI on Windows and a
   `machine-id`-derived key on Linux, so a copied settings file does not carry

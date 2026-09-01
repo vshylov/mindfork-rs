@@ -171,7 +171,10 @@ Neither of these is a signing problem. Both are things to settle *before* a
 stranger reads the repository with the terms in hand. **Decided (F8a,
 2026-09-01): settle them in the code** — the web tools become opt-in and the
 digest is checked, so SECURITY.md's two sentences become true instead of being
-edited to say less.
+edited to say less. **Done in `feat/web-tools-opt-in` (2026-09-02)**, together
+with the `TAVILY_API_KEY` default, so this section describes what the repository
+looked like when the track started; `PRIVACY.md` §3.3 and §4 moved with it. The
+condition in the table above is now satisfied by design.
 
 ## 4. Donations do not cost the subscription
 

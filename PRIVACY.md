@@ -118,11 +118,13 @@ up to 800 characters of each result page**, which the tool embeds to rank
 results. If your embedder is a cloud provider, that is search content reaching a
 second vendor.
 
-### 3.3 The web tools — on by default
+### 3.3 The web tools — off until you turn them on
 
-**These are on in a fresh installation** (`tools.web_enabled`), which means a
-model can search the web and fetch pages without you enabling anything first.
-Turn the switch off in settings if you do not want that.
+`tools.web_enabled` is **off in a fresh installation**, and with it
+`web_search`, `fetch_url` and `youtube_watch`. Everything in this section
+happens only after you switch it on in Settings → Tools. (It shipped *on* before
+0.9.9; an installation that already has a `settings.json` keeps whatever that
+file says, so if you had it on, it stays on.)
 
 - **`web_search`** queries, in order, `lite.duckduckgo.com`,
   `html.duckduckgo.com`, `www.mojeek.com` and `www.ecosia.org`. What is sent is
@@ -130,12 +132,12 @@ Turn the switch off in settings if you do not want that.
   conversation — plus a desktop browser User-Agent and an `Accept-Language`
   header. These engines are chosen by the app, not by you.
 - **A keyed provider** is preferred over that chain when a key is available:
-  today that is [Tavily](https://tavily.com/privacy) (`api.tavily.com`).
-  Note the sharp edge: the app looks for the key in the environment variable
-  `TAVILY_API_KEY` by default, so if you already export that variable for some
-  other tool, searches will go to Tavily — and spend your credits — without a
-  decision inside the app. Clear `tools.web_tavily_key_env`, or set
-  `tools.web_provider`, if that is not what you want.
+  today that is [Tavily](https://tavily.com/privacy) (`api.tavily.com`). A key
+  is only ever found where you put it — entered in settings, or in an
+  environment variable **you named** in settings. No variable name is assumed:
+  before 0.9.9 the app looked for `TAVILY_API_KEY` by default, which meant a key
+  exported for some unrelated tool could route your searches, and spend its
+  credits, without a decision made anywhere in this app.
 - **Result pages are fetched** by default (`tools.web_fetch_content`) to extract
   readable text, so the search engines' hits are visited too.
 - **`fetch_url`** retrieves the address the model chose and then sends up to
@@ -180,10 +182,12 @@ has to be approved again.
 `pythonindex.wasix.org` and `files.pythonhosted.org`; each of those is
 **verified against a sha256 lock list** before use. It then runs the downloaded
 `wasmer` binary to fetch the Python distribution (`python.webc`, the largest
-piece) from the Wasmer registry — that download is performed by `wasmer` itself
-and **is not hash-verified by this app**, and whatever else that third-party
-binary contacts is outside our control. Nothing about your data is sent in any
-of this; it is a package download.
+piece) from the Wasmer registry. That one is fetched by `wasmer` rather than by
+this app, so there is no URL for the lock list to pin — instead **the finished
+file is checked against a pinned digest**, and one that does not match is
+replaced rather than used. What that third-party binary contacts beyond this is
+outside our control. Nothing about your data is sent in any of it; it is a
+package download.
 
 Once Python execution is enabled, the sandbox's own network access is on by
 default (`tools.python_net_enabled`), which means code the model runs can reach
@@ -200,13 +204,14 @@ text passes through whatever is between you and the host.
 
 | Off by default | On by default |
 |---|---|
-| Python execution (`tools.python_enabled`) | The web tools — search, fetch, YouTube (§3.3) |
-| The file tools (`tools.fs_enabled`) — and their jail, `fs_root`, is **empty** until you set it, so enabling them without a root leaves them unrestricted | Fetching the content of search results |
-| MCP plugins — master switch and per-profile, both | Preferring a keyed search provider when a key is present |
-| Cross-chat search for the assistant (`chat_search`, `chat_read`) | Naming a new chat automatically (one extra model request) |
-| The self-model tools — and with them the injection of the self-model into the system prompt | Sandbox network access, once Python is enabled |
-| Reflection and the consolidation passes | Cloud as the *default* speech provider (nothing is spoken until `/tts`) |
-| Reaching private/loopback addresses from the web tools | The remaining ordinary tools (notes, RAG, time, and so on — local) |
+| **The web tools** — search, page fetching, YouTube (§3.3) | Fetching the content of search results, once the web tools are on |
+| Python execution (`tools.python_enabled`) | Preferring a keyed search provider, once you have said where its key lives |
+| The file tools (`tools.fs_enabled`) — and their jail, `fs_root`, is **empty** until you set it, so enabling them without a root leaves them unrestricted | Naming a new chat automatically (one extra model request) |
+| MCP plugins — master switch and per-profile, both | Sandbox network access, once Python is enabled |
+| Cross-chat search for the assistant (`chat_search`, `chat_read`) | Cloud as the *default* speech provider (nothing is spoken until `/tts`) |
+| The self-model tools — and with them the injection of the self-model into the system prompt | The remaining ordinary tools (notes, RAG, time, and so on — local) |
+| Reflection and the consolidation passes | |
+| Reaching private/loopback addresses from the web tools | |
 | **The confirmation prompt before a dangerous tool call** (`tools.confirm_dangerous`) — opt-in, so tools that are enabled run without asking | |
 
 ## 5. What the author receives

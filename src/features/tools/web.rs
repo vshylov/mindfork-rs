@@ -2119,7 +2119,7 @@ fn (data &amp;MyType) free() {
     #[tokio::test]
     #[ignore = "requires a keyed search provider (TAVILY_API_KEY)"]
     async fn live_tavily_returns_page_text_so_the_tool_need_not_fetch_it() {
-        let Ok(key) = std::env::var(crate::shared::config::DEFAULT_TAVILY_KEY_ENV) else {
+        let Ok(key) = std::env::var("TAVILY_API_KEY") else {
             eprintln!("skip: no Tavily key configured");
             return;
         };
@@ -2161,13 +2161,10 @@ fn (data &amp;MyType) free() {
     #[tokio::test]
     #[ignore = "requires a keyed search provider (TAVILY_API_KEY)"]
     async fn live_keyed_search_survives_ten_searches_in_a_row() {
-        let keyed: Vec<_> = [(
-            SearchSlot::Tavily,
-            crate::shared::config::DEFAULT_TAVILY_KEY_ENV,
-        )]
-        .into_iter()
-        .filter_map(|(slot, var)| Some((slot, std::env::var(var).ok()?)))
-        .collect();
+        let keyed: Vec<_> = [(SearchSlot::Tavily, "TAVILY_API_KEY")]
+            .into_iter()
+            .filter_map(|(slot, var)| Some((slot, std::env::var(var).ok()?)))
+            .collect();
         if keyed.is_empty() {
             eprintln!("skip: no keyed search provider configured");
             return;

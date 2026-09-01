@@ -189,7 +189,9 @@ build the moment they drift from what the app actually renders
 
 - **Introspection**: the model can read and change its own sampling and system
   message mid-conversation, and check when you last wrote.
-- **Web**: `web_search` — an in-house implementation with multi-engine
+- **Web** (Settings → Tools → **Web search**, **off** until you turn it on —
+  the search engines are picked by the app, not by you, so nothing goes to them
+  until you say so): `web_search` — an in-house implementation with multi-engine
   fallback (DuckDuckGo → Mojeek → Ecosia), page fetching and semantic
   re-ranking of results. The free engines throttle automated requests hard, so
   Settings → Tools → **Web search** also takes an API key for **Tavily** (1000
