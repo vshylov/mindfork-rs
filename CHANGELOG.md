@@ -16,6 +16,14 @@ split by subsystem.
 
 ### Added
 
+- **The spellcheck dictionaries now say where they come from — and carry their
+  licences.** They are somebody else's work, redistributed with the program, and
+  until now nothing in the release said whose or under what terms. Each
+  dictionary's origin, version and licence is recorded in
+  `dictionaries/SOURCES.md`, and the licence texts are installed next to the
+  dictionaries themselves (`data/dictionaries/licenses/`) in every archive,
+  package and install.
+
 - **The privacy policy is readable in the app.** `F1` → the tab that used to be
   "Disclaimer" is now **"Legal"** and carries both documents — the disclaimer
   first, then the policy, in the interface language. One tab rather than two

@@ -158,8 +158,12 @@ jobs:
           # the app reads next to the binary (data/ next to the exe → spellcheck
           # out of the box). See build.rs / shared/paths.rs.
           stage_data() {
-            mkdir -p "$1/data/dictionaries"
+            mkdir -p "$1/data/dictionaries/licenses"
             cp dictionaries/*.aff dictionaries/*.dic "$1/data/dictionaries/"
+            # The dictionaries are third-party work under BSD-style and LGPL
+            # terms, and both require their notices to travel with what is
+            # redistributed (dictionaries/SOURCES.md).
+            cp dictionaries/licenses/*.txt "$1/data/dictionaries/licenses/"
           }
 
           # Linux: tar.gz

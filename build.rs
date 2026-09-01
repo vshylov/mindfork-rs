@@ -1,7 +1,8 @@
 //! Build script: spellcheck dictionaries next to the binary + a Windows `.exe` icon
 //! + the build stamp.
 //!
-//! **Dictionaries.** In portable mode the application reads data from a `data/` subdirectory
+//! **Dictionaries.** Third-party work, pinned and licensed in `dictionaries/SOURCES.md`.
+//! In portable mode the application reads data from a `data/` subdirectory
 //! next to the executable (in dev — `target/<profile>/data/`, see shared/paths.rs),
 //! so dictionaries are expected at `data/dictionaries/`. Dictionaries live in the project
 //! root's `dictionaries/` (checked into the repo; the release workflow also packs them into
