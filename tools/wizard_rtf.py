@@ -176,57 +176,94 @@ def rule() -> str:
     return r"\pard\sb120\sa120\brdrb\brdrs\brdrw10\brsp40\par" + "\n"
 
 
+class Body:
+    """The accumulating state of one `render` pass: the RTF written so far, the
+    hard-wrapped paragraph or list item still open, and the pipe table being
+    read. A class rather than four `nonlocal`s in a closure, so the line
+    dispatch below is a flat `elif` chain over named operations — the closure
+    shape is what made `render` a `python:S3776` finding (cognitive complexity
+    23 against the allowed 15)."""
+
+    def __init__(self) -> None:
+        self.out: list[str] = []
+        self.pending: list[str] = []  # the paragraph or list item being accumulated
+        self.pending_is_bullet = False
+        self.table: list[list[str]] = []  # the pipe table being accumulated
+
+    def flush_table(self) -> None:
+        """The rows read so far → one labelled bullet each (see `table_row`)."""
+        if self.table:
+            headers, rows = self.table[0], self.table[1:]
+            self.out.extend(table_row(headers, cells) for cells in rows)
+        self.table = []
+
+    def flush(self) -> None:
+        """Close everything open: the table, and the wrapped lines as one
+        paragraph or one list item."""
+        self.flush_table()
+        if self.pending:
+            self.out.append(
+                bullet(self.pending)
+                if self.pending_is_bullet
+                else paragraph(self.pending)
+            )
+        self.pending, self.pending_is_bullet = [], False
+
+    def emit(self, rtf: str) -> None:
+        """A block that stands alone — a heading, a rule — after whatever it
+        interrupts."""
+        self.flush()
+        self.out.append(rtf)
+
+    def open_bullet(self, text: str) -> None:
+        """A list item, open for continuation lines to join."""
+        self.flush()
+        self.pending, self.pending_is_bullet = [text], True
+
+    def add_row(self, cells: list[str]) -> None:
+        """A table row: the first one closes what precedes the table, the rest
+        join the one already open."""
+        if not self.table:
+            self.flush()
+        self.table.append(cells)
+
+
+def feed_table_line(body: Body, line: str) -> None:
+    """A line of a pipe table. The `|---|---|` separator carries no content and
+    is dropped; everything else is cells, the first row being the header."""
+    cells = [c.strip() for c in line.strip("|").split("|")]
+    if not all(re.fullmatch(r":?-+:?", c) for c in cells):
+        body.add_row(cells)
+
+
+def feed(body: Body, line: str) -> None:
+    """One source line, already stripped, into the accumulating body: the block
+    constructs first, and whatever is left continues what is open."""
+    if not line:
+        body.flush()
+    elif m := re.match(r"(#{1,6})\s+(.*)", line):
+        body.emit(heading(len(m.group(1)), m.group(2)))
+    elif re.fullmatch(r"-{3,}", line):
+        body.emit(rule())
+    elif line.startswith("|") and line.endswith("|"):
+        feed_table_line(body, line)
+    elif m := re.match(r"[-*]\s+(.*)", line):
+        body.open_bullet(m.group(1))
+    else:
+        # A continuation line — of the wrapped paragraph or of the wrapped
+        # list item, whichever is open.
+        body.pending.append(line)
+
+
 def render(markdown: str, source: str = "DISCLAIMER.md") -> str:
     """The Markdown subset above → a complete RTF document, stamped with the file
     it came from: an `.rtf` opened on its own has to say what regenerates it, and
     there are three of them now."""
-    body: list[str] = []
-    pending: list[str] = []  # the paragraph or list item being accumulated
-    pending_is_bullet = False
-    table: list[list[str]] = []  # the pipe table being accumulated
-
-    def flush_table() -> None:
-        nonlocal table
-        if table:
-            headers, rows = table[0], table[1:]
-            body.extend(table_row(headers, cells) for cells in rows)
-        table = []
-
-    def flush() -> None:
-        nonlocal pending, pending_is_bullet
-        flush_table()
-        if pending:
-            body.append(bullet(pending) if pending_is_bullet else paragraph(pending))
-        pending, pending_is_bullet = [], False
-
+    body = Body()
     for raw in markdown.splitlines():
-        line = raw.rstrip()
-        stripped = line.strip()
-        if not stripped:
-            flush()
-        elif m := re.match(r"(#{1,6})\s+(.*)", stripped):
-            flush()
-            body.append(heading(len(m.group(1)), m.group(2)))
-        elif re.fullmatch(r"-{3,}", stripped):
-            flush()
-            body.append(rule())
-        elif stripped.startswith("|") and stripped.endswith("|"):
-            # A pipe table. The `|---|---|` separator carries no content and is
-            # dropped; everything else is cells, the first row being the header.
-            cells = [c.strip() for c in stripped.strip("|").split("|")]
-            if not all(re.fullmatch(r":?-{1,}:?", c) for c in cells):
-                if not table:
-                    flush()
-                table.append(cells)
-        elif m := re.match(r"[-*]\s+(.*)", stripped):
-            flush()
-            pending, pending_is_bullet = [m.group(1)], True
-        else:
-            # A continuation line — of the wrapped paragraph or of the wrapped
-            # list item, whichever is open.
-            pending.append(stripped)
-    flush()
-    return HEADER.replace("%SOURCE%", source) + "".join(body) + "}\n"
+        feed(body, raw.strip())
+    body.flush()
+    return HEADER.replace("%SOURCE%", source) + "".join(body.out) + "}\n"
 
 
 def repo_root() -> Path:
