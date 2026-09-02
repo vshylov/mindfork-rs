@@ -581,7 +581,7 @@ change rewrites two sections of `PRIVACY.md`, the metadata change invalidates an
 uninstaller stub signed before it (§6.6), and the application wants every visible
 surface already in place (F2).
 
-Stages 1–5 are **done**: the docs (#430), the opt-in defaults (#431), the
+Stages 1–6 are **done** (stage 6 bar the allowlist): the docs (#430), the opt-in defaults (#431), the
 metadata below (#432), the wizard page with the policy in the archive (#433,
 and the app's own "Legal" tab in #434), and the dictionaries' provenance.
 
@@ -614,10 +614,15 @@ and the app's own "Legal" tab in #434), and the dictionaries' provenance.
    installer, since both licences require the notice to accompany a
    redistribution. `feat/`, not `docs/`: it turned out to be a packaging change
    as much as a record.
-6. **The site, and the door opened** — the "Code signing policy" and "Privacy"
-   pages (§7), and `AllowedIps` emptied so the stack stops answering 403 to
-   everyone but you. F2's own precondition, and the one thing on this list that
-   is not a pull request.
+6. **The site** — the "Code signing policy" and "Privacy" pages (§7): **done**,
+   with `/privacy/` generated from `PRIVACY.md` and both linked from the footer,
+   which is how the home page comes to carry the required words. **The door is
+   still shut**: `AllowedIps` stays as it is until the user opens the site, which
+   he will do once the program is tested and the repository is public
+   (his decision, 2026-09-02). Emptying it is the one item on this list that is
+   not a pull request — and the last thing standing between here and stage 7,
+   since a reviewer who follows the link from the application would otherwise
+   meet a 403.
 7. **The application** (F1a, F2), once 1–6 are visible on a public repository.
    Say in it what §3's "no hacking tools" row says: an agent with a sandbox, not
    a scanner.

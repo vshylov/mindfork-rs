@@ -145,6 +145,8 @@ python tools/doc_index_check.py    # documentation-structure gate
 python tools/list_scroll_check.py  # one implementation of a list's scroll state
 python tools/wizard_rtf.py         # regenerate the Windows installer's disclaimer page
 python tools/wizard_rtf.py --check # ...and the gate that it matches DISCLAIMER.md
+python tools/site_legal_pages.py    # regenerate the site's privacy page from PRIVACY.md
+python tools/site_legal_pages.py --check  # ...and its gate
 ```
 
 Running against a real server (smoke test, llama.cpp):

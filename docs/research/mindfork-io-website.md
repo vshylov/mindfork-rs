@@ -261,7 +261,15 @@ infra/
 ### 5.2 URL scheme
 
 `/` · `/blog/` (+ pagination) · `/blog/<slug>/` · `/articles/<slug>/` ·
+`/privacy/` · `/code-signing-policy/` ·
 `/atom.xml` · `/sitemap.xml` · `/404.html` · later `/ru/…` mirrors.
+The last two are the legal pair added for the code-signing track
+([code-signing.md](code-signing.md) §7): both use `legal.html` (`page.html`
+without its reading-time byline), both are linked from the footer on every page
+— which is also how the *home* page comes to carry the words "Code signing
+policy", a condition of the arrangement — and `/privacy/` is **generated from
+`PRIVACY.md`** by `tools/site_legal_pages.py`, committed and gated, since the
+policy is edited in the repository and published in three places.
 `www.mindfork.io` → 301 to apex (same CloudFront Function that does the
 index rewrite). Trailing-slash directory URLs — Zola's native output.
 

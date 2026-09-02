@@ -152,8 +152,15 @@ jobs:
       # the previous text while the repository, the release archives and the app's
       # F1 tab all show the new one. Runs here rather than in packaging.yml: the
       # trigger that matters is a change to the source, which packaging.yml ignores.
-      - name: The installer's disclaimer page matches DISCLAIMER.md
+      - name: The installer's legal pages match their sources
         run: python3 tools/wizard_rtf.py --check
+      # The same reasoning one surface further: mindfork.io publishes the privacy
+      # policy, and a reviewer of the code-signing application reaches it from the
+      # home page. The page is generated from PRIVACY.md (repository links become
+      # absolute ones), committed like the RTFs above, and would otherwise drift
+      # the moment the policy is edited.
+      - name: The website's privacy page matches PRIVACY.md
+        run: python3 tools/site_legal_pages.py --check
       - name: Install the toolchain (from rust-toolchain.toml)
         run: rustup show
       # A cache belongs to the branch that wrote it, so with the default

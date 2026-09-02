@@ -10,7 +10,7 @@ the reasoning behind the site, not its current shape. For the current shape
 read the research/design doc above; for the traps that recur across areas
 read [lessons.md](../lessons.md).
 
-## Entries (11)
+## Entries (12)
 
 - Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 - Post-M9: website — S2 infra: one CloudFormation stack, mindfork.io live (done)
@@ -23,6 +23,7 @@ read [lessons.md](../lessons.md).
 - Post-M9: website — two more articles: local speed and the Python sandbox (done)
 - Post-M9: website — the 0.9.7 release post (done)
 - Post-M9: website — the 0.9.8 release post and the twelve-card landing (done)
+- Post-M9: the site gets its legal pair — `/privacy/` and `/code-signing-policy/` (done)
 
 ### Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 
@@ -421,3 +422,46 @@ build was verified with the pinned Zola 0.22.1 (0.23.x still cannot discover
 `templates/` on Windows — lessons §6): 10 pages, the post at
 `/blog/mindfork-0-9-8/`, all twelve cards rendering. Gates
 (`cyrillic_scan`/`link_check`/`doc_index_check`) green.
+
+### Post-M9: the site gets its legal pair — `/privacy/` and `/code-signing-policy/` (done)
+- **Stage 6 of the code-signing track** ([code-signing.md](../research/code-signing.md)
+  §7). SignPath's conditions are specific about the second page: the words
+  **"Code signing policy"** have to appear on the project's home page, and the
+  page has to carry their attribution line, the team roles and a privacy
+  statement. The footer carries both links on every page, which is how the home
+  page acquires the term without a section of its own.
+- **`/privacy/` is generated, not copied** — `tools/site_legal_pages.py`, which
+  turns `PRIVACY.md` into `site/content/privacy.md`. The reason is not tidiness:
+  the policy links to `SECURITY.md`, `docs/install.md`, `infra/website.cfn.yaml`
+  and five others, and those targets resolve in a checkout and on GitHub and to
+  nothing at all on a static site. The generator rewrites every
+  repository-relative link to an absolute GitHub URL (nine of them) and drops the
+  document's own `#` heading, which the template renders from `page.title`.
+- **Committed and gated, like the RTFs — not gitignored, like the brand assets.**
+  The site already has one mirror (`tools/site_sync_assets.py`, whose output is
+  derived binary data nobody reads in a diff). This is prose that lands on a
+  public page, so it follows the installer's precedent instead: the generated
+  file is committed, and `--check` runs in CI's lint job beside
+  `wizard_rtf.py --check`. The policy now exists in three places — repository,
+  installer, website — and exactly one of them is editable.
+- **A third template.** `legal.html` is `page.html` without its byline: a policy
+  has no author line, and "12 min read" over a legal text reads as a warning
+  rather than a service. Each of these documents states its own date in its first
+  paragraph, which is the line a reader actually wants.
+- **The status paragraph on the signing page is deliberate.** Nothing is signed
+  yet — the page exists *because* a policy has to be published before anyone can
+  review one — so it says so in its first line, above the attribution. Publishing
+  "Free code signing provided by SignPath.io" as a bare statement of fact before
+  the application is even filed would be the one thing on that page that is not
+  true.
+- **The IP allowlist stays on.** The stack's `AllowedIps` is untouched: the user
+  will open the site when the program is tested and the repository is public
+  (2026-09-02). The pages deploy either way; they are simply not reachable from
+  outside yet — which also means the application cannot be filed until that
+  happens, since a reviewer following the link would meet a 403.
+- **Verified by building, not by reading**: `zola check` clean, `zola build`
+  produces both pages, and each was rendered through headless Edge against a
+  local `zola serve` — the footer's two links resolve to absolute URLs, the
+  policy's rewritten links point at GitHub, and the §2 table survives the
+  transform as a real `<table>`. 2745 unit tests green, 129 `#[ignore]` — no
+  Rust changed.
