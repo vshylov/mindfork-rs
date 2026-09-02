@@ -7,7 +7,9 @@ installer **and the uninstaller** (F4 + `unins000.exe`, §6.6); one workflow wit
 raised timeouts (F5a); the policy in the repository and rendered on the site
 (F6a); shipped with the release, **plus a wizard page of its own** (F7a+, §8.1);
 and the web tools become opt-in with the sandbox digest checked (F8a).
-Date: 2026-09-01.
+Date: 2026-09-01; **F1 and F2 revisited 2026-09-02** when the application form
+was read — the certificate choice reaffirmed against a route found later
+(§2.1), and the timing tied to the form's mandatory Reputation field (F2).
 
 Subject: how `mindfork.exe` and `mindfork-rs-vX.Y.Z-x86_64-setup.exe` get an
 Authenticode signature; whether accepting donations costs the project the free
@@ -80,6 +82,60 @@ So the decision tree in installers.md §5.5 resolves on its first branch — pub
 repository → SignPath Foundation — and the alternative it named for the second
 branch (Certum, "the only cheap path in your own name") stays the fallback if
 the application is refused (F1).
+
+### 2.1 The route not taken: a certificate of your own
+
+Examined on 2026-09-02, when the application form turned out to have a
+**mandatory "Reputation" field** — *"links or information showing that your
+project is widely used or trusted"* — and this project has nothing to put in it
+yet (§10, stage 7). That makes the free certificate the one condition we cannot
+satisfy on schedule, so the alternative deserved a proper look rather than the
+one line F1 gave it.
+
+**There is a third route**, and it is not the one the July survey described.
+SignPath's conditions are in two parts: six basic ones for a free OSS
+subscription, and *additional* constraints that begin "If your certificate is
+issued by SignPath Foundation" — with the sentence "**If you bring your own
+certificate, that's it**" between them. The reputation bar lives in the second
+part, and their own explanation says why: *"Since our name is on the
+certificate, our name and reputation is at stake."* Bring your own certificate
+and that argument does not apply — not leniency, a different subject.
+
+The mechanics work too, and they answer the objection to Certum. Their
+documentation offers **a CSR generated on SignPath's own HSM**: you buy a
+certificate from a CA against it and upload the issued certificate back, so the
+private key is created in their HSM and never leaves it. Signing then runs
+through the same GitHub Action as everything else — no interactive session, no
+key on a card. That matters because **Certum's cloud certificates cannot be
+used in CI today** (their own position; support "planned", no date): the private
+key is not visible to `signtool` until SimplySign has authenticated with a TOTP
+from a phone, and the community workarounds — a purpose-built container, a TOTP
+seed in CI secrets — reinstate exactly what the 2023 hardware-key rules exist to
+prevent.
+
+**Rejected anyway (user's decision, 2026-09-02)**, for reasons that outrank the
+mechanics:
+
+- **it costs money for a program given away free.** A certificate that accepts
+  an external CSR is not the €69 one; the CAs that do this routinely are the
+  $150–300/year ones. Paying an annual fee so that a free program does not
+  frighten its users is a tax, not an investment;
+- **it requires the maintainer's own identity validation with a CA** — documents,
+  a verified address, a legal name matched against a public profile. That is a
+  process with a real failure rate and no appeal, and it is the *only* part of
+  the whole track that involves a person's papers rather than a repository;
+- **the Foundation route removes that step entirely.** The certificate is issued
+  to SignPath Foundation, so no identity of ours is validated by anyone. The
+  constraint that made the paid route unattractive is the same one that makes
+  the free route fit.
+
+What the decision costs, stated plainly so nobody rediscovers it as a surprise:
+the publisher shown in Windows dialogs stays "SignPath Foundation" rather than a
+personal name (F1), and the application waits until the Reputation field can be
+filled honestly (F2). One unverified detail is parked here rather than chased:
+whether a CA would issue an *individual* open-source certificate against an
+external CSR at all is not documented anywhere we found — it would have been a
+question for Certum's support, and the route was dropped before asking.
 
 ## 3. Their conditions, against this repository
 
@@ -486,7 +542,11 @@ holds, the same rule by which this installer's wizard page stopped being called
  fallback if (a) is refused.
  (c) Azure Artifact Signing — ruled out for an individual outside the US/Canada.
  (d) Stay unsigned — every release yellow, Smart App Control blocks outright.
- **User's decision (2026-09-01): (a).**
+ (e) **Your own certificate inside a free SignPath.io OSS subscription** — found
+ later, and the only route with no reputation bar and clean CI (§2.1).
+ **User's decision (2026-09-01): (a); reaffirmed 2026-09-02** after (e) was
+ examined and rejected on cost and on the identity validation a CA requires —
+ the reasoning is §2.1, and it is worth reading before anyone reopens this.
 
 **F2 — when to apply.**
  (a) **After the repository is public and one or two public releases exist**, so
@@ -500,6 +560,30 @@ holds, the same rule by which this installer's wizard page stopped being called
  it is a reviewer who cannot check the "Code signing policy" condition at all.
  The allowlist is the `AllowedIps` parameter of `infra/website.cfn.yaml`; set it
  empty to reopen.
+ **Refined 2026-09-02, once the form was read.** It has a **mandatory
+ "Reputation" field** — *"links or information showing that your project is
+ widely used or trusted: media coverage, blog posts, download statistics, GitHub
+ insights, or community discussions"*. Measured against it, the project has
+ nothing to offer today: the repository is **private** with 0 stars and 0 forks,
+ and its nine releases (v0.9.0 … v0.9.8, 2026-07-15 to 2026-08-27) are private
+ too, so the download counts are both zero and invisible. The site has four blog
+ posts and six articles — behind the allowlist, where no reader or crawler
+ reaches them. Submitting now would mean filling a mandatory field with either
+ nothing or an overstatement, and their terms are explicit that the decision is
+ theirs and not discussed. So the order of operations, decided with the user:
+ **allowlist off → repository public → a public release → an article and the
+ places its audience actually reads → let stars, downloads and discussion
+ accumulate → apply.** Weeks, not days.
+ Two notes for whoever writes that field. Their own bar is narrower than it
+ looks: *"For executable programs that may be downloaded and executed based on
+ our signature, we require a certain verifiable reputation. (Not for developer
+ libraries/components/packages though.)"* — mindfork is an executable, so it
+ applies to us. And an article is not itself the evidence; it is the thing that
+ produces the evidence the field asks for. Independent, countable places cost
+ little and carry more weight than anything self-published: crates.io (the name
+ `mindfork` is still free), an AUR `mindfork-rs-bin`, a winget manifest pointing
+ at the portable zip until the installer is signed — all three are already
+ groundwork items in [the roadmap](../roadmap.md).
 
 **F3 — the product name in the metadata.**
  (a) **`mindfork`** — the brand, matching `AppName`, the shortcut and the binary;
@@ -623,9 +707,12 @@ and the app's own "Legal" tab in #434), and the dictionaries' provenance.
    not a pull request — and the last thing standing between here and stage 7,
    since a reviewer who follows the link from the application would otherwise
    meet a 403.
-7. **The application** (F1a, F2), once 1–6 are visible on a public repository.
-   Say in it what §3's "no hacking tools" row says: an agent with a sandbox, not
-   a scanner.
+7. **The application** (F1a, F2) — **gated on the Reputation field**, not on our
+   own readiness: everything else has been done for weeks by the time this is
+   fileable. Sequence and reasoning in F2. Say in it what §3's "no hacking tools"
+   row says: an agent with a sandbox, not a scanner — and that the web tools are
+   off by default (F8a) with a published privacy policy, since those are the two
+   places a reviewer could otherwise assume the worst unaided.
 8. **`feat/code-signing`** — the two per-release signing requests with raised
    timeouts (F5a), the artifact configurations and their metadata restrictions,
    `SignedUninstaller` plus the once-signed stub committed and asserted present
