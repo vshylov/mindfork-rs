@@ -80,6 +80,15 @@ split by subsystem.
   the assistant noticed last is usually what you opened the screen for.
 
 
+
+### Changed
+
+- **A newer British dictionary.** `en_GB` moves from the 2018 word list to the
+  current one from its author (V 4.0.9): about 14 000 more stems, so fewer
+  correct words get underlined. It is the same variant as before — both
+  *organise* and *organize* are accepted — and it now states its licence
+  (LGPL v3 or later) in the file itself, with the full text installed beside it.
+
 ### Security
 
 - **The web tools are now off until you turn them on.** `web_search`,

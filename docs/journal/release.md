@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (33)
+## Entries (34)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -45,6 +45,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: the release metadata — one product, one name, measured on both artifacts (done)
 - Post-M9: the privacy policy in the wizard, the archive and the third translation (done)
 - Post-M9: the dictionaries get a provenance record — and their licences (done)
+- Post-M9: en_GB updated to V 4.0.9 — the licence stated, in the file itself (done)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -1759,3 +1760,47 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Verified: the installer compiles on Inno 7.1.0 with the three licence files
   compressed into it, both YAML files parse, and the archive staging was
   dry-run locally. 2745 unit tests green, 129 `#[ignore]` — no Rust changed.
+
+### Post-M9: en_GB updated to V 4.0.9 — the licence stated, in the file itself (done)
+- **The follow-up `dictionaries/SOURCES.md` had written down** when the
+  provenance record landed: the British dictionary's licence was *"LGPL"* with
+  **no version**, because that is what the 2018-11.01 files said; upstream only
+  began shipping an explicit LGPL v3 text a release later. Fixed by moving to a
+  current upstream, which is a data change and therefore its own PR.
+- **Taken from the author's own repository this time** —
+  `marcoagpinto/aoo-mozilla-en-dict`, **V 4.0.9 (2026-09-01)**, commit
+  `df5ce3e` — rather than from a packager, and **unmodified**. That is the whole
+  point: the new `.aff` states its terms in its own first lines, *"Licensed
+  under the GNU Lesser General Public License, version 3 or any later version"*,
+  and the repository's `LICENSE` is the LGPL v3 text, vendored beside it. The
+  ambiguity is gone from the file, not merely from our description of it.
+- **The variant was the trap, and it is invisible until a user is told their
+  spelling is wrong.** Upstream publishes three British word lists — `-ise`,
+  `-ize` (Oxford), and `-ise -ize` which accepts both. Ours has always been the
+  third. The obvious source for a bump, `LibreOffice/dictionaries` `en/`, has
+  meanwhile moved to the **`-ise`-only** list: measured, it answers *no* to
+  `organize`. Taking it would have quietly started flagging *organize* for every
+  British user while looking like a routine update. Marco's `en_GB (-ise -ize)`
+  is the matching list; measured before installing (`organise` yes, `organize`
+  yes, `color` no).
+- **`WORDCHARS` no longer needs the packager's edit.** The old file carried
+  `WORDCHARS ’` instead of upstream's `WORDCHARS 0123456789’` — a change made
+  for the R package. It changes nothing here: this app segments words itself
+  (`spellcheck::segment`, on `char::is_alphabetic`) and hands the checker one
+  word at a time, so Hunspell's own tokenization, which is what `WORDCHARS`
+  governs, never runs. Which is why the upstream file could be taken verbatim —
+  fewer modifications to state under a licence that asks for them.
+- **A gate that would have caught all of this**:
+  `the_bundled_dictionaries_load_and_answer` loads the **repository's own**
+  `dictionaries/`, not a fixture, and pins one marker per plausible mistake — a
+  pair that no longer loads, the wrong English variant (`organize` vs
+  `organise`), a language mixed up (`colour` vs `color`), and a `.dic` that
+  parsed to nothing. Every other test in that file writes its own fixture, so
+  nothing noticed when the *data* changed; a swapped upstream, a wrong variant
+  or an `.aff` the parser dislikes would have sailed through a green suite and
+  surfaced as "spellcheck went quiet" on someone's machine. Note that the new
+  `.aff` begins with a BOM, which `spellbook` turns out to accept — checked by
+  running it, not by reading the parser.
+- **Cost**: the word list grows from 87 455 stems to 101 294, the `.dic` from
+  996 KB to 1.29 MB. It ships in every archive, package and installer, so that
+  is ~300 KB before compression on each. 2746 unit tests green, 129 `#[ignore]`.

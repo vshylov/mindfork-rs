@@ -289,6 +289,59 @@ mod tests {
         assert!(!checker.check_word("world"));
     }
 
+    /// The **shipped** dictionaries load and answer, read from the repository's
+    /// own `dictionaries/` rather than from a fixture.
+    ///
+    /// Everything else here tests the loader against files this test wrote, so
+    /// nothing notices when the *data* changes: a dictionary swapped for a
+    /// different upstream, a variant, or a file with a BOM the parser dislikes
+    /// would sail through a green suite and surface as "spellcheck went quiet"
+    /// on someone's machine. That is not hypothetical — `en_GB` was replaced
+    /// wholesale (dictionaries/SOURCES.md), and the British word list comes in
+    /// three variants of which only one accepts both `-ise` and `-ize`.
+    ///
+    /// The markers are chosen to fail loudly on the plausible mistakes: a
+    /// missing pair (nothing loads), the wrong English variant (`organize`
+    /// against `organise`), a language mixed up (`colour` vs `color`), and a
+    /// `.dic` that parsed but produced nothing.
+    #[test]
+    fn the_bundled_dictionaries_load_and_answer() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("dictionaries");
+        let personal = dir.join("does-not-exist.txt");
+
+        for (name, present, absent) in [
+            (
+                "en_US",
+                ["color", "organize", "neighbor"],
+                ["colour", "neighbour"],
+            ),
+            (
+                "en_GB",
+                ["colour", "organise", "organize"],
+                ["color", "neighbor"],
+            ),
+            (
+                "ru_RU",
+                ["словарь", "проверка", "терминал"],
+                ["словарьь", "проверкаа"],
+            ),
+        ] {
+            let checker = load(&dir, None, &personal, true, &[name.to_string()]);
+            for word in present {
+                assert!(
+                    checker.check_word(word),
+                    "{name}: {word:?} should be a word"
+                );
+            }
+            for word in absent {
+                assert!(
+                    !checker.check_word(word),
+                    "{name}: {word:?} should not be a word"
+                );
+            }
+        }
+    }
+
     #[test]
     fn personal_roundtrip() {
         let dir = tempfile::tempdir().unwrap();
