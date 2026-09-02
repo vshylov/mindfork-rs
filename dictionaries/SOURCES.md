@@ -26,7 +26,7 @@ came from, which is the gap this file closes
 | Dictionary | Files | Repository | Path | Commit | Licence | Licence text |
 |---|---|---|---|---|---|---|
 | American English | `en_US.aff`, `en_US.dic` | github:ropensci/hunspell | `inst/dict/` | `bcdf9867a4aa0eb25bd5bb3a705f67c5b014ac9e` (`.aff`), `1a3b794b1f5bd2214626fc72db168748dc21d6f5` (`.dic`) | SCOWL (permissive, BSD-style) | [`licenses/en_US.txt`](licenses/en_US.txt) |
-| British English | `en_GB.aff`, `en_GB.dic` | github:ropensci/hunspell | `inst/dict/` | `1a3b794b1f5bd2214626fc72db168748dc21d6f5` | LGPL | [`licenses/en_GB.txt`](licenses/en_GB.txt) |
+| British English | `en_GB.aff`, `en_GB.dic` | github:marcoagpinto/aoo-mozilla-en-dict | `en_GB (-ise -ize)/` | `df5ce3e2d8448e71c073e018f21d6912b6e62016` (V 4.0.9, 2026-09-01) | **LGPL-3.0-or-later** | [`licenses/en_GB-LGPL-3.0.txt`](licenses/en_GB-LGPL-3.0.txt), attribution in [`licenses/en_GB.txt`](licenses/en_GB.txt) |
 | Russian | `ru_RU.aff`, `ru_RU.dic` | github:wooorm/dictionaries | `dictionaries/ru/` (`index.aff`, `index.dic`) | `e93d088fe597999d5cb6a2cfe6b34f0583577d59` | BSD 3-clause style | [`licenses/ru_RU.txt`](licenses/ru_RU.txt) |
 
 sha256 of the files as committed here:
@@ -35,8 +35,8 @@ sha256 of the files as committed here:
 |---|---|
 | `en_US.aff` | `5b5d3effe419c8078827fe0f297e3beefc0e50d56427707033b2b17ddbaadf4c` |
 | `en_US.dic` | `9eb52cdeab6c87a4988df7d2845caaa39cd9bdc93b45bc2e3c228f8070807767` |
-| `en_GB.aff` | `c3fd8942dfb60f1eceaaaa192c408f20a094489d990e4c2a566b57256a4d7527` |
-| `en_GB.dic` | `9b70004d5bc92b35f02fec5654d4e2f7c43bdda218b668d08cdfc95ad2e06e3d` |
+| `en_GB.aff` | `607caaadc279afee32f3854a82c27d78833f0bd67597f2685a4397c5e8017cec` |
+| `en_GB.dic` | `f9d37aa52721e6e0591f0f79f47b3011e1d36cd11a483b0489fd4fcd6448beb3` |
 | `ru_RU.aff` | `38ce7d4af78e211e9bafe4bf7e3d6a2c420591136cb738ec6648f8fdf6524cd7` |
 | `ru_RU.dic` | `f6047416a0204adbecf3a451b874ec8a97ee37e2cbc714466ef04d8dbcc0d6fc` |
 
@@ -46,45 +46,55 @@ The repositories above are where *we* took the files from. Both are packagers,
 and behind both stands the same origin — which matters for the licences, and for
 knowing what a version bump would mean.
 
-### English (both variants)
+### American English
 
 `ropensci/hunspell` is the R `hunspell` package; its `inst/dict/readme.txt` says
 the pair was taken from the LibreOffice **"English dictionaries" extension,
-release 2018-11.01**, and our files agree with that:
+release 2018-11.01**, and the files agree: `en_US.dic` is **byte-identical to
+`LibreOffice/dictionaries` `en/` at commit
+`605e1d1441a8e0a67709b4869ecf4c651e81dfd5`** (2018-10-25), the commit that
+carries that release.
 
-- `en_US.dic` and `en_GB.dic` are **byte-identical to
-  `LibreOffice/dictionaries` `en/` at commit `605e1d1441a8e0a67709b4869ecf4c651e81dfd5`**
-  (2018-10-25, "Updated the English dictionaries: GB+AU+CA+US"), the commit that
-  carries that release;
-- `en_GB.aff` states its own version in its header — *"David Bartlett, Andrew
-  Brown, Marco A.G.Pinto. V 2.66, 2018-11-01"*.
+**`en_US.aff` is modified** relative to that origin, by the packager:
+`WORDCHARS 0123456789’` becomes `WORDCHARS ’`, carrying the comment
+*"# Jeroen: removed numbers from WORDCHARS for R"*. It changes nothing here —
+this app segments words itself (`features/spellcheck/segment.rs`, on
+`char::is_alphabetic`) and hands the checker one word at a time, so Hunspell's
+own tokenization, which is what `WORDCHARS` governs, never runs. The word list
+is untouched.
 
-**Both `.aff` files are modified** relative to that origin, by the packager, and
-the modification is the same in each: `WORDCHARS 0123456789’` becomes
-`WORDCHARS ’`, carrying the comment *"# Jeroen: removed numbers from WORDCHARS
-for R"* — digits stop being word characters, so a token like `2018` is not
-offered to the checker as a word. `en_GB.aff` additionally has trailing
-whitespace stripped from about a thousand lines. Nothing else differs; the word
-lists themselves are untouched.
-
-The **en_US** word list is SCOWL — *"Copyright 2000-2018 by Kevin Atkinson"*,
-permissive and BSD-style, with parts derived from Ispell, WordNet 1.6 (Princeton
+The word list is SCOWL — *"Copyright 2000-2018 by Kevin Atkinson"*, permissive
+and BSD-style, with parts derived from Ispell, WordNet 1.6 (Princeton
 University) and Alan Beale's 12dicts. All of those notices are in
-[`licenses/en_US.txt`](licenses/en_US.txt), which is the upstream
-`README_en_US.txt` at the same commit.
+[`licenses/en_US.txt`](licenses/en_US.txt), the upstream `README_en_US.txt` at
+the same commit.
 
-The **en_GB** word list began as a subset of Kevin Atkinson's list *"and thus is
-covered by his original LGPL licence"* (the upstream README), then was
-extensively rewritten by David Bartlett, Brian Kelk, Andrew Brown and Marco
-A.G. Pinto. Note that the licence is stated as **"LGPL" without a version** in
-the files of this vintage; upstream only started bundling an explicit LGPL v3
-text one release later (its changelog: *"2019-03-01 — Added the LGPL_V3
-License .txt into the Extension"*). [`licenses/en_GB.txt`](licenses/en_GB.txt) is
-the upstream `README_en_GB.txt` at our commit, licence statement and attribution
-included. **If a clean LGPL v3 notice matters more than the frozen word list**,
-the way to get one is to move to a current upstream release — which is a
-behaviour change (upstream's `en_GB.dic` has grown from 996 KB to 1.2 MB since)
-and belongs in its own change, not in this record.
+### British English
+
+Taken from **Marco A.G. Pinto's own repository** rather than from a packager,
+and **unmodified** — which is the point: the file states its own terms in its
+first lines, *"Licensed under the GNU Lesser General Public License, version 3
+or any later version"*, and the full text is vendored beside it as
+[`licenses/en_GB-LGPL-3.0.txt`](licenses/en_GB-LGPL-3.0.txt) (the repository's
+own `LICENSE`). The dictionary began as a subset of Kevin Atkinson's list and
+was extensively rewritten by David Bartlett, Brian Kelk, Andrew Brown and Marco
+A.G. Pinto; [`licenses/en_GB.txt`](licenses/en_GB.txt) is the upstream README,
+attribution and changelog included.
+
+**The variant is load-bearing.** Upstream publishes three British word lists —
+`-ise`, `-ize` (Oxford), and `-ise -ize` which accepts both — and this is the
+third. Measured, because the difference is invisible until a user is told their
+spelling is wrong: the list here answers yes to *organise* **and** *organize*,
+and no to *color*. LibreOffice's bundled `en_GB` has meanwhile moved to the
+`-ise`-only list, so following that tree would have quietly started flagging
+*organize* for every British user. The gate test
+`spellcheck::dict::tests::the_bundled_dictionaries_load_and_answer` pins exactly
+that, along with the pair actually loading.
+
+This replaced the 2018-11.01 vintage (V 2.66, 87 455 stems) that came with the
+`en_US` pair from `ropensci/hunspell`; V 4.0.9 carries 101 294. The reason for
+the move was the licence — the old files said "LGPL" with no version — and the
+newer word list came with it.
 
 ### Russian
 
