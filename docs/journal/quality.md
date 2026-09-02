@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (19)
+## Entries (20)
 
 - Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - Post-M9: SonarQube Cloud analysis in CI (done)
@@ -31,6 +31,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: SonarQube follow-up — three complexity findings from the `/continue` merges (done)
 - Post-M9: SonarQube follow-up — the chat-body stub's complexity (done)
 - Post-M9: SonarQube follow-up — the dialogue director and its probe (done)
+- Post-M9: SonarQube follow-up — the wizard's RTF renderer, and a fixture's file mode (done)
 
 ### Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - **28 relative links in the docs pointed at nothing**, and had for a while.
@@ -1137,3 +1138,45 @@ structure (AGENTS.md §3).
   the live gate runs. **No live run required** (AGENTS.md §3) — a pure refactor,
   no engine, memory or tool surface changed. No CHANGELOG entry: nothing the
   user sees changed (§4).
+
+### Post-M9: SonarQube follow-up — the wizard's RTF renderer, and a fixture's file mode (done)
+
+- **Three findings open on `main`**: two on `tools/wizard_rtf.py` from the
+  legal-pages merges of 2026-09-01 — `python:S3776`, `render` at cognitive
+  complexity **23** against the 15 allowed, and `python:S6353`, the
+  `{1,}` quantifier that is spelled `+` — plus one older `rust:S2612`
+  (2026-07-21) on the sandbox-setup test fixture. The Python pair is the
+  lessons §10 recurrence in its exact prescribed form: the file was *reshaped*
+  (the pipe-table branch and two more source→output pairs came in with
+  `PRIVACY.md`), which is precisely when that lesson asks for the MCP snippet
+  pre-check, and it was not run. Branch `fix/sonar-wizard-rtf-complexity`.
+- **`render`'s complexity was its closure shape, not its logic.** One function
+  held four pieces of accumulating state, two nested functions closing over
+  them through `nonlocal`, and a six-way `elif` chain deciding what each source
+  line is — every nested construct scoring against the same budget. The state
+  is a `Body` class now (`out`, `pending`, `pending_is_bullet`, `table`) whose
+  methods are the operations the chain was performing inline — `flush_table`,
+  `flush`, `emit`, `open_bullet`, `add_row` — the per-line dispatch is a free
+  `feed`, and the table branch, the one arm with a body of its own, is
+  `feed_table_line`. What is left in `render` is what its doc comment says: the
+  header, a line-by-line feed, a final flush. Dropped on the way: `line =
+  raw.rstrip()`, dead since the next statement stripped it again.
+- **The regex fix is the same language**: the separator-row matcher
+  `:?-{1,}:?` → `:?-+:?`.
+- **The Rust finding is a test's tar fixture** — `header.set_mode(0o755)` on
+  the `bin/wasmer` entry `extract_targz_roundtrip` unpacks. The mode is never
+  read back (the test asserts the file exists), so the world-executable bit
+  bought nothing and is now `0o750`. **Rejected: accepting the issue in the
+  platform.** An Accept is per-issue and does not survive the line moving —
+  which is the same objection the `rust:S2208` block in
+  `sonar-project.properties` records for real — and this one has a
+  one-character answer.
+- **Behaviour is unchanged, and measured rather than argued**:
+  `python tools/wizard_rtf.py --check` reports all five committed RTFs still
+  matching their sources, so the rewritten renderer is byte-identical on every
+  document it exists to produce. The snippet analyzer, run on the new section
+  before the PR (lessons §10 — it takes Python, and no Rust), reports nothing.
+- `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, `cargo test` —
+  **2746 green, 129 `#[ignore]`, counts unchanged**. **No live run required**
+  (AGENTS.md §3) — a Python tool and one test fixture, no engine, memory or
+  tool surface touched. No CHANGELOG entry: nothing the user sees changed (§4).

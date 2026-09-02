@@ -714,7 +714,10 @@ mod tests {
             let data = b"#!fake wasmer\n";
             let mut header = tar::Header::new_gnu();
             header.set_size(data.len() as u64);
-            header.set_mode(0o755);
+            // Owner and group only: the fixture just needs an executable entry,
+            // the mode is never read back, and a world-executable bit in a test
+            // is still a `rust:S2612` finding.
+            header.set_mode(0o750);
             header.set_cksum();
             tb.append_data(&mut header, "bin/wasmer", &data[..])
                 .unwrap();
