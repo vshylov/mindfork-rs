@@ -2363,16 +2363,19 @@ orchestrator harness was built for this.
   build with Gemma 3 4B: the launcher's own line brings up 3 slots over the
   whole 4096 pool, 2 s. Retry decorator: the delegation test asserts the 4
   the inner client answers, which the default could not produce.
-  **The orchestrator e2e set is still owed**: the stack of the day was the
-  2B model on four 4096-token slots, raised for the research's throughput
-  probes, and the set cannot be read on it — the model answers the planted
-  facts with empty content and no tool call (the all-thinking turn the
-  probe met too), and the set's prompts overflow 4096
-  (`exceed_context_size_error` at ~4200 tokens); every failure was one of
-  those two shapes, none on the changed path, and the run was stopped
-  rather than read as a result. It runs on the 31B/Qwen 3.6 stack at
-  `-c 16384` before the PR merges (docs/lessons.md §9: a red run on the
-  wrong stack is not evidence either way).
+  **The orchestrator e2e set — GO on Gemma 4 31B** (2026-09-04,
+  `gemma-4-31B_q4_0-it` + mmproj, llama.cpp b10791, launched exactly as
+  stage 1 would at `sessions = 4`: `-np 4 --kv-unified -c 16384`, so four
+  slots over the whole 16384): **49 passed, 0 failed**, 72 min; the TTS
+  smoke skipped for want of a cloud key. Two false starts worth writing
+  down: the stack of the previous day was the 2B model on four *split*
+  4096-token slots, raised for the research's throughput probes, and the
+  set cannot be read on it — the model answers the planted facts with empty
+  content and no tool call, and the set's prompts overflow 4096
+  (`exceed_context_size_error` at ~4200 tokens); the 31B in the same split
+  shape has the same 4096 ceiling. A red run on the wrong shape is not
+  evidence either way (docs/lessons.md §9); the shape the app launches is
+  the one to test on. Qwen 3.6 is next.
 - **Tests**: 2759 green (+13: `active_sessions` by mode and its floor,
   the defaults on an old file; `build_args` at 1 and at 3; the `/props`
   slot read and its two "cannot say" shapes; the decorator's delegation;
