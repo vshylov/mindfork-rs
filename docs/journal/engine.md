@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (37)
+## Entries (38)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -49,6 +49,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: `/continue` — stage 1: resuming an interrupted reply in place (done)
 - Post-M9: `/continue` — stage 2: the clouds (track complete)
 - Post-M9: the model's name in `external` mode — asked of the server, and sent to it (done)
+- Post-M9: parallel sub-agents — stage 1, sessions per engine and the slot count (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -2307,3 +2308,87 @@ orchestrator harness was built for this.
   records no name. Correct — blocking a turn on a round trip to satisfy a caption
   would be the wrong trade — but it is why the end-to-end smoke waits for
   `EngineModel` before sending.
+
+
+### Post-M9: parallel sub-agents — stage 1, sessions per engine and the slot count (done)
+- **What**: the engine half of running several sub-agents at once
+  ([docs/research/parallel-subagents.md](../research/parallel-subagents.md),
+  all ten forks at their recommended options, user's decision 2026-09-03).
+  Every engine section — `engine.managed`, `engine.external`, the four
+  clouds — carries `sessions: u32` (default 1, `EngineSettings::active_sessions`
+  reads the active one and never returns below 1); `tools.subagent_parallel`
+  (default 1) exists in config for stage 2. A turn's request streams run
+  under a `tokio::sync::Semaphore` on `TurnShared` sized from the active
+  section: `TurnLoop::stream` takes a permit for the duration of
+  `stream_round` and for nothing else (`acquire_session`, cancellable — a
+  loop cancelled while waiting lands what it has as a `cancelled_round`), so
+  at the default the turn's loops take turns exactly as before. `build_args`
+  adds `-np N --kv-unified` when `ManagedConfig.parallel` (the section's
+  `sessions`) is above 1 and nothing at 1. `EngineBackend::parallel_slots`
+  (llama.cpp's `total_slots` on the `/props` fetch the other three questions
+  make) is the fourth self-description question, delegated by
+  `RetryBackend` **with its test in the same commit** — the hole that opened
+  three times before (docs/lessons.md §9). The orchestrator asks it in
+  `slots.rs` (the `ModelDiscovery` shape: epoch, pending, re-asked on apply
+  and on a readiness flip) and `AppEvent::EngineSlots` carries the answer to
+  the chat screen, which hands it to every settings screen it builds; the
+  new "Parallel sessions" group on the assistant's Model tab shows the field
+  in all six modes, with *"The server reports N slots."* appended for a
+  managed or external server that answered. The impersonation and
+  embeddings tabs have no such row.
+- **Why the flag pair, in numbers.** On the local CPU build (b10788, Gemma 3
+  4B, `-c 4096`): `-np 3 --kv-unified` → `/props` reports 3 slots and
+  `n_ctx 4096` per slot — the whole pool for each; `-np 3` alone → 3 slots
+  of **1536** (4096/3, padded down to 256). An explicit `-np` switches
+  llama.cpp to its split shape, so the unified pool has to be asked for by
+  name; the pair is what the server does on its own for its auto default
+  (`n_parallel < 0 → 4, kv_unified = true` since December 2025), which is
+  why a managed server already had four slots before this stage and why
+  `sessions` costs no extra KV memory (R5 of the research).
+- **One amendment to the plan.** The research's stage 1 listed the
+  `subagent_parallel` settings row; it ships with stage 2 instead. Nothing
+  reads the field until the parallel group exists, and a knob that does
+  nothing is the advertised no-op docs/lessons.md §4 keeps recording. The
+  config field, its default and its test are in.
+- **Screenshots**: the new row changed the Model-tab dumps (a scrollbar
+  glyph and the field count) and, through the same scroll state, the
+  Tools-tab dumps; regenerated with the site's JetBrains Mono faces written
+  back out as TTFs (docs/lessons.md §1) — the renderer reproduced every
+  committed image byte-for-byte before the change, which is what made the
+  regeneration trustworthy.
+- **Live run — GO.** `props_reports_the_slot_count_live` and
+  `props_reports_the_context_window_live` against the LAN stack (llama.cpp
+  b10791, `gemma-4-E2B-it-Q8_0`, `-np 4` split): slots 4, window 4096.
+  `managed_sessions_launch_three_slots_over_one_pool_live` on the local CPU
+  build with Gemma 3 4B: the launcher's own line brings up 3 slots over the
+  whole 4096 pool, 2 s. Retry decorator: the delegation test asserts the 4
+  the inner client answers, which the default could not produce.
+  **The orchestrator e2e set — GO on Gemma 4 31B** (2026-09-04,
+  `gemma-4-31B_q4_0-it` + mmproj, llama.cpp b10791, launched exactly as
+  stage 1 would at `sessions = 4`: `-np 4 --kv-unified -c 16384`, so four
+  slots over the whole 16384): **49 passed, 0 failed**, 72 min; the TTS
+  smoke skipped for want of a cloud key. Two false starts worth writing
+  down: the stack of the previous day was the 2B model on four *split*
+  4096-token slots, raised for the research's throughput probes, and the
+  set cannot be read on it — the model answers the planted facts with empty
+  content and no tool call, and the set's prompts overflow 4096
+  (`exceed_context_size_error` at ~4200 tokens); the 31B in the same split
+  shape has the same 4096 ceiling. A red run on the wrong shape is not
+  evidence either way (docs/lessons.md §9); the shape the app launches is
+  the one to test on. **GO on Qwen 3.6 27B too** (`Qwen3.6-27B-Q4_K_M`,
+  the same line without a projector): 47 passed, 27 min, and the two
+  image smokes skip in writing under `MINDFORK_LIVE_TEXT_ONLY=1` — run
+  once without the flag they failed honestly ("the server accepts no
+  images"), which is the flag's whole point. The two models measure very
+  differently on the same card (research §3.5): the Gemma stack prefills
+  at ~50 tok/s and gains 1.22× from four streams, the Qwen stack at ~2200
+  tok/s and gains 2.9× — the 31B's slow prompt path, not the hardware,
+  and a stack question rather than this track's.
+- **Tests**: 2759 green (+13: `active_sessions` by mode and its floor,
+  the defaults on an old file; `build_args` at 1 and at 3; the `/props`
+  slot read and its two "cannot say" shapes; the decorator's delegation;
+  the semaphore's take-and-return and the cancelled wait; `SlotsDiscovery`'s
+  epoch; six settings-screen tests — the row in every mode of the Assistant
+  tab and absent from Impersonation/Embeddings, the edit routed to the active
+  section with the others untouched, the floor at 1, the unparsable input
+  ignored, the slots hint for local servers only), 131 `#[ignore]` (+2 live).

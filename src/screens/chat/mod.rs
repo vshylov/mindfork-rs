@@ -533,6 +533,10 @@ pub struct ChatScreen {
     /// blank "Model (opt.)" field. A configured name always wins; see
     /// `Self::model_meta` and docs/research/external-model-name.md §4.
     engine_model: Option<String>,
+    /// What the engine said about its slot count (`AppEvent::EngineSlots`) —
+    /// handed to the settings screen when it is built, for the hint next to the
+    /// `sessions` field (spec §11.6). `None` — it cannot say.
+    engine_slots: Option<u32>,
     /// The spellchecker (loads in the background; `None` until ready / with no
     /// dictionaries).
     spell: Option<SpellChecker>,
@@ -704,6 +708,7 @@ impl ChatScreen {
             confirm_destructive: false,
             settings_snapshot: None,
             engine_model: None,
+            engine_slots: None,
             palette: Palette::default(),
             loc: locale(crate::shared::i18n::Lang::default()),
             mouse_scroll: false,
@@ -757,6 +762,17 @@ impl ChatScreen {
     /// falls back to the configuration alone. See `Self::model_meta`.
     pub fn set_engine_model(&mut self, model: Option<String>) {
         self.engine_model = model;
+    }
+
+    /// Records what the engine said about its slot count (`AppEvent::EngineSlots`),
+    /// kept here so a settings screen opened later starts with it (spec §11.6).
+    pub fn set_engine_slots(&mut self, slots: Option<u32>) {
+        self.engine_slots = slots;
+    }
+
+    /// The engine's slot count as last reported, for a settings screen being built.
+    pub fn engine_slots(&self) -> Option<u32> {
+        self.engine_slots
     }
 
     /// Sets the role names shown in the feed — the active chat's profile

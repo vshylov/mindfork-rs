@@ -1,7 +1,17 @@
 # Parallel sub-agents — several `call_subagent` runs in one round — research
 
-> Status: **research, pre-decision** (2026-09-03). Forks in §6 await the
-> user's decision; no product code yet. Supersedes the same-day draft of
+> Status: **forks decided, stage 1 done** (2026-09-03). User's decision:
+> F1–F10 at their recommended options. Stage 1 (`feat/parallel-sessions`,
+> §7): `sessions` on the six engine sections and `tools.subagent_parallel`
+> in config, the turn's session semaphore around one stream, `-np N
+> --kv-unified` above one (measured on the local build: 3 slots over the
+> whole 4096-token pool, where `-np 3` alone gives 1536 each),
+> `EngineBackend::parallel_slots` with its `RetryBackend` delegation and the
+> settings hint, the `sessions` row on the assistant's Model tab. The
+> `subagent_parallel` row and the parallel group itself are stage 2. One
+> amendment found while building: the `subagent_parallel` **setting row**
+> ships with stage 2, not stage 1 — a knob that does nothing yet is the
+> advertised no-op docs/lessons.md §4 warns about. Supersedes the same-day draft of
 > PR #440, closed to restart the research from scratch with a sharper
 > brief — that draft planned a probe; this one ran it. Measured this session on the LAN
 > stack (`llama-server` b10791, `gemma-4-E2B-it-Q8_0`, `-np 4` — four slots
@@ -258,6 +268,76 @@ passed no `name`, as Qwen did in the sub-agent track's live run — the
 landing auto-title covers it. Qwen 3.6 was not on the stack this session;
 its template's `supports_parallel_tool_calls` and its behaviour are the
 first thing the live run of stage 2 checks.
+
+### 3.5 The same probes on Gemma 4 31B (2026-09-04, RTX 4090, 4 split slots)
+
+The gate model on the gate hardware — `gemma-4-31B_q4_0-it`, llama.cpp
+b10791, `-np 4` over 16384 (4096 per slot), one RTX 4090 with 64 GB of host
+RAM — answers the two questions §3.1–§3.2 left open:
+
+| probe | E2B (§3.1–§3.3) | 31B |
+|---|---:|---:|
+| four 200-token streams, sequential → concurrent | 4.42 s → 1.58 s (2.8×) | 28.6 s → **20.8 s (1.38×)**; per stream 30 → **11 tok/s**, aggregate 44 |
+| six requests on four slots | 4 at 1.15 s, 2 at 2.13 s | 4 at 16.9 s, 2 at 25.9 s — queued, none failed |
+| interleaved on one pinned slot, second visit | `cache_n` 970, `prompt_ms` 43 | `cache_n` 970, **`prompt_ms` 1298** |
+| held to the end, second visit | `prompt_ms` 40 | `prompt_ms` 1235 |
+| cold 975-token prefill | 85 ms | **22.3 s** |
+
+Three readings:
+
+- **The RAM prompt cache restores a 31B context as cheaply as it holds
+  one.** The interleaved arm's second visit costs 1.30 s against 1.24 s for
+  the held arm — the restore is a memory copy, invisible next to the 29 new
+  tokens' own prefill. So the semantics F3 chose (a session per stream,
+  alive runs interleaving) hold on the large model too, as long as the
+  parked set fits `--cache-ram`.
+- **Concurrency buys much less on this card than on the small model.**
+  Re-measured in the unified shape (`-np 4 --kv-unified -c 16384`, what
+  stage 1 launches at `sessions = 4`; the same day, after the e2e set):
+
+  | streams at once | wall for the batch | per stream | aggregate |
+  |---:|---:|---:|---:|
+  | 1 (four in a row) | 23.1 s | 38 tok/s | 38 tok/s |
+  | 2 | 10.1 s for two (11.5 s in a row) | 22 tok/s | 43 tok/s |
+  | 4 | 19.0 s for four | 12 tok/s | 48 tok/s |
+
+  A 31B Q4_0 on one 4090 is bandwidth-bound already at one stream, so a
+  second stream costs the first almost half its speed and the batch gains
+  1.14×; four gain 1.22× and each transcript reads at 12 tok/s. On this
+  hardware `sessions` above **2** buys nothing a user would feel; the
+  measured gain of parallel sub-agents here is the *overlap of their tool
+  work*, not of their decoding. The E2B's 2.8× is what a small model, or a
+  card with headroom, gets.
+- **The cold prefill is anomalous on the Gemma stack, in both shapes** —
+  960 tokens in 18.6 s (~52 tok/s) unified, 975 in 22 s split; the e2e set
+  took 72 min against the ~10 min the same set took on this hardware in
+  August (b10322, `-np 1`). Not the shape and not the card: the Qwen run
+  below, same build, same line minus the projector, prefills 1305 tokens in
+  **590 ms** (~2200 tok/s). So it is the Gemma 4 path on b10791 or the
+  `--mmproj` projector — one experiment on the stack tells which (the
+  Gemma line without `-mm`, one ~960-token cold request), and it is not
+  this track's.
+
+**Qwen 3.6 27B (`Qwen3.6-27B-Q4_K_M`, the same day, the same unified
+line without a projector):** the template reports
+`supports_parallel_tool_calls: true` (the §8 question — no explicit
+`parallel_tool_calls` needed), and the model emitted **two `call_subagent`
+calls in 10/10 replies** (5 per description variant; it left `name` blank
+in 2 of 10, the landing auto-title's case).
+
+| streams at once | wall for the batch | per stream | gain over in-a-row |
+|---:|---:|---:|---:|
+| 1 (four in a row) | 20.1 s | 43 tok/s | — |
+| 2 | 5.6 s for two | 39 tok/s | **1.78×** |
+| 4 | 6.9 s for four | 33 tok/s | **2.9×** |
+
+The RAM cache restore: 260 ms on the second visit against 590 ms cold. So
+on the same card the 27B keeps 77% of its per-stream speed at four streams
+and the batch gains 2.9× — the E2B's figure, not the Gemma 31B's — which
+says the 31B's 1.22× was its prompt path, not the hardware's ceiling.
+`sessions` of 4 is worth having on this machine for Qwen; the honest
+setting is per model, and the field is per mode, which is the right
+granularity to say so in the hint rather than to guess.
 
 ## 4. Design
 

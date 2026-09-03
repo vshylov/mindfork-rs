@@ -263,6 +263,23 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
                 c.engine.managed.port = p;
             }
         }),
+        // Routed by mode like `XApiKeyEnv`: the value belongs to the active
+        // mode's own section. Below 1 is stored as 1 (one stream is the floor
+        // `EngineSettings::active_sessions` guarantees); unparsable — unchanged.
+        XSessions => int(|c, t| {
+            if let Ok(v) = t.parse::<u32>() {
+                let v = v.max(1);
+                match c.engine.mode {
+                    ServerMode::Managed => c.engine.managed.sessions = v,
+                    ServerMode::External => c.engine.external.sessions = v,
+                    _ => {
+                        if let Some(cl) = c.engine.cloud_mut() {
+                            cl.sessions = v;
+                        }
+                    }
+                }
+            }
+        }),
 
         // ---------- text: the impersonation engine ----------
         IxUrl => text(|c, t| {

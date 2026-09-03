@@ -595,6 +595,11 @@ pub enum AppEvent {
     /// did before the engine was ever asked. See
     /// docs/research/external-model-name.md §4.
     EngineModel(Option<String>),
+    /// How many requests the engine serves at once, when it said (`total_slots`
+    /// of a `llama-server`'s `/props`): a hint next to the `sessions` field of
+    /// the settings screen, never a value written into it (spec §11.6). `None`
+    /// — it cannot say, or the engine was just replaced.
+    EngineSlots(Option<u32>),
     /// The assistant's reply generation has started. `model` — the model the
     /// turn is going to, so the live bubble's header can name it right away
     /// (`interface.show_model_name`, spec §11.3); the very same value the

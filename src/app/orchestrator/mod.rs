@@ -50,6 +50,7 @@ mod save_queue;
 mod search;
 mod self_consolidation;
 mod settings;
+mod slots;
 mod title;
 mod tool_loop;
 mod tts;
@@ -156,6 +157,9 @@ pub async fn run(deps: OrchestratorDeps) {
     // `EngineBackend::model_id` and answers `(epoch, name)`, and the epoch drops
     // an answer belonging to an engine that has since been replaced.
     let (model_tx, mut model_rx) = unbounded_channel::<(u64, Option<String>)>();
+    // And the same shape for how many requests the engine serves at once (the
+    // hint next to the `sessions` field, spec §11.6): `(epoch, slots)`.
+    let (slots_tx, mut slots_rx) = unbounded_channel::<(u64, Option<u32>)>();
     // Internal status channel for the impersonation server (a background probe).
     let (imp_status_tx, mut imp_status_rx) = unbounded_channel::<ServerStatus>();
     // Internal status channel for the embedding server (a background probe).
@@ -194,6 +198,8 @@ pub async fn run(deps: OrchestratorDeps) {
         context: ContextDiscovery::default(),
         model_tx,
         model: model_name::ModelDiscovery::default(),
+        slots_tx,
+        slots: slots::SlotsDiscovery::default(),
         profiles: Vec::new(),
         chats: Vec::new(),
         confirm: None,
@@ -278,6 +284,8 @@ pub async fn run(deps: OrchestratorDeps) {
                     // And a server that just came up can now say what it loaded,
                     // where a moment ago it could not (`ModelDiscovery`).
                     orch.refresh_model_name();
+                    // Likewise its slot count (the `sessions` hint).
+                    orch.refresh_engine_slots();
                     orch.emit_server_status();
                     orch.relaunch_dead_managed_servers();
                 }
@@ -300,6 +308,11 @@ pub async fn run(deps: OrchestratorDeps) {
             model = model_rx.recv() => {
                 if let Some((epoch, name)) = model {
                     orch.handle_model_result(epoch, name);
+                }
+            }
+            slots = slots_rx.recv() => {
+                if let Some((epoch, count)) = slots {
+                    orch.handle_slots_result(epoch, count);
                 }
             }
             status = imp_status_rx.recv() => {
@@ -546,6 +559,11 @@ struct Orchestrator {
     /// What the engine said it is running, when the configuration does not say
     /// (`external` with a blank "Model (opt.)" — see [`model_name`]).
     model: model_name::ModelDiscovery,
+    /// Channel for the engine's answer about its slot count: `(epoch, slots)`.
+    slots_tx: UnboundedSender<(u64, Option<u32>)>,
+    /// What the engine said about how many requests it serves at once — the
+    /// hint next to the `sessions` field (see [`slots`]).
+    slots: slots::SlotsDiscovery,
     profiles: Vec<Profile>,
     /// The in-flight turn's dangerous-tool confirmation channel: its id and the
     /// sender the generation task is listening on (spec §9.8, fork F8 of

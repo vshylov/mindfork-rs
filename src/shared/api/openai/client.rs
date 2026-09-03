@@ -332,6 +332,16 @@ impl EngineBackend for OpenAiClient {
             .filter(|&n| n > 0)
     }
 
+    /// Reads llama.cpp's `/props` → `total_slots`: the number of server slots,
+    /// i.e. requests it serves at once. Measured on b10791: `4` for a server
+    /// launched with `-np 4`, and `4` for one launched without `-np` — since
+    /// December 2025 llama.cpp's auto default is four slots over one unified
+    /// KV pool (docs/research/parallel-subagents.md §2.4). A zero is nonsense
+    /// and reads as "cannot say", like a zero window above.
+    async fn parallel_slots(&self) -> Option<u32> {
+        self.props().await?.total_slots.filter(|&n| n > 0)
+    }
+
     /// Reads llama.cpp's `/props` → `modalities.vision` (measured on b10322).
     ///
     /// The same fetch [`Self::context_budget`] makes, read one field further along —
@@ -437,6 +447,9 @@ fn server_root_url(base_url: &str, path: &str) -> String {
 #[derive(serde::Deserialize)]
 struct Props {
     default_generation_settings: Option<PropsGeneration>,
+    /// The number of server slots (`-np`, or llama.cpp's auto default of four).
+    /// Absent on everything that is not llama.cpp.
+    total_slots: Option<u32>,
     /// What the server calls the loaded model: `--alias` when one was given,
     /// otherwise the model's own name, otherwise the `-m` path (llama.cpp
     /// `server.cpp`). Absent on everything that is not llama.cpp.
@@ -692,6 +705,20 @@ mod tests {
             server.join().unwrap().starts_with("GET /props "),
             "asked at the server root, outside /v1"
         );
+    }
+
+    /// The slot count comes from the same `/props` body, read as given; a
+    /// server without the endpoint answers "cannot say", never a guess.
+    #[tokio::test]
+    async fn parallel_slots_reads_total_slots() {
+        let (url, server) = one_shot_server("200 OK", PROPS_BODY);
+        assert_eq!(OpenAiClient::new(url).parallel_slots().await, Some(4));
+        assert!(server.join().unwrap().starts_with("GET /props "));
+
+        let (url, _server) = one_shot_server("404 Not Found", "{}");
+        assert_eq!(OpenAiClient::new(url).parallel_slots().await, None);
+        let (url, _server) = one_shot_server("200 OK", r#"{"total_slots":0}"#);
+        assert_eq!(OpenAiClient::new(url).parallel_slots().await, None);
     }
 
     /// Every way of not knowing is `None` — "cannot say", never a guess that

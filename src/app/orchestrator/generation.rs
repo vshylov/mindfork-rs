@@ -727,6 +727,7 @@ impl Orchestrator {
             max_rounds: self.config.max_tool_rounds,
             workspace_max_rounds: self.config.workspace.max_rounds,
             subagent: SubagentLimits::from_config(&self.config.tools),
+            sessions: self.config.engine.active_sessions(),
             compaction_summary: self
                 .chats
                 .iter()
@@ -1036,6 +1037,10 @@ struct GenSpawn {
     workspace_max_rounds: u32,
     /// A sub-agent run's limits (`config.tools`, spec §9.3.2).
     subagent: SubagentLimits,
+    /// How many request streams this turn may keep open at once — the active
+    /// engine section's `sessions` (spec §11.6). One, and the turn's loops take
+    /// turns exactly as they did before the setting existed.
+    sessions: u32,
     /// The chat's rolling summary when one is in force (`Chat::compaction_view`)
     /// — the folded half of the dialogue director's conversation brief
     /// (spec §9.13, fork F6); the unfolded half is the request's own tail.
@@ -1209,6 +1214,7 @@ fn spawn_generation(spawn: GenSpawn) {
         max_rounds,
         workspace_max_rounds,
         subagent,
+        sessions,
         allowed,
         self_model,
         self_model_params,
@@ -1271,6 +1277,7 @@ fn spawn_generation(spawn: GenSpawn) {
             max_rounds,
             workspace_max_rounds,
             subagent,
+            sessions: tokio::sync::Semaphore::new(sessions.max(1) as usize),
             engine_mode,
             model_name,
             ui_loc,
@@ -1360,6 +1367,13 @@ struct TurnShared {
     workspace_max_rounds: u32,
     /// A sub-agent run's limits (spec §9.3.2).
     subagent: SubagentLimits,
+    /// The turn's session budget (docs/research/parallel-subagents.md §4.2):
+    /// a permit is held for the duration of one request stream and for nothing
+    /// else — a round's tool execution, a popup waiting for the user, a child's
+    /// web fetch hold no session. Every loop of the turn, the turn's own
+    /// included, streams under it; sized from the active engine section's
+    /// `sessions`. With one permit the loops take turns as they always did.
+    sessions: tokio::sync::Semaphore,
     engine_mode: ServerMode,
     model_name: Option<String>,
     ui_loc: &'static crate::shared::i18n::Locale,
@@ -1667,22 +1681,29 @@ impl TurnLoop<'_> {
         // The continuation seed is the first round's alone: it filters the
         // server's echo of the prefill (research §4d, §7.1).
         let echo = self.echo_seed.take().map(EchoFilter::new);
-        let out = stream_round(
-            &self.shared.backend,
-            self.request.clone(),
-            &self.cancel,
-            self.shared.id,
-            &self.sink(),
-            self.token_base + self.total_tokens,
-            self.total_reasoning,
-            self.shared.ui_loc,
-            self.shared.compaction_enabled,
-            self.shared
-                .engine_mode
-                .supports_continuation(self.shared.model_name.as_deref()),
-            echo,
-        )
-        .await;
+        // A session for the stream, and only for the stream: the permit is
+        // dropped with this block, before the round's tools run.
+        let out = {
+            let Some(_session) = acquire_session(&self.shared.sessions, &self.cancel).await else {
+                return cancelled_round();
+            };
+            stream_round(
+                &self.shared.backend,
+                self.request.clone(),
+                &self.cancel,
+                self.shared.id,
+                &self.sink(),
+                self.token_base + self.total_tokens,
+                self.total_reasoning,
+                self.shared.ui_loc,
+                self.shared.compaction_enabled,
+                self.shared
+                    .engine_mode
+                    .supports_continuation(self.shared.model_name.as_deref()),
+                echo,
+            )
+            .await
+        };
         // The prefill was consumed by the round that carried it: later rounds
         // end with tool results (nothing to continue), and re-suppressing
         // thinking there would change rounds that continue nothing.
@@ -3703,5 +3724,70 @@ pub(super) fn merge_continuation(seed: &mut Message, round: Message) {
             md.model = kept_model;
         }
         seed.metadata = Some(md);
+    }
+}
+
+/// Takes one of the turn's sessions for a stream, or gives up when the loop is
+/// cancelled while waiting (docs/research/parallel-subagents.md §4.2). The
+/// permit is the caller's to drop — which it does the moment the stream ends,
+/// so a round's tools never hold one. A closed semaphore cannot happen here
+/// (nothing closes it), and reads as "cancelled" rather than as a panic.
+async fn acquire_session<'a>(
+    sessions: &'a tokio::sync::Semaphore,
+    cancel: &CancellationToken,
+) -> Option<tokio::sync::SemaphorePermit<'a>> {
+    tokio::select! {
+        biased;
+        _ = cancel.cancelled() => None,
+        permit = sessions.acquire() => permit.ok(),
+    }
+}
+
+/// A round that never streamed: cancelled while waiting for a session. Nothing
+/// was produced, nothing was counted, and the loop lands what it already has.
+fn cancelled_round() -> RoundOutput {
+    RoundOutput {
+        text: String::new(),
+        thoughts: String::new(),
+        thinking_ref: None,
+        calls: Vec::new(),
+        reason: FinishReason::Cancelled,
+        tokens: 0,
+        prompt_tokens: None,
+        reasoning_tokens: 0,
+    }
+}
+
+#[cfg(test)]
+mod session_tests {
+    use super::*;
+
+    /// A permit is held while the stream runs and returned when it is dropped —
+    /// the whole invariant a `sessions` budget of one rests on.
+    #[tokio::test]
+    async fn a_session_is_taken_for_the_stream_and_returned_after() {
+        let sessions = tokio::sync::Semaphore::new(1);
+        let cancel = CancellationToken::new();
+        let permit = acquire_session(&sessions, &cancel).await;
+        assert!(permit.is_some());
+        assert_eq!(sessions.available_permits(), 0);
+        drop(permit);
+        assert_eq!(sessions.available_permits(), 1);
+    }
+
+    /// A loop waiting for a session stops waiting when its turn is cancelled:
+    /// `Esc` must not hang on a sibling's stream.
+    #[tokio::test]
+    async fn cancellation_ends_the_wait_for_a_session() {
+        let sessions = tokio::sync::Semaphore::new(1);
+        let held = sessions.acquire().await.unwrap();
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        assert!(acquire_session(&sessions, &cancel).await.is_none());
+        drop(held);
+        // Not cancelled, a free permit: taken at once.
+        let fresh = CancellationToken::new();
+        assert!(acquire_session(&sessions, &fresh).await.is_some());
+        assert_eq!(cancelled_round().reason, FinishReason::Cancelled);
     }
 }

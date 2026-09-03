@@ -379,6 +379,12 @@ impl EngineBackend for RetryBackend {
     async fn model_id(&self) -> Option<String> {
         self.inner.model_id().await
     }
+
+    /// The fourth — and this one was added *with* its delegation and its test,
+    /// because the three before it were each left out once (docs/lessons.md §9).
+    async fn parallel_slots(&self) -> Option<u32> {
+        self.inner.parallel_slots().await
+    }
 }
 
 #[cfg(test)]
@@ -410,6 +416,7 @@ mod tests {
         budget: Option<u32>,
         vision: VisionSupport,
         model: Option<String>,
+        slots: Option<u32>,
     }
 
     impl Scripted {
@@ -420,6 +427,7 @@ mod tests {
                 budget: None,
                 vision: VisionSupport::Unknown,
                 model: None,
+                slots: None,
             })
         }
 
@@ -460,6 +468,10 @@ mod tests {
 
         async fn model_id(&self) -> Option<String> {
             self.model.clone()
+        }
+
+        async fn parallel_slots(&self) -> Option<u32> {
+            self.slots
         }
     }
 
@@ -755,6 +767,17 @@ mod tests {
             backend.model_id().await.as_deref(),
             Some("gemma-4-31B_q4_0-it")
         );
+    }
+
+    /// The fourth sibling: the slot count behind the settings hint. `external`
+    /// mode wraps its client in this decorator, so without the delegation the
+    /// hint would read "cannot say" for every llama.cpp that answers.
+    #[tokio::test]
+    async fn the_slot_count_is_delegated() {
+        let mut scripted = Scripted::new(vec![]);
+        Arc::get_mut(&mut scripted).unwrap().slots = Some(4);
+        let backend = RetryBackend::wrap(scripted);
+        assert_eq!(backend.parallel_slots().await, Some(4));
     }
 
     /// An explicit policy is what lets a test pin the shape without waiting on the

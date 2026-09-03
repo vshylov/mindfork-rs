@@ -462,6 +462,21 @@ pub trait EngineBackend: Send + Sync {
     async fn model_id(&self) -> Option<String> {
         None
     }
+
+    /// How many requests the engine can serve at once, when it can say — the
+    /// slot count a `llama-server` reports as `total_slots` on `/props`. Shown
+    /// next to the `sessions` field of the settings screen as a hint; never
+    /// applied to it (spec §11.6, docs/research/parallel-subagents.md fork F8).
+    ///
+    /// The fourth question of the same shape as
+    /// [`context_budget`](Self::context_budget), with the same default — `None`,
+    /// **"cannot say"** — because no cloud protocol and no other local server
+    /// has an endpoint for it, and the app sends what the user typed either
+    /// way. Only [`super::openai::OpenAiClient`] overrides it, from the fetch
+    /// the three questions above already make.
+    async fn parallel_slots(&self) -> Option<u32> {
+        None
+    }
 }
 
 /// Whether an engine accepts image input. See [`EngineBackend::vision`].

@@ -16,6 +16,17 @@ split by subsystem.
 
 ### Added
 
+- **A "Parallel sessions" setting for the assistant's engine.** Every engine
+  mode (managed, external, and each cloud provider) has its own `sessions`
+  — how many request streams the app may keep open against that engine at
+  once. It is **1** by default, and then nothing changes: the assistant and
+  its sub-agents take turns as before. Above 1 a managed `llama-server` is
+  launched with `-np N --kv-unified` (N slots sharing the one context pool
+  `-c` sizes — no extra memory), and the field's hint shows how many slots
+  the running server reports. This is the engine half of running several
+  sub-agents at once; the sub-agents themselves start running in parallel
+  with the next stage.
+
 - **The spellcheck dictionaries now say where they come from — and carry their
   licences.** They are somebody else's work, redistributed with the program, and
   until now nothing in the release said whose or under what terms. Each

@@ -889,7 +889,12 @@ Details:
 - **The loop is `TurnLoop<'a>` over a `TurnShared`** (`generation.rs`): what one
   turn shares — backend, registry, the UI sender, the confirmation receiver and
   the "approved for this turn" set, the generation id, the image and round
-  limits — is one struct owned by the generation task; the loop itself holds
+  limits, and the **session semaphore** (sized from the active engine
+  section's `sessions`, spec §11.6; `TurnLoop::stream` holds a permit for one
+  request stream and for nothing else — a round's tools, a popup, a child's
+  fetch run permit-free — so at the default of one the turn's loops take turns
+  exactly as before, and a loop cancelled while waiting lands what it has;
+  docs/research/parallel-subagents.md §4.2) — is one struct owned by the generation task; the loop itself holds
   only its own request, context, cancellation token, allowed set, accumulators
   and a `depth`. A nested loop (a subagent run,
   [docs/research/subagent-chats.md](research/subagent-chats.md) §3.2) is the
@@ -1187,6 +1192,16 @@ its own — or named by `api_key_env`, resolved through the same
   path to its base name and leaves an org-qualified id (`meta-llama/Llama-3-8B`)
   alone. Delegated by `RetryBackend` — `external` is wrapped in it, so the
   delegation *is* the feature. See docs/research/external-model-name.md.
+- **`EngineBackend::parallel_slots() -> Option<u32>`** (`None` by default) —
+  the fourth question of that shape: how many requests the server serves at
+  once, llama.cpp's `total_slots` on the same `/props` fetch. It feeds a
+  **hint** next to the `sessions` field of the settings screen (spec §11.6),
+  never the field: the orchestrator asks it in `slots.rs` (the
+  `ModelDiscovery` shape — epoch, pending, re-asked when the engine is applied
+  or its readiness flips) and the answer travels as `AppEvent::EngineSlots` to
+  the chat screen, which hands it to each settings screen it builds. Delegated
+  by `RetryBackend` with its test from the start
+  (docs/research/parallel-subagents.md §4.7).
 - **`ChatChunk`** = `Text` | `Thoughts` | `ThoughtsSignature(ThinkingRef)` |
   `ToolCall(ToolCallDelta)` | `Usage(TokenUsage)` | `Error{message,transient}` |
   `Finished`. `Error` is the stream's error channel: a failure that arrives after
@@ -1216,9 +1231,9 @@ its own — or named by `api_key_env`, resolved through the same
   `ChatChunk::Retry` *before* sleeping (interruptibly, via the turn's
   `CancellationToken`) so the UI can show the wait while it happens. Policy —
   constants in the module: 3 attempts, ~1 s/~2 s with downward jitter,
-  `Retry-After` honoured up to 30 s. **All three self-description methods are
+  `Retry-After` honoured up to 30 s. **All four self-description methods are
   delegated** (`context_budget`, which auto-compaction depends on — spec §6.7;
-  `vision`; `model_id`): each defaults to "cannot say", so a forgotten delegation
+  `vision`; `model_id`; `parallel_slots`): each defaults to "cannot say", so a forgotten delegation
   is invisible to every test of the inner client and silently removes the
   capability. It has happened three times; each method now has a delegation test
   asserting a value the decorator could not have produced by falling through
@@ -1230,7 +1245,10 @@ its own — or named by `api_key_env`, resolved through the same
   `build_args` assembles the CLI (`-m`, `-ngl`, `-c`, `--jinja`, `--no-mmap`,
   `--flash-attn`; speculative decoding `--spec-type` + draft `-md`/`-ngld`/
   `--spec-draft-n-max`/`-n-min`; for embeddings — `--embeddings -ub <ctx> -b
-  <ctx>`). Optional flags are added only when set (unset → llama.cpp default);
+  <ctx>`; `-np N --kv-unified` when `ManagedConfig.parallel` — the section's
+  `sessions` — is above 1: an explicit `-np` alone would *split* the context
+  between the slots, and the two flags together are what llama.cpp does on its
+  own for its auto default, spec §3.4). Optional flags are added only when set (unset → llama.cpp default);
   `FlashAttn`/`SpecType` are enums in `shared/config`, arriving in
   `ManagedConfig` as primitives (like `reasoning_format`) — the supervisor
   converts the enum to a string.

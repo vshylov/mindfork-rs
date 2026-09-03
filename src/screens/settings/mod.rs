@@ -481,6 +481,11 @@ enum FieldId {
     XDraftNMin,
     XHost,
     XPort,
+    /// How many request streams may be open against the assistant engine at
+    /// once (`sessions` of the active mode's section — managed, external or
+    /// the cloud provider). Assistant only: the impersonation engine runs no
+    /// sub-agents. See spec §11.6.
+    XSessions,
     // Model/server — Impersonation
     IxMode,
     IxUrl,
@@ -910,6 +915,11 @@ pub struct SettingsScreen {
     /// A snapshot of server statuses (chat/embeddings/impersonation) — chips in the
     /// "Model/server" section. Updated by `app` from the `ServerStatus` event. See spec §11.6.
     statuses: ServerStatuses,
+    /// What the engine said about how many requests it serves at once
+    /// (`AppEvent::EngineSlots`, a `llama-server`'s `total_slots`): the hint
+    /// next to the `sessions` field of the "Model/server" section, never its
+    /// value (spec §11.6). `None` — the engine cannot say.
+    engine_slots: Option<u32>,
     /// Ids of profiles with a locked scaffold language (the profile has data —
     /// the "Language" field is drawn locked, edits are gated). From the `Settings`
     /// snapshot (computed by the orchestrator). See docs/history/i18n.md.

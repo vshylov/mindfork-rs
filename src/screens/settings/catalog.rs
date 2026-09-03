@@ -36,6 +36,7 @@ impl SettingsScreen {
                 embed: ServerStatus::NotConfigured,
                 impersonation: ServerStatus::NotConfigured,
             },
+            engine_slots: None,
             language_locked,
             mcp: Default::default(),
             secrets_present: Vec::new(),
@@ -51,6 +52,13 @@ impl SettingsScreen {
     /// by `app` when creating the screen and on the `ServerStatus` event.
     pub fn set_server_statuses(&mut self, statuses: ServerStatuses) {
         self.statuses = statuses;
+    }
+
+    /// Updates what the engine said about its slot count (the hint next to the
+    /// `sessions` field, spec §11.6). Called by `app` when creating the screen
+    /// and on the `EngineSlots` event; `None` — the engine cannot say.
+    pub fn set_engine_slots(&mut self, slots: Option<u32>) {
+        self.engine_slots = slots;
     }
 
     /// Updates the working copy from a settings re-emit (after create/delete of a
@@ -291,6 +299,36 @@ impl SettingsScreen {
                         ),
                     )),
                 }
+                // Parallel sessions — the assistant engine only (spec §11.6): the
+                // value lives in the active mode's own section, and the slot
+                // count a `llama-server` reported is a hint next to the field,
+                // never written into it. A cloud has no slots to report.
+                let (sessions, slots_hint) = match x.mode {
+                    ServerMode::Managed => (x.managed.sessions, self.engine_slots),
+                    ServerMode::External => (x.external.sessions, self.engine_slots),
+                    ServerMode::OpenAi
+                    | ServerMode::Gemini
+                    | ServerMode::Claude
+                    | ServerMode::Grok => (x.cloud().map_or(1, |c| c.sessions), None),
+                };
+                let mut desc = loc.t("ui.settings.desc.sessions").to_string();
+                if let Some(n) = slots_hint {
+                    desc.push(' ');
+                    desc.push_str(
+                        &loc.tf("ui.settings.desc.sessions_slots", &[("n", &n.to_string())]),
+                    );
+                }
+                rows.extend(grouped(
+                    loc.t("ui.settings.group.sessions"),
+                    vec![
+                        row(
+                            FieldId::XSessions,
+                            loc.t("ui.settings.field.sessions"),
+                            FieldKind::Text(sessions.to_string()),
+                        )
+                        .describe(desc),
+                    ],
+                ));
                 rows
             }
             ModelTab::Impersonation => {

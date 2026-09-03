@@ -28,6 +28,12 @@ pub struct ManagedConfig {
     pub gpu_layers: i32,
     /// Context size (`-c`).
     pub context_size: u32,
+    /// Server slots the app will drive at once (`engine.managed.sessions`).
+    /// Above 1 → `-np N --kv-unified`: N slots over the one pool `-c` sizes,
+    /// the shape llama.cpp's own auto default has (four slots, unified), so
+    /// the pool costs no more memory for it (docs/research/parallel-subagents.md
+    /// §4.7). At 1 nothing is passed and the line is what it always was.
+    pub parallel: u32,
     /// Use the model's built-in chat template (`--jinja`).
     pub jinja: bool,
     /// Reasoning format (`--reasoning-format`); `None` — don't set it.
@@ -76,6 +82,14 @@ pub fn build_args(cfg: &ManagedConfig) -> Vec<String> {
         "-c".to_string(),
         cfg.context_size.to_string(),
     ];
+    // Explicit `-np` switches llama.cpp to the *split* shape (each slot gets
+    // `-c / N`), so the unified pool has to be asked for by name — and the two
+    // flags together are exactly what the server does on its own for `-np -1`.
+    if cfg.parallel > 1 {
+        args.push("-np".into());
+        args.push(cfg.parallel.to_string());
+        args.push("--kv-unified".into());
+    }
     if let Some(m) = &cfg.model_path {
         args.push("-m".into());
         args.push(m.clone());
@@ -394,6 +408,7 @@ mod tests {
             mmproj: None,
             gpu_layers: 99,
             context_size: 8192,
+            parallel: 1,
             jinja: true,
             reasoning_format: None,
             embeddings: false,
@@ -408,6 +423,31 @@ mod tests {
             port: 8000,
             extra_args: vec![],
         }
+    }
+
+    /// One session leaves the launch line exactly as it was before the setting
+    /// existed — no `-np` at all, so llama.cpp's own auto default (four slots,
+    /// unified) still applies. Above one, both flags: an explicit `-np` alone
+    /// would split the context between the slots.
+    #[test]
+    fn sessions_above_one_add_np_with_a_unified_pool() {
+        let one = build_args(&base_cfg());
+        assert!(
+            !one.iter().any(|a| a == "-np" || a == "--kv-unified"),
+            "{one:?}"
+        );
+
+        let cfg = ManagedConfig {
+            parallel: 3,
+            ..base_cfg()
+        };
+        let args = build_args(&cfg);
+        let np = args.iter().position(|a| a == "-np").expect("-np present");
+        assert_eq!(args[np + 1], "3");
+        assert!(args.contains(&"--kv-unified".to_string()), "{args:?}");
+        // The pool itself is unchanged: `-c` is still the configured size.
+        let c = args.iter().position(|a| a == "-c").unwrap();
+        assert_eq!(args[c + 1], "8192");
     }
 
     #[test]
@@ -739,5 +779,54 @@ mod tests {
             .await
             .expect("the monitor must arm exited on process exit");
         assert!(exited.is_cancelled());
+    }
+
+    /// A **real** `llama-server` launched with the pair of flags `sessions > 1`
+    /// adds must report exactly that many slots over an **undivided** context:
+    /// `-np N` alone would split `-c` between them
+    /// (docs/research/parallel-subagents.md §2.4, fork F4), and a launcher that
+    /// dropped `--kv-unified` would quarter the main chat's window with no unit
+    /// test noticing — the flag pair's meaning is the server's, not ours.
+    ///
+    ///     MINDFORK_LLAMA_BIN=.../llama-server.exe MINDFORK_MODEL=.../small.gguf \
+    ///       cargo test managed_sessions_launch -- --ignored --nocapture
+    #[tokio::test]
+    #[ignore = "requires a local llama-server binary + model (MINDFORK_LLAMA_BIN, MINDFORK_MODEL)"]
+    async fn managed_sessions_launch_three_slots_over_one_pool_live() {
+        use crate::shared::api::EngineBackend;
+        let (Ok(bin), Ok(model)) = (
+            std::env::var("MINDFORK_LLAMA_BIN"),
+            std::env::var("MINDFORK_MODEL"),
+        ) else {
+            eprintln!("skip: MINDFORK_LLAMA_BIN / MINDFORK_MODEL not set");
+            return;
+        };
+        let cfg = ManagedConfig {
+            binary: bin.into(),
+            model_path: Some(model),
+            parallel: 3,
+            context_size: 4096,
+            port: 18123,
+            ..base_cfg()
+        };
+        let handle = ServerHandle::launch(&cfg, locale(Lang::En)).expect("launch");
+        let client = OpenAiClient::new(handle.base_url());
+        wait_until_ready(
+            &client,
+            Duration::from_secs(600),
+            Some(handle.exited()),
+            locale(Lang::En),
+        )
+        .await
+        .expect("the server should come up");
+        let slots = client.parallel_slots().await;
+        let window = client.context_budget().await;
+        eprintln!("live managed launch: slots {slots:?}, per-slot window {window:?}");
+        assert_eq!(slots, Some(3));
+        assert_eq!(
+            window,
+            Some(4096),
+            "unified pool: every slot may use the whole -c"
+        );
     }
 }

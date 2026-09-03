@@ -235,6 +235,8 @@ fn bare_orch_rx() -> (tempfile::TempDir, Orchestrator, UnboundedReceiver<AppEven
         context: Default::default(),
         model_tx: unbounded_channel().0,
         model: Default::default(),
+        slots_tx: unbounded_channel().0,
+        slots: Default::default(),
         tts_cancel: None,
         tts_gen: None,
         tts_playback: None,
