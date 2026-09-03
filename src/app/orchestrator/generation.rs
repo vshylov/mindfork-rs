@@ -56,8 +56,10 @@ pub(super) enum TurnProgress {
     /// title, `name`, `created_at`, `User(message)` — with no rounds and no
     /// outcome yet.
     ChildStarted(Box<SubagentRun>),
-    /// The sub-agent's loop filed a round.
-    ChildRoundFiled(Vec<Message>),
+    /// The sub-agent's loop filed a round. Every `Child*` step names its
+    /// run: several runs can be in flight at once (spec §9.3.2, stage 2 of
+    /// docs/research/parallel-subagents.md), and the mirror keys on the id.
+    ChildRoundFiled { run: Uuid, messages: Vec<Message> },
     /// One step of the turn's own stream (docs/history/subagent-live.md §8,
     /// last bullet): the orchestrator mirrors the round in progress, so the
     /// chat's feed can be rebuilt whole when the user comes back to it
@@ -68,21 +70,23 @@ pub(super) enum TurnProgress {
     /// `ChildRoundFiled` on the one channel. The orchestrator keeps the
     /// round's partial and forwards the step to the screen while the
     /// transcript is the open conversation.
-    ChildStep(StreamStep),
+    ChildStep { run: Uuid, step: StreamStep },
     /// The sub-agent run's own token count so far (completion, reasoning).
     ChildTokens {
+        run: Uuid,
         completion: u64,
         reasoning: Option<u32>,
     },
     /// A dialogue's next line begins (spec §9.13): which side of the
     /// transcript the coming stream belongs to, so the open transcript draws
     /// it in the right bubble. Also resets the round-in-progress partial.
-    ChildLineStarted { role: MessageRole },
+    ChildLineStarted { run: Uuid, role: MessageRole },
     /// A dialogue **edited** its transcript — the director discarded or
     /// rewrote a line — so appending cannot express it: the full replacement.
-    ChildTranscript(Vec<Message>),
+    ChildTranscript { run: Uuid, messages: Vec<Message> },
     /// The run returned; the landed run carries the same fields.
     ChildEnded {
+        run: Uuid,
         outcome: RunOutcome,
         finished_at: chrono::DateTime<chrono::Utc>,
         tokens: u64,
@@ -701,10 +705,7 @@ impl Orchestrator {
             chat: active_id,
             rounds: Vec::new(),
             partial: Default::default(),
-            child: None,
-            child_stream: Uuid::nil(),
-            child_partial: Default::default(),
-            child_line_role: MessageRole::Assistant,
+            children: Vec::new(),
             continuation: continuation.is_some(),
         });
         // The confirmation channel for this turn (fork F8). The sender is kept
@@ -924,18 +925,27 @@ impl Orchestrator {
     /// still knows — a title the user gave the running transcript — is carried
     /// onto the landed run's record here, then it goes.
     fn carry_inflight_rename(&mut self, res: &mut GenResult) {
-        let inflight = self.inflight.take().filter(|t| t.generation == res.id);
-        if let Some(edited) = inflight.as_ref().and_then(|t| t.child.as_ref())
-            && edited.renamed_manually
-            && let Some(run) = res
+        let Some(inflight) = self.inflight.take().filter(|t| t.generation == res.id) else {
+            return;
+        };
+        // Every running transcript the user named while it ran — there can
+        // be several in one turn now (spec §9.3.2).
+        for edited in inflight
+            .children
+            .iter()
+            .map(|c| &c.run)
+            .filter(|r| r.renamed_manually)
+        {
+            if let Some(run) = res
                 .messages
                 .iter_mut()
                 .flat_map(|m| m.tool_calls.iter_mut())
                 .filter_map(|r| r.subagent.as_deref_mut())
                 .find(|r| r.id == edited.id)
-        {
-            run.title = edited.title.clone();
-            run.renamed_manually = true;
+            {
+                run.title = edited.title.clone();
+                run.renamed_manually = true;
+            }
         }
     }
 
@@ -1088,6 +1098,23 @@ struct GenSpawn {
     done_tx: UnboundedSender<GenMessage>,
 }
 
+/// What the confirmation round trip owns, behind [`TurnShared::confirm`]'s
+/// lock: the reply receiver and the "approved for this turn" set. One lock
+/// for both, held for the whole ask-and-wait, is what makes the popup one
+/// question at a time when several loops of the turn run at once
+/// (docs/research/parallel-subagents.md §4.3).
+struct ConfirmState {
+    /// The user's answers to [`AppEvent::ToolConfirmRequest`], routed in by
+    /// the orchestrator — the one channel that runs orchestrator → task.
+    rx: UnboundedReceiver<(String, ToolDecision)>,
+    /// Tools the user approved "for the rest of this turn" (fork F4). The turn
+    /// is the natural unit — it is the scope of one user request and it ends by
+    /// itself, so nothing outlives it and no standing permission accumulates.
+    /// Shared by every loop of the turn for the same reason: same turn, same
+    /// request.
+    allowed_for_turn: HashSet<ToolId>,
+}
+
 /// Everything [`confirm_call`] needs that does not change between calls.
 struct ConfirmGate<'a> {
     /// `tools.confirm_dangerous`. When `false` the gate is a no-op and never
@@ -1116,9 +1143,17 @@ struct ConfirmGate<'a> {
 async fn confirm_call(
     gate: ConfirmGate<'_>,
     call: &ApiToolCall,
-    allowed_for_turn: &mut HashSet<ToolId>,
-    confirm_rx: &mut UnboundedReceiver<(String, ToolDecision)>,
+    confirm: &tokio::sync::Mutex<ConfirmState>,
 ) -> Option<String> {
+    // Taken before the check and held through the answer: a sibling loop that
+    // reaches a dangerous call meanwhile waits here, so at most one popup is
+    // ever open and an "allow for this turn" given to the first covers the
+    // second before it asks. Cancellation inside the wait releases it.
+    let mut state = confirm.lock().await;
+    let ConfirmState {
+        rx: confirm_rx,
+        allowed_for_turn,
+    } = &mut *state;
     let needs_ask = gate.enabled
         && !allowed_for_turn.contains(call.name.as_str())
         && gate
@@ -1267,12 +1302,16 @@ fn spawn_generation(spawn: GenSpawn) {
             reasoning: None,
         });
 
-        let mut shared = TurnShared {
+        let shared = TurnShared {
             backend,
             registry,
             confirm_dangerous,
             image_cfg,
-            confirm_rx,
+            confirm: tokio::sync::Mutex::new(ConfirmState {
+                rx: confirm_rx,
+                allowed_for_turn: HashSet::new(),
+            }),
+            counters: TurnCounters::default(),
             id,
             max_rounds,
             workspace_max_rounds,
@@ -1283,12 +1322,11 @@ fn spawn_generation(spawn: GenSpawn) {
             ui_loc,
             evt_tx: evt_tx.clone(),
             done_tx: done_tx.clone(),
-            allowed_for_turn: HashSet::new(),
             compaction_enabled,
             compaction_summary,
         };
         let mut turn = TurnLoop {
-            shared: &mut shared,
+            shared: &shared,
             ctx,
             request,
             cancel,
@@ -1303,8 +1341,7 @@ fn spawn_generation(spawn: GenSpawn) {
             last_usage: None,
             pending_new_bubble: false,
             depth: 0,
-            live: true,
-            token_base: 0,
+            run_id: None,
             ended_by_limit: None,
             persona: None,
             echo_seed: continuation.as_ref().map(|c| c.text.clone()),
@@ -1358,7 +1395,14 @@ struct TurnShared {
     registry: Arc<ToolRegistry>,
     confirm_dangerous: bool,
     image_cfg: crate::shared::config::ImageSettings,
-    confirm_rx: UnboundedReceiver<(String, ToolDecision)>,
+    /// The dangerous-call confirmation round trip (spec §9.8), one question
+    /// at a time — see [`ConfirmState`].
+    confirm: tokio::sync::Mutex<ConfirmState>,
+    /// The turn's running token totals across every loop of it — what the
+    /// status bar shows (docs/research/parallel-subagents.md §4.4). Each loop
+    /// still keeps its own count for its record; this is the sum, kept where
+    /// concurrent loops can all add to it.
+    counters: TurnCounters,
     /// The turn's generation id: every streamed event and every confirmation
     /// request carries it, a child's included — the popup and the reply
     /// routing know one turn, not one loop.
@@ -1381,17 +1425,34 @@ struct TurnShared {
     /// The progress channel to the orchestrator — the same one the result
     /// goes on, so progress and result arrive in order ([`GenMessage`]).
     done_tx: UnboundedSender<GenMessage>,
-    /// Tools the user approved "for the rest of this turn" (fork F4). The turn
-    /// is the natural unit — it is the scope of one user request and it ends by
-    /// itself, so nothing outlives it and no standing permission accumulates.
-    /// Shared by a child loop for the same reason: same turn, same request.
-    allowed_for_turn: HashSet<ToolId>,
     /// `compaction.enabled` — picks which advice a context-overflow error gives
     /// (see [`GenSpawn::compaction_enabled`]).
     compaction_enabled: bool,
     /// The chat's rolling summary, for the dialogue director's brief
     /// (see [`GenSpawn::compaction_summary`]).
     compaction_summary: Option<String>,
+}
+
+/// The turn-wide token totals ([`TurnShared::counters`]): every loop adds its
+/// streamed deltas as they arrive and corrects to the server's exact `usage`
+/// at the round's end, so the bar's number grows monotonically whichever loop
+/// produced the token.
+#[derive(Default)]
+struct TurnCounters {
+    tokens: std::sync::atomic::AtomicU64,
+    reasoning: std::sync::atomic::AtomicU32,
+}
+
+/// One round's token report from [`stream_round`] to its [`RoundSink`]: the
+/// turn's totals for the status bar, the loop's own cumulative count for a
+/// transcript's counter, the exact context when the server said.
+struct TokenReport {
+    turn_completion: u64,
+    own_completion: u64,
+    turn_reasoning: Option<u32>,
+    own_reasoning: Option<u32>,
+    context: Option<u64>,
+    context_exact: bool,
 }
 
 /// One agentic loop's state: the turn's own, or a sub-agent's run inside it.
@@ -1401,7 +1462,10 @@ struct TurnShared {
 /// the module's parameter-struct pattern ([`GenSpawn`], [`ConfirmGate`]); it
 /// still never touches `Chat` — results go back through [`GenResult`].
 struct TurnLoop<'a> {
-    shared: &'a mut TurnShared,
+    /// Borrowed immutably by every loop of the turn — the parent's and any
+    /// number of children running at once (the mutable parts sit behind
+    /// their own locks and atomics, see [`TurnShared`]).
+    shared: &'a TurnShared,
     ctx: ToolContext,
     request: ChatRequest,
     /// This loop's cancellation: the turn's token for the turn's own loop; a
@@ -1434,15 +1498,12 @@ struct TurnLoop<'a> {
     /// [`Self::run_subagent`] refuses below the top — the belt under the braces
     /// of an allowed set that never offers `call_subagent` there.
     depth: u8,
-    /// Whether this loop's stream reaches the feed. The turn's own loop is
-    /// live; a sub-agent's is **muted** — its text would land in the parent's
-    /// bubble — and only its token counter passes, re-based on
-    /// [`Self::token_base`] (see [`RoundSink`]).
-    live: bool,
-    /// What the turn had already cost when this loop started: a sub-agent's
-    /// counter continues the parent's rather than restarting at zero, because
-    /// the user pays for both.
-    token_base: u64,
+    /// The run this loop is: `None` for the turn's own loop, whose stream
+    /// reaches the feed; the run's id for a sub-agent's, whose stream goes to
+    /// the orchestrator as progress under that id — its text would land in
+    /// the parent's bubble — while only the turn's token total passes to the
+    /// bar (see [`RoundSink`]). What every progress step of the loop is keyed by.
+    run_id: Option<Uuid>,
     /// Which budget ended this loop, when one did — the parent reads it to
     /// record a sub-agent's outcome as `RoundLimit` rather than `Completed`.
     ended_by_limit: Option<RoundLimit>,
@@ -1470,6 +1531,9 @@ struct SubagentLimits {
     /// director checkpoint of it. Its own knob: the honest default differs
     /// from the sub-agent's by an order of magnitude (spec §9.13).
     dialogue_run_timeout: std::time::Duration,
+    /// How many of one round's sub-agents run at once
+    /// (`tools.subagent_parallel`; docs/research/parallel-subagents.md §4.2).
+    parallel: u32,
 }
 
 impl SubagentLimits {
@@ -1478,6 +1542,7 @@ impl SubagentLimits {
             max_tokens: tools.subagent_max_tokens,
             run_timeout: std::time::Duration::from_secs(tools.subagent_run_timeout_secs),
             dialogue_run_timeout: std::time::Duration::from_secs(tools.dialogue_run_timeout_secs),
+            parallel: tools.subagent_parallel,
         }
     }
 }
@@ -1494,10 +1559,10 @@ struct RoundSink<'a> {
     done_tx: &'a UnboundedSender<GenMessage>,
     turn: Uuid,
     /// `None` on the turn's own loop, whose stream goes to the screen
-    /// directly and to the orchestrator as a mirror; `Some(token_base)` on a
-    /// sub-agent's, whose stream goes to the orchestrator only (the base is
-    /// subtracted from the re-based counter to get the run's own).
-    child: Option<u64>,
+    /// directly and to the orchestrator as a mirror; `Some(run id)` on a
+    /// sub-agent's, whose stream goes to the orchestrator only, keyed by the
+    /// run — several can be in flight at once.
+    child: Option<Uuid>,
     /// A dialogue's streams grow the open transcript **per message**, not per
     /// token (research §3.7): the token-level partial has no speaker side yet,
     /// and half the lines land on the `User` side — streaming them into the
@@ -1520,42 +1585,58 @@ impl RoundSink<'_> {
                     None => return,
                 }
             }
-            Some(token_base) => match event {
-                AppEvent::TokenUsage {
-                    generation_id,
-                    completion,
-                    reasoning,
-                    ..
-                } => {
-                    let _ = self.evt_tx.send(AppEvent::TokenUsage {
-                        generation_id,
-                        completion,
-                        context: None,
-                        context_exact: false,
-                        reasoning,
-                    });
-                    TurnProgress::ChildTokens {
-                        completion: completion.saturating_sub(token_base),
-                        reasoning,
-                    }
+            // A retry or an error inside the run: the parent's result text
+            // says how the run ended; nothing to draw meanwhile.
+            Some(run) => {
+                if self.mute_steps {
+                    return;
                 }
-                // A retry or an error inside the run: the parent's result
-                // text says how the run ended; nothing to draw meanwhile.
-                other => {
-                    if self.mute_steps {
-                        return;
-                    }
-                    match stream_step(&other) {
-                        Some(step) => TurnProgress::ChildStep(step),
-                        None => return,
-                    }
+                match stream_step(&event) {
+                    Some(step) => TurnProgress::ChildStep { run, step },
+                    None => return,
                 }
-            },
+            }
         };
         let _ = self.done_tx.send(GenMessage::Progress {
             id: self.turn,
             progress,
         });
+    }
+
+    /// The token counter: the turn's totals go to the status bar from every
+    /// loop (one number, whichever loop produced the token); a child's own
+    /// count goes to the orchestrator for its transcript's counter.
+    fn tokens(&self, r: TokenReport) {
+        match self.child {
+            None => {
+                let _ = self.evt_tx.send(AppEvent::TokenUsage {
+                    generation_id: self.turn,
+                    completion: r.turn_completion,
+                    context: r.context,
+                    context_exact: r.context_exact,
+                    reasoning: r.turn_reasoning,
+                });
+            }
+            Some(run) => {
+                // The child's prompt size is not the conversation's: the
+                // bar shows one number, so the `context` half is dropped.
+                let _ = self.evt_tx.send(AppEvent::TokenUsage {
+                    generation_id: self.turn,
+                    completion: r.turn_completion,
+                    context: None,
+                    context_exact: false,
+                    reasoning: r.turn_reasoning,
+                });
+                let _ = self.done_tx.send(GenMessage::Progress {
+                    id: self.turn,
+                    progress: TurnProgress::ChildTokens {
+                        run,
+                        completion: r.own_completion,
+                        reasoning: r.own_reasoning,
+                    },
+                });
+            }
+        }
     }
 }
 
@@ -1606,7 +1687,7 @@ impl TurnLoop<'_> {
     /// muted sink — this is the one event of a child's that is meant for the
     /// parent's screen. A no-op on the turn's own loop.
     fn report_progress(&self, tool: Option<&str>) {
-        let Some(name) = &self.persona else {
+        let (Some(name), Some(run)) = (&self.persona, self.run_id) else {
             return;
         };
         // `tool_round` counts the round before it executes the calls, so a
@@ -1615,6 +1696,7 @@ impl TurnLoop<'_> {
         let round = if tool.is_some() { counted } else { counted + 1 };
         let _ = self.shared.evt_tx.send(AppEvent::SubagentProgress {
             generation_id: self.shared.id,
+            run,
             progress: Some(crate::app::events::SubagentProgress {
                 name: name.clone(),
                 round,
@@ -1628,9 +1710,16 @@ impl TurnLoop<'_> {
     /// written, or that the director is judging the scene — so a parent turn
     /// parked inside a long dialogue never reads as a stuck "generating"
     /// (docs/lessons.md §4). Worded by the screen; cleared with the run.
-    fn dialogue_chip(&self, title: &str, round: u32, kind: crate::app::events::RunProgressKind) {
+    fn dialogue_chip(
+        &self,
+        run: Uuid,
+        title: &str,
+        round: u32,
+        kind: crate::app::events::RunProgressKind,
+    ) {
         let _ = self.shared.evt_tx.send(AppEvent::SubagentProgress {
             generation_id: self.shared.id,
+            run,
             progress: Some(crate::app::events::SubagentProgress {
                 name: title.to_string(),
                 round,
@@ -1650,10 +1739,9 @@ impl TurnLoop<'_> {
 
     /// A filed round, reported as the parent's or the sub-agent's by depth.
     fn report_progress_filed(&self, messages: Vec<Message>) {
-        self.progress(if self.depth == 0 {
-            TurnProgress::RoundFiled(messages)
-        } else {
-            TurnProgress::ChildRoundFiled(messages)
+        self.progress(match self.run_id {
+            None => TurnProgress::RoundFiled(messages),
+            Some(run) => TurnProgress::ChildRoundFiled { run, messages },
         });
     }
 
@@ -1663,7 +1751,7 @@ impl TurnLoop<'_> {
             evt_tx: &self.shared.evt_tx,
             done_tx: &self.shared.done_tx,
             turn: self.shared.id,
-            child: (!self.live).then_some(self.token_base),
+            child: self.run_id,
             mute_steps: false,
         }
     }
@@ -1693,7 +1781,8 @@ impl TurnLoop<'_> {
                 &self.cancel,
                 self.shared.id,
                 &self.sink(),
-                self.token_base + self.total_tokens,
+                &self.shared.counters,
+                self.total_tokens,
                 self.total_reasoning,
                 self.shared.ui_loc,
                 self.shared.compaction_enabled,
@@ -1919,9 +2008,58 @@ impl TurnLoop<'_> {
         );
         let mut records: Vec<ToolCallRecord> = Vec::new();
         let mut tool_msgs: Vec<Message> = Vec::new();
-        for call in &out.calls {
-            self.execute_call(call, rewrite, &mut records, &mut tool_msgs)
-                .await;
+        // The round in three phases (docs/research/parallel-subagents.md
+        // §4.1). One: the ordinary calls resolve in the model's order, as
+        // they always did; the round's `call_subagent` calls — its parallel
+        // group — are only announced and prepared. Two: the group runs, at
+        // most `tools.subagent_parallel` children at once, each card closing
+        // as its run lands. Three: the request history and the round's
+        // records are written in the model's order, so what the model and
+        // the chat see is exactly what a sequential round would have left.
+        let mut results: Vec<Option<CallResult>> = out.calls.iter().map(|_| None).collect();
+        let mut announced = vec![false; out.calls.len()];
+        let mut group: Vec<(usize, ChildSpec)> = Vec::new();
+        for (i, call) in out.calls.iter().enumerate() {
+            if self.is_group_call(call, rewrite) {
+                self.announce_call(call);
+                match self.child_spec(&Self::call_args(call)) {
+                    Ok(spec) => group.push((i, spec)),
+                    Err(refusal) => results[i] = Some(refusal),
+                }
+            } else {
+                results[i] = Some(self.resolve_call(call, rewrite).await);
+            }
+        }
+        if !group.is_empty() {
+            let width = self.shared.subagent.parallel.max(1) as usize;
+            let shared = self.shared;
+            let loc = self.ctx.loc;
+            let mut running = futures_util::stream::iter(
+                group
+                    .into_iter()
+                    .map(|(i, spec)| async move { (i, run_child(shared, loc, spec).await) }),
+            )
+            .buffer_unordered(width);
+            while let Some((i, done)) = running.next().await {
+                self.effects.extend(done.effects);
+                self.announce_result(&out.calls[i], &done.result.text, 0);
+                announced[i] = true;
+                results[i] = Some(done.result);
+            }
+        }
+        for (i, call) in out.calls.iter().enumerate() {
+            let result = results[i]
+                .take()
+                .expect("every call of the round resolves in one of the phases");
+            self.record_call(
+                call,
+                result,
+                rewrite,
+                announced[i],
+                &mut records,
+                &mut tool_msgs,
+            )
+            .await;
         }
 
         // The round's domain assistant message (text + thoughts + tool blocks).
@@ -1955,57 +2093,80 @@ impl TurnLoop<'_> {
         None
     }
 
-    /// Executes one tool call: resolves its result (gates/confirmation/the
-    /// actual invocation), emits the UI tool block, and records the call into
-    /// the request history + the round's domain records.
-    async fn execute_call(
+    /// One call's arguments as the tools take them. A no-argument call gives an
+    /// empty argument string — stored as an empty OBJECT, not `Null`: otherwise
+    /// serializing the history entry gives `"null"`, and strict providers
+    /// (Anthropic) expect an object in `input` (see shared/api/anthropic/wire.rs).
+    /// An object is also safer for invoke (deserializing a struct from `null`
+    /// panics).
+    fn call_args(call: &ApiToolCall) -> serde_json::Value {
+        serde_json::from_str(&call.arguments).unwrap_or_else(|_| serde_json::json!({}))
+    }
+
+    /// Opens a call's card before it runs (spec §11.3).
+    fn announce_call(&self, call: &ApiToolCall) {
+        self.sink().send(AppEvent::ToolCallStarted {
+            generation_id: self.shared.id,
+            call_id: call.id.clone(),
+            name: call.name.clone(),
+            arguments: call.arguments.clone(),
+        });
+    }
+
+    /// Closes a call's card with its result.
+    fn announce_result(&self, call: &ApiToolCall, result: &str, images: usize) {
+        self.sink().send(AppEvent::ToolCall {
+            generation_id: self.shared.id,
+            call_id: call.id.clone(),
+            name: call.name.clone(),
+            arguments: call.arguments.clone(),
+            result: result.to_string(),
+            images,
+        });
+    }
+
+    /// Resolves one ordinary call of the round: the card opens, the result
+    /// comes from [`Self::resolve_call_result`] (gates, confirmation, the
+    /// invocation). A control call and a call skipped by a rewrite never get
+    /// a card.
+    async fn resolve_call(&mut self, call: &ApiToolCall, rewrite: bool) -> CallResult {
+        let args = Self::call_args(call);
+        let is_control = control::is_control_tool(&call.name);
+        self.report_progress(Some(&call.name));
+        if !is_control && !rewrite {
+            self.announce_call(call);
+        }
+        self.resolve_call_result(call, &args, is_control, rewrite)
+            .await
+    }
+
+    /// Records one resolved call: the tool message into the request history,
+    /// the record and the domain tool message for the round — and closes the
+    /// card, unless the round already did as the result landed (`announced`,
+    /// the parallel group's case).
+    async fn record_call(
         &mut self,
         call: &ApiToolCall,
+        result: CallResult,
         rewrite: bool,
+        announced: bool,
         records: &mut Vec<ToolCallRecord>,
         tool_msgs: &mut Vec<Message>,
     ) {
-        // A no-argument call gives an empty argument string — we store it
-        // as an empty OBJECT, not `Null`: otherwise serializing the history
-        // entry gives `"null"`, and strict providers (Anthropic) expect an
-        // object in `input` (see shared/api/anthropic/wire.rs). An object is
-        // also safer for invoke (deserializing a struct from `null` panics).
-        let args: serde_json::Value =
-            serde_json::from_str(&call.arguments).unwrap_or_else(|_| serde_json::json!({}));
-        let is_control = control::is_control_tool(&call.name);
-        self.report_progress(Some(&call.name));
-        // The card opens before the call runs (spec §11.3); a control call and
-        // a call skipped by a rewrite never get one, as below.
-        if !is_control && !rewrite {
-            self.sink().send(AppEvent::ToolCallStarted {
-                generation_id: self.shared.id,
-                call_id: call.id.clone(),
-                name: call.name.clone(),
-                arguments: call.arguments.clone(),
-            });
-        }
         let CallResult {
             text: result,
             images,
             subagent,
-        } = self
-            .resolve_call_result(call, &args, is_control, rewrite)
-            .await;
+        } = result;
+        let is_control = control::is_control_tool(&call.name);
         // Decoded and downscaled here, once, so the same prepared bytes go into the
         // request and into the stored message — the object the model sees and the object
         // the chat keeps must be one (spec §9.10).
         let images = prepare_tool_images(images, self.shared.image_cfg).await;
         // A UI tool block — only for regular executed calls (the internal
         // followup/rewrite ones, and ones skipped during a rewrite, don't get one).
-        if !is_control && !rewrite {
-            self.sink().send(AppEvent::ToolCall {
-                generation_id: self.shared.id,
-                call_id: call.id.clone(),
-                name: call.name.clone(),
-                arguments: call.arguments.clone(),
-                result: result.clone(),
-                images: images.len(),
-            });
+        if !is_control && !rewrite && !announced {
+            self.announce_result(call, &result, images.len());
         }
         self.request.messages.push(
             ApiMessage::tool(&call.id, &result).with_images(
@@ -2028,7 +2189,7 @@ impl TurnLoop<'_> {
         records.push(ToolCallRecord {
             id: call.id.clone(),
             name: call.name.clone(),
-            arguments: args,
+            arguments: Self::call_args(call),
             result: Some(result.clone()),
             // The thought signature (Gemini 3) is persisted — needed on history replay.
             thought_signature: call.thought_signature.clone(),
@@ -2073,8 +2234,7 @@ impl TurnLoop<'_> {
                 loc: self.ctx.loc,
             },
             call,
-            &mut self.shared.allowed_for_turn,
-            &mut self.shared.confirm_rx,
+            &self.shared.confirm,
         )
         .await
         {
@@ -2125,41 +2285,54 @@ impl TurnLoop<'_> {
 }
 
 impl TurnLoop<'_> {
-    /// Runs a sub-agent (spec §9.3.2, docs/research/subagent-chats.md §3.2–§3.4):
-    /// a child loop of the same type over this turn's shared part, with this
-    /// turn's tools minus the withheld ones, this turn's environment, and a
-    /// persona and a single message of its own. Returns the model's result text
-    /// and the run for the record.
-    ///
-    /// The child borrows `self.shared` for the duration of the call — sound,
-    /// because this loop is suspended here until it returns — so everything the
-    /// parent needs afterwards is read into locals first.
+    /// Runs a sub-agent (spec §9.3.2, docs/research/subagent-chats.md
+    /// §3.2–§3.4) — the single-call path, reached only where a
+    /// `call_subagent` meets the loop outside a round's parallel group: a loop
+    /// below the top, which refuses the name whatever the allowed set says.
+    /// A round's own calls go through [`Self::child_spec`] and [`run_child`]
+    /// as a group in [`Self::tool_round`].
     async fn run_subagent(&mut self, args: &serde_json::Value) -> CallResult {
-        let loc = self.ctx.loc;
-        let parsed = match SubagentArgs::parse(args, loc) {
-            Ok(a) => a,
-            Err(err) => {
-                return loc
-                    .tf(
-                        "loop.tool_error",
-                        &[("name", CALL_SUBAGENT_ID), ("err", &err.to_string())],
-                    )
-                    .into();
+        match self.child_spec(args) {
+            Err(refusal) => refusal,
+            Ok(spec) => {
+                let done = run_child(self.shared, self.ctx.loc, spec).await;
+                self.effects.extend(done.effects);
+                done.result
             }
-        };
-        // No nesting, whatever the allowed set says (it never offers the tool
-        // below the top, so this is the second lock on the same door).
-        if self.depth > 0 {
-            return loc
-                .tf("loop.tool_disabled", &[("name", CALL_SUBAGENT_ID)])
-                .into();
         }
-        let started = chrono::Utc::now();
-        let limits = self.shared.subagent;
-        let max_rounds = self.shared.max_rounds;
+    }
 
-        // The turn's tools minus the withheld (research §3.3), in the turn's
-        // order; the schemas follow, so the model never sees what it may not call.
+    /// Whether a call of this round belongs to its parallel group
+    /// (docs/research/parallel-subagents.md §4.1): a `call_subagent` the
+    /// profile offers, at the top of the turn, in a round that is not being
+    /// discarded. Everything else — every other tool, a nested loop's
+    /// refusal, a switched-off tool's refusal — takes the ordinary path.
+    fn is_group_call(&self, call: &ApiToolCall, rewrite: bool) -> bool {
+        call.name == CALL_SUBAGENT_ID && self.depth == 0 && !rewrite && self.allowed_has(&call.name)
+    }
+
+    /// Everything a child needs, built by the parent before the child starts
+    /// (research §3.3): the parsed call; the turn's tools minus the withheld
+    /// ones, in the turn's order, with their schemas; the request over the
+    /// parent's environment under the child's persona and reply cap; a context
+    /// of its own; a cancellation token under the parent's, so `Esc` on the
+    /// turn ends the child while a timeout ends the child alone. `Err` is the
+    /// result to hand the model instead of a run: a malformed call, or a loop
+    /// below the top — no nesting, twice over (research §3.2).
+    fn child_spec(&self, args: &serde_json::Value) -> Result<ChildSpec, CallResult> {
+        let loc = self.ctx.loc;
+        let parsed = SubagentArgs::parse(args, loc).map_err(|err| {
+            CallResult::from(loc.tf(
+                "loop.tool_error",
+                &[("name", CALL_SUBAGENT_ID), ("err", &err.to_string())],
+            ))
+        })?;
+        if self.depth > 0 {
+            return Err(loc
+                .tf("loop.tool_disabled", &[("name", CALL_SUBAGENT_ID)])
+                .into());
+        }
+        let limits = self.shared.subagent;
         let allowed: Vec<ToolId> = self
             .allowed
             .iter()
@@ -2182,7 +2355,7 @@ impl TurnLoop<'_> {
         let mut ctx = self.ctx.clone();
         ctx.system_message = parsed.system_message.clone();
         ctx.effective_sampling = sampling.clone();
-        ctx.last_user_message_at = Some(started);
+        ctx.last_user_message_at = Some(chrono::Utc::now());
         ctx.history = None;
         ctx.cancel = cancel.clone();
         // Which attached files have an index — the attachment block names
@@ -2196,25 +2369,6 @@ impl TurnLoop<'_> {
                 .unwrap_or_default()
         };
         let user = Message::user(parsed.message.clone());
-        // The run's identity, minted before it runs: the list shows the
-        // transcript under this id from the first round on, and the landed
-        // record keeps it (docs/subagent-live.md §3.1).
-        let run_id = Uuid::new_v4();
-        self.progress(TurnProgress::ChildStarted(Box::new(SubagentRun {
-            id: run_id,
-            kind: RunKind::Subagent,
-            title: parsed.initial_title(),
-            renamed_manually: false,
-            name: parsed.name.clone(),
-            created_at: started,
-            finished_at: None,
-            system_message: parsed.system_message.clone(),
-            sampling_override: None,
-            messages: vec![user.clone()],
-            outcome: None,
-            tokens: 0,
-            participants: Vec::new(),
-        })));
         let request = build_request_in(
             &parsed.system_message,
             std::slice::from_ref(&user),
@@ -2236,133 +2390,215 @@ impl TurnLoop<'_> {
                 loc,
             },
         );
-
-        let token_base = self.token_base + self.total_tokens;
-        let mut child = TurnLoop {
-            shared: &mut *self.shared,
-            ctx,
-            request,
-            cancel: cancel.clone(),
+        Ok(ChildSpec {
+            parsed,
+            // The run's identity, minted before it runs: the list shows the
+            // transcript under this id from the first round on, and the
+            // landed record keeps it (docs/subagent-live.md §3.1).
+            run_id: Uuid::new_v4(),
             allowed,
-            messages: Vec::new(),
-            effects: Vec::new(),
-            deleted: Vec::new(),
-            round: 0,
-            workspace_rounds: 0,
-            total_tokens: 0,
-            total_reasoning: 0,
-            last_usage: None,
-            pending_new_bubble: false,
+            request,
+            ctx,
+            cancel,
+            user,
+            limits,
+            max_rounds: self.shared.max_rounds,
             depth: self.depth + 1,
-            live: false,
-            token_base,
-            ended_by_limit: None,
-            persona: Some(parsed.initial_title()),
-            // A sub-agent's run continues nothing — the seed is the turn's.
-            echo_seed: None,
-        };
-        // Boxed: `run` → `tool_round` → `execute_call` → here → `run` is a
-        // recursive async chain, and the compiler needs one indirection in it.
-        let finished = tokio::time::timeout(limits.run_timeout, Box::pin(child.run())).await;
-        let outcome = match finished {
-            Err(_) => {
-                // The run's own token, so the parent's turn goes on.
-                cancel.cancel();
-                RunOutcome::TimedOut
-            }
-            Ok(FinishReason::Cancelled) => RunOutcome::Cancelled,
-            Ok(FinishReason::Error) => RunOutcome::Failed,
-            Ok(_) if child.ended_by_limit.is_some() => RunOutcome::RoundLimit,
-            Ok(_) => RunOutcome::Completed,
-        };
-        // Everything the parent keeps, out of the child before its borrow ends.
-        // Its own discarded drafts (`rewrite_current_message`) are dropped: the
-        // archive's promise is recovering what the *user* lost (research §3.6).
-        let child_messages = std::mem::take(&mut child.messages);
-        let child_effects = std::mem::take(&mut child.effects);
-        let child_tokens = child.total_tokens;
-        let child_reasoning = child.total_reasoning;
-        drop(child);
-        // The chip goes with the run; the parent's turn is still generating.
-        let _ = self.shared.evt_tx.send(AppEvent::SubagentProgress {
-            generation_id: self.shared.id,
-            progress: None,
-        });
+        })
+    }
+}
 
-        // Effects go to the chat they describe (research §3.4): identity to the
-        // run, environment to the parent — which also mirrors an attachment into
-        // this loop's snapshot at the round's end, as for any tool.
-        let finished_at = chrono::Utc::now();
-        self.progress(TurnProgress::ChildEnded {
-            outcome,
-            finished_at,
-            tokens: child_tokens,
+/// What a child needs to run — see [`TurnLoop::child_spec`]. Owns everything
+/// of its own, so several can be built by one parent and run at once.
+struct ChildSpec {
+    parsed: SubagentArgs,
+    run_id: Uuid,
+    allowed: Vec<ToolId>,
+    request: ChatRequest,
+    ctx: ToolContext,
+    cancel: CancellationToken,
+    user: Message,
+    limits: SubagentLimits,
+    max_rounds: u32,
+    depth: u8,
+}
+
+/// What a child leaves for its parent to record: the call's result (the
+/// reply text with its trailer, and the run for the record) and the effects
+/// addressed to the parent's chat (research §3.4).
+struct ChildDone {
+    result: CallResult,
+    effects: Vec<ChatEffect>,
+}
+
+/// Runs one sub-agent over the turn's shared part: a child loop of the same
+/// type as the turn's own, borrowing `shared` immutably and owning nothing of
+/// its parent — which is what lets a round's group run several at once
+/// (docs/research/parallel-subagents.md §4.1, §4.3). Reports the run's start
+/// and end to the orchestrator, assembles the run and the result text.
+async fn run_child(
+    shared: &TurnShared,
+    loc: &'static crate::shared::i18n::Locale,
+    spec: ChildSpec,
+) -> ChildDone {
+    let ChildSpec {
+        parsed,
+        run_id,
+        allowed,
+        request,
+        ctx,
+        cancel,
+        user,
+        limits,
+        max_rounds,
+        depth,
+    } = spec;
+    let started = chrono::Utc::now();
+    let progress = |progress: TurnProgress| {
+        let _ = shared.done_tx.send(GenMessage::Progress {
+            id: shared.id,
+            progress,
         });
-        let mut run = SubagentRun {
-            id: run_id,
-            kind: RunKind::Subagent,
-            title: parsed.initial_title(),
-            renamed_manually: false,
-            name: parsed.name.clone(),
-            created_at: started,
-            finished_at: Some(finished_at),
-            system_message: parsed.system_message.clone(),
-            sampling_override: None,
-            messages: std::iter::once(user).chain(child_messages).collect(),
-            outcome: Some(outcome),
-            tokens: child_tokens,
-            participants: Vec::new(),
-        };
-        for effect in child_effects {
-            match effect {
-                ChatEffect::SetSystemMessage(s) => run.system_message = s,
-                ChatEffect::SetSamplingOverride(s) => run.sampling_override = Some(*s),
-                a @ ChatEffect::AddAttachment(_) => self.effects.push(a),
-            }
+    };
+    progress(TurnProgress::ChildStarted(Box::new(SubagentRun {
+        id: run_id,
+        kind: RunKind::Subagent,
+        title: parsed.initial_title(),
+        renamed_manually: false,
+        name: parsed.name.clone(),
+        created_at: started,
+        finished_at: None,
+        system_message: parsed.system_message.clone(),
+        sampling_override: None,
+        messages: vec![user.clone()],
+        outcome: None,
+        tokens: 0,
+        participants: Vec::new(),
+    })));
+
+    let mut child = TurnLoop {
+        shared,
+        ctx,
+        request,
+        cancel: cancel.clone(),
+        allowed,
+        messages: Vec::new(),
+        effects: Vec::new(),
+        deleted: Vec::new(),
+        round: 0,
+        workspace_rounds: 0,
+        total_tokens: 0,
+        total_reasoning: 0,
+        last_usage: None,
+        pending_new_bubble: false,
+        depth,
+        run_id: Some(run_id),
+        ended_by_limit: None,
+        persona: Some(parsed.initial_title()),
+        // A sub-agent's run continues nothing — the seed is the turn's.
+        echo_seed: None,
+    };
+    // Boxed: `run` → `tool_round` → here → `run` is a recursive async chain,
+    // and the compiler needs one indirection in it.
+    let finished = tokio::time::timeout(limits.run_timeout, Box::pin(child.run())).await;
+    let outcome = match finished {
+        Err(_) => {
+            // The run's own token, so the parent's turn goes on.
+            cancel.cancel();
+            RunOutcome::TimedOut
         }
-        self.total_tokens += child_tokens;
-        self.total_reasoning += child_reasoning;
+        Ok(FinishReason::Cancelled) => RunOutcome::Cancelled,
+        Ok(FinishReason::Error) => RunOutcome::Failed,
+        Ok(_) if child.ended_by_limit.is_some() => RunOutcome::RoundLimit,
+        Ok(_) => RunOutcome::Completed,
+    };
+    // Everything the parent keeps, out of the child. Its own discarded drafts
+    // (`rewrite_current_message`) are dropped: the archive's promise is
+    // recovering what the *user* lost (research §3.6).
+    let child_messages = std::mem::take(&mut child.messages);
+    let child_effects = std::mem::take(&mut child.effects);
+    let child_tokens = child.total_tokens;
+    drop(child);
+    // The chip goes with the run; the parent's turn is still generating.
+    let _ = shared.evt_tx.send(AppEvent::SubagentProgress {
+        generation_id: shared.id,
+        run: run_id,
+        progress: None,
+    });
+    let finished_at = chrono::Utc::now();
+    progress(TurnProgress::ChildEnded {
+        run: run_id,
+        outcome,
+        finished_at,
+        tokens: child_tokens,
+    });
+    let mut run = SubagentRun {
+        id: run_id,
+        kind: RunKind::Subagent,
+        title: parsed.initial_title(),
+        renamed_manually: false,
+        name: parsed.name.clone(),
+        created_at: started,
+        finished_at: Some(finished_at),
+        system_message: parsed.system_message.clone(),
+        sampling_override: None,
+        messages: std::iter::once(user).chain(child_messages).collect(),
+        outcome: Some(outcome),
+        tokens: child_tokens,
+        participants: Vec::new(),
+    };
+    // Effects go to the chat they describe (research §3.4): identity to the
+    // run, environment to the parent — which mirrors an attachment into its
+    // own snapshot at the round's end, as for any tool.
+    let mut effects = Vec::new();
+    for effect in child_effects {
+        match effect {
+            ChatEffect::SetSystemMessage(s) => run.system_message = s,
+            ChatEffect::SetSamplingOverride(s) => run.sampling_override = Some(*s),
+            a @ ChatEffect::AddAttachment(_) => effects.push(a),
+        }
+    }
 
-        // The model's result: the final reply and one line naming the transcript —
-        // and, when the run did not complete, why (docs/lessons.md §4: a result
-        // that says only "cannot" costs the next three turns).
-        let address = crate::features::chat_links::uri(run.id);
-        let body = run
-            .final_reply()
-            .map(str::to_string)
-            .unwrap_or_else(|| loc.t("tool.call_subagent.result.empty").to_string());
-        let status = match outcome {
-            RunOutcome::Completed => loc.tf(
-                "tool.call_subagent.result.transcript",
-                &[("address", &address)],
-            ),
-            RunOutcome::Cancelled => loc.tf(
-                "tool.call_subagent.result.cancelled",
-                &[("address", &address)],
-            ),
-            RunOutcome::TimedOut => loc.tf(
-                "tool.call_subagent.result.timeout",
-                &[
-                    ("address", &address),
-                    ("secs", &limits.run_timeout.as_secs().to_string()),
-                ],
-            ),
-            RunOutcome::Failed => {
-                loc.tf("tool.call_subagent.result.failed", &[("address", &address)])
-            }
-            RunOutcome::RoundLimit => loc.tf(
-                "tool.call_subagent.result.round_limit",
-                &[
-                    ("address", &address),
-                    ("max_rounds", &max_rounds.to_string()),
-                ],
-            ),
-        };
-        CallResult {
+    // The model's result: the final reply and one line naming the transcript —
+    // and, when the run did not complete, why (docs/lessons.md §4: a result
+    // that says only "cannot" costs the next three turns).
+    let address = crate::features::chat_links::uri(run.id);
+    let body = run
+        .final_reply()
+        .map(str::to_string)
+        .unwrap_or_else(|| loc.t("tool.call_subagent.result.empty").to_string());
+    let status = match outcome {
+        RunOutcome::Completed => loc.tf(
+            "tool.call_subagent.result.transcript",
+            &[("address", &address)],
+        ),
+        RunOutcome::Cancelled => loc.tf(
+            "tool.call_subagent.result.cancelled",
+            &[("address", &address)],
+        ),
+        RunOutcome::TimedOut => loc.tf(
+            "tool.call_subagent.result.timeout",
+            &[
+                ("address", &address),
+                ("secs", &limits.run_timeout.as_secs().to_string()),
+            ],
+        ),
+        RunOutcome::Failed => loc.tf("tool.call_subagent.result.failed", &[("address", &address)]),
+        RunOutcome::RoundLimit => loc.tf(
+            "tool.call_subagent.result.round_limit",
+            &[
+                ("address", &address),
+                ("max_rounds", &max_rounds.to_string()),
+            ],
+        ),
+    };
+    ChildDone {
+        result: CallResult {
             text: format!("{body}\n\n{status}"),
             images: Vec::new(),
             subagent: Some(Box::new(run)),
-        }
+        },
+        effects,
     }
 }
 
@@ -2387,6 +2623,8 @@ enum DialogueEnd {
 /// timeout keeps the partial transcript (the future is dropped, the state
 /// survives — the same shape `run_subagent` gets from its child loop).
 struct DialogueState {
+    /// The run's id — what its progress steps and chip are keyed by.
+    run_id: Uuid,
     /// The run's title — the status-bar chip names the scene by it.
     title: String,
     /// The role-encoded transcript (research §3.5): participant `a` is
@@ -2561,8 +2799,9 @@ impl TurnLoop<'_> {
             participants: participants.clone(),
         })));
 
-        let run_base = self.token_base + self.total_tokens;
+        let run = run_id;
         let mut st = DialogueState {
+            run_id,
             title: parsed.initial_title(loc),
             transcript: vec![opening],
             notes_a: Vec::new(),
@@ -2586,7 +2825,7 @@ impl TurnLoop<'_> {
                 &sampling,
                 &muted,
                 &cancel,
-                run_base,
+                run,
             )),
         )
         .await;
@@ -2608,16 +2847,16 @@ impl TurnLoop<'_> {
         // The chip goes with the run; the parent's turn is still generating.
         let _ = self.shared.evt_tx.send(AppEvent::SubagentProgress {
             generation_id: self.shared.id,
+            run: run_id,
             progress: None,
         });
         let finished_at = chrono::Utc::now();
         self.progress(TurnProgress::ChildEnded {
+            run: run_id,
             outcome,
             finished_at,
             tokens: st.tokens,
         });
-        self.total_tokens += st.tokens;
-        self.total_reasoning += st.reasoning;
         let run = SubagentRun {
             id: run_id,
             kind: RunKind::Dialogue,
@@ -2700,7 +2939,7 @@ impl TurnLoop<'_> {
         sampling: &SamplingConfig,
         muted: &SamplingConfig,
         cancel: &CancellationToken,
-        run_base: u64,
+        run: Uuid,
     ) -> DialogueEnd {
         use crate::features::tools::dialogue;
         loop {
@@ -2720,7 +2959,7 @@ impl TurnLoop<'_> {
                         sampling,
                         muted,
                         cancel,
-                        run_base,
+                        run,
                     )
                     .await
                 {
@@ -2735,14 +2974,17 @@ impl TurnLoop<'_> {
                 dialogue::next_speaker_a(&st.transcript).unwrap_or(!parsed.opening_by_a);
             let line = match self
                 .dialogue_line(
-                    st, parsed, labels, speaker_a, None, sampling, muted, cancel, run_base,
+                    st, parsed, labels, speaker_a, None, sampling, muted, cancel, run,
                 )
                 .await
             {
                 Ok(line) => line,
                 Err(end) => return end,
             };
-            self.progress(TurnProgress::ChildRoundFiled(vec![line.clone()]));
+            self.progress(TurnProgress::ChildRoundFiled {
+                run: st.run_id,
+                messages: vec![line.clone()],
+            });
             st.transcript.push(line);
             st.generated += 1;
         }
@@ -2762,7 +3004,7 @@ impl TurnLoop<'_> {
         sampling: &SamplingConfig,
         muted: &SamplingConfig,
         cancel: &CancellationToken,
-        run_base: u64,
+        run: Uuid,
     ) -> Result<Message, DialogueEnd> {
         use crate::features::tools::dialogue;
         let loc = self.ctx.loc;
@@ -2795,14 +3037,18 @@ impl TurnLoop<'_> {
         } else {
             MessageRole::User
         };
-        self.progress(TurnProgress::ChildLineStarted { role });
+        self.progress(TurnProgress::ChildLineStarted {
+            run: st.run_id,
+            role,
+        });
         self.dialogue_chip(
+            st.run_id,
             &st.title,
             (st.generated + 1) as u32,
             crate::app::events::RunProgressKind::DialogueLine,
         );
         let mut out = self
-            .dialogue_stream(request(sampling.clone()), cancel, st, run_base, true)
+            .dialogue_stream(request(sampling.clone()), cancel, st, run, true)
             .await;
         match out.reason {
             FinishReason::Cancelled => return Err(DialogueEnd::Cancelled),
@@ -2818,9 +3064,12 @@ impl TurnLoop<'_> {
             // muted; a second empty reply fails the run honestly. The re-ask
             // is the same line starting over: the open transcript's partial
             // resets with it.
-            self.progress(TurnProgress::ChildLineStarted { role });
+            self.progress(TurnProgress::ChildLineStarted {
+                run: st.run_id,
+                role,
+            });
             out = self
-                .dialogue_stream(request(muted.clone()), cancel, st, run_base, true)
+                .dialogue_stream(request(muted.clone()), cancel, st, run, true)
                 .await;
             match out.reason {
                 FinishReason::Cancelled => return Err(DialogueEnd::Cancelled),
@@ -2871,7 +3120,7 @@ impl TurnLoop<'_> {
         sampling: &SamplingConfig,
         muted: &SamplingConfig,
         cancel: &CancellationToken,
-        run_base: u64,
+        run: Uuid,
     ) -> Result<Option<(String, Option<String>)>, DialogueEnd> {
         use crate::features::tools::dialogue::{self, Verdict};
         let loc = self.ctx.loc;
@@ -2885,13 +3134,12 @@ impl TurnLoop<'_> {
             ..Default::default()
         };
         self.dialogue_chip(
+            st.run_id,
             &st.title,
             st.generated as u32,
             crate::app::events::RunProgressKind::DialogueDirector,
         );
-        let out = self
-            .dialogue_stream(request, cancel, st, run_base, false)
-            .await;
+        let out = self.dialogue_stream(request, cancel, st, run, false).await;
         match out.reason {
             FinishReason::Cancelled => return Err(DialogueEnd::Cancelled),
             FinishReason::Error => {
@@ -2935,7 +3183,7 @@ impl TurnLoop<'_> {
                         sampling,
                         muted,
                         cancel,
-                        run_base,
+                        run,
                     )
                     .await?;
                 }
@@ -3037,7 +3285,7 @@ impl TurnLoop<'_> {
         sampling: &SamplingConfig,
         muted: &SamplingConfig,
         cancel: &CancellationToken,
-        run_base: u64,
+        run: Uuid,
     ) -> Result<(), DialogueEnd> {
         let loc = self.ctx.loc;
         // Only a generated line can be retried, and the retry's regeneration
@@ -3067,13 +3315,19 @@ impl TurnLoop<'_> {
         };
         st.transcript.push(Message::new(MessageRole::System, line));
         st.rendered = st.transcript.len();
-        self.progress(TurnProgress::ChildTranscript(st.transcript.clone()));
+        self.progress(TurnProgress::ChildTranscript {
+            run: st.run_id,
+            messages: st.transcript.clone(),
+        });
         let line = self
             .dialogue_line(
-                st, parsed, labels, speaker_a, note, sampling, muted, cancel, run_base,
+                st, parsed, labels, speaker_a, note, sampling, muted, cancel, run,
             )
             .await?;
-        self.progress(TurnProgress::ChildRoundFiled(vec![line.clone()]));
+        self.progress(TurnProgress::ChildRoundFiled {
+            run: st.run_id,
+            messages: vec![line.clone()],
+        });
         st.transcript.push(line);
         st.generated += 1;
         Ok(())
@@ -3104,14 +3358,20 @@ impl TurnLoop<'_> {
         st.transcript[last].thoughts = None;
         st.transcript.push(Message::new(MessageRole::System, line));
         st.rendered = st.transcript.len();
-        self.progress(TurnProgress::ChildTranscript(st.transcript.clone()));
+        self.progress(TurnProgress::ChildTranscript {
+            run: st.run_id,
+            messages: st.transcript.clone(),
+        });
     }
 
     /// Files one director intervention as a `System` entry of the transcript
     /// (rendered as a note row, research §3.4) and mirrors it live.
     fn dialogue_intervention(&mut self, st: &mut DialogueState, text: String) {
         let m = Message::new(MessageRole::System, text);
-        self.progress(TurnProgress::ChildRoundFiled(vec![m.clone()]));
+        self.progress(TurnProgress::ChildRoundFiled {
+            run: st.run_id,
+            messages: vec![m.clone()],
+        });
         st.transcript.push(m);
         // The director already knows what it did — its own tool-call turn
         // carries it — so interventions are not re-rendered into the script.
@@ -3127,14 +3387,14 @@ impl TurnLoop<'_> {
         request: ChatRequest,
         cancel: &CancellationToken,
         st: &mut DialogueState,
-        run_base: u64,
+        run: Uuid,
         steps: bool,
     ) -> RoundOutput {
         let sink = RoundSink {
             evt_tx: &self.shared.evt_tx,
             done_tx: &self.shared.done_tx,
             turn: self.shared.id,
-            child: Some(run_base),
+            child: Some(run),
             mute_steps: !steps,
         };
         let out = stream_round(
@@ -3143,8 +3403,9 @@ impl TurnLoop<'_> {
             cancel,
             self.shared.id,
             &sink,
-            run_base + st.tokens,
-            self.total_reasoning + st.reasoning,
+            &self.shared.counters,
+            st.tokens,
+            st.reasoning,
             self.shared.ui_loc,
             self.shared.compaction_enabled,
             false,
@@ -3321,8 +3582,9 @@ async fn stream_round(
     cancel: &CancellationToken,
     id: Uuid,
     sink: &RoundSink<'_>,
-    base_tokens: u64,
-    base_reasoning: u32,
+    counters: &TurnCounters,
+    own_base_tokens: u64,
+    own_base_reasoning: u32,
     ui_loc: &'static crate::shared::i18n::Locale,
     compaction_enabled: bool,
     continuation_supported: bool,
@@ -3346,13 +3608,18 @@ async fn stream_round(
 
     // The reply counter: `context: None` leaves the prior conversation estimate
     // untouched (emitted by start_generation); the exact `context` only comes from the server's usage.
-    let emit_completion = |completion: u64| {
-        sink.send(AppEvent::TokenUsage {
-            generation_id: id,
-            completion,
+    // Each delta is counted into the turn's total as it arrives; the exact
+    // `usage` corrects the total at the end (see the `Usage` arm).
+    let emit_completion = |streamed: u64| {
+        use std::sync::atomic::Ordering::Relaxed;
+        counters.tokens.fetch_add(1, Relaxed);
+        sink.tokens(TokenReport {
+            turn_completion: counters.tokens.load(Relaxed),
+            own_completion: own_base_tokens + streamed,
+            turn_reasoning: None,
+            own_reasoning: None,
             context: None,
             context_exact: false,
-            reasoning: None,
         });
     };
 
@@ -3366,7 +3633,7 @@ async fn stream_round(
                         // in the seed message (research §4d).
                         let visible = strip_echo(echo.as_mut(), t);
                         streamed += 1;
-                        emit_completion(base_tokens + streamed);
+                        emit_completion(streamed);
                         relay_text(visible, &mut text, sink, id);
                     }
                     ChatChunk::Thoughts(t) => {
@@ -3376,7 +3643,7 @@ async fn stream_round(
                             generation_id: id,
                             text: t,
                         });
-                        emit_completion(base_tokens + streamed);
+                        emit_completion(streamed);
                     }
                     // A reference to the reasoning (Anthropic signature / OpenAI
                     // reasoning item) — not shown in the UI, accumulated for resending
@@ -3395,15 +3662,27 @@ async fn stream_round(
                         // conversation (prompt) — replaces the delta-based approximation
                         // and the conversation estimate. Reasoning tokens ("thoughts") —
                         // cumulative across rounds (base + current).
-                        usage_tokens = Some(u.completion_tokens as u64);
+                        use std::sync::atomic::Ordering::Relaxed;
+                        let exact = u.completion_tokens as u64;
+                        usage_tokens = Some(exact);
                         usage_prompt = Some(u.prompt_tokens);
                         round_reasoning = u.reasoning_tokens;
-                        sink.send(AppEvent::TokenUsage {
-                            generation_id: id,
-                            completion: base_tokens + u.completion_tokens as u64,
+                        // Correct the turn's total from the delta count to the
+                        // server's figure — the two differ by whatever a delta
+                        // carried that was not exactly one token.
+                        if exact >= streamed {
+                            counters.tokens.fetch_add(exact - streamed, Relaxed);
+                        } else {
+                            counters.tokens.fetch_sub(streamed - exact, Relaxed);
+                        }
+                        counters.reasoning.fetch_add(u.reasoning_tokens, Relaxed);
+                        sink.tokens(TokenReport {
+                            turn_completion: counters.tokens.load(Relaxed),
+                            own_completion: own_base_tokens + exact,
+                            turn_reasoning: Some(counters.reasoning.load(Relaxed)),
+                            own_reasoning: Some(own_base_reasoning + u.reasoning_tokens),
                             context: Some(u.prompt_tokens as u64),
                             context_exact: true,
-                            reasoning: Some(base_reasoning + u.reasoning_tokens),
                         });
                     }
                     // The engine is waiting before another attempt (spec §6.8). Not

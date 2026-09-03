@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (40)
+## Entries (41)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -52,6 +52,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the Python package pinned exactly — a selector is a range (done)
 - Post-M9: the language-model history, seeded from the chats that predate it (done)
 - Post-M9: the web tools become opt-in, and the one download outside the lock list (done)
+- Post-M9: parallel sub-agents — stage 2, the round's parallel group (track complete)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -3059,3 +3060,69 @@ the tag `probe/code-search-stage5`.
   which exists because a pin that has drifted turns every `sandbox setup` into a
   refusal, a worse failure than the one it guards. 2743 unit tests green,
   129 `#[ignore]`.
+
+
+### Post-M9: parallel sub-agents — stage 2, the round's parallel group (track complete)
+- **What**: the second half of
+  [docs/research/parallel-subagents.md](../research/parallel-subagents.md)
+  (forks F1–F10 at their recommended options; ADR 0010 amended). The model's
+  several `call_subagent` calls in one reply run **at once**. `tool_round`
+  now has three phases: the ordinary calls resolve in the model's order
+  (`resolve_call`), the round's sub-agent calls (`is_group_call`: offered,
+  depth 0, not a rewrite) become a `ChildSpec` each (`child_spec`) and run
+  through `buffer_unordered(tools.subagent_parallel)` over `run_child` — a
+  free function over `&TurnShared` owning nothing of the parent — with each
+  card closing as its run lands, and `record_call` writes the tool messages
+  and records in the model's order afterwards. `TurnShared` is borrowed
+  immutably by every loop: the confirmation reply receiver and the
+  "approved for this turn" set moved behind one `tokio::sync::Mutex`
+  (`ConfirmState`) held for the whole ask-and-wait, so two runs reaching a
+  dangerous call ask one popup at a time; the token totals moved to
+  `TurnCounters` atomics every loop adds to (`stream_round` corrects the
+  delta count to the server's `usage` at the round's end), and `RoundSink`
+  reports the turn's total to the bar and the loop's own count as
+  `ChildTokens`. Every `TurnProgress::Child*` step names its run; the
+  orchestrator's mirror is `children: Vec<InflightChild>` (run, stream,
+  partial, line role) keyed by id, `forward_child(run, …)` forwards a step
+  only to that run's open transcript, `switch_within_turn` covers the parent
+  and every running child, the list marks every running row, and a title
+  given to any running transcript is carried onto its landed run. The chip
+  (`AppEvent::SubagentProgress { run, .. }`) is a set on the screen: one
+  line, or *"N sub-agents · latest"*. `CallSubagent { parallel }` — the
+  registry is rebuilt on every settings edit — appends the measured
+  sentence to its description above 1, with the number. The settings row
+  `TSubParallel` ("Subagent: parallel runs") joins the Agentic loop group.
+  `run_dialogue` stays outside the group (ADR 0011).
+- **Key decisions.** Futures in the generation task rather than spawned
+  tasks: the children borrow `&TurnShared` and need no `'static`, the
+  turn's cancellation token reaches them unchanged, and `buffer_unordered`
+  is both the width and the completion order. The ordinary calls run before
+  the group, not among it: a sub-agent clones its context when it starts
+  and the round's attachment effects are mirrored once at the round's end,
+  so nothing a sibling tool did in the same round was ever visible to a
+  child. `is_group_call` keeps a nested loop's `call_subagent` on the
+  ordinary path, where the depth check still refuses it — two locks on the
+  same door, as before. A session permit is per stream, so with fewer
+  sessions than runs the children interleave round by round (fork F3);
+  the RAM prompt cache made that free on both gate models (research §3.5).
+- **Live run — GO on Qwen 3.6 27B** (`Qwen3.6-27B-Q4_K_M`, llama.cpp
+  b10791, `-np 4 --kv-unified -c 16384`, `subagent_parallel = 2`, two
+  sessions): `parallel_subagents_e2e_live` — the parent delegated both
+  files in one reply, the two runs started **1 ms apart** and overlapped
+  (the second finished before the first), each used `fs_read`, both
+  planted codes in the parent's reply. `subagent_with_tools_e2e_live` and
+  `dialogue_e2e_live` — the two loop-executed tools the refactor touched —
+  GO on the same stack. Gemma 4 31B had run the full e2e set on stage 1's
+  code the same day; stage 2 changes the loop's shape at the default too
+  (the group of one), so the set is due there again before the next release.
+- **Tests**: 2769 green (+10: a persona-keyed, stream-counting engine in
+  `tests/parallel.rs` — the scripted recorder plays by call order, which two
+  concurrent children make nondeterministic — pins two siblings streaming
+  at once and landing in the model's order with both cards open before
+  either closes and the tool results in call order on the next request;
+  `subagent_parallel = 1` running them one after the other; two alive on
+  one session with one stream open at a time; one sibling's timeout landing
+  `TimedOut` while the other completes; the mirror forwarding two running
+  transcripts apart and every parent↔child switch staying inside the turn;
+  the chip counting runs and naming the latest; the description carrying
+  the number only above 1; the settings row's three), 132 `#[ignore]` (+1).

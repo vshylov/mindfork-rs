@@ -200,8 +200,9 @@ pub(super) fn apply_event(
         } => screen.set_retrying(generation_id, attempt, max, delay_secs),
         AppEvent::SubagentProgress {
             generation_id,
+            run,
             progress,
-        } => screen.set_subagent_progress(generation_id, progress),
+        } => screen.set_subagent_progress(generation_id, run, progress),
         AppEvent::Error(message) => screen.push_error(&message),
         AppEvent::Notice(message) => screen.push_note(&message),
         // A roll can finish for a chat the user has since switched away from.

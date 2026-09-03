@@ -489,12 +489,17 @@ impl ChatScreen {
     pub fn set_subagent_progress(
         &mut self,
         generation_id: Uuid,
+        run: Uuid,
         progress: Option<crate::app::events::SubagentProgress>,
     ) {
         if self.current_gen != Some(generation_id) && self.live_turn != Some(generation_id) {
             return;
         }
-        self.subagent = progress.map(|p| {
+        // One line per running run, keyed by its id: a report replaces the
+        // run's line (and moves it last — the chip names the latest), its
+        // `None` removes it. Several runs at once are the parallel group.
+        self.subagents.retain(|(id, _)| *id != run);
+        let Some(label) = progress.map(|p| {
             use crate::app::events::RunProgressKind;
             let round = p.round.to_string();
             match p.kind {
@@ -516,7 +521,10 @@ impl ChatScreen {
                     ),
                 },
             }
-        });
+        }) else {
+            return;
+        };
+        self.subagents.push((run, label));
     }
 
     pub fn push_chunk(&mut self, generation_id: Uuid, text: &str) {
@@ -591,7 +599,7 @@ impl ChatScreen {
         // feed is not the turn's (docs/subagent-live.md §3.4).
         if self.live_turn == Some(generation_id) && self.current_gen.is_none() {
             self.live_turn = None;
-            self.subagent = None;
+            self.subagents.clear();
             return;
         }
         if self.current_gen != Some(generation_id) {
@@ -613,7 +621,7 @@ impl ChatScreen {
         self.generating = false;
         self.current_gen = None;
         self.clear_retrying();
-        self.subagent = None;
+        self.subagents.clear();
         // The interruption notes name `/continue` only when it would actually
         // work (`continuable` — fork F9); `Length` gets a note at all only
         // since the command existed to make one actionable (spec §6.4). A

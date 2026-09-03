@@ -603,6 +603,9 @@ enum FieldId {
     McpMaxResult,
     TSubMaxTokens,
     TSubTimeout,
+    /// How many of one reply's sub-agents run at once
+    /// (`tools.subagent_parallel`, spec §9.3.2); 1 keeps them sequential.
+    TSubParallel,
     /// The whole-run time limit of a dialogue (`tools.dialogue_run_timeout_secs`,
     /// spec §9.13).
     TDialogueTimeout,

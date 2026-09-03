@@ -103,3 +103,34 @@ that.
 - Stage 1 shows nothing of a running child but the counter; the list, the
   read-only screen, search and titles follow in the track's later PRs, the
   live view after a live run argues for it.
+
+## Amendment (2026-09-04) — the parallel group over the shared part
+
+Decision 2 above lent `TurnShared` to the child **mutably**, sound because
+the parent was suspended for the duration. The parallel-subagent track
+([docs/research/parallel-subagents.md](../research/parallel-subagents.md),
+forks F1–F10 at their recommended options, user's decision 2026-09-03)
+replaces that rule:
+
+1. **`TurnShared` is borrowed immutably by every loop of the turn.** Its
+   two mutable parts — the confirmation reply receiver and the "approved for
+   this turn" set — sit behind one `tokio::sync::Mutex` held for the whole
+   ask-and-wait, which is what makes the popup one question at a time; the
+   turn's token totals are atomics every loop adds to.
+2. **A round's `call_subagent` calls form its parallel group.** The
+   ordinary calls resolve first, in the model's order; the group runs as
+   futures inside the generation task (`buffer_unordered`, at most
+   `tools.subagent_parallel` at once — default 1, the sequential behaviour
+   of decision 1); each child is `run_child` over `&TurnShared` and a
+   `ChildSpec` the parent built, owning nothing of the parent; the records
+   and tool messages are written in the model's order afterwards. Each
+   child's stream takes a permit of the engine's `sessions` semaphore for
+   the stream alone.
+3. **Every progress step names its run.** The orchestrator's mirror holds
+   `children: Vec<InflightChild>` keyed by run id; the chip is a set.
+4. Not in the group: `run_dialogue` (ADR 0011's one-request contract, run at
+   its position), nested loops (a loop below the top still refuses the
+   name), and ordinary tools — a per-tool concurrency mark is a track of its
+   own.
+
+Decisions 3–6 stand unchanged.

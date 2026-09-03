@@ -101,7 +101,15 @@ impl SubagentArgs {
 }
 
 /// `call_subagent` — see the module doc.
-pub struct CallSubagent;
+pub struct CallSubagent {
+    /// `tools.subagent_parallel`: how many of one reply's sub-agents run at
+    /// once. Above 1 the description tells the model so, with the number
+    /// (docs/research/parallel-subagents.md §4.6, fork F5 — measured to
+    /// move a small model from three two-call replies in five to five); at 1
+    /// the description is byte-identical to what it was. The registry is
+    /// rebuilt on every settings edit, so the number is never stale.
+    pub parallel: u32,
+}
 
 #[async_trait::async_trait]
 impl Tool for CallSubagent {
@@ -115,7 +123,18 @@ impl Tool for CallSubagent {
         "subagent request"
     }
     fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
-        loc.t("tool.call_subagent.desc").into()
+        let base = loc.t("tool.call_subagent.desc");
+        if self.parallel > 1 {
+            format!(
+                "{base} {}",
+                loc.tf(
+                    "tool.call_subagent.desc.parallel",
+                    &[("n", &self.parallel.to_string())]
+                )
+            )
+        } else {
+            base.into()
+        }
     }
     fn parameters(&self, loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({
@@ -204,7 +223,7 @@ mod tests {
     #[tokio::test]
     async fn invoke_outside_the_loop_refuses_without_running() {
         let (_dir, _storage, ctx) = super::super::testkit::ctx_with_storage(uuid::Uuid::new_v4());
-        let out = CallSubagent
+        let out = CallSubagent { parallel: 1 }
             .invoke(
                 &ctx,
                 serde_json::json!({"system_message": "x", "message": "y"}),
@@ -214,7 +233,7 @@ mod tests {
         assert_eq!(out.result, ctx.loc.t("tool.call_subagent.result.loop_only"));
         assert!(out.effects.is_empty());
         assert!(
-            CallSubagent
+            CallSubagent { parallel: 1 }
                 .invoke(
                     &ctx,
                     serde_json::json!({"system_message": "x", "message": " "})
@@ -222,5 +241,22 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+    /// The description carries the parallel contract only above one, with
+    /// the number (docs/research/parallel-subagents.md fork F5): at one it
+    /// is byte-identical to the base text, in both languages.
+    #[test]
+    fn the_description_names_parallel_delegation_only_above_one() {
+        let base = CallSubagent { parallel: 1 }.description(en());
+        assert_eq!(base, en().t("tool.call_subagent.desc"));
+        let three = CallSubagent { parallel: 3 }.description(en());
+        assert!(three.starts_with(&base) && three.contains('3'), "{three}");
+        assert!(three.len() > base.len());
+        let ru = locale(Lang::Ru);
+        assert_eq!(
+            CallSubagent { parallel: 1 }.description(ru),
+            ru.t("tool.call_subagent.desc")
+        );
+        assert!(CallSubagent { parallel: 2 }.description(ru).contains('2'));
     }
 }

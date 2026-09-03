@@ -94,20 +94,28 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   7.4k prompt — so the counter must sum it with the cache fields.
 
 ## Tools
-- **Parallel sub-agents** — researched, all forks decided at their
-  recommended options (2026-09-03), **stage 1 done** (`feat/parallel-sessions`:
-  `sessions` per engine section, the turn's session semaphore, `-np N
-  --kv-unified` above one, the `parallel_slots` hint). **Stage 2 is next**:
-  the sibling `call_subagent` calls of one round actually running at once
-  under `tools.subagent_parallel` (the config field exists; its settings row
-  and the loop's parallel group land with the behaviour) — `TurnShared`
-  borrowed immutably, the confirmation round trip behind one lock, the
-  in-flight mirror keyed by run id, the description sentence. Measured on the
-  LAN stack (`-np 4`): four streams 2.8× faster than four in a row, a surplus
-  of requests queued rather than refused, the RAM prompt cache surviving an
-  interleave on one slot, and two-call replies from Gemma 4 E2B and all four
-  clouds. Design, forks, test plan:
-  [docs/research/parallel-subagents.md](research/parallel-subagents.md).
+- **Parallel sub-agents — groundwork** (the track itself is **done**, both
+  stages, 2026-09-04: `sessions` per engine section and the session
+  semaphore, `-np N --kv-unified`, the `parallel_slots` hint; the round's
+  parallel group under `tools.subagent_parallel`, `TurnShared` immutable
+  with the confirmation lock, the mirror keyed by run id, the description
+  with the number — [docs/research/parallel-subagents.md](research/parallel-subagents.md),
+  ADR 0010 amended). What the research left for later (its §8):
+  - **background sub-agents** — a child that outlives its round, the parent
+    notified in a later round (Claude Code's background agents): a
+    "task notification" round shape and a place for a result that arrives
+    after the turn ends;
+  - **concurrent ordinary tools** — a `Tool::concurrent()` mark for
+    read-only tools and a group per round like the sub-agents';
+  - **admission by budget** for the unified KV pool — a child's round waits
+    for a session while the in-flight prompt sizes plus the caps would
+    exceed `context_budget`; today an overfilled pool fails the round with
+    the server's message;
+  - **the Gemma stack's slow prefill** (~50 tok/s on b10791 with the
+    projector, against ~2200 tok/s for Qwen on the same line) — the Gemma
+    line without `-mm` and one cold request would tell whether it is the
+    projector or the model's path; not this track's, but it made the e2e
+    set take 72 minutes.
 - **MCP host — groundwork** (core is **done**: spec §9.6,
   [ADR 0007](decisions/0007-plugins-mcp-host-import-format.md); double opt-in,
   TOFU pinning, statuses/descriptions in settings, and the **server editor**

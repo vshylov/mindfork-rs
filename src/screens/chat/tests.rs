@@ -2734,6 +2734,7 @@ fn a_running_transcript_grows_by_rounds_and_keeps_the_chip_but_not_the_stream() 
 
     s.set_subagent_progress(
         generation,
+        Uuid::new_v4(),
         Some(SubagentProgress {
             kind: crate::app::events::RunProgressKind::Subagent,
             name: "Критик".into(),
@@ -2883,6 +2884,7 @@ fn the_dialogue_chip_names_the_line_and_the_director() {
     s.begin_generation(generation, None);
     s.set_subagent_progress(
         generation,
+        Uuid::new_v4(),
         Some(SubagentProgress {
             name: "Mara ↔ Jonas".into(),
             round: 3,
@@ -2897,6 +2899,7 @@ fn the_dialogue_chip_names_the_line_and_the_director() {
     );
     s.set_subagent_progress(
         generation,
+        Uuid::new_v4(),
         Some(SubagentProgress {
             name: "Mara ↔ Jonas".into(),
             round: 3,
@@ -2987,6 +2990,7 @@ fn the_subagent_chip_follows_the_run_and_cannot_outlive_the_turn() {
     use crate::app::events::SubagentProgress;
     let mut s = ChatScreen::new();
     let gen_id = Uuid::new_v4();
+    let run = Uuid::new_v4();
     s.begin_generation(gen_id, None);
     let at = |round: u32, tool: Option<&str>| {
         Some(SubagentProgress {
@@ -2997,10 +3001,10 @@ fn the_subagent_chip_follows_the_run_and_cannot_outlive_the_turn() {
         })
     };
 
-    s.set_subagent_progress(gen_id, at(1, None));
+    s.set_subagent_progress(gen_id, run, at(1, None));
     let hint = s.background_hint().expect("the chip must be shown");
     assert!(hint.contains("Критик") && hint.contains('1'), "{hint}");
-    s.set_subagent_progress(gen_id, at(2, Some("web_search")));
+    s.set_subagent_progress(gen_id, run, at(2, Some("web_search")));
     let hint = s.background_hint().unwrap();
     assert!(hint.contains("web_search") && hint.contains('2'), "{hint}");
 
@@ -3012,17 +3016,17 @@ fn the_subagent_chip_follows_the_run_and_cannot_outlive_the_turn() {
     );
 
     // The run ended; the turn goes on.
-    s.set_subagent_progress(gen_id, None);
+    s.set_subagent_progress(gen_id, run, None);
     assert!(!s.background_hint().unwrap().contains("Критик"));
 
     // The turn ends with a run still reported — the chip goes with it.
-    s.set_subagent_progress(gen_id, at(3, None));
+    s.set_subagent_progress(gen_id, run, at(3, None));
     s.finish_generation(gen_id, FinishReason::Cancelled, false);
     assert!(!s.background_hint().unwrap().contains("Критик"));
 
     // A stale generation's chip is dropped.
     s.begin_generation(Uuid::new_v4(), None);
-    s.set_subagent_progress(gen_id, at(1, None));
+    s.set_subagent_progress(gen_id, run, at(1, None));
     assert!(!s.background_hint().unwrap().contains("Критик"));
 }
 
@@ -4901,4 +4905,42 @@ fn the_caption_prefers_settings_and_falls_back_to_the_engine() {
     settings(&mut s, None);
     s.set_engine_model(None);
     assert_eq!(s.model_meta(), "");
+}
+
+/// Several runs at once (spec §9.3.2): the chip counts them and names the
+/// latest report; a run's `None` drops its line; one run left is one line.
+#[test]
+fn the_chip_counts_several_running_runs_and_names_the_latest() {
+    use crate::app::events::{RunProgressKind, SubagentProgress};
+    let mut s = ChatScreen::new();
+    let generation = gen_id();
+    s.begin_generation(generation, None);
+    let at = |name: &str| {
+        Some(SubagentProgress {
+            kind: RunProgressKind::Subagent,
+            name: name.into(),
+            round: 1,
+            tool: None,
+        })
+    };
+    let (a, b) = (gen_id(), gen_id());
+    s.set_subagent_progress(generation, a, at("Критик"));
+    let one = s.background_hint().unwrap();
+    assert!(one.contains("Критик") && !one.contains('2'), "{one}");
+    s.set_subagent_progress(generation, b, at("Поэт"));
+    let two = s.background_hint().unwrap();
+    assert!(
+        two.contains('2') && two.contains("Поэт") && !two.contains("Критик"),
+        "{two}"
+    );
+    // A's next report makes it the latest again.
+    s.set_subagent_progress(generation, a, at("Критик"));
+    let again = s.background_hint().unwrap();
+    assert!(again.contains('2') && again.contains("Критик"), "{again}");
+    // B ends: one line, no count.
+    s.set_subagent_progress(generation, b, None);
+    let back = s.background_hint().unwrap();
+    assert!(back.contains("Критик") && !back.contains("Поэт"), "{back}");
+    s.set_subagent_progress(generation, a, None);
+    assert!(!s.background_hint().unwrap_or_default().contains("Критик"));
 }
