@@ -308,13 +308,36 @@ Three readings:
   measured gain of parallel sub-agents here is the *overlap of their tool
   work*, not of their decoding. The E2B's 2.8× is what a small model, or a
   card with headroom, gets.
-- **The cold prefill is anomalous on this stack, in both shapes** — 960
-  tokens in 18.6 s (~52 tok/s) unified, 975 in 22 s split; the e2e set took
-  72 min against the ~10 min the same set took on this hardware in August
-  (b10322, `-np 1`). [prompt-caching.md](prompt-caching.md) §3.1 measured
-  4686 tokens in 2.7 s on this class of stack. Not this track's, but worth
-  one experiment on the stack: the same line at `-np 1`, and without the
-  projector, each read off a single ~960-token cold request.
+- **The cold prefill is anomalous on the Gemma stack, in both shapes** —
+  960 tokens in 18.6 s (~52 tok/s) unified, 975 in 22 s split; the e2e set
+  took 72 min against the ~10 min the same set took on this hardware in
+  August (b10322, `-np 1`). Not the shape and not the card: the Qwen run
+  below, same build, same line minus the projector, prefills 1305 tokens in
+  **590 ms** (~2200 tok/s). So it is the Gemma 4 path on b10791 or the
+  `--mmproj` projector — one experiment on the stack tells which (the
+  Gemma line without `-mm`, one ~960-token cold request), and it is not
+  this track's.
+
+**Qwen 3.6 27B (`Qwen3.6-27B-Q4_K_M`, the same day, the same unified
+line without a projector):** the template reports
+`supports_parallel_tool_calls: true` (the §8 question — no explicit
+`parallel_tool_calls` needed), and the model emitted **two `call_subagent`
+calls in 10/10 replies** (5 per description variant; it left `name` blank
+in 2 of 10, the landing auto-title's case).
+
+| streams at once | wall for the batch | per stream | gain over in-a-row |
+|---:|---:|---:|---:|
+| 1 (four in a row) | 20.1 s | 43 tok/s | — |
+| 2 | 5.6 s for two | 39 tok/s | **1.78×** |
+| 4 | 6.9 s for four | 33 tok/s | **2.9×** |
+
+The RAM cache restore: 260 ms on the second visit against 590 ms cold. So
+on the same card the 27B keeps 77% of its per-stream speed at four streams
+and the batch gains 2.9× — the E2B's figure, not the Gemma 31B's — which
+says the 31B's 1.22× was its prompt path, not the hardware's ceiling.
+`sessions` of 4 is worth having on this machine for Qwen; the honest
+setting is per model, and the field is per mode, which is the right
+granularity to say so in the hint rather than to guess.
 
 ## 4. Design
 

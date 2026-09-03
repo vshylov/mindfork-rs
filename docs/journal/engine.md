@@ -2375,7 +2375,15 @@ orchestrator harness was built for this.
   (`exceed_context_size_error` at ~4200 tokens); the 31B in the same split
   shape has the same 4096 ceiling. A red run on the wrong shape is not
   evidence either way (docs/lessons.md §9); the shape the app launches is
-  the one to test on. Qwen 3.6 is next.
+  the one to test on. **GO on Qwen 3.6 27B too** (`Qwen3.6-27B-Q4_K_M`,
+  the same line without a projector): 47 passed, 27 min, and the two
+  image smokes skip in writing under `MINDFORK_LIVE_TEXT_ONLY=1` — run
+  once without the flag they failed honestly ("the server accepts no
+  images"), which is the flag's whole point. The two models measure very
+  differently on the same card (research §3.5): the Gemma stack prefills
+  at ~50 tok/s and gains 1.22× from four streams, the Qwen stack at ~2200
+  tok/s and gains 2.9× — the 31B's slow prompt path, not the hardware,
+  and a stack question rather than this track's.
 - **Tests**: 2759 green (+13: `active_sessions` by mode and its floor,
   the defaults on an old file; `build_args` at 1 and at 3; the `/props`
   slot read and its two "cannot say" shapes; the decorator's delegation;
