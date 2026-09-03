@@ -94,16 +94,19 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   7.4k prompt — so the counter must sum it with the cache fields.
 
 ## Tools
-- **Parallel sub-agents** — **researched, forks awaiting the user's decision**
-  (2026-09-03): sibling `call_subagent` calls of one round run concurrently
-  under two knobs — `sessions` per engine section and
-  `tools.subagent_parallel` — with defaults that keep today's sequential
-  behaviour bit for bit. Measured on the LAN stack (`-np 4`): four streams
-  2.8× faster than four in a row, a surplus of requests queued rather than
-  refused, the RAM prompt cache surviving an interleave on one slot, and
-  two-call replies from Gemma 4 E2B and all four clouds. What the design
-  rests on: since December 2025 a managed `llama-server` already runs four
-  slots over one unified KV pool. Design, forks, test plan:
+- **Parallel sub-agents** — researched, all forks decided at their
+  recommended options (2026-09-03), **stage 1 done** (`feat/parallel-sessions`:
+  `sessions` per engine section, the turn's session semaphore, `-np N
+  --kv-unified` above one, the `parallel_slots` hint). **Stage 2 is next**:
+  the sibling `call_subagent` calls of one round actually running at once
+  under `tools.subagent_parallel` (the config field exists; its settings row
+  and the loop's parallel group land with the behaviour) — `TurnShared`
+  borrowed immutably, the confirmation round trip behind one lock, the
+  in-flight mirror keyed by run id, the description sentence. Measured on the
+  LAN stack (`-np 4`): four streams 2.8× faster than four in a row, a surplus
+  of requests queued rather than refused, the RAM prompt cache surviving an
+  interleave on one slot, and two-call replies from Gemma 4 E2B and all four
+  clouds. Design, forks, test plan:
   [docs/research/parallel-subagents.md](research/parallel-subagents.md).
 - **MCP host — groundwork** (core is **done**: spec §9.6,
   [ADR 0007](decisions/0007-plugins-mcp-host-import-format.md); double opt-in,

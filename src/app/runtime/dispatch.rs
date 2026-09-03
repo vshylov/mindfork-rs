@@ -108,6 +108,7 @@ pub(super) fn apply_event(
         } => screen.set_transcript_line(generation_id, role),
         AppEvent::TranscriptReset { id, messages } => screen.reset_transcript(id, &messages),
         AppEvent::EngineModel(model) => screen.set_engine_model(model),
+        AppEvent::EngineSlots(slots) => apply_engine_slots(screen, active, slots),
         AppEvent::UserMessage(text) => screen.push_user_message(text),
         AppEvent::RestoreInput(text) => screen.restore_input(text),
         AppEvent::GenerationStarted {
@@ -224,6 +225,16 @@ fn apply_server_status(screen: &mut ChatScreen, active: &mut ActiveScreen, statu
         settings.set_server_statuses(status.clone());
     }
     screen.set_server_status(status);
+}
+
+/// The `EngineSlots` arm of [`apply_event`]: the chat keeps the engine's answer
+/// for the next settings screen it builds, and an open one shows it at once
+/// (the hint next to the `sessions` field, spec §11.6).
+fn apply_engine_slots(screen: &mut ChatScreen, active: &mut ActiveScreen, slots: Option<u32>) {
+    if let ActiveScreen::Settings(settings) = active {
+        settings.set_engine_slots(slots);
+    }
+    screen.set_engine_slots(slots);
 }
 
 /// The `ChatList` arm of [`apply_event`]: the snapshot goes to the chat always
@@ -649,6 +660,10 @@ pub(super) fn dispatch(
                 // The initial server-status snapshot (chips in the "Model/server" section);
                 // afterward `apply_event` updates them from the `ServerStatus` event.
                 settings.set_server_statuses(screen.server_statuses());
+                // What the engine said about its slot count, for the hint next
+                // to the `sessions` field; afterward `apply_event` updates it
+                // from the `EngineSlots` event.
+                settings.set_engine_slots(screen.engine_slots());
                 // The MCP-host snapshot (the tool catalog + server statuses);
                 // afterward `apply_event` updates it from the `Settings` event.
                 settings.set_mcp(mcp);

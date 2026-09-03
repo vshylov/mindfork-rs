@@ -4418,3 +4418,234 @@ fn the_field_pane_scrolls_only_once_the_selection_leaves_the_window() {
     }
     assert_eq!(s.fields_scroll.offset(), 0);
 }
+
+// ---------- parallel sessions (spec §11.6) ----------
+
+/// Every cloud provider's mode, for the loops below.
+const CLOUD_MODES: [ServerMode; 4] = [
+    ServerMode::OpenAi,
+    ServerMode::Gemini,
+    ServerMode::Claude,
+    ServerMode::Grok,
+];
+
+/// Reads the active mode's `sessions` from a config the way the field does.
+fn active_sessions(c: &AppConfig) -> u32 {
+    match c.engine.mode {
+        ServerMode::Managed => c.engine.managed.sessions,
+        ServerMode::External => c.engine.external.sessions,
+        _ => c.engine.cloud().map_or(0, |cl| cl.sessions),
+    }
+}
+
+/// Opens the editor on `XSessions`, types `text`, commits with Enter.
+fn edit_sessions(s: &mut SettingsScreen, text: &str) -> Option<SettingsIntent> {
+    goto_section(s, Section::Model);
+    goto_field(s, FieldId::XSessions);
+    s.handle_key(key(KeyCode::Enter));
+    s.handle_key(ctrl('k')); // clear the current value
+    for c in text.chars() {
+        s.handle_key(key(KeyCode::Char(c)));
+    }
+    s.handle_key(key(KeyCode::Enter))
+}
+
+#[test]
+fn sessions_row_is_on_the_assistant_tab_in_every_mode() {
+    // The row is the assistant engine's in all three mode shapes, valued from the
+    // active mode's own section — and it is the last group of the tab.
+    let mut s = screen();
+    s.config.engine.managed.sessions = 2;
+    s.config.engine.external.sessions = 3;
+    s.config.engine.openai.sessions = 4;
+    s.config.engine.gemini.sessions = 5;
+    s.config.engine.claude.sessions = 6;
+    s.config.engine.grok.sessions = 7;
+    let modes = [ServerMode::Managed, ServerMode::External]
+        .into_iter()
+        .chain(CLOUD_MODES);
+    for mode in modes {
+        s.config.engine.mode = mode;
+        let rows = s.model_fields_for(ModelTab::Assistant);
+        let row = rows
+            .iter()
+            .find(|r| r.id == FieldId::XSessions)
+            .unwrap_or_else(|| panic!("{mode:?}: no sessions row"));
+        let want = active_sessions(&s.config).to_string();
+        assert!(
+            matches!(&row.kind, FieldKind::Text(v) if *v == want),
+            "{mode:?}: the value is the active section's"
+        );
+        assert_eq!(row.group, "Параллельные сессии", "{mode:?}: its own group");
+        assert_eq!(
+            rows.last().map(|r| r.id),
+            Some(FieldId::XSessions),
+            "{mode:?}: the group closes the tab"
+        );
+        assert!(
+            row.description.is_some(),
+            "{mode:?}: the row carries a description"
+        );
+    }
+}
+
+#[test]
+fn sessions_row_is_absent_from_the_impersonation_tab() {
+    // Only the assistant engine runs sub-agents: the impersonation tab has no such
+    // row in any of its mode shapes.
+    let mut s = screen();
+    s.config.engine.mode = ServerMode::Managed;
+    for mode in [
+        ImpersonationMode::Shared,
+        ImpersonationMode::Managed,
+        ImpersonationMode::External,
+        ImpersonationMode::OpenAi,
+    ] {
+        s.config.impersonation_engine.mode = mode;
+        let ids: Vec<FieldId> = s
+            .model_fields_for(ModelTab::Impersonation)
+            .iter()
+            .map(|r| r.id)
+            .collect();
+        assert!(
+            !ids.contains(&FieldId::XSessions),
+            "{mode:?}: the impersonation tab must not offer sessions"
+        );
+    }
+    // Nor does the embeddings tab.
+    let ids: Vec<FieldId> = s
+        .model_fields_for(ModelTab::Embeddings)
+        .iter()
+        .map(|r| r.id)
+        .collect();
+    assert!(!ids.contains(&FieldId::XSessions));
+}
+
+#[test]
+fn editing_sessions_writes_the_active_section() {
+    // "3" lands in the active mode's section and nowhere else.
+    let modes = [ServerMode::Managed, ServerMode::External]
+        .into_iter()
+        .chain(CLOUD_MODES);
+    for mode in modes {
+        let mut s = screen();
+        s.config.engine.mode = mode;
+        match edit_sessions(&mut s, "3") {
+            Some(SettingsIntent::SaveConfig(c)) => {
+                assert_eq!(active_sessions(&c), 3, "{mode:?}: the active section");
+                // The other sections keep their default.
+                let mut untouched = vec![
+                    (ServerMode::Managed, c.engine.managed.sessions),
+                    (ServerMode::External, c.engine.external.sessions),
+                    (ServerMode::OpenAi, c.engine.openai.sessions),
+                    (ServerMode::Gemini, c.engine.gemini.sessions),
+                    (ServerMode::Claude, c.engine.claude.sessions),
+                    (ServerMode::Grok, c.engine.grok.sessions),
+                ];
+                untouched.retain(|(m, _)| *m != mode);
+                for (m, v) in untouched {
+                    assert_eq!(v, 1, "{mode:?}: {m:?} must stay at the default");
+                }
+            }
+            other => panic!("{mode:?}: expected SaveConfig, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn sessions_below_one_is_stored_as_one() {
+    // One stream is the floor: "0" is stored as 1 (a no-op against the default,
+    // so start from 3 to see the write).
+    let mut s = screen();
+    s.config.engine.mode = ServerMode::External;
+    s.config.engine.external.sessions = 3;
+    match edit_sessions(&mut s, "0") {
+        Some(SettingsIntent::SaveConfig(c)) => assert_eq!(c.engine.external.sessions, 1),
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+}
+
+#[test]
+fn unparsable_sessions_leaves_the_value_unchanged() {
+    // Through the editor a non-number never commits (validation keeps it open);
+    // and the setter itself ignores what `u32` cannot parse — a negative value
+    // passes the editor's integer check but not the field's.
+    let mut s = screen();
+    s.config.engine.mode = ServerMode::Managed;
+    s.config.engine.managed.sessions = 2;
+    assert_eq!(edit_sessions(&mut s, "abc"), None);
+    assert!(s.editor.is_some(), "invalid input doesn't close the editor");
+    assert_eq!(s.config.engine.managed.sessions, 2);
+
+    use super::spec::{Access, FieldSpec};
+    let Some(FieldSpec {
+        access: Access::Text(set),
+        ..
+    }) = super::spec::field_spec(FieldId::XSessions)
+    else {
+        panic!("XSessions is a text field of the config table");
+    };
+    let mut c = AppConfig::default();
+    c.engine.mode = ServerMode::Managed;
+    c.engine.managed.sessions = 2;
+    set(&mut c, "abc");
+    set(&mut c, "-1");
+    set(&mut c, "");
+    assert_eq!(c.engine.managed.sessions, 2, "unparsable input is a no-op");
+    set(&mut c, "5");
+    assert_eq!(c.engine.managed.sessions, 5);
+    // A cloud mode routes to that provider's section.
+    c.engine.mode = ServerMode::Claude;
+    set(&mut c, "4");
+    assert_eq!(c.engine.claude.sessions, 4);
+    assert_eq!(
+        c.engine.managed.sessions, 5,
+        "the other sections are untouched"
+    );
+}
+
+#[test]
+fn sessions_description_names_the_reported_slots_for_local_servers_only() {
+    // A `llama-server`'s slot count is a hint next to the field — for the modes
+    // that talk to one. A cloud has no slots to report, and without an answer
+    // there is no hint.
+    let base = |s: &SettingsScreen| s.loc().t("ui.settings.desc.sessions").to_string();
+    let mut s = screen();
+    s.config.engine.mode = ServerMode::External;
+    s.set_engine_slots(Some(4));
+    let desc = field_desc(&s, FieldId::XSessions).unwrap();
+    assert!(
+        desc.contains('4'),
+        "external: the hint names the slots: {desc}"
+    );
+    assert!(
+        desc.starts_with(&base(&s)),
+        "the hint follows the description"
+    );
+    assert_ne!(
+        s.config.engine.external.sessions, 4,
+        "a hint is never written into the value"
+    );
+
+    s.config.engine.mode = ServerMode::Managed;
+    let desc = field_desc(&s, FieldId::XSessions).unwrap();
+    assert!(
+        desc.contains('4'),
+        "managed: the hint names the slots: {desc}"
+    );
+
+    for mode in CLOUD_MODES {
+        s.config.engine.mode = mode;
+        let desc = field_desc(&s, FieldId::XSessions).unwrap();
+        assert_eq!(
+            desc,
+            base(&s),
+            "{mode:?}: a cloud never gets the slots hint"
+        );
+    }
+
+    s.config.engine.mode = ServerMode::External;
+    s.set_engine_slots(None);
+    let desc = field_desc(&s, FieldId::XSessions).unwrap();
+    assert_eq!(desc, base(&s), "no answer — no hint");
+}

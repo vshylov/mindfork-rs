@@ -2818,6 +2818,24 @@ async fn props_reports_the_context_window_live() {
     assert!(n >= 512, "an implausible window: {n}");
 }
 
+/// The fourth self-description question, and the one behind the `sessions`
+/// hint (spec §11.6): a live `llama-server` reports its slot count on `/props`
+/// (`total_slots`) — `-np N` when given, four for the auto default since
+/// December 2025 (docs/research/parallel-subagents.md §2.4) — and our client
+/// reads it through the retry decorator every real external setup wraps it in.
+#[tokio::test]
+#[ignore = "needs a live engine (MINDFORK_ENGINE_URL)"]
+async fn props_reports_the_slot_count_live() {
+    let Some(backend) = live_backend() else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    let slots = backend.parallel_slots().await;
+    eprintln!("live slot count: {slots:?}");
+    let n = slots.expect("a live llama-server must report total_slots at /props");
+    assert!((1..=256).contains(&n), "an implausible slot count: {n}");
+}
+
 /// The other question only a real server can answer: that it will **name the
 /// model it is running**, and that our client reads a name a header can show.
 ///

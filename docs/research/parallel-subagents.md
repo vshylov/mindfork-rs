@@ -1,7 +1,17 @@
 # Parallel sub-agents — several `call_subagent` runs in one round — research
 
-> Status: **research, pre-decision** (2026-09-03). Forks in §6 await the
-> user's decision; no product code yet. Supersedes the same-day draft of
+> Status: **forks decided, stage 1 done** (2026-09-03). User's decision:
+> F1–F10 at their recommended options. Stage 1 (`feat/parallel-sessions`,
+> §7): `sessions` on the six engine sections and `tools.subagent_parallel`
+> in config, the turn's session semaphore around one stream, `-np N
+> --kv-unified` above one (measured on the local build: 3 slots over the
+> whole 4096-token pool, where `-np 3` alone gives 1536 each),
+> `EngineBackend::parallel_slots` with its `RetryBackend` delegation and the
+> settings hint, the `sessions` row on the assistant's Model tab. The
+> `subagent_parallel` row and the parallel group itself are stage 2. One
+> amendment found while building: the `subagent_parallel` **setting row**
+> ships with stage 2, not stage 1 — a knob that does nothing yet is the
+> advertised no-op docs/lessons.md §4 warns about. Supersedes the same-day draft of
 > PR #440, closed to restart the research from scratch with a sharper
 > brief — that draft planned a probe; this one ran it. Measured this session on the LAN
 > stack (`llama-server` b10791, `gemma-4-E2B-it-Q8_0`, `-np 4` — four slots

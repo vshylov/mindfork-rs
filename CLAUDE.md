@@ -168,10 +168,10 @@ Backend selection: `MINDFORK_ENGINE_URL` (external, any OpenAI server) OR
 rented instead of hosted — `python tools/e2e_hf.py run`, see
 `docs/history/remote-e2e-hf.md`.
 
-## Status (2026-09-02, version 0.9.8)
+## Status (2026-09-03, version 0.9.8)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2746 unit tests
-green, 129 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **2759 unit tests
+green, 131 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -182,6 +182,19 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 `tools/doc_index_check.py`. A new track adds a line; a line that has stopped
 being recent is dropped, not shortened.
 
+- **Parallel sub-agents — stage 1, the engine half** — every engine section
+  has a `sessions` (default 1: the main agent and its sub-agents take turns,
+  as before), a turn's request streams run under a semaphore of that size
+  (held for a stream and nothing else), a managed server above 1 is launched
+  with `-np N --kv-unified` (measured: 3 slots over the *whole* `-c`, where
+  `-np 3` alone quarters it to 1536 of 4096), and the settings field's hint
+  shows the slot count a `llama-server` reports (`parallel_slots`, the fourth
+  self-description question — delegated by `RetryBackend` with its test from
+  day one). What the design rests on: since December 2025 a `llama-server`
+  launched without `-np` already runs **four slots over one unified KV pool**.
+  Stage 2 — the sub-agents of one round actually running at once — is next
+  ([docs/research/parallel-subagents.md](docs/research/parallel-subagents.md),
+  spec §3.4, §11.6, [docs/journal/engine.md](docs/journal/engine.md)).
 - **The web tools became opt-in, and the last unhashed download got a hash** —
   writing a privacy policy for the code-signing track meant inventorying every
   outbound connection rather than trusting SECURITY.md's summary, and the
@@ -408,14 +421,6 @@ being recent is dropped, not shortened.
   allowlist while the repository is private** — the stack's `AllowedIps`
   parameter; set it empty to reopen
   ([docs/research/mindfork-io-website.md](docs/research/mindfork-io-website.md)).
-- **Demo screenshots + demo mode** — a private-data-free, rot-gated capture
-  pipeline, plus the interactive `mindfork demo`
-  ([docs/history/demo-screenshots.md](docs/history/demo-screenshots.md)).
-- **Grok (xAI) as a fourth cloud provider** — the first added without a client of
-  its own ([docs/research/grok-xai-provider.md](docs/research/grok-xai-provider.md)).
-- **History compression** — a rolling summary keeps a long chat inside the
-  context window: `/compact`, an automatic trigger, read-back tools for the
-  folded range ([docs/journal/engine.md](docs/journal/engine.md)).
 
 For what exists and how it works, read architecture.md and spec.md — they are
 the source of truth for the current state. For how any of it came to be, and

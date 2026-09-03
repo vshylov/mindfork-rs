@@ -345,6 +345,18 @@ Two modes (configured on the settings screen, `Ctrl+P`, "Model/server" section):
     Like the model and draft paths, the projector's path is checked before launch (a
     typo gives an immediate "projector file not found …" instead of a server that
     quietly has no vision), and changing it **restarts** the server.
+  - **Parallel sessions** (`sessions`, the "Parallel sessions" group): how many
+    request streams the app keeps open against the server at once — the
+    assistant's own reply and the sub-agents of one reply share them. **1** by
+    default, and then the launch line is exactly what it was. Above 1 the server
+    is launched with `-np N --kv-unified`: N slots over the **one** context pool
+    that `-c` sizes — the same shape `llama-server` picks on its own when `-np`
+    is not given (four slots over a unified pool, its default since December
+    2025), so the pool costs no extra memory; what N sessions cost is sharing
+    it, and a sub-agent's round fails with "Context size has been exceeded" when
+    the conversations running at once do not fit the pool together. Raise `-c`
+    to buy room. The field's hint shows how many slots the running server
+    reports (`total_slots` on `/props`).
 - **external** — connects to an already-running server by URL. The **"Model
   (opt.)"** field next to it is optional but not decorative: it is **sent as the
   request's `model`**, which is what a multi-model endpoint routes on
@@ -354,7 +366,12 @@ Two modes (configured on the settings screen, `Ctrl+P`, "Model/server" section):
   running — `GET /v1/models` when it lists exactly one model, otherwise
   `/props` — and shows that name next to the chat title and on every reply
   (`Ctrl+P` → Interface → "Model name in the feed"). A name you type always wins,
-  and a server that cannot say leaves the caption empty.
+  and a server that cannot say leaves the caption empty. The **"Parallel
+  sessions"** field here is the number of streams the app may open against
+  *your* server at once — for llama.cpp, what you started it with (`-np`, or
+  its four-slot default); the hint under the field shows what a llama.cpp
+  reports, and a vLLM/LM Studio/Ollama, which report nothing, leave it blank.
+  Leave it at 1 unless the server has the slots.
 
 **How the app knows whether images are accepted.** It asks the server, rather than
 matching model names: `llama-server` reports `modalities` on its `/props` endpoint

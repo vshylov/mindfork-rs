@@ -203,6 +203,11 @@ fn anthropic_model_continues(model: &str) -> bool {
 pub const DEFAULT_GPU_LAYERS: i32 = 99;
 /// Default context size (`-c`).
 pub const DEFAULT_CONTEXT_SIZE: u32 = 8192;
+/// Default number of request streams the app keeps open against one engine at
+/// a time (`sessions`, spec §11.6; docs/research/parallel-subagents.md §4.2).
+/// One — the main agent and its sub-agents take turns, exactly as before the
+/// setting existed.
+pub const DEFAULT_SESSIONS: u32 = 1;
 
 /// FlashAttention mode (`--flash-attn`) for the managed llama.cpp server. `Auto` —
 /// the flag isn't passed (llama.cpp decides on its own, its default); `On`/`Off` — forced.
@@ -334,6 +339,14 @@ pub struct ManagedSettings {
     pub gpu_layers: i32,
     /// Context size (`-c`).
     pub context_size: u32,
+    /// Simultaneous request streams the app may keep open against this server
+    /// (spec §11.6). Above 1 the server is launched with `-np N --kv-unified`:
+    /// N slots sharing the one context pool `-c` sizes — the shape llama.cpp
+    /// itself picks when `-np` is not given (four slots, unified), so the pool
+    /// costs the same memory whatever this says
+    /// (docs/research/parallel-subagents.md §4.7, fork F4). At 1 the launch
+    /// line is exactly what it was before the field existed.
+    pub sessions: u32,
     /// Use the model's built-in chat template (`--jinja`) — needed for correct
     /// formatting and tool calling.
     pub jinja: bool,
@@ -369,6 +382,7 @@ impl Default for ManagedSettings {
             mmproj: None,
             gpu_layers: DEFAULT_GPU_LAYERS,
             context_size: DEFAULT_CONTEXT_SIZE,
+            sessions: DEFAULT_SESSIONS,
             jinja: true,
             reasoning_format: None,
             no_mmap: false,
@@ -386,13 +400,19 @@ impl Default for ManagedSettings {
 
 /// External-mode settings: connecting to an already-running OpenAI-compatible
 /// server (any: llama.cpp, vLLM, LM Studio…).
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ExternalSettings {
     /// Server URL (e.g. `http://127.0.0.1:8000/v1`).
     pub url: Option<String>,
     /// Model name for a multi-model server (optional).
     pub model_name: Option<String>,
+    /// Simultaneous request streams the app may keep open against this server
+    /// (spec §11.6). Typed, never discovered: a llama.cpp behind the URL
+    /// reports its slot count on `/props`, which the settings screen shows as
+    /// a hint next to this field, but what the app actually opens is what is
+    /// written here (docs/research/parallel-subagents.md fork F8). Default 1.
+    pub sessions: u32,
     /// Env-variable name carrying a Bearer key (optional) — for an OpenAI-compatible
     /// proxy/gateway that requires authorization. Stores the **name**, not the secret
     /// (ADR 0004). `None`/empty — no authorization (a local `llama-server` doesn't need it).
@@ -404,9 +424,20 @@ pub struct ExternalSettings {
     pub api_key_env: Option<String>,
 }
 
+impl Default for ExternalSettings {
+    fn default() -> Self {
+        Self {
+            url: None,
+            model_name: None,
+            sessions: DEFAULT_SESSIONS,
+            api_key_env: None,
+        }
+    }
+}
+
 /// Settings for a single cloud provider (OpenAI/Gemini/Claude/Grok). Stored
 /// separately per provider so switching providers doesn't lose the other's values.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CloudSettings {
     /// Provider's model name (`gpt-4o`, `gemini-2.5-pro`, `claude-opus-4-8`, `grok-4.5`).
@@ -416,6 +447,22 @@ pub struct CloudSettings {
     pub api_key_env: Option<String>,
     /// Override of the provider's base URL (optional); `None` — the provider's default.
     pub url: Option<String>,
+    /// Simultaneous request streams the app may keep open against this
+    /// provider (spec §11.6) — the user's statement of what their tier allows;
+    /// a `429` when it is optimistic is absorbed by the retry decorator
+    /// (docs/research/parallel-subagents.md §4.8). Default 1.
+    pub sessions: u32,
+}
+
+impl Default for CloudSettings {
+    fn default() -> Self {
+        Self {
+            model_name: None,
+            api_key_env: None,
+            url: None,
+            sessions: DEFAULT_SESSIONS,
+        }
+    }
 }
 
 /// Chat inference-server settings. A sub-section per mode/provider
@@ -454,6 +501,20 @@ impl EngineSettings {
                 &mut self.grok,
             ],
         )
+    }
+
+    /// How many request streams the active mode lets a turn keep open at once
+    /// (`sessions` of the active section, spec §11.6). Never below 1: a zero
+    /// typed into the field would be a turn that can never start a stream.
+    pub fn active_sessions(&self) -> u32 {
+        let n = match self.mode {
+            ServerMode::Managed => self.managed.sessions,
+            ServerMode::External => self.external.sessions,
+            ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude | ServerMode::Grok => {
+                self.cloud().map_or(DEFAULT_SESSIONS, |c| c.sessions)
+            }
+        };
+        n.max(1)
     }
 
     /// Active model name for the current mode (for the `Message.metadata` snapshot
@@ -759,6 +820,10 @@ pub const DEFAULT_SUBAGENT_MAX_TOKENS: usize = 4096;
 /// Default time limit for a **whole** sub-agent run (seconds) — every round and
 /// every tool call of it. One knob, since the run is unattended inside a turn.
 pub const DEFAULT_SUBAGENT_RUN_TIMEOUT_SECS: u64 = 600;
+/// Default number of a round's sub-agents allowed to run at once
+/// (`tools.subagent_parallel`): one, i.e. the sequential behaviour the tool
+/// shipped with (docs/research/parallel-subagents.md §4.2).
+pub const DEFAULT_SUBAGENT_PARALLEL: u32 = 1;
 /// Default time limit for a whole dialogue run (`run_dialogue`, spec §9.13).
 /// An order of magnitude above the sub-agent's on purpose: a 16-message
 /// dialogue on a local thinking model is ~25 sequential requests, measured at
@@ -928,6 +993,13 @@ pub struct ToolSettings {
     /// Time limit for a whole dialogue run (`run_dialogue`, spec §9.13):
     /// every participant line and director checkpoint of it.
     pub dialogue_run_timeout_secs: u64,
+    /// How many of one round's sub-agents may run at once when the model
+    /// delegates several tasks in one reply (spec §9.3.2,
+    /// docs/research/parallel-subagents.md §4.2). The rest start as siblings
+    /// finish. At 1 — the default — the round's sub-agents run one after
+    /// another, in the model's order, as they always have. Their request
+    /// streams share the engine's `sessions` budget.
+    pub subagent_parallel: u32,
     /// Ask the user before the agentic loop runs a tool marked dangerous
     /// (`Tool::danger()` — spec §9.8). Off by default: opt-in, so the loop
     /// behaves exactly as before until the user turns it on.
@@ -962,6 +1034,7 @@ impl Default for ToolSettings {
             subagent_max_tokens: DEFAULT_SUBAGENT_MAX_TOKENS,
             subagent_run_timeout_secs: DEFAULT_SUBAGENT_RUN_TIMEOUT_SECS,
             dialogue_run_timeout_secs: DEFAULT_DIALOGUE_RUN_TIMEOUT_SECS,
+            subagent_parallel: DEFAULT_SUBAGENT_PARALLEL,
             confirm_dangerous: false,
             mcp_images: true,
         }
@@ -2176,6 +2249,34 @@ mod tests {
         assert_eq!(c.max_tool_rounds, AppConfig::default().max_tool_rounds);
     }
 
+    /// `sessions` is read from the active section, and never below one: a zero
+    /// typed into the field would be a turn that can never open a stream.
+    #[test]
+    fn active_sessions_follows_the_mode_and_never_drops_below_one() {
+        let mut e = EngineSettings::default();
+        assert_eq!(e.active_sessions(), 1);
+        e.managed.sessions = 3;
+        e.external.sessions = 0;
+        e.grok.sessions = 5;
+        e.mode = ServerMode::Managed;
+        assert_eq!(e.active_sessions(), 3);
+        e.mode = ServerMode::External;
+        assert_eq!(e.active_sessions(), 1, "zero reads as one");
+        e.mode = ServerMode::Grok;
+        assert_eq!(e.active_sessions(), 5);
+        e.mode = ServerMode::OpenAi;
+        assert_eq!(e.active_sessions(), 1, "a provider left at its default");
+        // A file written before the field existed reads as one everywhere.
+        let mut old: EngineSettings = serde_json::from_str(
+            r#"{"external":{"url":"http://h/v1"},"openai":{"model_name":"m"}}"#,
+        )
+        .unwrap();
+        old.mode = ServerMode::External;
+        assert_eq!(old.external.sessions, 1);
+        assert_eq!(old.openai.sessions, 1);
+        assert_eq!(old.active_sessions(), 1);
+    }
+
     #[test]
     fn active_model_name_by_mode() {
         // Managed — the GGUF's base name without the path or extension.
@@ -2267,6 +2368,12 @@ mod tests {
             c.tools.dialogue_run_timeout_secs,
             DEFAULT_DIALOGUE_RUN_TIMEOUT_SECS
         );
+        // Parallel sessions and sub-agents are opt-in: one stream and one run
+        // at a time until the user says otherwise (docs/research/parallel-subagents.md R4).
+        assert_eq!(c.engine.managed.sessions, DEFAULT_SESSIONS);
+        assert_eq!(c.engine.external.sessions, DEFAULT_SESSIONS);
+        assert_eq!(c.engine.claude.sessions, DEFAULT_SESSIONS);
+        assert_eq!(c.tools.subagent_parallel, DEFAULT_SUBAGENT_PARALLEL);
         // Confirmation of dangerous tool calls is opt-in: off until turned on.
         assert!(!c.tools.confirm_dangerous);
         // History compression: on where it can act at all (fork F10), and the

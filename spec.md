@@ -187,7 +187,7 @@ Two modes (chosen in settings):
 Parameters:
 
 - Path to the `llama-server` binary (managed mode) — in settings; by default it's looked up in `PATH` and next to the application binary.
-- One loaded model instance, **one generation context at a time** (the target hardware is a consumer PC; parallel generations aren't needed).
+- One loaded model instance. How many request streams the app keeps open against it at once is the engine section's **`sessions`** setting ([11.6](#116-the-settings-screen)), **1 by default** — the main agent and its subagents take turns, which is what a consumer PC wants. Above 1 a managed server is launched with `-np N --kv-unified`: N slots over the one context pool `-c` sizes, the shape llama.cpp itself picks when `-np` is not given (four slots, unified — its default since December 2025), so the pool costs no more memory; what N sessions cost is sharing it. Design and measurements: [docs/research/parallel-subagents.md](docs/research/parallel-subagents.md).
 
 ---
 
@@ -758,7 +758,7 @@ Since the inference server doesn't provide built-in web search, we implement it 
 - **Effects** go to the chat they describe: `set_system_message`/`set_sampling` to the run, an attachment a tool produced to the parent (and into both loops' snapshots).
 - **The transcript** — the persona, `User(message)` and the run's rounds exactly as any chat stores them — lives **on the call's `ToolCallRecord`** (`subagent: SubagentRun`, [5.1](#51-core-entities-entities)), inside the parent's file: it is part of the exchange that made it, travels with it into `Chat.deleted` on `Ctrl+E`/`Ctrl+R`, is hidden with the parent, and is ignored by request replay (a request with a stored run is byte-identical to one without). It carries a title (the `name`, else the first line of `message`, until a person or the model names it — **the automatic titling fires at landing** for every run with a substantive reply, under *either* `interface.auto_title` point, since a transcript's question and reply arrive together; `Off` is quiet, and a hand-named run is left alone, [11.2](#112-the-chat-list-an-overlay)), an outcome (`completed`/`cancelled`/`timed_out`/`failed`/`round_limit`), the tokens it cost, and an id for a `chat://` reference ([11.3](#113-the-message-feed)).
 - **The result** the main agent gets: the subagent's final reply, then one line naming the transcript's `chat://` address and — when the run did not complete — why. The run lands on the record together with the turn; until the list snapshot carries it, the address in the card is plain text (the "resolves or it is not a reference" rule).
-- **Limits**: `max_tool_rounds` and `workspace.max_rounds` apply to the run as to the turn (each run spends one round of the parent's budget, as before); `tools.subagent_max_tokens` caps each of its replies (min'ed with the effective `max_tokens`); `tools.subagent_run_timeout_secs` bounds the whole run. `Esc` on the turn cancels the run with it; the partial transcript lands as `cancelled`.
+- **Limits**: `max_tool_rounds` and `workspace.max_rounds` apply to the run as to the turn (each run spends one round of the parent's budget, as before); `tools.subagent_max_tokens` caps each of its replies (min'ed with the effective `max_tokens`); `tools.subagent_run_timeout_secs` bounds the whole run. `Esc` on the turn cancels the run with it; the partial transcript lands as `cancelled`. The run's request streams count against the engine's `sessions` ([11.6](#116-the-settings-screen)) like the turn's own: at the default of 1 the parent's stream, the subagent's rounds and any sibling run take turns, one stream at a time ([docs/research/parallel-subagents.md](docs/research/parallel-subagents.md) §4.2).
 
 #### 9.3.3. Conversation control tools (`send_followup_message` / `rewrite_current_message`)
 
@@ -2739,7 +2739,15 @@ section and subsection), `Esc` — cancel.
   context `-c`, `--jinja`), *Performance* (`-ngl`, FlashAttn, `--no-mmap`),
   *Speculative decoding* (`--spec-type` + draft-model fields); for external —
   *Server* (URL, "Model (opt.)", the key fields); for cloud —
-  *Provider* (model, API-key-env, base URL). The external **"Model (opt.)"** field
+  *Provider* (model, API-key-env, base URL); and, in every mode of the
+  assistant's engine, *Parallel sessions* — the section's `sessions`, how many
+  request streams a turn may keep open at once (1 by default, so the main
+  agent and its subagents take turns; managed launches `-np N --kv-unified`
+  above 1, [§3.4](#34-managing-the-server-lifecycle)); for a managed or
+  external `llama-server` the field's hint also says how many slots the server
+  itself reports (`total_slots` on `/props`) — a hint, never the value. The
+  impersonation and embeddings tabs have no such field: only the assistant's
+  engine runs subagents. The external **"Model (opt.)"** field
   is genuinely optional but not decorative: it is **sent as the request's `model`**,
   which is what a multi-model endpoint routes on (llama.cpp's router mode,
   LM Studio, LiteLLM, OpenRouter refuse a request without it), while a

@@ -250,6 +250,9 @@ impl ServerSupervisor for LlamaSupervisor {
                         mmproj: None,
                         gpu_layers: m.gpu_layers,
                         context_size: crate::shared::config::DEFAULT_CONTEXT_SIZE,
+                        // Embeddings are one request at a time; the chat
+                        // server's session budget is not this server's.
+                        parallel: 1,
                         jinja: false, // the embedding server doesn't need a chat template
                         reasoning_format: None,
                         embeddings: true,
@@ -434,6 +437,7 @@ fn managed_config(s: &ManagedSettings) -> ManagedConfig {
         mmproj: s.mmproj.clone(),
         gpu_layers: s.gpu_layers,
         context_size: s.context_size,
+        parallel: s.sessions,
         jinja: s.jinja,
         reasoning_format: s.reasoning_format.clone(),
         embeddings: false,
