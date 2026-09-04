@@ -26,6 +26,7 @@ use crate::shared::api::{
     ThinkingRef, ToolCallAccumulator,
 };
 use crate::shared::config::ServerMode;
+use crate::shared::session_budget::SessionBudget;
 use crate::shared::tokens::estimate_prompt;
 
 use super::Orchestrator;
@@ -619,10 +620,13 @@ impl Orchestrator {
         // based injection of observations in the task).
         // The turn's session budget (spec §11.6): every stream of the turn —
         // the loops' own and a tool's summary request (`ToolContext::sessions`)
-        // — takes a permit of this one semaphore, so it is made before the
-        // context and shared with the task.
-        let sessions = Arc::new(tokio::sync::Semaphore::new(
-            self.config.engine.active_sessions() as usize,
+        // — takes a permit of this one budget, and under a shared KV pool
+        // (`session_pool`, admission-by-budget §4.4) a reservation of it, so
+        // it is made before the context and shared with the task.
+        let pool = self.session_pool();
+        let sessions = Arc::new(SessionBudget::new(
+            self.config.engine.active_sessions(),
+            pool,
         ));
         let mut request;
         let ctx;
@@ -1056,11 +1060,12 @@ struct GenSpawn {
     workspace_max_rounds: u32,
     /// A sub-agent run's limits (`config.tools`, spec §9.3.2).
     subagent: SubagentLimits,
-    /// The turn's session budget — a semaphore sized from the active engine
-    /// section's `sessions` (spec §11.6), shared with the turn's `ToolContext`
-    /// so a tool's own engine request counts too. One permit, and the turn's
-    /// loops take turns exactly as they did before the setting existed.
-    sessions: Arc<tokio::sync::Semaphore>,
+    /// The turn's session budget — the permits of the active engine section's
+    /// `sessions` (spec §11.6) over the KV pool the streams share when one is
+    /// known ([`super::pool`]), shared with the turn's `ToolContext` so a
+    /// tool's own engine request counts too. One permit, and the turn's loops
+    /// take turns exactly as they did before the setting existed.
+    sessions: Arc<SessionBudget>,
     /// Width of a round's concurrent tool group — the active section's
     /// `concurrent_calls` (spec §6.3). One: the sequential round.
     concurrent_calls: u32,
@@ -1432,10 +1437,12 @@ struct TurnShared {
     /// web fetch hold no session. Every loop of the turn, the turn's own
     /// included, streams under it; sized from the active engine section's
     /// `sessions`. With one permit the loops take turns as they always did.
-    /// Shared (`Arc`) with the turn's `ToolContext`: a tool's own engine
-    /// request — `fetch_url`'s page summary — takes a permit of the same
-    /// budget (docs/research/concurrent-tools.md §4.5).
-    sessions: Arc<tokio::sync::Semaphore>,
+    /// Under a shared KV pool a stream also reserves what it will occupy and
+    /// waits for room (docs/research/admission-by-budget.md §4.1). Shared
+    /// (`Arc`) with the turn's `ToolContext`: a tool's own engine request —
+    /// `fetch_url`'s page summary — takes a permit of the same budget
+    /// (docs/research/concurrent-tools.md §4.5).
+    sessions: Arc<SessionBudget>,
     /// Width of a round's concurrent tool group (spec §6.3,
     /// docs/research/concurrent-tools.md §4.2–§4.4): how many of a segment's
     /// marked calls are alive at once. One: no segment is formed and every
@@ -1792,10 +1799,24 @@ impl TurnLoop<'_> {
         // The continuation seed is the first round's alone: it filters the
         // server's echo of the prefill (research §4d, §7.1).
         let echo = self.echo_seed.take().map(EchoFilter::new);
-        // A session for the stream, and only for the stream: the permit is
-        // dropped with this block, before the round's tools run.
+        // What this stream will occupy of a shared KV pool
+        // (docs/research/admission-by-budget.md §4.2): the calibrated estimate
+        // of the request, floored by the last round's exact size plus what it
+        // generated (the history only grows), plus the reply cap — which a
+        // child and a summary always carry, and the turn's own stream may not
+        // (then it reserves the pool: it never overlaps another stream anyway).
+        let estimate = estimate_prompt_tokens(&self.request);
+        let floor = self.last_usage.map_or(0, TurnUsage::next_prompt_estimate);
+        let need = self.shared.sessions.price(
+            estimate,
+            floor,
+            self.request.sampling.max_tokens.map(|m| m as u64),
+        );
+        // A session for the stream, and only for the stream: the permit and
+        // the reservation are dropped with this block, before the round's
+        // tools run.
         let out = {
-            let Some(_session) = acquire_session(&self.shared.sessions, &self.cancel).await else {
+            let Some(_session) = self.shared.sessions.acquire(need, &self.cancel).await else {
                 return cancelled_round();
             };
             stream_round(
@@ -1821,6 +1842,12 @@ impl TurnLoop<'_> {
         // thinking there would change rounds that continue nothing.
         self.request.continue_final = false;
         if let Some(prompt_tokens) = out.prompt_tokens {
+            // The exact size next to the estimate made for the same request:
+            // the estimator's correction for every later reservation of the
+            // turn (admission-by-budget §4.3).
+            self.shared
+                .sessions
+                .record_usage(estimate, prompt_tokens as u64);
             self.last_usage = Some(TurnUsage {
                 prompt_tokens,
                 completion_tokens: out.tokens,
@@ -4180,24 +4207,9 @@ pub(super) fn merge_continuation(seed: &mut Message, round: Message) {
     }
 }
 
-/// Takes one of the turn's sessions for a stream, or gives up when the loop is
-/// cancelled while waiting (docs/research/parallel-subagents.md §4.2). The
-/// permit is the caller's to drop — which it does the moment the stream ends,
-/// so a round's tools never hold one. A closed semaphore cannot happen here
-/// (nothing closes it), and reads as "cancelled" rather than as a panic.
-async fn acquire_session<'a>(
-    sessions: &'a tokio::sync::Semaphore,
-    cancel: &CancellationToken,
-) -> Option<tokio::sync::SemaphorePermit<'a>> {
-    tokio::select! {
-        biased;
-        _ = cancel.cancelled() => None,
-        permit = sessions.acquire() => permit.ok(),
-    }
-}
-
-/// A round that never streamed: cancelled while waiting for a session. Nothing
-/// was produced, nothing was counted, and the loop lands what it already has.
+/// A round that never streamed: cancelled while waiting for a session, or for
+/// room in the pool (`SessionBudget::acquire`). Nothing was produced, nothing
+/// was counted, and the loop lands what it already has.
 fn cancelled_round() -> RoundOutput {
     RoundOutput {
         text: String::new(),
@@ -4215,32 +4227,14 @@ fn cancelled_round() -> RoundOutput {
 mod session_tests {
     use super::*;
 
-    /// A permit is held while the stream runs and returned when it is dropped —
-    /// the whole invariant a `sessions` budget of one rests on.
-    #[tokio::test]
-    async fn a_session_is_taken_for_the_stream_and_returned_after() {
-        let sessions = tokio::sync::Semaphore::new(1);
-        let cancel = CancellationToken::new();
-        let permit = acquire_session(&sessions, &cancel).await;
-        assert!(permit.is_some());
-        assert_eq!(sessions.available_permits(), 0);
-        drop(permit);
-        assert_eq!(sessions.available_permits(), 1);
-    }
-
-    /// A loop waiting for a session stops waiting when its turn is cancelled:
-    /// `Esc` must not hang on a sibling's stream.
-    #[tokio::test]
-    async fn cancellation_ends_the_wait_for_a_session() {
-        let sessions = tokio::sync::Semaphore::new(1);
-        let held = sessions.acquire().await.unwrap();
-        let cancel = CancellationToken::new();
-        cancel.cancel();
-        assert!(acquire_session(&sessions, &cancel).await.is_none());
-        drop(held);
-        // Not cancelled, a free permit: taken at once.
-        let fresh = CancellationToken::new();
-        assert!(acquire_session(&sessions, &fresh).await.is_some());
-        assert_eq!(cancelled_round().reason, FinishReason::Cancelled);
+    /// The round a loop lands when cancelled before it could stream: nothing
+    /// produced, nothing counted (the budget's own waits are tested with it,
+    /// `shared::session_budget`).
+    #[test]
+    fn a_round_cancelled_while_waiting_is_empty() {
+        let round = cancelled_round();
+        assert_eq!(round.reason, FinishReason::Cancelled);
+        assert_eq!((round.tokens, round.prompt_tokens), (0, None));
+        assert!(round.text.is_empty() && round.calls.is_empty());
     }
 }

@@ -180,6 +180,12 @@ src/
 │  │  │                     per applied engine, epoch-guarded against a stale
 │  │  │                     answer). Never edits `chat.messages` — only what a
 │  │  │                     request carries, spec §6.7
+│  │  ├─ pool.rs            the KV pool a turn's streams share, when the app can
+│  │  │                     know it (`pool_for`: managed `-c` above one session;
+│  │  │                     an external llama.cpp's `n_ctx` when it reports more
+│  │  │                     than one slot; none on the clouds) — the figure the
+│  │  │                     turn's `SessionBudget` is built with. Spec §6.3,
+│  │  │                     docs/research/admission-by-budget.md §4.4
 │  │  ├─ model_name.rs      `ModelDiscovery` — what the engine says it is running
 │  │  │                     when settings cannot say (`external` with a blank
 │  │  │                     "Model (opt.)"): the `ContextDiscovery` shape, but
@@ -612,6 +618,13 @@ src/
    ├─ keys.rs              layout-independent Ctrl shortcuts (`hotkey_char`: Windows
    │                       keyboard-layout resolution → JCUKEN table → pass-through)
    ├─ server.rs            ServerStatus (server status for the UI)
+   ├─ session_budget.rs    `SessionBudget` — a turn's request streams: the permit
+   │                       count of `sessions` and, over a shared KV pool, a token
+   │                       reservation per stream (calibrated prompt estimate +
+   │                       reply cap) that waits for room rather than overflowing
+   │                       the pool; `price`/`acquire`/`record_usage`. Here rather
+   │                       than in `app` because `features::tools` (the summary)
+   │                       reserves too. Spec §6.3, docs/research/admission-by-budget.md
    ├─ video/               video understanding for `youtube_watch`: the
    │                       `VideoUnderstanding` contract + `GeminiVideo`
    │                       (`generateContent` with a `file_data` YouTube URL).
@@ -895,12 +908,17 @@ Details:
 - **The loop is `TurnLoop<'a>` over a `TurnShared`** (`generation.rs`): what one
   turn shares — backend, registry, the UI sender, the confirmation receiver and
   the "approved for this turn" set, the generation id, the image and round
-  limits, and the **session semaphore** (sized from the active engine
-  section's `sessions`, spec §11.6; `TurnLoop::stream` holds a permit for one
-  request stream and for nothing else — a round's tools, a popup, a child's
-  fetch run permit-free — so at the default of one the turn's loops take turns
-  exactly as before, and a loop cancelled while waiting lands what it has;
-  docs/research/parallel-subagents.md §4.2) — is one struct owned by the generation task; the loop itself holds
+  limits, and the **session budget** (`shared::session_budget::SessionBudget`:
+  the permits of the active engine section's `sessions`, spec §11.6, over the
+  KV pool `pool.rs` computed for the turn; `TurnLoop::stream` prices its
+  request — the estimate scaled by the budget's latest exact-to-estimate
+  ratio, floored by the loop's `last_usage`, plus the reply cap — and holds a
+  permit and that reservation for one request stream and for nothing else — a
+  round's tools, a popup, a child's fetch run permit-free — so at the default
+  of one the turn's loops take turns exactly as before, under a shared pool a
+  stream that would not fit waits for room, and a loop cancelled while waiting
+  lands what it has; every round's exact `usage` is recorded back as the
+  ratio; docs/research/parallel-subagents.md §4.2, admission-by-budget.md §4) — is one struct owned by the generation task; the loop itself holds
   only its own request, context, cancellation token, allowed set, accumulators
   and a `depth`. A nested loop (a subagent run,
   [docs/research/subagent-chats.md](research/subagent-chats.md) §3.2) is the
@@ -1746,14 +1764,16 @@ config parameters; the **only** place that maps `AppConfig` → parameters is
 (`tools/mod.rs`) instead of every construction site. See
 docs/history/refactoring-solid.md §3.
 
-**`ToolContext.sessions`** (`Option<Arc<tokio::sync::Semaphore>>`) is the
-turn's session semaphore — the one `TurnShared` holds for the loops' own
-streams (spec §11.6) — shared with the tools, so a request a tool makes of the
-engine on its own counts against `sessions` too: `fetch_url`'s
-`summarize_text` takes a permit around its summary stream and around nothing
-else (`features/tools/fetch.rs`, ADR 0012). `None` for a background task's
-context, which carries no budget. FSD is kept: `features` holds a tokio
-primitive, not an `app` type.
+**`ToolContext.sessions`** (`Option<Arc<shared::session_budget::SessionBudget>>`)
+is the turn's session budget — the one `TurnShared` holds for the loops' own
+streams (spec §6.3, §11.6) — shared with the tools, so a request a tool makes
+of the engine on its own counts against `sessions` too, and reserves its share
+of a shared KV pool: `fetch_url`'s `summarize_text` prices its request (the
+page's text plus the summary's cap) and holds a permit and the reservation
+around its summary stream and around nothing else (`features/tools/fetch.rs`,
+ADR 0012; docs/research/admission-by-budget.md §4.5). `None` for a background
+task's context, which carries no budget. FSD is kept: the type lives in
+`shared`, not in `app`.
 
 **`OrchestratorDeps.extra_tools`** — tools registered on top of the standard
 set and re-registered on every `rebuild_registry`; empty in production. The

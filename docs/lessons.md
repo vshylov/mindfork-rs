@@ -495,6 +495,19 @@ the real seam — here `apply_event` with the real event, asserted on the render
 
 ---
 
+**A parser's green tests say nothing about whether the caller ever reaches it.** The
+in-stream error envelope llama.cpp sends (`{"error":{...}}` inside an open `200`
+stream) had a parser, a transience rule and unit tests for both — and the client
+asked the parser only when the ordinary chunk parse *failed*, which it never did:
+every field of the chunk type has a `#[serde(default)]`, so the envelope deserialized
+as an empty chunk and was skipped in silence. A colliding sub-agent pair therefore
+landed as two *completed* runs with a reply cut mid-word, and the defect the parser
+existed to fix was live for as long as the parser was. Only a live control arm that
+expected a *failure* caught it. Test the caller's order of asking with the real wire
+shape after a real delta (an `sse_server` test), not the parser on its own — and keep
+one arm in every live smoke that must see the failure path fire.
+— *admission by budget*.
+
 ## 3. Measure; do not assume
 
 **Assume the measurement will overturn the plan, because it repeatedly has.** Defender

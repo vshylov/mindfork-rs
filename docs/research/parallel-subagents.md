@@ -488,6 +488,7 @@ the pool together. Two guards, one now and one later:
 - later (§8): admission by budget — a child's round waits for a session
   while the in-flight prompt sizes (`usage.prompt_tokens`, which every
   round already records) plus the caps would exceed `context_budget`.
+  *Built 2026-09-04:* [admission-by-budget.md](admission-by-budget.md).
 
 `EngineBackend::parallel_slots() -> Option<u32>` (llama.cpp's
 `total_slots` from the `/props` fetch `context_budget` and `vision` already
@@ -664,7 +665,8 @@ records satisfy a strict provider.
 - **Admission by budget** (F7): the app-side guard for the unified pool.
   **Now a track of its own** (2026-09-04):
   [admission-by-budget.md](admission-by-budget.md) — the collective
-  failure reproduced on the CPU build, both routes into it, and the guard.
+  failure reproduced on the CPU build, both routes into it, and the guard;
+  **built the same day**.
   *Noted 2026-09-04:* llama.cpp gained `--kv-unified-per-slot N` on
   2026-08-27 (PR #24124, in b10791 and later) — a per-slot cap under the
   unified pool, so an overgrown slot fails alone instead of clearing every

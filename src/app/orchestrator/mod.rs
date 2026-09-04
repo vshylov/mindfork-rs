@@ -40,6 +40,7 @@ mod impersonation;
 mod llm_history;
 mod mcp;
 mod model_name;
+mod pool;
 mod profiles;
 mod rag;
 mod reembed;

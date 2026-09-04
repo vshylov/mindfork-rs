@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (42)
+## Entries (43)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -54,6 +54,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the web tools become opt-in, and the one download outside the lock list (done)
 - Post-M9: parallel sub-agents — stage 2, the round's parallel group (track complete)
 - Post-M9: concurrent ordinary tools — the round's read-only calls run at once (done)
+- Post-M9: admission by budget — the unified KV pool never overfilled by the app (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -3232,3 +3233,120 @@ the tag `probe/code-search-stage5`.
   (+1: `concurrent_tools_e2e_live` — two planted-token files read in one
   reply, both tokens in the answer, two `fs_read` records on one message,
   both cards opened before either closed).
+### Post-M9: admission by budget — the unified KV pool never overfilled by the app (done)
+- **What**: the item the parallel sub-agent track left as F7, its own track
+  ([docs/research/admission-by-budget.md](../research/admission-by-budget.md),
+  forks F1–F8 at the recommended options, the user's decision 2026-09-04).
+  Above one session a managed `llama-server` runs `-np N --kv-unified`: N
+  slots over the one pool `-c` sizes, and when the processing sequences
+  outgrow it *together* the server halves its batch down to one and then
+  answers "Context size has been exceeded." to **every** processing slot,
+  clearing their prompts (`server-context.cpp`, the `decode` retry branch —
+  a `TODO` upstream to end only the largest sequence). The session semaphore
+  of stage 1 was a *count*; it could not know that two permits over a 16k
+  pool admit two 9k conversations. Now `shared::session_budget::SessionBudget`
+  is the turn's budget: the permits of `sessions` and, over a pool the app
+  can know, a token **reservation** per stream — the request's prompt
+  estimate scaled by the latest exact-to-estimate ratio any loop of the
+  turn has recorded (floored at 1.0), floored by the loop's last exact
+  `usage.prompt_tokens + completion_tokens`, plus the reply cap; a stream
+  with no cap (only the turn's own, which overlaps nothing) reserves the
+  whole pool. `acquire` takes a permit, then waits — cancellably, with a
+  `Notify` registered before the check so no release is missed — until the
+  reservation fits next to the open ones *or no stream is open*: a stream
+  alone is admitted whatever its size, so the server keeps deciding whether
+  one conversation fits, and a waiter is always behind a stream that ends.
+  `orchestrator/pool.rs` says what the pool is: managed `-c` (through
+  `context_budget`, so the explicit override wins) above one session; an
+  external llama.cpp's `n_ctx` when it reports more than one slot (`/props`
+  says nothing about the pool's shape, so *shared* is assumed — never wrong,
+  pessimistic on a split server, fork F4); none on the clouds or at one
+  session. Both streams of a turn price their requests: `TurnLoop::stream`
+  and `fetch_url`'s summary (`ToolContext.sessions` is the budget now).
+  With no pool the type is the bare semaphore it replaced, bit for bit.
+- **Measured before designing** (the local CPU build, `llama-server` b10807,
+  Gemma 3 4B Q8_0, `-c 2048 -np 2 --kv-unified`, `tools/kv_pool_probe.py`):
+  two 1244-token prompts at once — the batch halved 1024 → 1 in 100 ms,
+  then both slots ended, the one already decoding included (plain: two
+  HTTP 500 `server_error`; streaming: 200 and the error object after 4 and
+  0 chunks); two 884-token prompts that fit, whose 400-token replies grew
+  into each other — both ended after ~140 tokens, 69 s in; the parent's
+  parked context restored intact after the collision (`cache_n` 1239 of
+  1244), and a parked context restored while the other slot is full falls
+  back to a full prefill rather than failing; `--kv-unified-per-slot 1024`
+  made the refusal per request (a 400 in 20 ms) at the price of the split
+  shape's window and a *silent* `length` cut at the cap; the app's
+  estimator under-counted the probe's filler by **2.19×** — the reason the
+  reservation is calibrated by the turn's own exact usage rather than
+  trusted raw.
+- **What the live control arm found.** `admission_control_e2e_live` — the
+  same run with the app told the pool is 65536 — was written to prove the
+  guarded arm did something, and it did more: both children landed
+  **`Completed`**, one with a reply cut mid-word (`“KELVAR`), one empty.
+  The OpenAI-compatible client parsed each `data:` payload as a
+  `ChatCompletionChunk` first and asked `parse_stream_error` only when that
+  parse failed — which `{"error":{…}}` never makes it do, since every field
+  of the chunk has a `#[serde(default)]`; the envelope was an empty chunk,
+  skipped, and the closed connection read as a finished turn. The
+  in-stream error path built in the cloud-retry track had never fired on
+  llama.cpp's shape; its parser's unit tests were green because they test
+  the parser alone. Fixed: the client asks for the envelope *before* the
+  chunk parse, with an `sse_server` test (a delta, then llama.cpp's error
+  object → `Text`, `Error { transient: true }`, `Finished(Error)`, nothing
+  after). Recorded in docs/lessons.md §2.
+- **Live runs — GO** on the CPU build launched exactly as the managed
+  launcher would at `sessions = 2`, `-c 2048`: the parent scripted (a
+  hybrid backend — the persona's requests go to the real server and are
+  counted, the parent's play a script — so the 4B model's willingness to
+  delegate twice is not the variable), the planted text in each child's
+  *message* (~1100 tokens) rather than a file, because Gemma 3's template
+  drops tools (`supports_tools: false`, measured: `prompt_n` 5 with a tool
+  schema against 62 without). `admission_e2e_live` (the app's pool belief
+  2048): the two children **took turns** — most streams open at once 1 —
+  and both completed with their codenames; twice, before and after the
+  client fix. `admission_control_e2e_live` (belief 65536): both streamed at
+  once, the server ended both at 1237 + 1233 tokens, and with the fix the
+  committed child lands **`Failed`** (`“KEL`) while the uncommitted one is
+  retried by the decorator and completes alone — the recovery §2.3 of the
+  research had described as the status quo, live for the first time.
+  **And on the LAN stack** (Qwen 3.6 27B Q4_K_M, b10807, relaunched
+  `-np 4 --kv-unified -c 16384` — four slots over one 16384 pool; the
+  smoke sizes itself from `/props`, so the same arms ran: 300 paragraphs
+  per child, cap 2048): `parallel_subagents_e2e_live` GO as the
+  regression (26 s); `admission_e2e_live` — two ~9k-token children took
+  turns (most open at once **1**), both codes, 20 s; the control arm
+  (belief 65536) — both at once, the second child **`Failed`** with no
+  reply, the first completed, 14 s; `admission_four_e2e_live` — four
+  children at `sessions = 4`, a quarter of the pool plus the cap each: the
+  budget kept **exactly two** streaming at any time (two fit, three do
+  not) and all four completed with their codenames, 30 s. A one-slot
+  server (`-np 1`, how the stack was first found) makes the arms skip by
+  design: `pool.rs` guards nothing below two reported slots, and one slot
+  queues. **The whole `--ignored` set on that stack: 133 passed, 3
+  failed, 65 min** — the three failures are the vision smokes
+  (`image_attachment_e2e_live`, `image_url_attachment_e2e_live`,
+  `tool_result_image_is_seen_live`) on a relaunch without `--mmproj`
+  (`/props`: `vision: false`; the server's own "image input is not
+  supported - hint: … provide the mmproj"), failing honestly for want of
+  `MINDFORK_LIVE_TEXT_ONLY=1` rather than skipping — not this track's, and
+  every turn-path smoke green.
+- **Tests**: 2781 → 2798 unit tests green (+17: `shared/session_budget.rs`
+  — fit together, a third waits and is admitted on a release, larger than
+  the pool alone/not alone, a cancelled waiter leaves no reservation, no
+  pool never waits, the count still bounds, pricing with the density
+  floored at 1.0, the floor and the no-cap pool; `orchestrator/pool.rs` —
+  one session, managed, external by reported slots, the clouds;
+  `tests/parallel.rs` over the keyed recorder now reporting `usage` and
+  the open-stream count at each arrival — two children that do not fit a
+  4000-token pool take turns and both complete, the parent's exact usage
+  scaling the children's reservations from two-at-once to one, a child's
+  second round floored by its first round's exact size waiting for its
+  sibling's long reply to end; the summary reserving under a pool
+  (`fetch.rs`); the client's in-stream envelope; the empty cancelled
+  round), 133 → 136 `#[ignore]` (+3: the three live arms above). The
+  group's existing tests set a roomy `context_size`, since at the default
+  8192 two children capped at the profile's 2048 would now take turns.
+- **Docs**: spec §3.4, §6.3, §9.3.1–§9.3.2, §11.6; architecture §3 (the
+  two modules), §5, §8; install.md §3; the `sessions` hint (en/ru);
+  CHANGELOG Changed + Fixed; roadmap; parallel-subagents.md §4.7/§8;
+  lessons §2.

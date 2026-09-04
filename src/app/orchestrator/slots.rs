@@ -38,6 +38,13 @@ impl SlotsDiscovery {
     }
 
     /// Applies an answer if it belongs to the current engine.
+    /// What the server last answered, if it has: the `sessions` hint's
+    /// number, and the external mode's evidence of a shared pool
+    /// (docs/research/admission-by-budget.md §4.4).
+    pub(super) fn known(&self) -> Option<u32> {
+        self.known
+    }
+
     fn apply(&mut self, epoch: u64, slots: Option<u32>) -> bool {
         if epoch != self.epoch {
             return false;

@@ -25,6 +25,10 @@ use crate::shared::api::contract::{ChatStream, ToolCallDelta};
 struct KeyedRecorder {
     queues: Mutex<Vec<(String, VecDeque<Script>)>>,
     requests: Mutex<Vec<ChatRequest>>,
+    /// Per request, in arrival order: its system message and how many
+    /// streams were open when it arrived — what a stream that waited for
+    /// room in the pool (admission-by-budget §4.1) looks like from the engine.
+    arrivals: Mutex<Vec<(String, usize)>>,
     in_flight: Arc<AtomicUsize>,
     max_in_flight: AtomicUsize,
     delay_ms: u64,
@@ -49,6 +53,7 @@ impl KeyedRecorder {
                     .collect(),
             ),
             requests: Mutex::new(Vec::new()),
+            arrivals: Mutex::new(Vec::new()),
             in_flight: Arc::new(AtomicUsize::new(0)),
             max_in_flight: AtomicUsize::new(0),
             delay_ms,
@@ -57,6 +62,18 @@ impl KeyedRecorder {
 
     fn requests(&self) -> Vec<ChatRequest> {
         self.requests.lock().unwrap().clone()
+    }
+
+    /// How many streams were open when each request of `persona` arrived,
+    /// in its request order.
+    fn open_at_arrival(&self, persona: &str) -> Vec<usize> {
+        self.arrivals
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(system, _)| system.contains(persona))
+            .map(|(_, open)| *open)
+            .collect()
     }
 
     fn max_in_flight(&self) -> usize {
@@ -87,6 +104,7 @@ impl EngineBackend for KeyedRecorder {
                 })
         };
         let open = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+        self.arrivals.lock().unwrap().push((system, open - 1));
         self.max_in_flight.fetch_max(open, Ordering::SeqCst);
         let guard = OpenStream(self.in_flight.clone());
         let delay = self.delay_ms;
@@ -185,6 +203,13 @@ fn cfg(parallel: u32, sessions: u32) -> AppConfig {
     let mut cfg = no_auto_cfg();
     cfg.tools.subagent_parallel = parallel;
     cfg.engine.managed.sessions = sessions;
+    // A managed server above one session has a shared KV pool of `-c`, and
+    // every child reserves at least its reply cap in it — 2048 here, the
+    // default profile's `max_tokens`, below `subagent_max_tokens`
+    // (admission-by-budget §4.2). A roomy pool keeps the permit count the
+    // only bound the group's tests measure; the pool tests at the end of the
+    // file size it on purpose.
+    cfg.engine.managed.context_size = 65_536;
     cfg
 }
 
@@ -449,4 +474,178 @@ fn two_running_transcripts_are_mirrored_and_forwarded_apart() {
     let rows = &listed[0].children;
     assert!(rows.iter().find(|c| c.id == a_id).unwrap().running);
     assert!(!rows.iter().find(|c| c.id == b_id).unwrap().running);
+}
+
+// ---------------------------------------------------------------------------
+// Admission by budget (docs/research/admission-by-budget.md §4, §7): a
+// managed server above one session shares one KV pool of `-c`, and a child's
+// stream reserves its prompt plus its reply cap in it — waiting for room
+// rather than taking a permit it would overflow the pool with.
+// ---------------------------------------------------------------------------
+
+/// A script that reports an exact `usage` before it finishes — what a real
+/// server does, and what the budget's floor and calibration read.
+fn sized(mut script: Script, prompt_tokens: u32, completion_tokens: u32) -> Script {
+    let end = script.chunks.pop().expect("a script ends with Finished");
+    script
+        .chunks
+        .push(ChatChunk::Usage(crate::shared::api::contract::TokenUsage {
+            prompt_tokens,
+            completion_tokens,
+            reasoning_tokens: 0,
+        }));
+    script.chunks.push(end);
+    script
+}
+
+/// A reply of `n` text chunks — long enough on the recorder's delay to still
+/// be streaming when a sibling comes back for its second round.
+fn long_text(n: usize) -> Script {
+    let mut chunks: Vec<ChatChunk> = (0..n).map(|_| ChatChunk::Text("kind ".into())).collect();
+    chunks.push(ChatChunk::Finished(FinishReason::Stop));
+    Script {
+        chunks,
+        hang: false,
+    }
+}
+
+/// A child whose reservation is at least its 2048-token reply cap: two such
+/// do not fit a pool of 4000, so with two sessions they still stream one at
+/// a time — and both complete, in the model's order.
+#[tokio::test]
+async fn siblings_that_do_not_fit_the_pool_take_turns() {
+    let backend = two_siblings(text("harsh view"), text("kind view"), 40);
+    let mut c = cfg(2, 2);
+    c.engine.managed.context_size = 4000;
+    let (dir, _events, chat_id) = run_turn_on(backend.clone(), c).await;
+    assert_eq!(
+        backend.max_in_flight(),
+        1,
+        "two sessions, but two 2048-capped reservations exceed 4000"
+    );
+    let runs = landed_runs(&load(dir.path(), chat_id));
+    assert_eq!(
+        (runs[0].final_reply(), runs[1].final_reply()),
+        (Some("harsh view"), Some("kind view"))
+    );
+    assert!(
+        runs.iter()
+            .all(|r| r.outcome == Some(RunOutcome::Completed))
+    );
+}
+
+/// The parent's first round reports an exact prompt size far above its
+/// estimate; that ratio scales every later reservation of the turn
+/// (research §4.3), so two children that would fit a pool of 12000 on the
+/// raw estimate take turns — and, with no usage reported, run together.
+#[tokio::test]
+async fn the_parents_exact_usage_calibrates_the_childrens_reservations() {
+    let siblings = |calibrated: bool| {
+        let first = two_calls(("c1", CRITIC), ("c2", FAN));
+        let first = if calibrated {
+            sized(first, 1_000_000, 1)
+        } else {
+            first
+        };
+        KeyedRecorder::new(
+            vec![
+                ("", vec![first, text("both views in")]),
+                ("be harsh", vec![text("harsh view")]),
+                ("be kind", vec![text("kind view")]),
+            ],
+            40,
+        )
+    };
+    let mut c = cfg(2, 2);
+    c.engine.managed.context_size = 12_000;
+
+    let raw = siblings(false);
+    let (_d, _e, _id) = run_turn_on(raw.clone(), c.clone()).await;
+    assert_eq!(raw.max_in_flight(), 2, "on the raw estimate both fit");
+
+    let calibrated = siblings(true);
+    let (dir, _events, chat_id) = run_turn_on(calibrated.clone(), c).await;
+    assert_eq!(
+        calibrated.max_in_flight(),
+        1,
+        "the parent's usage said the estimator under-counts: one at a time"
+    );
+    let runs = landed_runs(&load(dir.path(), chat_id));
+    assert!(
+        runs.iter()
+            .all(|r| r.outcome == Some(RunOutcome::Completed))
+    );
+}
+
+/// A child's second round reserves at least what the server said its first
+/// round was plus what it generated (research §4.2's floor): Critic's first
+/// round is tiny by estimate but reports 5000 generated tokens, so its
+/// second request must wait for Fan's long reply to end — it arrives with
+/// no stream open — where the raw estimate would have fit next to it.
+#[tokio::test]
+async fn a_childs_second_round_reserves_at_least_its_last_exact_size() {
+    let call_unknown = || Script {
+        chunks: vec![
+            ChatChunk::ToolCall(ToolCallDelta {
+                thought_signature: None,
+                index: 0,
+                id: Some("k1".into()),
+                name: Some("no_such_tool".into()),
+                arguments: "{}".into(),
+            }),
+            ChatChunk::Finished(FinishReason::ToolCalls),
+        ],
+        hang: false,
+    };
+    let recorder = |floored: bool| {
+        // An exact prompt *below* the estimate keeps the density at 1.0, so
+        // only the floor can make the difference here.
+        let first = if floored {
+            sized(call_unknown(), 1, 5000)
+        } else {
+            call_unknown()
+        };
+        KeyedRecorder::new(
+            vec![
+                (
+                    "",
+                    vec![
+                        two_calls(("c1", CRITIC), ("c2", FAN)),
+                        text("both views in"),
+                    ],
+                ),
+                ("be harsh", vec![first, text("harsh view")]),
+                ("be kind", vec![long_text(12)]),
+            ],
+            40,
+        )
+    };
+    // Fan's stream reserves ~2100 (its estimate plus the 2048 cap); Critic's
+    // second round reserves ~2100 raw, 5001 + 2048 floored.
+    let mut c = cfg(2, 2);
+    c.engine.managed.context_size = 8000;
+
+    let raw = recorder(false);
+    let (_d, _e, _id) = run_turn_on(raw.clone(), c.clone()).await;
+    // The first requests of the two children race for the engine, so only
+    // the second round's arrival is asserted.
+    assert_eq!(
+        raw.open_at_arrival("be harsh").get(1),
+        Some(&1),
+        "raw: Critic's second round streams next to Fan's reply"
+    );
+
+    let floored = recorder(true);
+    let (dir, _events, chat_id) = run_turn_on(floored.clone(), c).await;
+    assert_eq!(
+        floored.open_at_arrival("be harsh").get(1),
+        Some(&0),
+        "floored: 5001 + 2048 does not fit next to Fan — it waited for Fan to end"
+    );
+    let runs = landed_runs(&load(dir.path(), chat_id));
+    assert_eq!(runs[0].final_reply(), Some("harsh view"));
+    assert!(
+        runs.iter()
+            .all(|r| r.outcome == Some(RunOutcome::Completed))
+    );
 }

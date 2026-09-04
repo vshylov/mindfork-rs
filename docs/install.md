@@ -353,9 +353,11 @@ Two modes (configured on the settings screen, `Ctrl+P`, "Model/server" section):
     that `-c` sizes — the same shape `llama-server` picks on its own when `-np`
     is not given (four slots over a unified pool, its default since December
     2025), so the pool costs no extra memory; what N sessions cost is sharing
-    it, and a sub-agent's round fails with "Context size has been exceeded" when
-    the conversations running at once do not fit the pool together. Raise `-c`
-    to buy room. The field's hint shows how many slots the running server
+    it — and the app keeps that sharing within the pool: a sub-agent's round
+    (or a page summary) that would not fit next to the streams already open
+    waits for one of them to end, instead of provoking the server's "Context
+    size has been exceeded", which ends *every* running conversation at once.
+    Raise `-c` to buy room and the waits get rarer. The field's hint shows how many slots the running server
     reports (`total_slots` on `/props`).
   - **Parallel tool calls** (`concurrent_calls`, the same group): how many of
     the tool calls the assistant issues in one reply run at once, when they

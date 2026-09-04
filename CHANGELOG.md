@@ -110,6 +110,17 @@ split by subsystem.
 
 ### Changed
 
+- **Parallel sessions never overfill the server's context pool.** Above one
+  session a managed `llama-server` shares one context pool between the
+  streams the app keeps open, and when they outgrew it together the server
+  ended *every* running conversation at once — two sub-agents dying with
+  "Context size has been exceeded" after a minute of visible progress. Now
+  every stream reserves what it will occupy (its prompt, corrected by the
+  exact sizes the server has already reported in this reply, plus its reply
+  cap) and a stream that would not fit waits for room instead. Nothing
+  changes at one session, on the clouds, or on an external server that does
+  not report its slots; the *Parallel sessions* hint says "waits" where it
+  said "fails".
 - **A newer British dictionary.** `en_GB` moves from the 2018 word list to the
   current one from its author (V 4.0.9): about 14 000 more stems, so fewer
   correct words get underlined. It is the same variant as before — both
@@ -142,6 +153,14 @@ split by subsystem.
 
 ### Fixed
 
+- **A server error inside an open stream no longer passes for a finished
+  reply.** When `llama-server` (or an OpenAI-compatible proxy) put an error
+  object into an already-open stream — its "Context size has been
+  exceeded." to every running conversation, for one — the reply simply
+  stopped, cut mid-word, and was recorded as complete; a sub-agent's parent
+  read the fragment as the answer. The error now ends the reply as an
+  error, with the note on screen and, where nothing had been delivered yet,
+  the retry that was always meant to run.
 - **The program's own name, as Windows shows it.** `mindfork.exe` announced
   itself as `mindfork-rs` — the package name — everywhere Windows reads a file's
   properties: Task Manager, Explorer's details, the "unknown publisher" dialog.

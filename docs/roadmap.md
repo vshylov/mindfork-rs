@@ -116,12 +116,15 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
     - **`youtube_watch` and `note_recall`** — the first once a marked tool
       with an effect has exercised the effect ordering, the second once the
       vector backfill leaves the read path or becomes a single flight;
-  - **admission by budget** for the unified KV pool — a child's round waits
-    for a session while the in-flight prompt sizes plus the caps would
-    exceed `context_budget`; today an overfilled pool fails the round with
-    the server's message — **research written** (2026-09-04):
-    [docs/research/admission-by-budget.md](research/admission-by-budget.md),
-    forks open;
+  - **admission by budget** for the unified KV pool — **done** (2026-09-04:
+    every stream reserves its calibrated prompt estimate plus its reply cap
+    and waits for room; the collective failure reproduced and then
+    unreachable on the CPU build —
+    [docs/research/admission-by-budget.md](research/admission-by-budget.md)).
+    What its §8 left for later: the external shape typed (a `pool` field for
+    a split server); a "waiting for room" label on the chip; the background
+    tasks under an app-wide budget; `--kv-unified-per-slot` as a managed
+    option;
   - **the Gemma stack's slow prefill** (~50 tok/s on b10791 with the
     projector, against ~2200 tok/s for Qwen on the same line) — the Gemma
     line without `-mm` and one cold request would tell whether it is the
