@@ -486,6 +486,14 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
                 c.tools.subagent_run_timeout_secs = v;
             }
         }),
+        // Below 1 is stored as 1 — one run at a time is the floor, the
+        // sequential behaviour of spec §9.3.2 (like `XSessions`); unparsable —
+        // unchanged.
+        TSubParallel => int(|c, t| {
+            if let Ok(v) = t.parse::<u32>() {
+                c.tools.subagent_parallel = v.max(1);
+            }
+        }),
         TDialogueTimeout => int(|c, t| {
             if let Ok(v) = t.parse() {
                 c.tools.dialogue_run_timeout_secs = v;

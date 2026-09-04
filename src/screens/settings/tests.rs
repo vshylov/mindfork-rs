@@ -4649,3 +4649,94 @@ fn sessions_description_names_the_reported_slots_for_local_servers_only() {
     let desc = field_desc(&s, FieldId::XSessions).unwrap();
     assert_eq!(desc, base(&s), "no answer — no hint");
 }
+
+// ---------- Subagent: parallel runs (tools.subagent_parallel, spec §9.3.2) ----------
+
+/// Opens the editor on `TSubParallel`, types `text`, commits with Enter.
+fn edit_sub_parallel(s: &mut SettingsScreen, text: &str) -> Option<SettingsIntent> {
+    goto_section(s, Section::Tools);
+    goto_field(s, FieldId::TSubParallel);
+    s.handle_key(key(KeyCode::Enter));
+    s.handle_key(ctrl('k')); // clear the current value
+    for c in text.chars() {
+        s.handle_key(key(KeyCode::Char(c)));
+    }
+    s.handle_key(key(KeyCode::Enter))
+}
+
+#[test]
+fn sub_parallel_row_follows_the_run_time_limit_in_tools() {
+    // The row sits in the "Agentic loop" group of "Tools", right after the
+    // subagent's run time limit, valued from `tools.subagent_parallel`, and
+    // carries a description.
+    let mut s = screen();
+    s.config.tools.subagent_parallel = 4;
+    let rows = s.tool_fields();
+    let pos = rows
+        .iter()
+        .position(|r| r.id == FieldId::TSubParallel)
+        .expect("no sub_parallel row");
+    assert_eq!(
+        rows[pos - 1].id,
+        FieldId::TSubTimeout,
+        "it follows the run time limit"
+    );
+    assert_eq!(
+        rows[pos].group,
+        rows[pos - 1].group,
+        "in the same group as its sibling"
+    );
+    assert!(
+        matches!(&rows[pos].kind, FieldKind::Text(v) if v == "4"),
+        "the value is tools.subagent_parallel"
+    );
+    assert!(rows[pos].description.is_some(), "the row is described");
+}
+
+#[test]
+fn editing_sub_parallel_saves_the_value_with_a_floor_of_one() {
+    // "3" lands in `tools.subagent_parallel`; "0" is stored as 1 — one run at a
+    // time is the floor, the sequential behaviour the tool has always had.
+    let mut s = screen();
+    match edit_sub_parallel(&mut s, "3") {
+        Some(SettingsIntent::SaveConfig(c)) => assert_eq!(c.tools.subagent_parallel, 3),
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+    let mut s = screen();
+    s.config.tools.subagent_parallel = 3;
+    match edit_sub_parallel(&mut s, "0") {
+        Some(SettingsIntent::SaveConfig(c)) => assert_eq!(c.tools.subagent_parallel, 1),
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+}
+
+#[test]
+fn sub_parallel_ignores_what_it_cannot_parse() {
+    // Through the editor a non-number never commits (validation keeps it open);
+    // and the setter itself ignores what `u32` cannot parse — a negative value
+    // passes the editor's integer check but not the field's.
+    let mut s = screen();
+    s.config.tools.subagent_parallel = 2;
+    assert_eq!(edit_sub_parallel(&mut s, "abc"), None);
+    assert!(s.editor.is_some(), "invalid input doesn't close the editor");
+    assert_eq!(s.config.tools.subagent_parallel, 2);
+
+    use super::spec::{Access, FieldSpec};
+    let Some(FieldSpec {
+        access: Access::Text(set),
+        ..
+    }) = super::spec::field_spec(FieldId::TSubParallel)
+    else {
+        panic!("TSubParallel is a text field of the config table");
+    };
+    let mut c = AppConfig::default();
+    c.tools.subagent_parallel = 2;
+    set(&mut c, "abc");
+    set(&mut c, "-1");
+    set(&mut c, "");
+    assert_eq!(c.tools.subagent_parallel, 2, "unparsable input is a no-op");
+    set(&mut c, "0");
+    assert_eq!(c.tools.subagent_parallel, 1, "below 1 is stored as 1");
+    set(&mut c, "5");
+    assert_eq!(c.tools.subagent_parallel, 5);
+}

@@ -680,6 +680,9 @@ pub struct ToolConfig {
     pub web_search_keys: Vec<(crate::shared::secrets::SearchSlot, String)>,
     /// "Sandbox" directory for file tools (`None` → no restriction).
     pub fs_root: Option<String>,
+    /// `config.tools.subagent_parallel` — how many of one reply's sub-agents
+    /// run at once; `call_subagent`'s description says so above 1.
+    pub subagent_parallel: u32,
     /// Resolved video-understanding slot for `youtube_watch` (`None` — not
     /// configured; the tool then degrades to metadata). Independent of the chat
     /// engine — see `shared::video`.
@@ -706,6 +709,7 @@ impl Default for ToolConfig {
             web_provider: crate::shared::config::WebProvider::default(),
             web_search_keys: Vec::new(),
             fs_root: None,
+            subagent_parallel: 1,
             video: None,
             sampling_provider: None,
         }
@@ -744,8 +748,12 @@ pub fn standard_registry(cfg: &ToolConfig) -> ToolRegistry {
     reg.register(Arc::new(rag::RagSearch));
     // A loop-executed tool (spec §9.3.2): registered for its schema and the
     // profile toggle; the agentic loop runs it, with the limits it reads from
-    // `config.tools` itself — so nothing here to parameterize.
-    reg.register(Arc::new(subagent::CallSubagent));
+    // `config.tools` itself. The one thing parameterized here is what the
+    // *description* says about parallel delegation (fork F5 of
+    // docs/research/parallel-subagents.md).
+    reg.register(Arc::new(subagent::CallSubagent {
+        parallel: cfg.subagent_parallel,
+    }));
     reg.register(Arc::new(dialogue::RunDialogue));
     // Both tools follow addresses the model picked, so both are built on a client that
     // refuses local and private ones (docs/research/fetch-url-address-policy.md, fork F1).

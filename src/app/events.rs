@@ -760,6 +760,10 @@ pub enum AppEvent {
     /// event, so a cancelled turn's chip cannot linger.
     SubagentProgress {
         generation_id: Uuid,
+        /// Which run the report is about: several can run at once (spec
+        /// §9.3.2), and the screen keeps one line per running run, clearing
+        /// the one whose `None` arrives.
+        run: Uuid,
         progress: Option<SubagentProgress>,
     },
     /// A transient provider failure is being retried; the next attempt starts in

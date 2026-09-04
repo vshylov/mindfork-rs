@@ -1,6 +1,13 @@
 # Parallel sub-agents — several `call_subagent` runs in one round — research
 
-> Status: **forks decided, stage 1 done** (2026-09-03). User's decision:
+> Status: **track complete — both stages** (2026-09-04). Stage 2
+> (`feat/parallel-subagents`): the round's parallel group (§4.1) under
+> `tools.subagent_parallel` with its settings row, `TurnShared` immutable
+> with the confirmation lock (§4.3), the turn-wide token totals (§4.4), the
+> mirror and the chip keyed by run id (§4.5), the description with the number
+> (§4.6); ADR 0010 amended. Ten unit tests over a persona-keyed, stream-counting
+> engine pin the group's order, the `sessions` ceiling, one sibling's timeout
+> and the mirror; the live smoke on Qwen 3.6 is in §7's note. User's decision:
 > F1–F10 at their recommended options. Stage 1 (`feat/parallel-sessions`,
 > §7): `sessions` on the six engine sections and `tools.subagent_parallel`
 > in config, the turn's session semaphore around one stream, `-np N
@@ -613,6 +620,15 @@ delegates it; a counting mock under `sessions = 1` never sees two streams
 even with `subagent_parallel = 3` (the loop of stage 2 is what would open
 them — so this test moves to stage 2, and stage 1 asserts the permit is
 taken and released around one stream).
+
+> Stage 2 as built (2026-09-04): everything below except the cloud arm,
+> which the stage-1 e2e runs on both gate models and the ordered-records
+> unit test cover; `parallel_subagents_e2e_live` on Qwen 3.6 27B — two runs
+> started 1 ms apart, overlapped, each used `fs_read`, both codes in the
+> reply — GO. The two-confirmation unit test is folded into the design (one
+> lock held across the wait) rather than written: the popup harness in
+> `tests/confirm.rs` answers one question at a time by construction, and
+> the lock is what makes a second question wait.
 
 **Stage 2 — the group, the immutable shared part, the mirror** (`feat/parallel-subagents`).
 §4.1, §4.3–§4.6, §4.9. Unit tests, over the keyed and counting mocks:

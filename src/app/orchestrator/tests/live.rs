@@ -4383,3 +4383,175 @@ async fn dialogue_e2e_live() {
         );
     }
 }
+
+/// The parallel group's live proof (docs/research/parallel-subagents.md §7):
+/// the parent is asked for two codenames in two files and told to delegate
+/// **both** reads in one reply; with `subagent_parallel = 2` and two sessions
+/// the two runs must overlap in time — the second started before the first
+/// finished — and both must land on the one assistant message, each having
+/// used `fs_read`, with both tokens in the parent's reply. A parent that
+/// delegates one at a time (two rounds) fails the overlap assertion, which is
+/// the no-go signal this smoke exists for. The dashes are folded on both
+/// sides: a model may render a code with a non-breaking hyphen
+/// (docs/lessons.md §9). `#[ignore]`, manual against a live model.
+#[tokio::test]
+#[ignore = "requires a live chat server (MINDFORK_ENGINE_URL)"]
+async fn parallel_subagents_e2e_live() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let file_a = sandbox.path().join("alpha.txt");
+    let file_b = sandbox.path().join("beta.txt");
+    std::fs::write(
+        &file_a,
+        "Internal note.\nThe alpha codename is ZARNOVIK-7741.\n",
+    )
+    .unwrap();
+    std::fs::write(
+        &file_b,
+        "Internal note.\nThe beta codename is KELVAR-3390.\n",
+    )
+    .unwrap();
+    let mut cfg = AppConfig::default();
+    cfg.tools.fs_enabled = true;
+    cfg.tools.fs_root = Some(sandbox.path().to_string_lossy().to_string());
+    cfg.tools.subagent_parallel = 2;
+    cfg.engine.external.sessions = 2;
+    cfg.engine.managed.sessions = 2;
+    cfg.interface.auto_title = crate::shared::config::AutoTitleMode::Off;
+    let Some((_d, cmd_tx, mut evt_rx, handle)) = spawn_orch_live_cfg(cfg) else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    cmd_tx
+        .send(AppCommand::CreateProfile {
+            name: "Delegator".into(),
+            system_message: "You are a coordinator. Reply in English. You never read files \
+                 yourself: whenever files have to be read, you delegate each file to its own \
+                 sub-agent with the call_subagent tool — several call_subagent calls in ONE \
+                 reply when there are several files — giving each the exact file path and \
+                 telling it to use fs_read, then you report what the sub-agents found."
+                .into(),
+        })
+        .unwrap();
+    let pl = wait_for(
+        &mut evt_rx,
+        |e| matches!(e, AppEvent::ProfileList(v) if v.len() >= 2),
+    )
+    .await
+    .unwrap();
+    let pid = match pl {
+        AppEvent::ProfileList(v) => v.last().unwrap().id,
+        _ => unreachable!(),
+    };
+    cmd_tx
+        .send(AppCommand::UpdateProfile {
+            id: pid,
+            edit: Box::new(ProfileEdit {
+                language: Some(crate::shared::i18n::Lang::En),
+                enabled_tools: Some(vec!["call_subagent".to_string(), "fs_read".to_string()]),
+                ..Default::default()
+            }),
+        })
+        .unwrap();
+    cmd_tx
+        .send(AppCommand::NewChat {
+            profile_id: Some(pid),
+        })
+        .unwrap();
+    let chat_id = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .and_then(|e| match e {
+            AppEvent::ChatActivated { id, .. } => Some(id),
+            _ => None,
+        })
+        .unwrap();
+
+    let ask = format!(
+        "What are the alpha and beta codenames? The alpha one is in the file {} and the \
+         beta one in {}. Do not read them yourself — delegate each file to its own \
+         sub-agent (call_subagent), both in this same reply, and tell each to read its \
+         file with fs_read. Then answer with both codenames.",
+        file_a.display(),
+        file_b.display()
+    );
+    let (reply, calls) = run_turn_capture_args(&cmd_tx, &mut evt_rx, &ask).await;
+    eprintln!("reply: {reply}");
+    for (n, a, r) in &calls {
+        eprintln!(
+            "call {n}({}) -> {}",
+            a.chars().take(120).collect::<String>(),
+            r.chars().take(160).collect::<String>()
+        );
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    let delegated = calls
+        .iter()
+        .filter(|(n, _, _)| n == "call_subagent")
+        .count();
+    assert!(
+        delegated >= 2,
+        "the parent did not delegate twice: {calls:?}"
+    );
+    assert!(
+        !calls.iter().any(|(n, _, _)| n == "fs_read"),
+        "the parent read a file itself instead of delegating"
+    );
+    let chat = Storage::open(Paths::with_root(_d.path()))
+        .unwrap()
+        .json()
+        .load_chat(chat_id)
+        .unwrap()
+        .unwrap();
+    // Both runs on one assistant message — one reply, one group.
+    let grouped: Vec<&crate::entities::subagent::SubagentRun> = chat
+        .messages
+        .iter()
+        .filter_map(|m| {
+            let runs: Vec<_> = m
+                .tool_calls
+                .iter()
+                .filter_map(|r| r.subagent.as_deref())
+                .collect();
+            (runs.len() >= 2).then_some(runs)
+        })
+        .next()
+        .expect("two runs on one assistant message");
+    for run in &grouped {
+        eprintln!(
+            "run «{}»: {} messages, outcome {:?}, {:?} → {:?}",
+            run.title,
+            run.messages.len(),
+            run.outcome,
+            run.created_at,
+            run.finished_at
+        );
+        let reads = run
+            .messages
+            .iter()
+            .flat_map(|m| m.tool_calls.iter())
+            .filter(|r| r.name == "fs_read")
+            .count();
+        assert!(
+            reads >= 1,
+            "the sub-agent «{}» never used fs_read",
+            run.title
+        );
+    }
+    // GO: the second run started before the first finished — they ran at once.
+    let first_end = grouped[0].finished_at.expect("the first run ended");
+    assert!(
+        grouped[1].created_at < first_end,
+        "the runs did not overlap: {:?} vs {:?}",
+        grouped[1].created_at,
+        first_end
+    );
+    let fold = |s: &str| s.replace(['\u{2010}', '\u{2011}', '\u{2012}', '\u{2013}'], "-");
+    let reply = fold(&reply);
+    assert!(
+        reply.contains("ZARNOVIK-7741"),
+        "alpha token missing: {reply}"
+    );
+    assert!(reply.contains("KELVAR-3390"), "beta token missing: {reply}");
+}

@@ -16,6 +16,17 @@ split by subsystem.
 
 ### Added
 
+- **Several sub-agents at once.** When the assistant delegates several
+  tasks in one reply — several `call_subagent` calls at once, the way Claude
+  Code fans out its agents — they now run **in parallel**: "Subagent:
+  parallel runs" in Settings → Tools says how many at a time (**1** by
+  default, so nothing changes until you raise it), each run is its own row
+  under the chat while it runs, the status bar counts them, and their
+  results land in the order the assistant asked. Their streams share the
+  engine's sessions (below): with one session they take turns round by
+  round, with more they stream together. Above 1 the tool's description
+  tells the model it may delegate several tasks in one reply — measured to
+  make even a small model do so every time.
 - **A "Parallel sessions" setting for the assistant's engine.** Every engine
   mode (managed, external, and each cloud provider) has its own `sessions`
   — how many request streams the app may keep open against that engine at
@@ -23,9 +34,8 @@ split by subsystem.
   its sub-agents take turns as before. Above 1 a managed `llama-server` is
   launched with `-np N --kv-unified` (N slots sharing the one context pool
   `-c` sizes — no extra memory), and the field's hint shows how many slots
-  the running server reports. This is the engine half of running several
-  sub-agents at once; the sub-agents themselves start running in parallel
-  with the next stage.
+  the running server reports. Measured on one RTX 4090: two sessions gain
+  little on a 31B, four gain 2.9× on Qwen 3.6 27B.
 
 - **The spellcheck dictionaries now say where they come from — and carry their
   licences.** They are somebody else's work, redistributed with the program, and

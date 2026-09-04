@@ -698,6 +698,12 @@ impl SettingsScreen {
                 )
                 .describe(loc.t("ui.settings.desc.sub_timeout")),
                 row(
+                    FieldId::TSubParallel,
+                    loc.t("ui.settings.field.sub_parallel"),
+                    FieldKind::Text(t.subagent_parallel.to_string()),
+                )
+                .describe(loc.t("ui.settings.desc.sub_parallel")),
+                row(
                     FieldId::TDialogueTimeout,
                     loc.t("ui.settings.field.dialogue_timeout"),
                     FieldKind::Text(t.dialogue_run_timeout_secs.to_string()),

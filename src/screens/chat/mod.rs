@@ -617,10 +617,12 @@ pub struct ChatScreen {
     /// a string rather than a flag, because the chip carries the numbers; it is
     /// cleared by content or by the turn finishing, so it cannot outlive the wait.
     retrying: Option<String>,
-    /// The composed "sub-agent «name» · round N · tool" label while the turn
-    /// is inside `call_subagent` (`AppEvent::SubagentProgress`); `None` —
-    /// no run in flight. Spec §9.3.2.
-    subagent: Option<String>,
+    /// The composed "sub-agent «name» · round N · tool" labels of the runs in
+    /// flight (`AppEvent::SubagentProgress`), one per run in report order —
+    /// the chip shows the one line, or the count and the latest when the
+    /// model delegated several tasks at once. Empty — no run in flight.
+    /// Spec §9.3.2.
+    subagents: Vec<(Uuid, String)>,
     /// The generation running on the open conversation when it is a sub-agent
     /// transcript (`ChatActivated::live_turn`, docs/subagent-live.md §3.4):
     /// the chip's guard while `current_gen` stays `None` — the parent's
@@ -717,7 +719,7 @@ impl ChatScreen {
             self_consolidating: false,
             compacting: false,
             retrying: None,
-            subagent: None,
+            subagents: Vec::new(),
             live_turn: None,
             transcript: Vec::new(),
             speaking: false,
@@ -891,6 +893,19 @@ impl ChatScreen {
     /// generalizes to any number of them (reflection / note sleep / self-model
     /// sleep can run in parallel).
     pub(super) fn background_hint(&self) -> Option<String> {
+        // The sub-agent chip: the one run's line, or the count and the
+        // latest line when several run at once (spec §9.3.2). Composed before
+        // the strip so the borrowed pieces outlive it.
+        let subagents_label: Option<String> = self.subagents.last().map(|(_, latest)| {
+            if self.subagents.len() == 1 {
+                latest.clone()
+            } else {
+                self.loc.tf(
+                    "ui.chat.bg.subagents",
+                    &[("n", &self.subagents.len().to_string()), ("latest", latest)],
+                )
+            }
+        });
         let mut parts: Vec<&str> = Vec::new();
         if self.reflecting {
             parts.push(self.loc.t("ui.chat.bg.reflect"));
@@ -906,8 +921,8 @@ impl ChatScreen {
         }
         // The sub-agent chip after the background tasks: it belongs to the
         // turn in flight, like the retry — the two read together at the end.
-        if let Some(subagent) = &self.subagent {
-            parts.push(subagent);
+        if let Some(label) = subagents_label.as_deref() {
+            parts.push(label);
         }
         // Last, so a retry the user is waiting on reads at the end of the strip
         // next to the generation indicator rather than in the middle of the
@@ -939,7 +954,7 @@ impl ChatScreen {
     pub fn set_live_turn(&mut self, live_turn: Option<Box<crate::app::events::LiveTurn>>) {
         let Some(live) = live_turn else {
             self.live_turn = None;
-            self.subagent = None;
+            self.subagents.clear();
             return;
         };
         self.live_turn = Some(live.turn);

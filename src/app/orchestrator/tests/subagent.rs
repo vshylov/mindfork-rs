@@ -764,10 +764,7 @@ fn a_filed_round_grows_the_open_transcript() {
         chat: parent,
         rounds: Vec::new(),
         partial: Default::default(),
-        child: None,
-        child_stream: Uuid::nil(),
-        child_partial: Default::default(),
-        child_line_role: MessageRole::Assistant,
+        children: Vec::new(),
         continuation: false,
     });
     let mut run = crate::entities::subagent::SubagentRun::fixture("Критик", &["задание"]);
@@ -791,7 +788,10 @@ fn a_filed_round_grows_the_open_transcript() {
     orch.active_id = Some(parent);
     orch.handle_progress(
         generation,
-        super::super::generation::TurnProgress::ChildRoundFiled(vec![Message::assistant("раз")]),
+        super::super::generation::TurnProgress::ChildRoundFiled {
+            run: run_id,
+            messages: vec![Message::assistant("раз")],
+        },
     );
     let mut grew = false;
     while let Ok(ev) = rx.try_recv() {
@@ -803,7 +803,10 @@ fn a_filed_round_grows_the_open_transcript() {
     orch.active_id = Some(run_id);
     orch.handle_progress(
         generation,
-        super::super::generation::TurnProgress::ChildRoundFiled(vec![Message::assistant("два")]),
+        super::super::generation::TurnProgress::ChildRoundFiled {
+            run: run_id,
+            messages: vec![Message::assistant("два")],
+        },
     );
     let grew = loop {
         match rx.try_recv().unwrap() {
@@ -817,9 +820,9 @@ fn a_filed_round_grows_the_open_transcript() {
         orch.inflight
             .as_ref()
             .unwrap()
-            .child
-            .as_ref()
+            .child(run_id)
             .unwrap()
+            .run
             .messages
             .len(),
         3
@@ -828,15 +831,18 @@ fn a_filed_round_grows_the_open_transcript() {
     // A step from another generation is dropped.
     orch.handle_progress(
         Uuid::new_v4(),
-        super::super::generation::TurnProgress::ChildRoundFiled(vec![Message::assistant("чужое")]),
+        super::super::generation::TurnProgress::ChildRoundFiled {
+            run: run_id,
+            messages: vec![Message::assistant("чужое")],
+        },
     );
     assert_eq!(
         orch.inflight
             .as_ref()
             .unwrap()
-            .child
-            .as_ref()
+            .child(run_id)
             .unwrap()
+            .run
             .messages
             .len(),
         3
@@ -863,10 +869,7 @@ fn the_parents_round_in_progress_is_mirrored_for_a_return() {
         chat: chat_id,
         rounds: Vec::new(),
         partial: Default::default(),
-        child: None,
-        child_stream: Uuid::nil(),
-        child_partial: Default::default(),
-        child_line_role: MessageRole::Assistant,
+        children: Vec::new(),
         continuation: false,
     });
     let step = |s: StreamStep| TurnProgress::OwnStep(s);
@@ -966,17 +969,20 @@ fn the_childs_stream_is_kept_and_forwarded_to_the_open_transcript() {
         chat: parent,
         rounds: Vec::new(),
         partial: Default::default(),
-        child: None,
-        child_stream: Uuid::nil(),
-        child_partial: Default::default(),
-        child_line_role: MessageRole::Assistant,
+        children: Vec::new(),
         continuation: false,
     });
     let mut run = crate::entities::subagent::SubagentRun::fixture("Критик", &["задание"]);
     run.outcome = None;
     let run_id = run.id;
     orch.handle_progress(generation, TurnProgress::ChildStarted(Box::new(run)));
-    let stream = orch.inflight.as_ref().unwrap().child_stream;
+    let stream = orch
+        .inflight
+        .as_ref()
+        .unwrap()
+        .child(run_id)
+        .unwrap()
+        .stream;
     assert_ne!(stream, Uuid::nil(), "a stream id of its own");
     assert_ne!(stream, generation);
 
@@ -984,11 +990,17 @@ fn the_childs_stream_is_kept_and_forwarded_to_the_open_transcript() {
     orch.active_id = Some(parent);
     orch.handle_progress(
         generation,
-        TurnProgress::ChildStep(StreamStep::Thoughts("думаю".into())),
+        TurnProgress::ChildStep {
+            run: run_id,
+            step: StreamStep::Thoughts("думаю".into()),
+        },
     );
     orch.handle_progress(
         generation,
-        TurnProgress::ChildStep(StreamStep::Chunk("нача".into())),
+        TurnProgress::ChildStep {
+            run: run_id,
+            step: StreamStep::Chunk("нача".into()),
+        },
     );
     while let Ok(ev) = rx.try_recv() {
         assert!(
@@ -996,7 +1008,14 @@ fn the_childs_stream_is_kept_and_forwarded_to_the_open_transcript() {
             "not forwarded while the parent is open: {ev:?}"
         );
     }
-    let partial = orch.inflight.as_ref().unwrap().child_partial.clone();
+    let partial = orch
+        .inflight
+        .as_ref()
+        .unwrap()
+        .child(run_id)
+        .unwrap()
+        .partial
+        .clone();
     assert_eq!(
         (partial.text.as_str(), partial.thoughts.as_str()),
         ("нача", "думаю")
@@ -1016,15 +1035,21 @@ fn the_childs_stream_is_kept_and_forwarded_to_the_open_transcript() {
     // Open: forwarded under the stream id.
     orch.handle_progress(
         generation,
-        TurnProgress::ChildStep(StreamStep::Chunk("ло".into())),
+        TurnProgress::ChildStep {
+            run: run_id,
+            step: StreamStep::Chunk("ло".into()),
+        },
     );
     orch.handle_progress(
         generation,
-        TurnProgress::ChildStep(StreamStep::ToolStarted {
-            call_id: "c9".into(),
-            name: "web_search".into(),
-            arguments: "{}".into(),
-        }),
+        TurnProgress::ChildStep {
+            run: run_id,
+            step: StreamStep::ToolStarted {
+                call_id: "c9".into(),
+                name: "web_search".into(),
+                arguments: "{}".into(),
+            },
+        },
     );
     let mut seen = Vec::new();
     while let Ok(ev) = rx.try_recv() {
@@ -1048,24 +1073,39 @@ fn the_childs_stream_is_kept_and_forwarded_to_the_open_transcript() {
             ("started", stream, "web_search".to_string())
         ]
     );
-    assert_eq!(orch.inflight.as_ref().unwrap().child_partial.text, "начало");
+    assert_eq!(
+        orch.inflight
+            .as_ref()
+            .unwrap()
+            .child(run_id)
+            .unwrap()
+            .partial
+            .text,
+        "начало"
+    );
 
     // A filed round resets the partial; the run's end closes the bubble.
     orch.handle_progress(
         generation,
-        TurnProgress::ChildRoundFiled(vec![Message::assistant("начало")]),
+        TurnProgress::ChildRoundFiled {
+            run: run_id,
+            messages: vec![Message::assistant("начало")],
+        },
     );
     assert!(
         orch.inflight
             .as_ref()
             .unwrap()
-            .child_partial
+            .child(run_id)
+            .unwrap()
+            .partial
             .text
             .is_empty()
     );
     orch.handle_progress(
         generation,
         TurnProgress::ChildEnded {
+            run: run_id,
             outcome: RunOutcome::Completed,
             finished_at: chrono::Utc::now(),
             tokens: 3,

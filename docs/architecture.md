@@ -709,9 +709,11 @@ attachment cards for the status-bar chip — §9.7 of the spec), `SelfModelView`
 `SelfModelChanged` (a lightweight "self-model changed" signal — an open `F3`
 screen re-requests the snapshot; §9.7), `BackgroundTask{kind,active}` (a quiet
 status-bar indicator for background reflection/consolidation/compression),
-`SubagentProgress{generation_id, progress}` (where a subagent run stands —
+`SubagentProgress{generation_id, run, progress}` (where a subagent run stands —
 name, round, tool — for the status-bar chip while the parent's turn is inside
-`call_subagent`; `None` clears it; spec §9.3.2), `TtsActive`
+`call_subagent`; keyed by the run, since several run at once, and `None`
+clears that run's line; the screen shows the one line or the count and the
+latest; spec §9.3.2), `TtsActive`
 (speech synthesis is running — a "♪ speaking" chip in the status bar; §11.9),
 `Error`, `Notice` (a plain informational note in the feed — the
 counterpart of `Error` for an outcome that is not a failure) and `Compacted`
@@ -911,6 +913,27 @@ Details:
   collects the runs that arrived with the turn and `maybe_auto_title_run`
   starts the title task for each (both `auto_title` points; `renamed_manually`
   wins), through the same `view()`-resolved task a transcript's `Ctrl+R` uses.
+- **The parallel group** ([docs/research/parallel-subagents.md](research/parallel-subagents.md)
+  §4.1–§4.3, [ADR 0010](decisions/0010-subagent-nested-turn.md) amended).
+  `tool_round` hands its calls to `execute_round`, which runs three phases
+  (`resolve_round`, `run_group`, then the records): the ordinary calls
+  resolve in the model's order (`resolve_call`); the round's `call_subagent` calls — those
+  the profile offers, at depth 0, in a round not being discarded
+  (`is_group_call`) — are announced, turned into a `ChildSpec` each
+  (`child_spec`: the parsed call, the tools minus the withheld, the request
+  over the parent's environment, a context and a child token of its own)
+  and run as futures **inside the generation task**,
+  `futures_util::stream::iter(..).buffer_unordered(tools.subagent_parallel)`
+  over `run_child(&TurnShared, loc, spec)` — a free function that owns
+  nothing of the parent; each result closes its card as it lands; then
+  `record_call` writes the tool messages and records in the model's order.
+  `TurnShared` is `&'a TurnShared` for every loop; its mutable parts are a
+  `tokio::sync::Mutex<ConfirmState>` (the reply receiver and the
+  "approved for this turn" set, locked for the whole ask-and-wait — one
+  popup at a time) and the `TurnCounters` atomics. At the default of 1 the
+  group runs one child at a time in the model's order, the tool's original
+  behaviour. `run_dialogue` is not a member (ADR 0011's one-request
+  contract); a nested loop still refuses the name.
 - **The turn's progress channel** ([docs/history/subagent-live.md](history/subagent-live.md)
   §3.1–§3.2). `done_tx` carries `GenMessage::{Progress{id, TurnProgress},
   Done(GenResult)}`: `file_round` sends `RoundFiled`/`ChildRoundFiled` by
@@ -918,20 +941,24 @@ Details:
   runs (the run's id is minted there and kept by the landed record) and
   `ChildEnded` after. One channel, so progress precedes the result. The
   orchestrator keeps `inflight: Option<InflightTurn>` — the parent's filed
-  rounds and its round in progress (`partial`), the running run — created by
+  rounds and its round in progress (`partial`), the running runs
+  (`children: Vec<InflightChild>`, keyed by run id: several run at once
+  since the parallel group, spec §9.3.2) — created by
   `start_generation`, fed by `handle_progress` (a step from another
-  generation is dropped), read and dropped by `handle_done` (a title given
-  while running is copied onto the landed run first). Never a source of
+  generation is dropped; **every `Child*` step names its run**), read and
+  dropped by `handle_done` (a title given to any running transcript is
+  copied onto the landed run first). Never a source of
   truth: `GenResult` is. **The child's stream is progress too** (history plan
-  §8): its `RoundSink` carries a `ChildRoute` instead of muting, turning
+  §8): its `RoundSink` carries the run's id instead of muting, turning
   `Chunk`/`Thoughts`/`ToolCallStarted`/`ToolCall`/`AssistantContinue`/
-  `AssistantRewrite`/`TokenUsage` into `TurnProgress::Child*` (the token
-  counter still also goes to the bar re-based on the parent's); the mirror
-  keeps `child_stream` (the run's own stream id) and `child_partial` (the
+  `AssistantRewrite` into `TurnProgress::Child*` and the token counter into
+  `ChildTokens` (the run's own count; the bar gets the **turn's** total from
+  `TurnShared.counters`, atomics every loop adds to); each `InflightChild`
+  keeps its `stream` (the run's own stream id) and `partial` (the
   round in progress, reset by `ChildRoundFiled`/`ChildRewrite`), and
-  `forward_child` re-emits each step to the screen under `child_stream`
-  while the transcript is the open conversation; `ChildEnded` emits its
-  `Finished`. **The parent's round in progress is mirrored the same way**
+  `forward_child(run, …)` re-emits a step to the screen under that child's
+  stream while its transcript is the open conversation; `ChildEnded` emits
+  its `Finished`. **The parent's round in progress is mirrored the same way**
   (§8, last bullet): the live loop's sink sends the screen its events as
   ever and the orchestrator `TurnProgress::OwnStep(StreamStep)` — one
   `StreamStep` shape for both loops, applied by `apply_step` to `partial`

@@ -580,6 +580,7 @@ mod live;
 mod llm_history;
 mod mcp;
 mod model_name;
+mod parallel;
 mod profiles;
 mod project;
 mod rag;
