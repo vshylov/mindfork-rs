@@ -245,6 +245,11 @@ impl Tool for ChatSearch {
     fn id(&self) -> ToolId {
         CHAT_SEARCH_ID.into()
     }
+    /// A read of the full-text index over a turn snapshot of the scope
+    /// (docs/research/concurrent-tools.md §2.3).
+    fn concurrent(&self) -> bool {
+        true
+    }
     fn group(&self) -> super::meta::ToolGroup {
         super::meta::ToolGroup::Conversation
     }
@@ -424,6 +429,10 @@ pub struct ChatRead;
 impl Tool for ChatRead {
     fn id(&self) -> ToolId {
         CHAT_READ_ID.into()
+    }
+    /// A read of another chat's file, scoped by the same snapshot.
+    fn concurrent(&self) -> bool {
+        true
     }
     fn group(&self) -> super::meta::ToolGroup {
         super::meta::ToolGroup::Conversation

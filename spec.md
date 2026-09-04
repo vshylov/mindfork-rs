@@ -469,14 +469,17 @@ loop:
             round += 1
             if round > max_tool_rounds: append a system note "limit reached", exit
             append assistant-message(tool_calls) to req.messages
-            for tc in tool_calls:                        # the client can execute every call of a round
-                outcome = registry.invoke(tc.name, tc.arguments, &tool_ctx).await
-                apply(outcome.effects)                   # the orchestrator mutates Chat (it's the owner)
-                append tool-message(tc.id, outcome.result) to req.messages
+            for segment in segments(tool_calls):         # a maximal run of consecutive concurrent-marked calls (9.2), else one call
+                outcomes[segment] = invoke every call of the segment at once, at most concurrent_calls in flight
+                                                         # a segment of one is invoked exactly as before; every card opens first
+            outcomes[group] = run the round's call_subagent calls as its parallel group (9.3.2)
+            for tc in tool_calls:                        # the model's order, whatever the completion order
+                apply(outcomes[tc].effects)              # the orchestrator mutates Chat (it's the owner)
+                append tool-message(tc.id, outcomes[tc].result) to req.messages
             continue the loop (a new request with the extended history)
 ```
 
-- `max_tool_rounds` — a safeguard against infinite loops; **8** by default, configurable. Unlike `mistral.rs` (which executed only the first tool call per turn), the client-side loop can execute every call in a round; tool descriptions are still designed for "one logical call per round" for predictability — with one exception the model is told about: the `call_subagent` calls of a round form its **parallel group** and run at once, at most `tools.subagent_parallel` of them, the tool results still appended in the model's order ([9.3.2](#932-call_subagent)).
+- `max_tool_rounds` — a safeguard against infinite loops; **8** by default, configurable. Unlike `mistral.rs` (which executed only the first tool call per turn), the client-side loop executes every call of a round — and a round may carry several: the model emits them unprompted when a task has several independent reads (measured 26/26 on both gate models and four clouds, [docs/research/concurrent-tools.md](docs/research/concurrent-tools.md) §3). The round is walked by **segments**: a maximal run of *consecutive* calls to tools their authors marked `concurrent()` ([9.2](#92-the-tool-contract)) runs as one segment, at most the engine section's `concurrent_calls` of them at once ([11.6](#116-the-settings-screen) — **1** on managed and external, **4** on the clouds; at 1 no segment is formed at all), every card opening first and closing as its own result lands; the results, the tool messages, the records and the effects are written in the **model's order**, so the request history and the stored message are what a sequential round would have left — no read is ever moved across a write. Every other call (a writer, a disabled or unknown name, a control call) ends the segment and runs at its own position, in order. The `call_subagent` calls of a round form its **parallel group** and run at once after the ordinary calls, at most `tools.subagent_parallel` of them, the tool results still appended in the model's order ([9.3.2](#932-call_subagent)). Design and the decided forks: [docs/research/concurrent-tools.md](docs/research/concurrent-tools.md), [ADR 0012](docs/decisions/0012-concurrent-tool-calls.md).
 - Each tool call is shown in the UI as a **collapsible block** (name, arguments, result) + an "assistant is using a tool…" indicator.
 - `tool_ctx` — a snapshot taken at the start of the turn (see [9.2](#92-the-tool-contract)).
 
@@ -681,6 +684,7 @@ pub struct ToolContext {
     pub last_user_message_at: DateTime<Utc>,
     pub storage: Arc<Storage>,              // notes/rag (internal synchronization, isolation by profile_id)
     pub engine: Arc<dyn EngineBackend>,     // for call_subagent
+    pub sessions: Option<Arc<Semaphore>>,   // the turn's session budget (11.6), shared with the tools; None for a background task
 }
 
 pub enum ChatEffect {                       // returned by a tool, applied by the orchestrator
@@ -694,6 +698,10 @@ pub trait Tool: Send + Sync {
     fn id(&self) -> ToolId;
     fn schema(&self) -> ToolSchema;
     async fn invoke(&self, ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome>;
+    /// May a call run at the same time as its neighbours in a round (6.3)? `true` is the author's claim:
+    /// no effect a sibling call could observe, nothing changed outside the application, no exclusive
+    /// resource, nothing to clean up if the future is dropped, never `danger()` (9.8). Default `false`.
+    fn concurrent(&self) -> bool { false }
 }
 ```
 
@@ -729,6 +737,8 @@ Semantics and signatures — as in attempt #1 (section 9.3 of its specification)
 | `chat_search` | `{ query, top_k? }` | **Optional, off by default** — full-text search across the *other* chats of the profile, grouped by conversation with page addresses. See [9.11](#911-cross-chat-search-chat_search-and-chat_read). |
 | `chat_read` | `{ chat, page? }` | **Optional, off by default** — read another conversation of the profile as a paged transcript. See [9.11](#911-cross-chat-search-chat_search-and-chat_read). |
 
+**Concurrent-marked** (`Tool::concurrent()`, [9.2](#92-the-tool-contract); the loop's segments, [6.3](#63-client-side-agentic-loop)) — the readers that hold nothing and change nothing: `fs_read`/`fs_list`, `code_read`/`code_grep`/`code_list`, `attachment_read`/`attachment_search`, `chat_search`/`chat_read`, `history_read`/`history_search`, `get_self_model`/`get_sampling`/`get_llm_name`/`get_llm_history`, and `fetch_url`. Not marked, by name: `web_search` (the keyless chain's throttling under concurrent requests is unmeasured), `note_recall` (it writes vectors inside a read), `youtube_watch`, `python_exec`, `code_edit`/`code_write`/`code_build`/`code_run`/`code_test`, every MCP tool, `call_subagent`/`run_dialogue`, the control pair, and every writer. A registry test pins the marked set to this list and that none of it is dangerous ([9.8](#98-confirmation-for-dangerous-tool-calls)).
+
 > **Embedding lifecycle**: a **dedicated** embedding server is used (ADR 0002) — a separate process on its own port, started at launch and kept alive; if not configured, RAG returns a clear error. See [decision #4](#161-accepted-decisions).
 
 #### 9.3.1. The web tool (our own implementation)
@@ -745,6 +755,7 @@ Since the inference server doesn't provide built-in web search, we implement it 
 - **Content extraction**: result pages are fetched in parallel, and "readable" text is extracted from the HTML (`scraper`: paragraphs/lists from `<article>`/`<main>`, boilerplate `nav`/`header`/`footer`/`aside` discarded). "Best effort" — one page's fetch failure doesn't fail the whole search. This prose-only extraction is what **ranking** needs and stays deliberately narrow (1500 characters per page); `fetch_url`, which is read by the model rather than ranked, uses the **rich** extraction below.
 - **Rich extraction** (`fetch_url` only, `web::extract_rich`): the same readability plus **section headings** (`## …`) and **code blocks** (fenced, with the language taken from a `language-*` class on the element or its inner `<code>`), in document order, whitespace inside code preserved and short code/headings exempt from the fragment floor. Prose-only extraction turns a documentation page into prose whose every "here is an example:" leads nowhere — measured on `docs.vlang.io`, which has no `<pre>` at all and wraps code in a bare `div.language-v`. A container that already emitted its content does not emit it twice (ancestry dedup).
 - **A page over the budget becomes a chat attachment** (§9.7) instead of being cut: the threshold is `attachments.max_file_tokens`, exactly as `youtube_watch(transcript:)` uses it, so such an attachment is always *by reference* and is immediately paged (`attachment_read`) and searchable (`attachment_search`). Below the threshold the text goes straight into the result. `summarize=true` still summarizes — from the head of the text, since the summarizer is a single-turn subagent — and attaches as well, so a partial summary is a starting point rather than the only access. A hard ceiling on one page's extracted text remains (400 000 characters) and, when reached, is **stated in the result**: silent truncation made a long page indistinguishable from a complete one.
+- **The summary is a stream of the turn.** `summarize=true` makes one request of `ctx.engine` per page, and that request takes a permit of the engine section's `sessions` ([11.6](#116-the-settings-screen)) through `ToolContext.sessions` — held around the summary's stream and around nothing else — so three pages fetched at once in a concurrent segment ([6.3](#63-client-side-agentic-loop)) download together and, on a one-session engine, are summarised one after another. A background task's context carries no budget (`None`) and takes no permit.
 - **Reranking**: results are reordered by embeddings (`ctx.embedder`, ADR 0002) by cosine similarity of the content to the query; if the embedder isn't available, the provider's original order is kept.
 - Behind a global switch (privacy), **off by default**. It shipped on until 0.9.9 and was turned off because this was the one subsystem contradicting the app's own claim that everything it contacts is something the user configured: the engines the chain queries are picked by *us*, and the query is derived from the conversation ([docs/research/code-signing.md](docs/research/code-signing.md) §3.2). Turning the switch on is what chooses them. An existing `settings.json` keeps whatever value it already carries. Content fetching + reranking are gated by the call's `fetch_content` argument (default from `config.tools.web_fetch_content`, `true` by default); `false` → the fast "titles/snippets only" path.
 - **Address policy** (`shared::net`, [docs/research/fetch-url-address-policy.md](docs/research/fetch-url-address-policy.md)). Both tools follow addresses the *model* chose — `fetch_url` directly, `web_search` through whatever the provider ranked — and such a URL routinely comes from a page just read, a search result or an attached document. So both refuse anything not publicly routable: loopback, the private ranges, link-local (where the cloud metadata endpoint lives), CGNAT, multicast and reserved space, each also in its **IPv4-mapped IPv6** spelling. Three mechanisms, because one is not enough: the check lives inside the client's **DNS resolver**, so the address that was approved is the address connected to (no rebinding window) and *every* address a name resolves to is judged, not the first; an **IP literal** is checked before the request, since `hyper` parses a literal host itself and never calls the resolver; and every **redirect hop** is checked again. The refusal names every closed route — no other tool reaches it either, and retrying by IP, by hostname or through a redirector is pointless — because a message that only says "cannot" spends the model's next three turns. `tools.web_allow_private` (**off** by default) opens the private ranges for someone whose model should read an internal service; it does not touch `/image attach <url>`, which the user types (§9.10), nor the engine addresses in settings, which are LAN by design.
@@ -1189,7 +1200,10 @@ application. Design record: [docs/history/tool-confirmation.md](docs/history/too
   `fs_write` (overwrites a path), and **every** MCP tool (third-party, effects
   unknown). Reads (`fs_read`/`fs_list`, `web_search`/`fetch_url`) and writes to
   *our own* storage (notes, self-model, RAG, attachments — visible in the UI,
-  profile-scoped, reversible) are not. A server's own
+  profile-scoped, reversible) are not. A tool marked `concurrent()`
+  ([9.2](#92-the-tool-contract)) is never dangerous — the two marks exclude
+  each other, and a registry test pins it — so no confirmation popup is ever
+  part of a segment ([6.3](#63-client-side-agentic-loop)). A server's own
   `destructiveHint`/`readOnlyHint` annotations are **untrusted input** and are
   deliberately not consulted: a server can claim anything, so they could only ever
   relax the decision, which is the attack.
@@ -2316,8 +2330,11 @@ this?"*; this screen answers *"where exactly, and take me there."*
   (`AppEvent::ToolCallStarted` → `ToolCall`, matched by the call's id). A long
   call — a subagent run, a project build, a `python_exec` — is therefore
   visible where it happens, not only as a status-bar chip, and a turn inside
-  one never looks idle. A control call and a call discarded by a rewrite open
-  no card, as before; a subagent's own calls stay in its transcript; a turn
+  one never looks idle. The cards of a concurrent segment
+  ([6.3](#63-client-side-agentic-loop)) open together, before any member
+  runs, and may close out of order — each as its own result lands — exactly
+  as the parallel group's do ([9.3.2](#932-call_subagent)). A control call
+  and a call discarded by a rewrite open no card, as before; a subagent's own calls stay in its transcript; a turn
   that ends mid-call (cancelled, timed out) clears the mark.
 - **Collapsible blocks**: "thoughts" (CoT, `Ctrl+T`) and tool calls (`Ctrl+O`).
   Both are **collapsed by default** — the feed is scanned for the reply, and
@@ -2746,9 +2763,21 @@ section and subsection), `Esc` — cancel.
   agent and its subagents take turns; managed launches `-np N --kv-unified`
   above 1, [§3.4](#34-managing-the-server-lifecycle)); for a managed or
   external `llama-server` the field's hint also says how many slots the server
-  itself reports (`total_slots` on `/props`) — a hint, never the value. The
-  impersonation and embeddings tabs have no such field: only the assistant's
-  engine runs subagents. The external **"Model (opt.)"** field
+  itself reports (`total_slots` on `/props`) — a hint, never the value. Beside
+  it, *Parallel tool calls* — the section's `concurrent_calls`, how many of one
+  reply's concurrent-marked tool calls run at once
+  ([6.3](#63-client-side-agentic-loop)): **1** on managed and external (the
+  sequential round, unchanged until raised) and **4** on the four clouds,
+  routed to the active mode's section exactly as `sessions` is. Its hint
+  reads *"How many tool calls of one reply run at once when they are reads;
+  1 — one after another, as before. Only tools that change nothing and hold
+  nothing run together — writers, commands, plugins and sub-agents keep their
+  turn — and the results are recorded in the assistant's order. A fetch_url
+  page summary counts against Sessions."*, followed by *"Tools that may run
+  together: …"* naming the marked tools from the catalog — derived from the
+  mark, so the hint cannot advertise what the rule keeps sequential. The
+  impersonation and embeddings tabs have neither field: only the assistant's
+  engine runs subagents or a tool round. The external **"Model (opt.)"** field
   is genuinely optional but not decorative: it is **sent as the request's `model`**,
   which is what a multi-model endpoint routes on (llama.cpp's router mode,
   LM Studio, LiteLLM, OpenRouter refuse a request without it), while a

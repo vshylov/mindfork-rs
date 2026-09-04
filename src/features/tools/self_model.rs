@@ -208,6 +208,11 @@ impl Tool for GetSelfModel {
     fn id(&self) -> ToolId {
         GET_SELF_MODEL_ID.into()
     }
+    /// Reads the profile's self-model; a read (docs/research/concurrent-tools.md
+    /// §2.3). Its writers are not marked.
+    fn concurrent(&self) -> bool {
+        true
+    }
     fn group(&self) -> crate::features::tools::meta::ToolGroup {
         crate::features::tools::meta::ToolGroup::SelfModel
     }

@@ -123,6 +123,12 @@ pub struct OrchestratorDeps {
     /// In tests — `Lang::default()` (`ru`). See docs/history/i18n.md,
     /// `shared::paths::Defaults`.
     pub default_language: crate::shared::i18n::Lang,
+    /// Tools registered on top of the standard set, and re-registered on
+    /// every rebuild. Empty in production: the hook exists for tests that
+    /// need an instrumented tool inside a real turn (a counting, delaying
+    /// read for the concurrent segment, docs/research/concurrent-tools.md
+    /// §5) — the same door the MCP tools come through, without a server.
+    pub extra_tools: Vec<Arc<dyn crate::features::tools::Tool>>,
 }
 
 /// The orchestrator's main loop. Ends when the command channel closes or
@@ -135,6 +141,7 @@ pub async fn run(deps: OrchestratorDeps) {
         config,
         supervisor,
         default_language,
+        extra_tools,
     } = deps;
 
     let (done_tx, mut done_rx) = unbounded_channel::<GenMessage>();
@@ -181,7 +188,13 @@ pub async fn run(deps: OrchestratorDeps) {
     // The same shape for `/image attach`: decoding and downscaling a photo is far too
     // slow to run on the command loop.
     let (image_tx, mut image_rx) = unbounded_channel::<ImageAttachResult>();
-    let registry = Arc::new(build_registry(&config, storage.json().sandbox_dir()));
+    let registry = {
+        let mut reg = build_registry(&config, storage.json().sandbox_dir());
+        for tool in &extra_tools {
+            reg.register(tool.clone());
+        }
+        Arc::new(reg)
+    };
     let mut orch = Orchestrator {
         evt_tx,
         engines: EngineManager::new(supervisor, status_tx, imp_status_tx, embed_status_tx),
@@ -222,6 +235,7 @@ pub async fn run(deps: OrchestratorDeps) {
         saves: SaveQueue::default(),
         restarts: RestartQueue::default(),
         default_language,
+        extra_tools,
     };
 
     // Bring up the servers from config and emit the startup events/settings.
@@ -650,6 +664,8 @@ struct Orchestrator {
     /// docs/history/i18n.md): the first profile's bootstrap and `CreateProfile`
     /// are created in it.
     default_language: crate::shared::i18n::Lang,
+    /// See [`OrchestratorDeps::extra_tools`]; kept so a rebuild re-registers them.
+    extra_tools: Vec<Arc<dyn crate::features::tools::Tool>>,
 }
 
 impl Orchestrator {
@@ -1322,6 +1338,9 @@ impl Orchestrator {
         for tool in self.mcp.tools() {
             reg.register(tool);
         }
+        for tool in &self.extra_tools {
+            reg.register(tool.clone());
+        }
         self.registry = Arc::new(reg);
     }
 
@@ -1381,6 +1400,9 @@ impl Orchestrator {
                 // same engine a foreground one would.
                 model_name: self.effective_model_name(),
                 engine_mode: self.config.engine.mode,
+                // Outside the session budget, as every background task is
+                // (docs/research/parallel-subagents.md fork F9).
+                sessions: None,
             },
         )
     }

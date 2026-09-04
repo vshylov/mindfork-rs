@@ -280,6 +280,22 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
                 }
             }
         }),
+        // The same routing and the same floor as `XSessions`: one is the
+        // sequential round (`EngineSettings::active_concurrent_calls`).
+        XConcurrent => int(|c, t| {
+            if let Ok(v) = t.parse::<u32>() {
+                let v = v.max(1);
+                match c.engine.mode {
+                    ServerMode::Managed => c.engine.managed.concurrent_calls = v,
+                    ServerMode::External => c.engine.external.concurrent_calls = v,
+                    _ => {
+                        if let Some(cl) = c.engine.cloud_mut() {
+                            cl.concurrent_calls = v;
+                        }
+                    }
+                }
+            }
+        }),
 
         // ---------- text: the impersonation engine ----------
         IxUrl => text(|c, t| {

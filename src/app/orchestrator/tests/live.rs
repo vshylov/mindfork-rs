@@ -1269,6 +1269,7 @@ async fn self_consolidation_e2e_live() {
             embedder,
         )),
         default_language: crate::shared::i18n::Lang::default(),
+        extra_tools: Vec::new(),
     };
     let handle = tokio::spawn(run(deps));
     let root = dir.path().to_path_buf();
@@ -4547,6 +4548,167 @@ async fn parallel_subagents_e2e_live() {
         grouped[1].created_at,
         first_end
     );
+    let fold = |s: &str| s.replace(['\u{2010}', '\u{2011}', '\u{2012}', '\u{2013}'], "-");
+    let reply = fold(&reply);
+    assert!(
+        reply.contains("ZARNOVIK-7741"),
+        "alpha token missing: {reply}"
+    );
+    assert!(reply.contains("KELVAR-3390"), "beta token missing: {reply}");
+}
+
+/// The concurrent segment on a live model (docs/research/concurrent-tools.md
+/// §7): two planted-token files, a profile with `fs_read` alone, the
+/// assistant told to read both **in one reply**, `concurrent_calls = 2`.
+/// GO: two `fs_read` records on one assistant message, each holding the
+/// result of its own call; both cards opened before either closed — the
+/// overlap proof, since the segment opens every card first and the
+/// sequential path never does (it closes the cards at the round's end,
+/// after every call ran, but opens the second only after the first ran);
+/// and both codenames in the reply.
+#[tokio::test]
+#[ignore = "requires a live chat server (MINDFORK_ENGINE_URL)"]
+async fn concurrent_tools_e2e_live() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let file_a = sandbox.path().join("alpha.txt");
+    let file_b = sandbox.path().join("beta.txt");
+    std::fs::write(
+        &file_a,
+        "Internal note.\nThe alpha codename is ZARNOVIK-7741.\n",
+    )
+    .unwrap();
+    std::fs::write(
+        &file_b,
+        "Internal note.\nThe beta codename is KELVAR-3390.\n",
+    )
+    .unwrap();
+    let mut cfg = AppConfig::default();
+    cfg.tools.fs_enabled = true;
+    cfg.tools.fs_root = Some(sandbox.path().to_string_lossy().to_string());
+    cfg.engine.external.concurrent_calls = 2;
+    cfg.engine.managed.concurrent_calls = 2;
+    cfg.interface.auto_title = crate::shared::config::AutoTitleMode::Off;
+    let Some((_d, cmd_tx, mut evt_rx, handle)) = spawn_orch_live_cfg(cfg) else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    cmd_tx
+        .send(AppCommand::CreateProfile {
+            name: "Clerk".into(),
+            system_message: "You are a file clerk. Reply in English. When asked about several \
+                 files, read them all with fs_read in ONE reply — one fs_read call per file, \
+                 all in the same message — and only then answer."
+                .into(),
+        })
+        .unwrap();
+    let pl = wait_for(
+        &mut evt_rx,
+        |e| matches!(e, AppEvent::ProfileList(v) if v.len() >= 2),
+    )
+    .await
+    .unwrap();
+    let pid = match pl {
+        AppEvent::ProfileList(v) => v.last().unwrap().id,
+        _ => unreachable!(),
+    };
+    cmd_tx
+        .send(AppCommand::UpdateProfile {
+            id: pid,
+            edit: Box::new(ProfileEdit {
+                language: Some(crate::shared::i18n::Lang::En),
+                enabled_tools: Some(vec!["fs_read".to_string()]),
+                ..Default::default()
+            }),
+        })
+        .unwrap();
+    cmd_tx
+        .send(AppCommand::NewChat {
+            profile_id: Some(pid),
+        })
+        .unwrap();
+    let chat_id = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .and_then(|e| match e {
+            AppEvent::ChatActivated { id, .. } => Some(id),
+            _ => None,
+        })
+        .unwrap();
+
+    let ask = format!(
+        "What are the alpha and beta codenames? The alpha one is in the file {} and the \
+         beta one in {}. Read both files with fs_read in this same reply, then answer \
+         with both codenames.",
+        file_a.display(),
+        file_b.display()
+    );
+    cmd_tx.send(AppCommand::SendMessage(ask)).unwrap();
+    let mut reply = String::new();
+    let mut opens: Vec<usize> = Vec::new();
+    let mut closes: Vec<usize> = Vec::new();
+    let mut n = 0usize;
+    while let Some(ev) = evt_rx.recv().await {
+        match &ev {
+            AppEvent::Chunk { text, .. } => reply.push_str(text),
+            AppEvent::ToolCallStarted { name, .. } if name == "fs_read" => opens.push(n),
+            AppEvent::ToolCall {
+                name,
+                arguments,
+                result,
+                ..
+            } if name == "fs_read" => {
+                closes.push(n);
+                eprintln!(
+                    "call fs_read({}) -> {}",
+                    arguments.chars().take(100).collect::<String>(),
+                    result.chars().take(100).collect::<String>()
+                );
+            }
+            AppEvent::Finished { .. } => break,
+            _ => {}
+        }
+        n += 1;
+    }
+    eprintln!("reply: {reply}");
+    tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    assert!(
+        opens.len() >= 2,
+        "the model did not read both files in one reply (opens {opens:?})"
+    );
+    assert_eq!(opens.len(), closes.len(), "every card closed");
+    // GO: the second card opened before the first closed — one segment.
+    assert!(
+        opens[1] < closes[0],
+        "the reads did not run as one segment: opens {opens:?}, closes {closes:?}"
+    );
+    let chat = Storage::open(Paths::with_root(_d.path()))
+        .unwrap()
+        .json()
+        .load_chat(chat_id)
+        .unwrap()
+        .unwrap();
+    let round = chat
+        .messages
+        .iter()
+        .find(|m| m.tool_calls.iter().filter(|r| r.name == "fs_read").count() >= 2)
+        .expect("two fs_read records on one assistant message");
+    // Each record holds the result of its own call, whatever order they landed.
+    for r in round.tool_calls.iter().filter(|r| r.name == "fs_read") {
+        let path = r.arguments["path"]
+            .as_str()
+            .unwrap_or_default()
+            .to_lowercase();
+        let result = r.result.as_deref().unwrap_or_default();
+        if path.contains("alpha") {
+            assert!(result.contains("ZARNOVIK-7741"), "{path}: {result}");
+        } else if path.contains("beta") {
+            assert!(result.contains("KELVAR-3390"), "{path}: {result}");
+        } else {
+            panic!("a read of an unexpected path: {path}");
+        }
+    }
     let fold = |s: &str| s.replace(['\u{2010}', '\u{2011}', '\u{2012}', '\u{2013}'], "-");
     let reply = fold(&reply);
     assert!(

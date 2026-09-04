@@ -357,6 +357,14 @@ Two modes (configured on the settings screen, `Ctrl+P`, "Model/server" section):
     the conversations running at once do not fit the pool together. Raise `-c`
     to buy room. The field's hint shows how many slots the running server
     reports (`total_slots` on `/props`).
+  - **Parallel tool calls** (`concurrent_calls`, the same group): how many of
+    the tool calls the assistant issues in one reply run at once, when they
+    are reads — file, project, attachment, chat and history reads, the
+    introspection tools and `fetch_url`; writers, commands, plugins and
+    sub-agents always keep their turn, and the results land in the
+    assistant's order. **1** on managed and external (one after another,
+    exactly as before) and **4** on the cloud providers. A `fetch_url` page
+    summary is a request stream and counts against *Parallel sessions* above.
 - **external** — connects to an already-running server by URL. The **"Model
   (opt.)"** field next to it is optional but not decorative: it is **sent as the
   request's `model`**, which is what a multi-model endpoint routes on
@@ -371,7 +379,9 @@ Two modes (configured on the settings screen, `Ctrl+P`, "Model/server" section):
   *your* server at once — for llama.cpp, what you started it with (`-np`, or
   its four-slot default); the hint under the field shows what a llama.cpp
   reports, and a vLLM/LM Studio/Ollama, which report nothing, leave it blank.
-  Leave it at 1 unless the server has the slots.
+  Leave it at 1 unless the server has the slots. The same **"Parallel tool
+  calls"** field sits beside it, **1** by default here as on managed; the
+  cloud modes default to **4**.
 
 **How the app knows whether images are accepted.** It asks the server, rather than
 matching model names: `llama-server` reports `modalities` on its `/props` endpoint

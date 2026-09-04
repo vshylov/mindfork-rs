@@ -153,6 +153,13 @@ pub struct ToolContext {
     /// The turn's engine mode (`config.engine.mode` snapshot) — the context
     /// half of `get_llm_name`'s answer and of an `llm_history` record.
     pub engine_mode: crate::shared::config::ServerMode,
+    /// The turn's session budget (the engine section's `sessions`, spec §11.6)
+    /// — the same semaphore the turn's loops stream under. A tool that makes an
+    /// engine request of its own (`fetch_url`'s page summary) takes a permit
+    /// around that stream and around nothing else, so the request counts
+    /// like every other stream of the turn (docs/research/concurrent-tools.md
+    /// §4.5). `None` for a background task, which the budget does not cover.
+    pub sessions: Option<Arc<tokio::sync::Semaphore>>,
 }
 
 /// Long-lived shared tool dependencies (an `Arc` bundle; changes on server
@@ -238,6 +245,8 @@ pub struct TurnInfo {
     pub model_name: Option<String>,
     /// The turn's engine mode. See [`ToolContext::engine_mode`].
     pub engine_mode: crate::shared::config::ServerMode,
+    /// The turn's session semaphore. See [`ToolContext::sessions`].
+    pub sessions: Option<Arc<tokio::sync::Semaphore>>,
 }
 
 impl ToolContext {
@@ -270,6 +279,7 @@ impl ToolContext {
             cancel: turn.cancel,
             model_name: turn.model_name,
             engine_mode: turn.engine_mode,
+            sessions: turn.sessions,
         }
     }
 }
@@ -518,6 +528,23 @@ pub trait Tool: Send + Sync {
     /// they are local, fast, and interruptible by `Esc`.
     fn counts_toward_round_limit(&self) -> bool {
         true
+    }
+
+    /// Whether a call to this tool may run **at the same time as its
+    /// neighbours** in a round (spec §6.3, docs/research/concurrent-tools.md
+    /// §4.1). `true` is a claim by the tool's author: the call has no effect a
+    /// sibling call of the same round could observe, changes nothing outside
+    /// the application, holds no exclusive resource (a process, a sidecar, a
+    /// socket to a stateful peer), needs no cleanup if its future is dropped,
+    /// and is never [`Tool::danger`] — so a confirmation popup can never be
+    /// part of a concurrent group.
+    ///
+    /// Default `false`: a new tool runs alone until someone says otherwise —
+    /// the right default for the same reason `danger()` defaults the other
+    /// way. A wrong `false` costs a user some seconds; a wrong `true` could
+    /// interleave a read with the write it was meant to follow.
+    fn concurrent(&self) -> bool {
+        false
     }
 }
 
@@ -863,9 +890,17 @@ impl ToolRegistry {
                 label: t.ui_label(),
                 gate: t.gate(),
                 enabled_by_default: t.enabled_by_default(),
+                concurrent: t.concurrent(),
                 description: None,
             })
             .collect()
+    }
+
+    /// Whether the registered tool `id` may run alongside its neighbours in a
+    /// round ([`Tool::concurrent`]). An unknown name runs alone — it is about
+    /// to be refused anyway, and a refusal is not a member of any group.
+    pub fn is_concurrent(&self, id: &str) -> bool {
+        self.tools.get(id).is_some_and(|t| t.concurrent())
     }
 
     /// Schemas for a subset of enabled tools (profile ∩ global), preserving
@@ -939,6 +974,9 @@ pub(crate) mod testkit {
             // No engine name by default; tests that need one set `ctx.model_name`.
             model_name: None,
             engine_mode: crate::shared::config::ServerMode::default(),
+            // No session budget by default (a background task's shape); the
+            // summary permit test sets `ctx.sessions`.
+            sessions: None,
         }
     }
 
@@ -1039,6 +1077,62 @@ pub(crate) mod testkit {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The concurrent set is exactly the documented one
+    /// (docs/research/concurrent-tools.md §2.3) — a tool cannot be marked by
+    /// accident and the document cannot drift — and no marked tool is
+    /// dangerous: a confirmation popup can never be part of a segment, which
+    /// is what lets the loop skip the gate for a segment's members (§4.3).
+    #[test]
+    fn concurrent_tools_are_the_documented_set_and_never_dangerous() {
+        let reg = standard_registry(&ToolConfig::default());
+        let infos = reg.infos();
+        let mut marked: Vec<&str> = infos
+            .iter()
+            .filter(|i| i.concurrent)
+            .map(|i| i.id.as_str())
+            .collect();
+        marked.sort_unstable();
+        let mut documented = vec![
+            fs::FS_READ_ID,
+            fs::FS_LIST_ID,
+            code::CODE_READ_ID,
+            code::CODE_GREP_ID,
+            code::CODE_LIST_ID,
+            attachment::ATTACHMENT_READ_ID,
+            attachment::ATTACHMENT_SEARCH_ID,
+            chats::CHAT_SEARCH_ID,
+            chats::CHAT_READ_ID,
+            history::HISTORY_READ_ID,
+            history::HISTORY_SEARCH_ID,
+            self_model::GET_SELF_MODEL_ID,
+            GET_SAMPLING_ID,
+            llm::GET_LLM_NAME_ID,
+            llm::GET_LLM_HISTORY_ID,
+            FETCH_URL_ID,
+        ];
+        documented.sort_unstable();
+        assert_eq!(marked, documented);
+        for info in infos.iter().filter(|i| i.concurrent) {
+            let tool = reg.get(&info.id).unwrap();
+            assert!(
+                !tool.danger(),
+                "{} is marked concurrent and dangerous",
+                info.id
+            );
+        }
+        assert!(reg.is_concurrent(FETCH_URL_ID));
+        assert!(!reg.is_concurrent(fs::FS_WRITE_ID));
+        assert!(
+            !reg.is_concurrent(WEB_SEARCH_ID),
+            "out until measured (fork F4)"
+        );
+        assert!(
+            !reg.is_concurrent(subagent::CALL_SUBAGENT_ID),
+            "the group's own path"
+        );
+        assert!(!reg.is_concurrent("no_such_tool"));
+    }
 
     /// The ~1200 tests built on [`testkit::ctx_with_storage`] run against an
     /// in-memory store on purpose: they exercise SQLite, and on a slow disk

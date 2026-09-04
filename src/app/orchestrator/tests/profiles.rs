@@ -201,6 +201,7 @@ fn spawn_orch_at(
         config,
         supervisor: Arc::new(MockSupervisor::with_backend(None)),
         default_language: crate::shared::i18n::Lang::default(),
+        extra_tools: Vec::new(),
     };
     (cmd_tx, tokio::spawn(run(deps)))
 }
@@ -303,6 +304,7 @@ async fn bootstrap_clears_legacy_seed_character_names() {
         config: AppConfig::default(),
         supervisor: Arc::new(MockSupervisor::with_backend(None)),
         default_language: crate::shared::i18n::Lang::default(),
+        extra_tools: Vec::new(),
     }));
     wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
         .await

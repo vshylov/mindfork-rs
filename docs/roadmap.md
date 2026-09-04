@@ -105,12 +105,17 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
     notified in a later round (Claude Code's background agents): a
     "task notification" round shape and a place for a result that arrives
     after the turn ends;
-  - **concurrent ordinary tools** — a `Tool::concurrent()` mark for
-    read-only tools and a group per round like the sub-agents'; **now its
-    own track**, research and forks in
-    [docs/research/concurrent-tools.md](research/concurrent-tools.md)
-    (the models emit several reads in one reply unprompted — measured
-    2026-09-04 on Gemma 4 31B and three clouds);
+  - **concurrent ordinary tools** — **done** (2026-09-04, see "Recently
+    closed"; [docs/research/concurrent-tools.md](research/concurrent-tools.md),
+    ADR 0012). What its §8 left for later:
+    - **`web_search` in the marked set** — after a measured probe of three
+      concurrent searches on the keyless chain, or per provider (Tavily
+      first; F4 there);
+    - **MCP tools on `readOnlyHint`** — only as a per-server opt-in the
+      user types, never the server's word alone (§4.9 there);
+    - **`youtube_watch` and `note_recall`** — the first once a marked tool
+      with an effect has exercised the effect ordering, the second once the
+      vector backfill leaves the read path or becomes a single flight;
   - **admission by budget** for the unified KV pool — a child's round waits
     for a session while the in-flight prompt sizes plus the caps would
     exceed `context_budget`; today an overfilled pool fails the round with
@@ -481,6 +486,17 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
 ---
 
 ## Recently closed
+- **Concurrent ordinary tools** (complete, one PR): the round's consecutive
+  read-only calls run at once — `Tool::concurrent()` (default off; the file,
+  project, attachment, chat, history and introspection readers, and
+  `fetch_url`), the loop's *segment* with results, records and effects in the
+  model's order, `concurrent_calls` per engine section (1 local, 4 cloud) with
+  a "Parallel tool calls" row beside `sessions`, and `fetch_url`'s summary
+  under `sessions`. Every model emitted the calls unprompted, 26/26. Design:
+  [docs/research/concurrent-tools.md](research/concurrent-tools.md),
+  [ADR 0012](decisions/0012-concurrent-tool-calls.md). What stays open: its
+  §8 — `web_search`, MCP `readOnlyHint`, `youtube_watch`/`note_recall` — as
+  sub-bullets of the parallel sub-agents groundwork item above.
 - **`/continue`** (complete, probe + 2 stages): an interrupted reply resumes
   in place via assistant prefill — managed/external (llama.cpp/vLLM, the
   server's echo stripped byte-exactly), Gemini, and Claude up to the 4.5

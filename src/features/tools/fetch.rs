@@ -212,6 +212,13 @@ impl Tool for FetchUrl {
     fn id(&self) -> ToolId {
         super::FETCH_URL_ID.into()
     }
+    /// A page fetch changes nothing and holds nothing: three pages from three
+    /// hosts are three unrelated connections — the largest win a concurrent
+    /// round has (docs/research/concurrent-tools.md §2.3). The summary request
+    /// it may make takes a session permit of its own (§4.5).
+    fn concurrent(&self) -> bool {
+        true
+    }
     fn group(&self) -> crate::features::tools::meta::ToolGroup {
         crate::features::tools::meta::ToolGroup::ExternalWorld
     }
@@ -435,6 +442,21 @@ async fn summarize_text(
         tools: Vec::new(), // no tools (a nesting ban)
     };
 
+    // A permit of the turn's session budget, held for the stream and for
+    // nothing else (docs/research/concurrent-tools.md §4.5): the summary is a
+    // request stream like the loops' own, so with `sessions = 1` three pages
+    // fetched at once are summarised one after another. Taken before the
+    // timeout starts — waiting behind a sibling's stream is not this summary's
+    // slowness. A background task has no budget to take (`None`).
+    let _permit = match ctx.sessions.as_deref() {
+        Some(sessions) => tokio::select! {
+            _ = ctx.cancel.cancelled() => {
+                anyhow::bail!(ctx.loc.t("tool.fetch_url.err.summary_cancelled"));
+            }
+            permit = sessions.acquire() => Some(permit?),
+        },
+        None => None,
+    };
     let cancel = CancellationToken::new();
     let engine = ctx.engine.clone();
     let collect = async {
@@ -810,6 +832,90 @@ mod tests {
         // focus made it into the task.
         let msg = format!("{:?}", req.messages[0]);
         assert!(msg.contains("какова цена"), "focus in the task: {msg}");
+    }
+
+    /// An engine whose streams report how many are open at once, each one
+    /// slow enough that two summaries could overlap if nothing stopped them.
+    struct CountingBackend {
+        in_flight: Arc<std::sync::atomic::AtomicUsize>,
+        max_in_flight: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    struct Open(Arc<std::sync::atomic::AtomicUsize>);
+
+    impl Drop for Open {
+        fn drop(&mut self) {
+            self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl EngineBackend for CountingBackend {
+        async fn chat_stream(
+            &self,
+            _req: ChatRequest,
+            _cancel: CancellationToken,
+        ) -> Result<ChatStream> {
+            use std::sync::atomic::Ordering::SeqCst;
+            let open = self.in_flight.fetch_add(1, SeqCst) + 1;
+            self.max_in_flight.fetch_max(open, SeqCst);
+            let guard = Open(self.in_flight.clone());
+            let s = async_stream::stream! {
+                let _open = guard;
+                tokio::time::sleep(Duration::from_millis(40)).await;
+                yield ChatChunk::Text("summary".into());
+                yield ChatChunk::Finished(FinishReason::Stop);
+            };
+            Ok(Box::pin(s))
+        }
+    }
+
+    /// The summary's stream takes a permit of the turn's session budget and
+    /// releases it with the stream (docs/research/concurrent-tools.md §4.5):
+    /// with one session two summaries never overlap, and with no budget —
+    /// a background task's context — both run at once.
+    #[tokio::test]
+    async fn summary_takes_a_session_permit_for_its_stream() {
+        let counting = Arc::new(CountingBackend {
+            in_flight: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            max_in_flight: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        });
+        let (_d, mut ctx) = ctx_with_engine(counting.clone());
+        let sessions = Arc::new(tokio::sync::Semaphore::new(1));
+        ctx.sessions = Some(sessions.clone());
+        let (a, b) = tokio::join!(
+            summarize_text(&ctx, "https://a.example", None, "text a"),
+            summarize_text(&ctx, "https://b.example", None, "text b"),
+        );
+        assert_eq!(
+            (a.unwrap(), b.unwrap()),
+            ("summary".into(), "summary".into())
+        );
+        assert_eq!(
+            counting
+                .max_in_flight
+                .load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "one session: the summaries streamed one after another"
+        );
+        assert_eq!(sessions.available_permits(), 1, "the permit came back");
+
+        ctx.sessions = None;
+        counting
+            .max_in_flight
+            .store(0, std::sync::atomic::Ordering::SeqCst);
+        let (a, b) = tokio::join!(
+            summarize_text(&ctx, "https://a.example", None, "text a"),
+            summarize_text(&ctx, "https://b.example", None, "text b"),
+        );
+        assert!(a.is_ok() && b.is_ok());
+        assert_eq!(
+            counting
+                .max_in_flight
+                .load(std::sync::atomic::Ordering::SeqCst),
+            2,
+            "no budget: nothing holds the second summary back"
+        );
     }
 
     #[test]

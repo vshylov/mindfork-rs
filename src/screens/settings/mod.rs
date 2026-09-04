@@ -486,6 +486,11 @@ enum FieldId {
     /// the cloud provider). Assistant only: the impersonation engine runs no
     /// sub-agents. See spec §11.6.
     XSessions,
+    /// How many of a round's concurrent tool calls run at once
+    /// (`concurrent_calls` of the active mode's section, spec §6.3;
+    /// docs/research/concurrent-tools.md §4.4). Beside `XSessions`, routed
+    /// the same way; assistant only, like it.
+    XConcurrent,
     // Model/server — Impersonation
     IxMode,
     IxUrl,
