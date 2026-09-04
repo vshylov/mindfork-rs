@@ -5,7 +5,9 @@
 > managed and external** (so the knob is a field of each engine section,
 > as `sessions` is — §4.4 rewritten to that shape), F4a, F6a, F7a, F8a, F9a;
 > F5 was not answered and is built at its recommended (a), pending the
-> user's word. The item [parallel-subagents.md](parallel-subagents.md) §8
+> user's word. Built on `feat/concurrent-tools` (2026-09-04); the journal
+> entry and the live runs are the record of what was measured. The item
+> [parallel-subagents.md](parallel-subagents.md) §8
 > recorded as F1c and left for later: the round's *ordinary* tool calls —
 > the reads the model issues in one reply — run concurrently, the way that
 > track made the round's `call_subagent` calls run. The model-behaviour

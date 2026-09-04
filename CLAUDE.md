@@ -67,7 +67,8 @@ multi-provider inference · 0005 Python sandbox as a `wasmer`/WASIX sidecar ·
 0006 data schema versioning and migrations · 0007 plugins — MCP tool host and a
 neutral import format · 0008 API keys with machine-bound encryption · 0009
 message speech (TTS) · 0010 the subagent as a nested turn · 0011 the
-directed dialogue as a scripted multi-context run.
+directed dialogue as a scripted multi-context run · 0012 concurrent tool calls
+in a round.
 
 ## Key architectural decisions
 
@@ -170,8 +171,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-04, version 0.9.8)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2769 unit tests
-green, 132 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **2781 unit tests
+green, 133 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -182,6 +183,19 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 `tools/doc_index_check.py`. A new track adds a line; a line that has stopped
 being recent is dropped, not shortened.
 
+- **Concurrent ordinary tools — the round's read-only calls run at once** —
+  the reads the model issues in one reply (measured unprompted, 26/26, on
+  Gemma 4 31B and four clouds) run as a *segment*: a maximal run of
+  consecutive calls their authors marked `Tool::concurrent()` (the file,
+  project, attachment, chat, history and introspection readers, `fetch_url`;
+  default `false`, never dangerous), at most the engine section's
+  `concurrent_calls` at once — **1** on managed/external, the sequential round
+  bit for bit, **4** on the clouds — with results, records and effects in the
+  model's order, so no read moves across a write; the sub-agent group
+  unchanged; `fetch_url`'s summary under `sessions`
+  ([docs/research/concurrent-tools.md](docs/research/concurrent-tools.md),
+  [ADR 0012](docs/decisions/0012-concurrent-tool-calls.md), spec §6.3,
+  [docs/journal/tools.md](docs/journal/tools.md)).
 - **Parallel sub-agents — track complete, both stages** — the model's
   several `call_subagent` calls in one reply run **at once**: the round's
   ordinary calls first, then the group (`buffer_unordered`, at most
@@ -405,19 +419,6 @@ being recent is dropped, not shortened.
   default per profile, scoped in one turn snapshot
   ([docs/research/cross-chat-search-tool.md](docs/research/cross-chat-search-tool.md),
   spec §9.11).
-- **Images in a message** — `/image attach|remove|list|paste`, a path or a web
-  address, to a local `--mmproj` server and all four clouds; capability is asked,
-  never guessed, and a request with no images is byte-identical to before. Its
-  SSRF follow-up closed `fetch_url`/`web_search` to non-routable addresses
-  ([docs/research/multimodal-images.md](docs/research/multimodal-images.md),
-  [mcp-tool-images.md](docs/research/mcp-tool-images.md),
-  [image-url-attach.md](docs/research/image-url-attach.md),
-  [fetch-url-address-policy.md](docs/research/fetch-url-address-policy.md),
-  spec §9.10).
-- **Cloud-error retry/backoff** — a `RetryBackend` decorator retries only while
-  the turn is *uncommitted*, so no tool effect fires twice
-  ([docs/research/cloud-retry-backoff.md](docs/research/cloud-retry-backoff.md),
-  spec §6.8).
 
 For what exists and how it works, read architecture.md and spec.md — they are
 the source of truth for the current state. For how any of it came to be, and

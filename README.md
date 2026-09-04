@@ -215,6 +215,13 @@ build the moment they drift from what the app actually renders
   persona the assistant composes, with the assistant's own tools (minus
   subagents, history read-back and the self-model), no history of the chat,
   no recursion; its transcript is kept on the call and shows as a child chat.
+- **Parallel tool calls** — when the assistant issues several reads in one
+  reply (two files, three pages), they run at once on a cloud engine (**4** at
+  a time by default; `Ctrl+P` → the engine's Model tab → "Parallel tool
+  calls", beside "Sessions (parallel streams)"). A local engine keeps them one
+  after another until you raise the number. Only tools that change nothing run
+  together — writers, commands and plugins keep their turn — and the results
+  land in the assistant's order.
 - **`run_dialogue`** — stage a dialogue between two personas the assistant
   composes: each sees the other as its user, a director (the assistant's own
   persona, briefed on your conversation) steers the scene — private notes,

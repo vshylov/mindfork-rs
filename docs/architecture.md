@@ -23,6 +23,10 @@ sources of truth:
   provider, our own speakable-text extractor, in-process `rodio` player; and
   [0010](decisions/0010-subagent-nested-turn.md) — the subagent as a nested
   turn with the turn's tools, its transcript on the call's record;
+  [0011](decisions/0011-dialogue-directed-run.md) — the directed dialogue as
+  a scripted multi-context run; and
+  [0012](decisions/0012-concurrent-tool-calls.md) — concurrent tool calls in
+  a round: the segment and the per-tool mark;
 - **[docs/install.md](install.md)** — install/run, engine, env.
 
 > Terminology: **engine** = the inference provider behind the `EngineBackend`
@@ -934,6 +938,31 @@ Details:
   group runs one child at a time in the model's order, the tool's original
   behaviour. `run_dialogue` is not a member (ADR 0011's one-request
   contract); a nested loop still refuses the name.
+- **The concurrent segment** ([docs/research/concurrent-tools.md](research/concurrent-tools.md)
+  §4.2–§4.4, [ADR 0012](decisions/0012-concurrent-tool-calls.md)). Phase one
+  walks the round by segments: `resolve_round` takes the next segment from
+  `segment_end` — the maximal run of consecutive calls `is_concurrent_call`
+  admits (not a rewrite, not a control call, offered by the profile, and
+  marked by its author: `ToolRegistry::is_concurrent`) — and a segment of
+  one goes through `resolve_call` exactly as before. A longer one goes
+  through `run_segment(&self, calls)`: every card opens first
+  (`announce_call`), the members run as futures inside the generation task,
+  `futures_util::stream::iter(..).buffer_unordered(TurnShared.concurrent_calls)`
+  over `invoke_member` (the same `select!` with the turn's token as the
+  sequential path, the same outcome mapping, the card closed as the result
+  lands), and the results come back sorted into the model's order — the
+  effects go to `self.effects` and the results into their `results[i]` slots
+  in that order, so `record_call` and everything after it are untouched.
+  `TurnShared.concurrent_calls` is read at the turn's start from the active
+  engine section (`EngineSettings::active_concurrent_calls`, floor 1); at 1
+  `segment_end` never forms a segment, so a local engine's default takes the
+  sequential path bit for bit. Anything not admitted — a writer, a disabled
+  or unknown name, a control call, a `call_subagent` — ends the segment and
+  resolves at its own position, which is what keeps the round's result equal
+  to a sequential round's: no read is moved across a write. `CallDone` (a
+  result and its effects) is the shape a segment member and a group child
+  both hand back; the sub-agent group still runs after the whole ordinary
+  phase.
 - **The turn's progress channel** ([docs/history/subagent-live.md](history/subagent-live.md)
   §3.1–§3.2). `done_tx` carries `GenMessage::{Progress{id, TurnProgress},
   Done(GenResult)}`: `file_round` sends `RoundFiled`/`ChildRoundFiled` by
@@ -1717,11 +1746,33 @@ config parameters; the **only** place that maps `AppConfig` → parameters is
 (`tools/mod.rs`) instead of every construction site. See
 docs/history/refactoring-solid.md §3.
 
+**`ToolContext.sessions`** (`Option<Arc<tokio::sync::Semaphore>>`) is the
+turn's session semaphore — the one `TurnShared` holds for the loops' own
+streams (spec §11.6) — shared with the tools, so a request a tool makes of the
+engine on its own counts against `sessions` too: `fetch_url`'s
+`summarize_text` takes a permit around its summary stream and around nothing
+else (`features/tools/fetch.rs`, ADR 0012). `None` for a background task's
+context, which carries no budget. FSD is kept: `features` holds a tokio
+primitive, not an `app` type.
+
+**`OrchestratorDeps.extra_tools`** — tools registered on top of the standard
+set and re-registered on every `rebuild_registry`; empty in production. The
+hook exists for tests that need an instrumented tool inside a real turn
+(`orchestrator/tests/concurrent.rs`: a counting, delaying read that makes a
+segment's overlap observable) — the same door the MCP tools come through,
+without a server.
+
 **Catalog metadata** (semantic group, short toggle label, global gate,
 "enabled by default") is declared by **the tool itself** via the `Tool` trait
 (`group()`/`ui_label()` — required, no default, → a new tool can't be added
 without a group and label; `gate()`/`enabled_by_default()` — with defaults of
-`None`/`true`). `meta.rs` carries only types (`ToolGroup`/`ToolGate`/
+`None`/`true`). Two more contracts sit beside them: `danger()` (spec §9.8) and
+**`concurrent()`** (default `false`; spec §9.2, ADR 0012) — the author's
+claim that a call may run at the same time as its neighbours in a round. The
+loop reads it through `ToolRegistry::is_concurrent`, the catalog carries it as
+`ToolInfo.concurrent` (so the settings hint lists the marked tools), and a
+registry test pins the marked set to the documented readers plus `fetch_url`
+and that none of them is `danger()`. `meta.rs` carries only types (`ToolGroup`/`ToolGate`/
 `ToolInfo`), not values. The UI catalog is a static `CATALOG` (a snapshot of
 `ToolRegistry::infos()` on the default `ToolConfig`, since metadata doesn't
 depend on config); `default_tool_ids`/`all_tool_ids`/`tool_catalog`/

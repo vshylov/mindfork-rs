@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (41)
+## Entries (42)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -53,6 +53,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the language-model history, seeded from the chats that predate it (done)
 - Post-M9: the web tools become opt-in, and the one download outside the lock list (done)
 - Post-M9: parallel sub-agents — stage 2, the round's parallel group (track complete)
+- Post-M9: concurrent ordinary tools — the round's read-only calls run at once (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -3132,3 +3133,85 @@ the tag `probe/code-search-stage5`.
   transcripts apart and every parent↔child switch staying inside the turn;
   the chip counting runs and naming the latest; the description carrying
   the number only above 1; the settings row's three), 132 `#[ignore]` (+1).
+
+### Post-M9: concurrent ordinary tools — the round's read-only calls run at once (done)
+- **What**: the item the parallel sub-agent track left as F1c, its own track
+  ([docs/research/concurrent-tools.md](../research/concurrent-tools.md),
+  forks F1–F9 at the user's decisions — F3 *4 on the four clouds, 1 on
+  managed and external*; [ADR 0012](../decisions/0012-concurrent-tool-calls.md)).
+  The model-behaviour probe ran before any design: with the app's own
+  `fs_read`/`fetch_url` descriptions and no prompting, Gemma 4 31B on the
+  LAN stack, gpt-5.6, gemini-3.1-pro-preview, grok-4.6 and claude-sonnet-5
+  answered two independent reads with two calls and three pages with three
+  — **26/26**, never one call, never one too many. So nothing is told to the
+  model; the harness runs what may run together, together. `Tool::concurrent()`
+  on the trait (default `false`; the catalog bit `ToolInfo.concurrent`,
+  `ToolRegistry::is_concurrent`) is the author's claim that a call has no
+  effect a sibling could observe, changes nothing outside the application,
+  holds no exclusive resource, needs no cleanup if dropped and is never
+  `danger()`; marked: `fs_read`/`fs_list`, `code_read`/`code_grep`/`code_list`,
+  `attachment_read`/`attachment_search`, `chat_search`/`chat_read`,
+  `history_read`/`history_search`, `get_self_model`/`get_sampling`/
+  `get_llm_name`/`get_llm_history`, `fetch_url`. The loop's unit is the
+  **segment**: `resolve_round` walks the round by maximal runs of
+  consecutive marked calls (`is_concurrent_call`, `segment_end`); a segment
+  of one takes `resolve_call` unchanged, a longer one `run_segment` — every
+  card opened first, `buffer_unordered(concurrent_calls)` over
+  `invoke_member` (the sequential path's `select!` and outcome mapping),
+  each card closed as its result lands, results and effects handed back in
+  the model's order; `CallDone` (renamed from `ChildDone`) is the shape a
+  member and a group child both return, and the sub-agent group still runs
+  after the ordinary phase. `concurrent_calls: u32` on `ManagedSettings`,
+  `ExternalSettings` and `CloudSettings` (`DEFAULT_CONCURRENT_CALLS_LOCAL = 1`,
+  `DEFAULT_CONCURRENT_CALLS_CLOUD = 4`, `EngineSettings::active_concurrent_calls`
+  with a floor of 1, `#[serde(default)]`, no schema step), read into
+  `TurnShared` at the turn's start; the settings row "Parallel tool calls"
+  (`FieldId::XConcurrent`) beside "Sessions (parallel streams)" in the
+  Parallel sessions group, routed to the active mode's section like
+  `XSessions`, its hint naming the marked tools from the catalog.
+  `ToolContext.sessions: Option<Arc<Semaphore>>` shares the turn's session
+  semaphore with the tools (`None` for background tasks), and `fetch_url`'s
+  `summarize_text` takes a permit around its summary stream — the one engine
+  request a tool makes on its own now counts against `sessions` like every
+  stream of the turn. `OrchestratorDeps.extra_tools` registers instrumented
+  tools on top of the standard set, re-registered on every rebuild (empty in
+  production).
+- **Key decisions.** The segment rather than "every marked call as one
+  group": the sub-agent group may run after everything because a child
+  observes none of the round's effects, but an ordinary read can observe a
+  write of the same round — `code_read(f)`, `code_write(f)`, `code_read(f)`
+  returns what the model asked for only in the model's order — so the rule
+  never moves a read across a write and the result equals a sequential
+  round's by construction, not in practice. The mark on the trait beside
+  `danger()`, default off: a wrong `false` costs seconds, a wrong `true`
+  could interleave a read with the write it was meant to follow; a registry
+  test pins the marked set to the documented list and that none of it is
+  dangerous, so no confirmation popup can be part of a segment. The width a
+  per-section field like `sessions`, and 1 on a local engine: at 1
+  `segment_end` never forms a segment, so the default local round is the
+  old path bit for bit, while a cloud gets the overlap out of the box. The
+  effects applied in the model's order after the segment, not as they
+  complete, so a sequential and a concurrent round leave the same `Chat`.
+  Out by name, each with its reason: `web_search` (three concurrent
+  searches from one address is the throttling case lessons §9 recorded, and
+  unmeasured), `note_recall` (it embeds and upserts inside a read),
+  `youtube_watch`, `python_exec`, the command tools, every MCP tool
+  (`readOnlyHint` is untrusted input), the loop-executed pair and the
+  control pair. Futures in the generation task, not spawned tasks — the
+  sibling's reason: `&self.ctx` and `&self.shared` borrowed for the
+  segment, the cancellation token reaching every member unchanged.
+- **Live run**: _pending — filled in by the author after the runs._
+- **Tests**: 2769 → 2781 unit tests green (+12: `tests/concurrent.rs` — a
+  counting, delaying probe tool registered through `extra_tools` pins a
+  segment running its reads at once and recording them in the model's order
+  with every card opened before any closed, width 1 taking the sequential
+  path, the width bounding how many run at once, an unmarked call and a
+  disabled tool each breaking the segment, effects landing in the model's
+  order, and `Esc` mid-segment cancelling every member; the registry
+  invariant — the marked set equals the documented one and none is
+  dangerous; `active_concurrent_calls` following the mode with a default per
+  kind; the summary taking and releasing a session permit around its
+  stream; the settings row's render, edit and hint), 132 → 133 `#[ignore]`
+  (+1: `concurrent_tools_e2e_live` — two planted-token files read in one
+  reply, both tokens in the answer, two `fs_read` records on one message,
+  both cards opened before either closed).

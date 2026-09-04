@@ -27,6 +27,12 @@ split by subsystem.
   round, with more they stream together. Above 1 the tool's description
   tells the model it may delegate several tasks in one reply — measured to
   make even a small model do so every time.
+- **Parallel tool calls.** The reads and page fetches the assistant issues in
+  one reply — two files, three pages — now run **at once** on a cloud engine
+  (4 at a time by default); a local engine keeps the round one call after
+  another until the new "Parallel tool calls" setting, beside "Sessions" on
+  the engine's Model tab, is raised. Only tools that change nothing run
+  together, and the results land in the assistant's order.
 - **A "Parallel sessions" setting for the assistant's engine.** Every engine
   mode (managed, external, and each cloud provider) has its own `sessions`
   — how many request streams the app may keep open against that engine at
