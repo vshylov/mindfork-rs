@@ -662,6 +662,9 @@ records satisfy a strict provider.
   track of its own** (2026-09-04):
   [concurrent-tools.md](concurrent-tools.md).
 - **Admission by budget** (F7): the app-side guard for the unified pool.
+  **Now a track of its own** (2026-09-04):
+  [admission-by-budget.md](admission-by-budget.md) — the collective
+  failure reproduced on the CPU build, both routes into it, and the guard.
   *Noted 2026-09-04:* llama.cpp gained `--kv-unified-per-slot N` on
   2026-08-27 (PR #24124, in b10791 and later) — a per-slot cap under the
   unified pool, so an overgrown slot fails alone instead of clearing every

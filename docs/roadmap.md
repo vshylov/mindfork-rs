@@ -119,7 +119,9 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   - **admission by budget** for the unified KV pool — a child's round waits
     for a session while the in-flight prompt sizes plus the caps would
     exceed `context_budget`; today an overfilled pool fails the round with
-    the server's message;
+    the server's message — **research written** (2026-09-04):
+    [docs/research/admission-by-budget.md](research/admission-by-budget.md),
+    forks open;
   - **the Gemma stack's slow prefill** (~50 tok/s on b10791 with the
     projector, against ~2200 tok/s for Qwen on the same line) — the Gemma
     line without `-mm` and one cold request would tell whether it is the
