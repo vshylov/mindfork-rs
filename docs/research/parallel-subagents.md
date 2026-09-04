@@ -658,14 +658,31 @@ records satisfy a strict provider.
   the parent notified in a later round — needs a "task notification" round
   shape and a place for a result that arrives after the turn ends.
 - **Concurrent ordinary tools** (F1c): a `Tool::concurrent()` mark for
-  read-only tools and a group per round like the sub-agents'.
+  read-only tools and a group per round like the sub-agents'. **Now a
+  track of its own** (2026-09-04):
+  [concurrent-tools.md](concurrent-tools.md).
 - **Admission by budget** (F7): the app-side guard for the unified pool.
+  *Noted 2026-09-04:* llama.cpp gained `--kv-unified-per-slot N` on
+  2026-08-27 (PR #24124, in b10791 and later) — a per-slot cap under the
+  unified pool, so an overgrown slot fails alone instead of clearing every
+  processing slot. It does not replace F7: the cap is one number for every
+  slot, so it cuts the main chat's window too, and without `-c` it sizes the
+  pool to `n_parallel × N` (F4c's memory). Name it in that track's forks.
 - **A large-model measurement of the RAM cache** (§3.2's caveat): the
   restore cost and the parked-set bound on a 31B at 16k, on the stack when
-  it next runs that model.
+  it next runs that model. *Settled in part by §3.5 (2026-09-04):* the
+  restore cost is measured on the 31B and the 27B — a memory copy, invisible
+  next to the new tokens' prefill. Still open: the parked-set bound, i.e. how
+  many 16k contexts `--cache-ram` holds for the 31B before eviction is real
+  again; a probe that rotates N conversations over one pinned slot and
+  watches `cache_n`, on the stack when it runs Qwen (the Gemma line's
+  prefill anomaly makes each cold 16k context minutes long).
 - **Qwen 3.6's template** (`supports_parallel_tool_calls`) — read on the
   first live run of stage 2, and sent explicitly as `parallel_tool_calls:
-  true` if the template's default proves to be off.
+  true` if the template's default proves to be off. *Settled by §3.5
+  (2026-09-04):* the template reports `true`, and so does Gemma 4 31B's
+  (`/props` → `chat_template_caps`, b10807); llama.cpp takes the request's
+  default from that cap (`server-common.cpp`), so nothing is sent.
 
 ## 9. Documentation touch list (AGENTS.md §4)
 

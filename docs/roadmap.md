@@ -106,7 +106,11 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
     "task notification" round shape and a place for a result that arrives
     after the turn ends;
   - **concurrent ordinary tools** — a `Tool::concurrent()` mark for
-    read-only tools and a group per round like the sub-agents';
+    read-only tools and a group per round like the sub-agents'; **now its
+    own track**, research and forks in
+    [docs/research/concurrent-tools.md](research/concurrent-tools.md)
+    (the models emit several reads in one reply unprompted — measured
+    2026-09-04 on Gemma 4 31B and three clouds);
   - **admission by budget** for the unified KV pool — a child's round waits
     for a session while the in-flight prompt sizes plus the caps would
     exceed `context_budget`; today an overfilled pool fails the round with
