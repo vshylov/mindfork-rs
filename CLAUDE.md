@@ -171,8 +171,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-04, version 0.9.8)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2781 unit tests
-green, 133 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **2798 unit tests
+green, 135 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -183,6 +183,18 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 `tools/doc_index_check.py`. A new track adds a line; a line that has stopped
 being recent is dropped, not shortened.
 
+- **Admission by budget — the unified KV pool never overfilled by the app** —
+  above one session a managed server's streams share one KV pool, and when
+  they outgrew it together the server ended *every* running conversation
+  at once (reproduced on the CPU build, both routes: two prompts that do
+  not fit, two replies that grow into each other); now every stream of a
+  turn **reserves** its calibrated prompt estimate plus its reply cap in
+  `SessionBudget` and waits for room, a stream alone always admitted, the
+  pool from `pool.rs` (managed `-c`; an external llama.cpp's `n_ctx` above
+  one slot; none on the clouds). The live control arm found the client
+  swallowing llama.cpp's in-stream error as an empty chunk — fixed
+  ([docs/research/admission-by-budget.md](docs/research/admission-by-budget.md),
+  spec §6.3, [docs/journal/tools.md](docs/journal/tools.md)).
 - **Concurrent ordinary tools — the round's read-only calls run at once** —
   the reads the model issues in one reply (measured unprompted, 26/26, on
   Gemma 4 31B and four clouds) run as a *segment*: a maximal run of
@@ -407,18 +419,6 @@ being recent is dropped, not shortened.
   (`auto`/`always`/`off`); the beneficiary is plain SSH, and JupyterLab drops the
   sequence entirely
   ([docs/history/osc52-clipboard.md](docs/history/osc52-clipboard.md), spec §11.7).
-- **Command-only control** — nineteen commands make the app operable without a
-  chord, each through the same handler its chord uses
-  ([docs/history/command-only-control.md](docs/history/command-only-control.md),
-  spec §11.7).
-- **Navigable `chat://` references** — one address per conversation: the tools
-  print it, their descriptions teach the model to cite it, the feed resolves it
-  and `Ctrl+L` (or a click) follows
-  ([docs/research/chat-uri-links.md](docs/research/chat-uri-links.md), spec §11.3).
-- **Cross-chat search for the assistant** — `chat_search`/`chat_read`, off by
-  default per profile, scoped in one turn snapshot
-  ([docs/research/cross-chat-search-tool.md](docs/research/cross-chat-search-tool.md),
-  spec §9.11).
 
 For what exists and how it works, read architecture.md and spec.md — they are
 the source of truth for the current state. For how any of it came to be, and

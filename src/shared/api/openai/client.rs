@@ -233,6 +233,26 @@ impl EngineBackend for OpenAiClient {
                                     yield ChatChunk::Finished(finish.unwrap_or(FinishReason::Stop));
                                     break;
                                 }
+                                // llama.cpp (and OpenAI-compatible proxies) can put an
+                                // error object into an already-open 200 stream instead
+                                // of a chunk (ggml-org/llama.cpp#14566). Asked *before*
+                                // the chunk parse: every field of a chunk has a default,
+                                // so `{"error":{…}}` deserializes as a chunk with no
+                                // choices and no usage and used to be skipped in
+                                // silence — the server's "Context size has been
+                                // exceeded." to two colliding streams landed both as
+                                // finished turns with a cut-off reply (measured,
+                                // docs/research/admission-by-budget.md §7).
+                                if let Some(e) = wire::parse_stream_error(&event.data) {
+                                    tracing::warn!(
+                                        name = %e.name,
+                                        transient = e.transient,
+                                        message = %e.message,
+                                        "engine reported an error inside the stream"
+                                    );
+                                    for chunk in ChatChunk::failure(e.message, e.transient) { yield chunk; }
+                                    break;
+                                }
                                 match serde_json::from_str::<wire::ChatCompletionChunk>(&event.data) {
                                     Ok(chunk) => {
                                         // The token counter (include_usage) arrives as a separate
@@ -283,21 +303,8 @@ impl EngineBackend for OpenAiClient {
                                         }
                                     }
                                     Err(err) => {
-                                        // llama.cpp (and OpenAI-compatible proxies) can put an
-                                        // error object into an already-open 200 stream instead
-                                        // of a chunk (ggml-org/llama.cpp#14566). It fails to
-                                        // parse as a chunk, and skipping it silently is how a
-                                        // failed turn used to look like a finished one.
-                                        if let Some(e) = wire::parse_stream_error(&event.data) {
-                                            tracing::warn!(
-                                                name = %e.name,
-                                                transient = e.transient,
-                                                message = %e.message,
-                                                "engine reported an error inside the stream"
-                                            );
-                                            for chunk in ChatChunk::failure(e.message, e.transient) { yield chunk; }
-                                            break;
-                                        }
+                                        // Not a chunk and not an error envelope (asked
+                                        // above): logged, and the stream goes on.
                                         tracing::warn!(error = %err, data = %event.data, "failed to parse SSE chunk");
                                     }
                                 }
@@ -634,6 +641,42 @@ mod tests {
             ),
             "{chunks:?}"
         );
+    }
+
+    /// llama.cpp's error object inside an open stream — the shape of its
+    /// "Context size has been exceeded." to every slot of an overfilled pool
+    /// (docs/research/admission-by-budget.md §3.2) — ends the turn as an
+    /// **error**, transient (a 500), with the text kept. Every field of a
+    /// chunk has a default, so the envelope *parses* as an empty chunk; it
+    /// has to be recognised before that parse, or the turn ends as a finished
+    /// reply cut mid-word, which is what the live control arm found.
+    #[tokio::test]
+    async fn an_error_object_inside_the_stream_ends_the_turn_as_an_error() {
+        let url = sse_server(&[
+            r#"{"choices":[{"index":0,"delta":{"content":"KELV"},"finish_reason":null}]}"#,
+            r#"{"error":{"code":500,"message":"Context size has been exceeded.","type":"server_error"}}"#,
+        ]);
+        let chunks = collect(url).await;
+        assert!(
+            matches!(&chunks[0], ChatChunk::Text(t) if t == "KELV"),
+            "{chunks:?}"
+        );
+        assert!(
+            matches!(
+                &chunks[1],
+                ChatChunk::Error { message, transient: true }
+                    if message.contains("Context size has been exceeded")
+            ),
+            "{chunks:?}"
+        );
+        assert!(
+            matches!(
+                chunks.last(),
+                Some(ChatChunk::Finished(FinishReason::Error))
+            ),
+            "{chunks:?}"
+        );
+        assert_eq!(chunks.len(), 3, "nothing after the failure: {chunks:?}");
     }
 
     /// A server that ends the body without `[DONE]` still ends the turn, and with

@@ -4717,3 +4717,311 @@ async fn concurrent_tools_e2e_live() {
     );
     assert!(reply.contains("KELVAR-3390"), "beta token missing: {reply}");
 }
+
+use futures_util::StreamExt as _;
+
+// ---------------------------------------------------------------------------
+// Admission by budget (docs/research/admission-by-budget.md §7): the guard
+// against the unified pool's collective failure, driven through the app
+// against a real `llama-server` small enough to overflow on purpose.
+// ---------------------------------------------------------------------------
+
+/// The parent's rounds scripted, the children's live: requests whose system
+/// message carries the children's persona go to the real server (and are
+/// counted — how many streams the server saw open at once), every other
+/// request plays the next script. The small model's willingness to delegate
+/// twice is not what the smoke measures, so it is taken out of the picture.
+struct ScriptedParent {
+    live: Arc<dyn EngineBackend>,
+    scripts: std::sync::Mutex<std::collections::VecDeque<Vec<ChatChunk>>>,
+    persona: &'static str,
+    in_flight: Arc<std::sync::atomic::AtomicUsize>,
+    max_in_flight: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+struct LiveOpen(Arc<std::sync::atomic::AtomicUsize>);
+
+impl Drop for LiveOpen {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+#[async_trait::async_trait]
+impl EngineBackend for ScriptedParent {
+    async fn chat_stream(
+        &self,
+        req: crate::shared::api::ChatRequest,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> anyhow::Result<crate::shared::api::contract::ChatStream> {
+        use std::sync::atomic::Ordering::SeqCst;
+        if req
+            .system
+            .as_deref()
+            .is_some_and(|s| s.contains(self.persona))
+        {
+            let open = self.in_flight.fetch_add(1, SeqCst) + 1;
+            self.max_in_flight.fetch_max(open, SeqCst);
+            let guard = LiveOpen(self.in_flight.clone());
+            let mut inner = self.live.chat_stream(req, cancel).await?;
+            let s = async_stream::stream! {
+                let _open = guard;
+                while let Some(chunk) = inner.next().await {
+                    yield chunk;
+                }
+            };
+            return Ok(Box::pin(s));
+        }
+        let chunks = self
+            .scripts
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or_else(|| vec![ChatChunk::Finished(FinishReason::Stop)]);
+        Ok(Box::pin(futures_util::stream::iter(chunks)))
+    }
+
+    async fn context_budget(&self) -> Option<u32> {
+        self.live.context_budget().await
+    }
+
+    async fn parallel_slots(&self) -> Option<u32> {
+        self.live.parallel_slots().await
+    }
+}
+
+const READER: &str = "You are a reader.";
+
+/// One run of the admission smoke: two children, each handed a ~1100-token
+/// archive with a codename in it and asked for the codename, under a parent
+/// that believes the pool is `pool_belief` tokens. Returns the two runs'
+/// outcomes and final replies, and the most live streams open at once.
+async fn admission_smoke(
+    pool_belief: usize,
+) -> Option<(
+    Vec<(Option<crate::entities::subagent::RunOutcome>, String)>,
+    usize,
+)> {
+    let live = live_backend()?;
+    // Each child's message is ~1100 tokens of prose around its codename — the
+    // planted text rides the message rather than a file, since the CPU
+    // build's Gemma 3 template drops tools (`supports_tools: false` on
+    // `/props`), and the pool does not care where the tokens came from. One
+    // such prompt plus a 300-token reply fits the 2048-token pool; two do
+    // not, in reality (~1150 each) and by the app's estimate (~1350 each).
+    let filler = |tag: &str| {
+        (0..36)
+            .map(|i| format!("Paragraph {i} of the {tag} archive describes a lighthouse keeper's ordinary evening: the lamp is lit, the log is written, the tide is noted."))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let delegate = |index: usize, id: &str, name: &str, tag: &str, code: &str| {
+        ChatChunk::ToolCall(crate::shared::api::contract::ToolCallDelta {
+            thought_signature: None,
+            index,
+            id: Some(id.into()),
+            name: Some("call_subagent".into()),
+            arguments: serde_json::json!({
+                "name": name,
+                "system_message": format!("{READER} You are given an archive; report the codename it contains in one short sentence, quoting it exactly."),
+                "message": format!("{}\nThe {tag} codename is {code}.\n\nWhat is the codename?", filler(tag)),
+            })
+            .to_string(),
+        })
+    };
+    let first = vec![
+        delegate(0, "c1", "Alpha reader", "alpha", "ZARNOVIK-7741"),
+        delegate(1, "c2", "Beta reader", "beta", "KELVAR-3390"),
+        ChatChunk::Finished(FinishReason::ToolCalls),
+    ];
+    let backend = Arc::new(ScriptedParent {
+        live,
+        scripts: std::sync::Mutex::new(
+            vec![
+                first,
+                vec![
+                    ChatChunk::Text("Both readers reported.".into()),
+                    ChatChunk::Finished(FinishReason::Stop),
+                ],
+            ]
+            .into(),
+        ),
+        persona: READER,
+        in_flight: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        max_in_flight: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+    });
+
+    let mut cfg = AppConfig::default();
+    cfg.tools.subagent_parallel = 2;
+    cfg.tools.subagent_max_tokens = 300;
+    cfg.default_sampling.max_tokens = Some(300);
+    cfg.engine.external.sessions = 2;
+    cfg.engine.managed.sessions = 2;
+    // The pool the app believes in — the explicit window outranks what the
+    // server reports (pool.rs); 2048 is what the server was launched with,
+    // 65536 is the control arm's lie. Compaction is off so the small window
+    // is the pool's and nothing else's.
+    cfg.compaction.context_tokens = Some(pool_belief);
+    cfg.compaction.enabled = false;
+    cfg.interface.auto_title = crate::shared::config::AutoTitleMode::Off;
+    let (dir, cmd_tx, mut evt_rx, handle) =
+        spawn_orch_cfg(Some(backend.clone() as Arc<dyn EngineBackend>), cfg);
+
+    // External mode's pool rule needs the server's slot count in hand.
+    let slots = tokio::time::timeout(
+        std::time::Duration::from_secs(20),
+        wait_for(&mut evt_rx, |e| matches!(e, AppEvent::EngineSlots(Some(_)))),
+    )
+    .await
+    .ok()
+    .flatten();
+    eprintln!("slots reported: {slots:?}");
+
+    cmd_tx
+        .send(AppCommand::CreateProfile {
+            name: "Delegator".into(),
+            system_message: "You coordinate readers.".into(),
+        })
+        .unwrap();
+    let pl = wait_for(
+        &mut evt_rx,
+        |e| matches!(e, AppEvent::ProfileList(v) if v.len() >= 2),
+    )
+    .await
+    .unwrap();
+    let pid = match pl {
+        AppEvent::ProfileList(v) => v.last().unwrap().id,
+        _ => unreachable!(),
+    };
+    cmd_tx
+        .send(AppCommand::UpdateProfile {
+            id: pid,
+            edit: Box::new(ProfileEdit {
+                language: Some(crate::shared::i18n::Lang::En),
+                enabled_tools: Some(vec!["call_subagent".to_string()]),
+                ..Default::default()
+            }),
+        })
+        .unwrap();
+    cmd_tx
+        .send(AppCommand::NewChat {
+            profile_id: Some(pid),
+        })
+        .unwrap();
+    let chat_id = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .and_then(|e| match e {
+            AppEvent::ChatActivated { id, .. } => Some(id),
+            _ => None,
+        })
+        .unwrap();
+
+    let (reply, calls) = run_turn_capture_args(
+        &cmd_tx,
+        &mut evt_rx,
+        "Ask both readers for their codenames.",
+    )
+    .await;
+    eprintln!("reply: {reply}");
+    for (n, a, r) in &calls {
+        eprintln!(
+            "call {n}({}) -> {}",
+            a.chars().take(100).collect::<String>(),
+            r.chars().take(200).collect::<String>()
+        );
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    let chat = Storage::open(Paths::with_root(dir.path()))
+        .unwrap()
+        .json()
+        .load_chat(chat_id)
+        .unwrap()
+        .unwrap();
+    let runs: Vec<_> = chat
+        .messages
+        .iter()
+        .flat_map(|m| m.tool_calls.iter())
+        .filter_map(|r| r.subagent.as_deref())
+        .map(|run| {
+            eprintln!(
+                "run «{}»: {} messages, outcome {:?}, reply {:?}",
+                run.title,
+                run.messages.len(),
+                run.outcome,
+                run.final_reply()
+            );
+            (
+                run.outcome,
+                run.final_reply().unwrap_or_default().to_string(),
+            )
+        })
+        .collect();
+    let most = backend
+        .max_in_flight
+        .load(std::sync::atomic::Ordering::SeqCst);
+    eprintln!("most live streams open at once: {most}");
+    Some((runs, most))
+}
+
+/// **The guard, live** (research §7): against a `llama-server` launched as
+/// the managed launcher would at `sessions = 2` with a 2048-token pool
+/// (`-c 2048 -np 2 --kv-unified`, the local CPU build and Gemma 3 4B), two
+/// children whose prompts do not fit the pool together both complete and
+/// both report their codename — the budget made them take turns where the
+/// server would have ended both (the control arm below). `#[ignore]`,
+/// manual: `MINDFORK_ENGINE_URL` must point at *that* server, not the gate
+/// stack.
+#[tokio::test]
+#[ignore = "requires a live chat server launched with -c 2048 -np 2 --kv-unified (MINDFORK_ENGINE_URL)"]
+async fn admission_e2e_live() {
+    let Some((runs, most)) = admission_smoke(2048).await else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    assert_eq!(runs.len(), 2, "two runs: {runs:?}");
+    assert!(
+        runs.iter()
+            .all(|(o, _)| *o == Some(crate::entities::subagent::RunOutcome::Completed)),
+        "both children complete under the guard: {runs:?}"
+    );
+    let fold = |s: &str| s.replace(['\u{2011}', '\u{2010}', '\u{2012}', '\u{2013}'], "-");
+    assert!(
+        fold(&runs[0].1).contains("ZARNOVIK-7741"),
+        "alpha code missing: {}",
+        runs[0].1
+    );
+    assert!(
+        fold(&runs[1].1).contains("KELVAR-3390"),
+        "beta code missing: {}",
+        runs[1].1
+    );
+    assert_eq!(
+        most, 1,
+        "two ~1650-token reservations do not fit 2048: the children took turns"
+    );
+}
+
+/// **The control arm**: the same run with the app believing the pool is
+/// 65536 tokens — the guard admits both prompts, the real 2048-token pool
+/// cannot hold them, and the server ends the running conversations
+/// together (research §3.2): at least one child does not complete. This is
+/// what proves the guarded run above did something rather than the server
+/// being polite. `#[ignore]`, manual, the same server as above.
+#[tokio::test]
+#[ignore = "requires a live chat server launched with -c 2048 -np 2 --kv-unified (MINDFORK_ENGINE_URL)"]
+async fn admission_control_e2e_live() {
+    let Some((runs, most)) = admission_smoke(65_536).await else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    assert_eq!(runs.len(), 2, "two runs: {runs:?}");
+    assert_eq!(most, 2, "unguarded, both children streamed at once");
+    assert!(
+        runs.iter()
+            .any(|(o, _)| *o != Some(crate::entities::subagent::RunOutcome::Completed)),
+        "the lie about the pool went unpunished — the server did not overflow: {runs:?}"
+    );
+}

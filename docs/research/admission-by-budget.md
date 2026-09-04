@@ -1,9 +1,11 @@
 # Admission by budget — the unified KV pool never overfilled by the app — research
 
-> Status: **decided, implementation starting** (2026-09-04). User's
-> decision, same day: **F1–F8 at their recommended options**. Built on
-> `feat/admission-by-budget`; the journal entry and the live runs are the
-> record of what was measured. The item
+> Status: **built** (2026-09-04, `feat/admission-by-budget`). User's
+> decision, same day: **F1–F8 at their recommended options**. What was
+> built, tested and run live is the journal entry
+> ([docs/journal/tools.md](../journal/tools.md), *admission by budget*);
+> §7's live smoke plants the text in the children's messages rather than in
+> files, since the CPU build's Gemma 3 template drops tools. The item
 > [parallel-subagents.md](parallel-subagents.md) §8 recorded as fork F7 —
 > *"admission by budget: the app-side guard for the unified pool"* — and
 > that track's §4.7 named as the *later* of its two guards. This document
@@ -107,24 +109,33 @@ delivering text for a minute when they die.
 On the wire it is an in-stream error object with `code: 500` and `type:
 server_error` (§3.2) — not the typed `exceed_context_size_error` the
 server sends for a single oversized request, which is a `400` before any
-stream opens. `wire::parse_stream_error` reads it; `stream_error_transient`
-says **transient** (500 is in `RETRYABLE_STATUSES`), so the `RetryBackend`
-decorator retries it **while the stream is uncommitted** — no text and no
-tool call delivered yet — up to `MAX_ATTEMPTS = 3` with a 1 s base delay
-([cloud-retry-backoff.md](cloud-retry-backoff.md)). Two consequences,
-neither designed:
+stream opens. What was *supposed* to happen, by the code's own comments:
+`wire::parse_stream_error` reads it; `stream_error_transient` says
+**transient** (500 is in `RETRYABLE_STATUSES`), so the `RetryBackend`
+decorator retries it while the stream is uncommitted — no text and no tool
+call delivered yet — up to `MAX_ATTEMPTS = 3` with a 1 s base delay
+([cloud-retry-backoff.md](cloud-retry-backoff.md)); a committed stream
+lands the child `Failed` with the server's message, the parent is told
+through `tool.call_subagent.result.failed`, and the turn goes on.
 
-- In the prefill collision (§3.2) the stream still prefilling had
-  delivered nothing, so it is retried; its sibling — already decoding —
-  had committed, lands `Failed` with the server's message, and the retry
-  then succeeds alone. Half of the round's work survives by accident, and
-  the surviving half paid a second prefill.
-- In the growth collision (§3.3) both streams had committed, so neither
-  is retried: both children land `Failed`, the parent is told through
-  `tool.call_subagent.result.failed`, and the turn goes on. On the CPU
-  build that is 69 s of two streams' work lost; on the gate hardware with
-  the Gemma line's prefill anomaly (parent §3.5: 960 tokens in 18.6 s) it
-  is minutes.
+**What actually happened, measured by §7's control arm (2026-09-04):
+neither.** The client parsed each `data:` payload as a
+`ChatCompletionChunk` first and asked `parse_stream_error` only when that
+parse *failed* — and it never fails on `{"error":{…}}`, because every field
+of the chunk has a `#[serde(default)]`: the envelope deserialized as a
+chunk with no choices and no usage and was skipped in silence, the
+connection then closed, and the stream ended "without a terminator", which
+the client reads as a finished turn. Both children of the colliding round
+landed **`Completed`** — one with a reply cut mid-word (`“KELVAR`), one with
+an empty reply — and the parent read them as complete. No retry fired, no
+`Failed` was recorded, nothing on screen said why. The unit tests of
+`parse_stream_error` in `wire.rs` are green because they test the parser
+alone, never the client's order of asking. **Fixed in this track**: the
+client asks for the envelope *before* the chunk parse, with a
+`sse_server` test of a text delta followed by llama.cpp's error object
+(`Text`, `Error { transient: true }`, `Finished(Error)`, nothing after),
+and the control arm re-run lands the collision as `Failed` — which is the
+only reason the arm can assert anything.
 
 The parent's own context survives either way — §3.4 measures it — because
 under the unified shape a suspended parent is parked in the RAM prompt
@@ -550,10 +561,16 @@ Live, on the local CPU build — the arms of §3 driven through the app:
 - **The parked-set bound** of the RAM prompt cache — still the parent
   track's §8 item; §3.4 adds one data point (one 1244-token context
   survived two failing siblings), not the bound.
-- **A retry that waits for room.** The decorator's accidental recovery
-  (§2.3) retries on a timer; with the guard in place the retry could
-  re-enter `acquire` instead — but by then the estimate was wrong once,
-  and the honest fix is the estimate.
+- **A retry that waits for room.** The decorator's recovery of an
+  uncommitted stream (§2.3, live only since the envelope fix) retries on a
+  timer; with the guard in place the retry could re-enter `acquire`
+  instead — but by then the estimate was wrong once, and the honest fix is
+  the estimate.
+- **The other clients' in-stream envelopes.** The OpenAI-compatible client
+  was the one whose error object parsed as an empty chunk; the Anthropic
+  and Gemini clients have their own event shapes and were not re-measured
+  here. A `sse_server`-style test per client, of an error object after a
+  text delta, is the cheap way to know.
 
 ## 9. Documentation touch list (AGENTS.md §4)
 
