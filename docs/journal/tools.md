@@ -3116,7 +3116,9 @@ the tag `probe/code-search-stage5`.
   50 passed, 0 failed**, 25 min (the two image smokes and TTS skipping in
   writing) — the group of one changes the loop's shape at the default too,
   which is why the whole set ran again rather than the three smokes alone.
-  Gemma 4 31B ran the full set on stage 1's code the same day.
+  **And on Gemma 4 31B** (`gemma-4-31B_q4_0-it` + mmproj, the same unified
+  line, the image smokes running for real): **50 passed, 0 failed**, 69
+  min — both gate models green on the final code.
 - **Tests**: 2769 green (+10: a persona-keyed, stream-counting engine in
   `tests/parallel.rs` — the scripted recorder plays by call order, which two
   concurrent children make nondeterministic — pins two siblings streaming
