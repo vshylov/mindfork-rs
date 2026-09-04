@@ -1,15 +1,19 @@
 # Concurrent ordinary tools — a round's read-only calls run at once — research
 
-> Status: **draft, forks F1–F9 awaiting the user's decision** (2026-09-04).
-> The item [parallel-subagents.md](parallel-subagents.md) §8 recorded as
-> F1c and left for later: the round's *ordinary* tool calls — the reads the
-> model issues in one reply — run concurrently, the way that track made the
-> round's `call_subagent` calls run. The model-behaviour probe (§3) ran
-> before any design: on the LAN stack (Gemma 4 31B, llama.cpp b10807, the
-> unified four-slot line stage 1 launches) and on three clouds, every model
-> answered a task of two independent reads with two `fs_read` calls in one
-> reply and a task of three pages with three `fetch_url` calls, 22/22 —
-> **go**. Extends the sibling's design (§4.1 there: the round's three phases,
+> Status: **decided, implementation starting** (2026-09-04). User's
+> decision, same day: F1a, F2a, **F3 — `4` on the four clouds, `1` on
+> managed and external** (so the knob is a field of each engine section,
+> as `sessions` is — §4.4 rewritten to that shape), F4a, F6a, F7a, F8a, F9a;
+> F5 was not answered and is built at its recommended (a), pending the
+> user's word. The item [parallel-subagents.md](parallel-subagents.md) §8
+> recorded as F1c and left for later: the round's *ordinary* tool calls —
+> the reads the model issues in one reply — run concurrently, the way that
+> track made the round's `call_subagent` calls run. The model-behaviour
+> probe (§3) ran before any design: on the LAN stack (Gemma 4 31B,
+> llama.cpp b10807, the unified four-slot line stage 1 launches) and on all
+> four clouds, every model answered a task of two independent reads with
+> two `fs_read` calls in one reply and a task of three pages with three
+> `fetch_url` calls, 26/26 — **go**. Extends the sibling's design (§4.1 there: the round's three phases,
 > `resolve_round` → `run_group` → the records), which is the shape this
 > track reuses, and [ADR 0010](../decisions/0010-subagent-nested-turn.md)'s
 > amendment, whose point 4 names "a per-tool concurrency mark" as this
@@ -204,12 +208,10 @@ sites: fetch each with fetch_url*. Counting tool calls in the first reply.
 | OpenAI Chat Completions | gpt-5.6 | **2/2** | **2/2** | 1–3 s |
 | Gemini (OpenAI-compatible endpoint) | gemini-3.1-pro-preview | **2/2** | **2/2** | 3–6 s |
 | xAI Chat Completions | grok-4.6 | **2/2** | **2/2** | 2–6 s |
+| Anthropic Messages | claude-sonnet-5 | **2/2** | **2/2** | 2–3 s |
 
-Twenty-two replies, every one with exactly as many calls as independent tasks —
-never one call, never a call too many. Anthropic was not in this session's
-environment (no key visible to the shell); the sibling's §3.4 measured
-claude-sonnet-5 emitting two calls in one reply for the sub-agent schema,
-which is the same capability. Two notes from the run, neither about the
+Twenty-six replies, every one with exactly as many calls as independent
+tasks — never one call, never a call too many. Two notes from the run, neither about the
 product: gpt-5.6 refuses function tools together with reasoning on the Chat
 Completions endpoint (*"use /v1/responses or set reasoning_effort to
 'none'"*) — the app talks to OpenAI through Responses, so only the probe
@@ -297,15 +299,23 @@ token reaches them unchanged — the sibling's reason for the same choice.
 
 ### 4.4 The knob
 
-`tools.concurrent_calls: u32`, `#[serde(default)]`, default per F3: the
-`width` of `buffer_unordered` — how many of a segment's calls are alive at
-once; the rest start as siblings finish. `1` is the sequential round, bit
-for bit. Read into `TurnShared` at the turn's start like
-`subagent.parallel`. A settings row *"Tools: parallel calls"* in the
-Agentic-loop group beside "Subagent: parallel runs", whose hint names what
-the number covers (*"reads and page fetches the model issues in one reply
-run at once; writers, commands and plugins always run one after another"*)
-— derived from the marked set, so the hint cannot advertise what the rule
+**`concurrent_calls: u32` on each engine section** (`engine.managed`,
+`engine.external`, `engine.openai`/`gemini`/`claude`/`grok`),
+`#[serde(default)]` — the shape `sessions` has, and the user's decision on
+F3: the default is **4 on the four clouds and 1 on managed and external**.
+A local server is the machine the user is sitting at, and its one context
+pool is what every stream of the turn shares; a cloud is someone else's
+fleet. So a local setup keeps today's sequential round bit for bit unless
+the user raises the number, and a cloud setup gets the overlap out of the
+box. The value is the `width` of `buffer_unordered` — how many of a
+segment's calls are alive at once; the rest start as siblings finish. Read
+into `TurnShared` at the turn's start from the active mode's section
+(`engine.active_concurrent_calls()`, beside `active_sessions()`), like
+`subagent.parallel`. A settings row *"Parallel tool calls"* on each
+engine section's Model tab beside "Sessions", whose hint names what the
+number covers (*"reads and page fetches the model issues in one reply run
+at once; writers, commands and plugins always run one after another"*) —
+derived from the marked set, so the hint cannot advertise what the rule
 does not do (docs/lessons.md §4).
 
 ### 4.5 The summary takes a session (R6)
@@ -429,7 +439,11 @@ Recommendations are marked; nothing is decided until the user says so.
   VRAM reason (the sibling's R5) which does not exist here; raising it
   later would be the one-line follow-up the sibling's knobs took. The whole
   e2e set runs at the chosen default on both gate models before the PR
-  either way.
+  either way. **User's decision (2026-09-04): (a) for the four clouds,
+  (b) for managed and external** — which makes the knob a per-section
+  field like `sessions` (§4.4), and means the live gate, which runs on a
+  local stack, exercises the segments only through the smoke that raises
+  the number.
 - **F4. `web_search` in the set.** (a) **Out in v1; admitted after a
   measured probe of three concurrent searches on the keyless chain** *(recommended —
   §2.6)*. (b) In from the start. (c) In only while Tavily is the provider
@@ -440,7 +454,8 @@ Recommendations are marked; nothing is decided until the user says so.
   — R6, §4.5; small)*. (b) Leave it outside — the server queues, the cloud
   retries a `429`, the unified pool takes three summaries at once. (c)
   Leave `fetch_url` unmarked — forfeits the largest win for the sake of a
-  request the tool makes on its own.
+  request the tool makes on its own. *Not answered in the user's decision
+  of 2026-09-04; built at (a), to be confirmed.*
 - **F6. The order effects land.** (a) **The model's order, after the
   segment** *(recommended — same `Chat` as a sequential round)*. (b)
   Completion order.
@@ -462,7 +477,8 @@ Recommendations are marked; nothing is decided until the user says so.
 
 **One PR — `feat/concurrent-tools`** (F9a). `Tool::concurrent()` with the
 marks of §2.3 and the two catalog invariants; `next_segment` and
-`run_segment` in the loop; `tools.concurrent_calls` and its settings row;
+`run_segment` in the loop; `concurrent_calls` on the six engine sections
+and its settings row;
 `ToolContext.sessions` and the permit in `summarize_text`; the ADR; the
 docs of §9.
 
