@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (43)
+## Entries (44)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -55,6 +55,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: parallel sub-agents — stage 2, the round's parallel group (track complete)
 - Post-M9: concurrent ordinary tools — the round's read-only calls run at once (done)
 - Post-M9: admission by budget — the unified KV pool never overfilled by the app (done)
+- Post-M9: the parked-set bound of the RAM prompt cache, measured (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -3350,3 +3351,22 @@ the tag `probe/code-search-stage5`.
   two modules), §5, §8; install.md §3; the `sessions` hint (en/ru);
   CHANGELOG Changed + Fixed; roadmap; parallel-subagents.md §4.7/§8;
   lessons §2.
+### Post-M9: the parked-set bound of the RAM prompt cache, measured (done)
+- **What**: the last open measurement of the parallel sub-agent track's §8
+  ([docs/research/parallel-subagents.md](../research/parallel-subagents.md)
+  §3.6, `tools/cache_ram_probe.py`): how many contexts llama.cpp's RAM
+  prompt cache (`--cache-ram`, 8192 MiB by default) parks before a
+  one-slot rotation of runs pays the full prefill again. On the LAN stack
+  (Qwen 3.6 27B Q4_K_M, b10807, `-np 4 --kv-unified -c 16384`), every
+  request pinned to one slot, conversations of 13 926 tokens added one at
+  a time and every earlier one revisited after each addition: **four**
+  come back (`cache_n` ~13.9k, `prompt_n` 26, 220 ms), the fifth evicts
+  one, and from six on **none** come back — a round-robin over an LRU
+  cache one entry too small evicts at every visit the entry the next
+  visit needs, so the cost is a cliff (every round of every run at the
+  full 5 s prefill), not one extra prefill. About 150 KB of KV state per
+  token on this model; a 16k context ~2.3 GB. Written into the research
+  (§3.6, §5, §8) and install.md next to `-c`: raising `subagent_parallel`
+  on a long-context profile is a reason to raise `--cache-ram` with it.
+  Not measured: the 31B's per-token size (larger, so a lower bound), when
+  the stack next runs it with its projector.

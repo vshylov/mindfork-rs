@@ -357,7 +357,15 @@ Two modes (configured on the settings screen, `Ctrl+P`, "Model/server" section):
     (or a page summary) that would not fit next to the streams already open
     waits for one of them to end, instead of provoking the server's "Context
     size has been exceeded", which ends *every* running conversation at once.
-    Raise `-c` to buy room and the waits get rarer. The field's hint shows how many slots the running server
+    Raise `-c` to buy room and the waits get rarer. And mind the server's
+    **RAM prompt cache** (`--cache-ram`, 8 GiB by default, host RAM): a
+    conversation that is not streaming is parked there and restored in a
+    fraction of a second, but only while the parked set fits — measured on a
+    27B, the default holds about four 14k-token contexts, and one past that
+    a rotation of runs restores *none* of them, every round paying the full
+    prefill ([docs/research/parallel-subagents.md](research/parallel-subagents.md)
+    §3.6). Raising `subagent_parallel` on a long-context profile is a reason
+    to raise `--cache-ram` with it. The field's hint shows how many slots the running server
     reports (`total_slots` on `/props`).
   - **Parallel tool calls** (`concurrent_calls`, the same group): how many of
     the tool calls the assistant issues in one reply run at once, when they
