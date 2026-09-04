@@ -154,6 +154,8 @@ impl McpSlot {
                 label: t.ui_label(),
                 gate: t.gate(),
                 enabled_by_default: t.enabled_by_default(),
+                // Third-party code: never a member of a concurrent group (`Tool::concurrent`).
+                concurrent: false,
                 description: Some(raw.description.clone()),
             })
             .collect();

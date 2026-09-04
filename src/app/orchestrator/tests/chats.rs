@@ -562,6 +562,7 @@ async fn remembers_and_restores_last_opened_chat() {
             config: AppConfig::default(),
             supervisor: Arc::new(MockSupervisor::with_backend(None)),
             default_language: crate::shared::i18n::Lang::default(),
+            extra_tools: Vec::new(),
         };
         let handle = tokio::spawn(run(deps));
 
@@ -613,6 +614,7 @@ async fn remembers_and_restores_last_opened_chat() {
             config,
             supervisor: Arc::new(MockSupervisor::with_backend(None)),
             default_language: crate::shared::i18n::Lang::default(),
+            extra_tools: Vec::new(),
         };
         let handle = tokio::spawn(run(deps));
 

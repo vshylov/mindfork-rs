@@ -290,6 +290,7 @@ fn launch_tui(
         supervisor,
         // New profiles' scaffold language — from defaults.json (axis A, docs/history/i18n.md).
         default_language: paths.default_language(),
+        extra_tools: Vec::new(),
     }));
 
     // Spellcheck dictionaries are loaded by `runtime` itself in the background per the

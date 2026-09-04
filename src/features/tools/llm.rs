@@ -34,6 +34,11 @@ impl Tool for GetLlmName {
     fn id(&self) -> ToolId {
         GET_LLM_NAME_ID.into()
     }
+    /// Reads the turn's frozen name; a read (docs/research/concurrent-tools.md
+    /// §2.3).
+    fn concurrent(&self) -> bool {
+        true
+    }
     fn group(&self) -> crate::features::tools::meta::ToolGroup {
         crate::features::tools::meta::ToolGroup::Introspection
     }
@@ -70,6 +75,10 @@ pub struct GetLlmHistory;
 impl Tool for GetLlmHistory {
     fn id(&self) -> ToolId {
         GET_LLM_HISTORY_ID.into()
+    }
+    /// Reads the profile's history table; a read.
+    fn concurrent(&self) -> bool {
+        true
     }
     fn group(&self) -> crate::features::tools::meta::ToolGroup {
         crate::features::tools::meta::ToolGroup::Introspection

@@ -38,6 +38,11 @@ impl Tool for GetSampling {
     fn id(&self) -> ToolId {
         GET_SAMPLING_ID.into()
     }
+    /// Reports the turn's snapshot; a read (docs/research/concurrent-tools.md
+    /// §2.3 — marked for the consistency of the rule, not for gain).
+    fn concurrent(&self) -> bool {
+        true
+    }
     fn group(&self) -> crate::features::tools::meta::ToolGroup {
         crate::features::tools::meta::ToolGroup::Introspection
     }

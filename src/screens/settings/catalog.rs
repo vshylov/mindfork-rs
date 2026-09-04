@@ -303,13 +303,25 @@ impl SettingsScreen {
                 // value lives in the active mode's own section, and the slot
                 // count a `llama-server` reported is a hint next to the field,
                 // never written into it. A cloud has no slots to report.
-                let (sessions, slots_hint) = match x.mode {
-                    ServerMode::Managed => (x.managed.sessions, self.engine_slots),
-                    ServerMode::External => (x.external.sessions, self.engine_slots),
+                let (sessions, concurrent, slots_hint) = match x.mode {
+                    ServerMode::Managed => (
+                        x.managed.sessions,
+                        x.managed.concurrent_calls,
+                        self.engine_slots,
+                    ),
+                    ServerMode::External => (
+                        x.external.sessions,
+                        x.external.concurrent_calls,
+                        self.engine_slots,
+                    ),
                     ServerMode::OpenAi
                     | ServerMode::Gemini
                     | ServerMode::Claude
-                    | ServerMode::Grok => (x.cloud().map_or(1, |c| c.sessions), None),
+                    | ServerMode::Grok => (
+                        x.cloud().map_or(1, |c| c.sessions),
+                        x.cloud().map_or(1, |c| c.concurrent_calls),
+                        None,
+                    ),
                 };
                 let mut desc = loc.t("ui.settings.desc.sessions").to_string();
                 if let Some(n) = slots_hint {
@@ -318,6 +330,23 @@ impl SettingsScreen {
                         &loc.tf("ui.settings.desc.sessions_slots", &[("n", &n.to_string())]),
                     );
                 }
+                // The concurrent group's width (spec §6.3). Its hint names the
+                // tools the number covers **from the catalog's own marks**, so
+                // it cannot advertise a tool the rule does not run together
+                // (docs/lessons.md §4; docs/research/concurrent-tools.md §4.4).
+                let marked: Vec<String> = crate::features::tools::tool_catalog()
+                    .into_iter()
+                    .filter(|t| t.concurrent)
+                    .map(|t| t.id)
+                    .collect();
+                let concurrent_desc = format!(
+                    "{} {}",
+                    loc.t("ui.settings.desc.concurrent_calls"),
+                    loc.tf(
+                        "ui.settings.desc.concurrent_calls_tools",
+                        &[("tools", &marked.join(", "))],
+                    )
+                );
                 rows.extend(grouped(
                     loc.t("ui.settings.group.sessions"),
                     vec![
@@ -327,6 +356,12 @@ impl SettingsScreen {
                             FieldKind::Text(sessions.to_string()),
                         )
                         .describe(desc),
+                        row(
+                            FieldId::XConcurrent,
+                            loc.t("ui.settings.field.concurrent_calls"),
+                            FieldKind::Text(concurrent.to_string()),
+                        )
+                        .describe(concurrent_desc),
                     ],
                 ));
                 rows

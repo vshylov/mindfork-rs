@@ -40,6 +40,11 @@ impl Tool for AttachmentRead {
     fn id(&self) -> ToolId {
         ATTACHMENT_READ_ID.into()
     }
+    /// Reads the turn's own snapshot: nothing a sibling call could observe
+    /// (docs/research/concurrent-tools.md §2.3).
+    fn concurrent(&self) -> bool {
+        true
+    }
     fn group(&self) -> super::meta::ToolGroup {
         super::meta::ToolGroup::Files
     }
@@ -126,6 +131,11 @@ pub struct AttachmentSearch;
 impl Tool for AttachmentSearch {
     fn id(&self) -> ToolId {
         ATTACHMENT_SEARCH_ID.into()
+    }
+    /// A read of the index — it builds nothing (the indexing happens when the
+    /// file is attached), so two searches at once observe the same index.
+    fn concurrent(&self) -> bool {
+        true
     }
     fn group(&self) -> super::meta::ToolGroup {
         super::meta::ToolGroup::Files

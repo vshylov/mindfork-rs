@@ -100,6 +100,7 @@ fn spawn_orch_sup(
         config,
         supervisor: sup.clone(),
         default_language: crate::shared::i18n::Lang::default(),
+        extra_tools: Vec::new(),
     }));
     (dir, sup, cmd_tx, evt_rx, handle)
 }
@@ -140,6 +141,24 @@ fn spawn_orch_cfg(
     (dir, cmd_tx, evt_rx, handle)
 }
 
+/// Like [`spawn_orch_cfg`], with instrumented tools registered on top of the
+/// standard set (`OrchestratorDeps::extra_tools`) — the concurrent-segment
+/// tests need a read that counts and delays inside a real turn.
+fn spawn_orch_tools(
+    backend: Option<Arc<dyn EngineBackend>>,
+    config: AppConfig,
+    extra_tools: Vec<Arc<dyn crate::features::tools::Tool>>,
+) -> (
+    tempfile::TempDir,
+    UnboundedSender<AppCommand>,
+    UnboundedReceiver<AppEvent>,
+    tokio::task::JoinHandle<()>,
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let (cmd_tx, evt_rx, handle) = spawn_orch_at_tools(dir.path(), backend, config, extra_tools);
+    (dir, cmd_tx, evt_rx, handle)
+}
+
 /// Like [`spawn_orch_cfg`], but on an **existing** data root — for two-phase
 /// tests that restart the app on the same data (what survived to disk, what a
 /// fresh bootstrap makes of it).
@@ -157,6 +176,20 @@ fn spawn_orch_at(
     UnboundedReceiver<AppEvent>,
     tokio::task::JoinHandle<()>,
 ) {
+    spawn_orch_at_tools(root, backend, config, Vec::new())
+}
+
+/// [`spawn_orch_at`] with instrumented tools on top of the standard set.
+fn spawn_orch_at_tools(
+    root: &std::path::Path,
+    backend: Option<Arc<dyn EngineBackend>>,
+    config: AppConfig,
+    extra_tools: Vec<Arc<dyn crate::features::tools::Tool>>,
+) -> (
+    UnboundedSender<AppCommand>,
+    UnboundedReceiver<AppEvent>,
+    tokio::task::JoinHandle<()>,
+) {
     let storage = Arc::new(Storage::open(Paths::with_root(root)).unwrap());
     let (cmd_tx, cmd_rx) = unbounded_channel();
     let (evt_tx, evt_rx) = unbounded_channel();
@@ -167,6 +200,7 @@ fn spawn_orch_at(
         config,
         supervisor: Arc::new(MockSupervisor::with_backend(backend)),
         default_language: crate::shared::i18n::Lang::default(),
+        extra_tools,
     };
     let handle = tokio::spawn(run(deps));
     (cmd_tx, evt_rx, handle)
@@ -268,6 +302,7 @@ fn bare_orch_rx() -> (tempfile::TempDir, Orchestrator, UnboundedReceiver<AppEven
         saves: SaveQueue::default(),
         restarts: RestartQueue::default(),
         default_language: crate::shared::i18n::Lang::default(),
+        extra_tools: Vec::new(),
     };
     (dir, orch, evt_rx)
 }
@@ -417,6 +452,7 @@ fn spawn_orch_live_with(config: AppConfig, with_embedder: bool) -> Option<OrchHa
         config,
         supervisor,
         default_language: crate::shared::i18n::Lang::default(),
+        extra_tools: Vec::new(),
     };
     let handle = tokio::spawn(run(deps));
     Some((dir, cmd_tx, evt_rx, handle))
@@ -570,6 +606,7 @@ fn orch_ready_for_self_consolidation() -> (tempfile::TempDir, Orchestrator, Uuid
 mod attachments;
 mod chats;
 mod compaction;
+mod concurrent;
 mod confirm;
 mod demo;
 mod dialogue;

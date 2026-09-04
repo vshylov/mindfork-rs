@@ -133,6 +133,11 @@ impl Tool for FsRead {
     fn id(&self) -> ToolId {
         FS_READ_ID.into()
     }
+    /// A pure read of one file: nothing a sibling call could observe, nothing
+    /// to clean up if dropped (docs/research/concurrent-tools.md §2.3).
+    fn concurrent(&self) -> bool {
+        true
+    }
     fn group(&self) -> crate::features::tools::meta::ToolGroup {
         crate::features::tools::meta::ToolGroup::Files
     }
@@ -300,6 +305,10 @@ impl FsList {
 impl Tool for FsList {
     fn id(&self) -> ToolId {
         FS_LIST_ID.into()
+    }
+    /// A directory listing: a read like `fs_read`'s.
+    fn concurrent(&self) -> bool {
+        true
     }
     fn group(&self) -> crate::features::tools::meta::ToolGroup {
         crate::features::tools::meta::ToolGroup::Files

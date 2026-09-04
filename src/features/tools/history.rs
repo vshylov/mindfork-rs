@@ -63,6 +63,11 @@ impl Tool for HistoryRead {
     fn id(&self) -> ToolId {
         HISTORY_READ_ID.into()
     }
+    /// Pages a rendered snapshot held in memory
+    /// (docs/research/concurrent-tools.md §2.3).
+    fn concurrent(&self) -> bool {
+        true
+    }
     fn group(&self) -> super::meta::ToolGroup {
         super::meta::ToolGroup::Conversation
     }
@@ -120,6 +125,10 @@ pub struct HistorySearch;
 impl Tool for HistorySearch {
     fn id(&self) -> ToolId {
         HISTORY_SEARCH_ID.into()
+    }
+    /// A read of the full-text index over the same snapshot.
+    fn concurrent(&self) -> bool {
+        true
     }
     fn group(&self) -> super::meta::ToolGroup {
         super::meta::ToolGroup::Conversation

@@ -54,6 +54,7 @@ async fn demo_boot_streams_cycling_canned_replies() {
         config,
         supervisor: Arc::new(DemoSupervisor::new(backend)),
         default_language: crate::shared::i18n::Lang::En,
+        extra_tools: Vec::new(),
     }));
 
     let first = collect_reply(&cmd_tx, &mut evt_rx, "Who am I talking to?").await;

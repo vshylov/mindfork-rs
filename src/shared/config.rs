@@ -208,6 +208,15 @@ pub const DEFAULT_CONTEXT_SIZE: u32 = 8192;
 /// One — the main agent and its sub-agents take turns, exactly as before the
 /// setting existed.
 pub const DEFAULT_SESSIONS: u32 = 1;
+/// Default width of a round's concurrent tool group on a **local** engine
+/// (`concurrent_calls` of `managed`/`external`, spec §6.3;
+/// docs/research/concurrent-tools.md §4.4, fork F3): one — the sequential
+/// round, bit for bit, until the user raises it. The machine the user is
+/// sitting at, sharing one context pool with every stream of the turn.
+pub const DEFAULT_CONCURRENT_CALLS_LOCAL: u32 = 1;
+/// The same on a **cloud** provider: four — the reads and page fetches the
+/// model issues in one reply overlap out of the box; someone else's fleet.
+pub const DEFAULT_CONCURRENT_CALLS_CLOUD: u32 = 4;
 
 /// FlashAttention mode (`--flash-attn`) for the managed llama.cpp server. `Auto` —
 /// the flag isn't passed (llama.cpp decides on its own, its default); `On`/`Off` — forced.
@@ -347,6 +356,11 @@ pub struct ManagedSettings {
     /// (docs/research/parallel-subagents.md §4.7, fork F4). At 1 the launch
     /// line is exactly what it was before the field existed.
     pub sessions: u32,
+    /// How many of a round's concurrent tool calls — the reads and page
+    /// fetches the model issues in one reply — run at once (spec §6.3,
+    /// docs/research/concurrent-tools.md §4.4). Default 1 on a local engine:
+    /// the sequential round, bit for bit.
+    pub concurrent_calls: u32,
     /// Use the model's built-in chat template (`--jinja`) — needed for correct
     /// formatting and tool calling.
     pub jinja: bool,
@@ -383,6 +397,7 @@ impl Default for ManagedSettings {
             gpu_layers: DEFAULT_GPU_LAYERS,
             context_size: DEFAULT_CONTEXT_SIZE,
             sessions: DEFAULT_SESSIONS,
+            concurrent_calls: DEFAULT_CONCURRENT_CALLS_LOCAL,
             jinja: true,
             reasoning_format: None,
             no_mmap: false,
@@ -413,6 +428,9 @@ pub struct ExternalSettings {
     /// a hint next to this field, but what the app actually opens is what is
     /// written here (docs/research/parallel-subagents.md fork F8). Default 1.
     pub sessions: u32,
+    /// Width of a round's concurrent tool group (spec §6.3,
+    /// docs/research/concurrent-tools.md §4.4). Default 1 — a local engine.
+    pub concurrent_calls: u32,
     /// Env-variable name carrying a Bearer key (optional) — for an OpenAI-compatible
     /// proxy/gateway that requires authorization. Stores the **name**, not the secret
     /// (ADR 0004). `None`/empty — no authorization (a local `llama-server` doesn't need it).
@@ -430,6 +448,7 @@ impl Default for ExternalSettings {
             url: None,
             model_name: None,
             sessions: DEFAULT_SESSIONS,
+            concurrent_calls: DEFAULT_CONCURRENT_CALLS_LOCAL,
             api_key_env: None,
         }
     }
@@ -452,6 +471,10 @@ pub struct CloudSettings {
     /// a `429` when it is optimistic is absorbed by the retry decorator
     /// (docs/research/parallel-subagents.md §4.8). Default 1.
     pub sessions: u32,
+    /// Width of a round's concurrent tool group (spec §6.3,
+    /// docs/research/concurrent-tools.md §4.4). Default 4 on a cloud: the
+    /// reads and page fetches of one reply overlap out of the box.
+    pub concurrent_calls: u32,
 }
 
 impl Default for CloudSettings {
@@ -461,6 +484,7 @@ impl Default for CloudSettings {
             api_key_env: None,
             url: None,
             sessions: DEFAULT_SESSIONS,
+            concurrent_calls: DEFAULT_CONCURRENT_CALLS_CLOUD,
         }
     }
 }
@@ -513,6 +537,21 @@ impl EngineSettings {
             ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude | ServerMode::Grok => {
                 self.cloud().map_or(DEFAULT_SESSIONS, |c| c.sessions)
             }
+        };
+        n.max(1)
+    }
+
+    /// Width of a round's concurrent tool group for the current mode
+    /// (`concurrent_calls` of the active section, spec §6.3;
+    /// docs/research/concurrent-tools.md §4.4). Never below 1: one is the
+    /// sequential round, and a zero would mean no call could ever run.
+    pub fn active_concurrent_calls(&self) -> u32 {
+        let n = match self.mode {
+            ServerMode::Managed => self.managed.concurrent_calls,
+            ServerMode::External => self.external.concurrent_calls,
+            ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude | ServerMode::Grok => self
+                .cloud()
+                .map_or(DEFAULT_CONCURRENT_CALLS_CLOUD, |c| c.concurrent_calls),
         };
         n.max(1)
     }
@@ -2275,6 +2314,44 @@ mod tests {
         assert_eq!(old.external.sessions, 1);
         assert_eq!(old.openai.sessions, 1);
         assert_eq!(old.active_sessions(), 1);
+    }
+
+    /// `concurrent_calls` is read from the active section like `sessions`,
+    /// with a default per kind of engine (docs/research/concurrent-tools.md
+    /// fork F3, the user's decision): one on a local engine — the sequential
+    /// round — and four on a cloud. Never below one, and a file written before
+    /// the field existed reads those defaults.
+    #[test]
+    fn active_concurrent_calls_follows_the_mode_with_a_default_per_kind() {
+        let mut e = EngineSettings::default();
+        assert_eq!(e.active_concurrent_calls(), 1, "managed is local");
+        e.mode = ServerMode::External;
+        assert_eq!(e.active_concurrent_calls(), 1, "external is local");
+        e.mode = ServerMode::OpenAi;
+        assert_eq!(
+            e.active_concurrent_calls(),
+            4,
+            "a cloud overlaps by default"
+        );
+        e.mode = ServerMode::Claude;
+        assert_eq!(e.active_concurrent_calls(), 4);
+        e.grok.concurrent_calls = 0;
+        e.mode = ServerMode::Grok;
+        assert_eq!(e.active_concurrent_calls(), 1, "zero reads as one");
+        e.managed.concurrent_calls = 3;
+        e.mode = ServerMode::Managed;
+        assert_eq!(e.active_concurrent_calls(), 3);
+        let old: EngineSettings = serde_json::from_str(
+            r#"{"external":{"url":"http://h/v1"},"gemini":{"model_name":"m"}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            old.external.concurrent_calls,
+            DEFAULT_CONCURRENT_CALLS_LOCAL
+        );
+        assert_eq!(old.managed.concurrent_calls, DEFAULT_CONCURRENT_CALLS_LOCAL);
+        assert_eq!(old.gemini.concurrent_calls, DEFAULT_CONCURRENT_CALLS_CLOUD);
+        assert_eq!(old.openai.concurrent_calls, DEFAULT_CONCURRENT_CALLS_CLOUD);
     }
 
     #[test]

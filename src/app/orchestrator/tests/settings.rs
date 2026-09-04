@@ -108,6 +108,7 @@ async fn model_change_restarts_chat_server_debounced() {
         config: AppConfig::default(),
         supervisor: sup.clone(),
         default_language: crate::shared::i18n::Lang::default(),
+        extra_tools: Vec::new(),
     }));
     wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Settings { .. }))
         .await
@@ -192,6 +193,7 @@ async fn an_edit_and_its_undo_cost_no_restart() {
         config: AppConfig::default(),
         supervisor: sup.clone(),
         default_language: crate::shared::i18n::Lang::default(),
+        extra_tools: Vec::new(),
     }));
     wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Settings { .. }))
         .await

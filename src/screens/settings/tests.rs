@@ -2413,6 +2413,7 @@ fn mcp_tools_extend_profile_toggles_with_honest_gate() {
             label: "read_text_file",
             gate: Some(ToolGate::Mcp),
             enabled_by_default: false,
+            concurrent: false,
             description: Some("Read the complete contents of a file".into()),
         }],
         servers: Vec::new(),
@@ -3268,6 +3269,7 @@ fn mcp_tool_toggles_share_the_column() {
         label: name,
         gate: Some(ToolGate::Mcp),
         enabled_by_default: false,
+        concurrent: false,
         description: Some("A server-provided description".into()),
     };
     s.set_mcp(crate::features::tools::mcp::McpSnapshot {
@@ -3913,6 +3915,7 @@ fn the_gate_explanation_is_only_on_gated_tools_and_names_its_section() {
         label: "issues",
         gate: Some(ToolGate::Mcp),
         enabled_by_default: false,
+        concurrent: false,
         description: None,
     };
     s.set_mcp(crate::features::tools::mcp::McpSnapshot {
@@ -4479,14 +4482,132 @@ fn sessions_row_is_on_the_assistant_tab_in_every_mode() {
         assert_eq!(row.group, "Параллельные сессии", "{mode:?}: its own group");
         assert_eq!(
             rows.last().map(|r| r.id),
-            Some(FieldId::XSessions),
-            "{mode:?}: the group closes the tab"
+            Some(FieldId::XConcurrent),
+            "{mode:?}: the group closes the tab, the width row last"
         );
         assert!(
             row.description.is_some(),
             "{mode:?}: the row carries a description"
         );
     }
+}
+
+/// Reads the active mode's `concurrent_calls` from a config the way the field does.
+fn active_concurrent(c: &AppConfig) -> u32 {
+    match c.engine.mode {
+        ServerMode::Managed => c.engine.managed.concurrent_calls,
+        ServerMode::External => c.engine.external.concurrent_calls,
+        _ => c.engine.cloud().map_or(0, |cl| cl.concurrent_calls),
+    }
+}
+
+/// Opens the editor on `XConcurrent`, types `text`, commits with Enter.
+fn edit_concurrent(s: &mut SettingsScreen, text: &str) -> Option<SettingsIntent> {
+    goto_section(s, Section::Model);
+    goto_field(s, FieldId::XConcurrent);
+    s.handle_key(key(KeyCode::Enter));
+    s.handle_key(ctrl('k'));
+    for c in text.chars() {
+        s.handle_key(key(KeyCode::Char(c)));
+    }
+    s.handle_key(key(KeyCode::Enter))
+}
+
+/// The width row sits beside the sessions row in every mode, valued from the
+/// active section — a local engine's default is one, a cloud's four
+/// (docs/research/concurrent-tools.md fork F3) — and its hint names the tools
+/// the number covers **from the catalog's marks**: a read is named, a writer
+/// is not, so the hint cannot advertise what the rule does not run together.
+#[test]
+fn concurrent_row_follows_the_section_and_its_hint_names_the_marked_tools() {
+    let mut s = screen();
+    s.config.engine.external.concurrent_calls = 3;
+    let modes = [ServerMode::Managed, ServerMode::External]
+        .into_iter()
+        .chain(CLOUD_MODES);
+    for mode in modes {
+        s.config.engine.mode = mode;
+        let rows = s.model_fields_for(ModelTab::Assistant);
+        let row = rows
+            .iter()
+            .find(|r| r.id == FieldId::XConcurrent)
+            .unwrap_or_else(|| panic!("{mode:?}: no width row"));
+        let want = active_concurrent(&s.config);
+        assert!(
+            matches!(&row.kind, FieldKind::Text(v) if *v == want.to_string()),
+            "{mode:?}: the value is the active section's ({want})"
+        );
+        let expected_default = match mode {
+            ServerMode::Managed => 1,
+            ServerMode::External => 3,
+            _ => 4,
+        };
+        assert_eq!(want, expected_default, "{mode:?}");
+        let desc = row.description.as_deref().unwrap_or_default();
+        assert!(
+            desc.contains("fs_read"),
+            "{mode:?}: the hint names a read: {desc}"
+        );
+        assert!(desc.contains("fetch_url"), "{mode:?}: {desc}");
+        assert!(
+            !desc.contains("fs_write") && !desc.contains("python_exec"),
+            "{mode:?}: the hint must not name a tool the rule keeps sequential: {desc}"
+        );
+    }
+}
+
+#[test]
+fn editing_concurrent_writes_the_active_section_with_a_floor_of_one() {
+    let modes = [ServerMode::Managed, ServerMode::External]
+        .into_iter()
+        .chain(CLOUD_MODES);
+    for mode in modes {
+        let mut s = screen();
+        s.config.engine.mode = mode;
+        match edit_concurrent(&mut s, "2") {
+            Some(SettingsIntent::SaveConfig(c)) => {
+                assert_eq!(active_concurrent(&c), 2, "{mode:?}: the active section");
+                // The other sections keep their own default.
+                let others = [
+                    (ServerMode::Managed, c.engine.managed.concurrent_calls, 1),
+                    (ServerMode::External, c.engine.external.concurrent_calls, 1),
+                    (ServerMode::OpenAi, c.engine.openai.concurrent_calls, 4),
+                    (ServerMode::Gemini, c.engine.gemini.concurrent_calls, 4),
+                    (ServerMode::Claude, c.engine.claude.concurrent_calls, 4),
+                    (ServerMode::Grok, c.engine.grok.concurrent_calls, 4),
+                ];
+                for (m, v, default) in others {
+                    if m != mode {
+                        assert_eq!(v, default, "{mode:?}: {m:?} must stay at its default");
+                    }
+                }
+            }
+            other => panic!("{mode:?}: expected SaveConfig, got {other:?}"),
+        }
+    }
+    // One is the floor: "0" is stored as 1.
+    let mut s = screen();
+    s.config.engine.mode = ServerMode::Grok;
+    match edit_concurrent(&mut s, "0") {
+        Some(SettingsIntent::SaveConfig(c)) => assert_eq!(c.engine.grok.concurrent_calls, 1),
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+    // And what `u32` cannot parse is a no-op on the setter itself.
+    use super::spec::{Access, FieldSpec};
+    let Some(FieldSpec {
+        access: Access::Text(set),
+        ..
+    }) = super::spec::field_spec(FieldId::XConcurrent)
+    else {
+        panic!("XConcurrent is a text field of the config table");
+    };
+    let mut c = AppConfig::default();
+    c.engine.mode = ServerMode::Managed;
+    set(&mut c, "abc");
+    set(&mut c, "-1");
+    assert_eq!(c.engine.managed.concurrent_calls, 1);
+    set(&mut c, "6");
+    assert_eq!(c.engine.managed.concurrent_calls, 6);
 }
 
 #[test]
@@ -4508,7 +4629,7 @@ fn sessions_row_is_absent_from_the_impersonation_tab() {
             .map(|r| r.id)
             .collect();
         assert!(
-            !ids.contains(&FieldId::XSessions),
+            !ids.contains(&FieldId::XSessions) && !ids.contains(&FieldId::XConcurrent),
             "{mode:?}: the impersonation tab must not offer sessions"
         );
     }
@@ -4518,7 +4639,7 @@ fn sessions_row_is_absent_from_the_impersonation_tab() {
         .iter()
         .map(|r| r.id)
         .collect();
-    assert!(!ids.contains(&FieldId::XSessions));
+    assert!(!ids.contains(&FieldId::XSessions) && !ids.contains(&FieldId::XConcurrent));
 }
 
 #[test]

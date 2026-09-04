@@ -617,6 +617,13 @@ impl Orchestrator {
 
         // Build the request/context + take the last user message (for relevance-
         // based injection of observations in the task).
+        // The turn's session budget (spec §11.6): every stream of the turn —
+        // the loops' own and a tool's summary request (`ToolContext::sessions`)
+        // — takes a permit of this one semaphore, so it is made before the
+        // context and shared with the task.
+        let sessions = Arc::new(tokio::sync::Semaphore::new(
+            self.config.engine.active_sessions() as usize,
+        ));
         let mut request;
         let ctx;
         let last_user;
@@ -680,6 +687,7 @@ impl Orchestrator {
                 cancel: cancel.clone(),
                 model_name: model_name.clone(),
                 engine_mode,
+                sessions: Some(sessions.clone()),
             };
             ctx = ToolContext::new(
                 self.tool_deps(backend.clone()),
@@ -728,7 +736,8 @@ impl Orchestrator {
             max_rounds: self.config.max_tool_rounds,
             workspace_max_rounds: self.config.workspace.max_rounds,
             subagent: SubagentLimits::from_config(&self.config.tools),
-            sessions: self.config.engine.active_sessions(),
+            sessions,
+            concurrent_calls: self.config.engine.active_concurrent_calls(),
             compaction_summary: self
                 .chats
                 .iter()
@@ -1047,10 +1056,14 @@ struct GenSpawn {
     workspace_max_rounds: u32,
     /// A sub-agent run's limits (`config.tools`, spec §9.3.2).
     subagent: SubagentLimits,
-    /// How many request streams this turn may keep open at once — the active
-    /// engine section's `sessions` (spec §11.6). One, and the turn's loops take
-    /// turns exactly as they did before the setting existed.
-    sessions: u32,
+    /// The turn's session budget — a semaphore sized from the active engine
+    /// section's `sessions` (spec §11.6), shared with the turn's `ToolContext`
+    /// so a tool's own engine request counts too. One permit, and the turn's
+    /// loops take turns exactly as they did before the setting existed.
+    sessions: Arc<tokio::sync::Semaphore>,
+    /// Width of a round's concurrent tool group — the active section's
+    /// `concurrent_calls` (spec §6.3). One: the sequential round.
+    concurrent_calls: u32,
     /// The chat's rolling summary when one is in force (`Chat::compaction_view`)
     /// — the folded half of the dialogue director's conversation brief
     /// (spec §9.13, fork F6); the unfolded half is the request's own tail.
@@ -1250,6 +1263,7 @@ fn spawn_generation(spawn: GenSpawn) {
         workspace_max_rounds,
         subagent,
         sessions,
+        concurrent_calls,
         allowed,
         self_model,
         self_model_params,
@@ -1316,7 +1330,8 @@ fn spawn_generation(spawn: GenSpawn) {
             max_rounds,
             workspace_max_rounds,
             subagent,
-            sessions: tokio::sync::Semaphore::new(sessions.max(1) as usize),
+            sessions,
+            concurrent_calls,
             engine_mode,
             model_name,
             ui_loc,
@@ -1417,7 +1432,15 @@ struct TurnShared {
     /// web fetch hold no session. Every loop of the turn, the turn's own
     /// included, streams under it; sized from the active engine section's
     /// `sessions`. With one permit the loops take turns as they always did.
-    sessions: tokio::sync::Semaphore,
+    /// Shared (`Arc`) with the turn's `ToolContext`: a tool's own engine
+    /// request — `fetch_url`'s page summary — takes a permit of the same
+    /// budget (docs/research/concurrent-tools.md §4.5).
+    sessions: Arc<tokio::sync::Semaphore>,
+    /// Width of a round's concurrent tool group (spec §6.3,
+    /// docs/research/concurrent-tools.md §4.2–§4.4): how many of a segment's
+    /// marked calls are alive at once. One: no segment is formed and every
+    /// call takes the sequential path, bit for bit.
+    concurrent_calls: u32,
     engine_mode: ServerMode,
     model_name: Option<String>,
     ui_loc: &'static crate::shared::i18n::Locale,
@@ -2053,8 +2076,7 @@ impl TurnLoop<'_> {
         calls: &[ApiToolCall],
         rewrite: bool,
     ) -> (Vec<ToolCallRecord>, Vec<Message>) {
-        let (mut results, group) = self.resolve_round(calls, rewrite).await;
-        let mut announced = vec![false; calls.len()];
+        let (mut results, group, mut announced) = self.resolve_round(calls, rewrite).await;
         if !group.is_empty() {
             for (i, done) in self.run_group(group).await {
                 self.effects.extend(done.effects);
@@ -2083,34 +2105,155 @@ impl TurnLoop<'_> {
         (records, tool_msgs)
     }
 
-    /// Phase one: every ordinary call resolved in the model's order; every
-    /// group call announced (its card opens) and prepared as a [`ChildSpec`],
-    /// or refused on the spot when the call is malformed.
+    /// Phase one: every ordinary call resolved in the model's order — a
+    /// **segment** of consecutive concurrent-marked calls as one group at its
+    /// position ([`Self::run_segment`], docs/research/concurrent-tools.md
+    /// §4.2), everything else one at a time; every sub-agent call announced
+    /// (its card opens) and prepared as a [`ChildSpec`], or refused on the
+    /// spot when the call is malformed. The third value says which cards a
+    /// segment already closed as its results landed.
     async fn resolve_round(
         &mut self,
         calls: &[ApiToolCall],
         rewrite: bool,
-    ) -> (Vec<Option<CallResult>>, Vec<(usize, ChildSpec)>) {
+    ) -> (Vec<Option<CallResult>>, Vec<(usize, ChildSpec)>, Vec<bool>) {
         let mut results: Vec<Option<CallResult>> = calls.iter().map(|_| None).collect();
         let mut group: Vec<(usize, ChildSpec)> = Vec::new();
-        for (i, call) in calls.iter().enumerate() {
+        let mut announced = vec![false; calls.len()];
+        let mut i = 0;
+        while i < calls.len() {
+            let call = &calls[i];
             if self.is_group_call(call, rewrite) {
                 self.announce_call(call);
                 match self.child_spec(&Self::call_args(call)) {
                     Ok(spec) => group.push((i, spec)),
                     Err(refusal) => results[i] = Some(refusal),
                 }
+                i += 1;
+                continue;
+            }
+            let end = self.segment_end(calls, i, rewrite);
+            if end > i + 1 {
+                // The segment's results arrive in the model's order, so its
+                // effects land in that order too (fork F6): a sequential round
+                // and a concurrent one leave the same `Chat`.
+                for (j, done) in self.run_segment(&calls[i..end]).await {
+                    self.effects.extend(done.effects);
+                    results[i + j] = Some(done.result);
+                    announced[i + j] = true;
+                }
+                i = end;
             } else {
                 results[i] = Some(self.resolve_call(call, rewrite).await);
+                i += 1;
             }
         }
-        (results, group)
+        (results, group, announced)
+    }
+
+    /// Whether `call` may be a member of a concurrent segment: a round not
+    /// being discarded, a name the profile offers, and a tool whose author
+    /// marked it (`Tool::concurrent`, docs/research/concurrent-tools.md §4.1).
+    /// A control call, a sub-agent, a disabled name or a writer is none of
+    /// these and resolves at its own position, as it always did.
+    fn is_concurrent_call(&self, call: &ApiToolCall, rewrite: bool) -> bool {
+        !rewrite
+            && !control::is_control_tool(&call.name)
+            && self.allowed_has(&call.name)
+            && self.shared.registry.is_concurrent(&call.name)
+    }
+
+    /// The end (exclusive) of the segment that starts at `start`: the first
+    /// later index whose call is not a concurrent member, or the round's end.
+    /// At a width of one no segment is ever formed — `start + 1` — so the
+    /// default of a local engine takes the sequential path bit for bit
+    /// (docs/research/concurrent-tools.md §4.4).
+    fn segment_end(&self, calls: &[ApiToolCall], start: usize, rewrite: bool) -> usize {
+        if self.shared.concurrent_calls <= 1 {
+            return start + 1;
+        }
+        let members = calls[start..]
+            .iter()
+            .take_while(|c| self.is_concurrent_call(c, rewrite))
+            .count();
+        start + members.max(1)
+    }
+
+    /// Runs a segment of concurrent calls (docs/research/concurrent-tools.md
+    /// §4.3): every member's card opens first, the invocations run as futures
+    /// inside this task — at most `concurrent_calls` of them polled at once —
+    /// each card closing as its result lands, and the results come back in
+    /// the model's order, with the index each had in the segment. The
+    /// confirmation gate is not consulted: a marked tool is never dangerous,
+    /// which a registry test pins.
+    async fn run_segment(&self, calls: &[ApiToolCall]) -> Vec<(usize, CallDone)> {
+        let names: Vec<&str> = calls.iter().map(|c| c.name.as_str()).collect();
+        self.report_progress(Some(&names.join(", ")));
+        for call in calls {
+            self.announce_call(call);
+        }
+        let width = self.shared.concurrent_calls.max(1) as usize;
+        // The futures are made by calling the `async fn` directly rather than
+        // inside an `async move` closure: the closure form captures `&self`
+        // under a higher-ranked lifetime the spawned task cannot name
+        // ("implementation of `FnOnce` is not general enough").
+        let members: Vec<_> = calls
+            .iter()
+            .enumerate()
+            .map(|(j, call)| self.invoke_member(j, call))
+            .collect();
+        let mut done: Vec<(usize, CallDone)> = futures_util::stream::iter(members)
+            .buffer_unordered(width)
+            .collect()
+            .await;
+        done.sort_by_key(|(j, _)| *j);
+        done
+    }
+
+    /// One member of a segment: the invocation under the same `select!` with
+    /// the turn's cancellation token the sequential path uses, the outcome
+    /// mapped the same way, and the card closed as the result lands. The card
+    /// carries the tool's own image count — none of the marked tools returns
+    /// images, and the record keeps the prepared count as always. Returns the
+    /// member's index in the segment with its result.
+    async fn invoke_member(&self, j: usize, call: &ApiToolCall) -> (usize, CallDone) {
+        let args = Self::call_args(call);
+        let invoked = tokio::select! {
+            _ = self.cancel.cancelled() => None,
+            res = self.shared.registry.invoke(&call.name, &self.ctx, args) => Some(res),
+        };
+        let (result, effects): (CallResult, Vec<ChatEffect>) = match invoked {
+            None => (
+                self.ctx.loc.t("loop.tool_cancelled").to_string().into(),
+                Vec::new(),
+            ),
+            Some(Ok(outcome)) => (
+                CallResult {
+                    text: outcome.result,
+                    images: outcome.images,
+                    subagent: None,
+                },
+                outcome.effects,
+            ),
+            Some(Err(err)) => (
+                self.ctx
+                    .loc
+                    .tf(
+                        "loop.tool_error",
+                        &[("name", &call.name), ("err", &err.to_string())],
+                    )
+                    .into(),
+                Vec::new(),
+            ),
+        };
+        self.announce_result(call, &result.text, result.images.len());
+        (j, CallDone { result, effects })
     }
 
     /// Phase two: the group's children as futures inside this task, at most
     /// `tools.subagent_parallel` polled at once, yielded in completion order
     /// with the index each had in the round.
-    async fn run_group(&self, group: Vec<(usize, ChildSpec)>) -> Vec<(usize, ChildDone)> {
+    async fn run_group(&self, group: Vec<(usize, ChildSpec)>) -> Vec<(usize, CallDone)> {
         let width = self.shared.subagent.parallel.max(1) as usize;
         let shared = self.shared;
         let loc = self.ctx.loc;
@@ -2457,7 +2600,7 @@ struct ChildSpec {
 /// What a child leaves for its parent to record: the call's result (the
 /// reply text with its trailer, and the run for the record) and the effects
 /// addressed to the parent's chat (research §3.4).
-struct ChildDone {
+struct CallDone {
     result: CallResult,
     effects: Vec<ChatEffect>,
 }
@@ -2471,7 +2614,7 @@ async fn run_child(
     shared: &TurnShared,
     loc: &'static crate::shared::i18n::Locale,
     spec: ChildSpec,
-) -> ChildDone {
+) -> CallDone {
     let ChildSpec {
         parsed,
         run_id,
@@ -2623,7 +2766,7 @@ async fn run_child(
             ],
         ),
     };
-    ChildDone {
+    CallDone {
         result: CallResult {
             text: format!("{body}\n\n{status}"),
             images: Vec::new(),

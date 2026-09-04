@@ -474,6 +474,12 @@ impl Tool for CodeTool {
     fn danger(&self) -> bool {
         self.changes_files()
     }
+    /// The three readers of the project (docs/research/concurrent-tools.md
+    /// §2.3): they walk the tree in-process and write nothing. The editors and
+    /// the command runner are exactly what a read must never overlap with.
+    fn concurrent(&self) -> bool {
+        matches!(self, Self::List | Self::Read | Self::Grep)
+    }
     /// The whole family is exempt: see `Tool::counts_toward_round_limit` and
     /// spec §9.12.
     fn counts_toward_round_limit(&self) -> bool {
