@@ -2006,61 +2006,7 @@ impl TurnLoop<'_> {
             ApiMessage::assistant_tool_calls(out.text.clone(), out.calls.clone())
                 .with_thinking(thinking),
         );
-        let mut records: Vec<ToolCallRecord> = Vec::new();
-        let mut tool_msgs: Vec<Message> = Vec::new();
-        // The round in three phases (docs/research/parallel-subagents.md
-        // §4.1). One: the ordinary calls resolve in the model's order, as
-        // they always did; the round's `call_subagent` calls — its parallel
-        // group — are only announced and prepared. Two: the group runs, at
-        // most `tools.subagent_parallel` children at once, each card closing
-        // as its run lands. Three: the request history and the round's
-        // records are written in the model's order, so what the model and
-        // the chat see is exactly what a sequential round would have left.
-        let mut results: Vec<Option<CallResult>> = out.calls.iter().map(|_| None).collect();
-        let mut announced = vec![false; out.calls.len()];
-        let mut group: Vec<(usize, ChildSpec)> = Vec::new();
-        for (i, call) in out.calls.iter().enumerate() {
-            if self.is_group_call(call, rewrite) {
-                self.announce_call(call);
-                match self.child_spec(&Self::call_args(call)) {
-                    Ok(spec) => group.push((i, spec)),
-                    Err(refusal) => results[i] = Some(refusal),
-                }
-            } else {
-                results[i] = Some(self.resolve_call(call, rewrite).await);
-            }
-        }
-        if !group.is_empty() {
-            let width = self.shared.subagent.parallel.max(1) as usize;
-            let shared = self.shared;
-            let loc = self.ctx.loc;
-            let mut running = futures_util::stream::iter(
-                group
-                    .into_iter()
-                    .map(|(i, spec)| async move { (i, run_child(shared, loc, spec).await) }),
-            )
-            .buffer_unordered(width);
-            while let Some((i, done)) = running.next().await {
-                self.effects.extend(done.effects);
-                self.announce_result(&out.calls[i], &done.result.text, 0);
-                announced[i] = true;
-                results[i] = Some(done.result);
-            }
-        }
-        for (i, call) in out.calls.iter().enumerate() {
-            let result = results[i]
-                .take()
-                .expect("every call of the round resolves in one of the phases");
-            self.record_call(
-                call,
-                result,
-                rewrite,
-                announced[i],
-                &mut records,
-                &mut tool_msgs,
-            )
-            .await;
-        }
+        let (records, tool_msgs) = self.execute_round(&out.calls, rewrite).await;
 
         // The round's domain assistant message (text + thoughts + tool blocks).
         let mut am = Message::assistant(out.text.clone());
@@ -2091,6 +2037,91 @@ impl TurnLoop<'_> {
             return Some(FinishReason::Cancelled);
         }
         None
+    }
+
+    /// Executes a round's calls and returns its records and tool messages, in
+    /// the model's order. Three phases (docs/research/parallel-subagents.md
+    /// §4.1): the ordinary calls resolve in the model's order, as they always
+    /// did, while the round's `call_subagent` calls — its parallel group — are
+    /// only announced and prepared ([`Self::resolve_round`]); the group runs,
+    /// at most `tools.subagent_parallel` children at once, each card closing
+    /// as its run lands ([`Self::run_group`]); the request history and the
+    /// round's records are written in the model's order, so what the model
+    /// and the chat see is exactly what a sequential round would have left.
+    async fn execute_round(
+        &mut self,
+        calls: &[ApiToolCall],
+        rewrite: bool,
+    ) -> (Vec<ToolCallRecord>, Vec<Message>) {
+        let (mut results, group) = self.resolve_round(calls, rewrite).await;
+        let mut announced = vec![false; calls.len()];
+        if !group.is_empty() {
+            for (i, done) in self.run_group(group).await {
+                self.effects.extend(done.effects);
+                // The card closes as its run lands, whatever the order.
+                self.announce_result(&calls[i], &done.result.text, 0);
+                announced[i] = true;
+                results[i] = Some(done.result);
+            }
+        }
+        let mut records: Vec<ToolCallRecord> = Vec::new();
+        let mut tool_msgs: Vec<Message> = Vec::new();
+        for (i, call) in calls.iter().enumerate() {
+            let result = results[i]
+                .take()
+                .expect("every call of the round resolves in one of the phases");
+            self.record_call(
+                call,
+                result,
+                rewrite,
+                announced[i],
+                &mut records,
+                &mut tool_msgs,
+            )
+            .await;
+        }
+        (records, tool_msgs)
+    }
+
+    /// Phase one: every ordinary call resolved in the model's order; every
+    /// group call announced (its card opens) and prepared as a [`ChildSpec`],
+    /// or refused on the spot when the call is malformed.
+    async fn resolve_round(
+        &mut self,
+        calls: &[ApiToolCall],
+        rewrite: bool,
+    ) -> (Vec<Option<CallResult>>, Vec<(usize, ChildSpec)>) {
+        let mut results: Vec<Option<CallResult>> = calls.iter().map(|_| None).collect();
+        let mut group: Vec<(usize, ChildSpec)> = Vec::new();
+        for (i, call) in calls.iter().enumerate() {
+            if self.is_group_call(call, rewrite) {
+                self.announce_call(call);
+                match self.child_spec(&Self::call_args(call)) {
+                    Ok(spec) => group.push((i, spec)),
+                    Err(refusal) => results[i] = Some(refusal),
+                }
+            } else {
+                results[i] = Some(self.resolve_call(call, rewrite).await);
+            }
+        }
+        (results, group)
+    }
+
+    /// Phase two: the group's children as futures inside this task, at most
+    /// `tools.subagent_parallel` polled at once, yielded in completion order
+    /// with the index each had in the round.
+    async fn run_group(&self, group: Vec<(usize, ChildSpec)>) -> Vec<(usize, ChildDone)> {
+        let width = self.shared.subagent.parallel.max(1) as usize;
+        let shared = self.shared;
+        let loc = self.ctx.loc;
+        futures_util::stream::iter(
+            group
+                .into_iter()
+                .map(|(i, spec)| async move { (i, run_child(shared, loc, spec).await) }),
+        )
+        .buffer_unordered(width)
+        .collect()
+        .await
     }
 
     /// One call's arguments as the tools take them. A no-argument call gives an

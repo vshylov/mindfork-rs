@@ -3067,7 +3067,9 @@ the tag `probe/code-search-stage5`.
   [docs/research/parallel-subagents.md](../research/parallel-subagents.md)
   (forks F1–F10 at their recommended options; ADR 0010 amended). The model's
   several `call_subagent` calls in one reply run **at once**. `tool_round`
-  now has three phases: the ordinary calls resolve in the model's order
+  hands its calls to `execute_round`, three phases (`resolve_round`,
+  `run_group`, the records — split out after Sonar measured the round at a
+  cognitive complexity of 18): the ordinary calls resolve in the model's order
   (`resolve_call`), the round's sub-agent calls (`is_group_call`: offered,
   depth 0, not a rewrite) become a `ChildSpec` each (`child_spec`) and run
   through `buffer_unordered(tools.subagent_parallel)` over `run_child` — a

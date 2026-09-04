@@ -915,8 +915,9 @@ Details:
   wins), through the same `view()`-resolved task a transcript's `Ctrl+R` uses.
 - **The parallel group** ([docs/research/parallel-subagents.md](research/parallel-subagents.md)
   §4.1–§4.3, [ADR 0010](decisions/0010-subagent-nested-turn.md) amended).
-  `tool_round` runs in three phases: the ordinary calls resolve in the
-  model's order (`resolve_call`); the round's `call_subagent` calls — those
+  `tool_round` hands its calls to `execute_round`, which runs three phases
+  (`resolve_round`, `run_group`, then the records): the ordinary calls
+  resolve in the model's order (`resolve_call`); the round's `call_subagent` calls — those
   the profile offers, at depth 0, in a round not being discarded
   (`is_group_call`) — are announced, turned into a `ChildSpec` each
   (`child_spec`: the parsed call, the tools minus the withheld, the request
