@@ -346,6 +346,57 @@ says the 31B's 1.22× was its prompt path, not the hardware's ceiling.
 setting is per model, and the field is per mode, which is the right
 granularity to say so in the hint rather than to guess.
 
+### 3.6 The parked-set bound of the RAM prompt cache (2026-09-04, Qwen 3.6 27B)
+
+The caveat §3.2 and §5 carried — *the free interleaving holds while the
+parked contexts fit `--cache-ram`* — measured on the LAN stack
+(`Qwen3.6-27B-Q4_K_M`, b10807, `-np 4 --kv-unified -c 16384`, `--cache-ram`
+at its default of 8192 MiB) with `tools/cache_ram_probe.py`: conversations
+of **13 926 tokens** each, every request pinned to one slot (`id_slot`), so
+each new conversation evicts the previous one into the RAM cache the way a
+one-session rotation does; added one at a time, and after each addition
+every earlier conversation revisited with one short turn, its `cache_n`
+saying whether it came back.
+
+| parked | came back | re-prefilled |
+|---:|---:|---:|
+| 2 | 1 of 1 | — |
+| 3 | 2 of 2 | — |
+| 4 | **3 of 3** | — |
+| 5 | 3 | **1** |
+| 6 | **0** | 5 |
+| 7 | 0 | 6 |
+| 8 | 0 | 7 |
+
+| visit | `prompt_n` | `cache_n` | `prompt_ms` | wall |
+|---|---:|---:|---:|---:|
+| cold (8 of them) | 13 926 | 0 | 4 949–5 158 | 5.5 s |
+| restored (9) | **25–26** | 13 928–14 011 | **209–236** | 1.0 s |
+| evicted (19) | 13 953–14 121 | **0** | 5 028–5 138 | 5.5 s |
+
+Three readings:
+
+- **The bound is four.** 8 GiB parks four ~14k contexts of the 27B and not
+  five — about **150 KB per token** of KV state, so a full 16k context is
+  ~2.3 GB and `--cache-ram`'s default holds three or four of them. The
+  restore is what §3.5 said: 220 ms against 5 s cold, a 23× difference on
+  this model.
+- **Past the bound the rotation does not lose one context; it loses
+  all.** With six parked, *none* came back, and the same at seven and
+  eight: a round-robin over an LRU cache one entry too small evicts, at
+  every visit, exactly the entry the next visit needs. So the cost curve
+  is a cliff, not a slope — a turn whose alive sub-agents plus the parent
+  exceed the cache pays the full prefill on every round of every run, not
+  on the one round that overflowed.
+- **What it means for the knobs.** `sessions` above one buys the overlap
+  §3.5 measured only while the parked set — the parent plus every alive
+  child, each at its own size — fits `--cache-ram`; four 16k contexts is
+  the default's ceiling on a 27B, and a 31B's per-token state is larger.
+  The honest advice for a user raising `tools.subagent_parallel` on a
+  long-context profile is to raise `--cache-ram` with it (the server's
+  flag; it is host RAM, not VRAM), and it belongs in install.md next to
+  `-c`.
+
 ## 4. Design
 
 ### 4.1 The unit of parallelism is the sibling group of one round
@@ -544,10 +595,11 @@ per child (§4.5 makes it so).
   flight, with `cycling`'s delay to make overlap observable) — both small
   additions to `shared/api/mock.rs`.
 - **The RAM cache is not the KV pool.** §3.2's free interleaving holds while
-  the parked contexts fit `--cache-ram`; on a 31B at 16k the cache may hold
-  two or three, and beyond that a pinned single slot re-prefills. The
-  default `subagent_parallel = 1` makes this opt-in; the settings hint says
-  it.
+  the parked contexts fit `--cache-ram`; measured in §3.6: **four** ~14k
+  contexts of the 27B in the default 8 GiB, and beyond that a pinned single
+  slot re-prefills on *every* visit, not one. The default
+  `subagent_parallel = 1` makes this opt-in; install.md says it next to
+  `-c`.
 - **Confirmation and cancellation.** A popup answered while a sibling's
   round is streaming is fine (the lock covers the ask-and-wait, not the
   stream); a popup open when the run's timeout fires ends that child alone
@@ -677,11 +729,11 @@ records satisfy a strict provider.
   restore cost and the parked-set bound on a 31B at 16k, on the stack when
   it next runs that model. *Settled in part by §3.5 (2026-09-04):* the
   restore cost is measured on the 31B and the 27B — a memory copy, invisible
-  next to the new tokens' prefill. Still open: the parked-set bound, i.e. how
-  many 16k contexts `--cache-ram` holds for the 31B before eviction is real
-  again; a probe that rotates N conversations over one pinned slot and
-  watches `cache_n`, on the stack when it runs Qwen (the Gemma line's
-  prefill anomaly makes each cold 16k context minutes long).
+  next to the new tokens' prefill. *Settled by §3.6 (2026-09-04, Qwen 3.6
+  27B):* the default 8 GiB parks **four** ~14k contexts (~150 KB per
+  token), and one past the bound a round-robin restores *none* — the LRU
+  cliff, not a slope. Still unmeasured: the 31B's own per-token size (its
+  bound is lower), when the stack next runs it with a projector.
 - **Qwen 3.6's template** (`supports_parallel_tool_calls`) — read on the
   first live run of stage 2, and sent explicitly as `parallel_tool_calls:
   true` if the template's default proves to be off. *Settled by §3.5
