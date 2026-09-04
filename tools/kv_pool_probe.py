@@ -163,7 +163,14 @@ def main():
         res = []
         one("P", False, res)
         print("parent first:", json.dumps(res))
-        pair = run_pair(False) if ARM == "parkpar" else [one("A", False, [])]
+        if ARM == "parkpar":
+            pair = run_pair(False)
+        else:
+            # `park`: one sibling rather than a colliding pair. `one` records
+            # into the list it is given and returns nothing, so the list is
+            # what gets printed -- echoing the call itself printed `[null]`.
+            pair = []
+            one("A", False, pair)
         print("pair:", json.dumps(pair))
         res = []
         one("P", False, res)
