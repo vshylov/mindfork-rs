@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (21)
+## Entries (22)
 
 - Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - Post-M9: SonarQube Cloud analysis in CI (done)
@@ -33,6 +33,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: SonarQube follow-up — the dialogue director and its probe (done)
 - Post-M9: SonarQube follow-up — the wizard's RTF renderer, and a fixture's file mode (done)
 - Post-M9: SonarQube follow-up — the budget's poison guard and the pool probe (done)
+- Post-M9: the pool probe's `park` arm records its sibling (done)
 
 ### Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - **28 relative links in the docs pointed at nothing**, and had for a while.
@@ -1233,3 +1234,38 @@ structure (AGENTS.md §3).
   green. **No live run required** (AGENTS.md §3): a research probe and one Rust
   expression, no engine, memory or tool surface touched. No CHANGELOG entry —
   nothing the user sees changed (§4).
+
+### Post-M9: the pool probe's `park` arm records its sibling (done)
+
+- **The behaviour change held out of the Sonar PR** (the entry above; AGENTS.md
+  §2 keeps a mechanical refactor and a behaviour change apart), now made on its
+  own. `tools/kv_pool_probe.py`'s `park` arm printed `pair: [null]`:
+  `[one("A", False, [])]` wraps the function's **return** — and `one` records
+  into the list it is given and returns `None` — so the sibling's own record
+  went into a throwaway list and was never seen. Branch
+  `fix/kv-probe-park-record`. The arm builds its list the way `run_pair` does:
+  `pair = []; one("A", False, pair)`.
+- **What it cost, stated so the research is not re-read as suspect**: nothing.
+  The parked-set measurement `admission-by-budget` §3 and the tools journal
+  quote (`cache_n` 1239 of 1244) is the `parent first` / `parent again` pair,
+  both of which printed correctly; and A's request really did run and occupy
+  the slot — the echo was missing, not the traffic. What was lost is A's own
+  status/finish/timings, which is exactly what one wants when the *sibling*
+  behaves unexpectedly rather than the parent.
+- **Measured, in the terms that matter for a probe**: the whole of `main()` run
+  under a stubbed `requests` on the pre- and post-fix module, for all four arms,
+  comparing the outgoing requests and stdout separately. **Traffic identical in
+  every arm** (`park` 3 requests, the other three 4) — so each arm still
+  measures precisely what it did — and stdout byte-identical except the one
+  `park` line, `[null]` → A's full record. `wall_s` scrubbed by pattern as a
+  clock reading; the first scrub matched two literal values and left the rest,
+  which is what made `parkpar` look changed until a control (the same pre-fix
+  module against itself, 8 runs) showed its record order stable and the
+  difference to be the timings alone.
+- The reshaped `main` through the Sonar MCP snippet analyzer (lessons §10):
+  **no issues** — the `if`/`else` replacing the conditional expression costs
+  nothing against the 15.
+- `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, `cargo test` —
+  **2798 green, 136 `#[ignore]`, counts unchanged**; the repository gates green.
+  **No live run required** (AGENTS.md §3) — an offline research probe, no
+  product code. No CHANGELOG entry: nothing the user sees changed (§4).
