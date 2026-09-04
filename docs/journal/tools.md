@@ -3208,8 +3208,16 @@ the tag `probe/code-search-stage5`.
   full e2e set on the final code, Gemma 4 31B: 51 passed, 0 failed**, 116 min
   (the image smokes running for real on the projector stack; the set runs at
   the local default of 1, so it is the regression proof that the default
-  round is the old path — the segment itself is the smoke above). The Qwen
-  3.6 run: _pending the stack switch._
+  round is the old path — the segment itself is the smoke above). **Qwen 3.6 27B** (`Qwen3.6-27B-Q4_K_M`, b10807, `-np 1 -c 16384`, its own
+  projector): the smoke GO, and the set **49 passed, 2 failed** in 17 min —
+  both failures on the sequential path of width 1, i.e. before any code of
+  this track: `dialogue_e2e_live` (an empty reply, no `run_dialogue` call)
+  and `code_workspace_navigate_e2e_live` (turn 2 answered without the tool
+  once, then called `code_read` and returned an empty text once). Rerun on
+  their own: the dialogue green at the first attempt, the navigation at the
+  second — **union green, no repeat** (docs/lessons.md §9), recorded as the
+  model's flakiness on a thinking template, not as a regression. Both had
+  passed on Qwen in the sibling track's stage-2 run.
 - **Tests**: 2769 → 2781 unit tests green (+12: `tests/concurrent.rs` — a
   counting, delaying probe tool registered through `extra_tools` pins a
   segment running its reads at once and recording them in the model's order

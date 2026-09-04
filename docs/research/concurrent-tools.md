@@ -4,8 +4,7 @@
 > decision, same day: F1a, F2a, **F3 — `4` on the four clouds, `1` on
 > managed and external** (so the knob is a field of each engine section,
 > as `sessions` is — §4.4 rewritten to that shape), F4a, F6a, F7a, F8a, F9a;
-> F5 was not answered and is built at its recommended (a), pending the
-> user's word. Built on `feat/concurrent-tools` (2026-09-04); the journal
+> F5 confirmed at (a) the same day, after the build. Built on `feat/concurrent-tools` (2026-09-04); the journal
 > entry and the live runs are the record of what was measured. The item
 > [parallel-subagents.md](parallel-subagents.md) §8
 > recorded as F1c and left for later: the round's *ordinary* tool calls —
@@ -456,8 +455,8 @@ Recommendations are marked; nothing is decided until the user says so.
   — R6, §4.5; small)*. (b) Leave it outside — the server queues, the cloud
   retries a `429`, the unified pool takes three summaries at once. (c)
   Leave `fetch_url` unmarked — forfeits the largest win for the sake of a
-  request the tool makes on its own. *Not answered in the user's decision
-  of 2026-09-04; built at (a), to be confirmed.*
+  request the tool makes on its own. **User's decision (2026-09-04): (a)**,
+  confirmed after the build.
 - **F6. The order effects land.** (a) **The model's order, after the
   segment** *(recommended — same `Chat` as a sequential round)*. (b)
   Completion order.
