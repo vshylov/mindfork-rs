@@ -1,6 +1,9 @@
 # Admission by budget — the unified KV pool never overfilled by the app — research
 
-> Status: **research, forks open** (2026-09-04). The item
+> Status: **decided, implementation starting** (2026-09-04). User's
+> decision, same day: **F1–F8 at their recommended options**. Built on
+> `feat/admission-by-budget`; the journal entry and the live runs are the
+> record of what was measured. The item
 > [parallel-subagents.md](parallel-subagents.md) §8 recorded as fork F7 —
 > *"admission by budget: the app-side guard for the unified pool"* — and
 > that track's §4.7 named as the *later* of its two guards. This document
