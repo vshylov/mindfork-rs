@@ -3200,7 +3200,16 @@ the tag `probe/code-search-stage5`.
   control pair. Futures in the generation task, not spawned tasks — the
   sibling's reason: `&self.ctx` and `&self.shared` borrowed for the
   segment, the cancellation token reaching every member unchanged.
-- **Live run**: _pending — filled in by the author after the runs._
+- **Live run — GO on Gemma 4 31B** (`gemma-4-31B_q4_0-it` + mmproj, llama.cpp
+  b10807, `-np 4 --kv-unified -c 16384`, the LAN stack): `concurrent_tools_e2e_live`
+  at `concurrent_calls = 2` — the clerk read both planted files in one reply,
+  the second card opened before the first closed (one segment), each record
+  held its own file's codename, both codenames in the answer, 31 s. **The
+  full e2e set on the final code, Gemma 4 31B: 51 passed, 0 failed**, 116 min
+  (the image smokes running for real on the projector stack; the set runs at
+  the local default of 1, so it is the regression proof that the default
+  round is the old path — the segment itself is the smoke above). The Qwen
+  3.6 run: _pending the stack switch._
 - **Tests**: 2769 → 2781 unit tests green (+12: `tests/concurrent.rs` — a
   counting, delaying probe tool registered through `extra_tools` pins a
   segment running its reads at once and recording them in the model's order
