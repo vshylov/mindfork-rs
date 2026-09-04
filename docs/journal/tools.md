@@ -3308,10 +3308,28 @@ the tag `probe/code-search-stage5`.
   once, the server ended both at 1237 + 1233 tokens, and with the fix the
   committed child lands **`Failed`** (`“KEL`) while the uncommitted one is
   retried by the decorator and completes alone — the recovery §2.3 of the
-  research had described as the status quo, live for the first time. Not
-  run: the LAN-stack variant on Qwen 3.6 (`sessions = 4`, four children
-  with ~7k attachments, research §7) — the stack was not up; it is a
-  regression of the same code path and belongs to the next live pass.
+  research had described as the status quo, live for the first time.
+  **And on the LAN stack** (Qwen 3.6 27B Q4_K_M, b10807, relaunched
+  `-np 4 --kv-unified -c 16384` — four slots over one 16384 pool; the
+  smoke sizes itself from `/props`, so the same arms ran: 300 paragraphs
+  per child, cap 2048): `parallel_subagents_e2e_live` GO as the
+  regression (26 s); `admission_e2e_live` — two ~9k-token children took
+  turns (most open at once **1**), both codes, 20 s; the control arm
+  (belief 65536) — both at once, the second child **`Failed`** with no
+  reply, the first completed, 14 s; `admission_four_e2e_live` — four
+  children at `sessions = 4`, a quarter of the pool plus the cap each: the
+  budget kept **exactly two** streaming at any time (two fit, three do
+  not) and all four completed with their codenames, 30 s. A one-slot
+  server (`-np 1`, how the stack was first found) makes the arms skip by
+  design: `pool.rs` guards nothing below two reported slots, and one slot
+  queues. **The whole `--ignored` set on that stack: 133 passed, 3
+  failed, 65 min** — the three failures are the vision smokes
+  (`image_attachment_e2e_live`, `image_url_attachment_e2e_live`,
+  `tool_result_image_is_seen_live`) on a relaunch without `--mmproj`
+  (`/props`: `vision: false`; the server's own "image input is not
+  supported - hint: … provide the mmproj"), failing honestly for want of
+  `MINDFORK_LIVE_TEXT_ONLY=1` rather than skipping — not this track's, and
+  every turn-path smoke green.
 - **Tests**: 2781 → 2798 unit tests green (+17: `shared/session_budget.rs`
   — fit together, a third waits and is admitted on a release, larger than
   the pool alone/not alone, a cancelled waiter leaves no reservation, no
@@ -3325,7 +3343,7 @@ the tag `probe/code-search-stage5`.
   second round floored by its first round's exact size waiting for its
   sibling's long reply to end; the summary reserving under a pool
   (`fetch.rs`); the client's in-stream envelope; the empty cancelled
-  round), 133 → 135 `#[ignore]` (+2: the two live arms above). The
+  round), 133 → 136 `#[ignore]` (+3: the three live arms above). The
   group's existing tests set a roomy `context_size`, since at the default
   8192 two children capped at the profile's 2048 would now take turns.
 - **Docs**: spec §3.4, §6.3, §9.3.1–§9.3.2, §11.6; architecture §3 (the

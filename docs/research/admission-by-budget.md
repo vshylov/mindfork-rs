@@ -5,7 +5,11 @@
 > built, tested and run live is the journal entry
 > ([docs/journal/tools.md](../journal/tools.md), *admission by budget*);
 > §7's live smoke plants the text in the children's messages rather than in
-> files, since the CPU build's Gemma 3 template drops tools. The item
+> files, since the CPU build's Gemma 3 template drops tools, and sizes its
+> arms from the pool `/props` reports, so the same three arms ran GO on the
+> CPU build (2048) and on the LAN stack (Qwen 3.6 27B, `-np 4 --kv-unified
+> -c 16384`: two 9k children take turns; the control arm loses one child;
+> four quarter-pool children stream exactly two at a time). The item
 > [parallel-subagents.md](parallel-subagents.md) §8 recorded as fork F7 —
 > *"admission by budget: the app-side guard for the unified pool"* — and
 > that track's §4.7 named as the *later* of its two guards. This document
