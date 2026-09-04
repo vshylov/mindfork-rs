@@ -3112,9 +3112,11 @@ the tag `probe/code-search-stage5`.
   (the second finished before the first), each used `fs_read`, both
   planted codes in the parent's reply. `subagent_with_tools_e2e_live` and
   `dialogue_e2e_live` — the two loop-executed tools the refactor touched —
-  GO on the same stack. Gemma 4 31B had run the full e2e set on stage 1's
-  code the same day; stage 2 changes the loop's shape at the default too
-  (the group of one), so the set is due there again before the next release.
+  GO on the same stack. **The full e2e set on stage 2's code, Qwen 3.6:
+  50 passed, 0 failed**, 25 min (the two image smokes and TTS skipping in
+  writing) — the group of one changes the loop's shape at the default too,
+  which is why the whole set ran again rather than the three smokes alone.
+  Gemma 4 31B ran the full set on stage 1's code the same day.
 - **Tests**: 2769 green (+10: a persona-keyed, stream-counting engine in
   `tests/parallel.rs` — the scripted recorder plays by call order, which two
   concurrent children make nondeterministic — pins two siblings streaming
