@@ -21,8 +21,8 @@
 //! answers no `/props`) the type is the bare semaphore it replaced, bit for
 //! bit: the count bounds, nothing is priced, nothing waits for room.
 
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, PoisonError};
 
 use tokio::sync::{Notify, Semaphore, SemaphorePermit};
 use tokio_util::sync::CancellationToken;
@@ -108,7 +108,7 @@ impl SessionBudget {
     fn open(&self) -> std::sync::MutexGuard<'_, u64> {
         self.in_flight
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .unwrap_or_else(PoisonError::into_inner)
     }
 
     /// The estimator's correction factor: the latest exact-to-estimate ratio

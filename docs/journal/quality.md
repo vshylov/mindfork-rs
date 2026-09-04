@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (20)
+## Entries (21)
 
 - Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - Post-M9: SonarQube Cloud analysis in CI (done)
@@ -32,6 +32,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: SonarQube follow-up — the chat-body stub's complexity (done)
 - Post-M9: SonarQube follow-up — the dialogue director and its probe (done)
 - Post-M9: SonarQube follow-up — the wizard's RTF renderer, and a fixture's file mode (done)
+- Post-M9: SonarQube follow-up — the budget's poison guard and the pool probe (done)
 
 ### Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - **28 relative links in the docs pointed at nothing**, and had for a while.
@@ -1180,3 +1181,55 @@ structure (AGENTS.md §3).
   **2746 green, 129 `#[ignore]`, counts unchanged**. **No live run required**
   (AGENTS.md §3) — a Python tool and one test fixture, no engine, memory or
   tool surface touched. No CHANGELOG entry: nothing the user sees changed (§4).
+
+### Post-M9: SonarQube follow-up — the budget's poison guard and the pool probe (done)
+
+- **Two findings open on `main`**, both raised by the 2026-09-04
+  admission-by-budget merges (PRs #446–#448) and neither visible to any local
+  gate: `rust:S1612` on `shared/session_budget.rs` (the closure that recovers a
+  poisoned mutex) and `python:S3776` on `tools/kv_pool_probe.py`, `one` at
+  cognitive complexity **36** against the 15 allowed. Branch
+  `fix/sonar-session-budget-kv-probe`.
+- **The Rust one is the lessons §10 family, exactly as described**: `S1612` is
+  clippy's `redundant_closure_for_method_calls`, which is *pedantic* and so off
+  — `cargo clippy --all-targets -- -D warnings` was green on this line the whole
+  time. `.unwrap_or_else(|poisoned| poisoned.into_inner())` →
+  `.unwrap_or_else(PoisonError::into_inner)`; the guard itself is unchanged, and
+  so is what it is for (the sum is a plain `u64`, so a panic while it is held
+  leaves nothing to protect — see the type's own note).
+- **`one`'s complexity was two response readers inlined in one function**, not
+  logic: the request shaping, the plain-JSON read and the SSE loop shared a
+  budget, and the SSE loop's per-chunk merge nested three deep inside it. Split
+  along the seams that were already there — `request_body` (the field a
+  non-streaming request must not carry, plus the slot pin), `read_plain`,
+  `read_stream`, and `merge_chunk` for what one `data:` chunk contributes — so
+  `one` is now what its shape always claimed: time it, post it, read it
+  whichever way, record the wall clock. The duplicated `timings` narrowing
+  became one `timings()` over a named `TIMING_KEYS`, which is also the only
+  place the probe says *which* three fields it reads.
+- **Equivalence measured, not argued** (offline, no server): both versions of
+  the module imported side by side with a stubbed `requests`, and `one()` run
+  over 14 fabricated answers — plain ok / overflow 500 / empty document / null
+  message / undecodable body, streaming ok / in-band error envelope / non-`data:`
+  lines / no `[DONE]` / no lines at all, and a transport failure in each shape,
+  with and without a pinned slot. **14/14 identical**, comparing the record
+  *and* the outgoing request body (`wall_s` dropped as a clock reading). The
+  cases that matter to the research are among them: `error_after_chunks` still
+  counts the chunks that preceded the envelope, `other_lines` still keeps what
+  is not a `data:` line, and a chunk after `[DONE]` is still ignored.
+- **The lessons §10 pre-check was run this time** — the reshaped file through
+  the Sonar MCP snippet analyzer before the PR: **no issues**, against a control
+  snippet the same call scored at complexity 38, so the rule was demonstrably
+  live rather than merely silent. That is the whole of the check's value and it
+  costs one tool call.
+- **Observed and left alone**: the `park` arm's `pair:` line prints `[null]` —
+  `[one("A", False, [])]` echoes the function's return, not the record it
+  appends to a throwaway list. It cost the research nothing (the parked-set
+  measurement is the `parent first` / `parent again` pair, and A's request
+  really does run and occupy the slot), and fixing it is a behaviour change,
+  which AGENTS.md §2 keeps out of a mechanical refactor's PR.
+- `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, `cargo test` —
+  **2798 green, 136 `#[ignore]`, counts unchanged**; the five repository gates
+  green. **No live run required** (AGENTS.md §3): a research probe and one Rust
+  expression, no engine, memory or tool surface touched. No CHANGELOG entry —
+  nothing the user sees changed (§4).
