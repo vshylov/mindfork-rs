@@ -23,6 +23,7 @@ pub mod proc;
 pub mod sandbox;
 pub mod secrets;
 pub mod server;
+pub mod session_budget;
 #[cfg(test)]
 pub mod shot;
 pub mod storage;

@@ -426,12 +426,16 @@ async fn summarize_text(
         ),
     };
 
+    let max_tokens = ctx
+        .effective_sampling
+        .max_tokens
+        .map_or(SUMMARY_MAX_TOKENS, |m| m.min(SUMMARY_MAX_TOKENS));
+    // What the stream will occupy of a shared KV pool: the request's estimate
+    // (no earlier round of its own to floor it) plus its reply cap
+    // (docs/research/admission-by-budget.md §4.2).
+    let estimate = crate::shared::tokens::estimate_prompt(Some(&system), [task.as_str()]);
     let sampling = SamplingConfig {
-        max_tokens: Some(
-            ctx.effective_sampling
-                .max_tokens
-                .map_or(SUMMARY_MAX_TOKENS, |m| m.min(SUMMARY_MAX_TOKENS)),
-        ),
+        max_tokens: Some(max_tokens),
         ..ctx.effective_sampling.clone()
     };
     let request = ChatRequest {
@@ -445,16 +449,19 @@ async fn summarize_text(
     // A permit of the turn's session budget, held for the stream and for
     // nothing else (docs/research/concurrent-tools.md §4.5): the summary is a
     // request stream like the loops' own, so with `sessions = 1` three pages
-    // fetched at once are summarised one after another. Taken before the
-    // timeout starts — waiting behind a sibling's stream is not this summary's
-    // slowness. A background task has no budget to take (`None`).
+    // fetched at once are summarised one after another — and under a shared
+    // KV pool as many at once as the pool holds, not as many as the permits
+    // allow (admission-by-budget §4.5). Taken before the timeout starts —
+    // waiting behind a sibling's stream is not this summary's slowness. A
+    // background task has no budget to take (`None`).
     let _permit = match ctx.sessions.as_deref() {
-        Some(sessions) => tokio::select! {
-            _ = ctx.cancel.cancelled() => {
-                anyhow::bail!(ctx.loc.t("tool.fetch_url.err.summary_cancelled"));
+        Some(budget) => {
+            let need = budget.price(estimate, 0, Some(max_tokens as u64));
+            match budget.acquire(need, &ctx.cancel).await {
+                Some(reservation) => Some(reservation),
+                None => anyhow::bail!(ctx.loc.t("tool.fetch_url.err.summary_cancelled")),
             }
-            permit = sessions.acquire() => Some(permit?),
-        },
+        }
         None => None,
     };
     let cancel = CancellationToken::new();
@@ -881,7 +888,7 @@ mod tests {
             max_in_flight: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         });
         let (_d, mut ctx) = ctx_with_engine(counting.clone());
-        let sessions = Arc::new(tokio::sync::Semaphore::new(1));
+        let sessions = Arc::new(crate::shared::session_budget::SessionBudget::new(1, None));
         ctx.sessions = Some(sessions.clone());
         let (a, b) = tokio::join!(
             summarize_text(&ctx, "https://a.example", None, "text a"),
@@ -898,7 +905,7 @@ mod tests {
             1,
             "one session: the summaries streamed one after another"
         );
-        assert_eq!(sessions.available_permits(), 1, "the permit came back");
+        assert_eq!(sessions.available_sessions(), 1, "the permit came back");
 
         ctx.sessions = None;
         counting
@@ -915,6 +922,57 @@ mod tests {
                 .load(std::sync::atomic::Ordering::SeqCst),
             2,
             "no budget: nothing holds the second summary back"
+        );
+    }
+
+    /// Under a shared KV pool the summary reserves its prompt plus its reply
+    /// cap (docs/research/admission-by-budget.md §4.5): with two sessions
+    /// over a pool two summaries do not fit in, they stream one after the
+    /// other; over a roomy pool, together.
+    #[tokio::test]
+    async fn summary_reserves_room_in_a_shared_pool() {
+        use crate::shared::session_budget::SessionBudget;
+        let counting = Arc::new(CountingBackend {
+            in_flight: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            max_in_flight: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        });
+        let (_d, mut ctx) = ctx_with_engine(counting.clone());
+        // Each reservation is at least the 768-token cap, so two exceed 1000.
+        ctx.sessions = Some(Arc::new(SessionBudget::new(2, Some(1000))));
+        let (a, b) = tokio::join!(
+            summarize_text(&ctx, "https://a.example", None, "text a"),
+            summarize_text(&ctx, "https://b.example", None, "text b"),
+        );
+        assert!(a.is_ok() && b.is_ok());
+        assert_eq!(
+            counting
+                .max_in_flight
+                .load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "two sessions, one pool too small for both: one at a time"
+        );
+        let budget = ctx.sessions.as_deref().unwrap();
+        assert_eq!(
+            (budget.in_flight(), budget.available_sessions()),
+            (0, 2),
+            "both reservations and both permits came back"
+        );
+
+        ctx.sessions = Some(Arc::new(SessionBudget::new(2, Some(100_000))));
+        counting
+            .max_in_flight
+            .store(0, std::sync::atomic::Ordering::SeqCst);
+        let (a, b) = tokio::join!(
+            summarize_text(&ctx, "https://a.example", None, "text a"),
+            summarize_text(&ctx, "https://b.example", None, "text b"),
+        );
+        assert!(a.is_ok() && b.is_ok());
+        assert_eq!(
+            counting
+                .max_in_flight
+                .load(std::sync::atomic::Ordering::SeqCst),
+            2,
+            "a pool with room for both: together"
         );
     }
 

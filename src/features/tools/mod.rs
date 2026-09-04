@@ -154,12 +154,14 @@ pub struct ToolContext {
     /// half of `get_llm_name`'s answer and of an `llm_history` record.
     pub engine_mode: crate::shared::config::ServerMode,
     /// The turn's session budget (the engine section's `sessions`, spec §11.6)
-    /// — the same semaphore the turn's loops stream under. A tool that makes an
+    /// — the same budget the turn's loops stream under. A tool that makes an
     /// engine request of its own (`fetch_url`'s page summary) takes a permit
-    /// around that stream and around nothing else, so the request counts
-    /// like every other stream of the turn (docs/research/concurrent-tools.md
-    /// §4.5). `None` for a background task, which the budget does not cover.
-    pub sessions: Option<Arc<tokio::sync::Semaphore>>,
+    /// and a token reservation around that stream and around nothing else, so
+    /// the request counts like every other stream of the turn
+    /// (docs/research/concurrent-tools.md §4.5; the reservation —
+    /// docs/research/admission-by-budget.md §4.5). `None` for a background
+    /// task, which the budget does not cover.
+    pub sessions: Option<Arc<crate::shared::session_budget::SessionBudget>>,
 }
 
 /// Long-lived shared tool dependencies (an `Arc` bundle; changes on server
@@ -245,8 +247,8 @@ pub struct TurnInfo {
     pub model_name: Option<String>,
     /// The turn's engine mode. See [`ToolContext::engine_mode`].
     pub engine_mode: crate::shared::config::ServerMode,
-    /// The turn's session semaphore. See [`ToolContext::sessions`].
-    pub sessions: Option<Arc<tokio::sync::Semaphore>>,
+    /// The turn's session budget. See [`ToolContext::sessions`].
+    pub sessions: Option<Arc<crate::shared::session_budget::SessionBudget>>,
 }
 
 impl ToolContext {
