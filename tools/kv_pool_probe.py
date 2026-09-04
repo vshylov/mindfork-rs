@@ -24,6 +24,11 @@ MAX_TOKENS = int(sys.argv[4]) if len(sys.argv) > 4 else 400
 WORDS = ("alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi "
          "omicron pi rho sigma tau upsilon phi chi psi omega").split()
 
+# The three `timings` fields the probe reads: how much of the prompt the server
+# actually processed, how much of it came from the cache, and how far the reply
+# got before the pool ended it.
+TIMING_KEYS = ("prompt_n", "cache_n", "predicted_n")
+
 
 def filler(tag, n_words):
     # Distinct per conversation (the tag is in every line) so no prefix is
@@ -51,51 +56,82 @@ def body(tag, stream):
     }
 
 
-def one(tag, stream, results, slot=None):
-    t0 = time.time()
+def request_body(tag, stream, slot):
+    """`body`, minus the field a non-streaming request must not carry, plus the
+    slot pin when the arm asks for one."""
     b = body(tag, stream)
     if b["stream_options"] is None:
         del b["stream_options"]
     if slot is not None:
         b["id_slot"] = slot
+    return b
+
+
+def timings(src):
+    """llama.cpp's `timings`, narrowed to the fields recorded."""
+    return {k: src.get(k) for k in TIMING_KEYS}
+
+
+def read_plain(rec, r):
+    """The non-streaming answer: one JSON document, error envelope included."""
+    j = r.json()
+    rec["error"] = j.get("error")
+    ch = (j.get("choices") or [{}])[0]
+    rec["finish"] = ch.get("finish_reason")
+    rec["content_len"] = len((ch.get("message") or {}).get("content") or "")
+    rec["usage"] = j.get("usage")
+    rec["timings"] = timings(j.get("timings", {}))
+
+
+def merge_chunk(rec, j):
+    """What one `data:` chunk contributes: the finish reason of any choice
+    carrying one, and the last `usage`/`timings` the stream reported."""
+    for ch in j.get("choices") or []:
+        if ch.get("finish_reason"):
+            rec["finish"] = ch["finish_reason"]
+    if j.get("usage"):
+        rec["usage"] = j["usage"]
+    if j.get("timings"):
+        rec["timings"] = timings(j["timings"])
+
+
+def read_stream(rec, r):
+    """The SSE answer: `data:` chunks until `[DONE]`. An overflow arrives as an
+    error envelope *in band* — a chunk of its own, counted so the record says
+    how far the reply got first — and anything that is not a `data:` line is
+    kept verbatim rather than discarded."""
+    n = 0
+    for line in r.iter_lines():
+        if not line:
+            continue
+        s = line.decode()
+        if not s.startswith("data: "):
+            rec.setdefault("other_lines", []).append(s[:200])
+            continue
+        d = s[6:]
+        if d == "[DONE]":
+            break
+        j = json.loads(d)
+        if "error" in j:
+            rec["error"] = j["error"]
+            rec["error_after_chunks"] = n
+            continue
+        n += 1
+        merge_chunk(rec, j)
+    rec["chunks"] = n
+
+
+def one(tag, stream, results, slot=None):
+    t0 = time.time()
     rec = {"tag": tag, "stream": stream}
     try:
-        r = requests.post(f"{BASE}/v1/chat/completions", json=b, stream=stream, timeout=600)
+        r = requests.post(f"{BASE}/v1/chat/completions",
+                          json=request_body(tag, stream, slot), stream=stream, timeout=600)
         rec["status"] = r.status_code
-        if not stream:
-            j = r.json()
-            rec["error"] = j.get("error")
-            ch = (j.get("choices") or [{}])[0]
-            rec["finish"] = ch.get("finish_reason")
-            rec["content_len"] = len((ch.get("message") or {}).get("content") or "")
-            rec["usage"] = j.get("usage")
-            rec["timings"] = {k: j.get("timings", {}).get(k) for k in ("prompt_n", "cache_n", "predicted_n")}
+        if stream:
+            read_stream(rec, r)
         else:
-            n = 0
-            for line in r.iter_lines():
-                if not line:
-                    continue
-                s = line.decode()
-                if not s.startswith("data: "):
-                    rec.setdefault("other_lines", []).append(s[:200])
-                    continue
-                d = s[6:]
-                if d == "[DONE]":
-                    break
-                j = json.loads(d)
-                if "error" in j:
-                    rec["error"] = j["error"]
-                    rec["error_after_chunks"] = n
-                    continue
-                n += 1
-                for ch in j.get("choices") or []:
-                    if ch.get("finish_reason"):
-                        rec["finish"] = ch["finish_reason"]
-                if j.get("usage"):
-                    rec["usage"] = j["usage"]
-                if j.get("timings"):
-                    rec["timings"] = {k: j["timings"].get(k) for k in ("prompt_n", "cache_n", "predicted_n")}
-            rec["chunks"] = n
+            read_plain(rec, r)
     except Exception as e:  # noqa: BLE001
         rec["exception"] = repr(e)[:300]
     rec["wall_s"] = round(time.time() - t0, 2)
