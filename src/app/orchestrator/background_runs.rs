@@ -238,6 +238,9 @@ impl Orchestrator {
             self.insert_attachment(chat_id, a);
         }
         self.emit_chat_list();
+        // Titled at landing like a turn child (spec §9.3.2): the run's
+        // question and reply arrive together here too.
+        self.maybe_auto_title_run(run_id);
         if !live {
             return;
         }
