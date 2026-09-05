@@ -219,8 +219,10 @@ build the moment they drift from what the app actually renders
   "Subagent: background runs" in Settings → Tools): the call returns at
   once, the run outlives the reply, and its result arrives later as a task
   notification the assistant reports on by itself when the chat is open and
-  idle. `/subagents stop [n]` ends one; a background run never asks for
-  confirmations — the profile's tool set is the control.
+  idle — otherwise the chat list marks that chat unread until you open it.
+  `/subagents stop [n]`, or `F6` on the run's open transcript, ends one; a
+  background run never asks for confirmations — the profile's tool set is
+  the control.
 - **Parallel tool calls** — when the assistant issues several reads in one
   reply (two files, three pages), they run at once on a cloud engine (**4** at
   a time by default; `Ctrl+P` → the engine's Model tab → "Parallel tool
@@ -387,6 +389,7 @@ screen you were on, marked *you are here*. The highlights:
 | `Ctrl+E` | take back the last exchange (your text returns to the input box) |
 | `Ctrl+U` | impersonation: the model writes your next message |
 | `F5` | copy the conversation to the clipboard (over SSH it also goes to your *own* machine's clipboard — see below) |
+| `F6` | on an open background subagent transcript: stop that run (elsewhere the key does nothing, and the footer does not offer it) |
 | `Ctrl+F` | find in this conversation; in the chat list — switch search between titles and message content |
 | `Ctrl+G` | in the input box: spellcheck suggestions; in the chat list's content search: the matching messages themselves |
 | `Ctrl+T` / `Ctrl+O` | collapse/expand "thoughts" / tool calls; `Ctrl+O` in the chat list — fold/unfold the selected chat's subagent transcripts |
@@ -456,7 +459,7 @@ confirmations included:
 | `/find [text]` · `/search <text>` | `Ctrl+F` · `Ctrl+G` | find in this conversation / find messages across every chat |
 | `/links` | `Ctrl+L` | follow a `chat://` reference the assistant wrote |
 | `/thoughts` · `/toolcalls` · `/mouse` · `/emoji` | `Ctrl+T` · `Ctrl+O` · `Ctrl+W` · `Ctrl+B` | the feed and the input box |
-| `/subagents [expand\|collapse]` | `Ctrl+O` in the list | this chat's subagent transcripts in the chat list: bare — toggle, a word sets it outright (remembered per chat) |
+| `/subagents [expand\|collapse\|stop [n]]` | `Ctrl+O` in the list · `F6` on a background transcript | this chat's subagent transcripts in the chat list: bare — toggle, a word sets it outright (remembered per chat); `stop [n]` ends the n-th background run out |
 | `/profile list` · `/profile new [name]` · `/profile delete <name>` | `Ctrl+N` · `Ctrl+D` in settings | your companion profiles: list them (the open chat's is marked), add one, remove one |
 | `/profile system [text\|clear]` · `/profile greeting [text\|clear]` | the settings editors | this chat's profile: its system message and its greeting, applied to new conversations. Bare — the current text comes back for editing; `clear` removes it |
 | `/impersonation list` · `new [name]` · `delete <name>` | `Ctrl+N` · `Ctrl+D` in settings | the impersonation profiles — the user personas `Ctrl+U` writes as: list (the open chat's is marked), add, remove (asks first) |

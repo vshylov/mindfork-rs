@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (46)
+## Entries (47)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -58,6 +58,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the parked-set bound of the RAM prompt cache, measured (done)
 - Post-M9: the parked-set bound on Gemma 4 31B, measured on a rented L40S (done)
 - Post-M9: sub-agents in the background — a run that outlives its turn, stage 1 (done)
+- Post-M9: sub-agents in the background — the stop key, the unread mark, and Gemma (stage 2, done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -3457,3 +3458,65 @@ the tag `probe/code-search-stage5`.
   (Qwen 3.6 27B) — see the PR.
 - **Not in stage 1** (research §7–§8): a key on the open transcript that
   stops the run, the unread mark on the list, background dialogues.
+
+### Post-M9: sub-agents in the background — the stop key, the unread mark, and Gemma (stage 2, done)
+- **What**: the track's second stage, the two items
+  [docs/research/background-subagents.md](../research/background-subagents.md)
+  §7 left for "what the live run argues for", plus that live run itself. The
+  stop key first, because it is the reason the footer rule of spec §11.2 had
+  an exception: a background run's open transcript is the one feed in the app
+  that **streams under no turn**, and `generating` — read by the status bar's
+  `Esc` hint, the input box's title and the key handler alike — meant "your
+  turn is running" everywhere else. So the fact travels from where it is
+  known: `LiveTurn` gained `background`, set by `activate_focused` for a seat
+  of `background_runs` **whose run has not ended** (an ended one waiting for
+  its chat's turn to land streams nothing, and a stop key there would stop
+  nothing), carried into `ChatScreen::background_run` and
+  `StatusModel::background_run`. On that screen `Esc` goes back instead of
+  cancelling a turn that does not exist, and `F6` stops the run through
+  `typed_subagents_stop` — the `/subagents stop` route itself, made
+  `pub(super)`, so the key and the command cannot grow two behaviours. The
+  hint appears in the corner block only while the run streams (`hotkey_list`
+  appends it, `keep_order` puts it right behind `F1`), and `finish_generation`
+  clears the flag whatever the outcome. Second, the **unread** mark:
+  `deliver_notification` sets `Chat.unread` (additive, `#[serde(default)]`,
+  no schema step) when the result lands in a chat that is not the open one,
+  and `activate_focused` clears it — opening the chat *is* the read, and the
+  mark survives a restart, so a result nobody came back to is still announced
+  after `Quit`. The mirror of a run that ended while its chat's turn was
+  still running now also carries the run's **messages**, so the transcript
+  shows the whole run during that wait rather than the rounds filed so far.
+  The settings hints gained what the research §3.3 measured — a run out is
+  one more conversation the server parks, so `--cache-ram` goes up with it —
+  and now name both stop routes and the unread mark.
+- **Tests**: 2824 green (+26 over stage 1), 137 `#[ignore]`. Four over the
+  keyed engine (`tests/background.rs`): the transcript activates as a
+  *background* live turn where the parent mid-turn activates as a turn's, and
+  neither switch cancels; an ended run waiting to land opens with **no** live
+  turn; a result landing in a closed chat marks it unread, starts no turn,
+  and the mark is in the file after `Quit`; opening the chat clears it. Five
+  on the chat screen (`Esc`/`F6` on a streaming background transcript, the
+  same two after the run ends, a turn child's transcript keeping `Esc` as
+  cancel, `F6` doing nothing on a chat, and the **rendered** footer offering
+  `F6` only while the run streams), one on the status bar (the shedding order
+  with the stop key, the `Esc` label mid-stream), one on the list widget (the
+  unread row) and one on the entity (the additive round trip).
+- **Live — GO on Gemma 4 31B**, the model §7 left pending because the LAN
+  stack (one RTX 4090) cannot host the 31B at several sessions: rented as an
+  L40S through `tools/e2e_hf.py run --chat-model gemma-4-31b --no-embed
+  --command …` (the user's route, 2026-09-05). `background_subagent_e2e_live`
+  green in **31.6 s** — the parent delegated with `start_subagent`, answered
+  the arithmetic in the same reply, the run read the planted file with
+  `fs_read`, and the woken turn reported the codename — and the §3.1
+  behaviour probe scored **5/5** background on S1, **5/5** foreground on S2,
+  **5/5** notification use with no re-call and 5/5 on the objection, i.e. the
+  top of the bar (≥ 4/5, 0/5, ≥ 4/5), matching Qwen 3.6 27B. Two things cost
+  a rental each and are recorded for the next one: the first deployment sat
+  1048 s *waiting to be scheduled* and then failed while the L40S catalogue
+  read `available` (capacity, not configuration; the retry deployed in ~510
+  s), and the probe died mid-run on a `cp1252` console the first time Gemma
+  answered with an emoji — a traceback that reads exactly like a model
+  failure until you read it (lessons §3). Three endpoints, each deleted with
+  the deletion verified.
+- **Not in the track** (research §8): background dialogues, a tasks screen
+  across chats, the silent background tasks under the app-wide budget.

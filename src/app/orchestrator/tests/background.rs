@@ -308,6 +308,224 @@ async fn esc_ends_the_turn_and_leaves_the_run_out() {
     assert!(chat.messages.iter().any(|m| m.is_notification()));
 }
 
+/// The transcript of a run out in the background opens with a `LiveTurn`
+/// marked `background` — the screen's cue that `Esc` leaves it and `F6`
+/// stops the run (spec §9.3.2) — where the parent's own mid-turn activation
+/// is a turn's, and moving between the two cancels nothing.
+#[tokio::test]
+async fn a_background_transcript_activates_as_a_background_live_turn() {
+    let backend = KeyedRecorder::new(
+        vec![
+            ("", vec![start("c1"), hang("started it"), text("noted")]),
+            ("be harsh", vec![hang("thinking")]),
+        ],
+        10,
+    );
+    let (dir, cmd_tx, mut rx, handle, chat_id) = begin(backend.clone(), cfg(2)).await;
+    let run_id = running_run(&mut rx).await;
+
+    let live_turn = |e: &AppEvent, id: Uuid| -> Option<Option<bool>> {
+        match e {
+            AppEvent::ChatActivated {
+                id: got, live_turn, ..
+            } if *got == id => Some(live_turn.as_ref().map(|l| l.background)),
+            _ => None,
+        }
+    };
+    cmd_tx.send(AppCommand::SwitchChat(run_id)).unwrap();
+    let e = next(&mut rx, |e| live_turn(e, run_id).is_some()).await;
+    assert_eq!(
+        live_turn(&e, run_id),
+        Some(Some(true)),
+        "the transcript streams a background run"
+    );
+    cmd_tx.send(AppCommand::SwitchChat(chat_id)).unwrap();
+    let e = next(&mut rx, |e| live_turn(e, chat_id).is_some()).await;
+    assert_eq!(
+        live_turn(&e, chat_id),
+        Some(Some(false)),
+        "the parent is still mid-turn, and the turn is a turn"
+    );
+    // Neither switch ended anything: the turn is still hanging, the run out.
+    nothing_like(&mut rx, finished).await;
+    cmd_tx.send(AppCommand::Cancel).unwrap();
+    next(&mut rx, finished).await;
+    cmd_tx
+        .send(AppCommand::StopSubagentRun { id: run_id })
+        .unwrap();
+    next(&mut rx, runs_out(0)).await;
+    next(&mut rx, finished).await;
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+    let chat = load(dir.path(), chat_id);
+    assert!(
+        !chat.unread,
+        "a result landing in the open chat marks nothing"
+    );
+}
+
+/// A run that **ended** while its chat's turn was still running waits for
+/// that turn to land, and its transcript is no longer streaming: opening it
+/// carries no live turn, so the screen offers no stop key for a run there is
+/// nothing left to stop (spec §11.2).
+#[tokio::test]
+async fn an_ended_run_waiting_to_land_opens_without_a_live_turn() {
+    let backend = KeyedRecorder::new(
+        vec![
+            (
+                "",
+                vec![start("c1"), hang("started it"), text("the review is in")],
+            ),
+            ("be harsh", vec![text("harsh view")]),
+        ],
+        10,
+    );
+    let (dir, cmd_tx, mut rx, handle, chat_id) = begin(backend.clone(), cfg(2)).await;
+    let run_id = running_run(&mut rx).await;
+    // The run ends while the parent's second round still hangs: the seat is
+    // there, ended, and the record is not in `Chat` yet.
+    next(&mut rx, runs_out(0)).await;
+
+    cmd_tx.send(AppCommand::SwitchChat(run_id)).unwrap();
+    let e = next(
+        &mut rx,
+        |e| matches!(e, AppEvent::ChatActivated { id, .. } if *id == run_id),
+    )
+    .await;
+    let AppEvent::ChatActivated {
+        live_turn,
+        messages,
+        ..
+    } = e
+    else {
+        unreachable!()
+    };
+    assert!(live_turn.is_none(), "nothing streams in an ended run");
+    assert!(
+        messages.iter().any(|m| m.text.contains("harsh view")),
+        "the mirror's rounds are still what the transcript shows: {messages:?}"
+    );
+
+    cmd_tx.send(AppCommand::Cancel).unwrap();
+    next(&mut rx, finished).await;
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+    let chat = load(dir.path(), chat_id);
+    let run = chat.messages[1].tool_calls[0].subagent.as_deref().unwrap();
+    assert_eq!(run.outcome, Some(RunOutcome::Completed), "it landed anyway");
+}
+
+/// The list's card of `id`, from a `ChatList` snapshot.
+fn card_of(e: &AppEvent, id: Uuid) -> Option<crate::entities::chat::ChatSummary> {
+    let AppEvent::ChatList(chats) = e else {
+        return None;
+    };
+    chats.iter().find(|c| c.id == id).cloned()
+}
+
+/// Ends the turn in the first chat and opens a second one, so the run's
+/// result lands in a chat the user is not looking at.
+async fn look_away(
+    cmd_tx: &UnboundedSender<AppCommand>,
+    rx: &mut UnboundedReceiver<AppEvent>,
+    chat_id: Uuid,
+) -> Uuid {
+    next(rx, finished).await;
+    cmd_tx
+        .send(AppCommand::NewChat { profile_id: None })
+        .unwrap();
+    let e = next(
+        rx,
+        |e| matches!(e, AppEvent::ChatActivated { id, .. } if *id != chat_id),
+    )
+    .await;
+    let AppEvent::ChatActivated { id, .. } = e else {
+        unreachable!()
+    };
+    id
+}
+
+/// A result landing in a chat the user is not looking at marks the chat
+/// **unread** — on the list and in its file — and starts no turn there;
+/// the mark survives a restart, so a result nobody came back to is still
+/// visible after `Quit` (spec §11.2).
+#[tokio::test]
+async fn a_result_landing_in_a_closed_chat_marks_it_unread_and_the_mark_persists() {
+    let backend = KeyedRecorder::new(
+        vec![
+            (
+                "",
+                vec![start("c1"), text("started it"), text("never asked")],
+            ),
+            ("be harsh", vec![hang("thinking")]),
+        ],
+        10,
+    );
+    let (dir, cmd_tx, mut rx, handle, chat_id) = begin(backend.clone(), cfg(2)).await;
+    let run_id = running_run(&mut rx).await;
+    look_away(&cmd_tx, &mut rx, chat_id).await;
+
+    cmd_tx
+        .send(AppCommand::StopSubagentRun { id: run_id })
+        .unwrap();
+    next(&mut rx, runs_out(0)).await;
+    let e = next(&mut rx, |e| card_of(e, chat_id).is_some_and(|c| c.unread)).await;
+    assert!(card_of(&e, chat_id).unwrap().unread);
+    // No wake into a chat nobody is looking at (research fork F2).
+    nothing_like(&mut rx, finished).await;
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    let chat = load(dir.path(), chat_id);
+    assert!(chat.unread, "the mark is in the file");
+    assert!(chat.messages.iter().any(|m| m.is_notification()));
+    assert_ne!(
+        chat.messages.last().unwrap().text,
+        "never asked",
+        "no turn was started in the closed chat"
+    );
+}
+
+/// Opening the chat is reading it: the mark clears on the list and in the
+/// file, and the notification is still there for the next message.
+#[tokio::test]
+async fn opening_the_chat_clears_the_unread_mark() {
+    let backend = KeyedRecorder::new(
+        vec![
+            (
+                "",
+                vec![start("c1"), text("started it"), text("never asked")],
+            ),
+            ("be harsh", vec![hang("thinking")]),
+        ],
+        10,
+    );
+    let (dir, cmd_tx, mut rx, handle, chat_id) = begin(backend.clone(), cfg(2)).await;
+    let run_id = running_run(&mut rx).await;
+    look_away(&cmd_tx, &mut rx, chat_id).await;
+    cmd_tx
+        .send(AppCommand::StopSubagentRun { id: run_id })
+        .unwrap();
+    next(&mut rx, |e| card_of(e, chat_id).is_some_and(|c| c.unread)).await;
+
+    cmd_tx.send(AppCommand::SwitchChat(chat_id)).unwrap();
+    let e = next(&mut rx, |e| card_of(e, chat_id).is_some_and(|c| !c.unread)).await;
+    assert!(!card_of(&e, chat_id).unwrap().unread);
+    next(
+        &mut rx,
+        |e| matches!(e, AppEvent::ChatActivated { id, .. } if *id == chat_id),
+    )
+    .await;
+    // Opening it starts no turn either: the note waits for the next message.
+    nothing_like(&mut rx, finished).await;
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    let chat = load(dir.path(), chat_id);
+    assert!(!chat.unread);
+    assert!(chat.messages.last().unwrap().is_notification());
+}
+
 /// With the wake off the notification waits for the user's next message —
 /// and travels merged in front of it, as one user message on the wire.
 #[tokio::test]

@@ -65,6 +65,7 @@ impl ChatScreen {
             staged_images,
             esc_target: self.esc_target,
             read_only: self.read_only(),
+            background_run: self.background_run,
         }
     }
 

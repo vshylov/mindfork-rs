@@ -165,8 +165,11 @@ adds a second tool and lets a run outlive its turn:
    idle. A notification is a user-side row for regeneration and deletion.
 5. **No confirmations in a background run** (the user's decision): its
    calls run as with `confirm_dangerous` off; the profile's tool set is the
-   control. `Esc` ends the turn and not the run; `/subagents stop`, the
-   deletion of the spawning exchange, a deleted chat and `Quit` end it, the
-   last landing every run *cancelled* from its mirror before the exit flush.
+   control. `Esc` ends the turn and not the run — and on the run's own open
+   transcript, which streams under no turn, it merely goes back; `F6` there,
+   `/subagents stop`, the deletion of the spawning exchange, a deleted chat
+   and `Quit` end the run, the last landing every run *cancelled* from its
+   mirror before the exit flush. A result landing in a chat the user is not
+   looking at marks that chat unread in the list until it is opened.
 
 Decisions 1–4 and 6 stand unchanged; decision 5 holds for a foreground run.

@@ -169,10 +169,10 @@ Backend selection: `MINDFORK_ENGINE_URL` (external, any OpenAI server) OR
 rented instead of hosted — `python tools/e2e_hf.py run`, see
 `docs/history/remote-e2e-hf.md`.
 
-## Status (2026-09-04, version 0.9.8)
+## Status (2026-09-05, version 0.9.8)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2798 unit tests
-green, 136 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **2824 unit tests
+green, 137 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -183,18 +183,22 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 `tools/doc_index_check.py`. A new track adds a line; a line that has stopped
 being recent is dropped, not shortened.
 
-- **Sub-agents in the background — a run that outlives its turn, stage 1** —
-  `start_subagent` (opt-in, `tools.subagent_background`): the call returns
-  at once, the run is owned by the orchestrator over the turn's cloneable
-  parts and the **app-wide** session budget, its record lands with the
-  turn as a placeholder and is filled in **by id** when it ends, and the
-  result is a stored **task notification** the model reads as user text —
-  with a turn the app starts itself when the chat is open and idle.
-  Measured before code on the four clouds and Qwen 3.6: an optional flag
-  is silently omitted by Claude (0/3), a second tool is used 3/3 and 5/5.
-  No confirmations in a background run (the user's decision: the tool set
-  is the control); `Esc` leaves it, `/subagents stop`, take-back and
-  `Quit` end it
+- **Sub-agents in the background — a run that outlives its turn, both
+  stages** — `start_subagent` (opt-in, `tools.subagent_background`): the
+  call returns at once, the run is owned by the orchestrator over the
+  turn's cloneable parts and the **app-wide** session budget, its record
+  lands with the turn as a placeholder and is filled in **by id** when it
+  ends, and the result is a stored **task notification** the model reads
+  as user text — with a turn the app starts itself when the chat is open
+  and idle. Measured before code on the four clouds and Qwen 3.6: an
+  optional flag is silently omitted by Claude (0/3), a second tool is used
+  3/3 and 5/5. No confirmations in a background run (the user's decision:
+  the tool set is the control). Stage 2 answered the one surface the
+  footer rule left open: a feed that streams under **no** turn
+  (`LiveTurn.background`) — `F6` stops the run there and `Esc` merely goes
+  back, both advertised only while it streams — and a result landing in a
+  chat nobody is looking at marks that chat **unread** in the list
+  (`Chat.unread`, additive, cleared by opening it)
   ([docs/research/background-subagents.md](docs/research/background-subagents.md),
   [ADR 0010](docs/decisions/0010-subagent-nested-turn.md) amended, spec
   §9.3.2, [docs/journal/tools.md](docs/journal/tools.md)).
@@ -410,10 +414,6 @@ being recent is dropped, not shortened.
   shows every change as a diff with per-file revert. Attaching *is* the
   permission, and the model cannot compose a command
   ([docs/history/code-workspace.md](docs/history/code-workspace.md), spec §9.12).
-- **The model's name on the assistant's header** —
-  `interface.show_model_name` (off), from the **message's** own metadata
-  snapshot rather than the current engine setting
-  ([docs/journal/ui-feed.md](docs/journal/ui-feed.md), spec §11.3).
 
 For what exists and how it works, read architecture.md and spec.md — they are
 the source of truth for the current state. For how any of it came to be, and

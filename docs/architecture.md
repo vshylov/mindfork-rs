@@ -982,7 +982,9 @@ Details:
   fills it in — deferred to `handle_done` (`land_pending_runs`) when a
   turn is still running in that chat — then appends the notification row
   (`Message::notification`) and wakes the assistant (`maybe_wake`:
-  active, idle, the setting on). `request::api_messages` sends the row as
+  active, idle, the setting on) — or, when the chat is not the open one,
+  sets `Chat.unread` (additive) so the list says a result is waiting;
+  `activate_focused` clears it, which makes opening the chat the read. `request::api_messages` sends the row as
   user text merged into the next user message. `Esc` never reaches a
   run's token; `handle_stop_subagent_run`, `cancel_orphaned_background_runs`
   (delete/regenerate), `cancel_background_runs_of` (a deleted chat) and
@@ -2645,7 +2647,12 @@ a flag — mirroring would mean writing the same rule at each set/clear site to 
 one word honest, which is how a hint drifts from the key it describes. The label
 itself is resolved a step later, by `status_bar::esc_hint_key`, in the key handler's
 own order of precedence: a **running turn** wins, because mid-turn `Esc` cancels and
-goes nowhere, and only otherwise does the target speak. Generation is deliberately
+goes nowhere, and only otherwise does the target speak. The one feed that streams
+under *no* turn is the open transcript of a background run (`LiveTurn.background`
+→ `ChatScreen::background_run` → `StatusModel::background_run`, spec §9.3.2):
+there `Esc` navigates though the feed is generating, and the corner block gains
+its one conditional hint, `F6` — the stop key — for exactly as long as the run
+streams. Generation is deliberately
 not a fourth `EscTarget` — this stack could never produce it — so the widget reads
 both halves off the one `StatusModel` the generation chip and the input box's title
 are drawn from, and the three cannot disagree within a frame.
@@ -2768,7 +2775,7 @@ the screen rebuilds its feed from the `transcript` copy it keeps while a
 transcript is open. `switch_within_turn` exempts the parent ↔ in-flight child
 move from `switch_to`'s cancel; `activate_focused` builds the parent's feed
 from `chat.messages + inflight.rounds` and sets `ChatActivated.live_turn`,
-— `LiveTurn { turn, stream, partial, continues }` — which the screen's
+— `LiveTurn { turn, stream, partial, continues, background }` — which the screen's
 `set_live_turn` turns into a resumed generation on the chat, or, on a
 transcript, a `begin_generation(stream)`, in both cases seeded with
 `partial`: thoughts, text, and the round's tool calls replayed as running or

@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (58)
+## Entries (59)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -70,6 +70,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: one hint grid, and footers that name only the keys that work (done)
 - Post-M9: the privacy policy joins the disclaimer on one "Legal" tab (done)
 - Post-M9: the background run on the list, in the feed and on the bar (done)
+- Post-M9: the stop key on a background transcript, and the unread chat (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -3050,3 +3051,24 @@ screenshot pipeline, whose dumps and images are regenerated here.
 - **Not yet**: a key on the open transcript that stops the run (the
   footer rule of spec §11.2 — advertise only what works — is why the
   command came first).
+
+### Post-M9: the stop key on a background transcript, and the unread chat (done)
+- **What**: the two surfaces of the background track's stage 2 (spec §9.3.2,
+  §11.2). **The chat screen**: on the open transcript of a run that is still
+  out, `F6` stops it and `Esc` goes back to the list — until now `Esc` there
+  dispatched `ChatIntent::Cancel` against a turn that did not exist, an
+  advertised key that was a no-op, which is precisely why stage 1 shipped
+  `/subagents stop` and no key at all. The screen learns which kind of feed
+  it is showing from `LiveTurn::background` rather than guessing from
+  `generating`; the status bar's `Esc` label follows (`esc_hint_key` reads
+  both halves off the one `StatusModel`), and the corner block gains its
+  first **conditional** hint — `F6`, right behind `F1` in the shedding order,
+  present only while the run streams. **The chat list**: a chat whose
+  background result landed while it was not the open one is marked *unread*
+  beside its count with its dot in the accent colour, so the one result that
+  starts no turn is still announced; the mark is `ChatSummary::unread` from
+  `Chat::unread`, cleared by opening the chat. A transcript row never carries
+  it — its own row already says how its run ended.
+- **Live**: not required for the keys and the row (pure UI), and covered
+  anyway by the track's live run — see
+  [tools.md](tools.md), the same stage.

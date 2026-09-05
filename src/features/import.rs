@@ -334,6 +334,7 @@ fn map_chat(c: &ImChat, profile_id: Uuid, loc: &Locale) -> Result<Chat> {
         // chat with history never meets the automatic-titling condition anyway
         // (spec §11.2 — it fires on the chat's first reply only).
         renamed_manually: false,
+        unread: false,
         // A project is a path on *this* machine (spec §9.12); a chat that
         // travelled here through the exchange format cannot carry one, and
         // inventing a root would point the code tools at a directory the

@@ -411,6 +411,12 @@ pub struct LiveTurn {
     /// dialogue's line carries its speaker's side (spec §9.13 — participant
     /// `b`'s lines are the transcript's `User` role).
     pub role: MessageRole,
+    /// The conversation is the transcript of a run out in the **background**
+    /// (spec §9.3.2, docs/research/background-subagents.md §4.5): its stream
+    /// is no turn's, so on it `Esc` goes back instead of cancelling and `F6`
+    /// stops the run. `false` on a turn's own chat and on a turn child's
+    /// transcript, where `Esc` cancels the turn.
+    pub background: bool,
 }
 
 /// A round in progress (see [`LiveTurn::partial`]): its text and thoughts

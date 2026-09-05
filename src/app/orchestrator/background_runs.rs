@@ -150,11 +150,15 @@ impl Orchestrator {
         };
         let chat_id = self.background_runs[pos].chat;
         if self.inflight.as_ref().is_some_and(|t| t.chat == chat_id) {
-            // The seat's row reads as ended meanwhile.
+            // The seat's row reads as ended meanwhile — and its transcript
+            // shows the whole run, last reply included: the mirror is what
+            // every read path sees until the record lands (research §5, the
+            // list and the transcript honestly ahead of the feed).
             let mirror = &mut self.background_runs[pos].child.run;
             mirror.outcome = run.outcome;
             mirror.finished_at = run.finished_at;
             mirror.tokens = run.tokens;
+            mirror.messages = run.messages.clone();
             self.pending_landings.push(PendingLanding {
                 generation,
                 run,
@@ -260,14 +264,21 @@ impl Orchestrator {
 
     /// Appends the notification row to the chat — the feed rebuilt when it
     /// is the open one, so the note shows at once — and wakes the assistant
-    /// (research §4.4).
+    /// (research §4.4). A chat the user is not looking at is marked
+    /// **unread** instead (spec §11.2): the list says a result is waiting
+    /// there, and opening the chat clears the mark
+    /// ([`Orchestrator::activate_focused`]).
     fn deliver_notification(&mut self, chat_id: Uuid, message: Message) {
+        let open = self.active_id == Some(chat_id);
         let Some(chat) = self.chat_mut(chat_id) else {
             return;
         };
         chat.push_message(message);
+        if !open {
+            chat.unread = true;
+        }
         self.mark_dirty(chat_id);
-        if self.active_id == Some(chat_id) {
+        if open {
             self.activate(chat_id);
         }
         self.emit_chat_list();

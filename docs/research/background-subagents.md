@@ -592,6 +592,28 @@ on S2, ≥ 4/5 notification use without a re-call. A model below that bar is
 not a no-go for the track (the clouds are there) but a reason to keep the
 feature off by default for that stack and say so in the hint.
 
+**Gemma 4 31B, measured in stage 2 (2026-09-05)** — the LAN stack is one
+RTX 4090 and cannot host the 31B at several sessions, so the arm was run on
+a rented L40S through `tools/e2e_hf.py run --chat-model gemma-4-31b
+--no-embed --command …` (the user's route). **Go, at the top of the bar**:
+
+| model | S1: asked for the background | S2: stayed in the foreground | r3: used the notification, no re-call | r4: main objection right |
+|---|:-:|:-:|:-:|:-:|
+| Gemma 4 31B (q4_0, llama.cpp on an L40S) | **5/5** | 5/5 | 5/5 | 5/5 |
+
+Both gate models therefore clear the bar under shape (d), and the feature's
+default-off is about the tool set, not the model. The stage-2 live smoke
+`background_subagent_e2e_live` is green on the same endpoint (31.6 s: the
+parent delegated, answered the arithmetic at once, the run read the planted
+file with `fs_read`, and the woken turn reported the codename).
+
+Two notes for the next rented arm. The first deployment sat 1048 s in
+*"waiting to be scheduled"* and then **failed** with the L40S catalogue
+reading `available` — capacity, not configuration; the retry deployed in
+~510–550 s. And the probe died mid-run on a `cp1252` console the first time
+Gemma answered with an emoji, which cost a whole rental and read exactly
+like a model failure until the traceback was read (lessons §3).
+
 **Stage 1 — the run outside the turn** (`feat/background-subagents`).
 §4.1–§4.5, §4.7–§4.11. Unit tests over the keyed and counting mocks: the
 catalog is byte-identical with `subagent_background` off, and carries
@@ -616,8 +638,16 @@ reply), the run reads the file, the wake turn's reply carries the planted
 token, the transcript has the run — and one cloud arm (Anthropic, the
 strictest about turn shape) for the merged user message.
 
-**Stage 2 — what the live run argues for.** The unread mark; the
-settings-screen rows' polish; the docs' final pass.
+**Stage 2 — what the live run argues for** (`feat/background-subagents-2`,
+done 2026-09-05). The stop key on the open transcript of a run still out —
+`F6`, the `/subagents stop` route itself, advertised in the footer only
+while the run streams, with `Esc` there going back rather than cancelling a
+turn that does not exist (`LiveTurn.background` carries the distinction from
+the orchestrator, which is the only layer that knows it); the unread mark
+(`Chat.unread`, additive) on a chat whose result landed while it was not
+open, cleared by opening it; the settings rows' polish (both stop routes,
+the unread mark, and §3.3's parked-set advice in the hint); the docs' final
+pass; and the Gemma arm above.
 
 ## 8. Not in this track (recorded so they are not re-derived)
 

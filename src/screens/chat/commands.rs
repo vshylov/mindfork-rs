@@ -205,7 +205,9 @@ impl ChatScreen {
     /// on a chat, the n-th background run out under it — or the only one when
     /// there is one. Resolved from the list's cards, where *out* is
     /// `running && background`; the orchestrator ignores an id that is not.
-    fn typed_subagents_stop(&mut self, active: Uuid, which: &str) -> Option<ChatIntent> {
+    /// `pub(super)` because `F6` on the transcript is this very route
+    /// (`input.rs`), not a second one.
+    pub(super) fn typed_subagents_stop(&mut self, active: Uuid, which: &str) -> Option<ChatIntent> {
         let parent = self
             .chats
             .iter()

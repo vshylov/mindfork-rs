@@ -129,6 +129,11 @@ pub struct Row {
     /// only; `0` — none). Drawn as a `▸ n` mark beside the count, so a folded
     /// chat with transcripts doesn't look like a chat without any.
     pub collapsed_children: usize,
+    /// A background run's result landed here while the chat was not open
+    /// (`ChatSummary::unread`, spec §9.3.2): the row says *unread* beside its
+    /// count and its dot takes the accent colour, until the chat is opened.
+    /// Chats only — a transcript's row says how its run ended instead.
+    pub unread: bool,
 }
 
 impl Row {
@@ -317,6 +322,7 @@ impl ChatListState {
                     background: c.background,
                     dimmed: false,
                     collapsed_children: 0,
+                    unread: false,
                 })
                 .collect();
             let own = matches(chat.id, &chat.title);
@@ -334,6 +340,7 @@ impl ChatListState {
                 background: false,
                 dimmed: !own,
                 collapsed_children: if folded { children.len() } else { 0 },
+                unread: chat.unread,
             });
             if !folded {
                 rows.extend(children);
@@ -890,8 +897,12 @@ impl ChatListState {
         } else {
             Span::raw("  ")
         };
+        // An unread chat's dot takes the accent colour — the one mark that
+        // survives a narrow list, where the label below is the first to go.
         let dot_color = if is_active {
             palette.success
+        } else if row.unread {
+            palette.accent
         } else {
             palette.border
         };
@@ -921,6 +932,11 @@ impl ChatListState {
         );
         if let Some(key) = outcome {
             count = format!("{} · {count}", loc.t(key));
+        }
+        // A background run's result the user has not looked at yet (spec
+        // §9.3.2): said in words beside the count, cleared by opening.
+        if row.unread {
+            count = format!("{} · {count}", loc.t("ui.chatlist.unread"));
         }
         // A folded chat says how many transcripts it is hiding — without the
         // mark it would look like a chat that has none (docs/lessons.md §4).
@@ -2022,6 +2038,28 @@ mod tree_tests {
         assert!(row_text(&s, &rows[2]).starts_with("    └ Критик"));
         assert!(!row_text(&s, &rows[2]).contains(loc.t("ui.chatlist.run.cancelled")));
         assert!(row_text(&s, &rows[3]).contains(loc.t("ui.chatlist.run.timed_out")));
+    }
+
+    /// A chat whose background run landed while it was not open is marked
+    /// *unread* in words beside its count (spec §9.3.2, §11.2); the mark is
+    /// the card's, so a snapshot that says read draws none — and a
+    /// transcript's row never carries it, whatever its parent says.
+    #[test]
+    fn an_unread_chat_says_so_beside_its_count() {
+        let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru);
+        let mut chats = family();
+        chats[0].unread = true;
+        let s = ChatListState::new(chats, None);
+        let rows = s.visible();
+        let plans = rows.iter().find(|r| r.title == "Планы").unwrap();
+        assert!(plans.unread);
+        let text = row_text(&s, plans);
+        assert!(text.contains(loc.t("ui.chatlist.unread")), "{text}");
+        let critic = rows.iter().find(|r| r.title == "Критик").unwrap();
+        assert!(!critic.unread);
+        assert!(!row_text(&s, critic).contains(loc.t("ui.chatlist.unread")));
+        let recipes = rows.iter().find(|r| r.title == "Рецепты").unwrap();
+        assert!(!row_text(&s, recipes).contains(loc.t("ui.chatlist.unread")));
     }
 
     /// The stored fold (spec §11.2): a collapsed chat — the default — hides

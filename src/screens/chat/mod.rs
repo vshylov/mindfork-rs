@@ -67,6 +67,7 @@ pub(crate) static HELP_SECTION: HelpSection = HelpSection {
         ("Ctrl+N", "ui.help.new_chat"),
         ("F2", "ui.help.rename_chat"),
         ("F5", "ui.help.copy_chat"),
+        ("F6", "ui.help.stop_run"),
         ("Ctrl+R", "ui.help.regenerate"),
         ("Ctrl+E", "ui.help.delete_exchange"),
         ("Ctrl+U", "ui.help.impersonate"),
@@ -638,6 +639,12 @@ pub struct ChatScreen {
     /// the chip's guard while `current_gen` stays `None` — the parent's
     /// stream must not land in the transcript's feed.
     live_turn: Option<Uuid>,
+    /// The open transcript is a run out in the **background** and still
+    /// streaming (`LiveTurn::background`, spec §9.3.2): its stream is no
+    /// turn's, so `Esc` goes back to the list instead of cancelling, and
+    /// `F6` stops the run — the one key the footer advertises only while it
+    /// works (spec §11.2). Cleared when the run's stream ends.
+    background_run: bool,
     /// The open sub-agent transcript's messages, kept only while one is open
     /// and running, so a filed round rebuilds the feed stitched exactly as a
     /// landed transcript would be (`TranscriptGrew`).
@@ -732,6 +739,7 @@ impl ChatScreen {
             retrying: None,
             subagents: Vec::new(),
             live_turn: None,
+            background_run: false,
             transcript: Vec::new(),
             speaking: false,
             esc_target: EscTarget::default(),
@@ -980,10 +988,14 @@ impl ChatScreen {
     pub fn set_live_turn(&mut self, live_turn: Option<Box<crate::app::events::LiveTurn>>) {
         let Some(live) = live_turn else {
             self.live_turn = None;
+            self.background_run = false;
             self.subagents.clear();
             return;
         };
         self.live_turn = Some(live.turn);
+        // Only a transcript can be a background run's; a turn's chat streams
+        // the turn, whatever the flag says.
+        self.background_run = live.background && self.child.is_some();
         if self.child.is_none() {
             // The turn's own chat: the rounds so far are in the feed already;
             // the round in progress is seeded below, the rest streams on.
