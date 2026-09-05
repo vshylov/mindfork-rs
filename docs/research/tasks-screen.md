@@ -1,6 +1,8 @@
 # A tasks screen — everything the app is doing, on one surface
 
-**Status:** design, forks open (2026-09-06). The second of the two items
+**Status:** design **accepted**; every fork at its recommendation (the
+user's decisions, 2026-09-06 — F1–F7 answered directly, F8 and F9 adopted
+uncontested). The second of the two items
 [background-subagents.md](background-subagents.md) §8 left for later (the
 first, background dialogues, shipped 2026-09-06). Its own note there is the
 starting position — *"the list's rows under each parent are the v1 surface"* —
@@ -230,40 +232,41 @@ are. Not storage: closing the app forgets the ordering, not the runs.
 
 ## 6. Forks
 
-Recommendations marked; nothing is decided until the user says so.
+**Decided by the user, 2026-09-06**: the recommendation in every one —
+F1(a), F2(a), F3(a), F4(a), F5(a), F6(a), F7(a), F8(a), F9(a).
 
-- **F1. What the screen lists.** (a) **Live runs and landed runs, capped at
+- **F1** *(decided: (a))*. **What the screen lists.** (a) **Live runs and landed runs, capped at
   50 landed** *(recommended — §2.3: the landed half is free, and "where did
   it land" is half the question)*. (b) Live runs only — the smallest thing
   that closes the gap in §1. (c) Live plus only this session's landed runs —
   needs retention the app does not have today.
-- **F2. The silent tasks.** (a) **A second section, running/idle only**
+- **F2** *(decided: (a))*. **The silent tasks.** (a) **A second section, running/idle only**
   *(recommended — the labels exist, no new state, and "why is the machine
   busy" is the same question)*. (b) Also last-run time and last outcome — two
   new fields on `BgSlot` and a wider snapshot. (c) Runs only; the silent tasks
   stay on the status bar.
-- **F3. Where the position comes from.** (a) **A `TurnProgress::ChildProgress`
+- **F3** *(decided: (a))*. **Where the position comes from.** (a) **A `TurnProgress::ChildProgress`
   step the orchestrator stores on the seat** *(recommended — one owner, and
   the data survives the screen being closed)*. (b) A runtime map fed by the
   existing `SubagentProgress` events.
-- **F4. The transport.** (a) **A purpose-built `TaskList` snapshot plus a
+- **F4** *(decided: (a))*. **The transport.** (a) **A purpose-built `TaskList` snapshot plus a
   request command** *(recommended, the `F4` shape)*. (b) Reuse `ChatList` +
   `BackgroundRuns` and assemble in the screen.
-- **F5. Elapsed.** (a) **Rendered from `created_at`, with the repaint tick
+- **F5** *(decided: (a))*. **Elapsed.** (a) **Rendered from `created_at`, with the repaint tick
   extended to this screen while a run is out** *(recommended)*. (b) Show the
   start time and no elapsed, so no tick is needed.
-- **F6. The entry point.** (a) **`F7` and `/tasks`** *(recommended — `F7` is
+- **F6** *(decided: (a))*. **The entry point.** (a) **`F7` and `/tasks`** *(recommended — `F7` is
   free everywhere and unclaimed by both measured hosts, and the typed route
   is the rule for anything a terminal might eat)*. (b) `/tasks` only.
   (c) `Ctrl+S` and `/tasks`.
-- **F7. The row's actions.** (a) **`Enter` opens the transcript, `F6` stops,
+- **F7** *(decided: (a))*. **The row's actions.** (a) **`Enter` opens the transcript, `F6` stops,
   `P` opens the parent chat** *(recommended — `F6` is already the stop key on
   a transcript)*. (b) `Enter` and `F6` only; the parent is one more `Esc`
   away. (c) Add `Del` to hide a landed run from the screen — rejected: the
   screen is a projection, not a store.
-- **F8. Order.** (a) **Running first, then landed, both newest first**
+- **F8** *(decided: (a), uncontested)*. **Order.** (a) **Running first, then landed, both newest first**
   *(recommended)*. (b) Grouped by chat, like the list's nesting.
-- **F9. Staging.** (a) **One PR** *(recommended — the screen is inert without
+- **F9** *(decided: (a), uncontested)*. **Staging.** (a) **One PR** *(recommended — the screen is inert without
   its rows)*. (b) Two: the runs section, then the silent tasks.
 
 ## 7. Test plan
