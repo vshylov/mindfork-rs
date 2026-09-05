@@ -4237,6 +4237,7 @@ mod read_only_transcript {
                 message_count: 2,
                 outcome: None,
                 running: false,
+                background: false,
             }],
             children_expanded: false,
         }]);

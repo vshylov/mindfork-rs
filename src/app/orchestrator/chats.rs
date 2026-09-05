@@ -397,6 +397,8 @@ impl Orchestrator {
             }
             Ok(true) => {}
         }
+        // A run out in the background for this chat has nowhere to land.
+        self.cancel_background_runs_of(id);
         self.chats.retain(|c| c.id != id);
         self.saves.forget(id);
         // Staging is keyed by chat, so a deleted chat's slot has to go with it —

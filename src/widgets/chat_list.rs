@@ -118,6 +118,10 @@ pub struct Row {
     /// The run is in progress (`ChildSummary::running`): drawn as a *running*
     /// mark where an outcome would go.
     pub running: bool,
+    /// The run was started in the background (`ChildSummary::background`):
+    /// with no outcome and not running it reads *unfinished*, not
+    /// *interrupted* (spec §9.3.2).
+    pub background: bool,
     /// A chat shown only because one of its transcripts matched the filter:
     /// drawn dimmed, so the match and its context read differently.
     pub dimmed: bool,
@@ -310,6 +314,7 @@ impl ChatListState {
                     parent: Some(chat.id),
                     outcome: c.outcome,
                     running: c.running,
+                    background: c.background,
                     dimmed: false,
                     collapsed_children: 0,
                 })
@@ -326,6 +331,7 @@ impl ChatListState {
                 parent: None,
                 outcome: None,
                 running: false,
+                background: false,
                 dimmed: !own,
                 collapsed_children: if folded { children.len() } else { 0 },
             });
@@ -902,6 +908,7 @@ impl ChatListState {
         let outcome = match (row.is_child(), row.outcome) {
             (false, _) | (true, Some(RunOutcome::Completed)) => None,
             (true, None) if row.running => Some("ui.chatlist.run.running"),
+            (true, None) if row.background => Some("ui.chatlist.run.unfinished"),
             (true, Some(RunOutcome::Cancelled)) => Some("ui.chatlist.run.cancelled"),
             (true, Some(RunOutcome::TimedOut)) => Some("ui.chatlist.run.timed_out"),
             (true, Some(RunOutcome::Failed)) => Some("ui.chatlist.run.failed"),
@@ -1830,6 +1837,7 @@ mod tree_tests {
             message_count: 3,
             outcome,
             running: false,
+            background: false,
         }
     }
 

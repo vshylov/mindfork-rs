@@ -60,6 +60,11 @@ pub enum AppCommand {
     /// Written with the save debounce, `modified_at` untouched — a view toggle
     /// must not bump the chat up the list. See spec §11.2.
     SetChildrenExpanded { id: Uuid, expanded: bool },
+    /// Stop a sub-agent run that is out in the **background** (`/subagents
+    /// stop [n]`, spec §9.3.2): `id` is the run's own id. The run's token is
+    /// cancelled and it lands as `cancelled` through the same route every
+    /// end takes; an id that names no running background run is ignored.
+    StopSubagentRun { id: Uuid },
     /// Regenerate the last assistant reply: delete everything after the last
     /// user message and restart generation from the same request.
     RegenerateLast,
@@ -298,6 +303,8 @@ impl AppCommand {
             | AppCommand::Impersonate { .. }
             // Changes what the conversation stores.
             | AppCommand::DeleteLastExchange
+            // Ends a background run: its record lands as cancelled.
+            | AppCommand::StopSubagentRun { .. }
             | AppCommand::Compact
             | AppCommand::FileAttach { .. }
             | AppCommand::FileRemove { .. }
@@ -752,6 +759,10 @@ pub enum AppEvent {
     /// Background task activity (auto-reflection/consolidation) for the quiet indicator
     /// in the status bar: `active=true` at the start, `false` on completion. See stage 5.
     BackgroundTask { kind: BackgroundKind, active: bool },
+    /// How many sub-agent runs are out in the **background** right now
+    /// (spec §9.3.2) — a quiet status-bar indicator with the count; `0`
+    /// clears it.
+    BackgroundRuns { out: u32 },
     /// Where a sub-agent run stands (spec §9.3.2): a quiet status-bar chip
     /// while the parent's turn is inside `call_subagent`, whose own stream is
     /// muted — without it the bar would read "generating" for minutes with

@@ -17,7 +17,9 @@ use crate::entities::message::{
 use crate::entities::profile::ToolId;
 use crate::entities::sampling::SamplingConfig;
 use crate::entities::subagent::{RunKind, RunOutcome, SubagentRun};
-use crate::features::tools::subagent::{CALL_SUBAGENT_ID, SubagentArgs, withheld_from_subagent};
+use crate::features::tools::subagent::{
+    CALL_SUBAGENT_ID, START_SUBAGENT_ID, SubagentArgs, withheld_from_subagent,
+};
 use crate::features::tools::{
     ChatEffect, ToolContext, ToolParams, ToolRegistry, TurnInfo, control, effective_tool_ids,
 };
@@ -92,6 +94,14 @@ pub(super) enum TurnProgress {
         finished_at: chrono::DateTime<chrono::Utc>,
         tokens: u64,
     },
+    /// A `start_subagent` call (spec §9.3.2,
+    /// docs/research/background-subagents.md §4.2): everything the run
+    /// needs, built by the parent as for a group child, handed to the
+    /// orchestrator to spawn **outside** the turn — its own task, its own
+    /// token, the app's budget. The parent's record lands with the turn
+    /// carrying a placeholder; [`super::Orchestrator::spawn_background_run`]
+    /// fills it in when the run ends.
+    BackgroundStart(Box<BackgroundStart>),
 }
 
 /// One step of a loop's stream, as the orchestrator mirrors it (see
@@ -311,10 +321,12 @@ impl Orchestrator {
             let Some(chat) = self.chat_mut(active_id) else {
                 return;
             };
+            // A task notification is a user-side row (spec §9.3.2): the
+            // reply it woke is redone, the notification kept.
             let Some(idx) = chat
                 .messages
                 .iter()
-                .rposition(|m| m.role == MessageRole::User)
+                .rposition(|m| m.role == MessageRole::User || m.is_notification())
             else {
                 return; // no user message — nothing to regenerate
             };
@@ -328,6 +340,9 @@ impl Orchestrator {
         self.mark_dirty(active_id);
         self.activate(active_id); // rebuild the feed without the old reply
         self.emit_chat_list();
+        // A background run whose exchange just left the live messages ends
+        // with it (research fork F8).
+        self.cancel_orphaned_background_runs(active_id);
         self.start_generation(active_id, backend, None);
     }
 
@@ -433,14 +448,20 @@ impl Orchestrator {
             let Some(chat) = self.chat_mut(active_id) else {
                 return;
             };
+            // A task notification is a user-side row (spec §9.3.2): the
+            // exchange it woke goes with it, and nothing returns to the box.
             let Some(idx) = chat
                 .messages
                 .iter()
-                .rposition(|m| m.role == MessageRole::User)
+                .rposition(|m| m.role == MessageRole::User || m.is_notification())
             else {
                 return; // no user message — nothing to delete
             };
-            user_text = chat.messages[idx].text.clone();
+            user_text = if chat.messages[idx].is_notification() {
+                String::new()
+            } else {
+                chat.messages[idx].text.clone()
+            };
             // Save what's deleted (the user message + the assistant's reply) and the
             // input draft BEFORE returning the user's text to the field — for manual
             // recovery (spec §11.7).
@@ -452,6 +473,7 @@ impl Orchestrator {
         self.mark_dirty(active_id);
         self.activate(active_id); // rebuild the feed without the deleted exchange
         self.emit_chat_list();
+        self.cancel_orphaned_background_runs(active_id);
         let _ = self.evt_tx.send(AppEvent::RestoreInput(user_text));
     }
 
@@ -476,7 +498,7 @@ impl Orchestrator {
     /// truncated). The shared part for sending a new message, regenerating,
     /// and `/continue` — which passes the `continuation` seed so the turn
     /// prefills the trailing partial and appends into it (spec §6.4).
-    fn start_generation(
+    pub(super) fn start_generation(
         &mut self,
         active_id: Uuid,
         backend: Arc<dyn EngineBackend>,
@@ -534,6 +556,7 @@ impl Orchestrator {
                 python: self.config.tools.python_enabled,
                 fs: self.config.tools.fs_enabled,
                 mcp: self.config.mcp.enabled,
+                background: self.config.tools.subagent_background,
                 history: history_upto.is_some(),
                 workspace: workspace.is_some(),
                 // Which slots carry a line, so a `code_test` with nothing to
@@ -623,11 +646,10 @@ impl Orchestrator {
         // — takes a permit of this one budget, and under a shared KV pool
         // (`session_pool`, admission-by-budget §4.4) a reservation of it, so
         // it is made before the context and shared with the task.
-        let pool = self.session_pool();
-        let sessions = Arc::new(SessionBudget::new(
-            self.config.engine.active_sessions(),
-            pool,
-        ));
+        // App-wide since background runs (docs/research/background-subagents.md
+        // §4.7): the same `Arc` a run out in the background holds, so the
+        // run and this turn take turns under one permit count and one pool.
+        let sessions = self.session_budget();
         let mut request;
         let ctx;
         let last_user;
@@ -761,6 +783,7 @@ impl Orchestrator {
             continuation,
             evt_tx: self.evt_tx.clone(),
             done_tx: self.done_tx.clone(),
+            background: self.background_slots.clone(),
         });
     }
 
@@ -802,6 +825,9 @@ impl Orchestrator {
         let mut res = res;
         self.carry_inflight_rename(&mut res);
         if res.messages.is_empty() && res.effects.is_empty() && res.deleted.is_empty() {
+            // A turn that landed nothing still ends the wait of a result
+            // that arrived meanwhile (docs/research/background-subagents.md §4.4).
+            self.land_pending_runs(res.chat_id);
             return;
         }
         // Did the model edit the "self-model" via its own tools this turn? If so —
@@ -865,6 +891,11 @@ impl Orchestrator {
         for a in attached {
             self.insert_attachment(res.chat_id, a);
         }
+        // A background run that ended while this turn ran: its notification
+        // goes after the turn's rows, and the assistant may be woken on it
+        // (docs/research/background-subagents.md §4.4). Before the silent
+        // follow-ups, which a turn in flight makes wait their turn.
+        self.land_pending_runs(res.chat_id);
         // The profile's language-model history (spec §9.14): an exchange just
         // completed, so append a record when the model differs — by name or
         // mode — from the newest one (the store decides, `llm_history_note`).
@@ -1114,6 +1145,8 @@ struct GenSpawn {
     continuation: Option<ContinuationSeed>,
     evt_tx: UnboundedSender<AppEvent>,
     done_tx: UnboundedSender<GenMessage>,
+    /// The background-run slots (see [`TurnShared::background`]).
+    background: Arc<BackgroundSlots>,
 }
 
 /// What the confirmation round trip owns, behind [`TurnShared::confirm`]'s
@@ -1283,6 +1316,7 @@ fn spawn_generation(spawn: GenSpawn) {
         continuation,
         evt_tx,
         done_tx,
+        background,
     } = spawn;
 
     tokio::spawn(async move {
@@ -1322,6 +1356,7 @@ fn spawn_generation(spawn: GenSpawn) {
         });
 
         let shared = TurnShared {
+            background,
             backend,
             registry,
             confirm_dangerous,
@@ -1461,6 +1496,11 @@ struct TurnShared {
     /// The chat's rolling summary, for the dialogue director's brief
     /// (see [`GenSpawn::compaction_summary`]).
     compaction_summary: Option<String>,
+    /// How many background runs are out, against the cap
+    /// (`tools.subagent_background_max`) — owned by the orchestrator, taken
+    /// by the loop that starts a run, released by the run that ends
+    /// (docs/research/background-subagents.md §4.8).
+    background: Arc<BackgroundSlots>,
 }
 
 /// The turn-wide token totals ([`TurnShared::counters`]): every loop adds its
@@ -2159,6 +2199,16 @@ impl TurnLoop<'_> {
                 i += 1;
                 continue;
             }
+            if self.is_background_call(call, rewrite) {
+                // A background run starts now and answers at once — its
+                // card opens and closes within the round, like any call's
+                // (docs/research/background-subagents.md §4.2).
+                self.announce_call(call);
+                self.report_progress(Some(&call.name));
+                results[i] = Some(self.start_background(&Self::call_args(call)));
+                i += 1;
+                continue;
+            }
             let end = self.segment_end(calls, i, rewrite);
             if end > i + 1 {
                 // The segment's results arrive in the model's order, so its
@@ -2448,6 +2498,10 @@ impl TurnLoop<'_> {
             // A loop-executed tool (spec §9.3.2): the sub-agent is a nested
             // loop over this turn's shared part, not a registry call.
             self.run_subagent(args).await
+        } else if call.name == START_SUBAGENT_ID {
+            // Reached only below the top of the turn (the round's own calls
+            // resolve in `resolve_round`): refused there, no nesting.
+            self.start_background(args)
         } else if call.name == crate::features::tools::dialogue::RUN_DIALOGUE_ID {
             // The second loop-executed tool (spec §9.13): a directed dialogue
             // of two personas, driven by this loop over the same shared part.
@@ -2512,6 +2566,74 @@ impl TurnLoop<'_> {
         call.name == CALL_SUBAGENT_ID && self.depth == 0 && !rewrite && self.allowed_has(&call.name)
     }
 
+    /// Whether a call of this round starts a **background** run
+    /// (`start_subagent`, docs/research/background-subagents.md §4.1): the
+    /// same three conditions as the group's, for the twin the profile
+    /// offers only when `tools.subagent_background` is on.
+    fn is_background_call(&self, call: &ApiToolCall, rewrite: bool) -> bool {
+        call.name == START_SUBAGENT_ID
+            && self.depth == 0
+            && !rewrite
+            && self.allowed_has(&call.name)
+    }
+
+    /// Starts a background run (docs/research/background-subagents.md
+    /// §4.2): the spec a group child would get, over a token of its own —
+    /// not the turn's, so `Esc` ends the turn and not the run — handed to
+    /// the orchestrator as progress to spawn outside this task. The call's
+    /// result is the *started* line with the transcript's address, and the
+    /// record lands with the turn carrying a placeholder run the landing
+    /// fills in. Refused past the cap (`tools.subagent_background_max`),
+    /// with the number, and below the top of the turn.
+    fn start_background(&mut self, args: &serde_json::Value) -> CallResult {
+        let loc = self.ctx.loc;
+        let spec = match self.child_spec_with(args, START_SUBAGENT_ID, CancellationToken::new()) {
+            Ok(spec) => spec,
+            Err(refusal) => return refusal,
+        };
+        if let Err(out) = self.shared.background.take() {
+            return loc
+                .tf(
+                    "tool.start_subagent.result.too_many",
+                    &[("n", &out.to_string())],
+                )
+                .into();
+        }
+        let placeholder = SubagentRun {
+            id: spec.run_id,
+            kind: RunKind::Subagent,
+            title: spec.parsed.initial_title(),
+            renamed_manually: false,
+            name: spec.parsed.name.clone(),
+            created_at: chrono::Utc::now(),
+            finished_at: None,
+            system_message: spec.parsed.system_message.clone(),
+            sampling_override: None,
+            messages: vec![spec.user.clone()],
+            outcome: None,
+            tokens: 0,
+            participants: Vec::new(),
+            background: true,
+        };
+        let address = crate::features::chat_links::uri(spec.run_id);
+        let text = loc.tf(
+            "tool.start_subagent.result.started",
+            &[
+                ("name", &spec.parsed.initial_title()),
+                ("address", &address),
+            ],
+        );
+        self.progress(TurnProgress::BackgroundStart(Box::new(BackgroundStart {
+            spec,
+            parts: SharedParts::of(self.shared),
+        })));
+        CallResult {
+            text,
+            images: Vec::new(),
+            subagent: Some(Box::new(placeholder)),
+        }
+    }
+
     /// Everything a child needs, built by the parent before the child starts
     /// (research §3.3): the parsed call; the turn's tools minus the withheld
     /// ones, in the turn's order, with their schemas; the request over the
@@ -2521,17 +2643,27 @@ impl TurnLoop<'_> {
     /// result to hand the model instead of a run: a malformed call, or a loop
     /// below the top — no nesting, twice over (research §3.2).
     fn child_spec(&self, args: &serde_json::Value) -> Result<ChildSpec, CallResult> {
+        self.child_spec_with(args, CALL_SUBAGENT_ID, self.cancel.child_token())
+    }
+
+    /// [`Self::child_spec`] for either delegation tool: `tool` names the
+    /// caller in a refusal, `cancel` is the run's token — a child of the
+    /// turn's for a group child, a fresh one for a background run.
+    fn child_spec_with(
+        &self,
+        args: &serde_json::Value,
+        tool: &str,
+        cancel: CancellationToken,
+    ) -> Result<ChildSpec, CallResult> {
         let loc = self.ctx.loc;
         let parsed = SubagentArgs::parse(args, loc).map_err(|err| {
             CallResult::from(loc.tf(
                 "loop.tool_error",
-                &[("name", CALL_SUBAGENT_ID), ("err", &err.to_string())],
+                &[("name", tool), ("err", &err.to_string())],
             ))
         })?;
         if self.depth > 0 {
-            return Err(loc
-                .tf("loop.tool_disabled", &[("name", CALL_SUBAGENT_ID)])
-                .into());
+            return Err(loc.tf("loop.tool_disabled", &[("name", tool)]).into());
         }
         let limits = self.shared.subagent;
         let allowed: Vec<ToolId> = self
@@ -2551,8 +2683,7 @@ impl TurnLoop<'_> {
         );
         // The child's context is the parent's — environment, scope, journal —
         // under its own persona and knobs, with no folded history to read back
-        // and a token of its own that the parent's cancels with it.
-        let cancel = self.cancel.child_token();
+        // and the token the caller chose (see `child_spec_with`).
         let mut ctx = self.ctx.clone();
         ctx.system_message = parsed.system_message.clone();
         ctx.effective_sampling = sampling.clone();
@@ -2610,8 +2741,11 @@ impl TurnLoop<'_> {
 }
 
 /// What a child needs to run — see [`TurnLoop::child_spec`]. Owns everything
-/// of its own, so several can be built by one parent and run at once.
-struct ChildSpec {
+/// of its own, so several can be built by one parent and run at once — or
+/// be carried out of the turn altogether (a background run,
+/// [`BackgroundStart`]): opaque to the orchestrator, which only hands it
+/// to [`spawn_background_run`].
+pub(super) struct ChildSpec {
     parsed: SubagentArgs,
     run_id: Uuid,
     allowed: Vec<ToolId>,
@@ -2630,6 +2764,249 @@ struct ChildSpec {
 struct CallDone {
     result: CallResult,
     effects: Vec<ChatEffect>,
+}
+
+/// A background run about to start (docs/research/background-subagents.md
+/// §4.2): the child's spec over a token of its own, and the parts of the
+/// turn's shared state a run needs — the engine, the registry, the limits —
+/// as `Arc`s and copies, so the run owes the turn nothing once spawned.
+pub(super) struct BackgroundStart {
+    spec: ChildSpec,
+    parts: SharedParts,
+}
+
+impl BackgroundStart {
+    /// The run's id — minted with the spec, the placeholder's and the
+    /// landed record's.
+    pub(super) fn run_id(&self) -> Uuid {
+        self.spec.run_id
+    }
+
+    /// The run as it will land, before it runs: what the orchestrator's
+    /// mirror starts from (the same shape `ChildStarted` carries).
+    pub(super) fn placeholder(&self) -> SubagentRun {
+        SubagentRun {
+            id: self.spec.run_id,
+            kind: RunKind::Subagent,
+            title: self.spec.parsed.initial_title(),
+            renamed_manually: false,
+            name: self.spec.parsed.name.clone(),
+            created_at: chrono::Utc::now(),
+            finished_at: None,
+            system_message: self.spec.parsed.system_message.clone(),
+            sampling_override: None,
+            messages: vec![self.spec.user.clone()],
+            outcome: None,
+            tokens: 0,
+            participants: Vec::new(),
+            background: true,
+        }
+    }
+}
+
+/// The cloneable half of [`TurnShared`] — what a background run takes with
+/// it out of the turn.
+struct SharedParts {
+    backend: Arc<dyn EngineBackend>,
+    registry: Arc<ToolRegistry>,
+    image_cfg: crate::shared::config::ImageSettings,
+    max_rounds: u32,
+    workspace_max_rounds: u32,
+    subagent: SubagentLimits,
+    concurrent_calls: u32,
+    engine_mode: ServerMode,
+    model_name: Option<String>,
+    ui_loc: &'static crate::shared::i18n::Locale,
+    compaction_enabled: bool,
+    compaction_summary: Option<String>,
+    background: Arc<BackgroundSlots>,
+}
+
+impl SharedParts {
+    fn of(shared: &TurnShared) -> Self {
+        Self {
+            backend: shared.backend.clone(),
+            registry: shared.registry.clone(),
+            image_cfg: shared.image_cfg,
+            max_rounds: shared.max_rounds,
+            workspace_max_rounds: shared.workspace_max_rounds,
+            subagent: shared.subagent,
+            concurrent_calls: shared.concurrent_calls,
+            engine_mode: shared.engine_mode,
+            model_name: shared.model_name.clone(),
+            ui_loc: shared.ui_loc,
+            compaction_enabled: shared.compaction_enabled,
+            compaction_summary: shared.compaction_summary.clone(),
+            background: shared.background.clone(),
+        }
+    }
+}
+
+/// How many background runs are out, against the cap
+/// (`tools.subagent_background_max`, docs/research/background-subagents.md
+/// §4.8). Owned by the orchestrator, shared with every turn: a loop takes a
+/// slot when it starts a run, the run gives it back when it ends — so two
+/// siblings of one round cannot both pass a cap of one.
+#[derive(Debug)]
+pub(super) struct BackgroundSlots {
+    out: std::sync::atomic::AtomicU32,
+    max: std::sync::atomic::AtomicU32,
+}
+
+impl BackgroundSlots {
+    pub(super) fn new(max: u32) -> Self {
+        Self {
+            out: std::sync::atomic::AtomicU32::new(0),
+            max: std::sync::atomic::AtomicU32::new(max.max(1)),
+        }
+    }
+
+    /// The cap, as the settings say now (a settings edit lowers or raises
+    /// it for the *next* start; runs already out are not ended).
+    pub(super) fn set_max(&self, max: u32) {
+        self.max
+            .store(max.max(1), std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Takes a slot, or says how many are out when none is free.
+    fn take(&self) -> Result<(), u32> {
+        use std::sync::atomic::Ordering::SeqCst;
+        let max = self.max.load(SeqCst);
+        let mut out = self.out.load(SeqCst);
+        loop {
+            if out >= max {
+                return Err(out);
+            }
+            match self.out.compare_exchange(out, out + 1, SeqCst, SeqCst) {
+                Ok(_) => return Ok(()),
+                Err(seen) => out = seen,
+            }
+        }
+    }
+
+    fn release(&self) {
+        use std::sync::atomic::Ordering::SeqCst;
+        let _ = self
+            .out
+            .fetch_update(SeqCst, SeqCst, |n| Some(n.saturating_sub(1)));
+    }
+}
+
+/// What a background run says to the orchestrator: its stream and rounds
+/// while it runs (the same steps a turn's child sends, keyed by the run's
+/// own generation id), and its end — the landed run, the result text the
+/// notification quotes, and the effects for the parent chat.
+pub(super) enum BackgroundMessage {
+    Progress {
+        generation: Uuid,
+        progress: TurnProgress,
+    },
+    Done {
+        generation: Uuid,
+        run: Box<SubagentRun>,
+        result: String,
+        effects: Vec<ChatEffect>,
+    },
+}
+
+/// What the orchestrator adds to a [`BackgroundStart`] to spawn it
+/// (docs/research/background-subagents.md §4.2): the run's own generation
+/// id, the app-wide session budget, and the channels.
+pub(super) struct BackgroundSpawn {
+    pub(super) generation: Uuid,
+    pub(super) sessions: Arc<SessionBudget>,
+    pub(super) evt_tx: UnboundedSender<AppEvent>,
+    pub(super) bg_tx: UnboundedSender<BackgroundMessage>,
+}
+
+/// Spawns a background run as a task of its own: a [`TurnShared`] built
+/// from the parts the turn handed over — no confirmation round trip (its
+/// calls run as with `confirm_dangerous` off, research fork F3, the user's
+/// decision), fresh counters, the app's budget — and the same [`run_child`]
+/// a group child runs under, so everything a sub-agent is, a background
+/// one is. Returns the run's cancellation token, which the orchestrator
+/// keeps for `/subagents stop`, the deletion of the spawning exchange and
+/// `Quit`.
+pub(super) fn spawn_background_run(
+    start: BackgroundStart,
+    spawn: BackgroundSpawn,
+) -> CancellationToken {
+    let BackgroundStart { mut spec, parts } = start;
+    let BackgroundSpawn {
+        generation,
+        sessions,
+        evt_tx,
+        bg_tx,
+    } = spawn;
+    let cancel = spec.cancel.clone();
+    // The run streams under the app's budget, like the turn it left.
+    spec.ctx.sessions = Some(sessions.clone());
+    // The run's progress goes on a channel of its own and is forwarded under
+    // its generation id, so the orchestrator can tell it from the turn's;
+    // its end follows on the same path, after the channel has closed, so
+    // the landing never overtakes the last filed round.
+    let (done_tx, mut done_rx) = tokio::sync::mpsc::unbounded_channel::<GenMessage>();
+    let (end_tx, end_rx) = tokio::sync::oneshot::channel::<BackgroundMessage>();
+    let forward = bg_tx;
+    tokio::spawn(async move {
+        while let Some(message) = done_rx.recv().await {
+            if let GenMessage::Progress { progress, .. } = message {
+                let _ = forward.send(BackgroundMessage::Progress {
+                    generation,
+                    progress,
+                });
+            }
+        }
+        if let Ok(end) = end_rx.await {
+            let _ = forward.send(end);
+        }
+    });
+    // Nothing ever asks: the gate is off, and the receiver is never read.
+    let (_confirm_tx, confirm_rx) = tokio::sync::mpsc::unbounded_channel();
+    let slots = parts.background.clone();
+    let shared = TurnShared {
+        backend: parts.backend,
+        registry: parts.registry,
+        confirm_dangerous: false,
+        image_cfg: parts.image_cfg,
+        confirm: tokio::sync::Mutex::new(ConfirmState {
+            rx: confirm_rx,
+            allowed_for_turn: HashSet::new(),
+        }),
+        counters: TurnCounters::default(),
+        id: generation,
+        max_rounds: parts.max_rounds,
+        workspace_max_rounds: parts.workspace_max_rounds,
+        subagent: parts.subagent,
+        sessions,
+        concurrent_calls: parts.concurrent_calls,
+        engine_mode: parts.engine_mode,
+        model_name: parts.model_name,
+        ui_loc: parts.ui_loc,
+        evt_tx,
+        done_tx,
+        compaction_enabled: parts.compaction_enabled,
+        compaction_summary: parts.compaction_summary,
+        background: parts.background,
+    };
+    let loc = spec.ctx.loc;
+    tokio::spawn(async move {
+        let CallDone { result, effects } = run_child(&shared, loc, spec).await;
+        slots.release();
+        let run = result
+            .subagent
+            .expect("run_child always lands a run on its result");
+        let _ = end_tx.send(BackgroundMessage::Done {
+            generation,
+            run,
+            result: result.text,
+            effects,
+        });
+        // Dropping the shared part closes the run's progress channel; the
+        // forwarder then delivers the end above, last.
+        drop(shared);
+    });
+    cancel
 }
 
 /// Runs one sub-agent over the turn's shared part: a child loop of the same
@@ -2675,6 +3052,7 @@ async fn run_child(
         outcome: None,
         tokens: 0,
         participants: Vec::new(),
+        background: false,
     })));
 
     let mut child = TurnLoop {
@@ -2747,6 +3125,7 @@ async fn run_child(
         outcome: Some(outcome),
         tokens: child_tokens,
         participants: Vec::new(),
+        background: false,
     };
     // Effects go to the chat they describe (research §3.4): identity to the
     // run, environment to the parent — which mirrors an attachment into its
@@ -2998,6 +3377,7 @@ impl TurnLoop<'_> {
             outcome: None,
             tokens: 0,
             participants: participants.clone(),
+            background: false,
         })));
 
         let run = run_id;
@@ -3072,6 +3452,7 @@ impl TurnLoop<'_> {
             outcome: Some(outcome),
             tokens: st.tokens,
             participants,
+            background: false,
         };
 
         // The result closes the door (docs/lessons.md §4): how it ended, and

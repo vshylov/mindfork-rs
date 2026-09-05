@@ -262,6 +262,13 @@ fn bare_orch_rx() -> (tempfile::TempDir, Orchestrator, UnboundedReceiver<AppEven
         mcp: McpManager::new(unbounded_channel().0),
         confirm: None,
         inflight: None,
+        background_runs: Vec::new(),
+        bg_run_tx: unbounded_channel().0,
+        background_slots: Arc::new(super::generation::BackgroundSlots::new(
+            crate::shared::config::DEFAULT_SUBAGENT_BACKGROUND_MAX,
+        )),
+        pending_landings: Vec::new(),
+        session_budget_memo: None,
         imp_cancel: None,
         imp_gen: None,
         imp_done_tx,
@@ -604,6 +611,7 @@ fn orch_ready_for_self_consolidation() -> (tempfile::TempDir, Orchestrator, Uuid
 // ---------- test submodules (god-object breakup: docs/history/refactoring-god-objects.md, stage 3) ----------
 
 mod attachments;
+mod background;
 mod chats;
 mod compaction;
 mod concurrent;

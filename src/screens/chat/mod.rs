@@ -164,6 +164,13 @@ pub enum ChatIntent {
         id: Uuid,
         expanded: bool,
     },
+    /// Stop a background sub-agent run (command `/subagents stop [n]`,
+    /// spec §9.3.2): `id` is the run's own id, resolved here from the list's
+    /// cards — the open transcript's, or the n-th running one under the
+    /// open chat.
+    StopSubagentRun {
+        id: Uuid,
+    },
     /// Write the open chat to a file (command `/export [md|json] [path]`).
     /// The orchestrator owns the conversation and the disk, so it formats and
     /// writes; a relative path (or a generated name) resolves against the
@@ -602,6 +609,9 @@ pub struct ChatScreen {
     /// Whether background self-model auto-reflection is running (a quiet
     /// status-bar indicator).
     reflecting: bool,
+    /// Sub-agent runs out in the background (`AppEvent::BackgroundRuns`,
+    /// spec §9.3.2): a quiet indicator with the count; `0` — none.
+    background_runs: u32,
     /// Whether background note auto-consolidation ("sleep") is running (a
     /// quiet indicator).
     consolidating: bool,
@@ -715,6 +725,7 @@ impl ChatScreen {
             loc: locale(crate::shared::i18n::Lang::default()),
             mouse_scroll: false,
             reflecting: false,
+            background_runs: 0,
             consolidating: false,
             self_consolidating: false,
             compacting: false,
@@ -859,6 +870,12 @@ impl ChatScreen {
         self.reflecting = active;
     }
 
+    /// How many sub-agent runs are out in the background — the quiet
+    /// indicator's count (spec §9.3.2); `0` clears it.
+    pub fn set_background_runs(&mut self, out: u32) {
+        self.background_runs = out;
+    }
+
     /// Sets/clears the active note auto-consolidation flag ("sleep").
     pub fn set_consolidating(&mut self, active: bool) {
         self.consolidating = active;
@@ -918,6 +935,15 @@ impl ChatScreen {
         }
         if self.compacting {
             parts.push(self.loc.t("ui.chat.bg.compact"));
+        }
+        let background_runs = (self.background_runs > 0).then(|| {
+            self.loc.tf(
+                "ui.chat.bg.background_runs",
+                &[("n", &self.background_runs.to_string())],
+            )
+        });
+        if let Some(label) = background_runs.as_deref() {
+            parts.push(label);
         }
         // The sub-agent chip after the background tasks: it belongs to the
         // turn in flight, like the retry — the two read together at the end.

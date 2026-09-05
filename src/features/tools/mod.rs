@@ -628,6 +628,8 @@ pub struct ToolGates {
     pub fs: bool,
     /// `mcp.enabled` — every `mcp__…` tool.
     pub mcp: bool,
+    /// `tools.subagent_background` — `start_subagent` (spec §9.3.2).
+    pub background: bool,
     /// Whether **this chat** has a compacted-away range (spec §6.7, S12).
     pub history: bool,
     /// Whether **this chat** has a code project attached (spec §9.12).
@@ -670,6 +672,7 @@ pub fn effective_tool_ids(enabled: &[ToolId], gates: &ToolGates) -> Vec<ToolId> 
                 Some(meta::ToolGate::Python) => gates.python,
                 Some(meta::ToolGate::Fs) => gates.fs,
                 Some(meta::ToolGate::Mcp) => gates.mcp,
+                Some(meta::ToolGate::Background) => gates.background,
                 None => true,
             }
         })
@@ -783,6 +786,11 @@ pub fn standard_registry(cfg: &ToolConfig) -> ToolRegistry {
     reg.register(Arc::new(subagent::CallSubagent {
         parallel: cfg.subagent_parallel,
     }));
+    // The background twin (spec §9.3.2, docs/research/background-subagents.md
+    // §4.1): in the catalog and the profile's toggles like any tool, and
+    // gated by `tools.subagent_background` in `effective_tool_ids` — at the
+    // default it never reaches a request.
+    reg.register(Arc::new(subagent::StartSubagent));
     reg.register(Arc::new(dialogue::RunDialogue));
     // Both tools follow addresses the model picked, so both are built on a client that
     // refuses local and private ones (docs/research/fetch-url-address-policy.md, fork F1).
@@ -1319,6 +1327,7 @@ mod tests {
         let eff = effective_tool_ids(
             &all_tool_ids(),
             &ToolGates {
+                background: false,
                 history: true,
                 ..Default::default()
             },
@@ -1334,6 +1343,7 @@ mod tests {
         let eff = effective_tool_ids(
             &enabled,
             &ToolGates {
+                background: false,
                 web: true,
                 history: true,
                 ..Default::default()
@@ -1347,6 +1357,7 @@ mod tests {
         let eff = effective_tool_ids(
             &enabled,
             &ToolGates {
+                background: false,
                 history: true,
                 ..Default::default()
             },
@@ -1364,6 +1375,7 @@ mod tests {
         let eff = effective_tool_ids(
             &enabled,
             &ToolGates {
+                background: false,
                 fs: true,
                 history: true,
                 ..Default::default()
@@ -1388,6 +1400,7 @@ mod tests {
             let eff = effective_tool_ids(
                 &enabled,
                 &ToolGates {
+                    background: false,
                     history: true,
                     sampling_provider: provider,
                     ..Default::default()
@@ -1415,6 +1428,7 @@ mod tests {
         let eff = effective_tool_ids(
             &enabled,
             &ToolGates {
+                background: false,
                 ..Default::default()
             },
         );
@@ -1428,6 +1442,7 @@ mod tests {
         let eff = effective_tool_ids(
             &enabled,
             &ToolGates {
+                background: false,
                 history: true,
                 ..Default::default()
             },
@@ -1444,6 +1459,7 @@ mod tests {
         let eff = effective_tool_ids(
             &enabled,
             &ToolGates {
+                background: false,
                 history: true,
                 ..Default::default()
             },
@@ -1453,6 +1469,7 @@ mod tests {
         let eff = effective_tool_ids(
             &enabled,
             &ToolGates {
+                background: false,
                 mcp: true,
                 history: true,
                 ..Default::default()
@@ -1475,6 +1492,7 @@ mod tests {
         let detached = effective_tool_ids(
             &enabled,
             &ToolGates {
+                background: false,
                 history: true,
                 ..Default::default()
             },
@@ -1486,6 +1504,7 @@ mod tests {
         let attached = effective_tool_ids(
             &enabled,
             &ToolGates {
+                background: false,
                 history: true,
                 workspace: true,
                 ..Default::default()
@@ -1511,6 +1530,7 @@ mod tests {
             let offered = effective_tool_ids(
                 &enabled,
                 &ToolGates {
+                    background: false,
                     history: true,
                     workspace: true,
                     workspace_commands: code::WorkspaceCommands::of(&ws),
@@ -1535,6 +1555,7 @@ mod tests {
         let narrow = effective_tool_ids(
             &one,
             &ToolGates {
+                background: false,
                 history: true,
                 workspace: true,
                 ..Default::default()
@@ -1552,6 +1573,7 @@ mod tests {
         let fs_off = effective_tool_ids(
             &enabled,
             &ToolGates {
+                background: false,
                 history: true,
                 workspace: true,
                 ..Default::default()

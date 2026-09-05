@@ -74,6 +74,9 @@ impl Orchestrator {
         // built there), so they rebuild it too.
         if self.config.tools != old.tools || self.config.video != old.video {
             self.rebuild_registry();
+            // The cap on background runs applies to the next start.
+            self.background_slots
+                .set_max(self.config.tools.subagent_background_max);
         }
         self.emit_settings();
     }

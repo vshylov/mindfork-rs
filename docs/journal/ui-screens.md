@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (57)
+## Entries (58)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -69,6 +69,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the self-model screen lists its observations newest first (done)
 - Post-M9: one hint grid, and footers that name only the keys that work (done)
 - Post-M9: the privacy policy joins the disclaimer on one "Legal" tab (done)
+- Post-M9: the background run on the list, in the feed and on the bar (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -3021,3 +3022,31 @@ screenshot pipeline, whose dumps and images are regenerated here.
   wizard caption by pointing at the F1 tab's word — now the same rule stated
   twice rather than one borrowed from the other. 2745 unit tests green,
   129 `#[ignore]`.
+
+### Post-M9: the background run on the list, in the feed and on the bar (done)
+- **What**: the surfaces of a sub-agent run out in the background (spec
+  §9.3.2, [docs/research/background-subagents.md](../research/background-subagents.md)
+  §4.9). The chat list: the run's row comes from its placeholder record the
+  moment the parent lands, and the orchestrator's `background_runs` seat
+  marks it *running* and keeps its count growing (`emit_chat_list` updates
+  the card in place rather than pushing a second one); a stored run with
+  `background` and no outcome reads **unfinished** (`ChildSummary::background`,
+  `ui.chatlist.run.unfinished`) — the app was closed while it was out — where
+  a turn's would read *interrupted*. The transcript opens and streams through
+  the same `view()`/`forward_child`/`activate_focused` paths as a turn
+  child's (`LiveTurn` keyed by the run's own generation id), and moving to
+  it from the parent while a turn runs there cancels nothing
+  (`switch_within_turn` covers the parent's background runs). The feed: the
+  task notification is a `System` row, so it gets the note look for free
+  (`FeedRole::Note`) — no new bubble kind. The status bar: a quiet
+  *"in background: n"* indicator (`AppEvent::BackgroundRuns { out }`,
+  `ChatScreen::set_background_runs`) beside the silent tasks', cleared at
+  zero; the sub-agent chip stays the turn's. `/subagents` gained `stop [n]`
+  (`ChatIntent::StopSubagentRun`, resolved on the screen from the list's
+  cards: the open transcript's run, or the n-th one out under the chat, or
+  the only one), with notes for "which one" and "none out". Settings: three
+  rows in the agentic-loop group, the labels kept under `LABEL_CAP`; the
+  gallery panel height rose to 33 so the Tools capture still fills its area.
+- **Not yet**: a key on the open transcript that stops the run (the
+  footer rule of spec §11.2 — advertise only what works — is why the
+  command came first).

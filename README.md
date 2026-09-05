@@ -215,6 +215,12 @@ build the moment they drift from what the app actually renders
   persona the assistant composes, with the assistant's own tools (minus
   subagents, history read-back and the self-model), no history of the chat,
   no recursion; its transcript is kept on the call and shows as a child chat.
+- **`start_subagent`** — the same delegation in the **background** (opt-in:
+  "Subagent: background runs" in Settings → Tools): the call returns at
+  once, the run outlives the reply, and its result arrives later as a task
+  notification the assistant reports on by itself when the chat is open and
+  idle. `/subagents stop [n]` ends one; a background run never asks for
+  confirmations — the profile's tool set is the control.
 - **Parallel tool calls** — when the assistant issues several reads in one
   reply (two files, three pages), they run at once on a cloud engine (**4** at
   a time by default; `Ctrl+P` → the engine's Model tab → "Parallel tool

@@ -863,6 +863,11 @@ pub const DEFAULT_SUBAGENT_RUN_TIMEOUT_SECS: u64 = 600;
 /// (`tools.subagent_parallel`): one, i.e. the sequential behaviour the tool
 /// shipped with (docs/research/parallel-subagents.md §4.2).
 pub const DEFAULT_SUBAGENT_PARALLEL: u32 = 1;
+/// Default cap on the sub-agent runs out in the **background** at once
+/// (`tools.subagent_background_max`, spec §9.3.2,
+/// docs/research/background-subagents.md §4.8): a `start_subagent` past it is
+/// refused with a result that names the cap.
+pub const DEFAULT_SUBAGENT_BACKGROUND_MAX: u32 = 2;
 /// Default time limit for a whole dialogue run (`run_dialogue`, spec §9.13).
 /// An order of magnitude above the sub-agent's on purpose: a 16-message
 /// dialogue on a local thinking model is ~25 sequential requests, measured at
@@ -1039,6 +1044,20 @@ pub struct ToolSettings {
     /// another, in the model's order, as they always have. Their request
     /// streams share the engine's `sessions` budget.
     pub subagent_parallel: u32,
+    /// Offer `start_subagent` — a sub-agent run that outlives the turn which
+    /// started it, its result delivered as a task notification in a later
+    /// turn (spec §9.3.2, docs/research/background-subagents.md). **Off** by
+    /// default: the tool is absent from the catalog and nothing about a turn
+    /// changes. A background run never asks for a confirmation: the profile's
+    /// tool set is the control (research fork F3, user's decision).
+    pub subagent_background: bool,
+    /// When a background run ends while its chat is open and idle, start a
+    /// turn at once so the assistant reports the result (research §4.4);
+    /// off — the notification waits for the next message.
+    pub subagent_background_wake: bool,
+    /// How many background runs may be out at once; a `start_subagent` past
+    /// the cap is refused with a result that says so (research §4.8).
+    pub subagent_background_max: u32,
     /// Ask the user before the agentic loop runs a tool marked dangerous
     /// (`Tool::danger()` — spec §9.8). Off by default: opt-in, so the loop
     /// behaves exactly as before until the user turns it on.
@@ -1074,6 +1093,9 @@ impl Default for ToolSettings {
             subagent_run_timeout_secs: DEFAULT_SUBAGENT_RUN_TIMEOUT_SECS,
             dialogue_run_timeout_secs: DEFAULT_DIALOGUE_RUN_TIMEOUT_SECS,
             subagent_parallel: DEFAULT_SUBAGENT_PARALLEL,
+            subagent_background: false,
+            subagent_background_wake: true,
+            subagent_background_max: DEFAULT_SUBAGENT_BACKGROUND_MAX,
             confirm_dangerous: false,
             mcp_images: true,
         }

@@ -134,3 +134,39 @@ replaces that rule:
    own.
 
 Decisions 3–6 stand unchanged.
+
+## Amendment (2026-09-05) — the run outside the turn
+
+Decision 5 above — *the child lands with the turn* — was the whole of what
+kept a sub-agent inside the round that started it. The background track
+([docs/research/background-subagents.md](../research/background-subagents.md),
+forks F1–F10 decided by the user 2026-09-05, F3 against every confirmation)
+adds a second tool and lets a run outlive its turn:
+
+1. **`start_subagent` is a twin, not a flag.** Measured (research §3.1): an
+   optional boolean on `call_subagent` is silently omitted by one provider,
+   a second tool is used 3/3 on every cloud and 5/5 on the local gate
+   model. Offered only when `tools.subagent_background` is on (a gate, like
+   `web_search`'s), so the default catalog is byte-identical.
+2. **The run is owned by the orchestrator, not borrowed from the turn.** The
+   loop builds the same `ChildSpec` a group child gets, over a fresh token,
+   and hands it over as progress; the orchestrator spawns it as a task of
+   its own over a `TurnShared` built from the turn's cloneable parts, with
+   no confirmation round trip and the **app-wide** session budget — one
+   `Arc` every turn and run streams under, so the run and the next turn
+   take turns at `sessions = 1` and the admission guard covers both.
+3. **The record lands with the turn as a placeholder and is filled in by
+   id** — the auto-title's late-write route — deferred to the turn's
+   landing when one is still running in the chat, so a result never
+   precedes the round that was in flight when it arrived.
+4. **The result is a stored task notification**: a `System` row with the
+   run's id, user text on the wire merged in front of the next user
+   message, and a turn the app starts itself when the chat is open and
+   idle. A notification is a user-side row for regeneration and deletion.
+5. **No confirmations in a background run** (the user's decision): its
+   calls run as with `confirm_dangerous` off; the profile's tool set is the
+   control. `Esc` ends the turn and not the run; `/subagents stop`, the
+   deletion of the spawning exchange, a deleted chat and `Quit` end it, the
+   last landing every run *cancelled* from its mirror before the exit flush.
+
+Decisions 1–4 and 6 stand unchanged; decision 5 holds for a foreground run.

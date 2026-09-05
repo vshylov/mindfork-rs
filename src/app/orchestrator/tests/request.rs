@@ -423,3 +423,72 @@ fn a_chat_without_a_project_builds_an_unchanged_request() {
         req.system
     );
 }
+
+/// A task notification (spec §9.3.2, docs/research/background-subagents.md
+/// §4.4) is a `System` row for the feed and **user text** on the wire: merged
+/// in front of the user message that follows it — one message, the
+/// notification first — alone when it is the last user-side row (a turn the
+/// app started on it), and alone before an assistant row.
+#[test]
+fn a_notification_is_user_text_merged_into_the_next_user_message() {
+    let p = Profile::new("X", "Ты — X.");
+    let run = uuid::Uuid::new_v4();
+    let mut chat = Chat::from_profile(&p, "c");
+    chat.push_message(Message::user("delegate"));
+    chat.push_message(Message::assistant("started"));
+    chat.push_message(Message::notification(
+        run,
+        "[note] the run finished: harsh view",
+    ));
+    chat.push_message(Message::user("thanks"));
+
+    let req = request_of(&chat, &CompactionSettings::default(), false);
+    let roles: Vec<_> = req.messages.iter().map(|m| m.role).collect();
+    assert_eq!(
+        roles,
+        [
+            crate::shared::api::contract::ApiRole::User,
+            crate::shared::api::contract::ApiRole::Assistant,
+            crate::shared::api::contract::ApiRole::User
+        ],
+        "{:?}",
+        req.messages
+    );
+    assert_eq!(
+        req.messages[2].content,
+        "[note] the run finished: harsh view
+
+thanks"
+    );
+
+    // Alone at the end: the wake turn's request.
+    chat.messages.pop();
+    let req = request_of(&chat, &CompactionSettings::default(), false);
+    assert_eq!(req.messages.len(), 3);
+    assert_eq!(
+        req.messages[2].role,
+        crate::shared::api::contract::ApiRole::User
+    );
+    assert_eq!(
+        req.messages[2].content,
+        "[note] the run finished: harsh view"
+    );
+
+    // Alone before an assistant row: the reply it woke, replayed.
+    chat.push_message(Message::assistant("the review is in"));
+    let req = request_of(&chat, &CompactionSettings::default(), false);
+    let roles: Vec<_> = req.messages.iter().map(|m| m.role).collect();
+    assert_eq!(
+        roles,
+        [
+            crate::shared::api::contract::ApiRole::User,
+            crate::shared::api::contract::ApiRole::Assistant,
+            crate::shared::api::contract::ApiRole::User,
+            crate::shared::api::contract::ApiRole::Assistant
+        ]
+    );
+    // A plain `System` row (a dialogue director's note) still goes nowhere.
+    chat.push_message(Message::new(MessageRole::System, "Director: wrap up"));
+    let req = request_of(&chat, &CompactionSettings::default(), false);
+    assert_eq!(req.messages.len(), 4);
+}

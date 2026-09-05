@@ -29,6 +29,7 @@
 
 mod attachments;
 mod background;
+mod background_runs;
 mod chats;
 mod compaction;
 mod consolidation;
@@ -178,6 +179,9 @@ pub async fn run(deps: OrchestratorDeps) {
     // consolidation): the task sends `(kind, Ok/Err(reason))`, the loop handles
     // it in one branch via `handle_bg_done`.
     let (bg_done_tx, mut bg_done_rx) = unbounded_channel::<(BackgroundKind, Result<(), String>)>();
+    // The background sub-agent runs' channel (progress and ends): their own,
+    // since a run outlives the turn whose channel a child normally shares.
+    let (bg_run_tx, mut bg_run_rx) = unbounded_channel::<generation::BackgroundMessage>();
     // Internal "speech finished" channel (background task → loop): the loop
     // distinguishes its own outcome from a stale one by the task's generation.
     let (tts_done_tx, mut tts_done_rx) = unbounded_channel::<Uuid>();
@@ -218,6 +222,13 @@ pub async fn run(deps: OrchestratorDeps) {
         chats: Vec::new(),
         confirm: None,
         inflight: None,
+        background_runs: Vec::new(),
+        bg_run_tx,
+        background_slots: Arc::new(generation::BackgroundSlots::new(
+            crate::shared::config::DEFAULT_SUBAGENT_BACKGROUND_MAX,
+        )),
+        pending_landings: Vec::new(),
+        session_budget_memo: None,
         active_id: None,
         gen_state: GenState::Idle,
         done_tx,
@@ -240,6 +251,8 @@ pub async fn run(deps: OrchestratorDeps) {
     };
 
     // Bring up the servers from config and emit the startup events/settings.
+    orch.background_slots
+        .set_max(orch.config.tools.subagent_background_max);
     orch.apply_chat_settings();
     orch.apply_impersonation_settings();
     orch.apply_embed_settings();
@@ -352,6 +365,11 @@ pub async fn run(deps: OrchestratorDeps) {
             done = bg_done_rx.recv() => {
                 if let Some((kind, res)) = done {
                     orch.handle_bg_done(kind, res);
+                }
+            }
+            message = bg_run_rx.recv() => {
+                if let Some(message) = message {
+                    orch.handle_background_message(message);
                 }
             }
             done = tts_done_rx.recv() => {
@@ -610,6 +628,25 @@ struct Orchestrator {
     /// lands. Created by `start_generation`, fed by [`Self::handle_progress`],
     /// dropped by `handle_done`. Never a source of truth: `GenResult` is.
     inflight: Option<InflightTurn>,
+    /// The sub-agent runs out in the **background** (spec §9.3.2,
+    /// docs/research/background-subagents.md §4.9): one seat per run, its
+    /// mirror outliving any turn. See [`background_runs`].
+    background_runs: Vec<background_runs::BackgroundRun>,
+    /// The background runs' channel — their progress and their ends
+    /// ([`generation::BackgroundMessage`]).
+    bg_run_tx: UnboundedSender<generation::BackgroundMessage>,
+    /// How many background runs are out, against the cap; shared with
+    /// every turn ([`generation::BackgroundSlots`]).
+    background_slots: Arc<generation::BackgroundSlots>,
+    /// Runs that ended while a turn was running in their chat: their
+    /// records land with that turn, and so do they (research §4.4, §5).
+    pending_landings: Vec<background_runs::PendingLanding>,
+    /// The session budget the turns and the background runs share, with
+    /// the key it was built for (research §4.7; [`background_runs::BudgetKey`]).
+    session_budget_memo: Option<(
+        background_runs::BudgetKey,
+        Arc<crate::shared::session_budget::SessionBudget>,
+    )>,
     /// Visible chats, entirely in memory (the orchestrator is the sole writer).
     chats: Vec<Chat>,
     active_id: Option<Uuid>,
@@ -756,6 +793,9 @@ impl Orchestrator {
                 if let Some(token) = &self.tts_cancel {
                     token.cancel();
                 }
+                // Every background run lands `cancelled` from its mirror
+                // before the exit flush (research fork F7).
+                self.stop_all_background_runs();
                 self.cancel_all_bg();
                 self.mcp.shutdown();
                 return true;
@@ -778,6 +818,7 @@ impl Orchestrator {
             AppCommand::SetChildrenExpanded { id, expanded } => {
                 self.handle_set_children_expanded(id, expanded)
             }
+            AppCommand::StopSubagentRun { id } => self.handle_stop_subagent_run(id),
             AppCommand::RegenerateLast => self.handle_regenerate(),
             AppCommand::ContinueLast => self.handle_continue(),
             AppCommand::DeleteLastExchange => self.handle_delete_last(),
@@ -1093,6 +1134,17 @@ impl Orchestrator {
         if let Some(chat) = self.chats.iter().find(|c| c.id == id) {
             return Some(ChatView::Top(chat));
         }
+        // A run out in the background: its mirror, ahead of the placeholder
+        // its record landed with (docs/research/background-subagents.md
+        // §4.9) — the transcript grows here until the run ends.
+        if let Some(seat) = self.background_run(id)
+            && let Some(parent) = self.chats.iter().find(|c| c.id == seat.chat)
+        {
+            return Some(ChatView::Child {
+                parent,
+                run: &seat.child.run,
+            });
+        }
         if let Some(found) = self
             .chats
             .iter()
@@ -1127,6 +1179,17 @@ impl Orchestrator {
         let Some(parent_id) = self.parent_of(id) else {
             return false;
         };
+        // A run out in the background: the mirror, which the landing
+        // carries onto the record (a title given while it ran).
+        if let Some(child) = self
+            .background_runs
+            .iter_mut()
+            .find(|b| b.run_id == id)
+            .map(|b| &mut b.child)
+        {
+            edit(&mut child.run);
+            return true;
+        }
         if let Some(run) = self.chat_mut(parent_id).and_then(|c| c.child_mut(id)) {
             edit(run);
             self.mark_dirty(parent_id);
@@ -1166,11 +1229,28 @@ impl Orchestrator {
                 });
                 self.emit_chat_list();
             }
+            // A `start_subagent` call: the run leaves the turn for a seat of
+            // its own (docs/research/background-subagents.md §4.2).
+            TurnProgress::BackgroundStart(start) => {
+                let chat = turn.chat;
+                self.spawn_background_run(start, chat);
+            }
+            other => self.handle_child_progress(other),
+        }
+    }
+
+    /// One step of a sub-agent run's life, applied to whichever mirror
+    /// holds the run — the turn's children or a background seat
+    /// (docs/research/background-subagents.md §4.9): every child step names
+    /// its run, and that id is the key. A step that is not a child's is
+    /// nothing here.
+    fn handle_child_progress(&mut self, progress: TurnProgress) {
+        match progress {
             // A dialogue's next line (spec §9.13): the partial starts over on
             // the given side; the open transcript is told which bubble the
             // coming stream belongs to.
             TurnProgress::ChildLineStarted { run, role } => {
-                let Some(child) = turn.child_mut(run) else {
+                let Some(child) = self.child_mut_any(run) else {
                     return;
                 };
                 child.partial = Default::default();
@@ -1184,7 +1264,7 @@ impl Orchestrator {
             // line): the mirror takes the full replacement, and so does the
             // open transcript — appending cannot express an edit.
             TurnProgress::ChildTranscript { run, messages } => {
-                let Some(child) = turn.child_mut(run) else {
+                let Some(child) = self.child_mut_any(run) else {
                     return;
                 };
                 child.run.messages = messages.clone();
@@ -1198,7 +1278,7 @@ impl Orchestrator {
                 self.emit_chat_list();
             }
             TurnProgress::ChildRoundFiled { run, messages } => {
-                let Some(child) = turn.child_mut(run) else {
+                let Some(child) = self.child_mut_any(run) else {
                     return;
                 };
                 child.run.messages.extend(messages.iter().cloned());
@@ -1217,7 +1297,7 @@ impl Orchestrator {
                 finished_at,
                 tokens,
             } => {
-                let Some(child) = turn.child_mut(run) else {
+                let Some(child) = self.child_mut_any(run) else {
                     return;
                 };
                 child.run.outcome = Some(outcome);
@@ -1244,7 +1324,7 @@ impl Orchestrator {
             // the screen, under the run's own stream id, only while the
             // transcript is the open conversation.
             TurnProgress::ChildStep { run, step } => {
-                let Some(child) = turn.child_mut(run) else {
+                let Some(child) = self.child_mut_any(run) else {
                     return;
                 };
                 apply_step(&mut child.partial, &step);
@@ -1303,6 +1383,10 @@ impl Orchestrator {
                 context_exact: false,
                 reasoning,
             }),
+            TurnProgress::RoundFiled(_)
+            | TurnProgress::OwnStep(_)
+            | TurnProgress::ChildStarted(_)
+            | TurnProgress::BackgroundStart(_) => {}
         }
     }
 
@@ -1312,7 +1396,7 @@ impl Orchestrator {
         if self.active_id != Some(run) {
             return;
         }
-        if let Some(child) = self.inflight.as_ref().and_then(|t| t.child(run)) {
+        if let Some(child) = self.child_any(run) {
             let _ = self.evt_tx.send(event(child.stream));
         }
     }
@@ -1324,10 +1408,17 @@ impl Orchestrator {
         let Some(turn) = self.inflight.as_ref() else {
             return false;
         };
-        if turn.children.is_empty() {
-            return false;
-        }
-        turn.covers(id) && self.active_id.is_some_and(|a| turn.covers(a))
+        // The turn's chat, its in-flight children, and the background runs
+        // of that chat (docs/research/background-subagents.md §4.9):
+        // looking at any of them is not leaving the turn.
+        let within = |x: Uuid| {
+            turn.covers(x)
+                || self
+                    .background_runs
+                    .iter()
+                    .any(|b| b.run_id == x && b.chat == turn.chat)
+        };
+        within(id) && self.active_id.is_some_and(within)
     }
 
     /// Rebuilds the tool registry: the standard set from config + live
@@ -1460,6 +1551,20 @@ impl Orchestrator {
                     })
                 })
             }
+        });
+        // A background run's transcript streams under its own id the same
+        // way, keyed by the run's own generation
+        // (docs/research/background-subagents.md §4.9).
+        let live_turn = live_turn.or_else(|| {
+            self.background_run(id).map(|seat| {
+                Box::new(crate::app::events::LiveTurn {
+                    turn: seat.generation,
+                    stream: seat.child.stream,
+                    role: seat.child.line_role,
+                    partial: Some(seat.child.partial.clone()),
+                    continues: false,
+                })
+            })
         });
         let event = match self.view(id) {
             Some(ChatView::Top(chat)) => {
@@ -1652,6 +1757,21 @@ impl Orchestrator {
                 let mut card = crate::entities::chat::ChildSummary::of(&child.run);
                 card.running = child.run.outcome.is_none();
                 parent.children.push(card);
+            }
+        }
+        // The runs out in the background: their placeholder card came from
+        // the chat; the mirror says *running* and how far it is
+        // (docs/research/background-subagents.md §4.9).
+        for seat in &self.background_runs {
+            let Some(parent) = summaries.iter_mut().find(|s| s.id == seat.chat) else {
+                continue;
+            };
+            let mut card = crate::entities::chat::ChildSummary::of(&seat.child.run);
+            card.running = seat.child.run.outcome.is_none();
+            card.background = true;
+            match parent.children.iter_mut().find(|c| c.id == seat.run_id) {
+                Some(existing) => *existing = card,
+                None => parent.children.push(card),
             }
         }
         summaries.sort_by_key(|s| std::cmp::Reverse(s.modified_at));

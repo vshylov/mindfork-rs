@@ -71,6 +71,10 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
         TPythonNet => toggle(|c| c.tools.python_net_enabled = !c.tools.python_net_enabled),
         TFs => toggle(|c| c.tools.fs_enabled = !c.tools.fs_enabled),
         TConfirmDangerous => toggle(|c| c.tools.confirm_dangerous = !c.tools.confirm_dangerous),
+        TSubBackground => toggle(|c| c.tools.subagent_background = !c.tools.subagent_background),
+        TSubBackgroundWake => {
+            toggle(|c| c.tools.subagent_background_wake = !c.tools.subagent_background_wake)
+        }
         TMcpEnabled => toggle(|c| c.mcp.enabled = !c.mcp.enabled),
         TMcpImages => toggle(|c| c.tools.mcp_images = !c.tools.mcp_images),
         ICompat => toggle(|c| c.interface.terminal_compat = !c.interface.terminal_compat),
@@ -508,6 +512,13 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
         TSubParallel => int(|c, t| {
             if let Ok(v) = t.parse::<u32>() {
                 c.tools.subagent_parallel = v.max(1);
+            }
+        }),
+        // The same floor: a cap of 0 would refuse every `start_subagent`
+        // while the tool is still offered — the setting above is the switch.
+        TSubBackgroundMax => int(|c, t| {
+            if let Ok(v) = t.parse::<u32>() {
+                c.tools.subagent_background_max = v.max(1);
             }
         }),
         TDialogueTimeout => int(|c, t| {

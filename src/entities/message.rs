@@ -133,6 +133,14 @@ pub struct Message {
     /// and a chat without images serializes exactly as before.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub images: Vec<MessageImage>,
+    /// A **task notification** (spec §9.3.2, docs/research/background-subagents.md
+    /// §4.4): the run whose result this row delivers. Stored on a `System` row —
+    /// the feed's note look — and sent to the model as *user* text, merged in
+    /// front of the user message that follows it, so a later request sees the
+    /// result exactly where the model first read it. Additive (ADR 0006 F12):
+    /// old chats read `None`, and a chat without one serializes as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notification: Option<Uuid>,
 }
 
 fn default_true() -> bool {
@@ -155,11 +163,27 @@ impl Message {
             tool_call_id: None,
             tool_name: None,
             images: Vec::new(),
+            notification: None,
         }
     }
 
     pub fn user(text: impl Into<String>) -> Self {
         Self::new(MessageRole::User, text)
+    }
+
+    /// A task notification delivering the background run `run`'s result
+    /// (see [`Message::notification`]): a `System` row for the feed, user text
+    /// on the wire.
+    pub fn notification(run: Uuid, text: impl Into<String>) -> Self {
+        let mut m = Self::new(MessageRole::System, text);
+        m.notification = Some(run);
+        m
+    }
+
+    /// Whether this row is a task notification — a user-side boundary of the
+    /// conversation for the model, a note for the feed.
+    pub fn is_notification(&self) -> bool {
+        self.notification.is_some()
     }
 
     /// A user message carrying the images staged with `/image attach` (spec §9.10).

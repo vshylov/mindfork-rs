@@ -370,7 +370,9 @@ Two modes (configured on the settings screen, `Ctrl+P`, "Model/server" section):
     ([docs/research/parallel-subagents.md](research/parallel-subagents.md)
     §3.6–§3.7). Raising `subagent_parallel` on a long-context profile is a
     reason to raise `--cache-ram` with it: budget ~2.5 GiB per parked
-    conversation on the 27B and ~5 GiB on the 31B. The field's hint shows how many slots the running server
+    conversation on the 27B and ~5 GiB on the 31B — and a sub-agent run out
+    in the background (`start_subagent`, spec §9.3.2) is one more
+    conversation to park beside the chat it left. The field's hint shows how many slots the running server
     reports (`total_slots` on `/props`).
   - **Parallel tool calls** (`concurrent_calls`, the same group): how many of
     the tool calls the assistant issues in one reply run at once, when they
