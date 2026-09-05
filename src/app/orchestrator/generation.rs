@@ -1776,29 +1776,6 @@ impl TurnLoop<'_> {
         });
     }
 
-    /// The dialogue's own status-bar chip (spec §9.13): which line is being
-    /// written, or that the director is judging the scene — so a parent turn
-    /// parked inside a long dialogue never reads as a stuck "generating"
-    /// (docs/lessons.md §4). Worded by the screen; cleared with the run.
-    fn dialogue_chip(
-        &self,
-        run: Uuid,
-        title: &str,
-        round: u32,
-        kind: crate::app::events::RunProgressKind,
-    ) {
-        let _ = self.shared.evt_tx.send(AppEvent::SubagentProgress {
-            generation_id: self.shared.id,
-            run,
-            progress: Some(crate::app::events::SubagentProgress {
-                name: title.to_string(),
-                round,
-                tool: None,
-                kind,
-            }),
-        });
-    }
-
     /// Sends one step of the turn to the orchestrator (see [`TurnProgress`]).
     fn progress(&self, progress: TurnProgress) {
         let _ = self.shared.done_tx.send(GenMessage::Progress {
@@ -1914,7 +1891,7 @@ impl TurnLoop<'_> {
             // The final round (Stop/Length/Cancelled/Error, or no calls).
             if let Some(mut m) = finalize_message(
                 &out,
-                &self.ctx,
+                &self.ctx.effective_sampling,
                 self.shared.engine_mode,
                 &self.shared.model_name,
             ) {
@@ -1990,7 +1967,7 @@ impl TurnLoop<'_> {
         let final_out = self.stream().await;
         if let Some(mut m) = finalize_message(
             &final_out,
-            &self.ctx,
+            &self.ctx.effective_sampling,
             self.shared.engine_mode,
             &self.shared.model_name,
         ) {
@@ -3276,15 +3253,103 @@ fn conversation_brief(
     format!("{}\n{}", loc.t("prompt.dialogue.brief"), parts.join("\n\n"))
 }
 
+/// Everything a directed dialogue needs from the turn that staged it
+/// (spec §9.13, docs/research/background-dialogues.md F6 — the user's
+/// decision, 2026-09-05). The driver used to be a `TurnLoop` method and
+/// reached into the loop for five unrelated things: the locale and sampling
+/// of `ToolContext`, the parent chat's persona, the turn's live request tail
+/// (from which the director's brief is folded) and the turn's cancellation
+/// token. Naming them makes the scene runnable from anywhere that can
+/// produce them — the live turn below, and a background task from a
+/// snapshot — without the loop's other twenty fields coming along.
+struct DialogueCtx<'a> {
+    /// The turn's shared parts: the backend, the counters, the limits, the
+    /// event and progress senders. Borrowed immutably, like every loop's.
+    shared: &'a TurnShared,
+    /// The profile's language — every prompt and result text of the scene.
+    loc: &'static crate::shared::i18n::Locale,
+    /// The sampling the participants' lines run under (the director's is
+    /// derived from it: muted, with a small verdict cap).
+    sampling: SamplingConfig,
+    /// The parent chat's persona — the head of the director's system prompt
+    /// (fork F6 of the dialogue track: the main agent directs).
+    persona: String,
+    /// The director's conversation brief, already folded
+    /// ([`conversation_brief`]): the rolling summary plus the tail of the
+    /// parent's own conversation.
+    brief: String,
+    /// The scene's own token — a child of the turn's for a foreground
+    /// dialogue, so `Esc` ends both.
+    cancel: CancellationToken,
+    /// The nesting guard's input: `0` for a scene staged by the turn's own
+    /// loop, which is the only depth that may stage one.
+    depth: u8,
+}
+
 impl TurnLoop<'_> {
-    /// Runs a directed dialogue (spec §9.13, docs/research/two-agent-dialogue.md):
-    /// two persona contexts and a director context taking strictly sequential
-    /// turns on the turn's one backend — at most one request in flight, which
-    /// is the feature's VRAM contract (research §3.9). Returns the result text
-    /// and the run for the record, exactly as `run_subagent` does.
+    /// Runs a directed dialogue (spec §9.13, docs/research/two-agent-dialogue.md)
+    /// on behalf of the turn: names what the scene needs from this loop and
+    /// hands it to [`DialogueCtx::run`], which is the driver.
     async fn run_dialogue(&mut self, args: &serde_json::Value) -> CallResult {
+        DialogueCtx {
+            shared: self.shared,
+            loc: self.ctx.loc,
+            sampling: self.ctx.effective_sampling.clone(),
+            persona: self.ctx.system_message.clone(),
+            brief: conversation_brief(
+                self.shared.compaction_summary.as_deref(),
+                &self.request.messages,
+                self.ctx.loc,
+            ),
+            cancel: self.cancel.child_token(),
+            depth: self.depth,
+        }
+        .run(args)
+        .await
+    }
+}
+
+impl DialogueCtx<'_> {
+    /// The dialogue's own status-bar chip (spec §9.13): which line is being
+    /// written, or that the director is judging the scene — so a parent turn
+    /// parked inside a long dialogue never reads as a stuck "generating"
+    /// (docs/lessons.md §4). Worded by the screen; cleared with the run.
+    fn dialogue_chip(
+        &self,
+        run: Uuid,
+        title: &str,
+        round: u32,
+        kind: crate::app::events::RunProgressKind,
+    ) {
+        let _ = self.shared.evt_tx.send(AppEvent::SubagentProgress {
+            generation_id: self.shared.id,
+            run,
+            progress: Some(crate::app::events::SubagentProgress {
+                name: title.to_string(),
+                round,
+                tool: None,
+                kind,
+            }),
+        });
+    }
+
+    /// Sends one step of the scene to the orchestrator, keyed by the turn
+    /// that owns it — [`TurnLoop::progress`] for a scene.
+    fn progress(&self, progress: TurnProgress) {
+        let _ = self.shared.done_tx.send(GenMessage::Progress {
+            id: self.shared.id,
+            progress,
+        });
+    }
+
+    /// The scene itself (spec §9.13, research §3.3): two persona contexts
+    /// and a director context taking strictly sequential turns on one
+    /// backend — at most one request of the scene in flight, the feature's
+    /// VRAM contract (research §3.9). Returns the result text and the run
+    /// for the record, exactly as `run_subagent` does.
+    async fn run(&self, args: &serde_json::Value) -> CallResult {
         use crate::features::tools::dialogue::{self, RUN_DIALOGUE_ID};
-        let loc = self.ctx.loc;
+        let loc = self.loc;
         let parsed = match dialogue::DialogueArgs::parse(args, loc) {
             Ok(a) => a,
             Err(err) => {
@@ -3311,7 +3376,7 @@ impl TurnLoop<'_> {
         // Participants ride the chat's sampling under the shared per-line cap;
         // the director's checkpoints run with thinking muted (the probe's
         // empty-turn rule, research §5.1) and a small verdict cap.
-        let mut sampling = self.ctx.effective_sampling.clone();
+        let mut sampling = self.sampling.clone();
         sampling.max_tokens = Some(
             sampling
                 .max_tokens
@@ -3333,12 +3398,7 @@ impl TurnLoop<'_> {
         // The director is the main agent directing (fork F6): the parent
         // turn's own persona, the conversation brief, then the appendix. The
         // self-model injection stays top-turn-only (ADR 0010 F3).
-        let brief = conversation_brief(
-            self.shared.compaction_summary.as_deref(),
-            &self.request.messages,
-            loc,
-        );
-        let director_system = [self.ctx.system_message.as_str(), &brief, &appendix]
+        let director_system = [self.persona.as_str(), &self.brief, &appendix]
             .iter()
             .filter(|s| !s.trim().is_empty())
             .copied()
@@ -3362,7 +3422,7 @@ impl TurnLoop<'_> {
             Message::user(parsed.opening.clone())
         };
         let run_id = Uuid::new_v4();
-        let cancel = self.cancel.child_token();
+        let cancel = self.cancel.clone();
         self.progress(TurnProgress::ChildStarted(Box::new(SubagentRun {
             id: run_id,
             kind: RunKind::Dialogue,
@@ -3511,7 +3571,7 @@ impl TurnLoop<'_> {
     /// lines, until the director stops it or the cap fires.
     #[allow(clippy::too_many_arguments)] // one internal seam; a struct would re-group what DialogueState already holds
     async fn dialogue_loop(
-        &mut self,
+        &self,
         st: &mut DialogueState,
         parsed: &crate::features::tools::dialogue::DialogueArgs,
         labels: (&str, &str),
@@ -3577,7 +3637,7 @@ impl TurnLoop<'_> {
     /// all-thinking spiral the probe measured (research §5.1).
     #[allow(clippy::too_many_arguments)]
     async fn dialogue_line(
-        &mut self,
+        &self,
         st: &mut DialogueState,
         parsed: &crate::features::tools::dialogue::DialogueArgs,
         labels: (&str, &str),
@@ -3589,7 +3649,7 @@ impl TurnLoop<'_> {
         run: Uuid,
     ) -> Result<Message, DialogueEnd> {
         use crate::features::tools::dialogue;
-        let loc = self.ctx.loc;
+        let loc = self.loc;
         let persona = if speaker_a { &parsed.a } else { &parsed.b };
         let notes = if speaker_a { &st.notes_a } else { &st.notes_b };
         let who = if speaker_a { labels.0 } else { labels.1 };
@@ -3670,7 +3730,7 @@ impl TurnLoop<'_> {
         }
         let Some(mut m) = finalize_message(
             &out,
-            &self.ctx,
+            &self.sampling,
             self.shared.engine_mode,
             &self.shared.model_name,
         ) else {
@@ -3692,7 +3752,7 @@ impl TurnLoop<'_> {
     /// `continue` — the dialogue proceeds toward its cap rather than stalling.
     #[allow(clippy::too_many_arguments)]
     async fn dialogue_checkpoint(
-        &mut self,
+        &self,
         st: &mut DialogueState,
         parsed: &crate::features::tools::dialogue::DialogueArgs,
         labels: (&str, &str),
@@ -3705,7 +3765,7 @@ impl TurnLoop<'_> {
         run: Uuid,
     ) -> Result<Option<(String, Option<String>)>, DialogueEnd> {
         use crate::features::tools::dialogue::{self, Verdict};
-        let loc = self.ctx.loc;
+        let loc = self.loc;
         let user = self.dialogue_script(st, labels);
         st.director_msgs.push(ApiMessage::user(user));
         let request = ChatRequest {
@@ -3781,7 +3841,7 @@ impl TurnLoop<'_> {
     /// Advances `rendered` — interventions are excluded, since the director's
     /// own tool-call turns already carry them.
     fn dialogue_script(&self, st: &mut DialogueState, labels: (&str, &str)) -> String {
-        let loc = self.ctx.loc;
+        let loc = self.loc;
         let new_lines: Vec<String> = st.transcript[st.rendered..]
             .iter()
             .filter(|m| m.role != MessageRole::System)
@@ -3809,8 +3869,8 @@ impl TurnLoop<'_> {
 
     /// The `Stop` verdict's intervention row — the reason, and the director's
     /// closing summary when it wrote one.
-    fn dialogue_stop(&mut self, st: &mut DialogueState, reason: &str, summary: Option<&str>) {
-        let loc = self.ctx.loc;
+    fn dialogue_stop(&self, st: &mut DialogueState, reason: &str, summary: Option<&str>) {
+        let loc = self.loc;
         let line = match summary {
             Some(s) => loc.tf(
                 "tool.run_dialogue.stop_line_summary",
@@ -3825,13 +3885,13 @@ impl TurnLoop<'_> {
     /// and appended to each addressed participant's notes — identity stays
     /// with the run from the moment it was issued (research §3.4).
     fn dialogue_note(
-        &mut self,
+        &self,
         st: &mut DialogueState,
         labels: (&str, &str),
         to: (bool, bool),
         text: String,
     ) {
-        let loc = self.ctx.loc;
+        let loc = self.loc;
         let (to_a, to_b) = to;
         let whom = match to {
             (true, false) => labels.0.to_string(),
@@ -3859,7 +3919,7 @@ impl TurnLoop<'_> {
     /// the regeneration.
     #[allow(clippy::too_many_arguments)]
     async fn dialogue_retry(
-        &mut self,
+        &self,
         st: &mut DialogueState,
         parsed: &crate::features::tools::dialogue::DialogueArgs,
         labels: (&str, &str),
@@ -3869,7 +3929,7 @@ impl TurnLoop<'_> {
         cancel: &CancellationToken,
         run: Uuid,
     ) -> Result<(), DialogueEnd> {
-        let loc = self.ctx.loc;
+        let loc = self.loc;
         // Only a generated line can be retried, and the retry's regeneration
         // spends a `max_messages` slot of its own.
         if st.generated == 0 || st.generated >= parsed.max_messages {
@@ -3917,8 +3977,8 @@ impl TurnLoop<'_> {
 
     /// The `Rewrite` verdict: the director's final cut replaces the last
     /// line's words in place. A no-op when there is no line to rewrite.
-    fn dialogue_rewrite(&mut self, st: &mut DialogueState, labels: (&str, &str), text: String) {
-        let loc = self.ctx.loc;
+    fn dialogue_rewrite(&self, st: &mut DialogueState, labels: (&str, &str), text: String) {
+        let loc = self.loc;
         let Some(last) = st
             .transcript
             .iter()
@@ -3948,7 +4008,7 @@ impl TurnLoop<'_> {
 
     /// Files one director intervention as a `System` entry of the transcript
     /// (rendered as a note row, research §3.4) and mirrors it live.
-    fn dialogue_intervention(&mut self, st: &mut DialogueState, text: String) {
+    fn dialogue_intervention(&self, st: &mut DialogueState, text: String) {
         let m = Message::new(MessageRole::System, text);
         self.progress(TurnProgress::ChildRoundFiled {
             run: st.run_id,
@@ -3965,7 +4025,7 @@ impl TurnLoop<'_> {
     /// the open transcript (a participant's line does, stage 2 of the track;
     /// a director checkpoint stays muted — its deliberation is not a line).
     async fn dialogue_stream(
-        &mut self,
+        &self,
         request: ChatRequest,
         cancel: &CancellationToken,
         st: &mut DialogueState,
@@ -4529,7 +4589,7 @@ fn tool_message(call: &ApiToolCall, result: String) -> Message {
 /// what lets `/continue` tell an interrupted reply from a completed one.
 fn finalize_message(
     out: &RoundOutput,
-    ctx: &ToolContext,
+    sampling: &SamplingConfig,
     mode: ServerMode,
     model: &Option<String>,
 ) -> Option<Message> {
@@ -4541,9 +4601,7 @@ fn finalize_message(
         m.thoughts = Some(out.thoughts.clone());
     }
     m.metadata = Some(MessageMetadata {
-        sampling: ctx
-            .effective_sampling
-            .retain_supported(mode.cloud_provider()),
+        sampling: sampling.retain_supported(mode.cloud_provider()),
         mode,
         model: model.clone(),
         finish: Some(match out.reason {
