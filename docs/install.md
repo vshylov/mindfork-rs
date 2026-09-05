@@ -360,12 +360,17 @@ Two modes (configured on the settings screen, `Ctrl+P`, "Model/server" section):
     Raise `-c` to buy room and the waits get rarer. And mind the server's
     **RAM prompt cache** (`--cache-ram`, 8 GiB by default, host RAM): a
     conversation that is not streaming is parked there and restored in a
-    fraction of a second, but only while the parked set fits — measured on a
-    27B, the default holds about four 14k-token contexts, and one past that
-    a rotation of runs restores *none* of them, every round paying the full
-    prefill ([docs/research/parallel-subagents.md](research/parallel-subagents.md)
-    §3.6). Raising `subagent_parallel` on a long-context profile is a reason
-    to raise `--cache-ram` with it. The field's hint shows how many slots the running server
+    fraction of a second, but only while the parked set fits — measured on
+    Qwen 3.6 27B, the default holds about four 14k-token contexts; on Gemma
+    4 31B it holds **one** 16k conversation, because a parked conversation
+    there is 3.7 GiB fresh and grows by ~0.8 GiB with every exchange (the
+    server keeps checkpoints of the sliding-window layers with it) — and
+    one past the bound a rotation of runs restores *none* of them, every
+    round paying the full prefill
+    ([docs/research/parallel-subagents.md](research/parallel-subagents.md)
+    §3.6–§3.7). Raising `subagent_parallel` on a long-context profile is a
+    reason to raise `--cache-ram` with it: budget ~2.5 GiB per parked
+    conversation on the 27B and ~5 GiB on the 31B. The field's hint shows how many slots the running server
     reports (`total_slots` on `/props`).
   - **Parallel tool calls** (`concurrent_calls`, the same group): how many of
     the tool calls the assistant issues in one reply run at once, when they

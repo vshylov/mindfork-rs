@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (44)
+## Entries (45)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -56,6 +56,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: concurrent ordinary tools — the round's read-only calls run at once (done)
 - Post-M9: admission by budget — the unified KV pool never overfilled by the app (done)
 - Post-M9: the parked-set bound of the RAM prompt cache, measured (done)
+- Post-M9: the parked-set bound on Gemma 4 31B, measured on a rented L40S (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -3368,5 +3369,43 @@ the tag `probe/code-search-stage5`.
   token on this model; a 16k context ~2.3 GB. Written into the research
   (§3.6, §5, §8) and install.md next to `-c`: raising `subagent_parallel`
   on a long-context profile is a reason to raise `--cache-ram` with it.
-  Not measured: the 31B's per-token size (larger, so a lower bound), when
-  the stack next runs it with its projector.
+  Not measured then: the 31B's own bound — the next entry, on a rented
+  L40S (2026-09-05).
+
+### Post-M9: the parked-set bound on Gemma 4 31B, measured on a rented L40S (done)
+- **What**: the number the previous entry left open — how many contexts
+  of the 31B the RAM prompt cache parks — measured on a Hugging Face
+  Inference Endpoint instead of the LAN stack, whose single RTX 4090 does
+  not carry four sessions comfortably
+  ([docs/research/parallel-subagents.md](../research/parallel-subagents.md)
+  §3.7): `tools/e2e_hf.py run --no-embed --command "python
+  tools/cache_ram_probe.py - 8 14000"`, the probe taught to read the
+  endpoint and the bearer from the runner's environment, to refuse a split
+  pool (an `n_ctx` a conversation does not fit) and to label a series so
+  two on one server share no prefix; `gemma-4-31B_q4_0-it` without the
+  projector on an L40S, `server-cuda-b10795` pinned, `-np 4 --kv-unified
+  -c 16384` through `nParallel` + `LLAMA_ARG_KV_UNIFIED`,
+  `LLAMA_ARG_CACHE_RAM` at 8192 and at 20480. Three deploys, 31 minutes,
+  about $0.93.
+- **Result**: the default 8 GiB parks **one** 16k conversation of the 31B
+  (two fresh ones would fit, but the first exchange after a park adds
+  0.8–1.6 GiB); 20 GiB parks three. A fresh 16k entry is 3 663 MiB, read
+  off the server's own log (the endpoints API serves the container log,
+  and the eviction line prints every entry's size at WARN): 1.25 GiB of KV
+  — 80 KiB per token, the 10 global-attention layers — plus three ~805 MiB
+  copies of the 50 sliding-window layers' 1 024-cell window, the live one
+  and the two context checkpoints the server keeps with the prompt, one
+  more per exchange. §3.6's "150 KB per token" for the 27B is the same
+  mechanism over its recurrent layers; the honest unit is per parked
+  conversation. Restore 1.7 s against 8 s cold. The cold prefill ran at
+  ~2 100 tok/s on this stack, so the LAN's ~50 tok/s on this model is the
+  projector or the Windows build, not the model's path.
+- **Found on the way**: a series label costs a token per paragraph on
+  Gemma's tokenizer (466 of them pushed 14 000 nominal tokens to 16 704,
+  over the pool — one wasted series, the probe's usage now says so); GHCR
+  carries `server-cuda-b<build>` tags for a few builds only (b10795 alone
+  between b10780 and b10840); HF's `/logs` route stays out of `hf_api.py`
+  because nothing in the gate reads it — the probe's need was one-off,
+  served by a scratch poller.
+- Written into research §3.7 (and §3.6, §5, §8), install.md §3, and the
+  roadmap (the prefill item narrowed).

@@ -129,7 +129,11 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
     projector, against ~2200 tok/s for Qwen on the same line) — the Gemma
     line without `-mm` and one cold request would tell whether it is the
     projector or the model's path; not this track's, but it made the e2e
-    set take 72 minutes.
+    set take 72 minutes. *Narrowed 2026-09-05:* the same model without
+    the projector on a rented L40S (`server-cuda-b10795`) prefills at
+    ~2 100 tok/s (research §3.7), so it is the projector or the Windows
+    CUDA build, not the model's path; the LAN line without `-mm` is the
+    one remaining check.
 - **MCP host — groundwork** (core is **done**: spec §9.6,
   [ADR 0007](decisions/0007-plugins-mcp-host-import-format.md); double opt-in,
   TOFU pinning, statuses/descriptions in settings, and the **server editor**

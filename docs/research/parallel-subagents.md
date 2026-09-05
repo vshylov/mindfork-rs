@@ -391,11 +391,88 @@ Three readings:
 - **What it means for the knobs.** `sessions` above one buys the overlap
   §3.5 measured only while the parked set — the parent plus every alive
   child, each at its own size — fits `--cache-ram`; four 16k contexts is
-  the default's ceiling on a 27B, and a 31B's per-token state is larger.
+  the default's ceiling on a 27B, and **one** is the 31B's (§3.7).
   The honest advice for a user raising `tools.subagent_parallel` on a
   long-context profile is to raise `--cache-ram` with it (the server's
   flag; it is host RAM, not VRAM), and it belongs in install.md next to
   `-c`.
+
+### 3.7 The same bound on Gemma 4 31B (2026-09-05, a rented L40S)
+
+The number §3.6 left open — the 31B's own parked-set bound — measured on a
+Hugging Face Inference Endpoint rather than the LAN stack, whose single RTX
+4090 does not carry four sessions comfortably: `tools/e2e_hf.py run
+--no-embed --command "python tools/cache_ram_probe.py - 8 14000"`, the
+probe in place of the suite (it reads the endpoint from
+`MINDFORK_ENGINE_URL` and sends the runner's bearer);
+`gemma-4-31B_q4_0-it` without its projector on an L40S (48 GB, 30 GB of
+host RAM); the image pinned to `server-cuda-b10795`, the only tag GHCR
+carries between the LAN's b10791 and §3.6's b10807; `-np 4 --kv-unified
+-c 16384` through the payload's `nParallel` and `LLAMA_ARG_KV_UNIFIED=1`
+(HF passes the `LLAMA_ARG_*` family through, and `/props` reports
+`n_ctx` 16384 on 4 slots — a split pool would say 4096, and the probe now
+refuses one); `LLAMA_ARG_CACHE_RAM` at its default 8192 MiB and then at
+20480. Three deploys, 31 minutes of L40S in all, about $0.93.
+
+| cache | tokens each | parked 2 | 3 | 4 | 5 | 6 and up |
+|---:|---:|---|---|---|---|---|
+| 8 GiB | 16 237 | 1 of 1 | **0 of 2** | 0 | 0 | 0 |
+| 20 GiB | 15 984 | 1 of 1 | 2 of 2 | 3 of 3 | **3 of 4** | 0 |
+| 20 GiB | 8 335 | 1 of 1 | 2 of 2 | 3 of 3 | 4 of 4 | **0 of 5** |
+
+| visit | `prompt_n` | `cache_n` | `prompt_ms` |
+|---|---:|---:|---:|
+| cold, 16k | 15 984–16 237 | 0 | 7 739–8 571 |
+| restored, 16k | 28–29 | 16 003–16 050 | **1 657–1 683** |
+| cold, 8k | 8 335 | 0 | ~5 300 |
+| restored, 8k | 28–29 | 8 335–8 382 | 1 679–1 711 |
+
+And the entries themselves, from the endpoint's container log (the
+endpoints API serves it, and the server prints the size of every entry it
+evicts at WARN — `alloc: - making room for prompt cache entry, removing
+oldest entry (size = … MiB)`):
+
+| entry | size |
+|---|---:|
+| a 16k conversation, fresh | **3 663 MiB** |
+| the same after one more exchange | 4 465 MiB |
+| after two | 5 267–5 276 MiB |
+| an 8.3k conversation, fresh / one more / two more | 3 064 / 3 866 / 4 665–4 675 MiB |
+
+Four readings:
+
+- **The default 8 GiB parks one 16k conversation of the 31B, not four.**
+  Two fresh ones would fit (7.3 GiB), but a conversation is never fresh
+  twice: its first exchange after a park adds 0.8–1.6 GiB, and one such
+  entry beside a fresh one is over the limit — the 8 GiB row. 20 GiB parks
+  three, four only while they are fresh. The restore is what §3.5 said —
+  1.7 s against 8 s cold, a memory copy — with no penalty for the model's
+  size.
+- **The entry is not "KV per token".** The 1.875 MiB step between entries
+  that differ by one 24-token exchange is exactly the model's
+  global-attention KV: 10 of the 60 layers, 4 KV heads × 512 × K and V ×
+  f16 = **80 KiB per token**, 1.25 GiB at 16k. The other 2.4 GiB of a fresh
+  entry are three copies of the 50 sliding-window layers' window — 16 KV
+  heads × 256, 800 KiB per cell, ~1 030 cells (the 1 024-token window plus
+  a batch's slack), **~805 MiB a copy**: the live window and the two
+  *context checkpoints* the server keeps with the prompt
+  (`server-context.cpp`, `create_checkpoint`: at the start of a user
+  message, near the end of the prompt, otherwise at least
+  `--checkpoint-min-step` 8192 tokens apart, up to `--ctx-checkpoints`
+  32). Every later exchange begins a user message and adds one, which is
+  why a parked conversation grows by a window copy per turn while its
+  tokens grow by dozens.
+- **§3.6's "150 KB per token" was the same thing in disguise.** Qwen 3.6
+  27B is a hybrid: 16 of its 65 layers hold KV (4 heads × 256 × K and V ×
+  f16 = 64 KiB per token, 0.87 GiB of a ~2.2 GiB entry); the rest is copies
+  of the 49 recurrent layers' state, checkpointed the same way. The honest
+  unit is therefore *per parked conversation*, not per token: ~2.2 GiB on
+  the 27B, 3.7–5.3 GiB on the 31B, both growing with every exchange.
+- **The Gemma prefill is normal here.** 16 237 tokens in 7.75 s (~2 100
+  tok/s) on b10795 without the projector — the rate the LAN stack shows
+  for Qwen, not the ~50 tok/s it shows for this model with `--mmproj` on
+  b10791. That narrows the roadmap's question to the projector (or the
+  Windows CUDA build); the LAN line without `-mm` would close it.
 
 ## 4. Design
 
@@ -595,9 +672,10 @@ per child (§4.5 makes it so).
   flight, with `cycling`'s delay to make overlap observable) — both small
   additions to `shared/api/mock.rs`.
 - **The RAM cache is not the KV pool.** §3.2's free interleaving holds while
-  the parked contexts fit `--cache-ram`; measured in §3.6: **four** ~14k
-  contexts of the 27B in the default 8 GiB, and beyond that a pinned single
-  slot re-prefills on *every* visit, not one. The default
+  the parked contexts fit `--cache-ram`; measured in §3.6–§3.7: **four**
+  ~14k contexts of the 27B in the default 8 GiB, **one** 16k conversation
+  of the 31B, and beyond that a pinned single slot re-prefills on *every*
+  visit, not one. The default
   `subagent_parallel = 1` makes this opt-in; install.md says it next to
   `-c`.
 - **Confirmation and cancellation.** A popup answered while a sibling's
@@ -732,8 +810,11 @@ records satisfy a strict provider.
   next to the new tokens' prefill. *Settled by §3.6 (2026-09-04, Qwen 3.6
   27B):* the default 8 GiB parks **four** ~14k contexts (~150 KB per
   token), and one past the bound a round-robin restores *none* — the LRU
-  cliff, not a slope. Still unmeasured: the 31B's own per-token size (its
-  bound is lower), when the stack next runs it with a projector.
+  cliff, not a slope. *Settled by §3.7 (2026-09-05, Gemma 4 31B on a
+  rented L40S):* the default parks **one** 16k conversation; a fresh
+  entry is 3.7 GiB, of which 1.25 GiB is KV per token and the rest copies
+  of the sliding-window state the server checkpoints per exchange — which
+  also re-reads §3.6's per-token figure as a per-conversation one.
 - **Qwen 3.6's template** (`supports_parallel_tool_calls`) — read on the
   first live run of stage 2, and sent explicitly as `parallel_tool_calls:
   true` if the template's default proves to be off. *Settled by §3.5
