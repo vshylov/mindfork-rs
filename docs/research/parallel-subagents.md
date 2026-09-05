@@ -787,7 +787,12 @@ records satisfy a strict provider.
 
 - **Background sub-agents** (F1b): a child that outlives its round, with
   the parent notified in a later round — needs a "task notification" round
-  shape and a place for a result that arrives after the turn ends.
+  shape and a place for a result that arrives after the turn ends. **Now a
+  research doc of its own** (2026-09-05, forks open):
+  [background-subagents.md](background-subagents.md) — measured on the
+  four clouds: an optional flag is not the shape (Claude never sets it), a
+  second tool or a required `mode` is used 3/3, and the notification is
+  consumed as a user-side message without a second call.
 - **Concurrent ordinary tools** (F1c): a `Tool::concurrent()` mark for
   read-only tools and a group per round like the sub-agents'. **Now a
   track of its own** (2026-09-04):

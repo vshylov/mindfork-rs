@@ -104,7 +104,10 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   - **background sub-agents** — a child that outlives its round, the parent
     notified in a later round (Claude Code's background agents): a
     "task notification" round shape and a place for a result that arrives
-    after the turn ends;
+    after the turn ends. **Research written** (2026-09-05, forks F1–F10
+    awaiting the user's decision, the local-model arm of the probe pending
+    the LAN stack):
+    [docs/research/background-subagents.md](research/background-subagents.md);
   - **concurrent ordinary tools** — **done** (2026-09-04, see "Recently
     closed"; [docs/research/concurrent-tools.md](research/concurrent-tools.md),
     ADR 0012). What its §8 left for later:
