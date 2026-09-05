@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (18)
+## Entries (19)
 
 - Post-M9: the generation state machine split out of the orchestrator (`GenState`) (done)
 - Post-M9: the orchestrator god object split by feature (done)
@@ -30,6 +30,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: SOLID refactor — stage 3, step 3.1: settings-field description in `FieldRow` (done)
 - Post-M9: SOLID refactor — stage 3, steps 3.2/3.3: a field-value access table (`field_spec`) (done)
 - Post-M9: the child-loop seam — `TurnShared`, `RequestEnv`, `sanitize_title` in `shared` (done)
+- Post-M9: the dialogue driver off `TurnLoop` — an explicit `DialogueCtx` (done)
 
 ### Post-M9: the generation state machine split out of the orchestrator (`GenState`) (done)
 - **The generation state was moved** out of `app/orchestrator.rs` into a separate
@@ -633,3 +634,33 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - **Live run**: not required — a pure refactor; `cargo fmt`/clippy `-D warnings`
   clean, **2447 tests green, 106 `#[ignore]`** (four tests moved, none added or
   removed).
+
+### Post-M9: the dialogue driver off `TurnLoop` — an explicit `DialogueCtx` (done)
+- **Why**: the background-dialogue track (its design doc,
+  `docs/research/background-dialogues.md`, arrives with the track itself —
+  fork F6(b), the user's decision 2026-09-05) needs the scene runnable from a
+  task that has no turn. The driver was a `TurnLoop` method and reached into
+  the loop for five unrelated things — `ToolContext`'s locale and sampling,
+  the parent chat's persona, the turn's live request tail (from which the
+  director's brief is folded) and the turn's cancellation token — while
+  ignoring the loop's other twenty fields. AGENTS.md §2 keeps a mechanical
+  refactor out of a behaviour change, so the lift ships alone, ahead of the
+  track.
+- **What**: those five become an explicit `DialogueCtx` (plus the nesting
+  depth, so the guard keeps firing where it did, after the arguments are
+  parsed), the whole `impl TurnLoop` block that held `run_dialogue` and the
+  ten `dialogue_*` methods becomes `impl DialogueCtx`, and `TurnLoop::run_dialogue`
+  stays as the six-line wrapper that names what the scene needs and delegates
+  to `DialogueCtx::run`. The context is immutable — only `DialogueState` was
+  ever written — so every receiver becomes `&self`. Two helpers moved with
+  the driver: `progress` (a copy of the loop's, keyed by the same turn id)
+  and `dialogue_chip`, whose only caller the scene has always been.
+  `finalize_message` now takes the `SamplingConfig` it records instead of the
+  whole `ToolContext` — the one thing it read — which is what let the driver
+  stop carrying a tool context it otherwise had no use for; the three call
+  sites pass `&ctx.effective_sampling`, the value they passed inside the
+  context before.
+- **The gate**: no test changed. 2824 unit green (the same number, the same
+  names), `cargo fmt`/`clippy` clean, and `dialogue_e2e_live` re-run against
+  the LAN stack — see the PR. A refactor whose diff is +118/−60 in one file
+  and whose test suite is untouched is the shape this was aimed at.
