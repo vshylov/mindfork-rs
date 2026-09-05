@@ -4385,6 +4385,148 @@ async fn dialogue_e2e_live() {
     }
 }
 
+/// `start_dialogue` go/no-go (spec §9.13, docs/research/background-dialogues.md
+/// §7): asked for a scene it will read later **and** for something it can
+/// answer now, the model stages the scene in the background and answers the
+/// rest in the same reply; the scene outlives that turn, lands on the record
+/// by id, and its closing result arrives as a task notification the app's own
+/// woken turn reports. The profile carries both dialogue tools, so choosing
+/// the background one is the model's decision and not a lack of alternatives
+/// — the one place this smoke deliberately departs from "remove the
+/// alternative" (lessons §9), because the choice *is* what is measured.
+#[tokio::test]
+#[ignore = "requires a live chat server (MINDFORK_ENGINE_URL)"]
+async fn background_dialogue_e2e_live() {
+    let mut cfg = AppConfig::default();
+    cfg.tools.subagent_background = true;
+    // Two sessions, so the scene and the parent's turns need not queue behind
+    // each other on a stack that has the room; the budget is what decides.
+    cfg.engine.external.sessions = 2;
+    cfg.engine.managed.sessions = 2;
+    // The measured ceiling for an open-ended ask on a thinking model
+    // (docs/journal/ci.md; lessons §9): at the default 2048 this smoke's
+    // two-part question spent the whole cap in `reasoning_content` and the
+    // parent said nothing at all, twice in a row.
+    cfg.default_sampling.max_tokens = Some(4096);
+    cfg.interface.auto_title = crate::shared::config::AutoTitleMode::Off;
+    let Some((dir, cmd_tx, mut evt_rx, handle)) = spawn_orch_live_cfg(cfg) else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    let (_profile, chat_id) = narrow_profile_to(
+        &cmd_tx,
+        &mut evt_rx,
+        vec!["start_dialogue".into(), "run_dialogue".into()],
+    )
+    .await;
+
+    let ask = "Two things. (1) Stage me a café scene I will read later: barista \
+        Mara (warm, frazzled by the morning rush) and customer Jonas (in a hurry \
+        for his tram, got an oat latte instead of his double espresso; he opens \
+        by asking politely to fix it). Tell each persona to reply with one spoken \
+        line only, no narration. Direct it yourself, stop once the mix-up is \
+        resolved, cap it at 6 lines — and do not wait for it, I want the \
+        transcript later, not now. (2) Right now: which is larger, 17 × 23 or 400?";
+    let (reply, calls) = run_turn_capture(&cmd_tx, &mut evt_rx, ask).await;
+    eprintln!(
+        "parent reply: {}",
+        reply.chars().take(300).collect::<String>()
+    );
+    for (n, a) in &calls {
+        eprintln!("call {n}({})", a.chars().take(160).collect::<String>());
+    }
+    assert!(
+        !reply.trim().is_empty() || !calls.is_empty(),
+        "the parent turn produced nothing at all — the all-thinking empty turn \
+         (lessons §9), not a verdict on the tool: re-run before reading it as one"
+    );
+    assert!(
+        calls.iter().any(|(n, _)| n == "start_dialogue"),
+        "the model did not stage the scene in the background; calls: {calls:?}"
+    );
+    assert!(
+        !calls.iter().any(|(n, _)| n == "run_dialogue"),
+        "the model waited for the scene instead of backgrounding it: {calls:?}"
+    );
+
+    // The scene ends and the app wakes the assistant on the notification: a
+    // turn nobody sent a message for.
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(900);
+    let mut wake = String::new();
+    loop {
+        let ev = tokio::time::timeout_at(deadline, evt_rx.recv())
+            .await
+            .expect("the scene lands and the wake turn ends within fifteen minutes")
+            .expect("the event stream stays open");
+        match ev {
+            AppEvent::Chunk { text, .. } => wake.push_str(&text),
+            AppEvent::Finished { .. } => break,
+            _ => {}
+        }
+    }
+    eprintln!("wake reply: {wake}");
+    tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    let chat = super::subagent::load(dir.path(), chat_id);
+    let run = chat
+        .children()
+        .find(|r| r.background)
+        .expect("a background run on the record");
+    assert_eq!(run.kind, crate::entities::subagent::RunKind::Dialogue);
+    assert_eq!(run.participants.len(), 2);
+    let outcome = run.outcome.expect("the scene reported how it ended");
+    assert!(
+        matches!(
+            outcome,
+            crate::entities::subagent::RunOutcome::Completed
+                | crate::entities::subagent::RunOutcome::RoundLimit
+        ),
+        "unexpected outcome: {outcome:?}"
+    );
+    let spoken: Vec<MessageRole> = run
+        .messages
+        .iter()
+        .filter(|m| m.role != MessageRole::System)
+        .map(|m| m.role)
+        .collect();
+    assert!(
+        spoken.len() >= 3,
+        "too short: {} spoken lines",
+        spoken.len()
+    );
+    for pair in spoken.windows(2) {
+        assert_ne!(pair[0], pair[1], "two consecutive lines by one side");
+    }
+    println!(
+        "scene landed: {:?}, {} spoken lines, {} tokens, title {:?}",
+        outcome,
+        spoken.len(),
+        run.tokens,
+        run.title
+    );
+
+    // The notification is the dialogue's, names the scene, and carries the
+    // closing result; the woken reply is about the scene rather than empty.
+    let note = chat
+        .messages
+        .iter()
+        .find(|m| m.is_notification())
+        .expect("a task notification row");
+    println!("notification: {}", note.text);
+    assert_eq!(note.notification, Some(run.id));
+    assert!(
+        note.text.contains(&run.title),
+        "the notification does not name the scene: {}",
+        note.text
+    );
+    assert!(
+        !wake.trim().is_empty(),
+        "the woken turn said nothing at all — the empty-turn mode (research §3)"
+    );
+}
+
 /// The parallel group's live proof (docs/research/parallel-subagents.md §7):
 /// the parent is asked for two codenames in two files and told to delegate
 /// **both** reads in one reply; with `subagent_parallel = 2` and two sessions

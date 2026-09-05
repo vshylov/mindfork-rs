@@ -16,6 +16,17 @@ split by subsystem.
 
 ### Added
 
+- **Dialogues in the background.** The same switch that offers background
+  sub-agents now also offers `start_dialogue`: the assistant stages a
+  directed scene between two personas, gets its `chat://` address at once,
+  and keeps talking to you while the scene plays out — its closing result
+  arrives later as a task notification, exactly as a background sub-agent's
+  does. The transcript is a row of the chat list while it runs and streams
+  line by line if you open it, `F6` there stops it (as does
+  `/subagents stop [n]`), and the cap counts scenes and sub-agents together.
+  The director reads the conversation as it was when you asked for the
+  scene. The setting is now called "Background runs (subagent/dialogue)".
+
 - **Sub-agents in the background.** Switch on "Subagent: background runs"
   in Settings → Tools and the assistant gains `start_subagent`: a
   delegation that returns at once — the assistant keeps answering you while

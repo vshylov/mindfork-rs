@@ -360,8 +360,53 @@ pub fn verdict_tools(loc: &Locale, a_label: &str, b_label: &str) -> Vec<ToolSche
     ]
 }
 
+/// The **background** twin (spec §9.13, docs/research/background-dialogues.md
+/// §4.1): the same scene, the same arguments, but the call returns at once
+/// with the transcript's address and the director's closing result arrives
+/// later as a task notification. Offered only when `tools.subagent_background`
+/// is on — the one switch for "a run that outlives the turn" (fork F2). A
+/// second tool rather than a flag for the reason the sub-agent twin measured:
+/// an optional boolean is silently omitted by one provider
+/// (background-subagents.md §3.1).
+pub const START_DIALOGUE_ID: &str = "start_dialogue";
+
 /// `run_dialogue` — see the module doc.
 pub struct RunDialogue;
+
+/// `start_dialogue` — the background twin (see [`START_DIALOGUE_ID`]). Like
+/// its foreground sibling a **loop-executed** tool: this impl carries the
+/// schema, the catalog entry and the profile toggle, and its `invoke` — what
+/// a caller outside the loop gets — says so rather than running a scene.
+pub struct StartDialogue;
+
+#[async_trait::async_trait]
+impl Tool for StartDialogue {
+    fn id(&self) -> ToolId {
+        START_DIALOGUE_ID.into()
+    }
+    fn group(&self) -> crate::features::tools::meta::ToolGroup {
+        crate::features::tools::meta::ToolGroup::Subagent
+    }
+    fn gate(&self) -> Option<crate::features::tools::meta::ToolGate> {
+        Some(crate::features::tools::meta::ToolGate::Background)
+    }
+    fn ui_label(&self) -> &'static str {
+        "background dialogue"
+    }
+    fn description(&self, loc: &Locale) -> String {
+        loc.t("tool.start_dialogue.desc").into()
+    }
+    fn parameters(&self, loc: &Locale) -> serde_json::Value {
+        RunDialogue.parameters(loc)
+    }
+    /// Never the executor — the loop runs the scene (see the module doc).
+    async fn invoke(&self, ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
+        DialogueArgs::parse(&args, ctx.loc)?;
+        Ok(ToolOutcome::text(
+            ctx.loc.t("tool.run_dialogue.result.loop_only"),
+        ))
+    }
+}
 
 #[async_trait::async_trait]
 impl Tool for RunDialogue {

@@ -792,6 +792,7 @@ pub fn standard_registry(cfg: &ToolConfig) -> ToolRegistry {
     // default it never reaches a request.
     reg.register(Arc::new(subagent::StartSubagent));
     reg.register(Arc::new(dialogue::RunDialogue));
+    reg.register(Arc::new(dialogue::StartDialogue));
     // Both tools follow addresses the model picked, so both are built on a client that
     // refuses local and private ones (docs/research/fetch-url-address-policy.md, fork F1).
     let policy = crate::shared::net::AddressPolicy::from_allow_private(cfg.web_allow_private);

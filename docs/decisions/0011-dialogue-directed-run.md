@@ -77,6 +77,34 @@ escalation ladder emerging unprompted.
    the partial transcript. The five existing `RunOutcome`s cover every
    ending; no new variant was needed.
 
+## Amendment (2026-09-06) — the scene outside the turn
+
+The background track ([docs/research/background-dialogues.md](../research/background-dialogues.md),
+forks F1–F11 decided by the user 2026-09-05) gives the scene a twin that
+outlives the turn that staged it, the way ADR 0010's second amendment did for
+a sub-agent. Two of the decisions above are amended:
+
+1. **Decision 3's "at most one request in flight" is now the session
+   budget's guarantee, not sequentiality's.** A scene that outlives its turn
+   meets the next turn by construction, so the invariant moves to where the
+   app already prices streams: every dialogue request — participant line,
+   director checkpoint, muted re-ask — takes a permit and, under a shared KV
+   pool, a reservation. The same seam fixed a defect the inventory found:
+   the driver had been calling `stream_round` directly, so a *foreground*
+   scene had been overlapping background runs since those shipped.
+2. **The driver is context-explicit** (fork F6(b)). `run_dialogue` was a
+   `TurnLoop` method reaching into the loop for the locale, the sampling, the
+   parent's persona, the turn's request tail and the turn's token; those are
+   now a `DialogueCtx` the loop builds for a foreground scene and the
+   background task builds from a snapshot. Shipped as its own refactor,
+   ahead of the feature (AGENTS.md §2).
+
+Everything else stands: the record is still the sub-agent's shape with
+`kind: dialogue`, the transcript is still role-encoded and derived per line,
+the director is still the main agent directing — reading, for a background
+scene, the conversation **as it was when the scene was staged** (fork F3),
+which the tool's description says out loud.
+
 ## Consequences
 
 - A chat that never stages a dialogue is unchanged on the wire and on disk;

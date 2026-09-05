@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (47)
+## Entries (48)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -59,6 +59,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the parked-set bound on Gemma 4 31B, measured on a rented L40S (done)
 - Post-M9: sub-agents in the background — a run that outlives its turn, stage 1 (done)
 - Post-M9: sub-agents in the background — the stop key, the unread mark, and Gemma (stage 2, done)
+- Post-M9: background dialogues — a directed scene that outlives its turn (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -3520,3 +3521,71 @@ the tag `probe/code-search-stage5`.
   the deletion verified.
 - **Not in the track** (research §8): background dialogues, a tasks screen
   across chats, the silent background tasks under the app-wide budget.
+
+### Post-M9: background dialogues — a directed scene that outlives its turn (done)
+- **What**: the last of the background sub-agent track's leftovers
+  ([docs/research/background-dialogues.md](../research/background-dialogues.md),
+  forks F1–F11 decided by the user 2026-09-05;
+  [ADR 0011](../decisions/0011-dialogue-directed-run.md) amended).
+  `start_dialogue` is to `run_dialogue` what `start_subagent` is to
+  `call_subagent`: the same scene behind the same switch, answering at once
+  with the transcript's `chat://` address while the scene plays on past the
+  turn. The inventory is why the track was small — the seat, the mirror, the
+  landing by id, the notification and the wake, the stop key, the unread mark
+  are all keyed by **run id** and were already kind-agnostic — so what this
+  PR adds is the start, the spec and the words: `BackgroundStart` carries a
+  two-variant `RunSpec`, a `DialogueSpec` holding the parsed scene plus the
+  director's inputs **snapshotted at the call** (fork F3: the parent's
+  persona and the folded conversation brief, because a scene ending twenty
+  minutes later has no turn to read them from), and `spawn_background_run`
+  branches once at the end into the very same `DialogueCtx::run_parsed` the
+  turn's own `run_dialogue` enters — the seam the preceding refactor built.
+  `finish_landing` picks the notification's wording by `run.kind` (F8); the
+  cap, the gate, `/subagents stop [n]` and `F6` are shared with sub-agents
+  (F2, F7, F9) and their texts now say "background run" where they said
+  "sub-agent".
+- **Two fixes the track carried**, both measured rather than guessed:
+  - **The scene was streaming outside the session budget.** `dialogue_stream`
+    called `stream_round` directly while `TurnLoop::stream` priced and
+    acquired a permit — invisible while a scene was the only thing running,
+    and live since background sub-agents shipped: a *foreground* scene's ~25
+    requests could overlap a background run on a one-session engine, the
+    collective failure admission-by-budget exists to prevent. Every dialogue
+    request now takes a permit and a pool reservation (F4), which is also
+    what carries ADR 0011's one-request contract now that a scene can outlive
+    its turn. The test that pins it fails at `max_in_flight = 2` with the
+    permit removed.
+  - **The wake turn could land empty.** The probe found the turn the app
+    starts on a notification spending its whole reply cap in
+    `reasoning_content` — 2 of 5 on the gate model, `finish_reason: length`,
+    no text and no calls — with the *next* turn answering correctly from the
+    same notification, which is what proved the model had read it. A muted
+    re-ask recovered both, 2/2, so a woken turn now gets the one-shot muted
+    re-ask a dialogue's line has (F11). This was a defect of the **shipped**
+    background sub-agent feature, found by this track's probe.
+- **Tests**: 2830 green (+6), 138 `#[ignore]`. The six: the scene lands
+  by id with a `kind: Dialogue` placeholder and a notification in the
+  dialogue's wording (asserted against both keys rendered in both languages,
+  so it pins *which* text the landing chose); `Esc` leaves the scene out and
+  the stop lands it *cancelled*; at one session the scene and the turns take
+  turns (the mutation above); the shared cap refuses a scene when a sub-agent
+  is already out; the gate adds exactly the two twins; and the woken turn's
+  muted re-ask. Two traps on the way, both already in
+  [lessons.md](../lessons.md): the keyed engine mock routes by the first
+  matching key and the director's system quotes the call's arguments, so the
+  director's queue has to come first; and `wait_for` drains, so the turn's
+  end must be pulled before the scene's.
+- **Live — GO on Qwen 3.6 27B** (LAN stack, b10807):
+  `background_dialogue_e2e_live` — asked for a scene to read later *and* for
+  something answerable now, the model staged the scene with `start_dialogue`
+  and answered the arithmetic in the same reply; the scene completed by the
+  director's decision in 5 spoken lines and 2748 tokens, the notification
+  carried its closing reason and summary in the dialogue's wording, and the
+  app's own woken turn reported it. 233 s.
+  The first two runs failed with the parent turn producing **nothing** — no
+  text, no calls — and the honest diagnosis was not "a flake": at
+  `AppConfig::default()`'s **2048**-token cap this smoke's two-part ask spends
+  the whole reply in `reasoning_content`, the measured ceiling
+  [ci.md](ci.md) already records for open-ended asks on a thinking model. The
+  smoke sets 4096 and says so, and it now names an empty parent turn for what
+  it is instead of reporting it as a refusal to use the tool.

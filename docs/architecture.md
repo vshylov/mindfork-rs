@@ -959,6 +959,25 @@ Details:
   group runs one child at a time in the model's order, the tool's original
   behaviour. `run_dialogue` is not a member (ADR 0011's one-request
   contract); a nested loop still refuses the name.
+- **A background dialogue** ([docs/research/background-dialogues.md](research/background-dialogues.md)
+  §4, ADR 0011 amended). `start_dialogue` is the scene's twin of
+  `start_subagent`, so `BackgroundStart` carries a two-variant `RunSpec`:
+  `Subagent(ChildSpec)` or `Dialogue(DialogueSpec)` — the parsed scene plus
+  the director's inputs **snapshotted at the call** (the parent's persona and
+  the folded `conversation_brief`), its sampling, its own token and the run's
+  id, minted at the call so the *started* line can name the transcript.
+  `placeholder()` branches on the variant; `spawn_background_run` branches
+  once at the end, building a `DialogueCtx` from the snapshot and calling the
+  same `DialogueCtx::run_parsed` the turn's own `run_dialogue` enters, so the
+  two paths cannot drift. Everything after the start is the sub-agent path
+  unchanged — the seat, the mirror, the landing by id, the stop, the unread
+  mark — because all of it is keyed by run id; only `finish_landing` reads
+  `run.kind` to pick the notification's wording. Every dialogue stream
+  (`dialogue_stream`) now takes a permit and a pool reservation from the same
+  `SessionBudget`, which is what carries ADR 0011's one-request contract once
+  a scene outlives its turn. A turn the app starts on a notification is marked
+  `woken`, and a first round that comes back empty is re-asked once with
+  thinking muted (`TurnLoop::run`) — the recovery a participant's line has.
 - **The background runs** ([docs/research/background-subagents.md](research/background-subagents.md)
   §4, ADR 0010's second amendment). A `start_subagent` call resolves at
   its position in phase one (`is_background_call` → `start_background`):
@@ -1848,6 +1867,7 @@ by `ToolGroup` (`Ord`).
 | Files (project) | `code_list`, `code_read`, `code_grep`, `code_edit`, `code_write`, `code_build`, `code_run`, `code_test` — the code workspace attached to *this chat* with `/project attach` (spec §9.12). One `CodeTool` enum with one `impl Tool` dispatching to free functions, and `code::ALL` is what the registry loops, so a new member cannot be registered without joining the family's list. The editing pair and the three command tools are `danger()` (so §9.8's confirmation can park them); the editors journal a file's previous bytes before touching it; the whole family is exempt from `max_tool_rounds` and bounded instead by `workspace.max_rounds`. **No global gate**: the project's presence is the gate — and for a command tool, a line in its slot — so with none attached the schemas never reach the prompt and the request is byte-identical to what it was before the feature. The rule lives in `code::offered`, which `effective_tool_ids` consults. Stateless — the root, the command lines and the limits are per-turn snapshots (`ToolContext.workspace`, `ToolContext.workspace_cfg`), not registry parameters |
 | Awareness      | `call_subagent` — a **loop-executed** tool (ADR 0010): the loop runs a nested `TurnLoop` with the turn's tools minus itself, `history_*` and the self-model family, over the parent's environment; no history, no nesting; the transcript lives on the call's record (`SubagentRun`) |
 | Awareness      | `start_subagent` — the background twin (spec §9.3.2, gate `ToolGate::Background` = `tools.subagent_background`): the same call returns at once and the run outlives the turn, its result delivered as a task notification; the record lands as a placeholder and is filled in by id (`orchestrator/background_runs.rs`) |
+| Awareness      | `start_dialogue` — the same twin for a directed scene (spec §9.13, the same gate): the call returns with the scene's address, the director's closing result arrives as a task notification, and the director's brief is the conversation as it was at the call (`features/tools/dialogue.rs`, `DialogueSpec`) |
 | Conversation control | `send_followup_message` / `rewrite_current_message` — **control flow** (optional, off by default): recognized by the agentic loop, not `Tool::invoke`. The same settings group also holds the read-back pair `history_read`/`history_search` (the folded range of *this* chat, offered only while one exists — spec §6.7) and the cross-chat pair `chat_search`/`chat_read` (the profile's *other* chats — **optional, off by default**; spec §9.11) |
 | Self-model     | `get_self_model`, `reflect`, `update_self_model`, `update_user_model`, `add_insight` — **optional, off by default**: a per-profile "self-model" in SQLite (description + goals + a model of the interlocutor), written directly through `storage` (not via `ChatEffect`). Observations ("narrative") moved into `@self` notes — they're consolidated by note tools (`consolidate_narrative` was removed). **Details in §9** |
 | Plugins (MCP)  | `mcp__<server>__<tool>` — **dynamic** `McpTool` wrappers around external MCP servers' tools (`features/tools/mcp.rs`; description/schema is a snapshot of the server, per-call timeout + `ctx.cancel` cancellation, result clipping). Not part of the static `CATALOG`: the registry is rebuilt on `McpManager` events (`rebuild_registry`), and the UI catalog rides an `McpSnapshot` inside `AppEvent::Settings`; the `effective_tool_ids` gate is by the `mcp__` prefix + `config.mcp.enabled`. Double opt-in + TOFU catalog pinning. See spec §9.6, ADR 0007 |

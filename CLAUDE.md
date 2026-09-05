@@ -169,10 +169,10 @@ Backend selection: `MINDFORK_ENGINE_URL` (external, any OpenAI server) OR
 rented instead of hosted — `python tools/e2e_hf.py run`, see
 `docs/history/remote-e2e-hf.md`.
 
-## Status (2026-09-05, version 0.9.8)
+## Status (2026-09-06, version 0.9.8)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2824 unit tests
-green, 137 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **2830 unit tests
+green, 138 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -183,6 +183,22 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 `tools/doc_index_check.py`. A new track adds a line; a line that has stopped
 being recent is dropped, not shortened.
 
+- **Background dialogues — a directed scene that outlives its turn** —
+  `start_dialogue`, the scene's twin of `start_subagent` behind the same
+  switch: the call answers with the transcript's address and the director's
+  closing result arrives later as a task notification. Small because the
+  background machinery was already keyed by run id; what it added is a
+  two-variant `RunSpec`, a `DialogueSpec` whose director inputs are
+  **snapshotted at the call**, and one branch in the spawn into the same
+  driver the foreground scene uses — a driver the preceding refactor lifted
+  off `TurnLoop` onto an explicit context. Two measured fixes rode along: the
+  dialogue had been streaming **outside the session budget** (so a foreground
+  scene could already overlap a background run), and the turn the app starts
+  on a notification could spend its whole cap thinking and land empty — now
+  re-asked once with thinking muted, 2/2 recovered in the probe
+  ([docs/research/background-dialogues.md](docs/research/background-dialogues.md),
+  [ADR 0011](docs/decisions/0011-dialogue-directed-run.md) amended, spec
+  §9.13, [docs/journal/tools.md](docs/journal/tools.md)).
 - **Sub-agents in the background — a run that outlives its turn, both
   stages** — `start_subagent` (opt-in, `tools.subagent_background`): the
   call returns at once, the run is owned by the orchestrator over the
@@ -369,11 +385,6 @@ being recent is dropped, not shortened.
   section, and each screen owns its section table next to its key handler
   ([docs/history/help-hotkeys-context.md](docs/history/help-hotkeys-context.md),
   [docs/journal/ui-screens.md](docs/journal/ui-screens.md), spec §11.7).
-- **Subagent transcripts fold under their chat in the list** — collapsed by
-  default with a `▸ n` mark on the row; `Ctrl+O` in the list / `/subagents` in
-  the chat, remembered per chat (`Chat.children_expanded`, additive), and a
-  search match still surfaces a transcript
-  ([docs/journal/ui-screens.md](docs/journal/ui-screens.md), spec §11.2).
 - **The binary/command is `mindfork`** — one `[[bin]]` stanza over the
   unchanged package `mindfork-rs`; the Linux symlink/`.desktop`/icons, the
   Windows installer, CI and the docs' command examples follow, while data
@@ -402,13 +413,6 @@ being recent is dropped, not shortened.
   ([docs/history/subagent-live.md](docs/history/subagent-live.md))
   ([docs/research/subagent-chats.md](docs/research/subagent-chats.md),
   [ADR 0010](docs/decisions/0010-subagent-nested-turn.md)).
-- **Inno Setup 7 for the Windows installer** — a 64-bit setup, and a pinned,
-  hash-verified compiler in CI instead of a chocolatey package frozen at 6.7.1
-  ([docs/research/inno-setup-7.md](docs/research/inno-setup-7.md)).
-- **The licence and the disclaimer in Russian** — unofficial translations under
-  `docs/legal/`, on the `F1` tabs and the ru installer's wizard pages, chosen by
-  interface language; the English originals govern
-  ([docs/history/legal-ru-translations.md](docs/history/legal-ru-translations.md)).
 - **A code project attached to a chat** — `/project attach <directory>`: list,
   read, search and change it, run the user's build/run/test command lines, `F4`
   shows every change as a diff with per-file revert. Attaching *is* the

@@ -504,6 +504,29 @@ impl Orchestrator {
         backend: Arc<dyn EngineBackend>,
         continuation: Option<ContinuationSeed>,
     ) {
+        self.start_generation_woken(active_id, backend, continuation, false);
+    }
+
+    /// The turn the app starts on a background run's task notification
+    /// (spec §9.3.2): nobody typed anything, so an empty first generation is
+    /// worth one muted re-ask rather than an empty bubble (fork F11).
+    pub(super) fn start_woken_generation(
+        &mut self,
+        active_id: Uuid,
+        backend: Arc<dyn EngineBackend>,
+    ) {
+        self.start_generation_woken(active_id, backend, None, true);
+    }
+
+    /// [`Self::start_generation`] with the one flag its two entry points
+    /// differ by.
+    fn start_generation_woken(
+        &mut self,
+        active_id: Uuid,
+        backend: Arc<dyn EngineBackend>,
+        continuation: Option<ContinuationSeed>,
+        woken: bool,
+    ) {
         // Speech stops per the setting (off by default: listening to the reply
         // while the next one is being written is legitimate). See spec §11.9.
         if self.config.tts.stop_on_generation_start {
@@ -781,6 +804,7 @@ impl Orchestrator {
             ui_loc: self.ui_locale(),
             compaction_enabled: self.config.compaction.enabled,
             continuation,
+            woken,
             evt_tx: self.evt_tx.clone(),
             done_tx: self.done_tx.clone(),
             background: self.background_slots.clone(),
@@ -1143,6 +1167,13 @@ struct GenSpawn {
     /// the echo filter on the first round, its id rides `GenResult` so the
     /// orchestrator folds the round into it in place.
     continuation: Option<ContinuationSeed>,
+    /// The app started this turn itself, on a background run's task
+    /// notification (spec §9.3.2): nobody typed anything, and the whole new
+    /// input is the note. Measured on the gate model, such a turn can spend
+    /// its entire reply cap in `reasoning_content` and land empty
+    /// (docs/research/background-dialogues.md §3, fork F11), so it gets the
+    /// one-shot muted re-ask a dialogue's line gets.
+    woken: bool,
     evt_tx: UnboundedSender<AppEvent>,
     done_tx: UnboundedSender<GenMessage>,
     /// The background-run slots (see [`TurnShared::background`]).
@@ -1314,6 +1345,7 @@ fn spawn_generation(spawn: GenSpawn) {
         compaction_enabled,
         compaction_summary,
         continuation,
+        woken,
         evt_tx,
         done_tx,
         background,
@@ -1395,6 +1427,7 @@ fn spawn_generation(spawn: GenSpawn) {
             total_reasoning: 0,
             last_usage: None,
             pending_new_bubble: false,
+            woken,
             depth: 0,
             run_id: None,
             ended_by_limit: None,
@@ -1564,6 +1597,10 @@ struct TurnLoop<'a> {
     /// The next domain assistant message starts a new bubble (after
     /// `send_followup_message`). See spec §9.3.
     pending_new_bubble: bool,
+    /// The turn the app started itself on a task notification — the one
+    /// turn allowed a muted re-ask when its first round comes back empty
+    /// (see [`GenSpawn::woken`]).
+    woken: bool,
     /// Nesting level: `0` for the turn's own loop, `1` for a sub-agent's run.
     /// [`Self::run_subagent`] refuses below the top — the belt under the braces
     /// of an allowed set that never offers `call_subagent` there.
@@ -1874,11 +1911,31 @@ impl TurnLoop<'_> {
     }
 
     async fn run(&mut self) -> FinishReason {
+        let mut muted_retry_left = self.woken;
         loop {
             self.report_progress(None);
-            let out = self.stream().await;
+            let mut out = self.stream().await;
             self.total_tokens += out.tokens;
             self.total_reasoning += out.reasoning_tokens;
+
+            // A turn the app started on a task notification can spend its
+            // whole cap thinking and say nothing — measured 2 in 5 on the
+            // gate model (docs/research/background-dialogues.md §3). The
+            // recovery is the dialogue's (spec §9.13): one re-ask with
+            // thinking muted, whose tokens count like any other round's. A
+            // second empty reply is reported honestly.
+            if muted_retry_left
+                && out.calls.is_empty()
+                && out.text.trim().is_empty()
+                && out.reason != FinishReason::Cancelled
+            {
+                muted_retry_left = false;
+                self.request.sampling.reasoning_budget = Some(0);
+                self.report_progress(None);
+                out = self.stream().await;
+                self.total_tokens += out.tokens;
+                self.total_reasoning += out.reasoning_tokens;
+            }
 
             // A round with tool calls — execute and continue the loop.
             if out.reason == FinishReason::ToolCalls && !out.calls.is_empty() {
@@ -2182,7 +2239,13 @@ impl TurnLoop<'_> {
                 // (docs/research/background-subagents.md §4.2).
                 self.announce_call(call);
                 self.report_progress(Some(&call.name));
-                results[i] = Some(self.start_background(&Self::call_args(call)));
+                results[i] = Some(
+                    if call.name == crate::features::tools::dialogue::START_DIALOGUE_ID {
+                        self.start_background_dialogue(&Self::call_args(call))
+                    } else {
+                        self.start_background(&Self::call_args(call))
+                    },
+                );
                 i += 1;
                 continue;
             }
@@ -2479,6 +2542,9 @@ impl TurnLoop<'_> {
             // Reached only below the top of the turn (the round's own calls
             // resolve in `resolve_round`): refused there, no nesting.
             self.start_background(args)
+        } else if call.name == crate::features::tools::dialogue::START_DIALOGUE_ID {
+            // Reached only below the top of the turn, like its sibling above.
+            self.start_background_dialogue(args)
         } else if call.name == crate::features::tools::dialogue::RUN_DIALOGUE_ID {
             // The second loop-executed tool (spec §9.13): a directed dialogue
             // of two personas, driven by this loop over the same shared part.
@@ -2543,12 +2609,14 @@ impl TurnLoop<'_> {
         call.name == CALL_SUBAGENT_ID && self.depth == 0 && !rewrite && self.allowed_has(&call.name)
     }
 
-    /// Whether a call of this round starts a **background** run
-    /// (`start_subagent`, docs/research/background-subagents.md §4.1): the
-    /// same three conditions as the group's, for the twin the profile
-    /// offers only when `tools.subagent_background` is on.
+    /// Whether a call of this round starts a **background** run —
+    /// `start_subagent` (docs/research/background-subagents.md §4.1) or
+    /// `start_dialogue` (background-dialogues.md §4.2): the same three
+    /// conditions as the group's, for the twins the profile offers only
+    /// when `tools.subagent_background` is on.
     fn is_background_call(&self, call: &ApiToolCall, rewrite: bool) -> bool {
-        call.name == START_SUBAGENT_ID
+        (call.name == START_SUBAGENT_ID
+            || call.name == crate::features::tools::dialogue::START_DIALOGUE_ID)
             && self.depth == 0
             && !rewrite
             && self.allowed_has(&call.name)
@@ -2601,7 +2669,77 @@ impl TurnLoop<'_> {
             ],
         );
         self.progress(TurnProgress::BackgroundStart(Box::new(BackgroundStart {
-            spec,
+            spec: RunSpec::Subagent(Box::new(spec)),
+            parts: SharedParts::of(self.shared),
+        })));
+        CallResult {
+            text,
+            images: Vec::new(),
+            subagent: Some(Box::new(placeholder)),
+        }
+    }
+
+    /// Starts a **background dialogue** (spec §9.13,
+    /// docs/research/background-dialogues.md §4.2): the scene is parsed here
+    /// so the model gets a straight refusal for a malformed call and the
+    /// *started* line can name the transcript, the director's inputs are
+    /// snapshotted (fork F3 — the persona and the conversation brief as they
+    /// are at the call), and the run leaves the turn as progress. The record
+    /// lands with the turn as a `kind: Dialogue` placeholder the landing
+    /// fills in. Refused past the shared cap (`tools.subagent_background_max`,
+    /// fork F7) and below the top of the turn.
+    fn start_background_dialogue(&mut self, args: &serde_json::Value) -> CallResult {
+        use crate::features::tools::dialogue::{self, START_DIALOGUE_ID};
+        let loc = self.ctx.loc;
+        let parsed = match dialogue::DialogueArgs::parse(args, loc) {
+            Ok(parsed) => parsed,
+            Err(err) => {
+                return loc
+                    .tf(
+                        "loop.tool_error",
+                        &[("name", START_DIALOGUE_ID), ("err", &err.to_string())],
+                    )
+                    .into();
+            }
+        };
+        if self.depth > 0 {
+            return loc
+                .tf("loop.tool_disabled", &[("name", START_DIALOGUE_ID)])
+                .into();
+        }
+        if let Err(out) = self.shared.background.take() {
+            return loc
+                .tf(
+                    "tool.start_subagent.result.too_many",
+                    &[("n", &out.to_string())],
+                )
+                .into();
+        }
+        // The participants' lines run under the chat's sampling; the scene
+        // caps each of them itself, exactly as the foreground driver does.
+        let spec = DialogueSpec {
+            run_id: Uuid::new_v4(),
+            persona: self.ctx.system_message.clone(),
+            brief: conversation_brief(
+                self.shared.compaction_summary.as_deref(),
+                &self.request.messages,
+                loc,
+            ),
+            sampling: self.ctx.effective_sampling.clone(),
+            cancel: CancellationToken::new(),
+            loc,
+            args: parsed,
+        };
+        let placeholder = spec.placeholder();
+        let text = loc.tf(
+            "tool.start_dialogue.result.started",
+            &[
+                ("name", &placeholder.title),
+                ("address", &crate::features::chat_links::uri(spec.run_id)),
+            ],
+        );
+        self.progress(TurnProgress::BackgroundStart(Box::new(BackgroundStart {
+            spec: RunSpec::Dialogue(Box::new(spec)),
             parts: SharedParts::of(self.shared),
         })));
         CallResult {
@@ -2748,34 +2886,100 @@ struct CallDone {
 /// turn's shared state a run needs — the engine, the registry, the limits —
 /// as `Arc`s and copies, so the run owes the turn nothing once spawned.
 pub(super) struct BackgroundStart {
-    spec: ChildSpec,
+    spec: RunSpec,
     parts: SharedParts,
+}
+
+/// What a background run *is* (docs/research/background-dialogues.md F5): a
+/// sub-agent over its `ChildSpec`, or a directed scene over its own. The two
+/// share every later step — the seat, the landing by id, the notification,
+/// the stop — so only the start and the spawn branch.
+pub(super) enum RunSpec {
+    Subagent(Box<ChildSpec>),
+    Dialogue(Box<DialogueSpec>),
+}
+
+/// A background dialogue's start (F3): the parsed scene plus the director's
+/// inputs **snapshotted at the call** — the parent's persona and the folded
+/// conversation brief — because a scene ending twenty minutes later has no
+/// turn left to read them from.
+pub(super) struct DialogueSpec {
+    run_id: Uuid,
+    args: crate::features::tools::dialogue::DialogueArgs,
+    persona: String,
+    brief: String,
+    sampling: SamplingConfig,
+    cancel: CancellationToken,
+    loc: &'static crate::shared::i18n::Locale,
 }
 
 impl BackgroundStart {
     /// The run's id — minted with the spec, the placeholder's and the
     /// landed record's.
     pub(super) fn run_id(&self) -> Uuid {
-        self.spec.run_id
+        match &self.spec {
+            RunSpec::Subagent(spec) => spec.run_id,
+            RunSpec::Dialogue(spec) => spec.run_id,
+        }
     }
 
     /// The run as it will land, before it runs: what the orchestrator's
     /// mirror starts from (the same shape `ChildStarted` carries).
     pub(super) fn placeholder(&self) -> SubagentRun {
+        match &self.spec {
+            RunSpec::Subagent(spec) => SubagentRun {
+                id: spec.run_id,
+                kind: RunKind::Subagent,
+                title: spec.parsed.initial_title(),
+                renamed_manually: false,
+                name: spec.parsed.name.clone(),
+                created_at: chrono::Utc::now(),
+                finished_at: None,
+                system_message: spec.parsed.system_message.clone(),
+                sampling_override: None,
+                messages: vec![spec.user.clone()],
+                outcome: None,
+                tokens: 0,
+                participants: Vec::new(),
+                background: true,
+            },
+            RunSpec::Dialogue(spec) => spec.placeholder(),
+        }
+    }
+}
+
+impl DialogueSpec {
+    /// The scene as it will land before its first line: the opening the
+    /// caller authored, the two personas, `kind: Dialogue` — the shape
+    /// `DialogueCtx::run_parsed` reports through `ChildStarted`.
+    fn placeholder(&self) -> SubagentRun {
         SubagentRun {
-            id: self.spec.run_id,
-            kind: RunKind::Subagent,
-            title: self.spec.parsed.initial_title(),
+            id: self.run_id,
+            kind: RunKind::Dialogue,
+            title: self.args.initial_title(self.loc),
             renamed_manually: false,
-            name: self.spec.parsed.name.clone(),
+            name: None,
             created_at: chrono::Utc::now(),
             finished_at: None,
-            system_message: self.spec.parsed.system_message.clone(),
+            system_message: String::new(),
             sampling_override: None,
-            messages: vec![self.spec.user.clone()],
+            messages: vec![if self.args.opening_by_a {
+                Message::assistant(self.args.opening.clone())
+            } else {
+                Message::user(self.args.opening.clone())
+            }],
             outcome: None,
             tokens: 0,
-            participants: Vec::new(),
+            participants: vec![
+                crate::entities::subagent::Participant {
+                    name: self.args.a.name.clone(),
+                    system_message: self.args.a.system_message.clone(),
+                },
+                crate::entities::subagent::Participant {
+                    name: self.args.b.name.clone(),
+                    system_message: self.args.b.system_message.clone(),
+                },
+            ],
             background: true,
         }
     }
@@ -2915,9 +3119,17 @@ pub(super) fn spawn_background_run(
         evt_tx,
         bg_tx,
     } = spawn;
-    let cancel = spec.cancel.clone();
-    // The run streams under the app's budget, like the turn it left.
-    spec.ctx.sessions = Some(sessions.clone());
+    let cancel = match &mut spec {
+        RunSpec::Subagent(spec) => {
+            // The run streams under the app's budget, like the turn it left.
+            spec.ctx.sessions = Some(sessions.clone());
+            spec.cancel.clone()
+        }
+        // A scene's own streams are priced by `DialogueCtx` against the same
+        // budget (F4); its participants have no tools, so there is no tool
+        // context to hand one to.
+        RunSpec::Dialogue(spec) => spec.cancel.clone(),
+    };
     // The run's progress goes on a channel of its own and is forwarded under
     // its generation id, so the orchestrator can tell it from the turn's;
     // its end follows on the same path, after the channel has closed, so
@@ -2966,13 +3178,46 @@ pub(super) fn spawn_background_run(
         compaction_summary: parts.compaction_summary,
         background: parts.background,
     };
-    let loc = spec.ctx.loc;
     tokio::spawn(async move {
-        let CallDone { result, effects } = run_child(&shared, loc, spec).await;
+        let (result, effects) = match spec {
+            RunSpec::Subagent(spec) => {
+                let loc = spec.ctx.loc;
+                let CallDone { result, effects } = run_child(&shared, loc, *spec).await;
+                (result, effects)
+            }
+            // The scene runs through the very same driver the turn's own
+            // `run_dialogue` enters, over a context built from the snapshot
+            // (docs/research/background-dialogues.md §4.2) — so a background
+            // scene and a foreground one cannot drift apart.
+            RunSpec::Dialogue(spec) => {
+                let DialogueSpec {
+                    run_id,
+                    args,
+                    persona,
+                    brief,
+                    sampling,
+                    cancel,
+                    loc,
+                } = *spec;
+                let result = DialogueCtx {
+                    shared: &shared,
+                    loc,
+                    sampling,
+                    persona,
+                    brief,
+                    cancel,
+                    depth: 0,
+                    run_id,
+                }
+                .run_parsed(args)
+                .await;
+                (result, Vec::new())
+            }
+        };
         slots.release();
         let run = result
             .subagent
-            .expect("run_child always lands a run on its result");
+            .expect("a background run always lands a run on its result");
         let _ = end_tx.send(BackgroundMessage::Done {
             generation,
             run,
@@ -3038,6 +3283,8 @@ async fn run_child(
         request,
         cancel: cancel.clone(),
         allowed,
+        // A child is never a woken turn: the notification reaches the parent.
+        woken: false,
         messages: Vec::new(),
         effects: Vec::new(),
         deleted: Vec::new(),
@@ -3284,6 +3531,11 @@ struct DialogueCtx<'a> {
     /// The nesting guard's input: `0` for a scene staged by the turn's own
     /// loop, which is the only depth that may stage one.
     depth: u8,
+    /// The run's id, minted by whoever starts the scene: a foreground call
+    /// mints it here, a background one mints it at the call so its *started*
+    /// line can name the transcript's address before the scene begins
+    /// (docs/research/background-dialogues.md §4.2).
+    run_id: Uuid,
 }
 
 impl TurnLoop<'_> {
@@ -3303,6 +3555,7 @@ impl TurnLoop<'_> {
             ),
             cancel: self.cancel.child_token(),
             depth: self.depth,
+            run_id: Uuid::new_v4(),
         }
         .run(args)
         .await
@@ -3368,6 +3621,18 @@ impl DialogueCtx<'_> {
                 .tf("loop.tool_disabled", &[("name", RUN_DIALOGUE_ID)])
                 .into();
         }
+        self.run_parsed(parsed).await
+    }
+
+    /// The scene over already-parsed arguments — the seam a background start
+    /// enters through, having parsed at the call to answer the model at once
+    /// (docs/research/background-dialogues.md §4.2).
+    async fn run_parsed(
+        &self,
+        parsed: crate::features::tools::dialogue::DialogueArgs,
+    ) -> CallResult {
+        use crate::features::tools::dialogue;
+        let loc = self.loc;
         let started = chrono::Utc::now();
         let limits = self.shared.subagent;
         let a_label = parsed.label(true, loc);
@@ -3421,7 +3686,7 @@ impl DialogueCtx<'_> {
         } else {
             Message::user(parsed.opening.clone())
         };
-        let run_id = Uuid::new_v4();
+        let run_id = self.run_id;
         let cancel = self.cancel.clone();
         self.progress(TurnProgress::ChildStarted(Box::new(SubagentRun {
             id: run_id,
@@ -4024,6 +4289,14 @@ impl DialogueCtx<'_> {
     /// run's tokens accounted. `steps` — whether the stream's tokens reach
     /// the open transcript (a participant's line does, stage 2 of the track;
     /// a director checkpoint stays muted — its deliberation is not a line).
+    ///
+    /// The stream takes a session permit and a pool reservation like every
+    /// other (`TurnLoop::stream`, spec §6.3): the scene's "one request in
+    /// flight" was an invariant of running *inside* a turn, and a background
+    /// scene has no turn to be inside — so the admission guard is what keeps
+    /// it (docs/research/background-dialogues.md R3, fork F4). Nothing is
+    /// priced at one session with no pool, which is the behaviour every
+    /// foreground scene had before.
     async fn dialogue_stream(
         &self,
         request: ChatRequest,
@@ -4038,6 +4311,16 @@ impl DialogueCtx<'_> {
             turn: self.shared.id,
             child: Some(run),
             mute_steps: !steps,
+        };
+        // Each context is its own conversation, so there is no last-round
+        // floor to raise the estimate with — the request is priced as it is.
+        let need = self.shared.sessions.price(
+            estimate_prompt_tokens(&request),
+            0,
+            request.sampling.max_tokens.map(|m| m as u64),
+        );
+        let Some(_session) = self.shared.sessions.acquire(need, cancel).await else {
+            return cancelled_round();
         };
         let out = stream_round(
             &self.shared.backend,
