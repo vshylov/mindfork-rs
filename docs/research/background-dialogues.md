@@ -1,6 +1,11 @@
 # Background dialogues — a directed scene that outlives its turn
 
-**Status:** design, forks open (2026-09-05). The last of the three items
+**Status:** design **accepted**; forks F1–F11 decided by the user
+(2026-09-05) — the recommendations everywhere except **F6(b)**, where the
+dialogue driver is lifted off `TurnLoop` rather than re-hosted on a rebuilt
+one. Because that is a mechanical refactor, AGENTS.md §2 splits it out: the
+lift ships first, alone, with no behaviour change (F10 becomes "one track PR
+behind one refactor PR"). The last of the three items
 [background-subagents.md](background-subagents.md) §8 left for later, and the
 one [two-agent-dialogue.md](two-agent-dialogue.md) named as *"the same shape
 would serve"* when the background mechanism existed. It now does.
@@ -225,12 +230,18 @@ on the variant, so a dialogue's placeholder is `kind: Dialogue` with its
 `participants` and the opening line — the shape `run_dialogue` builds at
 `generation.rs:3366` today.
 
-In the spawned task the background run reconstructs a `TurnLoop` over the
-`TurnShared` built from `SharedParts` — with the snapshotted `ctx` (persona
-included) and a request whose `messages` are the snapshotted brief tail,
-`depth: 0`, the run's own token — and calls the **existing**
-`TurnLoop::run_dialogue` unchanged (F6). This is what `run_child` already
-does for a sub-agent: build a loop and run it. No dialogue logic moves.
+The driver itself stops being a `TurnLoop` method (F6(b), the user's
+decision). The scene needs seven things — the shared parts, the locale, the
+effective sampling, the parent persona, the conversation brief, a
+cancellation token and the run's id — so those become an explicit
+`DialogueCtx`, and the ~700 lines of `dialogue_*` methods move onto a
+`DialogueRunner` over it. `TurnLoop::run_dialogue` stays as a thin
+constructor of that context from `self`, so the foreground path is unchanged
+by construction; the background task builds the same context from the
+snapshot in `DialogueSpec` and calls the same runner. **This lift is a
+separate, behaviour-free PR** (AGENTS.md §2: a mechanical refactor and a
+behaviour change do not share a PR), and its gate is that every existing
+dialogue test passes untouched.
 
 ### 4.3 Landing, delivery, stopping
 
@@ -301,55 +312,60 @@ and no outcome reads *unfinished* by the same rule.
 
 ## 6. Forks
 
-Recommendations marked; nothing is decided until the user says so.
+**Decided by the user, 2026-09-05**: F1(a), F2(a), F3(a), F4(a), F5(a),
+**F6(b)**, F7(a), F8(a), F9(a), F10(a) *(as amended by F6(b): the refactor
+ships first)*, F11(a). Each is marked below.
 
-- **F1. How the model asks.** (a) **A second tool, `start_dialogue`**
+- **F1** *(decided: (a))*. **How the model asks.** (a) **A second tool, `start_dialogue`**
   *(recommended — the sibling's measurement, plus §3 here)*. (b) A
   `background` boolean on `run_dialogue` — rejected by the sibling's
   measurement (0/3 on Claude). (c) A required `mode` enum on
   `run_dialogue` — works, but changes the shipped tool's schema for every
   model and every profile.
-- **F2. The gate.** (a) **The existing `tools.subagent_background` gates
+- **F2** *(decided: (a))*. **The gate.** (a) **The existing `tools.subagent_background` gates
   both twins** *(recommended — one switch for "a run that outlives the
   turn"; the settings row is reworded from "Subagent: background runs" to
   cover both, no new knob)*. (b) A separate `tools.dialogue_background`.
-- **F3. The director's brief.** (a) **Snapshotted at the call**
+- **F3** *(decided: (a))*. **The director's brief.** (a) **Snapshotted at the call**
   *(recommended — matches `SharedParts`' frozen shape; the brief exists to
   give the director the context the delegation was made in)*. (b) Refreshed
   at each checkpoint from the live chat — needs a round trip to the
   orchestrator, the sole owner of `Chat`, and lets the scene drift with
   whatever the user said meanwhile.
-- **F4. The session budget.** (a) **Every dialogue stream priced and
+- **F4** *(decided: (a))*. **The session budget.** (a) **Every dialogue stream priced and
   admitted, foreground and background alike** *(recommended — R3, and it
   closes §2.3's defect at the same seam)*. (b) Background dialogues only.
   (c) Leave the dialogue outside the budget — rejected: it is the exact
   overlap the admission track exists to prevent.
-- **F5. The spec shape.** (a) **`BackgroundStart` carries a two-variant
+- **F5** *(decided: (a))*. **The spec shape.** (a) **`BackgroundStart` carries a two-variant
   spec** (`Subagent(ChildSpec)` / `Dialogue(DialogueSpec)`) *(recommended)*.
   (b) A parallel start type and a second spawn path.
-- **F6. Where the dialogue's code runs.** (a) **Rebuild a `TurnLoop` in the
+- **F6** *(decided: **(b)** — the user chose the lift over the rebuild, so the
+  driver becomes context-explicit and the refactor ships on its own)*.
+  **Where the dialogue's code runs.** (a) Rebuild a `TurnLoop` in the
   background task and call the existing `run_dialogue`** *(recommended —
   what `run_child` does for a sub-agent; zero dialogue logic moves, so the
-  foreground behaviour cannot drift)*. (b) Lift the ~700-line dialogue
-  driver off `TurnLoop` into a free function over an explicit context — a
-  large refactor mixed into a behaviour change, which AGENTS.md §2 says not
-  to mix.
-- **F7. The cap.** (a) **Shared `subagent_background_max`** *(recommended —
+  foreground behaviour cannot drift)*. (b) **Lift the ~700-line dialogue driver off
+  `TurnLoop` onto an explicit `DialogueCtx`** *(the user's choice — the
+  cleaner seam; AGENTS.md §2 is then satisfied by shipping the lift as its
+  own behaviour-free PR rather than by avoiding it)*.
+- **F7** *(decided: (a))*. **The cap.** (a) **Shared `subagent_background_max`** *(recommended —
   R7)*. (b) A separate dialogue cap.
-- **F8. The notification.** (a) **A dialogue-specific wording** naming the
+- **F8** *(decided: (a))*. **The notification.** (a) **A dialogue-specific wording** naming the
   participants and carrying the director's closing result *(recommended)*.
   (b) Reuse the sub-agent key.
-- **F9. The stop routes' wording.** (a) **Keep `/subagents stop [n]` and
+- **F9** *(decided: (a))*. **The stop routes' wording.** (a) **Keep `/subagents stop [n]` and
   `F6`, reword the texts to "background run"** *(recommended — one route
   for one concept)*. (b) A `/dialogues` command family.
-- **F11. The wake turn's empty reply** (measured above, and a defect of the
+- **F11** *(decided: (a))*. **The wake turn's empty reply** (measured above, and a defect of the
   **shipped** background sub-agent feature, not of dialogues). (a) **Give the
   wake turn the one-shot muted re-ask the dialogue's lines already have**
   *(recommended — the measurement is here, the fix is one place, and without
   it a background result can land as an empty bubble on the gate model)*.
   (b) Leave it and record the mode in the journal. (c) Split it into its own
   fix PR before this track.
-- **F10. Staging.** (a) **One PR** *(recommended — the mechanism, the
+- **F10** *(decided: (a), amended by F6(b) into refactor-then-track)*.
+  **Staging.** (a) **One PR** *(recommended — the mechanism, the
   surfaces and the keys all exist; this track adds a tool, a spec variant,
   the budget seam and texts)*. (b) Two, splitting the budget fix out first.
 
@@ -358,7 +374,15 @@ Recommendations marked; nothing is decided until the user says so.
 **Probe → go/no-go** (§3): the bar is the sibling's — ≥ 4/5 background on
 S1, 0/5 on S2, ≥ 4/5 notification use without a re-call.
 
-**The track** (`feat/background-dialogues`), assuming F10(a). Unit tests
+**PR 1 — the lift** (`refactor/dialogue-driver-context`), F6(b). The
+`dialogue_*` methods move off `TurnLoop` onto a `DialogueRunner` over an
+explicit `DialogueCtx`; `TurnLoop::run_dialogue` builds that context and
+delegates. No behaviour changes, no new tests: the gate is the existing
+dialogue suite (7 orchestrator tests + the unit tests in
+`features/tools/dialogue.rs`) passing untouched, plus `dialogue_e2e_live`
+green once.
+
+**PR 2 — the track** (`feat/background-dialogues`). Unit tests
 over the keyed engine, alongside the existing dialogue and background
 suites: the catalog is byte-identical with the switch off and carries
 `start_dialogue` on; a `start_dialogue` call records the *started* line and
