@@ -23,6 +23,11 @@ pub enum ToolGate {
     /// [`super::effective_tool_ids`] (the tools are dynamic — absent from the
     /// static `CATALOG`).
     Mcp,
+    /// The background delegation switch (`config.tools.subagent_background`,
+    /// spec §9.3.2): `start_subagent` is in the catalog and the profile's
+    /// toggles like any tool, and offered to the model only when the switch
+    /// is on — so at the default the request is byte-identical to before.
+    Background,
 }
 
 /// Semantic group of a tool (the group heading in profile toggles). Variant order

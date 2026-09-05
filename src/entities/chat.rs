@@ -352,6 +352,19 @@ impl Chat {
             .find(|r| r.id == id)
     }
 
+    /// [`Self::child_mut`] over the live messages **and** the deleted
+    /// archive: where a background run lands when the exchange that started
+    /// it was taken back while it was out (spec §9.3.2,
+    /// docs/research/background-subagents.md fork F8).
+    pub fn child_mut_including_deleted(&mut self, id: Uuid) -> Option<&mut SubagentRun> {
+        self.messages
+            .iter_mut()
+            .chain(self.deleted.iter_mut().flat_map(|d| d.messages.iter_mut()))
+            .flat_map(|m| m.tool_calls.iter_mut())
+            .filter_map(|r| r.subagent.as_deref_mut())
+            .find(|r| r.id == id)
+    }
+
     /// Gives every sub-agent transcript a fresh id — what a **clone** must do,
     /// since the copied messages carry the transcripts along and two chats
     /// answering to one `chat://` prefix would make the reference ambiguous
@@ -496,6 +509,11 @@ pub struct ChildSummary {
     /// file — `Chat::summary()` never sets it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub running: bool,
+    /// The run was started in the background (spec §9.3.2): with no outcome
+    /// and not running, its row reads *unfinished* — the app was closed while
+    /// it was out — rather than *interrupted*, which is a turn's word.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub background: bool,
 }
 
 impl ChildSummary {
@@ -508,6 +526,7 @@ impl ChildSummary {
             message_count: visible_message_count(&run.messages),
             outcome: run.outcome,
             running: false,
+            background: run.background,
         }
     }
 }

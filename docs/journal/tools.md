@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (45)
+## Entries (46)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -57,6 +57,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: admission by budget — the unified KV pool never overfilled by the app (done)
 - Post-M9: the parked-set bound of the RAM prompt cache, measured (done)
 - Post-M9: the parked-set bound on Gemma 4 31B, measured on a rented L40S (done)
+- Post-M9: sub-agents in the background — a run that outlives its turn, stage 1 (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -3409,3 +3410,50 @@ the tag `probe/code-search-stage5`.
   served by a scratch poller.
 - Written into research §3.7 (and §3.6, §5, §8), install.md §3, and the
   roadmap (the prefill item narrowed).
+
+### Post-M9: sub-agents in the background — a run that outlives its turn, stage 1 (done)
+- **What**: the last open item of the parallel track's §8, designed in
+  [docs/research/background-subagents.md](../research/background-subagents.md)
+  (forks F1–F10 decided by the user 2026-09-05; F3 against every
+  confirmation) and built as stage 1: `start_subagent` — a second tool, not
+  a flag on `call_subagent`, because the probe found Claude omitting an
+  optional boolean 0/3 while a tool of its own is used 3/3 on every cloud
+  and 5/5 on Qwen 3.6 27B — behind `ToolGate::Background`
+  (`tools.subagent_background`, off), so the default catalog's effective set
+  and every request stay byte-identical. The loop resolves the call at its
+  position (`start_background`): the `ChildSpec` a group child would get,
+  over a fresh token, goes to the orchestrator as
+  `TurnProgress::BackgroundStart` with the cloneable half of `TurnShared`;
+  the call's result is the *started* line with the transcript's address,
+  and a placeholder run (`background: true`, no outcome) lands on the record
+  with the turn. `background_runs.rs` spawns the run as a task of its own —
+  `spawn_background_run` builds a `TurnShared` with no confirmation round
+  trip and the **app-wide** session budget (`session_budget()`, memoized per
+  mode/count/pool, the one `Arc` every turn and run streams under) and runs
+  the very same `run_child`; its progress is forwarded under a generation id
+  of its own, its end after the channel closes. The landing re-finds the
+  record by id (`Chat::child_mut_including_deleted`), deferred to
+  `handle_done` when a turn is still running in that chat — the first
+  attempt landed nothing because the placeholder was not in `Chat` yet, the
+  second lost a race between the forwarded `ChildEnded` and the `Done` on a
+  second sender, hence the oneshot behind the forwarder — then appends the
+  notification row (`Message::notification`, a `System` row the feed draws
+  as a note, sent as user text merged in front of the next user message by
+  `request::api_messages`) and wakes the assistant when the chat is open and
+  idle. `Esc` never touches a run; `/subagents stop [n]` (the subcommand
+  parser now keeps a word's tail), take-back/regenerate (the notification
+  is a user-side boundary for both), a deleted chat and `Quit` end it —
+  `Quit` landing every run *cancelled* from its mirror before the exit flush.
+  The cap (`BackgroundSlots`, `subagent_background_max`) refuses with the
+  setting's name. Three settings rows, the `unfinished` label, the
+  *"in background: n"* indicator, `en`/`ru`.
+- **Tests**: nine over the keyed engine (`tests/background.rs`) — delivery
+  at landing with the wake, one session taking turns (`max_in_flight` 1),
+  stop after the turn, `Esc` leaving the run out, the wake off and the
+  merged message, the cap, `Quit`, the archive on take-back, the gate — the
+  wire mapping, the parser, the tool's twin shape; the whole suite green.
+  The gallery height rose from 30 to 33 for the three rows (the dumps and
+  images regenerated). Live: `background_subagent_e2e_live` on the LAN stack
+  (Qwen 3.6 27B) — see the PR.
+- **Not in stage 1** (research §7–§8): a key on the open transcript that
+  stops the run, the unread mark on the list, background dialogues.

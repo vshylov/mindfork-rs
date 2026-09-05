@@ -104,10 +104,16 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   - **background sub-agents** — a child that outlives its round, the parent
     notified in a later round (Claude Code's background agents): a
     "task notification" round shape and a place for a result that arrives
-    after the turn ends. **Research written** (2026-09-05, forks F1–F10
-    awaiting the user's decision; Qwen 3.6 27B go 5/5, Gemma 4 31B pending
-    the stack):
-    [docs/research/background-subagents.md](research/background-subagents.md);
+    after the turn ends. **Stage 1 built** (2026-09-05, `start_subagent`,
+    the run outside the turn, the notification and the wake, the app-wide
+    session budget, stop/delete/quit; forks F1–F10 at their
+    recommendations, F3 → no confirmations; Qwen 3.6 27B go 5/5 on the
+    probe, Gemma 4 31B pending the stack):
+    [docs/research/background-subagents.md](research/background-subagents.md).
+    What its §8 leaves for later: an unread mark on the list for a chat
+    whose run finished while it was not open; a key on the open transcript
+    that stops the run (`/subagents stop` is the route today); background
+    dialogues; a tasks screen across chats;
   - **concurrent ordinary tools** — **done** (2026-09-04, see "Recently
     closed"; [docs/research/concurrent-tools.md](research/concurrent-tools.md),
     ADR 0012). What its §8 left for later:

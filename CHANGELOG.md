@@ -16,6 +16,21 @@ split by subsystem.
 
 ### Added
 
+- **Sub-agents in the background.** Switch on "Subagent: background runs"
+  in Settings → Tools and the assistant gains `start_subagent`: a
+  delegation that returns at once — the assistant keeps answering you while
+  the sub-agent works, past the end of its own reply — and whose result
+  arrives later as a **task notification** in the chat, worded for the
+  assistant to read; when the chat is open and idle the assistant replies
+  to it by itself ("Subagent: report background runs", on by default),
+  otherwise the note waits for your next message. The run is a row of the
+  chat list while it is out and its transcript opens as it streams;
+  `Esc` stops your reply and not the run — `/subagents stop [n]` does;
+  taking back the exchange that started it, or quitting, ends it and says
+  so on its transcript. A background run never asks you to confirm a
+  tool call: switch off the tools you would not let run unattended. Up to
+  "Subagent: background runs at once" (2) may be out at a time; the
+  status bar shows how many.
 - **Several sub-agents at once.** When the assistant delegates several
   tasks in one reply — several `call_subagent` calls at once, the way Claude
   Code fans out its agents — they now run **in parallel**: "Subagent:

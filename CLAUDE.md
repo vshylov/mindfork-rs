@@ -183,6 +183,21 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 `tools/doc_index_check.py`. A new track adds a line; a line that has stopped
 being recent is dropped, not shortened.
 
+- **Sub-agents in the background — a run that outlives its turn, stage 1** —
+  `start_subagent` (opt-in, `tools.subagent_background`): the call returns
+  at once, the run is owned by the orchestrator over the turn's cloneable
+  parts and the **app-wide** session budget, its record lands with the
+  turn as a placeholder and is filled in **by id** when it ends, and the
+  result is a stored **task notification** the model reads as user text —
+  with a turn the app starts itself when the chat is open and idle.
+  Measured before code on the four clouds and Qwen 3.6: an optional flag
+  is silently omitted by Claude (0/3), a second tool is used 3/3 and 5/5.
+  No confirmations in a background run (the user's decision: the tool set
+  is the control); `Esc` leaves it, `/subagents stop`, take-back and
+  `Quit` end it
+  ([docs/research/background-subagents.md](docs/research/background-subagents.md),
+  [ADR 0010](docs/decisions/0010-subagent-nested-turn.md) amended, spec
+  §9.3.2, [docs/journal/tools.md](docs/journal/tools.md)).
 - **Admission by budget — the unified KV pool never overfilled by the app** —
   above one session a managed server's streams share one KV pool, and when
   they outgrew it together the server ended *every* running conversation
@@ -399,26 +414,6 @@ being recent is dropped, not shortened.
   `interface.show_model_name` (off), from the **message's** own metadata
   snapshot rather than the current engine setting
   ([docs/journal/ui-feed.md](docs/journal/ui-feed.md), spec §11.3).
-- **Automatic chat titling on the first exchange** — `interface.auto_title`, a
-  tri-state defaulting to after the assistant's first *substantive* reply; a
-  manual rename outranks it
-  ([docs/history/auto-chat-title.md](docs/history/auto-chat-title.md), spec §11.2).
-- **The external server's API key, entered in settings** — addressed by *slot*
-  (`SecretKey::External`), since four `external` sub-sections are four
-  independent URLs; having no key stays legitimate
-  ([docs/history/external-api-key.md](docs/history/external-api-key.md), spec §11.6).
-- **A second chat model on the live e2e gate** — `--chat-model`
-  `gemma-4-31b`/`qwen-3.6-27b`, one per dispatch; the product needed no change,
-  the test-side assumptions did
-  ([docs/history/e2e-second-chat-model.md](docs/history/e2e-second-chat-model.md)).
-- **`/export` — a conversation to a file** — `md` is byte-for-byte what `F5`
-  copies; `json` is the `mindfork-import` v1 document, so an export imports back
-  onto the same chat
-  ([docs/history/chat-export-file.md](docs/history/chat-export-file.md), spec §11.7).
-- **OSC 52 — copying to the client's clipboard** — `interface.clipboard_osc52`
-  (`auto`/`always`/`off`); the beneficiary is plain SSH, and JupyterLab drops the
-  sequence entirely
-  ([docs/history/osc52-clipboard.md](docs/history/osc52-clipboard.md), spec §11.7).
 
 For what exists and how it works, read architecture.md and spec.md — they are
 the source of truth for the current state. For how any of it came to be, and

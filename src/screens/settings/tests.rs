@@ -4861,3 +4861,76 @@ fn sub_parallel_ignores_what_it_cannot_parse() {
     set(&mut c, "5");
     assert_eq!(c.tools.subagent_parallel, 5);
 }
+
+// ---------- Subagent: background runs (tools.subagent_background*, spec §9.3.2) ----------
+
+/// The three background-run rows follow the parallel-runs row in the
+/// "Agentic loop" group, in this order: the switch, the wake, the cap —
+/// each valued from its field and described.
+#[test]
+fn background_rows_follow_the_parallel_runs_row_in_tools() {
+    let mut s = screen();
+    s.config.tools.subagent_background = true;
+    s.config.tools.subagent_background_wake = false;
+    s.config.tools.subagent_background_max = 3;
+    let rows = s.tool_fields();
+    let pos = rows
+        .iter()
+        .position(|r| r.id == FieldId::TSubBackground)
+        .expect("no background row");
+    assert_eq!(rows[pos - 1].id, FieldId::TSubParallel);
+    assert_eq!(rows[pos + 1].id, FieldId::TSubBackgroundWake);
+    assert_eq!(rows[pos + 2].id, FieldId::TSubBackgroundMax);
+    for r in &rows[pos..pos + 3] {
+        assert_eq!(
+            r.group,
+            rows[pos - 1].group,
+            "{:?} in the loop's group",
+            r.id
+        );
+        assert!(r.description.is_some(), "{:?} is described", r.id);
+    }
+    assert!(matches!(rows[pos].kind, FieldKind::Toggle(true)));
+    assert!(matches!(rows[pos + 1].kind, FieldKind::Toggle(false)));
+    assert!(matches!(&rows[pos + 2].kind, FieldKind::Text(v) if v == "3"));
+}
+
+/// The switch and the wake toggle; the cap is edited with a floor of one — a
+/// cap of zero would refuse every start while the switch still offered the
+/// tool.
+#[test]
+fn background_rows_save_their_fields() {
+    let mut s = screen();
+    goto_section(&mut s, Section::Tools);
+    goto_field(&mut s, FieldId::TSubBackground);
+    match s.handle_key(key(KeyCode::Char(' '))) {
+        Some(SettingsIntent::SaveConfig(c)) => assert!(c.tools.subagent_background),
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+    goto_field(&mut s, FieldId::TSubBackgroundWake);
+    match s.handle_key(key(KeyCode::Char(' '))) {
+        Some(SettingsIntent::SaveConfig(c)) => assert!(!c.tools.subagent_background_wake),
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+    let edit_max = |s: &mut SettingsScreen, text: &str| {
+        goto_section(s, Section::Tools);
+        goto_field(s, FieldId::TSubBackgroundMax);
+        s.handle_key(key(KeyCode::Enter));
+        s.handle_key(ctrl('k'));
+        for c in text.chars() {
+            s.handle_key(key(KeyCode::Char(c)));
+        }
+        s.handle_key(key(KeyCode::Enter))
+    };
+    let mut s = screen();
+    match edit_max(&mut s, "4") {
+        Some(SettingsIntent::SaveConfig(c)) => assert_eq!(c.tools.subagent_background_max, 4),
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+    let mut s = screen();
+    s.config.tools.subagent_background_max = 3;
+    match edit_max(&mut s, "0") {
+        Some(SettingsIntent::SaveConfig(c)) => assert_eq!(c.tools.subagent_background_max, 1),
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+}

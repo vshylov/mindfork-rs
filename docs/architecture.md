@@ -233,6 +233,7 @@ src/
 │  │  ├─ consolidation.rs   note auto-consolidation ("sleep")
 │  │  ├─ tool_loop.rs       shared "silent" agentic loop for background tasks (reflection/consolidation)
 │  │  ├─ background.rs      slot registry for silent background tasks (BgSlot by BackgroundKind)
+│  │  ├─ background_runs.rs sub-agent runs out in the background: seats, landing by id, the notification (spec §9.3.2)
 │  │  ├─ request.rs         mapping domain messages to the engine wire format
 │  │  └─ tests/             orchestrator tests, split by feature (mod.rs — fixtures;
 │  │                        generation/chats/profiles/settings/title/impersonation/
@@ -730,7 +731,9 @@ status-bar indicator for background reflection/consolidation/compression),
 name, round, tool — for the status-bar chip while the parent's turn is inside
 `call_subagent`; keyed by the run, since several run at once, and `None`
 clears that run's line; the screen shows the one line or the count and the
-latest; spec §9.3.2), `TtsActive`
+latest; spec §9.3.2), `BackgroundRuns{out}` (how many sub-agent runs are
+out in the background — a quiet indicator with the count, `0` clears it),
+`TtsActive`
 (speech synthesis is running — a "♪ speaking" chip in the status bar; §11.9),
 `Error`, `Notice` (a plain informational note in the feed — the
 counterpart of `Error` for an outcome that is not a failure) and `Compacted`
@@ -956,6 +959,35 @@ Details:
   group runs one child at a time in the model's order, the tool's original
   behaviour. `run_dialogue` is not a member (ADR 0011's one-request
   contract); a nested loop still refuses the name.
+- **The background runs** ([docs/research/background-subagents.md](research/background-subagents.md)
+  §4, ADR 0010's second amendment). A `start_subagent` call resolves at
+  its position in phase one (`is_background_call` → `start_background`):
+  the `ChildSpec` a group child would get, over a **fresh** token, is
+  handed to the orchestrator as `TurnProgress::BackgroundStart` together
+  with the cloneable half of `TurnShared` (`SharedParts`), and the call's
+  result is the *started* line plus a **placeholder** `SubagentRun`
+  (`background: true`, no outcome) that lands on the record with the
+  turn. The orchestrator (`background_runs.rs`) takes the app-wide
+  session budget (`session_budget()`, memoized per engine mode, count and
+  pool — the one `Arc` every turn and run streams under), a generation id
+  of the run's own, and `spawn_background_run` builds a `TurnShared` from
+  the parts — no confirmation round trip (`confirm_dangerous: false`),
+  fresh counters — and runs the very same `run_child` in a task of its
+  own; its progress is forwarded on a channel of its own
+  (`BackgroundMessage`, keyed by that generation id) and its end follows
+  after the channel closes, so the landing never overtakes the last filed
+  round. The cap is `BackgroundSlots` (owned by the orchestrator, taken by
+  the loop, released by the run). At the end `land_background_run`
+  re-finds the record by id (`Chat::child_mut_including_deleted`) and
+  fills it in — deferred to `handle_done` (`land_pending_runs`) when a
+  turn is still running in that chat — then appends the notification row
+  (`Message::notification`) and wakes the assistant (`maybe_wake`:
+  active, idle, the setting on). `request::api_messages` sends the row as
+  user text merged into the next user message. `Esc` never reaches a
+  run's token; `handle_stop_subagent_run`, `cancel_orphaned_background_runs`
+  (delete/regenerate), `cancel_background_runs_of` (a deleted chat) and
+  `stop_all_background_runs` (`Quit`, landing every run *cancelled* from
+  its mirror) do.
 - **The concurrent segment** ([docs/research/concurrent-tools.md](research/concurrent-tools.md)
   §4.2–§4.4, [ADR 0012](decisions/0012-concurrent-tool-calls.md)). Phase one
   walks the round by segments: `resolve_round` takes the next segment from
@@ -990,7 +1022,10 @@ Details:
   orchestrator keeps `inflight: Option<InflightTurn>` — the parent's filed
   rounds and its round in progress (`partial`), the running runs
   (`children: Vec<InflightChild>`, keyed by run id: several run at once
-  since the parallel group, spec §9.3.2) — created by
+  since the parallel group, spec §9.3.2; a run out in the **background**
+  has the same `InflightChild` in a seat of `background_runs` that outlives
+  the turn, and `child_any`/`child_mut_any`, `view()`, `forward_child`,
+  `emit_chat_list` and `activate_focused` consult both tables) — created by
   `start_generation`, fed by `handle_progress` (a step from another
   generation is dropped; **every `Child*` step names its run**), read and
   dropped by `handle_done` (a title given to any running transcript is
@@ -1810,6 +1845,7 @@ by `ToolGroup` (`Ord`).
 | Utilities      | `calculate` (our own expression evaluator), `current_time` (chrono) — no I/O, not gated |
 | Files (project) | `code_list`, `code_read`, `code_grep`, `code_edit`, `code_write`, `code_build`, `code_run`, `code_test` — the code workspace attached to *this chat* with `/project attach` (spec §9.12). One `CodeTool` enum with one `impl Tool` dispatching to free functions, and `code::ALL` is what the registry loops, so a new member cannot be registered without joining the family's list. The editing pair and the three command tools are `danger()` (so §9.8's confirmation can park them); the editors journal a file's previous bytes before touching it; the whole family is exempt from `max_tool_rounds` and bounded instead by `workspace.max_rounds`. **No global gate**: the project's presence is the gate — and for a command tool, a line in its slot — so with none attached the schemas never reach the prompt and the request is byte-identical to what it was before the feature. The rule lives in `code::offered`, which `effective_tool_ids` consults. Stateless — the root, the command lines and the limits are per-turn snapshots (`ToolContext.workspace`, `ToolContext.workspace_cfg`), not registry parameters |
 | Awareness      | `call_subagent` — a **loop-executed** tool (ADR 0010): the loop runs a nested `TurnLoop` with the turn's tools minus itself, `history_*` and the self-model family, over the parent's environment; no history, no nesting; the transcript lives on the call's record (`SubagentRun`) |
+| Awareness      | `start_subagent` — the background twin (spec §9.3.2, gate `ToolGate::Background` = `tools.subagent_background`): the same call returns at once and the run outlives the turn, its result delivered as a task notification; the record lands as a placeholder and is filled in by id (`orchestrator/background_runs.rs`) |
 | Conversation control | `send_followup_message` / `rewrite_current_message` — **control flow** (optional, off by default): recognized by the agentic loop, not `Tool::invoke`. The same settings group also holds the read-back pair `history_read`/`history_search` (the folded range of *this* chat, offered only while one exists — spec §6.7) and the cross-chat pair `chat_search`/`chat_read` (the profile's *other* chats — **optional, off by default**; spec §9.11) |
 | Self-model     | `get_self_model`, `reflect`, `update_self_model`, `update_user_model`, `add_insight` — **optional, off by default**: a per-profile "self-model" in SQLite (description + goals + a model of the interlocutor), written directly through `storage` (not via `ChatEffect`). Observations ("narrative") moved into `@self` notes — they're consolidated by note tools (`consolidate_narrative` was removed). **Details in §9** |
 | Plugins (MCP)  | `mcp__<server>__<tool>` — **dynamic** `McpTool` wrappers around external MCP servers' tools (`features/tools/mcp.rs`; description/schema is a snapshot of the server, per-call timeout + `ctx.cancel` cancellation, result clipping). Not part of the static `CATALOG`: the registry is rebuilt on `McpManager` events (`rebuild_registry`), and the UI catalog rides an `McpSnapshot` inside `AppEvent::Settings`; the `effective_tool_ids` gate is by the `mcp__` prefix + `config.mcp.enabled`. Double opt-in + TOFU catalog pinning. See spec §9.6, ADR 0007 |

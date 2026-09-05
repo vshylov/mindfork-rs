@@ -5107,3 +5107,195 @@ async fn admission_four_e2e_live() {
         "a quarter of the pool plus the cap each: two fit together, three do not"
     );
 }
+
+/// The background run's live proof (docs/research/background-subagents.md
+/// §7): the parent is told to have a planted file read in the background and
+/// to answer an unrelated question at once; the turn lands with a
+/// `start_subagent` call and no `fs_read` of its own; the run reads the file
+/// and ends; the assistant is woken on the task notification and its reply
+/// carries the planted codename. The dashes are folded on both sides
+/// (docs/lessons.md §9). `#[ignore]`, manual against a live model.
+#[tokio::test]
+#[ignore = "requires a live chat server (MINDFORK_ENGINE_URL)"]
+async fn background_subagent_e2e_live() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let file = sandbox.path().join("alpha.txt");
+    std::fs::write(
+        &file,
+        "Internal note.\nThe alpha codename is ZARNOVIK-7741.\n",
+    )
+    .unwrap();
+    let mut cfg = AppConfig::default();
+    cfg.tools.fs_enabled = true;
+    cfg.tools.fs_root = Some(sandbox.path().to_string_lossy().to_string());
+    cfg.tools.subagent_background = true;
+    cfg.engine.external.sessions = 2;
+    cfg.engine.managed.sessions = 2;
+    cfg.interface.auto_title = crate::shared::config::AutoTitleMode::Off;
+    let Some((_d, cmd_tx, mut evt_rx, handle)) = spawn_orch_live_cfg(cfg) else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    cmd_tx
+        .send(AppCommand::CreateProfile {
+            name: "Delegator".into(),
+            system_message: "You are a coordinator. Reply in English. You never read files \
+                 yourself. When asked to have a file read in the background, start ONE \
+                 sub-agent with the start_subagent tool — give it the exact file path and \
+                 tell it to use fs_read — and answer the rest of the request at once, \
+                 without waiting for it. When a task notification with the sub-agent's \
+                 result arrives, report what it found."
+                .into(),
+        })
+        .unwrap();
+    let pl = wait_for(
+        &mut evt_rx,
+        |e| matches!(e, AppEvent::ProfileList(v) if v.len() >= 2),
+    )
+    .await
+    .unwrap();
+    let pid = match pl {
+        AppEvent::ProfileList(v) => v.last().unwrap().id,
+        _ => unreachable!(),
+    };
+    cmd_tx
+        .send(AppCommand::UpdateProfile {
+            id: pid,
+            edit: Box::new(ProfileEdit {
+                language: Some(crate::shared::i18n::Lang::En),
+                enabled_tools: Some(vec![
+                    "start_subagent".to_string(),
+                    "call_subagent".to_string(),
+                    "fs_read".to_string(),
+                ]),
+                ..Default::default()
+            }),
+        })
+        .unwrap();
+    cmd_tx
+        .send(AppCommand::NewChat {
+            profile_id: Some(pid),
+        })
+        .unwrap();
+    let chat_id = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .and_then(|e| match e {
+            AppEvent::ChatActivated { id, .. } => Some(id),
+            _ => None,
+        })
+        .unwrap();
+
+    let ask = format!(
+        "Two things. (1) Have a sub-agent read the file {} in the background and find the \
+         alpha codename — start it now with start_subagent and do not wait for it. \
+         (2) Right now: which is larger, 17 × 23 or 400?",
+        file.display()
+    );
+    cmd_tx.send(AppCommand::SendMessage(ask)).unwrap();
+    let mut reply = String::new();
+    let mut thoughts = 0usize;
+    let mut calls: Vec<(String, String, String)> = Vec::new();
+    let mut finish = None;
+    while let Some(ev) = evt_rx.recv().await {
+        match ev {
+            AppEvent::Chunk { text, .. } => reply.push_str(&text),
+            AppEvent::Thoughts { text, .. } => thoughts += text.len(),
+            AppEvent::ToolCall {
+                name,
+                arguments,
+                result,
+                ..
+            } => calls.push((name, arguments, result)),
+            AppEvent::Error(e) => eprintln!("error event: {e}"),
+            AppEvent::Finished { reason, .. } => {
+                finish = Some(reason);
+                break;
+            }
+            _ => {}
+        }
+    }
+    eprintln!("reply ({finish:?}, {thoughts} bytes of thoughts): {reply}");
+    for (n, a, r) in &calls {
+        eprintln!(
+            "call {n}({}) -> {}",
+            a.chars().take(120).collect::<String>(),
+            r.chars().take(160).collect::<String>()
+        );
+    }
+    assert!(
+        calls.iter().any(|(n, _, _)| n == "start_subagent"),
+        "the parent did not start a background run: {calls:?} ({finish:?}, reply {reply:?})"
+    );
+    assert!(
+        !calls.iter().any(|(n, _, _)| n == "fs_read"),
+        "the parent read the file itself instead of delegating"
+    );
+
+    // The run ends and the assistant is woken on the task notification: a
+    // turn nobody sent a message for, whose reply carries the codename.
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(300);
+    let mut wake = String::new();
+    loop {
+        let ev = tokio::time::timeout_at(deadline, evt_rx.recv())
+            .await
+            .expect("the run lands and the wake turn ends within five minutes")
+            .expect("the event stream stays open");
+        match ev {
+            AppEvent::Chunk { text, .. } => wake.push_str(&text),
+            AppEvent::Finished { .. } => break,
+            _ => {}
+        }
+    }
+    eprintln!("wake reply: {wake}");
+    tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    let chat = Storage::open(Paths::with_root(_d.path()))
+        .unwrap()
+        .json()
+        .load_chat(chat_id)
+        .unwrap()
+        .unwrap();
+    let run = chat
+        .children()
+        .find(|r| r.background)
+        .expect("a background run on the record");
+    eprintln!(
+        "run «{}»: {} messages, outcome {:?}",
+        run.title,
+        run.messages.len(),
+        run.outcome
+    );
+    assert_eq!(
+        run.outcome,
+        Some(crate::entities::subagent::RunOutcome::Completed),
+        "the run did not complete"
+    );
+    assert!(
+        run.messages
+            .iter()
+            .flat_map(|m| m.tool_calls.iter())
+            .any(|r| r.name == "fs_read"),
+        "the run never used fs_read"
+    );
+    let fold = |s: &str| {
+        s.replace(['-', '\u{2010}', '\u{2011}', '\u{2012}', '\u{2013}'], "")
+            .to_uppercase()
+    };
+    let note = chat
+        .messages
+        .iter()
+        .find(|m| m.is_notification())
+        .expect("a task notification row");
+    assert!(
+        fold(&note.text).contains("ZARNOVIK7741"),
+        "the notification lacks the codename: {}",
+        note.text
+    );
+    // GO: the woken assistant reports what the run found.
+    assert!(
+        fold(&wake).contains("ZARNOVIK7741"),
+        "the wake reply lacks the codename: {wake}"
+    );
+}

@@ -611,6 +611,15 @@ enum FieldId {
     /// How many of one reply's sub-agents run at once
     /// (`tools.subagent_parallel`, spec §9.3.2); 1 keeps them sequential.
     TSubParallel,
+    /// Offer `start_subagent`, the background delegation
+    /// (`tools.subagent_background`, spec §9.3.2).
+    TSubBackground,
+    /// Report a background run's result at once when its chat is open and
+    /// idle (`tools.subagent_background_wake`).
+    TSubBackgroundWake,
+    /// How many background runs may be out at once
+    /// (`tools.subagent_background_max`); 1 is the floor.
+    TSubBackgroundMax,
     /// The whole-run time limit of a dialogue (`tools.dialogue_run_timeout_secs`,
     /// spec §9.13).
     TDialogueTimeout,

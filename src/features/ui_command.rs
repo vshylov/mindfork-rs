@@ -191,7 +191,7 @@ pub const COMMANDS: &[Spec] = &[
     // The feed.
     row(&["/thoughts"], UiCommand::Thoughts, Arity::None, "/thoughts", "ui.help.cmd_thoughts"),
     row(&["/toolcalls"], UiCommand::ToolCalls, Arity::None, "/toolcalls", "ui.help.cmd_toolcalls"),
-    row(&["/subagents"], UiCommand::Subagents, Arity::Subcommand(&["expand", "collapse"]), "ui.help.k.subagents", "ui.help.cmd_subagents"),
+    row(&["/subagents"], UiCommand::Subagents, Arity::Subcommand(&["expand", "collapse", "stop"]), "ui.help.k.subagents", "ui.help.cmd_subagents"),
     row(&["/mouse"], UiCommand::Mouse, Arity::None, "/mouse", "ui.help.cmd_mouse"),
     row(&["/emoji"], UiCommand::Emoji, Arity::None, "/emoji", "ui.help.cmd_emoji"),
 ];
@@ -225,11 +225,20 @@ pub fn parse(input: &str, loc: &Locale) -> Option<Result<Parsed, String>> {
         }
         // A closed set: the word is normalized to the registry's own spelling,
         // so the runner matches on a known string rather than on user casing.
+        // The word may carry a tail of its own (`/subagents stop 2`): the
+        // head is what the set closes over, the tail travels with it.
         Arity::Subcommand(words) if !argument.is_empty() => {
-            match words.iter().find(|w| argument.eq_ignore_ascii_case(w)) {
+            let (head, tail) = argument
+                .split_once(char::is_whitespace)
+                .map_or((argument, ""), |(h, t)| (h, t.trim()));
+            match words.iter().find(|w| head.eq_ignore_ascii_case(w)) {
                 Some(word) => Ok(Parsed {
                     command: spec.command,
-                    argument: (*word).to_string(),
+                    argument: if tail.is_empty() {
+                        (*word).to_string()
+                    } else {
+                        format!("{word} {tail}")
+                    },
                     alias,
                 }),
                 None => Err(loc.tf(
@@ -482,5 +491,22 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A subcommand may carry a short tail of its own (`/subagents stop 2`,
+    /// spec §9.3.2): the head is normalized against the closed set, the tail
+    /// travels with it; a head outside the set is still reported.
+    #[test]
+    fn a_subcommand_word_keeps_its_tail() {
+        let parsed = parse("/subagents STOP 2", ru())
+            .expect("recognized")
+            .expect("parsed");
+        assert_eq!(parsed.command, UiCommand::Subagents);
+        assert_eq!(parsed.argument, "stop 2");
+        assert_eq!(
+            parse("/subagents stop", ru()).unwrap().unwrap().argument,
+            "stop"
+        );
+        assert!(parse("/subagents halt 2", ru()).unwrap().is_err());
     }
 }

@@ -22,7 +22,7 @@ use crate::shared::api::contract::{ChatStream, ToolCallDelta};
 /// also counts how many streams are open at once — the load-bearing number
 /// for every assertion about `subagent_parallel` and `sessions` — and plays
 /// each chunk after `delay_ms`, so two streams can overlap at all.
-struct KeyedRecorder {
+pub(super) struct KeyedRecorder {
     queues: Mutex<Vec<(String, VecDeque<Script>)>>,
     requests: Mutex<Vec<ChatRequest>>,
     /// Per request, in arrival order: its system message and how many
@@ -44,7 +44,7 @@ impl Drop for OpenStream {
 }
 
 impl KeyedRecorder {
-    fn new(queues: Vec<(&str, Vec<Script>)>, delay_ms: u64) -> Arc<Self> {
+    pub(super) fn new(queues: Vec<(&str, Vec<Script>)>, delay_ms: u64) -> Arc<Self> {
         Arc::new(Self {
             queues: Mutex::new(
                 queues
@@ -60,13 +60,13 @@ impl KeyedRecorder {
         })
     }
 
-    fn requests(&self) -> Vec<ChatRequest> {
+    pub(super) fn requests(&self) -> Vec<ChatRequest> {
         self.requests.lock().unwrap().clone()
     }
 
     /// How many streams were open when each request of `persona` arrived,
     /// in its request order.
-    fn open_at_arrival(&self, persona: &str) -> Vec<usize> {
+    pub(super) fn open_at_arrival(&self, persona: &str) -> Vec<usize> {
         self.arrivals
             .lock()
             .unwrap()
@@ -76,7 +76,7 @@ impl KeyedRecorder {
             .collect()
     }
 
-    fn max_in_flight(&self) -> usize {
+    pub(super) fn max_in_flight(&self) -> usize {
         self.max_in_flight.load(Ordering::SeqCst)
     }
 }

@@ -739,6 +739,24 @@ impl SettingsScreen {
                 )
                 .describe(loc.t("ui.settings.desc.sub_parallel")),
                 row(
+                    FieldId::TSubBackground,
+                    loc.t("ui.settings.field.sub_background"),
+                    FieldKind::Toggle(t.subagent_background),
+                )
+                .describe(loc.t("ui.settings.desc.sub_background")),
+                row(
+                    FieldId::TSubBackgroundWake,
+                    loc.t("ui.settings.field.sub_background_wake"),
+                    FieldKind::Toggle(t.subagent_background_wake),
+                )
+                .describe(loc.t("ui.settings.desc.sub_background_wake")),
+                row(
+                    FieldId::TSubBackgroundMax,
+                    loc.t("ui.settings.field.sub_background_max"),
+                    FieldKind::Text(t.subagent_background_max.to_string()),
+                )
+                .describe(loc.t("ui.settings.desc.sub_background_max")),
+                row(
                     FieldId::TDialogueTimeout,
                     loc.t("ui.settings.field.dialogue_timeout"),
                     FieldKind::Text(t.dialogue_run_timeout_secs.to_string()),
@@ -1719,6 +1737,7 @@ impl SettingsScreen {
             ToolGate::Python => !self.config.tools.python_enabled,
             ToolGate::Fs => !self.config.tools.fs_enabled,
             ToolGate::Mcp => !self.config.mcp.enabled,
+            ToolGate::Background => !self.config.tools.subagent_background,
         }
     }
 

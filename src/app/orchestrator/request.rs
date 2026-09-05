@@ -37,6 +37,44 @@ fn message_to_api(message: &Message, loc: &Locale) -> Option<ApiMessage> {
     }
 }
 
+/// Domain messages → wire messages. A **task notification** (a `System` row
+/// carrying [`Message::notification`], spec §9.3.2,
+/// docs/research/background-subagents.md §4.4) is user text to the model:
+/// merged in front of the user message that follows it — one wire message,
+/// the notification first, the user's words after, which every provider
+/// accepts without relying on consecutive same-role turns — or standing alone
+/// when it is the last user-side row (a turn the app started on it) or an
+/// assistant row follows it.
+fn api_messages(messages: &[Message], loc: &Locale) -> Vec<ApiMessage> {
+    /// Between a notification and the user's words, and between two
+    /// notifications delivered in one message.
+    const SEP: &str = "\n\n";
+    let mut out = Vec::with_capacity(messages.len());
+    let mut pending: Vec<&str> = Vec::new();
+    for m in messages {
+        if m.is_notification() {
+            pending.push(&m.text);
+            continue;
+        }
+        if m.role == MessageRole::User && !pending.is_empty() {
+            let mut parts = std::mem::take(&mut pending);
+            parts.push(&m.text);
+            out.push(ApiMessage::user(parts.join(SEP)).with_images(images_to_api(&m.images, loc)));
+            continue;
+        }
+        if !pending.is_empty() {
+            out.push(ApiMessage::user(std::mem::take(&mut pending).join(SEP)));
+        }
+        if let Some(api) = message_to_api(m, loc) {
+            out.push(api);
+        }
+    }
+    if !pending.is_empty() {
+        out.push(ApiMessage::user(pending.join(SEP)));
+    }
+    out
+}
+
 /// Domain images → the request form, each carrying the label part emitted just before it
 /// (spec §9.10, fork F5 of docs/research/multimodal-images.md).
 ///
@@ -177,10 +215,7 @@ pub(super) fn build_request_in(
     ChatRequest {
         continue_final: false,
         system: inject_workspace(system, env.workspace, cx.offered_tools, cx.loc),
-        messages: messages[upto..]
-            .iter()
-            .filter_map(|m| message_to_api(m, cx.loc))
-            .collect(),
+        messages: api_messages(&messages[upto..], cx.loc),
         sampling,
         tools,
     }

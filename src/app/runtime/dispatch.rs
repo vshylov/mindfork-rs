@@ -188,6 +188,7 @@ pub(super) fn apply_event(
         AppEvent::SelfModelChanged => refresh_self_model_screen(active, cmd_tx),
         AppEvent::TtsActive(on) => screen.set_speaking(on),
         AppEvent::BackgroundTask { kind, active: on } => apply_background_task(screen, kind, on),
+        AppEvent::BackgroundRuns { out } => screen.set_background_runs(out),
         // The import runs from the settings screen and its outcome is shown
         // there, on the import row itself — a note in the feed would sit behind
         // the screen the user is standing on.
@@ -591,6 +592,9 @@ pub(super) fn dispatch(
         ChatIntent::SetChildrenExpanded { id, expanded } => {
             AppCommand::SetChildrenExpanded { id, expanded }
         }
+        // `/subagents stop` — the run's id, resolved on the screen from the
+        // list's cards (spec §9.3.2).
+        ChatIntent::StopSubagentRun { id } => AppCommand::StopSubagentRun { id },
         ChatIntent::ExportChat { id, format, path } => AppCommand::ExportChat { id, format, path },
         // Profile CRUD and the self-model wipe reach the same orchestrator
         // commands the settings and self-model screens send — the typed routes

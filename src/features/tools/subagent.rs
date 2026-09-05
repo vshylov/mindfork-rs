@@ -24,14 +24,25 @@ use super::{Tool, ToolContext, ToolOutcome};
 /// The tool's name — what the loop recognises.
 pub const CALL_SUBAGENT_ID: &str = "call_subagent";
 
+/// The **background** twin (spec §9.3.2, docs/research/background-subagents.md
+/// §4.1): the same delegation, but the call returns at once with the run's
+/// address and the run outlives the turn — its result arrives later as a task
+/// notification. Offered only when `tools.subagent_background` is on. A
+/// second tool rather than a flag on the first because a flag is silently
+/// omitted by one provider (research §3.1: 0/3 on Claude), where a tool of
+/// its own is used 3/3 on every cloud and 5/5 locally.
+pub const START_SUBAGENT_ID: &str = "start_subagent";
+
 /// Whether a tool of the turn is **withheld** from a sub-agent
-/// (docs/research/subagent-chats.md §3.3): the nested-run pair itself (no
-/// nesting — `run_dialogue` included, spec §9.13), the read-back pair over
-/// the *parent's* folded history, and the self-model family — the profile
-/// persona's identity, which a persona the parent composed must not write
-/// into. Everything else the turn offers, the sub-agent gets.
+/// (docs/research/subagent-chats.md §3.3): the nested-run family itself (no
+/// nesting — `run_dialogue` and the background twin included, spec §9.13),
+/// the read-back pair over the *parent's* folded history, and the self-model
+/// family — the profile persona's identity, which a persona the parent
+/// composed must not write into. Everything else the turn offers, the
+/// sub-agent gets.
 pub fn withheld_from_subagent(id: &str) -> bool {
     id == CALL_SUBAGENT_ID
+        || id == START_SUBAGENT_ID
         || id == super::dialogue::RUN_DIALOGUE_ID
         || id == super::history::HISTORY_READ_ID
         || id == super::history::HISTORY_SEARCH_ID
@@ -137,28 +148,70 @@ impl Tool for CallSubagent {
         }
     }
     fn parameters(&self, loc: &crate::shared::i18n::Locale) -> serde_json::Value {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "name": {
-                    "type": "string",
-                    "description": loc.t("tool.call_subagent.param.name")
-                },
-                "system_message": {
-                    "type": "string",
-                    "description": loc.t("tool.call_subagent.param.system_message")
-                },
-                "message": {
-                    "type": "string",
-                    "description": loc.t("tool.call_subagent.param.message")
-                }
-            },
-            "required": ["system_message", "message"]
-        })
+        subagent_parameters(loc)
     }
     /// Never the executor — see the module doc. Validates the arguments (so a
     /// malformed call is refused the same way everywhere) and then says the run
     /// is only available inside a chat turn.
+    async fn invoke(&self, ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
+        SubagentArgs::parse(&args, ctx.loc)?;
+        Ok(ToolOutcome::text(
+            ctx.loc.t("tool.call_subagent.result.loop_only"),
+        ))
+    }
+}
+
+/// The schema both delegation tools share: a persona (`name`,
+/// `system_message`) and the one message. The background twin takes exactly
+/// the same call — what differs is when the answer comes.
+fn subagent_parameters(loc: &crate::shared::i18n::Locale) -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "name": {
+                "type": "string",
+                "description": loc.t("tool.call_subagent.param.name")
+            },
+            "system_message": {
+                "type": "string",
+                "description": loc.t("tool.call_subagent.param.system_message")
+            },
+            "message": {
+                "type": "string",
+                "description": loc.t("tool.call_subagent.param.message")
+            }
+        },
+        "required": ["system_message", "message"]
+    })
+}
+
+/// `start_subagent` — the background delegation (see [`START_SUBAGENT_ID`]).
+/// Registered only when `tools.subagent_background` is on, so the catalog a
+/// turn offers at the default is byte-identical to what it was. Like its
+/// twin, a loop-executed tool: `invoke` is what a caller outside the loop
+/// gets.
+pub struct StartSubagent;
+
+#[async_trait::async_trait]
+impl Tool for StartSubagent {
+    fn id(&self) -> ToolId {
+        START_SUBAGENT_ID.into()
+    }
+    fn group(&self) -> crate::features::tools::meta::ToolGroup {
+        crate::features::tools::meta::ToolGroup::Subagent
+    }
+    fn ui_label(&self) -> &'static str {
+        "background subagent"
+    }
+    fn gate(&self) -> Option<crate::features::tools::meta::ToolGate> {
+        Some(crate::features::tools::meta::ToolGate::Background)
+    }
+    fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
+        loc.t("tool.start_subagent.desc").into()
+    }
+    fn parameters(&self, loc: &crate::shared::i18n::Locale) -> serde_json::Value {
+        subagent_parameters(loc)
+    }
     async fn invoke(&self, ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
         SubagentArgs::parse(&args, ctx.loc)?;
         Ok(ToolOutcome::text(
@@ -258,5 +311,26 @@ mod tests {
             ru.t("tool.call_subagent.desc")
         );
         assert!(CallSubagent { parallel: 2 }.description(ru).contains('2'));
+    }
+
+    /// The background twin (docs/research/background-subagents.md §4.1): the
+    /// same parameters as `call_subagent`, its own description, the
+    /// `Background` gate, and withheld from a sub-agent like the rest of the
+    /// nested-run family.
+    #[test]
+    fn start_subagent_is_the_twin_with_its_own_gate() {
+        use crate::features::tools::meta::ToolGate;
+        assert_eq!(StartSubagent.id(), START_SUBAGENT_ID);
+        assert_eq!(
+            StartSubagent.parameters(en()),
+            CallSubagent { parallel: 1 }.parameters(en())
+        );
+        assert_eq!(
+            StartSubagent.description(en()),
+            en().t("tool.start_subagent.desc")
+        );
+        assert_eq!(StartSubagent.gate(), Some(ToolGate::Background));
+        assert!(withheld_from_subagent(START_SUBAGENT_ID));
+        assert!(!StartSubagent.danger());
     }
 }

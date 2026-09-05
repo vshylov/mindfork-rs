@@ -1,6 +1,18 @@
 # Background sub-agents — a run that outlives its round — research
 
-> Status: **research, forks open** (2026-09-05). The last open item of the
+> Status: **stage 1 built** (2026-09-05, `feat/background-subagents`: §4.1–§4.5,
+> §4.7–§4.11 — the tool behind a gate, the run owned by the orchestrator,
+> the app-wide budget, the placeholder filled in by id, the notification
+> row and the wake, `/subagents stop`, take-back and `Quit`; nine unit
+> tests over the keyed engine and the live smoke
+> `background_subagent_e2e_live`). User's decision:
+> F1–F10 at their recommended options, except **F3 → (c)**: no confirmation
+> machinery for a background run at all — its calls run without asking,
+> and the profile's tool set is the user's control (the *dangerous* mark is
+> an author's guess, not a classification — Claude Code asks a classifier
+> model for that, too heavy to add here — and a confirmation that reaches
+> into a sub-agent's calls compounds the guess). Stage 1 on
+> `feat/background-subagents`. The last open item of the
 > parallel sub-agent track's §8
 > ([parallel-subagents.md](parallel-subagents.md), fork F1b): a
 > `call_subagent` run that does not end with the round that started it —
@@ -407,18 +419,20 @@ answer there is "say it when they return", not a reply into the void.
   note), never as running — running is a property of the mirror, which a
   fresh process does not have (R7).
 
-### 4.6 Dangerous calls: withheld from a background run
+### 4.6 No confirmations in a background run
 
-A dangerous call inside a run asks the user through the turn's confirmation
-round trip — one popup at a time, keyed by the turn (§2.3). A background run
-has no turn to ask through, and a popup opening in a chat the user is not
-looking at, or on top of a running turn's own popup, is a second question
-the UI has one slot for. V1 (F3a): when `tools.confirm_dangerous` is on, the
-dangerous tools are withheld from a background run the way `call_subagent`
-is — the tool's description says so, and a run that needs one says it
-could not and why. When confirmations are off, the run has them all, as a
-foreground run does. Routing a popup queue by run id is the stage-2
-candidate (§8).
+A dangerous call inside a foreground run asks the user through the turn's
+confirmation round trip — one popup at a time, keyed by the turn (§2.3). A
+background run has no turn to ask through, and the user's decision (F3c)
+is that it does not ask at all: its calls run as they would with
+`tools.confirm_dangerous` off, whatever that setting says, and the user's
+control is the profile's tool set — a tool one would not let run
+unattended is switched off there, which removes it from every run's set.
+The reasoning: the app's *dangerous* mark is an author's guess, not a
+classification — Claude Code asks a classifier model, which is too heavy
+to add here — and a confirmation that reaches into a sub-agent's calls
+compounds a guess with a popup out of context. The tool's description and
+the setting's hint both say that a background run never asks.
 
 ### 4.7 The budget becomes the app's
 
@@ -532,9 +546,12 @@ Recommendations are marked; nothing is decided until the user says so.
   under `tools.subagent_background_wake` (default on). (b) The next user
   message only. (c) A wake into a non-active chat — not possible with one
   turn per active chat, and not wanted.
-- **F3. Dangerous calls in a background run.** (a) **Withheld while
-  confirmations are on** *(recommended for v1; honest, no popup out of
-  context)*. (b) A popup queue routed by run id (stage 2).
+- **F3. Dangerous calls in a background run.** (a) Withheld while
+  confirmations are on *(the recommendation)*. (b) A popup queue routed by
+  run id. (c) **No confirmation at all: the run's calls execute without
+  asking; the profile's tool set is the control** *(user's decision,
+  2026-09-05 — the dangerous mark is a guess, and a popup out of context
+  compounds it)*.
 - **F4. The budget.** (a) **App-wide `SessionBudget`, background runs
   inside it** *(recommended — R6; the admission guard covers both)*. (b)
   Outside, like the silent tasks — the collective failure the admission
@@ -562,7 +579,8 @@ Recommendations are marked; nothing is decided until the user says so.
   the owned run, the app-wide budget, landing, delivery with the wake, the
   mirror and the list, stop and `Quit`; stage 2 the popup queue (F3b), an
   unread mark on the list for a chat whose run finished while it was not
-  active, and whatever the live run argues for. (b) One PR.
+  active, and whatever the live run argues for. (b) One PR. — *User's
+  decision (2026-09-05): (a).*
 
 ## 7. Stages and the test plan
 
@@ -589,7 +607,8 @@ turn; `/subagents stop` and `Ctrl+E` on the exchange cancel it and land
 `Cancelled` where the record lives; `Quit` lands every run; with
 `sessions = 1` the wake turn's stream waits for the run's stream (the
 counting mock sees one at a time); `subagent_background_max` refuses the
-third; the dangerous set is withheld while confirmations are on; a stored
+third; a dangerous call inside a background run runs without a popup
+whatever `confirm_dangerous` says; a stored
 `background: true, outcome: None` run reads as unfinished. Live:
 `background_subagent_e2e_live` on both gate models — the parent starts a
 run over a planted file and answers a question at once (both in one
@@ -597,15 +616,13 @@ reply), the run reads the file, the wake turn's reply carries the planted
 token, the transcript has the run — and one cloud arm (Anthropic, the
 strictest about turn shape) for the merged user message.
 
-**Stage 2 — what the live run argues for.** The popup queue (F3b) if the
-withheld set proves too blunt; the unread mark; the settings-screen rows'
-polish; the docs' final pass.
+**Stage 2 — what the live run argues for.** The unread mark; the
+settings-screen rows' polish; the docs' final pass.
 
 ## 8. Not in this track (recorded so they are not re-derived)
 
-- **A popup for a background run** (F3b): a confirmation queue keyed by run
-  id, and the "allow for this turn" semantics across a run that has no
-  turn.
+- **A popup for a background run**: decided against, not deferred (F3c) —
+  a background run never asks; the profile's tool set is the control.
 - **Background dialogues** (`run_dialogue` in the background): ADR 0011's
   one-request contract; the same shape would serve, later.
 - **Nested background** (a child starting a background run): no nesting, as

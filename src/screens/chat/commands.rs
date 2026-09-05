@@ -173,6 +173,10 @@ impl ChatScreen {
         let Some(active) = self.active_chat else {
             return self.note("ui.cmd.no_chat");
         };
+        // `stop [n]`: a background run, not the fold (spec §9.3.2).
+        if let Some(which) = argument.strip_prefix("stop") {
+            return self.typed_subagents_stop(active, which.trim());
+        }
         // The parser normalized the word to the registry's spelling; anything
         // else it reported itself, so bare is the only other shape here.
         let want = match argument.as_str() {
@@ -195,6 +199,51 @@ impl ChatScreen {
             "ui.cmd.subagents_collapsed"
         }));
         Some(ChatIntent::SetChildrenExpanded { id, expanded })
+    }
+
+    /// `/subagents stop [n]` (spec §9.3.2): on an open transcript, that run;
+    /// on a chat, the n-th background run out under it — or the only one when
+    /// there is one. Resolved from the list's cards, where *out* is
+    /// `running && background`; the orchestrator ignores an id that is not.
+    fn typed_subagents_stop(&mut self, active: Uuid, which: &str) -> Option<ChatIntent> {
+        let parent = self
+            .chats
+            .iter()
+            .find(|c| c.id == active || c.child_ids().any(|k| k == active));
+        let out: Vec<(Uuid, String)> = parent
+            .map(|c| {
+                c.children
+                    .iter()
+                    .filter(|r| r.running && r.background)
+                    .map(|r| (r.id, r.title.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let on_transcript = parent.is_some_and(|c| c.id != active);
+        let chosen = if on_transcript {
+            out.iter().find(|(id, _)| *id == active).cloned()
+        } else if let Ok(n) = which.parse::<usize>() {
+            n.checked_sub(1).and_then(|i| out.get(i).cloned())
+        } else if which.is_empty() && out.len() > 1 {
+            let text = self.loc.tf(
+                "ui.cmd.subagents_stop_which",
+                &[("n", &out.len().to_string())],
+            );
+            self.push_note(&text);
+            return None;
+        } else if which.is_empty() {
+            out.first().cloned()
+        } else {
+            None
+        };
+        let Some((id, title)) = chosen else {
+            return self.note("ui.cmd.subagents_no_running");
+        };
+        let text = self
+            .loc
+            .tf("ui.cmd.subagents_stopped", &[("title", &title)]);
+        self.push_note(&text);
+        Some(ChatIntent::StopSubagentRun { id })
     }
 
     /// `/regen`·`/retry` and `/takeback`. Both are ignored during generation by

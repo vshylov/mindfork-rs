@@ -100,6 +100,14 @@ pub struct SubagentRun {
     /// Completion tokens the run cost, for the card and the list.
     #[serde(default, skip_serializing_if = "crate::entities::message::is_zero_u64")]
     pub tokens: u64,
+    /// The run was started in the **background** (`start_subagent`, spec
+    /// §9.3.2, docs/research/background-subagents.md §4.2): its record landed
+    /// with the parent's turn as a placeholder and was filled in when the run
+    /// ended. With `outcome: None` on a stored record this reads as
+    /// *unfinished* — the app was closed or crashed while the run was out —
+    /// never as running, which only the orchestrator's mirror can say.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub background: bool,
 }
 
 impl SubagentRun {
@@ -133,6 +141,7 @@ impl SubagentRun {
             outcome: Some(RunOutcome::Completed),
             tokens: 0,
             participants: Vec::new(),
+            background: false,
         }
     }
 
@@ -177,6 +186,7 @@ mod tests {
             outcome: Some(RunOutcome::Completed),
             tokens: 12,
             participants: Vec::new(),
+            background: false,
         }
     }
 
