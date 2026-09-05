@@ -86,7 +86,10 @@ impl EscTarget {
 /// the generation chip and the input box's title are drawn from, so the three
 /// cannot disagree. See spec §11.1.
 fn esc_hint_key(model: &StatusModel) -> &'static str {
-    if model.generating {
+    // A background run's transcript streams under no turn: `Esc` leaves it
+    // and the run stays out (`F6` is the stop), so the hint is the navigation
+    // one even while the feed says *generating*.
+    if model.generating && !model.background_run {
         "ui.status.hotkey.cancel"
     } else {
         model.esc_target.hint_key()
@@ -132,6 +135,11 @@ pub struct StatusModel<'a> {
     /// The open "chat" is a sub-agent transcript, read-only (spec §11.2): a
     /// quiet chip says so, next to the input box's title that says the same.
     pub read_only: bool,
+    /// The open transcript is a run out in the **background**, still
+    /// streaming (spec §9.3.2): `generating` is true, but there is no turn
+    /// for `Esc` to cancel — it goes back, and the bar says so — and `F6`
+    /// stops the run, a hint shown only while the key works (spec §11.2).
+    pub background_run: bool,
 }
 
 /// The speaking-indicator glyph (WGL4, width 1 column — the hotkey grid doesn't "shift").
@@ -262,6 +270,14 @@ const HINT_ROWS_MAX: usize = 2;
 /// mouse toggle). `keep_order_matches_the_hotkey_list` pins the mapping.
 const HELP_IDX: usize = 1;
 
+/// The stop key of a background run's open transcript (spec §9.3.2) — the
+/// one hint that comes and goes with the state ([`StatusModel::background_run`]).
+const STOP_KEY: &str = "F6";
+
+/// [`STOP_KEY`]'s index in [`hotkey_list`]'s order when it is present: after
+/// the five fixed hotkeys. `keep_order_matches_the_hotkey_list` pins it.
+const STOP_IDX: usize = 6;
+
 /// The order the corner block **keeps** hints when the pill leaves it too
 /// little width — later entries shed first. `F1` outlives everything: it opens
 /// the full per-screen hotkey list every hidden hint is still on (spec §11.7).
@@ -270,14 +286,22 @@ const HELP_IDX: usize = 1;
 /// quit, the mouse toggle, settings, new chat. In scroll mode the mouse toggle
 /// instead jumps to the front: accent-highlighted, it is the one thing on
 /// screen saying why native selection is off — a mode light, not a hint.
+/// The stop key of a background run's transcript (`with_stop`) goes right
+/// behind `F1`: on that screen it is the one hint that says what the screen
+/// is for, and `Esc` there only navigates.
 /// Values index [`hotkey_list`]'s order; `keep_order_matches_the_hotkey_list`
 /// pins the mapping.
-fn keep_order(mouse_pinned: bool) -> [usize; 6] {
-    if mouse_pinned {
-        [0, HELP_IDX, 2, 5, 4, 3]
+fn keep_order(mouse_pinned: bool, with_stop: bool) -> Vec<usize> {
+    let mut order: Vec<usize> = if mouse_pinned {
+        vec![0, HELP_IDX, 2, 5, 4, 3]
     } else {
-        [HELP_IDX, 2, 5, 0, 4, 3]
+        vec![HELP_IDX, 2, 5, 0, 4, 3]
+    };
+    if with_stop {
+        let after_help = order.iter().position(|&i| i == HELP_IDX).unwrap_or(0) + 1;
+        order.insert(after_help, STOP_IDX);
     }
+    order
 }
 
 /// The hints the corner block shows at `avail` columns: walk [`keep_order`]
@@ -291,7 +315,7 @@ fn keep_order(mouse_pinned: bool) -> [usize; 6] {
 /// monotonically — no flicker — and return when the turn's chips leave.
 fn trim_to_fit(cell_w: &[usize], avail: usize, mouse_pinned: bool) -> Vec<usize> {
     let mut kept: Vec<usize> = Vec::new();
-    for idx in keep_order(mouse_pinned) {
+    for idx in keep_order(mouse_pinned, cell_w.len() > STOP_IDX) {
         let mut candidate = kept.clone();
         candidate.push(idx);
         candidate.sort_unstable();
@@ -468,6 +492,12 @@ fn hotkey_list(
         };
         (*key, loc.t(desc_key), false)
     }));
+    // The one conditional hint: the stop key of the background run whose
+    // transcript is open, appended after the fixed list ([`STOP_IDX`]) and
+    // only while pressing it does something (spec §11.2).
+    if model.background_run {
+        hotkeys.push((STOP_KEY, loc.t("ui.status.hotkey.stop_run"), false));
+    }
     hotkeys
 }
 
@@ -576,6 +606,7 @@ mod tests {
             staged_images: None,
             esc_target: EscTarget::default(),
             read_only: false,
+            background_run: false,
         }
     }
 
@@ -684,6 +715,7 @@ mod tests {
                 staged_images: None,
                 esc_target: EscTarget::default(),
                 read_only: false,
+                background_run: false,
             };
             lines(200, &m, &compat, ru())
                 .iter()
@@ -791,6 +823,7 @@ mod tests {
                 staged_images: None,
                 esc_target: EscTarget::default(),
                 read_only: false,
+                background_run: false,
             };
             lines(200, &m, &Palette::default(), ru())
                 .iter()
@@ -967,15 +1000,67 @@ mod tests {
         let m = model(&statuses, false, 0, None, false, false);
         let keys: Vec<&str> = hotkey_list(&m, ru()).iter().map(|(k, _, _)| *k).collect();
         assert_eq!(keys[HELP_IDX], HELP_KEY);
-        let named = |order: [usize; 6]| order.map(|i| keys[i]);
         assert_eq!(
-            named(keep_order(false)),
+            keys.len(),
+            STOP_IDX,
+            "the stop key is absent off a background run"
+        );
+        let named = |order: Vec<usize>| order.into_iter().map(|i| keys[i]).collect::<Vec<_>>();
+        assert_eq!(
+            named(keep_order(false, false)),
             ["F1", "Esc", "Ctrl+Q", "Ctrl+W", "Ctrl+P", "Ctrl+N"]
         );
         assert_eq!(
-            named(keep_order(true)),
+            named(keep_order(true, false)),
             ["Ctrl+W", "F1", "Esc", "Ctrl+Q", "Ctrl+P", "Ctrl+N"]
         );
+        // On a background run's transcript the stop key joins, right behind
+        // `F1` in the shedding order, at the fixed list's tail on screen.
+        let mut bg = model(&statuses, true, 0, None, false, false);
+        bg.background_run = true;
+        let keys: Vec<&str> = hotkey_list(&bg, ru()).iter().map(|(k, _, _)| *k).collect();
+        assert_eq!(keys[STOP_IDX], STOP_KEY);
+        let named = |order: Vec<usize>| order.into_iter().map(|i| keys[i]).collect::<Vec<_>>();
+        assert_eq!(
+            named(keep_order(false, true)),
+            ["F1", "F6", "Esc", "Ctrl+Q", "Ctrl+W", "Ctrl+P", "Ctrl+N"]
+        );
+        assert_eq!(
+            named(keep_order(true, true)),
+            ["Ctrl+W", "F1", "F6", "Esc", "Ctrl+Q", "Ctrl+P", "Ctrl+N"]
+        );
+    }
+
+    /// On a background run's open transcript the bar tells the truth about
+    /// both keys (spec §9.3.2, §11.2): `F6` stops the run and is advertised
+    /// only there; `Esc` goes back — never "cancel", though the feed is
+    /// streaming — and the hint returns to the plain set when the run ends.
+    #[test]
+    fn a_background_transcript_advertises_the_stop_key_and_esc_goes_back() {
+        let statuses = ready();
+        let stop = ru().t("ui.status.hotkey.stop_run");
+        let cancel = ru().t("ui.status.hotkey.cancel");
+        let chats = ru().t("ui.status.hotkey.chats");
+
+        let mut m = model(&statuses, true, 0, None, false, false);
+        m.background_run = true;
+        m.read_only = true;
+        let text = rows_of(140, &m).join(" ");
+        assert!(text.contains("F6") && text.contains(stop), "{text}");
+        assert!(!text.contains(cancel), "{text}");
+        assert!(text.contains(chats), "{text}");
+
+        // A turn's own chat mid-generation: no stop key, `Esc` cancels.
+        let turn = model(&statuses, true, 0, None, false, false);
+        let text = rows_of(140, &turn).join(" ");
+        assert!(!text.contains("F6"), "{text}");
+        assert!(text.contains(cancel), "{text}");
+
+        // The run ended: the transcript is a plain read-only one again.
+        let mut ended = model(&statuses, false, 0, None, false, false);
+        ended.read_only = true;
+        let text = rows_of(140, &ended).join(" ");
+        assert!(!text.contains("F6"), "{text}");
     }
 
     #[test]
@@ -1187,6 +1272,7 @@ mod tests {
             staged_images: Some("изображения: 1 (~1.2k)"),
             esc_target: EscTarget::SearchResults,
             read_only: false,
+            background_run: false,
         };
         term.draw(|f| render(f, f.area(), &m, &Palette::default(), ru()))
             .unwrap();

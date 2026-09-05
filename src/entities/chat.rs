@@ -99,6 +99,14 @@ pub struct Chat {
     /// new key (ADR 0006 F12).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub renamed_manually: bool,
+    /// A background run's **task notification** landed here while the chat
+    /// was not the open one (spec §9.3.2, §11.2): the list marks the row
+    /// *unread* until the chat is opened, which clears it. Only the
+    /// orchestrator sets and clears it — the delivery and the activation.
+    /// Additive field — old chat files read without migration, and a chat
+    /// with nothing unread writes no new key (ADR 0006 F12).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub unread: bool,
     /// The code project attached to this chat (`/project attach`, spec §9.12).
     /// While it is `None` the `code_*` tools are not offered to the model at
     /// all — attaching a directory *is* the consent, so there is no second
@@ -236,6 +244,7 @@ impl Chat {
             reflected_upto: None,
             reflected_at: None,
             renamed_manually: false,
+            unread: false,
             workspace: None,
             is_hidden: false,
         }
@@ -325,6 +334,7 @@ impl Chat {
             message_count: visible_message_count(&self.messages),
             children: self.children().map(ChildSummary::of).collect(),
             children_expanded: self.children_expanded,
+            unread: self.unread,
         }
     }
 
@@ -447,6 +457,11 @@ pub struct ChatSummary {
     /// it (the widget's tree rule, spec §11.2).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub children_expanded: bool,
+    /// A background run's result landed while the chat was not open
+    /// ([`Chat::unread`]): the row is marked until the chat is opened.
+    /// Additive: a snapshot without the key reads as read.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub unread: bool,
 }
 
 impl ChatSummary {
@@ -466,6 +481,7 @@ impl ChatSummary {
             message_count: 0,
             children: Vec::new(),
             children_expanded: false,
+            unread: false,
         }
     }
 
@@ -482,6 +498,7 @@ impl ChatSummary {
             message_count: child.message_count,
             children: Vec::new(),
             children_expanded: false,
+            unread: false,
         }
     }
 
@@ -588,6 +605,33 @@ mod tests {
         let summary_json = serde_json::to_value(back.summary()).unwrap();
         let summary: ChatSummary = serde_json::from_value(summary_json).unwrap();
         assert!(summary.children_expanded);
+    }
+
+    /// The additive contract for `unread` (spec §9.3.2, §11.2), the same
+    /// shape as the fold's: an old file loads read, a chat with nothing
+    /// unread writes no key, and the mark round-trips onto the card.
+    #[test]
+    fn unread_is_additive_and_round_trips() {
+        let profile = Profile::new("P", "sys");
+        let chat = Chat::from_profile(&profile, "t");
+        let json = serde_json::to_value(&chat).unwrap();
+        assert!(
+            json.get("unread").is_none(),
+            "a chat with nothing unread writes no new key: {json}"
+        );
+        let old: Chat = serde_json::from_value(json).unwrap();
+        assert!(!old.unread, "old files load read");
+
+        let mut marked = chat;
+        marked.unread = true;
+        let json = serde_json::to_value(&marked).unwrap();
+        assert_eq!(json.get("unread"), Some(&true.into()));
+        let back: Chat = serde_json::from_value(json).unwrap();
+        assert!(back.unread);
+        assert!(back.summary().unread, "the card carries the mark");
+        let summary_json = serde_json::to_value(back.summary()).unwrap();
+        let summary: ChatSummary = serde_json::from_value(summary_json).unwrap();
+        assert!(summary.unread);
     }
 
     use super::*;

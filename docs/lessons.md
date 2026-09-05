@@ -736,6 +736,21 @@ it?) has to be read before the code that creates it runs, or the answer is `fals
 forever.
 — *a launch that finds chats but no `data.db` says so*.
 
+**A flag that means two things is right until a second thing arrives, and then every
+hint derived from it lies.** The chat screen's `generating` meant *this feed is
+streaming*, and three surfaces read it as *your turn is running*: the status bar's
+`Esc` hint said "cancel", the input box's title said the same, and the key really did
+dispatch a cancel. Both readings were the same fact until a feed streamed under **no
+turn** — the open transcript of a sub-agent run out in the background — where `Esc`
+cancelled a turn that did not exist (a no-op the footer was advertising) and the one
+key that would have helped, stopping the run, existed only as a typed command. The
+repair is not a second flag next to the first but the distinguishing fact carried
+from where it is known: the orchestrator already knew which table the run came from,
+so `LiveTurn` says `background` and the screen derives both keys from it. Before
+adding a surface that streams, ask what `generating` will mean on it — and if the
+answer is "something else", widen the event, not the screen's guesswork.
+— *sub-agents in the background — stage 2*.
+
 **A lazily-synced state trails every intent dispatched in the same loop iteration.**
 The input draft flushes at the *top* of the next tick while a key's intent goes out at
 the *bottom* of this one, so four handlers reading `chat.draft` saw the spent command:

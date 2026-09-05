@@ -25,9 +25,12 @@ split by subsystem.
   to it by itself ("Subagent: report background runs", on by default),
   otherwise the note waits for your next message. The run is a row of the
   chat list while it is out and its transcript opens as it streams;
-  `Esc` stops your reply and not the run — `/subagents stop [n]` does;
-  taking back the exchange that started it, or quitting, ends it and says
-  so on its transcript. A background run never asks you to confirm a
+  `Esc` stops your reply and not the run — `/subagents stop [n]` does, as
+  does `F6` on the run's own open transcript, where `Esc` just takes you
+  back; taking back the exchange that started it, or quitting, ends it and
+  says so on its transcript. A result that arrives while you are looking
+  somewhere else marks its chat **unread** in the chat list until you open
+  it, so nothing waits for you unannounced. A background run never asks you to confirm a
   tool call: switch off the tools you would not let run unattended. Up to
   "Subagent: background runs at once" (2) may be out at a time; the
   status bar shows how many.

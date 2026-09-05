@@ -1524,6 +1524,13 @@ impl Orchestrator {
     /// [`AppCommand::OpenChatAt`]). The single activation funnel — everything
     /// else goes through `activate` and passes `None`.
     fn activate_focused(&mut self, id: Uuid, focus: Option<FeedFocus>) {
+        // Opening a chat is reading it: the unread mark a background run's
+        // result left on it goes (spec §11.2), on disk and on the list.
+        if let Some(chat) = self.chats.iter_mut().find(|c| c.id == id && c.unread) {
+            chat.unread = false;
+            self.mark_dirty(id);
+            self.emit_chat_list();
+        }
         // The running turn's chat and sub-agent (docs/subagent-live.md §3.4,
         // §3.5): the parent's feed gets the rounds filed so far and keeps its
         // generation; the child keeps the status chip.
@@ -1539,6 +1546,7 @@ impl Orchestrator {
                     // tool round is a message of its own, and the filed
                     // continuation round was folded into the seed's view below.
                     continues: t.continuation && t.rounds.is_empty(),
+                    background: false,
                 }))
             } else {
                 t.child(id).map(|child| {
@@ -1548,23 +1556,31 @@ impl Orchestrator {
                         role: child.line_role,
                         partial: Some(child.partial.clone()),
                         continues: false,
+                        background: false,
                     })
                 })
             }
         });
         // A background run's transcript streams under its own id the same
         // way, keyed by the run's own generation
-        // (docs/research/background-subagents.md §4.9).
+        // (docs/research/background-subagents.md §4.9). Only while the run is
+        // **still out**: a seat whose run ended and is waiting for its chat's
+        // turn to land (`pending_landings`) has nothing streaming, and saying
+        // otherwise would put a stop key on the screen that stops nothing
+        // (spec §11.2).
         let live_turn = live_turn.or_else(|| {
-            self.background_run(id).map(|seat| {
-                Box::new(crate::app::events::LiveTurn {
-                    turn: seat.generation,
-                    stream: seat.child.stream,
-                    role: seat.child.line_role,
-                    partial: Some(seat.child.partial.clone()),
-                    continues: false,
+            self.background_run(id)
+                .filter(|seat| seat.child.run.outcome.is_none())
+                .map(|seat| {
+                    Box::new(crate::app::events::LiveTurn {
+                        turn: seat.generation,
+                        stream: seat.child.stream,
+                        role: seat.child.line_role,
+                        partial: Some(seat.child.partial.clone()),
+                        continues: false,
+                        background: true,
+                    })
                 })
-            })
         });
         let event = match self.view(id) {
             Some(ChatView::Top(chat)) => {

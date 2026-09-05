@@ -249,13 +249,26 @@ impl ChatScreen {
             // Esc opens the chat list screen (`app` builds it from the list
             // snapshot; `Esc` there closes the screen — toggling
             // "list ↔ chat"). During generation, Esc first cancels it. Quit
-            // — `Ctrl+C`. See spec §11.7.
+            // — `Ctrl+C`. See spec §11.7. On the streaming transcript of a
+            // run out in the background there is no turn to cancel: `Esc`
+            // goes back and leaves the run out, `F6` stops it (spec §9.3.2).
             (KeyCode::Esc, _) => {
-                if self.generating {
+                if self.generating && !self.background_run {
                     Some(ChatIntent::Cancel)
                 } else {
                     Some(ChatIntent::OpenChatList)
                 }
+            }
+            // Stop the background run whose transcript is open (spec §9.3.2,
+            // §11.2): the command's own route, so the key and `/subagents
+            // stop` cannot grow two behaviours. Anywhere else the key does
+            // nothing — and the footer does not advertise it there.
+            (KeyCode::F(6), _) => {
+                if !self.background_run {
+                    return None;
+                }
+                let active = self.active_chat?;
+                self.typed_subagents_stop(active, "")
             }
             // Shift+Enter — a line break; Enter — send (spec §11.7).
             // Alt+Enter — the same line break: a fallback for "bare" unix

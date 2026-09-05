@@ -71,6 +71,7 @@ impl ChatScreen {
         self.current_gen = None;
         self.generating = false;
         self.live_turn = None;
+        self.background_run = false;
         self.stream_role = FeedRole::Assistant;
         // Only a transcript can grow in place (see `grow_transcript`); a
         // chat's feed is rebuilt by activation alone.
@@ -620,6 +621,9 @@ impl ChatScreen {
         }
         self.generating = false;
         self.current_gen = None;
+        // The run's stream ended — whatever the outcome, the stop key stops
+        // nothing now, so the footer must stop advertising it (spec §11.2).
+        self.background_run = false;
         self.clear_retrying();
         self.subagents.clear();
         // The interruption notes name `/continue` only when it would actually

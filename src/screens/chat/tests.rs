@@ -2725,6 +2725,7 @@ fn a_running_transcript_grows_by_rounds_and_keeps_the_chip_but_not_the_stream() 
             tools: Vec::new(),
         }),
         continues: false,
+        background: false,
     })));
     assert!(s.generating, "a transcript streams its own run");
     assert!(
@@ -2811,6 +2812,7 @@ fn a_dialogue_line_streams_on_its_speakers_side() {
             tools: Vec::new(),
         }),
         continues: false,
+        background: false,
     })));
     let last = s.feed.last().unwrap();
     assert_eq!(
@@ -2954,6 +2956,7 @@ fn returning_to_the_running_chat_resumes_its_generation() {
             ],
         }),
         continues: false,
+        background: false,
     })));
     assert!(s.generating);
     // The seed: one streaming bubble with the text, the thoughts and both
@@ -4240,11 +4243,156 @@ mod read_only_transcript {
                 background: false,
             }],
             children_expanded: false,
+            unread: false,
         }]);
         let card = c.s.summary_card(child_id).expect("the transcript's card");
         assert_eq!(card.title, "Критик");
         assert_eq!(card.profile_id, Uuid::from_u128(2));
         assert!(c.s.feed_view.known_chats().contains(&child_id));
+    }
+}
+
+/// The open transcript of a run out in the **background** (spec §9.3.2,
+/// §11.2): the screen streams it like a turn child's, but there is no turn
+/// behind it — `Esc` goes back to the list and leaves the run out, `F6` stops
+/// it through the `/subagents stop` route, and both the key and its footer
+/// hint exist only while the run streams.
+mod background_transcript {
+    use super::*;
+    use crate::app::events::{ChildView, LivePartial, LiveTurn};
+    use crate::entities::chat::ChildSummary;
+
+    const RUN: u128 = 77;
+    const STREAM: u128 = 88;
+
+    /// A streaming transcript under the open chat — a background run's when
+    /// `background`, a turn child's otherwise. The list snapshot carries the
+    /// run as `running` the way the orchestrator reports it, which is where
+    /// the stop route resolves the id.
+    fn streaming(background: bool) -> Cmd {
+        let mut c = Cmd::new();
+        let run = Uuid::from_u128(RUN);
+        let mut chat = card(c.chat, Uuid::from_u128(2), "Про космос");
+        chat.children = vec![ChildSummary {
+            id: run,
+            title: "Критик".into(),
+            created_at: chrono::Utc::now(),
+            finished_at: None,
+            message_count: 1,
+            outcome: None,
+            running: true,
+            background,
+        }];
+        chat.children_expanded = true;
+        c.s.set_chat_list(vec![chat]);
+        c.s.set_child_view(Some(ChildView {
+            parent: c.chat,
+            parent_title: "Про космос".into(),
+            system_message: "Ты — критик.".into(),
+        }));
+        c.s.activate_chat(
+            run,
+            "Критик".into(),
+            &[Message::user("Оцени X.")],
+            "",
+            FeedView::default(),
+            None,
+            None,
+        );
+        c.s.set_live_turn(Some(Box::new(LiveTurn {
+            turn: Uuid::new_v4(),
+            stream: Uuid::from_u128(STREAM),
+            role: MessageRole::Assistant,
+            partial: Some(LivePartial::default()),
+            continues: false,
+            background,
+        })));
+        c.chat = run;
+        c
+    }
+
+    #[test]
+    fn esc_goes_back_and_f6_stops_the_run() {
+        let mut c = streaming(true);
+        assert!(c.s.generating, "the run's stream is live in this feed");
+        let model = c.s.status_model(None, None, None);
+        assert!(model.background_run && model.read_only);
+        assert_eq!(c.key(KeyCode::Esc), Some(ChatIntent::OpenChatList));
+        assert_eq!(
+            c.key(KeyCode::F(6)),
+            Some(ChatIntent::StopSubagentRun {
+                id: Uuid::from_u128(RUN)
+            })
+        );
+        assert!(c.last_note().contains("Критик"), "{}", c.last_note());
+    }
+
+    #[test]
+    fn once_the_run_ends_the_key_stops_nothing_and_the_hint_goes() {
+        let mut c = streaming(true);
+        c.s.finish_generation(Uuid::from_u128(STREAM), FinishReason::Cancelled, false);
+        assert!(!c.s.generating);
+        assert!(!c.s.status_model(None, None, None).background_run);
+        assert_eq!(c.key(KeyCode::F(6)), None);
+        assert_eq!(c.key(KeyCode::Esc), Some(ChatIntent::OpenChatList));
+    }
+
+    /// A turn child's transcript is the turn's: `Esc` cancels it, as on the
+    /// parent, and the stop key is not there.
+    #[test]
+    fn a_turn_childs_transcript_keeps_esc_as_cancel_and_has_no_stop_key() {
+        let mut c = streaming(false);
+        assert!(c.s.generating);
+        assert!(!c.s.status_model(None, None, None).background_run);
+        assert_eq!(c.key(KeyCode::Esc), Some(ChatIntent::Cancel));
+        assert_eq!(c.key(KeyCode::F(6)), None);
+    }
+
+    #[test]
+    fn f6_on_a_chat_does_nothing_idle_or_generating() {
+        let mut c = Cmd::new();
+        assert_eq!(c.key(KeyCode::F(6)), None);
+        c.s.begin_generation(gen_id(), None);
+        assert!(!c.s.status_model(None, None, None).background_run);
+        assert_eq!(c.key(KeyCode::F(6)), None);
+        assert_eq!(c.key(KeyCode::Esc), Some(ChatIntent::Cancel));
+    }
+
+    /// The rendered footer says what the keys do here — `F6` and a
+    /// navigation `Esc` — and drops the stop hint the moment the run ends
+    /// (spec §11.2: an advertised key that is a no-op is worse than none).
+    #[test]
+    fn the_footer_advertises_f6_only_while_the_run_streams() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let mut c = streaming(true);
+        c.s.set_server_status(ready_statuses());
+        let mut term = Terminal::new(TestBackend::new(160, 20)).unwrap();
+        let text = |c: &mut Cmd, term: &mut Terminal<TestBackend>| {
+            term.draw(|f| c.s.render(f)).unwrap();
+            let buf = term.backend().buffer();
+            (0..buf.area.height)
+                .map(|y| {
+                    (0..buf.area.width)
+                        .map(|x| buf[(x, y)].symbol().to_string())
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let live = text(&mut c, &mut term);
+        assert!(live.contains("F6"), "{live}");
+        assert!(
+            live.contains(c.s.loc.t("ui.status.hotkey.stop_run")),
+            "{live}"
+        );
+        assert!(
+            !live.contains(c.s.loc.t("ui.status.hotkey.cancel")),
+            "{live}"
+        );
+        c.s.finish_generation(Uuid::from_u128(STREAM), FinishReason::Stop, false);
+        let ended = text(&mut c, &mut term);
+        assert!(!ended.contains("F6"), "{ended}");
     }
 }
 
@@ -4859,6 +5007,7 @@ fn a_rebuild_mid_continuation_appends_the_partial_into_the_seed_bubble() {
             tools: Vec::new(),
         }),
         continues: true,
+        background: false,
     })));
     assert!(s.generating);
     let assistants: Vec<_> = s
