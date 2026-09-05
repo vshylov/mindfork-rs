@@ -1229,11 +1229,12 @@ impl Orchestrator {
                 });
                 self.emit_chat_list();
             }
-            // A `start_subagent` call: the run leaves the turn for a seat of
-            // its own (docs/research/background-subagents.md §4.2).
+            // A `start_subagent` or `start_dialogue` call: the run leaves the
+            // turn for a seat of its own (docs/research/background-subagents.md
+            // §4.2, background-dialogues.md §4.2).
             TurnProgress::BackgroundStart(start) => {
                 let chat = turn.chat;
-                self.spawn_background_run(start, chat);
+                self.spawn_background_run(*start, chat);
             }
             other => self.handle_child_progress(other),
         }

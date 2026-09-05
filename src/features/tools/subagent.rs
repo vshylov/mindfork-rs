@@ -44,6 +44,7 @@ pub fn withheld_from_subagent(id: &str) -> bool {
     id == CALL_SUBAGENT_ID
         || id == START_SUBAGENT_ID
         || id == super::dialogue::RUN_DIALOGUE_ID
+        || id == super::dialogue::START_DIALOGUE_ID
         || id == super::history::HISTORY_READ_ID
         || id == super::history::HISTORY_SEARCH_ID
         || super::self_model::is_self_model_tool(id)

@@ -215,8 +215,13 @@ build the moment they drift from what the app actually renders
   persona the assistant composes, with the assistant's own tools (minus
   subagents, history read-back and the self-model), no history of the chat,
   no recursion; its transcript is kept on the call and shows as a child chat.
+- **`start_dialogue`** — the same scene in the **background**: the call
+  returns with the transcript's address, the scene plays on past the reply,
+  and the director's closing result arrives as a task notification. Same
+  switch as the one below; the director sees the conversation as it was when
+  you asked for the scene.
 - **`start_subagent`** — the same delegation in the **background** (opt-in:
-  "Subagent: background runs" in Settings → Tools): the call returns at
+  "Background runs (subagent/dialogue)" in Settings → Tools): the call returns at
   once, the run outlives the reply, and its result arrives later as a task
   notification the assistant reports on by itself when the chat is open and
   idle — otherwise the chat list marks that chat unread until you open it.

@@ -61,13 +61,13 @@ impl Orchestrator {
     /// (research §4.2): a seat here, a fresh generation id, the app's budget,
     /// and the task. The parent's turn has already recorded the *started*
     /// result and goes on.
-    pub(super) fn spawn_background_run(&mut self, start: Box<BackgroundStart>, chat: Uuid) {
+    pub(super) fn spawn_background_run(&mut self, start: BackgroundStart, chat: Uuid) {
         let generation = Uuid::new_v4();
         let run_id = start.run_id();
         let placeholder = start.placeholder();
         let sessions = self.session_budget();
         let cancel = generation::spawn_background_run(
-            *start,
+            start,
             BackgroundSpawn {
                 generation,
                 sessions,
@@ -216,6 +216,7 @@ impl Orchestrator {
         }
         let chat_id = seat.chat;
         let run_id = run.id;
+        let kind = run.kind;
         let label = run.name.clone().unwrap_or_else(|| run.title.clone());
         let mut attached = Vec::new();
         let mut live = false;
@@ -249,9 +250,16 @@ impl Orchestrator {
             return;
         }
         // The notification, in the profile's language: the model reads it.
+        // A scene and a sub-agent get their own wording (fork F8) — what
+        // finished, and in a dialogue's case who was in it; the body is the
+        // run's own closing result either way.
         let loc = self.profile_locale_of(chat_id);
+        let key = match kind {
+            crate::entities::subagent::RunKind::Dialogue => "tool.start_dialogue.notification",
+            _ => "tool.start_subagent.notification",
+        };
         let text = loc.tf(
-            "tool.start_subagent.notification",
+            key,
             &[
                 ("name", &label),
                 ("address", &crate::features::chat_links::uri(run_id)),
@@ -302,7 +310,9 @@ impl Orchestrator {
         let Ok(backend) = self.engines.backend_if_ready(self.ui_locale()) else {
             return;
         };
-        self.start_generation(chat_id, backend, None);
+        // Marked as woken, which is what buys the turn its muted re-ask when
+        // the first generation comes back empty (fork F11).
+        self.start_woken_generation(chat_id, backend);
     }
 
     /// `/subagents stop` (spec §9.3.2): cancels the run's token; the run

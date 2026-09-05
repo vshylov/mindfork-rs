@@ -57,7 +57,7 @@ fn cfg(sessions: u32) -> AppConfig {
 
 /// The orchestrator up on `backend`, the first chat activated and the
 /// parent's message sent.
-async fn begin(
+pub(super) async fn begin(
     backend: Arc<KeyedRecorder>,
     cfg: AppConfig,
 ) -> (
@@ -81,15 +81,18 @@ async fn begin(
     (dir, cmd_tx, evt_rx, handle, chat_id)
 }
 
-async fn next(rx: &mut UnboundedReceiver<AppEvent>, pred: impl Fn(&AppEvent) -> bool) -> AppEvent {
+pub(super) async fn next(
+    rx: &mut UnboundedReceiver<AppEvent>,
+    pred: impl Fn(&AppEvent) -> bool,
+) -> AppEvent {
     wait_for(rx, pred).await.expect("the event arrives")
 }
 
-fn finished(e: &AppEvent) -> bool {
+pub(super) fn finished(e: &AppEvent) -> bool {
     matches!(e, AppEvent::Finished { .. })
 }
 
-fn runs_out(n: u32) -> impl Fn(&AppEvent) -> bool {
+pub(super) fn runs_out(n: u32) -> impl Fn(&AppEvent) -> bool {
     move |e| matches!(e, AppEvent::BackgroundRuns { out } if *out == n)
 }
 
@@ -106,14 +109,17 @@ fn running_child(e: &AppEvent) -> Option<Uuid> {
         .map(|c| c.id)
 }
 
-async fn running_run(rx: &mut UnboundedReceiver<AppEvent>) -> Uuid {
+pub(super) async fn running_run(rx: &mut UnboundedReceiver<AppEvent>) -> Uuid {
     let e = next(rx, |e| running_child(e).is_some()).await;
     running_child(&e).unwrap()
 }
 
 /// Nothing matching `pred` arrives for a short while — what "the run is
 /// still out" or "no turn was started" looks like from the event stream.
-async fn nothing_like(rx: &mut UnboundedReceiver<AppEvent>, pred: impl Fn(&AppEvent) -> bool) {
+pub(super) async fn nothing_like(
+    rx: &mut UnboundedReceiver<AppEvent>,
+    pred: impl Fn(&AppEvent) -> bool,
+) {
     let seen =
         tokio::time::timeout(std::time::Duration::from_millis(200), wait_for(rx, pred)).await;
     assert!(seen.is_err(), "unexpected event: {seen:?}");
