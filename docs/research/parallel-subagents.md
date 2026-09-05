@@ -791,8 +791,8 @@ records satisfy a strict provider.
   research doc of its own** (2026-09-05, forks open):
   [background-subagents.md](background-subagents.md) — measured on the
   four clouds: an optional flag is not the shape (Claude never sets it), a
-  second tool or a required `mode` is used 3/3, and the notification is
-  consumed as a user-side message without a second call.
+  second tool or a required `mode` is used 3/3 (5/5 on Qwen 3.6 27B), and
+  the notification is consumed as a user-side message without a second call.
 - **Concurrent ordinary tools** (F1c): a `Tool::concurrent()` mark for
   read-only tools and a group per round like the sub-agents'. **Now a
   track of its own** (2026-09-04):

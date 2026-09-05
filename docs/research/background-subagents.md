@@ -11,7 +11,8 @@
 > boolean flag is *not* set by Claude (0/3) and not always by Gemini (2/3),
 > while a second tool or a required `mode` is used 3/3 on all four, and every
 > model consumes the notification without calling the tool again. The local
-> arm (Qwen 3.6 27B, Gemma 4 31B) is pending: the LAN stack was down. Builds
+> arm on Qwen 3.6 27B is **go** — 5/5, 0/5, 5/5 under every shape (§3.1);
+> Gemma 4 31B was not on the stack this session. Builds
 > on [subagent-chats.md](subagent-chats.md) / [ADR 0010](../decisions/0010-subagent-nested-turn.md)
 > (the nested turn; its decision 5, *the child lands with the turn*, is what
 > this track amends), [subagent-live.md](../history/subagent-live.md) (the
@@ -208,8 +209,8 @@ was started in the background, the turn is allowed to end and the next
 **user** message is the notification alone — *"[Task notification — not a
 message from the user] The background sub-agent run r1 («Critic») has
 finished. Its final reply: …"* — then a fourth message asks, in one line,
-for the run's main objection. Three trials of S1 and two of S2 per cell,
-temperature 1.
+for the run's main objection. Three trials of S1 and two of S2 per cloud
+cell, five and five on the LAN stack, temperature 1.
 
 | backend | model | shape | S1: asked for the background | S2: stayed in the foreground | r3: used the notification, no re-call | r4: main objection right |
 |---|---|:-:|:-:|:-:|:-:|:-:|
@@ -222,17 +223,24 @@ temperature 1.
 | Gemini | gemini-3.1-pro-preview | d | **3/3** | 2/2 | 3/3 | 3/3 |
 | xAI | grok-4.6 | b | **3/3** | 2/2 | 3/3 | 3/3 |
 | xAI | grok-4.6 | c | **3/3** | 2/2 | 3/3 | 3/3 |
-| llama.cpp (LAN) | Qwen 3.6 27B, Gemma 4 31B | — | *pending — the stack was down* | | | |
+| llama.cpp (LAN, b10807, thinking on) | Qwen 3.6 27B Q4_K_M | b | **5/5** | 5/5 | 5/5 | 5/5 |
+| llama.cpp | Qwen 3.6 27B | c | **5/5** | 5/5 | 5/5 | 5/5 |
+| llama.cpp | Qwen 3.6 27B | d | **5/5** | 5/5 | 5/5 | 4/5 — one empty reply |
+| llama.cpp | Gemma 4 31B | — | *not on the stack this session* | | | |
 
 Four readings:
 
-- **The optional flag is the wrong shape.** Claude never passed
-  `background`, in three trials — and *narrated* it every time: "Task
-  started (background)", "I've started the critique in the background" —
-  then took the foreground result the harness returned and relayed it as
-  "early feedback". Gemini passed it in two of three and produced an empty
-  reply in the third. A required field or a second tool got **3/3 on all
-  four clouds**, which settles F1 between (c) and (d), against (a)/(b).
+- **The optional flag is not a shape every model uses.** Claude never
+  passed `background`, in three trials — and *narrated* it every time:
+  "Task started (background)", "I've started the critique in the
+  background" — then took the foreground result the harness returned and
+  relayed it as "early feedback". Gemini passed it in two of three and
+  produced an empty reply in the third; Qwen passed it 5/5. So the flag is
+  not wrong everywhere — it is wrong on one provider the app cannot do
+  without, silently, in a way the harness cannot detect (the call is
+  well-formed, the model merely meant something else). A required field or
+  a second tool got **3/3 on all four clouds and 5/5 locally**, which
+  settles F1 between (c) and (d), against (a)/(b).
 - **No model asked for the background when the answer was the point.** S2
   stayed in the foreground in every cell, under every shape — the
   description's "when the result is not needed for your current reply" is
@@ -249,6 +257,15 @@ Four readings:
   called the tool again to "fetch" the result. The plain text form — a
   bracketed preamble, the run's id, the reply, the transcript address — is
   enough; no XML, no special role.
+- **The local gate model does everything the clouds do.** Qwen 3.6 27B
+  (b10807, thinking on) asked for the background 5/5 under every shape,
+  stayed in the foreground 5/5 in S2, invented nothing, and consumed the
+  notification 5/5 without a second call. Its two misses in fifteen S1
+  trials were an empty fourth reply — the all-thinking turn the dialogue
+  track met ([two-agent-dialogue.md](two-agent-dialogue.md)) — and one
+  second-round reply that reported the start and forgot the arithmetic;
+  neither is about the background. Gemma 4 31B was not on the stack; §7
+  keeps it as the live run's first check.
 
 ### 3.2 The reference shape, observed
 
@@ -549,11 +566,13 @@ Recommendations are marked; nothing is decided until the user says so.
 
 ## 7. Stages and the test plan
 
-**Before code — the local arm of §3.1**, on the LAN stack: Qwen 3.6 27B and
-Gemma 4 31B, shape (d), five trials of S1 and S2. Go: ≥ 4/5 background on
-S1, 0/5 on S2, ≥ 4/5 notification use without a re-call. A model below that
-bar is not a no-go for the track (the clouds are there) but a reason to
-keep the feature off by default for that stack and say so in the hint.
+**The local arm of §3.1** — Qwen 3.6 27B: **go** (5/5 background on S1,
+0/5 on S2, 5/5 notification use under shape (d), the same under (b) and
+(c)). Gemma 4 31B was not on the stack this session: the live run of
+stage 1 checks it first, under the same bar — ≥ 4/5 background on S1, 0/5
+on S2, ≥ 4/5 notification use without a re-call. A model below that bar is
+not a no-go for the track (the clouds are there) but a reason to keep the
+feature off by default for that stack and say so in the hint.
 
 **Stage 1 — the run outside the turn** (`feat/background-subagents`).
 §4.1–§4.5, §4.7–§4.11. Unit tests over the keyed and counting mocks: the

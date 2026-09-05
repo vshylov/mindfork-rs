@@ -105,8 +105,8 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
     notified in a later round (Claude Code's background agents): a
     "task notification" round shape and a place for a result that arrives
     after the turn ends. **Research written** (2026-09-05, forks F1–F10
-    awaiting the user's decision, the local-model arm of the probe pending
-    the LAN stack):
+    awaiting the user's decision; Qwen 3.6 27B go 5/5, Gemma 4 31B pending
+    the stack):
     [docs/research/background-subagents.md](research/background-subagents.md);
   - **concurrent ordinary tools** — **done** (2026-09-04, see "Recently
     closed"; [docs/research/concurrent-tools.md](research/concurrent-tools.md),
