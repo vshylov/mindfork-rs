@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (22)
+## Entries (23)
 
 - Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - Post-M9: SonarQube Cloud analysis in CI (done)
@@ -34,6 +34,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: SonarQube follow-up — the wizard's RTF renderer, and a fixture's file mode (done)
 - Post-M9: SonarQube follow-up — the budget's poison guard and the pool probe (done)
 - Post-M9: the pool probe's `park` arm records its sibling (done)
+- Post-M9: SonarQube follow-up — the round resolver's three arms (done)
 
 ### Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - **28 relative links in the docs pointed at nothing**, and had for a while.
@@ -1269,3 +1270,55 @@ structure (AGENTS.md §3).
   **2798 green, 136 `#[ignore]`, counts unchanged**; the repository gates green.
   **No live run required** (AGENTS.md §3) — an offline research probe, no
   product code. No CHANGELOG entry: nothing the user sees changed (§4).
+
+### Post-M9: SonarQube follow-up — the round resolver's three arms (done)
+
+- **One finding open on `main`**: `rust:S3776` on
+  `src/app/orchestrator/generation.rs`, `resolve_round` at cognitive
+  complexity **18** against the 15 allowed. Its creation timestamp
+  (2026-09-05T21:27:32Z) is commit `e215cba` to the minute — the background
+  dialogues merge (PR #457), which added the `if`/`else` picking
+  `start_background_dialogue` over `start_background` *inside* the background
+  arm, three levels down. Branch `refactor/sonar-resolve-round`. The lessons
+  §10 family again: `cargo clippy --all-targets -- -D warnings` was green on
+  this function the whole time and no local gate could have seen it.
+- **The complexity was three arms sharing one loop body, not logic.** The
+  `while` walked the round's calls and each kind was inlined at its `continue`,
+  so everything nested inside paid the loop's depth: the group arm's `match`
+  over `child_spec`, the background arm's twin-picking `if`/`else`, and the
+  segment arm's `for` over the results. One method per arm —
+  `queue_group_call`, `resolve_background_call`, `resolve_ordinary` — leaves
+  the loop answering the two questions it is actually about: which of the three
+  kinds the call at `i` is, and where the next one starts. This is the shape
+  lessons §10 already prescribes for a dispatch whose arms carry preconditions
+  (written down when a nineteen-arm `match` scored 16 on five short `if`s);
+  it was applied here to a three-arm one.
+- **Two small unifications came with the seams, and nothing else moved.** The
+  ordinary arm's `i += 1` and `i = end` collapse into a single `i = end`
+  because `segment_end` never answers less than `start + 1` — the one-call case
+  *is* `end == i + 1`, which is also why `resolve_ordinary` can decide by
+  `span.len()` rather than re-derive the comparison. And `Self::call_args(call)`
+  moves out of the background arm's two branches into one binding above them: a
+  pure parse of the call's argument string, previously done twice in source and
+  once at run time either way.
+- **Covered by the tests that already own these paths** — `concurrent::` (7),
+  `parallel::` (8), `background::` (13), `background_dialogue::` (6) — 34 over
+  the three arms, including the four that pin exactly what a reshaped dispatch
+  could disturb: `a_segment_runs_its_reads_at_once_and_records_them_in_order`,
+  `an_unmarked_call_breaks_the_segment`,
+  `a_disabled_tool_is_refused_and_breaks_the_segment` and
+  `esc_mid_segment_cancels_every_member`. No new test: the refactor adds no
+  behaviour to pin, and a test over the private helpers would pin the shape
+  this entry expects to be free to change again.
+- **The lessons §10 pre-check is still unavailable for Rust**, confirmed rather
+  than assumed this time: the Sonar MCP snippet analyzer's `language` parameter
+  enumerates twenty languages and Rust is not among them, so the call cannot be
+  made at all. The shape was therefore watched by eye — by hand-count the loop
+  is 5 against the 15, and the three helpers 1, 2 and 2 — and the PR's own
+  analysis is the first real measurement, as it has been for every Rust finding
+  here.
+- `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, `cargo test` —
+  **2866 green, 138 `#[ignore]`, counts unchanged**; the six repository gates
+  green. **No live run required** (AGENTS.md §3): a mechanical refactor of a
+  dispatch, no engine, memory or tool surface touched. No CHANGELOG entry —
+  nothing the user sees changed (§4).

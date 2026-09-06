@@ -2230,6 +2230,11 @@ impl TurnLoop<'_> {
     /// (its card opens) and prepared as a [`ChildSpec`], or refused on the
     /// spot when the call is malformed. The third value says which cards a
     /// segment already closed as its results landed.
+    ///
+    /// The loop itself answers two questions and nothing else: which of the
+    /// three kinds the call at `i` is, and where the next one starts. What
+    /// each kind *does* is a method of its own — the shape docs/lessons.md
+    /// §10 prescribes for a dispatch whose arms carry preconditions.
     async fn resolve_round(
         &mut self,
         calls: &[ApiToolCall],
@@ -2242,47 +2247,78 @@ impl TurnLoop<'_> {
         while i < calls.len() {
             let call = &calls[i];
             if self.is_group_call(call, rewrite) {
-                self.announce_call(call);
-                match self.child_spec(&Self::call_args(call)) {
-                    Ok(spec) => group.push((i, spec)),
-                    Err(refusal) => results[i] = Some(refusal),
-                }
+                self.queue_group_call(call, i, &mut group, &mut results);
                 i += 1;
-                continue;
-            }
-            if self.is_background_call(call, rewrite) {
-                // A background run starts now and answers at once — its
-                // card opens and closes within the round, like any call's
-                // (docs/research/background-subagents.md §4.2).
-                self.announce_call(call);
-                self.report_progress(Some(&call.name));
-                results[i] = Some(
-                    if call.name == crate::features::tools::dialogue::START_DIALOGUE_ID {
-                        self.start_background_dialogue(&Self::call_args(call))
-                    } else {
-                        self.start_background(&Self::call_args(call))
-                    },
-                );
+            } else if self.is_background_call(call, rewrite) {
+                results[i] = Some(self.resolve_background_call(call));
                 i += 1;
-                continue;
-            }
-            let end = self.segment_end(calls, i, rewrite);
-            if end > i + 1 {
-                // The segment's results arrive in the model's order, so its
-                // effects land in that order too (fork F6): a sequential round
-                // and a concurrent one leave the same `Chat`.
-                for (j, done) in self.run_segment(&calls[i..end]).await {
-                    self.effects.extend(done.effects);
-                    results[i + j] = Some(done.result);
-                    announced[i + j] = true;
-                }
-                i = end;
             } else {
-                results[i] = Some(self.resolve_call(call, rewrite).await);
-                i += 1;
+                let end = self.segment_end(calls, i, rewrite);
+                self.resolve_ordinary(&calls[i..end], i, rewrite, &mut results, &mut announced)
+                    .await;
+                i = end;
             }
         }
         (results, group, announced)
+    }
+
+    /// A member of the round's parallel group: the card opens and the
+    /// [`ChildSpec`] joins the group under the call's own index, or a
+    /// malformed call is refused on the spot and never reaches the group
+    /// (docs/research/parallel-subagents.md §4.1).
+    fn queue_group_call(
+        &mut self,
+        call: &ApiToolCall,
+        at: usize,
+        group: &mut Vec<(usize, ChildSpec)>,
+        results: &mut [Option<CallResult>],
+    ) {
+        self.announce_call(call);
+        match self.child_spec(&Self::call_args(call)) {
+            Ok(spec) => group.push((at, spec)),
+            Err(refusal) => results[at] = Some(refusal),
+        }
+    }
+
+    /// A background run starts now and answers at once — its card opens and
+    /// closes within the round, like any call's
+    /// (docs/research/background-subagents.md §4.2, and
+    /// docs/research/background-dialogues.md §4.2 for the scene's twin).
+    fn resolve_background_call(&mut self, call: &ApiToolCall) -> CallResult {
+        self.announce_call(call);
+        self.report_progress(Some(&call.name));
+        let args = Self::call_args(call);
+        if call.name == crate::features::tools::dialogue::START_DIALOGUE_ID {
+            self.start_background_dialogue(&args)
+        } else {
+            self.start_background(&args)
+        }
+    }
+
+    /// Everything that is not a sub-agent call, at index `at` of the round:
+    /// `span` is either the one call, resolved where it stands, or a segment
+    /// of two or more run at once ([`Self::run_segment`]). The segment's
+    /// results arrive in the model's order, so its effects land in that order
+    /// too (fork F6): a sequential round and a concurrent one leave the same
+    /// `Chat`. A segment closes its cards as the results land, which is what
+    /// it marks in `announced`.
+    async fn resolve_ordinary(
+        &mut self,
+        span: &[ApiToolCall],
+        at: usize,
+        rewrite: bool,
+        results: &mut [Option<CallResult>],
+        announced: &mut [bool],
+    ) {
+        if span.len() == 1 {
+            results[at] = Some(self.resolve_call(&span[0], rewrite).await);
+            return;
+        }
+        for (j, done) in self.run_segment(span).await {
+            self.effects.extend(done.effects);
+            results[at + j] = Some(done.result);
+            announced[at + j] = true;
+        }
     }
 
     /// Whether `call` may be a member of a concurrent segment: a round not
