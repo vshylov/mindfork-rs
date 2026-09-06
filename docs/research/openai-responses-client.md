@@ -64,6 +64,12 @@ This is **the same mechanism** already implemented for Anthropic:
 assistant turn with calls. There's exactly one difference: OpenAI needs an
 `id` for the item, in addition to `encrypted_content`.
 
+> **Amended 2026-09-06.** "The item" is several: gpt-5.6 returned two to five
+> reasoning items in half the replies probed, and the API rejects a fusion of
+> them under one id (`400 invalid_encrypted_content`). Each is resent as its
+> own item, in order — [journal/engine.md](../journal/engine.md), the
+> multi-item entry.
+
 ### 2.3 Protocol format
 
 | | Chat Completions | Responses |

@@ -221,8 +221,8 @@ impl EngineBackend for ResponsesClient {
 mod ignored_smoke {
     use super::*;
     use crate::entities::sampling::{ReasoningEffort, SamplingConfig, Verbosity};
-    use crate::shared::api::ToolCallAccumulator;
     use crate::shared::api::contract::{ApiMessage, ApiToolCall, ThinkingBlock, ToolSchema};
+    use crate::shared::api::{ThinkingAccumulator, ToolCallAccumulator};
 
     fn client_from_env() -> Option<ResponsesClient> {
         let key = std::env::var("MINDFORK_OPENAI_KEY").ok()?;
@@ -446,11 +446,11 @@ mod ignored_smoke {
                         arguments: call.arguments.clone(),
                     }],
                 )
-                .with_thinking(Some(ThinkingBlock {
+                .with_thinking_blocks(vec![ThinkingBlock {
                     text: String::new(),
                     signature: enc,
                     id: thinking_id,
-                })),
+                }]),
                 ApiMessage::tool(&call.id, "18°C, sunny"),
             ],
             sampling,
@@ -483,5 +483,212 @@ mod ignored_smoke {
             !text.is_empty(),
             "expected a final answer after tool result"
         );
+    }
+
+    /// The next round of a request, as the app would send it: `Ok((text, calls))`
+    /// — the reply's text and how many tool calls it made — or the engine's
+    /// refusal (a status error before the stream, or an error chunk).
+    async fn next_round(
+        client: &ResponsesClient,
+        req: ChatRequest,
+    ) -> Result<(String, usize), String> {
+        let mut stream = client
+            .chat_stream(req, Default::default())
+            .await
+            .map_err(|e| format!("{e:#}"))?;
+        let mut text = String::new();
+        let mut acc = ToolCallAccumulator::default();
+        while let Some(chunk) = stream.next().await {
+            match chunk {
+                ChatChunk::Text(t) => text.push_str(&t),
+                ChatChunk::ToolCall(d) => acc.push(d),
+                ChatChunk::Error { message, .. } => return Err(message),
+                ChatChunk::Finished(_) => break,
+                _ => {}
+            }
+        }
+        Ok((text, acc.finish().len()))
+    }
+
+    /// The multi-item echo (docs/journal/engine.md): gpt-5.6 answers a
+    /// reasoning-heavy brief with two to five reasoning items in about half its
+    /// replies, and every one must go back as its own item, in order. Streams the
+    /// brief that produced the shape in the field — verbatim, with the search tool
+    /// the sub-agent had — until such a reply arrives (eight tries at most: one item
+    /// eight times in a row is a 0.4% event at the measured rate), then sends the
+    /// next request through the app's own wire with the blocks the loop's
+    /// accumulator produced, and — the control arm — the fused shape the loop
+    /// produced before the fix (one item, the last id, every ciphertext
+    /// concatenated), which the API rejected with `invalid_encrypted_content`
+    /// when this was written.
+    /// Run: `MINDFORK_OPENAI_KEY=... MINDFORK_OPENAI_MODEL=gpt-5.6 cargo test
+    /// several_reasoning_items -- --ignored --nocapture`.
+    #[tokio::test]
+    #[ignore = "requires MINDFORK_OPENAI_KEY (live OpenAI Responses API)"]
+    async fn several_reasoning_items_round_trip_each_as_its_own_item() {
+        let Some(client) = client_from_env() else {
+            eprintln!("skip: MINDFORK_OPENAI_KEY not set");
+            return;
+        };
+        let tool = ToolSchema {
+            name: "web_search".into(),
+            description: "Search the web: a list of results with title, url and snippet. \
+                          Several independent queries go in one reply as several calls."
+                .into(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {"query": {"type": "string", "description": "The search query."}},
+                "required": ["query"],
+            }),
+        };
+        let sampling = SamplingConfig {
+            max_tokens: Some(8192),
+            thinking: Some(true),
+            reasoning_effort: Some(ReasoningEffort::Medium),
+            ..Default::default()
+        };
+        // The sub-agent brief that produced the shape in the field, verbatim: a
+        // Russian brief with a search tool at hand (the tool-less English probes of
+        // the same day gave one item per reply).
+        let system = "Ты — исследователь феноменологии Гуссерля. Анализируй строго, различая  \
+            собственные тексты Гуссерля, обоснованную реконструкцию и спекуляцию. Не  \
+            приписывай философу знакомства с квантовой механикой или тезисом  \
+            квантового бессмертия. Пиши по-русски, содержательно и без театральной  \
+            имитации его голоса.";
+        let prompt = "Разбери идею квантового бессмертия с позиций философии Эдмунда Гуссерля.  \
+            Сначала кратко и точно определи сам мысленный эксперимент и его спорные  \
+            физические предпосылки (многомировая интерпретация, квантовое  \
+            самоубийство, антропный/селекционный эффект). Затем исследуй через  \
+            эпохе, трансцендентальную субъективность, внутреннее сознание времени,  \
+            конституирование собственного тела и смерти, интерсубъективность.  \
+            Ответь: может ли невозможность пережить собственное небытие служить  \
+            аргументом за субъективное бессмертие? Где происходит подмена между  \
+            феноменологической неданностью смерти и онтологическим продолжением  \
+            жизни? Дай структурированный вывод и обозначь пределы реконструкции.";
+        let mut refs = Vec::new();
+        let mut calls = Vec::new();
+        let mut text = String::new();
+        for attempt in 1..=8 {
+            let round1 = ChatRequest {
+                continue_final: false,
+                system: Some(system.into()),
+                messages: vec![ApiMessage::user(prompt)],
+                sampling: sampling.clone(),
+                tools: vec![tool.clone()],
+            };
+            let mut stream = client
+                .chat_stream(round1, Default::default())
+                .await
+                .unwrap();
+            let mut thinking = ThinkingAccumulator::default();
+            let mut acc = ToolCallAccumulator::default();
+            text.clear();
+            while let Some(chunk) = stream.next().await {
+                match chunk {
+                    ChatChunk::Text(t) => text.push_str(&t),
+                    ChatChunk::ToolCall(d) => acc.push(d),
+                    ChatChunk::ThoughtsSignature(r) => thinking.push(r),
+                    ChatChunk::Error { message, .. } => panic!("round 1 failed: {message}"),
+                    ChatChunk::Finished(_) => break,
+                    _ => {}
+                }
+            }
+            refs = thinking.finish();
+            calls = acc.finish();
+            eprintln!(
+                "attempt {attempt}: {} reasoning item(s), {} call(s)",
+                refs.len(),
+                calls.len()
+            );
+            if refs.len() >= 2 {
+                break;
+            }
+        }
+        assert!(
+            refs.len() >= 2,
+            "eight replies with a single reasoning item — rerun (a 0.4% event at the measured rate)"
+        );
+        assert!(
+            refs.iter().all(|r| r.id.is_some()),
+            "every Responses reasoning item carries an id"
+        );
+
+        // The next request as the loop builds it: the assistant turn with its
+        // blocks, then the tool outputs (stubs) — or, for a text reply, a follow-up.
+        let history = |thinking: Vec<ThinkingBlock>| {
+            let mut messages = vec![ApiMessage::user(prompt)];
+            if calls.is_empty() {
+                messages.push(ApiMessage::assistant(text.clone()).with_thinking_blocks(thinking));
+                messages.push(ApiMessage::user(
+                    "Спасибо. Теперь одним абзацем: в чём главный разрыв?",
+                ));
+            } else {
+                messages.push(
+                    ApiMessage::assistant_tool_calls(text.clone(), calls.clone())
+                        .with_thinking_blocks(thinking),
+                );
+                for c in &calls {
+                    messages.push(ApiMessage::tool(
+                        &c.id,
+                        "Результаты поиска (1): 1. заглушка — https://example.org — фрагмент.",
+                    ));
+                }
+            }
+            ChatRequest {
+                continue_final: false,
+                system: Some(system.into()),
+                messages,
+                sampling: sampling.clone(),
+                tools: vec![tool.clone()],
+            }
+        };
+
+        // The fixed path: every item, in order, each under its own id.
+        let fixed: Vec<ThinkingBlock> = refs
+            .iter()
+            .map(|r| ThinkingBlock {
+                text: String::new(),
+                signature: r.signature.clone(),
+                id: r.id.clone(),
+            })
+            .collect();
+        let (answer, more_calls) = next_round(&client, history(fixed))
+            .await
+            .unwrap_or_else(|e| panic!("the multi-item echo was rejected: {e}"));
+        assert!(
+            !answer.is_empty() || more_calls > 0,
+            "expected an answer or another round of calls after the echo"
+        );
+        eprintln!(
+            "fixed path: {} items echoed after {} call(s); next reply: {} chars, {} call(s)",
+            refs.len(),
+            calls.len(),
+            answer.len(),
+            more_calls
+        );
+
+        // The control arm: the shape the loop produced before the fix. The API
+        // rejected it when this was written; should it ever stop, the list stays the
+        // documented contract ("pass back all reasoning items, untouched"), so the
+        // arm reports rather than fails.
+        let fused = vec![ThinkingBlock {
+            text: String::new(),
+            signature: refs.iter().map(|r| r.signature.as_str()).collect(),
+            id: refs.last().and_then(|r| r.id.clone()),
+        }];
+        match next_round(&client, history(fused)).await {
+            Err(e) => {
+                assert!(
+                    e.contains("invalid_encrypted_content"),
+                    "the fused item was refused, but not as invalid_encrypted_content: {e}"
+                );
+                eprintln!(
+                    "control arm: the fused item is rejected (invalid_encrypted_content), as before the fix"
+                );
+            }
+            Ok(_) => eprintln!(
+                "control arm: the API now accepts a fused item — the list stays the contract"
+            ),
+        }
     }
 }

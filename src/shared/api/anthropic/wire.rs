@@ -216,8 +216,10 @@ fn build_messages(req: &ChatRequest) -> Vec<AntMessage> {
                 let mut blocks = Vec::new();
                 // A thinking block (with a signature) must go FIRST in an assistant turn with
                 // tool_use — otherwise Anthropic returns 400. Only placed on the current
-                // agentic-loop turn (see ApiMessage::with_thinking).
-                if let Some(tb) = &m.thinking {
+                // agentic-loop turn (see ApiMessage::with_thinking_blocks). One block per reply
+                // without the interleaved-thinking beta, which the app does not request;
+                // were several to arrive, each would be resent as its own block.
+                for tb in &m.thinking {
                     blocks.push(AntBlock::Thinking {
                         thinking: tb.text.clone(),
                         signature: tb.signature.clone(),
@@ -802,11 +804,11 @@ mod tests {
                     arguments: "{\"x\":1}".into(),
                 }],
             )
-            .with_thinking(Some(ThinkingBlock {
+            .with_thinking_blocks(vec![ThinkingBlock {
                 text: "надо сложить".into(),
                 signature: "sig-abc".into(),
                 id: None,
-            })),
+            }]),
             ApiMessage::tool("t1", "2"),
         ]);
         let json = serde_json::to_value(build_request(&r, "claude-x", true)).unwrap();

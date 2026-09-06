@@ -31,8 +31,8 @@ mod dialogue_probe;
 pub use anthropic::AnthropicClient;
 pub use contract::{
     ApiImage, ApiMessage, ApiToolCall, ChatChunk, ChatRequest, EmbedRole, Embedder, EngineBackend,
-    FinishReason, ThinkingBlock, ThinkingRef, ToolCallAccumulator, ToolSchema, UnavailableEmbedder,
-    VisionSupport,
+    FinishReason, ThinkingAccumulator, ThinkingBlock, ThinkingRef, ToolCallAccumulator, ToolSchema,
+    UnavailableEmbedder, VisionSupport,
 };
 pub use gemini::GeminiClient;
 pub use managed::{ManagedConfig, ServerHandle, wait_until_ready};

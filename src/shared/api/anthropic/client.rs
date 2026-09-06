@@ -596,11 +596,11 @@ mod ignored_smoke {
                         arguments: call.arguments.clone(),
                     }],
                 )
-                .with_thinking(Some(ThinkingBlock {
+                .with_thinking_blocks(vec![ThinkingBlock {
                     text: thoughts.clone(),
                     signature: signature.clone(),
                     id: None,
-                })),
+                }]),
                 ApiMessage::tool(&call.id, "18°C, sunny"),
             ],
             sampling,

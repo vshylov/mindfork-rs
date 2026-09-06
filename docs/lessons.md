@@ -1273,6 +1273,16 @@ goes second.
 
 ## 9. Live runs and model behaviour
 
+**A wire shape seen once per reply is not a contract — a newer model breaks the
+"one" quietly.** Every OpenAI Responses reply had carried one reasoning item, so the
+loop fused whatever arrived into one string under the last id, and nothing noticed
+for months; gpt-5.6 emits two to five in half its replies, and the fused item is a
+`400` the retry layer rightly does not retry. Accumulate a *list* of anything a
+provider indexes (`ToolCallAccumulator` already did; `ThinkingAccumulator` now
+does), and when a new model lands, probe the shapes it returns before trusting the
+old count.
+— *several reasoning items in one reply*.
+
 **A decorator is only covered live if the test harness wraps too — check, don't
 assume.** The retry `EngineBackend` decorator sits on every real cloud and external
 turn, and the live e2e set appeared to exercise it; it did not. The harness builds its

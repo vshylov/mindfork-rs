@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (38)
+## Entries (39)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -50,6 +50,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: `/continue` — stage 2: the clouds (track complete)
 - Post-M9: the model's name in `external` mode — asked of the server, and sent to it (done)
 - Post-M9: parallel sub-agents — stage 1, sessions per engine and the slot count (done)
+- Post-M9: several reasoning items in one reply — each resent as its own item (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -2392,3 +2393,78 @@ orchestrator harness was built for this.
   tab and absent from Impersonation/Embeddings, the edit routed to the active
   section with the others untouched, the floor at 1, the unparsable input
   ignored, the slots hint for local servers only), 131 `#[ignore]` (+2 live).
+
+### Post-M9: several reasoning items in one reply — each resent as its own item (done)
+
+**Symptom** (the user, 2026-09-06, the first run with four parallel sub-agents
+on gpt-5.6): one of the four ended "the engine failed before completion" at
+its second round while its three siblings completed; the parent re-ran it and
+the report was whole. The log had the cause — `400 Bad Request`,
+`invalid_request_error` / `invalid_encrypted_content`: *"The encrypted content
+for item rs_… could not be verified. Reason: Encrypted content could not be
+decrypted or parsed."* Non-transient by the error classifier, so no retry —
+correctly: the request was malformed.
+
+**Cause: a reply carries several reasoning items, and the loop fused them into
+one.** `stream_round` accumulated every `ThoughtsSignature` chunk by appending
+its ciphertext to one string and keeping the last id; `push_assistant_items`
+then sent **one** `reasoning` item — the last id over the concatenation of every
+item's `encrypted_content`, which is precisely what the API cannot decrypt. The
+shape had never shown itself because every reply seen until then carried one
+item. gpt-5.6 does not: measured on the user's key with the failed run's own
+brief, **8 of 16** replies carried two to five reasoning items, and one of five
+tool-calling replies had four items ahead of three calls — the failed run's
+shape. The tool-less English probes of the same day gave one item every time,
+which is why the first draft of the live smoke (a shortened brief, no tool)
+saw eight single items in a row and was rewritten around the verbatim brief.
+
+**Measured before the fix** — the echo of a 4-item, 3-call reply:
+
+| Echo | Result |
+|---|---|
+| the app's: one item, last id, contents concatenated | 400 `invalid_encrypted_content`, the log's text verbatim |
+| every item in its place | 200 |
+| one item alone (first or last, its own content) | 200 |
+| no reasoning item at all | 200 |
+
+OpenAI's reasoning guide: *"pass back all reasoning items, function call items,
+and function call output items since the last user message … untouched"*. The
+causes of this error known in the field — another organisation's key, a model
+switch mid-conversation, stale items — did not apply: same key, same model, a
+fresh item. Parallelism did not cause it either: reproduced on a single stream.
+
+**Fix.** `ApiMessage.thinking` is a `Vec<ThinkingBlock>` — one block per
+reasoning item on Responses, one on Anthropic — and `ThinkingAccumulator`
+(contract.rs, beside `ToolCallAccumulator`) replaces the two locals of
+`stream_round`: a reference **with** an id is an entry of its own; one
+**without** appends to a trailing id-less entry, so Anthropic's one signature,
+however many deltas carry it, stays one block — the previous behaviour by
+construction. `push_assistant_items` emits every id-bearing block, in order,
+before the text and the calls (every shape observed had the reasoning items
+first; positions are not otherwise tracked); `build_messages` (Anthropic) emits
+every block, which for one block is what it emitted before. The round's
+thoughts text rides on the first block (Anthropic resends it with the
+signature; Responses sends only id + ciphertext). `with_thinking(Option)` is
+gone; `with_thinking_blocks(Vec)` is the builder.
+
+**Not done, and why.** Positions by `output_index` (a reasoning item *between*
+two calls): no such shape appeared in the 16 probed replies or in the field,
+and the accumulator keeps the reply's order, which is what the API checked.
+The Anthropic interleaved-thinking beta (several blocks per reply) is not
+requested by the app; were it, per-block text would be needed — the loop
+already resends each block on its own.
+
+**Tests**: 5 new unit — the accumulator (one entry per id-bearing item, in
+order; id-less deltas fused into one block; an id-less delta never appended to
+an item; empty), the Responses wire (three blocks → three `reasoning` input
+items under their own ids, in order, then the call); and one new `#[ignore]`
+live smoke, `several_reasoning_items_round_trip_each_as_its_own_item`: the
+verbatim brief with the search tool, streamed until a multi-item reply
+arrives, echoed through the app's wire, plus a control arm sending the fused
+shape, which the API must still reject. 2871 unit tests green (138 → 139
+`#[ignore]`). **Live**: the five Responses smokes on gpt-5.6, 5/5 — the new
+one caught a 2-item, 3-call reply on its fourth attempt, the echo through the
+app's wire was accepted (a 23 480-character reply), and the control arm's
+fused item was rejected with `invalid_encrypted_content`; the four Anthropic
+smokes (the single-block signature round trip intact) and the two continue
+probes, 6/6.
