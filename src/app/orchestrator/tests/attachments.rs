@@ -229,6 +229,7 @@ async fn attachment_read_sees_the_chat_files_through_the_turn_snapshot() {
             model_name: None,
             engine_mode: Default::default(),
             sessions: None,
+            silent_lane: false,
         },
     );
 
@@ -434,6 +435,7 @@ fn turn_ctx(
             model_name: None,
             engine_mode: Default::default(),
             sessions: None,
+            silent_lane: false,
         },
     )
 }

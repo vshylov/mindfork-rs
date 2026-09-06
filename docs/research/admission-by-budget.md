@@ -560,7 +560,9 @@ Live, on the local CPU build — the arms of §3 driven through the app:
 - **Admission for the background tasks** (auto-title, reflection, RAG
   indexing): they share the server outside the turn's budget (parent F9)
   and can still collide with a turn's streams under a unified pool; an
-  app-wide budget on `EngineManager` would be the shape.
+  app-wide budget on `EngineManager` would be the shape. *Done 2026-09-07
+  — the budget's silent lane, [silent-tasks-budget.md](silent-tasks-budget.md);
+  RAG indexing is the embedder's server, not this pool's.*
 - **`--kv-unified-per-slot` as a managed option** (F7b).
 - **The parked-set bound** of the RAM prompt cache — still the parent
   track's §8 item; §3.4 adds one data point (one 1244-token context

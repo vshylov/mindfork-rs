@@ -732,6 +732,9 @@ Recommendations are marked; nothing is decided until the user says so.
 - **F9. Background tasks and the semaphore.** (a) **Outside it** *(recommended
   — they coexist with the turn on the server today; the sessions budget is
   the turn's)*. (b) Inside an app-wide semaphore on `EngineManager`.
+  *Superseded 2026-09-07: coexisting on the server's four unified slots
+  was the collective failure; they are inside now, on the budget's silent
+  lane — [silent-tasks-budget.md](silent-tasks-budget.md).*
 - **F10. Staging.** (a) **Two PRs: stage 1 engine and settings, stage 2 the
   loop and the mirror** *(recommended; §7)*. (b) One PR. (c) Three, with the
   UI (list, chip, switch) split out of stage 2.

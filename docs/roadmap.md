@@ -115,8 +115,14 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
     **The tasks screen is done** (2026-09-06: `F7`/`/tasks`, every run
     across every chat with its position or outcome and the silent tasks
     below, [docs/research/tasks-screen.md](research/tasks-screen.md), every
-    fork at its recommendation); what its §8 still leaves for later: the
-    silent background tasks under the app-wide budget. **Background dialogues are
+    fork at its recommendation). **The silent tasks under the app-wide
+    budget are done** (2026-09-07: the budget's silent lane — one permit
+    for the app's own requests over the same pool sum — and the pool known
+    at one session, where a `llama-server` without `-np` runs four unified
+    slots; measured before designing: the compaction roll beside a
+    background run ended both at the default,
+    [docs/research/silent-tasks-budget.md](research/silent-tasks-budget.md),
+    every fork at its recommendation). **Background dialogues are
     done** (2026-09-06: `start_dialogue` behind the same switch, the
     director's brief snapshotted at the call, every dialogue stream priced by
     the session budget — which also closed a live defect, a foreground scene

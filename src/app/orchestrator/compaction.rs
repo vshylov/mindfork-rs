@@ -334,6 +334,7 @@ impl Orchestrator {
     ) -> Result<(), String> {
         let backend = self.engines.backend_if_ready(self.ui_locale())?;
         let cancel = CancellationToken::new();
+        let sessions = self.session_budget();
         spawn_compact(
             backend,
             plan,
@@ -342,6 +343,7 @@ impl Orchestrator {
             cancel.clone(),
             self.ui_locale(),
             self.compact_tx.clone(),
+            sessions,
         );
         self.begin_bg(BackgroundKind::Compaction, cancel);
         Ok(())
@@ -422,7 +424,12 @@ impl Orchestrator {
 }
 
 /// Runs one summarization roll: a single independent request, text collected,
-/// result posted to `compact_tx`.
+/// result posted to `compact_tx`. The request streams on the **silent lane**
+/// of the app's budget (docs/research/silent-tasks-budget.md §4.2), priced
+/// from the request it was handed — the digest is sized by the conversation,
+/// and it is the one silent request that fires when the conversation is at
+/// its largest.
+#[allow(clippy::too_many_arguments)]
 fn spawn_compact(
     backend: Arc<dyn EngineBackend>,
     plan: RollPlan,
@@ -431,6 +438,7 @@ fn spawn_compact(
     cancel: CancellationToken,
     loc: &'static crate::shared::i18n::Locale,
     compact_tx: UnboundedSender<CompactResult>,
+    sessions: Arc<crate::shared::session_budget::SessionBudget>,
 ) {
     let RollPlan {
         boundary_id,
@@ -439,6 +447,24 @@ fn spawn_compact(
         cut: _,
     } = plan;
     tokio::spawn(async move {
+        let need = sessions.price(
+            super::generation::estimate_prompt_tokens(&request),
+            0,
+            request.sampling.max_tokens.map(|m| m as u64),
+        );
+        // Taken before the timeout starts: waiting behind an open stream is
+        // not this roll's slowness. A wait cancelled (the app is quitting)
+        // reports as the timeout would — nothing was summarized.
+        let Some(_lane) = sessions.acquire_silent(need, &cancel, "compaction").await else {
+            let _ = compact_tx.send(CompactResult {
+                chat_id,
+                boundary_id,
+                rolls,
+                origin,
+                text: Err(loc.t("ui.err.compact_timeout").to_string()),
+            });
+            return;
+        };
         let collect = async {
             let mut stream = backend.chat_stream(request, cancel.clone()).await?;
             let mut text = String::new();
@@ -494,7 +520,7 @@ fn spawn_compact(
                 }
                 Ok(salvage_title_source(text, thoughts))
             }
-            Ok(Err(err)) => Err(loc.tf("ui.err.title_gen_failed", &[("err", &err.to_string())])),
+            Ok(Err(err)) => Err(loc.tf("ui.err.compact_failed", &[("err", &err.to_string())])),
             Err(_) => {
                 cancel.cancel();
                 Err(loc.t("ui.err.compact_timeout").to_string())

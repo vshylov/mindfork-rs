@@ -537,6 +537,14 @@ fn run_loop(
         // `dirty`).
         if spinner_frame_needed(&active, &screen) {
             dirty = true;
+            // A silent task's *waiting* state flips inside the task (spec
+            // §11.10): the once-a-second tick re-asks for the rows while one
+            // runs, so the screen says which task streams and which waits.
+            if let ActiveScreen::Tasks(tasks) = &active
+                && tasks.has_app_task_running()
+            {
+                let _ = cmd_tx.send(AppCommand::RequestTasks);
+            }
         }
         // The input-box draft changed — save it on the active chat (the orchestrator
         // writes it to disk with a debounce). This doesn't need a repaint. See spec §11.7.

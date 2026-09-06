@@ -105,6 +105,19 @@ impl Orchestrator {
     }
 }
 
+/// The silent lane's label for a task kind (`SessionBudget::acquire_silent`,
+/// docs/research/silent-tasks-budget.md §4.6): what the budget reports as
+/// streaming, and what the tasks screen's snapshot compares against to say
+/// which running task is *waiting*. Stable identifiers, never shown.
+pub(super) fn lane_label(kind: BackgroundKind) -> &'static str {
+    match kind {
+        BackgroundKind::Reflection => "reflection",
+        BackgroundKind::Consolidation => "consolidation",
+        BackgroundKind::SelfConsolidation => "self_consolidation",
+        BackgroundKind::Compaction => "compaction",
+    }
+}
+
 /// A human-readable label for the task kind (the interface language, axis B) — error
 /// texts are assembled from it (**byte-for-byte** with the previous Russian wording).
 fn kind_label(loc: &'static Locale, kind: BackgroundKind) -> &'static str {

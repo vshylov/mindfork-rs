@@ -1490,6 +1490,7 @@ impl Orchestrator {
     fn background_tool_ctx(
         &self,
         backend: Arc<dyn crate::shared::api::EngineBackend>,
+        sessions: Arc<crate::shared::session_budget::SessionBudget>,
         profile_id: Uuid,
         chat_id: Uuid,
         system_message: String,
@@ -1521,9 +1522,11 @@ impl Orchestrator {
                 // same engine a foreground one would.
                 model_name: self.effective_model_name(),
                 engine_mode: self.config.engine.mode,
-                // Outside the session budget, as every background task is
-                // (docs/research/parallel-subagents.md fork F9).
-                sessions: None,
+                // The app-wide budget, on its silent lane: a summary a silent
+                // loop asks for streams as the loop's own rounds do
+                // (docs/research/silent-tasks-budget.md §4.2).
+                sessions: Some(sessions),
+                silent_lane: true,
             },
         )
     }

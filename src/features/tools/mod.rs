@@ -159,9 +159,14 @@ pub struct ToolContext {
     /// and a token reservation around that stream and around nothing else, so
     /// the request counts like every other stream of the turn
     /// (docs/research/concurrent-tools.md §4.5; the reservation —
-    /// docs/research/admission-by-budget.md §4.5). `None` for a background
-    /// task, which the budget does not cover.
+    /// docs/research/admission-by-budget.md §4.5).
     pub sessions: Option<Arc<crate::shared::session_budget::SessionBudget>>,
+    /// The turn is one of the app's own background tasks (reflection, a
+    /// consolidation): a request a tool makes takes the budget's **silent
+    /// lane** — one such stream at a time beside the interactive ones —
+    /// rather than an interactive permit (docs/research/silent-tasks-budget.md
+    /// §4.2). `false` on a user's turn and on every run.
+    pub silent_lane: bool,
 }
 
 /// Long-lived shared tool dependencies (an `Arc` bundle; changes on server
@@ -249,6 +254,9 @@ pub struct TurnInfo {
     pub engine_mode: crate::shared::config::ServerMode,
     /// The turn's session budget. See [`ToolContext::sessions`].
     pub sessions: Option<Arc<crate::shared::session_budget::SessionBudget>>,
+    /// Which lane of the budget the turn streams on. See
+    /// [`ToolContext::silent_lane`].
+    pub silent_lane: bool,
 }
 
 impl ToolContext {
@@ -282,6 +290,7 @@ impl ToolContext {
             model_name: turn.model_name,
             engine_mode: turn.engine_mode,
             sessions: turn.sessions,
+            silent_lane: turn.silent_lane,
         }
     }
 }
@@ -988,6 +997,7 @@ pub(crate) mod testkit {
             // No session budget by default (a background task's shape); the
             // summary permit test sets `ctx.sessions`.
             sessions: None,
+            silent_lane: false,
         }
     }
 

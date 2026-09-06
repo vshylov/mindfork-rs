@@ -157,10 +157,21 @@ impl TasksScreen {
             .is_some_and(|l| l.runs.iter().any(|r| r.running))
     }
 
-    /// The runtime's once-a-second repaint while a run is out; nothing when
-    /// the list is all landed (research R6: no timer that runs for nothing).
+    /// Whether one of the app's own tasks is running: its *waiting* state
+    /// flips inside the task, so the runtime re-asks for the rows on the
+    /// tick while one runs ([`Self::needs_repaint`]).
+    pub fn has_app_task_running(&self) -> bool {
+        self.list
+            .as_ref()
+            .is_some_and(|l| l.app.iter().any(|t| t.running))
+    }
+
+    /// The runtime's once-a-second repaint while a run is out or a silent
+    /// task runs; nothing when the list is all landed and idle (research
+    /// R6: no timer that runs for nothing).
     pub fn needs_repaint(&self) -> bool {
-        self.has_running() && self.last_drawn.elapsed() >= REPAINT_EVERY
+        (self.has_running() || self.has_app_task_running())
+            && self.last_drawn.elapsed() >= REPAINT_EVERY
     }
 
     /// The selectable rows in display order: the runs, then the tasks.
@@ -470,7 +481,15 @@ impl TasksScreen {
         let loc = self.loc;
         let label = loc.t(app_label_key(task.kind));
         let pad = label_w.saturating_sub(wrap::str_width(label));
-        let (glyph, state, state_style) = if task.running {
+        let (glyph, state, state_style) = if task.running && task.waiting {
+            // Its slot is taken, its stream is not open: behind another
+            // task on the silent lane, or waiting for room in the pool.
+            (
+                p.glyphs().background,
+                loc.t("ui.tasks.app.waiting"),
+                p.muted_style(),
+            )
+        } else if task.running {
             (
                 p.glyphs().background,
                 loc.t("ui.tasks.app.running"),
@@ -704,6 +723,7 @@ mod tests {
         .map(|kind| AppTask {
             kind,
             running: kind == BackgroundKind::Reflection,
+            waiting: false,
         })
         .collect()
     }
@@ -1106,6 +1126,24 @@ mod tests {
         assert_eq!(s.state_of(&done), en().t("ui.chatlist.run.unfinished"));
         done.background = false;
         assert_eq!(s.state_of(&done), en().t("ui.chatlist.run.interrupted"));
+    }
+
+    /// A running task that is not the one streaming says it waits — a slot
+    /// taken with nothing open would otherwise read as "running" for the
+    /// minute it spends behind another task.
+    #[test]
+    fn a_waiting_task_says_so() {
+        let mut list = list(Vec::new());
+        list.app[1] = AppTask {
+            kind: BackgroundKind::Consolidation,
+            running: true,
+            waiting: true,
+        };
+        let mut s = TasksScreen::new(Palette::default(), loc());
+        s.set_list(list);
+        let shown = text(&mut s);
+        assert!(shown.contains(loc().t("ui.tasks.app.waiting")), "{shown}");
+        assert!(shown.contains(loc().t("ui.tasks.app.running")), "{shown}");
     }
 
     #[test]

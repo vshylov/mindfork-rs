@@ -118,6 +118,7 @@ pub(super) fn spawn_silent_loop(spawn: SilentLoop) {
             &allowed,
             &cancel,
             max_rounds,
+            super::background::lane_label(kind),
         );
         let outcome: Result<(), String> = match tokio::time::timeout(timeout, run).await {
             Ok(Ok(())) => Ok(()),
@@ -137,6 +138,16 @@ pub(super) fn spawn_silent_loop(spawn: SilentLoop) {
 
 /// The mini agentic loop's body: rounds of stream→calls→execution up to `max_rounds` or
 /// the first round with no calls. Only allows tools from `allowed`.
+///
+/// Every round streams under the **silent lane** of the app's session budget
+/// (`ctx.sessions`; docs/research/silent-tasks-budget.md §4.1–§4.2): a
+/// permit the silent tasks share one of, and under a pool a reservation —
+/// the calibrated estimate of the request, floored by the last round's exact
+/// size plus what it generated, plus the reply cap — held for the stream and
+/// dropped before the round's tools run, as a turn's loop does. A wait
+/// cancelled (the app is quitting) ends the task quietly: nothing ran, so
+/// nothing failed.
+#[allow(clippy::too_many_arguments)]
 async fn run_rounds(
     backend: &Arc<dyn EngineBackend>,
     registry: &Arc<ToolRegistry>,
@@ -145,11 +156,36 @@ async fn run_rounds(
     allowed: &[ToolId],
     cancel: &CancellationToken,
     max_rounds: u32,
+    lane: &'static str,
 ) -> Result<(), anyhow::Error> {
     let mut round: u32 = 0;
+    let mut last_exact: u64 = 0;
     loop {
-        let stream = backend.chat_stream(request.clone(), cancel.clone()).await?;
-        let (text, calls, reason) = read_round(stream).await;
+        let estimate = super::generation::estimate_prompt_tokens(request);
+        let (text, calls, reason, usage) = {
+            let _lane = match ctx.sessions.as_deref() {
+                Some(budget) => {
+                    let need = budget.price(
+                        estimate,
+                        last_exact,
+                        request.sampling.max_tokens.map(|m| m as u64),
+                    );
+                    match budget.acquire_silent(need, cancel, lane).await {
+                        Some(reservation) => Some(reservation),
+                        None => return Ok(()),
+                    }
+                }
+                None => None,
+            };
+            let stream = backend.chat_stream(request.clone(), cancel.clone()).await?;
+            read_round(stream).await
+        };
+        if let Some(u) = usage {
+            if let Some(budget) = ctx.sessions.as_deref() {
+                budget.record_usage(estimate, u.prompt_tokens as u64);
+            }
+            last_exact = u.prompt_tokens as u64 + u.completion_tokens as u64;
+        }
         // A round with no calls, or the limit was reached — the task is done.
         if reason != FinishReason::ToolCalls || calls.is_empty() || round >= max_rounds {
             break;
@@ -169,17 +205,27 @@ async fn run_rounds(
     Ok(())
 }
 
-/// Consumes one round's stream into its text, accumulated tool calls, and
-/// finish reason; `Thoughts`/`ThoughtsSignature`/`Usage` are tolerated and
+/// Consumes one round's stream into its text, accumulated tool calls, finish
+/// reason and the server's exact `usage` when it sent one (the budget's floor
+/// and calibration read it); `Thoughts`/`ThoughtsSignature` are tolerated and
 /// ignored (a silent task has no UI to stream them to).
-async fn read_round(mut stream: ChatStream) -> (String, Vec<ApiToolCall>, FinishReason) {
+async fn read_round(
+    mut stream: ChatStream,
+) -> (
+    String,
+    Vec<ApiToolCall>,
+    FinishReason,
+    Option<crate::shared::api::contract::TokenUsage>,
+) {
     let mut acc = ToolCallAccumulator::default();
     let mut text = String::new();
     let mut reason = FinishReason::Stop;
+    let mut usage = None;
     while let Some(chunk) = stream.next().await {
         match chunk {
             ChatChunk::ToolCall(d) => acc.push(d),
             ChatChunk::Text(t) => text.push_str(&t),
+            ChatChunk::Usage(u) => usage = Some(u),
             ChatChunk::Finished(r) => {
                 reason = r;
                 break;
@@ -202,10 +248,10 @@ async fn read_round(mut stream: ChatStream) -> (String, Vec<ApiToolCall>, Finish
             ChatChunk::Error { message, .. } => {
                 tracing::warn!(error = %message, "engine error in a background tool loop");
             }
-            ChatChunk::Thoughts(_) | ChatChunk::ThoughtsSignature(_) | ChatChunk::Usage(_) => {}
+            ChatChunk::Thoughts(_) | ChatChunk::ThoughtsSignature(_) => {}
         }
     }
-    (text, acc.finish(), reason)
+    (text, acc.finish(), reason, usage)
 }
 
 /// One call's result: the invocation when the tool is in the task's allowed
