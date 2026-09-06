@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (60)
+## Entries (61)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -72,6 +72,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the background run on the list, in the feed and on the bar (done)
 - Post-M9: the stop key on a background transcript, and the unread chat (done)
 - Post-M9: the tasks screen — every background run on one surface (done)
+- Post-M9: a title is cut where it is drawn, not where it is stored (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -3133,3 +3134,111 @@ screenshot pipeline, whose dumps and images are regenerated here.
   4 slots, 16k ctx): the scene landed `RoundLimit` at 7 lines / 4907
   tokens with its notification, the sub-agent `Completed` and the wake turn
   named the planted codename — the position step changed nothing on the wire.
+
+### Post-M9: a title is cut where it is drawn, not where it is stored (done)
+
+**Symptom** (the user, on a maximized window, the day the tasks screen
+shipped): the first column — the run's title — ends mid-word with no marker,
+while the parent-chat column two spaces to its right elides properly, marker
+and all. And there were **95 free columns** to the right of the cut, so the
+row was not short of room.
+
+**Two cuts, only one of them marked.** The screen's own cut is by width and
+carries the marker every column cut in this app carries
+(`wrap::truncate_to_width`, `screens/tasks.rs`); it was not the one firing.
+The other lives in storage: `shared::title::sanitize_title` capped every title
+at `MAX_TITLE_LEN = 100` characters and returned the head, so a run named
+after the first line of its instruction (`CallSubagentArgs::initial_title`)
+arrived at the screen **already cut and looking whole**. Measured on the
+screenshot: the titles were exactly 100 characters. A cut made in storage is
+the one cut no screen can mark for itself — by the time a row draws the value,
+the fact that something was lost is gone with it.
+
+**The user's decision (2026-09-06): remove the cap.** Not "mark it at 100"
+(the option offered) but *remove the limit entirely; if it does not fit, it is
+cut with an ellipsis*. So `sanitize_title` is now normalization only (whitespace collapsed, trimmed,
+empty rejected), and a title is bounded by the surface that draws it, in
+columns, with the marker. The `/rename` route's own duplicate ceiling
+(`.take(MAX_TITLE_LEN)` in `screens/chat/commands.rs`, added so the two routes
+to a title would "agree on its bounds") went with it — they agree by having
+none.
+
+**The consequence is an obligation, so the surfaces were audited.** Every place
+that draws a title in a **fixed row** must now cut it itself:
+
+- the chat list (`widgets/chat_list.rs`) and the tasks screen — already did,
+  by width, with the marker;
+- the search screen — **wraps** every line it builds, so a long group header
+  costs a second row and loses nothing; left alone;
+- the feed's panel border (`widgets/message_feed.rs`) — did **not**: ratatui
+  clips a `Block` title at the corner silently, and a long title also ran into
+  the right-aligned model/ctx caption. The title now takes what the ◆ marker,
+  that caption and the two corners leave, cut with "…";
+- the chat-reference picker (`widgets/chat_link_picker.rs`) — did **not**: a
+  long title pushed the date (the thing that tells two same-named
+  conversations apart) off the row. Same treatment.
+
+<!-- cyrillic-ok:start (the ru locale values this paragraph is about) -->
+
+**And the Russian section header.** `ui.tasks.sec.runs` was "ПРОГОНЫ" — a
+literal rendering of "RUNS" that reads as machine-shop jargon in Russian and
+says nothing about what is in the section. It is now **"СУБАГЕНТЫ И ДИАЛОГИ"**
+— exactly what the section lists, the wording its own empty state already uses,
+and a natural pair for "РАБОТА ПРИЛОЖЕНИЯ" below it (the user's choice from
+three; the runners-up were "ЗАПУСКИ" and "ПОРУЧЕНИЯ"). The word "прогон" stays
+in the body text, where the app has used it since the sub-agent track. One
+stray spelling fixed on the way: "саб-агентов" → "субагентов", the only
+hyphenated one in `ru.json`.
+
+<!-- cyrillic-ok:end -->
+
+**Tests**: 3 new — the tasks screen (a title whole at 160 columns, cut with the
+marker at 90, the columns after it still lined up), the feed's border (cut and
+marked at 60, whole at 100, the caption keeping its corner in both), the picker
+(cut and marked, the date surviving) — plus `sanitize_title`'s ceiling tests
+replaced by one asserting a 400-character title comes back whole. 2860 unit
+tests green (2857 before; 138 `#[ignore]`).
+
+**Live**: not required — a pure string function and three render paths.
+
+**Stage 2 — the data already on disk.** The user rebuilt, opened `F7`, and the
+column was cut exactly as before. Of course it was: the cap ran **at write
+time**, so every existing title was already 100 characters in
+`chats/*.json` — verified against their own data, four run titles at exactly
+100. Removing a cap fixes what is written from now on and can do nothing for
+what it has already thrown away.
+
+Except here it had not thrown it away: a sub-agent run stores its instruction
+as its own first `User` message, and the title was the first line of it. So
+`CHAT_SCHEMA` 3→4 (`chat_to_v4`) rewrites a cut title with what
+`initial_title` would have produced had the cap never existed — the same seed
+rule the language-model history used, *what the recorder would have written had
+it existed then*. Deliberately narrow, three guards: the title is **exactly**
+100 characters, it is not `renamed_manually`, and the re-derivation **starts
+with it** — so the step can only give a title its tail back, never replace one,
+and a hand-edited file or a rename the flag missed is safe. Chat titles are
+left alone (a model-written or typed one has no source), and so are dialogue
+runs (`A ↔ B` over labels that may be a localized default `shared` cannot
+reproduce). Idempotent for free: a restored title is no longer 100 characters,
+so the first guard stops the second pass.
+
+Probed against the user's real data before the fixture was written: 4/4
+restored, to 802, 165, 162 and 159 characters. The 802 is the honest answer
+rather than an argument for a cap — that run's instruction is one paragraph
+with no line break, the title *is* its first line, and the row now shows as
+much of it as the column has and ends in "…".
+
+- **Tests**: 6 more — a golden `chat_v3_cut_run_title.json` (the shape the cap
+  stored: a cut run, the same title marked as the user's own, a persona-named
+  run, a fourth cut run in the `deleted` archive) with the fixture's own
+  parse check, the restore + `v = 4` stamp, everything-else-untouched, the
+  not-a-prefix guard, the dialogue guard, and idempotency. 2866 green.
+- **Not a shape change**, but a version bump all the same: the step rewrites
+  stored values, so it goes through the framework's backup-then-write path and
+  runs exactly once (ADR 0006).
+
+**Not done, deliberately**: the model-facing surfaces (`chats` listings,
+`chat_search` labels) print a title verbatim and now have no bound at all. The
+text is the model's own instruction line, one row per chat, and inventing a
+budget for a surface with no columns would be a second invisible cut of exactly
+the kind this entry removes.

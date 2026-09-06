@@ -5,13 +5,20 @@
 //! migration step cannot reach `features` (FSD: dependencies point downward).
 //! See spec §11.2.
 
-/// Maximum chat-title length (in characters). Anything past it is trimmed.
-pub const MAX_TITLE_LEN: usize = 100;
-
 /// Normalizes user-entered title input: trims the outer whitespace,
-/// collapses internal line breaks/tabs into a space, and limits the length.
-/// Returns `None` if the string is empty after normalization (the rename
-/// is rejected — the old title is kept).
+/// collapses internal line breaks/tabs into a space, and collapses repeated
+/// spaces. Returns `None` if the string is empty after normalization (the
+/// rename is rejected — the old title is kept).
+///
+/// **Length is not bounded here** (the user's decision of 2026-09-06). A cap
+/// used to cut the title at 100 characters, and a cut made in storage arrives
+/// at a screen looking whole: a run named after the first line of its
+/// instruction ended mid-word on a maximized window with columns to spare and
+/// read as its own full name. A title is now cut only where it does not fit —
+/// by the surface drawing it, in columns, with the "…" every such cut carries
+/// (`wrap::truncate_to_width`, spec §11.2). Every surface that draws a title
+/// in a fixed row must therefore do that cut itself; the ones that wrap
+/// (the search screen, a feed note) need nothing.
 pub fn sanitize_title(input: &str) -> Option<String> {
     let collapsed: String = input
         .chars()
@@ -32,7 +39,7 @@ pub fn sanitize_title(input: &str) -> Option<String> {
         title.push(ch);
         prev_space = is_space;
     }
-    Some(title.chars().take(MAX_TITLE_LEN).collect())
+    Some(title)
 }
 
 #[cfg(test)]
@@ -59,9 +66,11 @@ mod tests {
     }
 
     #[test]
-    fn truncates_to_max_len_by_chars() {
-        let long = "я".repeat(MAX_TITLE_LEN + 50);
-        let out = sanitize_title(&long).unwrap();
-        assert_eq!(out.chars().count(), MAX_TITLE_LEN);
+    fn a_long_title_is_kept_whole() {
+        // No ceiling here: what does not fit is cut by the screen drawing it,
+        // in columns and with a marker. A cut made here would arrive looking
+        // like the whole name (spec §11.2).
+        let long = "я".repeat(400);
+        assert_eq!(sanitize_title(&long).as_deref(), Some(long.as_str()));
     }
 }

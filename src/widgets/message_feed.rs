@@ -831,19 +831,27 @@ impl MessageFeed {
     ) {
         // A rounded panel: title with a ◆ marker on the left, meta (model/ctx) on the right.
         let glyphs = palette.glyphs();
+        let marker = format!(" {} ", glyphs.title_marker);
+        let meta_cell = (!meta.is_empty()).then(|| format!(" {meta} "));
+        // The border is a fixed row, so the title is cut to what the marker,
+        // the meta and the corners leave — with the "…" that cut carries. A
+        // title is not bounded in storage; every surface that draws one in a
+        // row bounds it itself (`shared::title::sanitize_title`, spec §11.2).
+        let budget = (area.width as usize).saturating_sub(
+            2 + wrap::str_width(&marker) + 1 + meta_cell.as_deref().map_or(0, wrap::str_width),
+        );
+        let (title, _) = wrap::truncate_to_width(title, budget);
         let mut block = Block::default()
             .borders(Borders::ALL)
             .border_type(glyphs.border)
             .border_style(palette.border_style(false))
             .title(Line::from(vec![
-                Span::styled(format!(" {} ", glyphs.title_marker), palette.muted_style()),
+                Span::styled(marker, palette.muted_style()),
                 Span::styled(format!("{title} "), Style::new().fg(palette.text)),
             ]));
-        if !meta.is_empty() {
-            block = block.title(
-                Line::from(Span::styled(format!(" {meta} "), palette.muted_style()))
-                    .right_aligned(),
-            );
+        if let Some(cell) = meta_cell {
+            block =
+                block.title(Line::from(Span::styled(cell, palette.muted_style())).right_aligned());
         }
         let inner = block.inner(area);
         frame.render_widget(&block, area);
@@ -4104,6 +4112,37 @@ mod tests {
             )
         })
         .unwrap();
+    }
+
+    /// The panel's top border is a row like any other: a title too long for
+    /// what the marker and the meta leave is cut there, with the "…" that
+    /// says so, and the meta keeps its corner. Nothing bounds a title in
+    /// storage (`shared::title::sanitize_title`, spec §11.2).
+    #[test]
+    fn a_long_chat_title_is_cut_on_the_border_and_marked() {
+        let top = |term: &Terminal<TestBackend>| -> String {
+            let buf = term.backend().buffer();
+            (buf.area.left()..buf.area.right())
+                .map(|x| buf[(x, buf.area.top())].symbol().to_string())
+                .collect()
+        };
+        let mut feed = MessageFeed::new();
+        let mut term = Terminal::new(TestBackend::new(60, 8)).unwrap();
+        let long = "заголовок который не помещается в верхнюю рамку никак";
+        let meta = "gemma-4 · 16k ctx";
+        term.draw(|f| feed.render(f, f.area(), long, meta, &[], &Palette::default(), ru()))
+            .unwrap();
+        let row = top(&term);
+        assert!(row.contains('…'), "a cut title says so: {row}");
+        assert!(row.contains(meta), "the meta keeps its corner: {row}");
+        assert!(row.starts_with('╭') && row.ends_with('╮'), "{row}");
+        // Room for all of it — no marker, and the title is whole.
+        let mut term = Terminal::new(TestBackend::new(100, 8)).unwrap();
+        term.draw(|f| feed.render(f, f.area(), long, meta, &[], &Palette::default(), ru()))
+            .unwrap();
+        let row = top(&term);
+        assert!(row.contains(long), "{row}");
+        assert!(!row.contains('…'), "{row}");
     }
 
     #[test]

@@ -3724,16 +3724,17 @@ fn rename_takes_a_title_or_offers_the_current_one() {
     );
 }
 
-/// A title longer than the chat list's own ceiling is trimmed to it, not stored
-/// whole — the two routes to a title must agree on its bounds.
+/// A long title is stored whole — the two routes to a title agree that the cut
+/// belongs to whichever surface draws it, in columns and with a marker
+/// (spec §11.2, the user's decision of 2026-09-06).
 #[test]
-fn a_renamed_title_obeys_the_length_ceiling() {
+fn a_renamed_title_is_kept_whole() {
     let mut c = Cmd::new();
-    let long = "я".repeat(crate::shared::title::MAX_TITLE_LEN + 40);
+    let long = "я".repeat(140);
     let Some(ChatIntent::RenameChat { title, .. }) = c.run(&format!("/rename {long}")) else {
         panic!("expected a rename");
     };
-    assert_eq!(title.chars().count(), crate::shared::title::MAX_TITLE_LEN);
+    assert_eq!(title, long);
 }
 
 /// `/new <profile>`: an exact name, then an unambiguous prefix (fork F3). A miss

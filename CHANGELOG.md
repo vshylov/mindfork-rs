@@ -148,6 +148,14 @@ split by subsystem.
 
 ### Changed
 
+<!-- cyrillic-ok:start (the ru interface strings this entry is about) -->
+
+- **The tasks screen's Russian section header.** «ПРОГОНЫ» — a literal
+  rendering of "RUNS" — now reads «СУБАГЕНТЫ И ДИАЛОГИ», which is what the
+  section actually lists.
+
+<!-- cyrillic-ok:end -->
+
 - **Parallel sessions never overfill the server's context pool.** Above one
   session a managed `llama-server` shares one context pool between the
   streams the app keeps open, and when they outgrew it together the server
@@ -190,6 +198,18 @@ split by subsystem.
   replaced instead of used.
 
 ### Fixed
+
+- **A long chat or run title no longer ends mid-word.** Every title was cut
+  to 100 characters when it was stored, without a mark to say so — so a
+  sub-agent run named after the first line of its instruction read as its own
+  full name, and on a maximized window the tasks screen showed it cut with
+  half the row still empty. Titles are no longer shortened when they are
+  stored: what does not fit is cut where it is drawn, to the columns that
+  screen actually has, and always ends in "…". Two places that used to clip a
+  long title silently now cut it the same way: the chat panel's top border
+  (the model caption keeps its corner) and the chat-reference picker (the
+  date keeps its place). Titles already on disk are repaired on the next
+  start where the text is recoverable — see **Data**.
 
 - **A server error inside an open stream no longer passes for a finished
   reply.** When `llama-server` (or an OpenAI-compatible proxy) put an error
@@ -249,6 +269,14 @@ split by subsystem.
   `mindfork sandbox setup --force`.
 
 ### Data
+
+- **Chat files: `CHAT_SCHEMA` 3 → 4.** A sub-agent run whose title the old
+  100-character limit had cut gets the rest of it back, re-derived from the
+  instruction the run still holds — so runs from before this version read
+  the same way as new ones. Only a title that is exactly 100 characters, was
+  not renamed by you, and matches the start of that instruction is touched;
+  chat titles and dialogue titles are left as they are. As with every
+  migration, the app makes a full backup before writing anything.
 
 - Chat files move to schema **v3** (a version stamp, no shape change): a chat
   may now carry a dialogue transcript, and an older mindfork refuses such a

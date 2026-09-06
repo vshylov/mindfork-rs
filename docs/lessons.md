@@ -1006,6 +1006,19 @@ is set once from `app/runtime` next to the protocol push, and the two footers
 interpolate it.
 — *the line-break hint names the chord the terminal can deliver*.
 
+**A cut made in storage arrives at a screen looking whole.** Every title was
+capped at 100 characters as it was stored, so the tasks screen drew a run named
+after the first line of its instruction as a sentence ending mid-word — no
+marker, and 95 free columns to the right of it. The screen's own cut was fine;
+it never fired. A value shortened before it reaches a row carries no evidence
+that anything was lost, and no renderer can add the marker back. Bound a value
+where it is *drawn*, in the columns that surface actually has; a bound in
+storage is only for what storage itself cannot hold. And when you do remove
+one, the obligation moves: audit every surface that draws the value in a fixed
+row — two here clipped silently (a ratatui `Block` title at the corner, a
+`List` row at the border), while the ones that wrap needed nothing.
+— *a title is cut where it is drawn, not where it is stored*.
+
 ---
 
 ## 6. Windows and cross-platform

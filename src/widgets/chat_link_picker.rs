@@ -23,6 +23,7 @@ use crate::entities::chat::ChatSummary;
 use crate::shared::i18n::Locale;
 use crate::shared::theme::Palette;
 use crate::shared::ui::ListScroll;
+use crate::shared::wrap;
 
 /// Action the overlay asks the layer above to perform.
 #[derive(Debug, Clone, PartialEq)]
@@ -124,18 +125,22 @@ impl ChatLinkPickerState {
             .chats
             .iter()
             .map(|c| {
-                let mut spans = vec![Span::styled(c.title.clone(), Style::new().fg(palette.text))];
                 // The date is what tells two same-named conversations apart —
-                // the same thing the chat list leans on.
-                spans.push(Span::styled(
-                    format!("  {}", c.modified_at.format("%Y-%m-%d")),
-                    palette.muted_style(),
-                ));
-                if self.current == Some(c.id) {
-                    spans.push(Span::styled(
-                        format!("  {}", loc.t("ui.chat_links.current")),
-                        palette.muted_style(),
-                    ));
+                // the same thing the chat list leans on — and the "current"
+                // mark says which one is open, so both keep their columns and
+                // the title takes what is left, cut with the "…" that says so
+                // (a title is not bounded in storage, spec §11.2).
+                let date = format!("  {}", c.modified_at.format("%Y-%m-%d"));
+                let current = (self.current == Some(c.id))
+                    .then(|| format!("  {}", loc.t("ui.chat_links.current")));
+                let budget = (popup.width as usize).saturating_sub(
+                    2 + wrap::str_width(&date) + current.as_deref().map_or(0, wrap::str_width),
+                );
+                let (title, _) = wrap::truncate_to_width(&c.title, budget);
+                let mut spans = vec![Span::styled(title, Style::new().fg(palette.text))];
+                spans.push(Span::styled(date, palette.muted_style()));
+                if let Some(current) = current {
+                    spans.push(Span::styled(current, palette.muted_style()));
                 }
                 ListItem::new(Line::from(spans))
             })
@@ -197,6 +202,34 @@ mod tests {
         s.on_key(key(KeyCode::Down));
         s.on_key(key(KeyCode::Down));
         assert_eq!(s.selected_id(), Some(last), "no wrap past the bottom");
+    }
+
+    /// A title too long for the popup is cut with the "…" that says so, and
+    /// the date it would have pushed off the row keeps its place — nothing
+    /// bounds a title in storage (spec §11.2).
+    #[test]
+    fn a_long_title_is_cut_and_the_date_survives() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let long = "заголовок который заведомо шире этого всплывающего окна";
+        let mut s = ChatLinkPickerState::new(vec![chat(long)], None);
+        let mut term = Terminal::new(TestBackend::new(60, 12)).unwrap();
+        term.draw(|f| s.render(f, f.area(), &Palette::default(), ru()))
+            .unwrap();
+        let buf = term.backend().buffer().clone();
+        let row = (buf.area.top()..buf.area.bottom())
+            .map(|y| {
+                (buf.area.left()..buf.area.right())
+                    .map(|x| buf[(x, y)].symbol().to_string())
+                    .collect::<String>()
+            })
+            .find(|row| row.contains("заголовок"))
+            .expect("the row is drawn");
+        assert!(row.contains('…'), "a cut title says so: {row}");
+        assert!(
+            row.contains(&chrono::Local::now().format("%Y").to_string()),
+            "the date keeps its place: {row}"
+        );
     }
 
     /// A chat with more references than the screen can hold scrolls, and it
