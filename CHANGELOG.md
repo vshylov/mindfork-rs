@@ -16,6 +16,15 @@ split by subsystem.
 
 ### Added
 
+- **A tasks screen.** `F7` (or `/tasks`) shows everything the app is doing
+  in the background on one screen: every sub-agent and dialogue run across
+  all your chats — the ones running, with the round and tool they are in and
+  how long they have been out, then the ones that landed, with how they
+  ended — and the app's own quiet work (reflection, consolidation, history
+  compaction) as running or idle. `Enter` opens a run's transcript, `P` its
+  chat, `F6` stops a running background run, and `Esc` from a chat opened
+  there brings you back to the list.
+
 - **Dialogues in the background.** The same switch that offers background
   sub-agents now also offers `start_dialogue`: the assistant stages a
   directed scene between two personas, gets its `chat://` address at once,

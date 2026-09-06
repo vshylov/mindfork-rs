@@ -39,6 +39,9 @@ pub enum UiCommand {
     /// The changes screen (`F4`): what the assistant changed in the attached
     /// project (spec §9.12).
     Changes,
+    /// The tasks screen (`F7`): every background run and the app's own work
+    /// (spec §11.10).
+    Tasks,
     /// The help/"About" dialog (`F1`).
     Help,
     /// A new chat; the argument picks the profile by name (`Ctrl+N`).
@@ -170,6 +173,7 @@ pub const COMMANDS: &[Spec] = &[
     row(&["/self"], UiCommand::SelfModel, Arity::Subcommand(&["clear"]), "ui.help.k.self", "ui.help.cmd_self"),
     row(&["/chats"], UiCommand::Chats, Arity::None, "/chats", "ui.help.cmd_chats"),
     row(&["/changes"], UiCommand::Changes, Arity::None, "/changes", "ui.help.cmd_changes"),
+    row(&["/tasks"], UiCommand::Tasks, Arity::None, "/tasks", "ui.help.cmd_tasks"),
     row(&["/help"], UiCommand::Help, Arity::None, "/help", "ui.help.cmd_help"),
     // The conversation.
     row(&["/new"], UiCommand::NewChat, Arity::Optional, "ui.help.k.new", "ui.help.cmd_new"),

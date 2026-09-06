@@ -166,6 +166,8 @@ fn set_children_expanded_persists_by_id_and_reemits_the_list() {
         }
         other => panic!("expected the updated list, got {other:?}"),
     }
+    // The tasks screen's snapshot rides every list emit (spec §11.10).
+    assert!(matches!(rx.try_recv(), Ok(AppEvent::TaskList(_))));
 
     // The same value again — a no-op: no re-flagging, no list chatter.
     orch.saves.take();

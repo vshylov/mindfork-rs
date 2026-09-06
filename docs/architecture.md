@@ -234,6 +234,8 @@ src/
 │  │  ├─ tool_loop.rs       shared "silent" agentic loop for background tasks (reflection/consolidation)
 │  │  ├─ background.rs      slot registry for silent background tasks (BgSlot by BackgroundKind)
 │  │  ├─ background_runs.rs sub-agent runs out in the background: seats, landing by id, the notification (spec §9.3.2)
+│  │  ├─ tasks.rs           the tasks screen's snapshot (AppEvent::TaskList): rows off the seats,
+│  │  │                     the turn's children and the chats' records (spec §11.10)
 │  │  ├─ request.rs         mapping domain messages to the engine wire format
 │  │  └─ tests/             orchestrator tests, split by feature (mod.rs — fixtures;
 │  │                        generation/chats/profiles/settings/title/impersonation/
@@ -266,6 +268,9 @@ src/
 │  ├─ search.rs             SearchScreen: message-level content search results (Ctrl+G in
 │  │                        the list's content mode), grouped by chat with a highlighted
 │  │                        snippet; Enter → a jump into the feed, → SearchIntent
+│  ├─ tasks.rs              TasksScreen: every sub-agent/dialogue run across every chat —
+│  │                        running with its position, landed with its outcome — and the
+│  │                        app's own silent tasks (F7, /tasks; spec §11.10), → TasksIntent
 │  └─ settings/             SettingsScreen: sections (Model/Sampling/Tools/Plugins/
 │     │                     Memory/Data/Profiles/Interface) with field groups; "Plugins" is the
 │     │                     MCP host — master switch, server editor (Ctrl+N/Ctrl+D over
@@ -2601,7 +2606,7 @@ Near-term decision points (deliberately deferred):
 ## 10. UI: screens, widgets, rendering
 
 `runtime.rs` holds one base `ChatScreen` (feed/generation/input) and an
-`ActiveScreen { Chat | ChatList | Settings | SelfModel | Search }` enum — the
+`ActiveScreen { Chat | ChatList | Settings | SelfModel | Search | Changes | Tasks }` enum — the
 screen open on top of the chat. An open list/settings/view gets input and is drawn
 instead of the chat; the `OpenChatList`/`OpenSettings` event from the chat
 creates them, `Close` (Esc) returns to `Chat`. The chat list keeps its
@@ -2676,6 +2681,34 @@ streams. Generation is deliberately
 not a fourth `EscTarget` — this stack could never produce it — so the widget reads
 both halves off the one `StatusModel` the generation chip and the input box's title
 are drawn from, and the three cannot disagree within a frame.
+
+**The tasks screen** (`screens/tasks.rs`, `ActiveScreen::Tasks`, `F7`/`/tasks`;
+spec §11.10, [research/tasks-screen.md](research/tasks-screen.md)) is the round
+trip the changes screen is, with one difference that decides its shape: its
+snapshot (`AppEvent::TaskList`) is also sent **unasked** — on every
+`emit_chat_list` (the rows are a projection of the same two sources, the chats'
+records and the run mirrors), on a run's position step and on a silent task's
+begin/done — so an event can never be allowed to *open* it, or a run ending
+would steal whatever screen the user was reading (the trap stage 2 of the
+search track recorded). The key opens the screen at once, waiting, and sends
+`AppCommand::RequestTasks`; `apply_event`'s `TaskList` arm refreshes an open
+screen, or the one stashed behind a chat, and nothing else; the two exhaustive
+screen-replacing matches (`show_self_model`, `show_changes`) list `Tasks` among
+the screens they leave alone. The snapshot is built in `orchestrator/tasks.rs`:
+the background seats and the turn's children from their mirrors —
+`InflightChild.position` holds the `TurnProgress::ChildProgress` step that
+`report_progress`/`dialogue_chip` now send beside the status-bar chip, and a
+seat's *running* is `BackgroundRun::is_out`, the status bar's own predicate —
+everything else from `Chat::children()`; running first, then landed, the landed
+half capped at `TASK_LANDED_CAP` with a count. `Back::Tasks` is the third way
+down: `Enter`/`P` stash the screen whole and switch chats through the ordinary
+route, `ChatIntent::OpenChatList` restores it and re-requests the rows,
+`EscTarget::Tasks` words the bar's hint. `spinner_frame_needed` repaints it once
+a second while a run is out (`TasksScreen::needs_repaint`) and never when the
+list is all landed. The run-state words the chat list and this screen share
+live in one place (`chat_list::run_state_key`), as does the Paragraph-drawn
+lists' scroll rule (`shared::ui::keep_visible`, the changes screen's, now with
+two callers).
 
 **Exporting a conversation** (`features/export_command.rs` +
 `chat_export::{export_filename, to_import_json}`, spec §11.7). `/export` parses

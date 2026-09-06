@@ -189,6 +189,9 @@ pub(super) fn apply_event(
         AppEvent::TtsActive(on) => screen.set_speaking(on),
         AppEvent::BackgroundTask { kind, active: on } => apply_background_task(screen, kind, on),
         AppEvent::BackgroundRuns { out } => screen.set_background_runs(out),
+        // The tasks screen's rows: into an open screen, and into one stashed
+        // behind a chat opened from it — never opening one (spec §11.10).
+        AppEvent::TaskList(list) => apply_task_list(active, back, *list),
         // The import runs from the settings screen and its outcome is shown
         // there, on the import row itself — a note in the feed would sit behind
         // the screen the user is standing on.
@@ -396,8 +399,8 @@ fn show_self_model(
         ActiveScreen::SelfModel(view) => view.set_model(model, names),
         // A results list the user is reading must not be swapped out from
         // under them by a stale reply to a request they have left behind — and
-        // neither must a diff the user is reading.
-        ActiveScreen::Search(_) | ActiveScreen::Changes(_) => {}
+        // neither must a diff, or a task list, the user is reading.
+        ActiveScreen::Search(_) | ActiveScreen::Changes(_) | ActiveScreen::Tasks(_) => {}
         ActiveScreen::Chat | ActiveScreen::ChatList(_) | ActiveScreen::Settings(_) => {
             *active = ActiveScreen::SelfModel(Box::new(SelfModelScreen::new(
                 model,
@@ -461,8 +464,9 @@ fn show_changes(
     match active {
         ActiveScreen::Changes(view) => view.set_changes(set),
         // A results list the user is reading must not be swapped out from under
-        // them by a stale reply to a request they have left behind.
-        ActiveScreen::Search(_) => {}
+        // them by a stale reply to a request they have left behind — nor a
+        // task list.
+        ActiveScreen::Search(_) | ActiveScreen::Tasks(_) => {}
         ActiveScreen::Chat
         | ActiveScreen::ChatList(_)
         | ActiveScreen::Settings(_)
@@ -472,6 +476,54 @@ fn show_changes(
                 screen.palette(),
                 screen.loc(),
             )))
+        }
+    }
+}
+
+/// The `TaskList` arm of [`apply_event`]: refreshes an open tasks screen, or
+/// the one stashed behind a chat opened from it ([`Back::Tasks`]), so the
+/// screen the next `Esc` restores is current. It never **opens** the screen:
+/// the snapshot is sent unasked on every change, and an unasked event must
+/// not steal the screen the user is reading (the rule `show_self_model`
+/// states) — the screen opens on the key, and asks.
+fn apply_task_list(active: &mut ActiveScreen, back: &mut Option<Back>, list: TaskList) {
+    if let Some(Back::Tasks { screen, .. }) = back {
+        screen.set_list(list.clone());
+    }
+    if let ActiveScreen::Tasks(view) = active {
+        view.set_list(list);
+    }
+}
+
+/// Translates a tasks-screen intent (spec §11.10): closing returns to the
+/// chat, `Quit` ends the loop (`true`), a stop goes to the orchestrator as the
+/// very command `/subagents stop` sends — the screen stays and refreshes on
+/// the `TaskList` the run's end emits — and opening a run's transcript or its
+/// parent chat is an ordinary switch that **stashes the screen** as the way
+/// back ([`Back::Tasks`]), so `Esc` in that chat returns here rather than to
+/// the chat list.
+pub(super) fn dispatch_tasks(
+    intent: TasksIntent,
+    cmd_tx: &UnboundedSender<AppCommand>,
+    active: &mut ActiveScreen,
+    back: &mut Option<Back>,
+) -> bool {
+    match intent {
+        TasksIntent::Close => {
+            *active = ActiveScreen::Chat;
+            false
+        }
+        TasksIntent::Quit => true,
+        TasksIntent::StopRun(id) => {
+            let _ = cmd_tx.send(AppCommand::StopSubagentRun { id });
+            false
+        }
+        TasksIntent::OpenRun(chat) | TasksIntent::OpenParent(chat) => {
+            if let ActiveScreen::Tasks(screen) = std::mem::replace(active, ActiveScreen::Chat) {
+                *back = Some(Back::Tasks { screen, chat });
+            }
+            let _ = cmd_tx.send(AppCommand::SwitchChat(chat));
+            false
         }
     }
 }
@@ -539,6 +591,7 @@ pub(super) enum AnyIntent {
     SelfModel(SelfModelIntent),
     Changes(ChangesIntent),
     Search(SearchIntent),
+    Tasks(TasksIntent),
 }
 
 /// Dispatches the active screen's intent to the corresponding translator.
@@ -557,6 +610,7 @@ pub(super) fn dispatch_any(
         AnyIntent::SelfModel(i) => dispatch_self_model(i, cmd_tx, active),
         AnyIntent::Changes(i) => dispatch_changes(i, cmd_tx, active),
         AnyIntent::Search(i) => dispatch_search(i, cmd_tx, screen, active, back),
+        AnyIntent::Tasks(i) => dispatch_tasks(i, cmd_tx, active, back),
     }
 }
 
@@ -696,6 +750,12 @@ pub(super) fn dispatch(
                 Some(Back::Link { origin, .. }) => {
                     let _ = cmd_tx.send(AppCommand::SwitchChat(origin));
                 }
+                // Back to the task list, whole — and asked afresh, since
+                // runs may have landed or started while the chat was open.
+                Some(Back::Tasks { screen, .. }) => {
+                    *active = ActiveScreen::Tasks(screen);
+                    let _ = cmd_tx.send(AppCommand::RequestTasks);
+                }
                 None => {}
             }
             return false;
@@ -716,6 +776,16 @@ pub(super) fn dispatch(
         // (`WorkspaceChanges`), not on the key press.
         ChatIntent::OpenChanges => {
             let _ = cmd_tx.send(AppCommand::OpenChanges);
+            return false;
+        }
+        // The tasks screen opens **now**, waiting, and asks for its rows: the
+        // reply refreshes it in place. Not the `F4` shape — its snapshot is
+        // also sent unasked on every change, and an event that could open a
+        // screen would steal whatever the user was reading (spec §11.10).
+        ChatIntent::OpenTasks => {
+            *active =
+                ActiveScreen::Tasks(Box::new(TasksScreen::new(screen.palette(), screen.loc())));
+            let _ = cmd_tx.send(AppCommand::RequestTasks);
             return false;
         }
         // The help overlay never becomes an orchestrator command: it is opened

@@ -259,6 +259,7 @@ fn handle_key_event(
         ActiveScreen::SelfModel(view) => view.handle_key(key).map(AnyIntent::SelfModel),
         ActiveScreen::Search(search) => search.handle_key(key).map(AnyIntent::Search),
         ActiveScreen::Changes(changes) => changes.handle_key(key).map(AnyIntent::Changes),
+        ActiveScreen::Tasks(tasks) => tasks.handle_key(key).map(AnyIntent::Tasks),
     };
     if intent.is_some() {
         flush_draft(screen, cmd_tx);

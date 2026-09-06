@@ -834,7 +834,7 @@ fn opening_a_hit_stashes_the_live_results_for_the_way_back() {
         Back::Search { screen, .. } => {
             assert_eq!(screen.selected(), 1, "with the selection intact")
         }
-        Back::Link { .. } => panic!("a hit stashes the results, not a chat"),
+        Back::Link { .. } | Back::Tasks { .. } => panic!("a hit stashes the results, not a chat"),
     }
 }
 
@@ -1511,6 +1511,7 @@ fn help_sections_cover_every_context() {
         HelpContext::SelfModel,
         HelpContext::Changes,
         HelpContext::Search,
+        HelpContext::Tasks,
     ] {
         assert_eq!(
             HELP_SECTIONS
@@ -1766,4 +1767,184 @@ fn a_non_chat_open_lands_on_its_section() {
         !hotkeys.contains("/rag add"),
         "commands must not be on the hotkeys tab"
     );
+}
+
+// ---- the tasks screen (spec §11.10, docs/research/tasks-screen.md §7) ----
+
+/// A snapshot holding one run and no silent tasks.
+fn task_list_with(run: crate::app::events::TaskRun) -> AppEvent {
+    AppEvent::TaskList(Box::new(TaskList {
+        runs: vec![run],
+        more_landed: 0,
+        app: Vec::new(),
+    }))
+}
+
+impl Harness {
+    /// Every command the loop has sent so far, drained.
+    fn commands(&mut self) -> Vec<AppCommand> {
+        let mut out = Vec::new();
+        while let Ok(c) = self.cmd_rx.try_recv() {
+            out.push(c);
+        }
+        out
+    }
+
+    /// Renders the active screen and returns the buffer as one string.
+    fn dump(&mut self) -> String {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let mut term = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        match &mut self.active {
+            ActiveScreen::Tasks(tasks) => term.draw(|f| tasks.render(f)).unwrap(),
+            other => panic!("not the tasks screen: {:?}", std::mem::discriminant(other)),
+        };
+        format!("{:?}", term.backend().buffer())
+    }
+}
+
+/// `F7` and `/tasks` are one route (spec §11.7): both open the screen at
+/// once — waiting — and ask the orchestrator for its rows.
+#[test]
+fn f7_and_slash_tasks_open_the_tasks_screen_and_ask_for_its_rows() {
+    let mut h = Harness::new();
+    h.feed(key(KeyCode::F(7)));
+    assert!(matches!(h.active, ActiveScreen::Tasks(_)));
+    assert!(matches!(h.next_command(), Some(AppCommand::RequestTasks)));
+    assert!(
+        h.dump().contains(&ru().t("ui.tasks.loading")[..10]),
+        "waiting for the rows"
+    );
+    h.feed(key(KeyCode::Esc));
+    assert!(matches!(h.active, ActiveScreen::Chat));
+
+    for c in "/tasks".chars() {
+        h.feed(key(KeyCode::Char(c)));
+    }
+    h.feed(key(KeyCode::Enter));
+    assert!(matches!(h.active, ActiveScreen::Tasks(_)));
+    let sent = h.commands();
+    assert!(
+        sent.iter().any(|c| matches!(c, AppCommand::RequestTasks)),
+        "{sent:?}"
+    );
+}
+
+/// The snapshot is sent unasked on every change, so it may only ever
+/// **refresh** a tasks screen — never open one over whatever the user is
+/// reading (the silent-match-site rule, docs/history/chat-search-stage2.md §1.6).
+#[test]
+fn an_unasked_task_list_refreshes_the_screen_but_never_opens_it() {
+    let mut h = Harness::new();
+    h.apply(AppEvent::TaskList(Box::default()));
+    assert!(matches!(h.active, ActiveScreen::Chat), "opened by an event");
+
+    h.dispatch(ChatIntent::OpenTasks);
+    let run = crate::app::events::TaskRun::fixture("Критик");
+    h.apply(task_list_with(run));
+    assert!(
+        h.dump().contains("Критик"),
+        "the reply filled the open screen in"
+    );
+}
+
+/// The tasks screen is only as safe as the arms that replace the active
+/// one: a stale self-model snapshot or change set must not steal it, and the
+/// settings broadcast has to reach it or its language would freeze.
+#[test]
+fn the_tasks_screen_survives_stale_replies_and_takes_the_settings_broadcast() {
+    let mut h = Harness::new();
+    h.dispatch(ChatIntent::OpenTasks);
+    h.apply(AppEvent::SelfModelView {
+        model: Box::new(None),
+        names: Default::default(),
+    });
+    assert!(
+        matches!(h.active, ActiveScreen::Tasks(_)),
+        "stolen by a self-model reply"
+    );
+    h.apply(AppEvent::WorkspaceChanges(Box::default()));
+    assert!(
+        matches!(h.active, ActiveScreen::Tasks(_)),
+        "stolen by a change set"
+    );
+
+    let mut config = crate::shared::config::AppConfig::default();
+    config.interface.language = crate::shared::i18n::Lang::En;
+    h.apply(AppEvent::Settings {
+        config: Box::new(config),
+        profiles: Vec::new(),
+        language_locked: Vec::new(),
+        mcp: Default::default(),
+        secrets_present: Vec::new(),
+    });
+    let dump = h.dump();
+    assert!(
+        dump.contains("Tasks"),
+        "the locale broadcast must reach the screen: {dump}"
+    );
+}
+
+/// `Enter` on a run opens its transcript by an ordinary switch and stashes
+/// the screen as the way back: `Esc` in that chat returns to the **task
+/// list**, re-asked, not to the chat list. `P` (the parent chat) stashes the
+/// same way, and leaving for a third chat drops it like every other way back.
+#[test]
+fn esc_from_a_chat_opened_from_the_tasks_screen_returns_to_it() {
+    let mut h = Harness::new();
+    h.dispatch(ChatIntent::OpenTasks);
+    h.drain_commands();
+    let run = crate::app::events::TaskRun::fixture("Критик");
+    let (run_id, parent) = (run.id, run.parent);
+    h.apply(task_list_with(run.clone()));
+
+    h.feed(key(KeyCode::Enter));
+    assert!(matches!(h.next_command(), Some(AppCommand::SwitchChat(id)) if id == run_id));
+    assert!(matches!(h.active, ActiveScreen::Chat));
+    assert!(matches!(&h.back, Some(Back::Tasks { chat, .. }) if *chat == run_id));
+    assert_eq!(esc_target(&h.back), EscTarget::Tasks, "and the bar says so");
+    h.apply(chat_activated(run_id));
+    assert!(
+        h.back.is_some(),
+        "the switch's own activation is not leaving"
+    );
+    // A snapshot arriving meanwhile reaches the stashed screen too.
+    h.apply(AppEvent::TaskList(Box::default()));
+
+    h.dispatch(ChatIntent::OpenChatList);
+    assert!(
+        matches!(h.active, ActiveScreen::Tasks(_)),
+        "back to the task list"
+    );
+    assert!(
+        matches!(h.next_command(), Some(AppCommand::RequestTasks)),
+        "asked afresh"
+    );
+    assert!(h.back.is_none(), "one step deep, and consumed");
+    assert!(
+        !h.dump().contains("Критик"),
+        "the stashed screen took the snapshot that arrived while it was behind"
+    );
+
+    h.apply(task_list_with(run));
+    h.feed(key(KeyCode::Char('p')));
+    assert!(matches!(h.next_command(), Some(AppCommand::SwitchChat(id)) if id == parent));
+    assert!(matches!(&h.back, Some(Back::Tasks { chat, .. }) if *chat == parent));
+    h.apply(chat_activated(uuid::Uuid::new_v4()));
+    assert!(h.back.is_none(), "no longer where we came from");
+}
+
+/// `F6` on a running background run sends the very command `/subagents
+/// stop` sends, and the screen stays: the run's end refreshes it.
+#[test]
+fn f6_on_the_tasks_screen_stops_the_run_and_stays() {
+    let mut h = Harness::new();
+    h.dispatch(ChatIntent::OpenTasks);
+    h.drain_commands();
+    let run = crate::app::events::TaskRun::fixture("Критик");
+    let run_id = run.id;
+    h.apply(task_list_with(run));
+    h.feed(key(KeyCode::F(6)));
+    assert!(matches!(h.next_command(), Some(AppCommand::StopSubagentRun { id }) if id == run_id));
+    assert!(matches!(h.active, ActiveScreen::Tasks(_)));
 }

@@ -1,8 +1,18 @@
 # A tasks screen — everything the app is doing, on one surface
 
-**Status:** design **accepted**; every fork at its recommendation (the
-user's decisions, 2026-09-06 — F1–F7 answered directly, F8 and F9 adopted
-uncontested). The second of the two items
+**Status:** **implemented** 2026-09-06 (`F7`/`/tasks`; spec §11.10,
+architecture §10, the journal entry in
+[ui-screens.md](../journal/ui-screens.md)). Two calls the code made where
+the design was silent: the turn's own children (a foreground
+`call_subagent`) are listed as running rows too, without `F6` — a screen
+whose premise is that nothing is hidden could not omit the run the chat list
+shows as running, and the stop command names seats only; and every emit is
+a full snapshot rather than §5's live/landed split — the landed walk is the
+`children()` walk `emit_chat_list` already makes on the same events, and
+tracking the landed half's invalidations would have opened the bug farm the
+split was meant to avoid. The design as accepted: every fork at its
+recommendation (the user's decisions, 2026-09-06 — F1–F7 answered directly,
+F8 and F9 adopted uncontested). The second of the two items
 [background-subagents.md](background-subagents.md) §8 left for later (the
 first, background dialogues, shipped 2026-09-06). Its own note there is the
 starting position — *"the list's rows under each parent are the v1 surface"* —

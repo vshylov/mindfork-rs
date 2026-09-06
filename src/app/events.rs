@@ -241,6 +241,12 @@ pub enum AppCommand {
     TtsPause,
     /// Resume paused playback (the `/tts resume` command).
     TtsResume,
+    /// Request a snapshot of everything the app is doing in the background —
+    /// the tasks screen's rows (`F7` / `/tasks`, spec §11.10). The
+    /// orchestrator answers with an [`AppEvent::TaskList`]; it also emits one
+    /// unasked whenever the rows change, so this is the screen's opening
+    /// request and its refresh after coming back, nothing more.
+    RequestTasks,
     /// Request a snapshot of the active profile's "self-model" (for the viewer screen,
     /// `F3`). The orchestrator (the owner of `Storage`) responds with a `SelfModelView`
     /// event.
@@ -366,6 +372,7 @@ impl AppCommand {
             | AppCommand::TtsStop
             | AppCommand::TtsPause
             | AppCommand::TtsResume
+            | AppCommand::RequestTasks
             | AppCommand::RequestSelfModel
             | AppCommand::UpdateSelfModel(_)
             | AppCommand::ConfirmMcpCatalog(_)
@@ -464,6 +471,91 @@ pub struct SubagentProgress {
     pub tool: Option<String>,
     pub kind: RunProgressKind,
 }
+
+/// One sub-agent or dialogue run as the tasks screen lists it
+/// ([`AppEvent::TaskList`], spec §11.10): a projection of the orchestrator's
+/// mirror while the run is in flight, and of the record on its parent chat
+/// once it has landed — nothing is stored for the screen's sake
+/// (docs/research/tasks-screen.md R4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskRun {
+    /// The run's id — what `Enter` opens and `F6` stops.
+    pub id: Uuid,
+    pub kind: crate::entities::subagent::RunKind,
+    pub title: String,
+    /// The chat whose exchange started it, and its title for the row.
+    pub parent: Uuid,
+    pub parent_title: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub finished_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// How the run ended; `None` while it runs — or, with `running` false,
+    /// a run that never reported (the chat list's *interrupted* /
+    /// *unfinished* rows, spec §11.2).
+    pub outcome: Option<crate::entities::subagent::RunOutcome>,
+    /// The run is in flight right now — the orchestrator holds its mirror.
+    pub running: bool,
+    /// Out in the background (a seat of its own, spec §9.3.2) rather than a
+    /// child of the turn in flight. Only a running background run can be
+    /// stopped from the screen: `AppCommand::StopSubagentRun` names seats.
+    pub background: bool,
+    /// Completion tokens so far (the run's own count while it runs).
+    pub tokens: u64,
+    /// Where a running run stands — its latest [`SubagentProgress`] step,
+    /// stored on the mirror by the orchestrator. `None` before its first
+    /// round, and always on a landed row.
+    pub position: Option<SubagentProgress>,
+}
+
+impl TaskRun {
+    /// A background sub-agent run out right now, under a chat called
+    /// "Plans", started ten minutes ago with no position yet. Shared by the
+    /// tasks screen's and the runtime's tests — each keeping a copy of this
+    /// literal is the sliding self-duplication the gate measures
+    /// (docs/lessons.md §2); tests mutate the fields they are about.
+    #[cfg(test)]
+    pub fn fixture(title: &str) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            kind: crate::entities::subagent::RunKind::Subagent,
+            title: title.into(),
+            parent: Uuid::new_v4(),
+            parent_title: "Plans".into(),
+            created_at: chrono::Utc::now() - chrono::Duration::minutes(10),
+            finished_at: None,
+            outcome: None,
+            running: true,
+            background: true,
+            tokens: 0,
+            position: None,
+        }
+    }
+}
+
+/// One of the app's own silent tasks on the tasks screen: running or idle,
+/// which is all the slot registry can honestly say
+/// (docs/research/tasks-screen.md §2.4, fork F2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AppTask {
+    pub kind: BackgroundKind,
+    pub running: bool,
+}
+
+/// The tasks screen's snapshot ([`AppEvent::TaskList`]): the runs — running
+/// first, then landed, each half newest first, the landed half capped — and
+/// the app's own silent tasks.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TaskList {
+    pub runs: Vec<TaskRun>,
+    /// How many landed runs fell past the cap (`TASK_LANDED_CAP`); the
+    /// screen says "…and n more" rather than truncating silently.
+    pub more_landed: usize,
+    /// Every [`BackgroundKind`], in one fixed order.
+    pub app: Vec<AppTask>,
+}
+
+/// How many landed runs the tasks screen lists (docs/research/tasks-screen.md
+/// fork F1): the most recent ones, with a counted remainder line.
+pub const TASK_LANDED_CAP: usize = 50;
 
 /// projection.
 #[derive(Debug, Clone)]
@@ -769,6 +861,15 @@ pub enum AppEvent {
     /// (spec §9.3.2) — a quiet status-bar indicator with the count; `0`
     /// clears it.
     BackgroundRuns { out: u32 },
+    /// The tasks screen's rows (spec §11.10): every run in flight or landed,
+    /// and the app's own silent tasks. Sent in reply to
+    /// [`AppCommand::RequestTasks`] and, unasked, whenever the rows change —
+    /// a run starts, files a round, moves to a tool, ends or lands, a silent
+    /// task begins or finishes, the chat list changes. The runtime refreshes
+    /// an **open** tasks screen from it and never opens one on it: the
+    /// screen opens on the key, and an unasked snapshot must not steal the
+    /// screen the user is reading. `Box` — a large type, don't bloat the enum.
+    TaskList(Box<TaskList>),
     /// Where a sub-agent run stands (spec §9.3.2): a quiet status-bar chip
     /// while the parent's turn is inside `call_subagent`, whose own stream is
     /// muted — without it the bar would read "generating" for minutes with

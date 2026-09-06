@@ -20,7 +20,7 @@ use crate::shared::api::contract::ToolCallDelta;
 const CRITIC: &str = r#"{"name":"Critic","system_message":"be harsh","message":"rate X"}"#;
 
 /// One round with one `start_subagent` call.
-fn start(id: &str) -> Script {
+pub(super) fn start(id: &str) -> Script {
     call(id, "start_subagent", CRITIC)
 }
 
@@ -45,7 +45,7 @@ fn two_starts(a: &str, b: &str) -> Script {
     }
 }
 
-fn cfg(sessions: u32) -> AppConfig {
+pub(super) fn cfg(sessions: u32) -> AppConfig {
     let mut cfg = no_auto_cfg();
     cfg.tools.subagent_background = true;
     cfg.engine.managed.sessions = sessions;

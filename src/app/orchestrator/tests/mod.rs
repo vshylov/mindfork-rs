@@ -637,5 +637,6 @@ mod self_consolidation;
 mod self_model;
 mod settings;
 mod subagent;
+mod tasks;
 mod title;
 mod tts;

@@ -177,6 +177,24 @@ impl ListScroll {
     }
 }
 
+/// Keeps `selected` inside a `view`-row window starting at `scroll`: the
+/// offset moves only as far as it must, in either direction, so the selection
+/// can walk to the top row as well as the bottom one. For screens that draw
+/// their rows through a `Paragraph` rather than a `List` — the changes and
+/// tasks screens — where [`ListScroll`] does not apply.
+pub fn keep_visible(scroll: usize, selected: usize, view: usize) -> usize {
+    if view == 0 {
+        return 0;
+    }
+    if selected < scroll {
+        selected
+    } else if selected >= scroll + view {
+        selected + 1 - view
+    } else {
+        scroll
+    }
+}
+
 /// Gap between hotkey-grid columns, and between the chat bar's status pill and
 /// the grid beside it.
 pub const HINT_GAP: usize = 3;

@@ -30,7 +30,7 @@ use ratatui::crossterm::terminal::{BeginSynchronizedUpdate, EndSynchronizedUpdat
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use uuid::Uuid;
 
-use crate::app::events::{AppCommand, AppEvent, BackgroundKind, ClipboardImage};
+use crate::app::events::{AppCommand, AppEvent, BackgroundKind, ClipboardImage, TaskList};
 use crate::features::spellcheck::{SpellChecker, dict};
 use crate::screens::changes::{ChangesIntent, ChangesScreen};
 use crate::screens::chat::{ChatIntent, ChatScreen};
@@ -38,6 +38,7 @@ use crate::screens::chat_list::{ChatListIntent, ChatListScreen};
 use crate::screens::search::{SearchIntent, SearchScreen};
 use crate::screens::self_model::{SelfModelIntent, SelfModelScreen};
 use crate::screens::settings::{SettingsIntent, SettingsScreen};
+use crate::screens::tasks::{TasksIntent, TasksScreen};
 use crate::shared::theme::Palette;
 use crate::shared::ui::dim_background;
 use crate::widgets::help_dialog::{
@@ -64,6 +65,10 @@ enum ActiveScreen {
     /// What the assistant changed in the attached project (`F4` / `/changes`).
     /// See docs/history/code-workspace.md §3.5, spec §9.12.
     Changes(Box<ChangesScreen>),
+    /// Everything the app is doing in the background (`F7` / `/tasks`):
+    /// every sub-agent and dialogue run, and the silent tasks. See spec §11.10,
+    /// docs/research/tasks-screen.md.
+    Tasks(Box<TasksScreen>),
 }
 
 impl ActiveScreen {
@@ -98,6 +103,10 @@ impl ActiveScreen {
                 changes.set_palette(palette);
                 changes.set_loc(loc);
             }
+            ActiveScreen::Tasks(tasks) => {
+                tasks.set_palette(palette);
+                tasks.set_loc(loc);
+            }
             ActiveScreen::Chat | ActiveScreen::Settings(_) => {}
         }
     }
@@ -113,7 +122,7 @@ impl ActiveScreen {
             ActiveScreen::ChatList(list) => list.handle_paste(text),
             ActiveScreen::SelfModel(view) => view.handle_paste(text),
             // Read-only results — nothing to paste into.
-            ActiveScreen::Search(_) | ActiveScreen::Changes(_) => {}
+            ActiveScreen::Search(_) | ActiveScreen::Changes(_) | ActiveScreen::Tasks(_) => {}
         }
     }
 }
@@ -122,12 +131,15 @@ impl ActiveScreen {
 /// reached by drilling **down** rather than by picking it. Without it the step
 /// the user just took is thrown away and they land in the chat list.
 ///
-/// Two ways down exist, and they differ only in what "back" *is*:
+/// Three ways down exist, and they differ only in what "back" *is*:
 ///
 /// - a **message-level search hit** ([`SearchIntent::OpenHit`]) — back is the
 ///   results screen;
 /// - a **`chat://` reference** followed in the feed (spec §11.3) — back is the
-///   conversation it was followed from.
+///   conversation it was followed from;
+/// - a **run's transcript or parent chat opened from the tasks screen**
+///   ([`TasksIntent::OpenRun`], [`TasksIntent::OpenParent`], spec §11.10) —
+///   back is the task list.
 ///
 /// **One deep, and consumed on use**, for both: the next `Esc` goes on to the
 /// chat list as it always did. So a chain of followed references (A → B → C)
@@ -156,6 +168,14 @@ enum Back {
     /// the id is kept: a chat is reopened from storage in full, so there is no
     /// screen state a re-activation would lose.
     Link { origin: Uuid, chat: Uuid },
+    /// Back to the tasks screen a run was opened from — the screen itself,
+    /// like the search half, so the selection survives; its rows are
+    /// re-requested on the way back, since they may have moved meanwhile.
+    Tasks {
+        /// Boxed as it is inside [`ActiveScreen`] (clippy::large_enum_variant).
+        screen: Box<TasksScreen>,
+        chat: Uuid,
+    },
 }
 
 impl Back {
@@ -169,7 +189,7 @@ impl Back {
     /// repeat jump) is not leaving it, so it keeps the way back.
     fn chat(&self) -> Uuid {
         match self {
-            Back::Search { chat, .. } | Back::Link { chat, .. } => *chat,
+            Back::Search { chat, .. } | Back::Link { chat, .. } | Back::Tasks { chat, .. } => *chat,
         }
     }
 }
@@ -226,13 +246,14 @@ impl HelpOverlay {
 /// code they document (proximity to the `match` is the anti-drift force;
 /// docs/history/help-hotkeys-context.md §6). `help_sections_cover_every_context`
 /// closes the loop [`help_context`] opens: one section per screen.
-pub(super) static HELP_SECTIONS: [&HelpSection; 7] = [
+pub(super) static HELP_SECTIONS: [&HelpSection; 8] = [
     &help_dialog::GLOBAL,
     &crate::screens::chat::HELP_SECTION,
     &crate::widgets::chat_list::HELP_SECTION,
     &crate::screens::settings::HELP_SECTION,
     &crate::screens::self_model::HELP_SECTION,
     &crate::screens::changes::HELP_SECTION,
+    &crate::screens::tasks::HELP_SECTION,
     &crate::screens::search::HELP_SECTION,
 ];
 
@@ -248,6 +269,7 @@ fn help_context(active: &ActiveScreen) -> HelpContext {
         ActiveScreen::SelfModel(_) => HelpContext::SelfModel,
         ActiveScreen::Search(_) => HelpContext::Search,
         ActiveScreen::Changes(_) => HelpContext::Changes,
+        ActiveScreen::Tasks(_) => HelpContext::Tasks,
     }
 }
 
@@ -255,6 +277,7 @@ fn esc_target(back: &Option<Back>) -> EscTarget {
     match back {
         Some(Back::Search { .. }) => EscTarget::SearchResults,
         Some(Back::Link { .. }) => EscTarget::PreviousChat,
+        Some(Back::Tasks { .. }) => EscTarget::Tasks,
         None => EscTarget::ChatList,
     }
 }
@@ -593,10 +616,17 @@ fn spellcheck_upkeep(
     dirty
 }
 
-/// Whether a spinner animation is on screen (background RAG indexing or
-/// impersonation on the chat screen) — those frames repaint every tick.
+/// Whether a frame must repaint without input: a spinner animation on the
+/// chat screen (background RAG indexing or impersonation) repaints every
+/// tick; the tasks screen repaints once a second while a run is out, so its
+/// elapsed column moves (spec §11.10) — and not at all once every run has
+/// landed.
 fn spinner_frame_needed(active: &ActiveScreen, screen: &ChatScreen) -> bool {
-    active.is_chat() && (screen.is_rag_active() || screen.is_impersonating())
+    match active {
+        ActiveScreen::Chat => screen.is_rag_active() || screen.is_impersonating(),
+        ActiveScreen::Tasks(tasks) => tasks.needs_repaint(),
+        _ => false,
+    }
 }
 
 /// Draws one frame for the active screen (the `dirty` branch of [`run_loop`]'s
@@ -693,6 +723,7 @@ fn draw_frame(
             ActiveScreen::SelfModel(view) => view.render(frame),
             ActiveScreen::Search(search) => search.render(frame),
             ActiveScreen::Changes(changes) => changes.render(frame),
+            ActiveScreen::Tasks(tasks) => tasks.render(frame),
         }
         if let Some(state) = help.open.as_mut() {
             dim_background(frame, &palette);

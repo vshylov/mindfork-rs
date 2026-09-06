@@ -96,6 +96,8 @@ pub enum HelpContext {
     Changes,
     /// The message-search results (`Ctrl+G` in the chat list).
     Search,
+    /// The tasks screen (`F7`): every background run and the app's own work.
+    Tasks,
 }
 
 /// The help dialog's state: the active tab + its content's scroll position

@@ -233,6 +233,9 @@ impl ChatScreen {
             // hosts (VS Code's `commandsToSkipShell`, browser tabs) — design
             // fork F10.
             (KeyCode::F(4), _) => Some(ChatIntent::OpenChanges),
+            // The tasks screen (spec §11.10). `F7` is free on every measured
+            // host; `/tasks` is the typed route.
+            (KeyCode::F(7), _) => Some(ChatIntent::OpenTasks),
             // Copy the active chat's conversation to the clipboard (like F5
             // in the chat list). The confirmation/error arrives as a note in
             // the feed (no overlay).

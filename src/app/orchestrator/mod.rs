@@ -53,6 +53,7 @@ mod search;
 mod self_consolidation;
 mod settings;
 mod slots;
+mod tasks;
 mod title;
 mod tool_loop;
 mod tts;
@@ -556,6 +557,11 @@ struct InflightChild {
     /// `Assistant` for a sub-agent's rounds; a dialogue's line carries its
     /// speaker's side (spec §9.13), set by [`TurnProgress::ChildLineStarted`].
     line_role: crate::entities::message::MessageRole,
+    /// Where the run stands — its latest [`TurnProgress::ChildProgress`]
+    /// step: the round it is on and the tool it is inside, if any. Read by
+    /// the tasks screen's snapshot (spec §11.10); `None` before the first
+    /// round and after the run ends.
+    position: Option<crate::app::events::SubagentProgress>,
 }
 
 impl InflightTurn {
@@ -872,6 +878,7 @@ impl Orchestrator {
             AppCommand::TtsStop => self.stop_tts(),
             AppCommand::TtsPause => self.handle_tts_pause(),
             AppCommand::TtsResume => self.handle_tts_resume(),
+            AppCommand::RequestTasks => self.emit_task_list(),
             AppCommand::RequestSelfModel => self.handle_request_self_model(),
             AppCommand::UpdateSelfModel(edit) => self.handle_update_self_model(edit),
             AppCommand::ConfirmMcpCatalog(server) => self.handle_confirm_mcp_catalog(server),
@@ -1226,6 +1233,7 @@ impl Orchestrator {
                     stream: Uuid::new_v4(),
                     partial: Default::default(),
                     line_role: crate::entities::message::MessageRole::Assistant,
+                    position: None,
                 });
                 self.emit_chat_list();
             }
@@ -1247,6 +1255,16 @@ impl Orchestrator {
     /// nothing here.
     fn handle_child_progress(&mut self, progress: TurnProgress) {
         match progress {
+            // The run's position (spec §11.10): kept on the mirror, and the
+            // tasks screen told — a round or a tool is the coarse step the
+            // rows move on, so this is the one child step that emits.
+            TurnProgress::ChildProgress { run, progress } => {
+                let Some(child) = self.child_mut_any(run) else {
+                    return;
+                };
+                child.position = Some(progress);
+                self.emit_task_list();
+            }
             // A dialogue's next line (spec §9.13): the partial starts over on
             // the given side; the open transcript is told which bubble the
             // coming stream belongs to.
@@ -1304,6 +1322,7 @@ impl Orchestrator {
                 child.run.outcome = Some(outcome);
                 child.run.finished_at = Some(finished_at);
                 child.run.tokens = tokens;
+                child.position = None;
                 let stream = child.stream;
                 if self.active_id == Some(run) {
                     let reason = match outcome {
@@ -1377,13 +1396,22 @@ impl Orchestrator {
                 run,
                 completion,
                 reasoning,
-            } => self.forward_child(run, |stream| AppEvent::TokenUsage {
-                generation_id: stream,
-                completion,
-                context: None,
-                context_exact: false,
-                reasoning,
-            }),
+            } => {
+                // The count so far on the mirror, for the tasks screen's
+                // tokens column; the landed value overwrites it at the end.
+                // No snapshot goes out for it — the next round or tool step
+                // carries it, and a usage report can arrive per chunk.
+                if let Some(child) = self.child_mut_any(run) {
+                    child.run.tokens = completion;
+                }
+                self.forward_child(run, |stream| AppEvent::TokenUsage {
+                    generation_id: stream,
+                    completion,
+                    context: None,
+                    context_exact: false,
+                    reasoning,
+                })
+            }
             TurnProgress::RoundFiled(_)
             | TurnProgress::OwnStep(_)
             | TurnProgress::ChildStarted(_)
@@ -1793,6 +1821,10 @@ impl Orchestrator {
         }
         summaries.sort_by_key(|s| std::cmp::Reverse(s.modified_at));
         let _ = self.evt_tx.send(AppEvent::ChatList(summaries));
+        // The tasks screen's rows are a projection of the same two sources
+        // — the chats' records and the mirrors — so every reason the list
+        // is re-sent is a reason the rows may have changed (spec §11.10).
+        self.emit_task_list();
     }
 
     fn emit_profile_list(&self) {

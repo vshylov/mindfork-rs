@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (59)
+## Entries (60)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -71,6 +71,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the privacy policy joins the disclaimer on one "Legal" tab (done)
 - Post-M9: the background run on the list, in the feed and on the bar (done)
 - Post-M9: the stop key on a background transcript, and the unread chat (done)
+- Post-M9: the tasks screen — every background run on one surface (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -3072,3 +3073,63 @@ screenshot pipeline, whose dumps and images are regenerated here.
 - **Live**: not required for the keys and the row (pure UI), and covered
   anyway by the track's live run — see
   [tools.md](tools.md), the same stage.
+
+### Post-M9: the tasks screen — every background run on one surface (done)
+- **What**: `F7`/`/tasks` (spec §11.10; the accepted design
+  [docs/research/tasks-screen.md](../research/tasks-screen.md), every fork at
+  its recommendation, the user's decisions of 2026-09-06): a full-screen
+  projection in two sections — every sub-agent and dialogue run of every
+  chat, running first with its position (`round 3 · fs_read`, `line 5`,
+  `director`) and elapsed time, then landed with its outcome and finish
+  clock (the most recent 50, the rest counted), then the four silent tasks
+  as running/idle. `Enter` opens the transcript, `P` the parent chat, `F6`
+  stops a running background run through `AppCommand::StopSubagentRun` —
+  the footer offers each only where it works (spec §11.2); `Esc` from a
+  chat opened here returns to the list (`Back::Tasks`, the third way down;
+  `EscTarget::Tasks` on the bar).
+- **How**: `AppEvent::TaskList(Box<TaskList>)` + `AppCommand::RequestTasks`;
+  the snapshot built in `orchestrator/tasks.rs` off the seats, the turn's
+  children and `Chat::children()`; the position via a new
+  `TurnProgress::ChildProgress` step that `report_progress`/`dialogue_chip`
+  send beside the status-bar chip, stored on `InflightChild.position`;
+  `BackgroundRun::is_out` shared by the bar's count and the running rows;
+  the emit rides `emit_chat_list` (same sources) plus the position step and
+  the silent tasks' begin/done. `keep_visible` moved to `shared::ui` and the
+  run-state words to `chat_list::run_state_key` — the seams the second
+  caller asks for (docs/lessons.md §2). `HELP_SECTIONS` is 8, the gate
+  lists `HelpContext::Tasks`.
+- **Two calls the design left open** (recorded in the research doc's status
+  too): (1) the turn's own children are listed as running rows — hiding a run
+  the chat list shows as running would contradict the screen's premise —
+  without `F6` (no seat to cancel; the turn's `Esc` ends them), and the
+  bar-count test is pinned on the seats; (2) every emit is a full snapshot
+  rather than the live/landed split §5 sketched: the landed walk is the same
+  `children()` walk `emit_chat_list` already makes on the same events, and
+  tracking the landed half's invalidations (deletion, takeback, a profile
+  switch) is exactly the bug farm the split would open. A third shape
+  decision: the screen opens **synchronously**, waiting, and asks — because
+  the snapshot is also sent unasked, and an event that could open a screen
+  would steal the one being read (the stage-2 search trap, verified by the
+  steal-gate test). A run's tokens while it runs come from
+  `ChildTokens` onto the mirror and ride the next coarse emit — no snapshot
+  per usage report.
+- **Rejected**: a runtime-side map fed by `SubagentProgress` (fork F3(b) —
+  dies with the screen); reusing `ChatList` + `BackgroundRuns` and assembling
+  in the screen (F4(b)); a `requested` flag on the event to let a reply open
+  the screen (a synchronous open needs none and can never steal).
+- **Not stored, not timed**: closing the app forgets the ordering, not the
+  runs; the once-a-second repaint runs only while a run is out.
+- **Tests**: 26 new — 17 on the screen (the footer against the row, the
+  columns lined up, the waiting/empty/capped states, selection by identity,
+  the tick), 5 on the snapshot (a run out → landed by id with position and
+  outcome, the archive skipped, the cap newest-first, the bar count against
+  the running rows through the shared predicate, the request and the silent
+  tasks), 4 on the runtime (`F7` and `/tasks` one route, the unasked
+  snapshot never opens, the steal gate + the settings broadcast, `Esc` back
+  to the list re-asked and `P`) — 2857 unit tests green (2830 before; 138 `#[ignore]`).
+- **Live**: not required (pure UI over existing routes); the two background
+  e2e smokes re-run once because the orchestrator gained a progress step —
+  **GO**, 2/2 in 322 s against the LAN `llama-server` (Qwen3.6-27B-Q4_K_M,
+  4 slots, 16k ctx): the scene landed `RoundLimit` at 7 lines / 4907
+  tokens with its notification, the sub-agent `Completed` and the wake turn
+  named the planted codename — the position step changed nothing on the wire.
