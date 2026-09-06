@@ -199,6 +199,14 @@ split by subsystem.
 
 ### Fixed
 
+- **A tool round on OpenAI no longer fails when the model reasons in
+  stages.** gpt-5.6 often returns two to five reasoning items in one reply;
+  the app sent them back fused into one, which OpenAI rejected
+  (`invalid_encrypted_content`), so a sub-agent that had just made its
+  searches ended with "the engine failed" and the assistant had to run it
+  again — the same shape could end a tool round in the main chat. Every
+  reasoning item now goes back as itself, in order.
+
 - **The "Sessions (parallel streams)" hint now says what it does not do.**
   Raising it alone never made the sub-agents of one reply run together —
   that number is "Subagent: parallel runs" in Settings → Tools, which

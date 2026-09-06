@@ -55,6 +55,12 @@ pub struct ApiToolCall {
 /// - **OpenAI Responses**: a reasoning item (`id` + `encrypted_content`) right before
 ///   its own `function_call` (see [`openai::responses`](super::openai)).
 ///
+/// A reply may carry **several** — gpt-5.6 returned two to five reasoning items in
+/// half of the replies probed, each with its own id and ciphertext — and every one
+/// is resent as its own item, in order ([`ApiMessage::thinking`]). Fusing them into
+/// one (the contents concatenated under the last id) is what the API rejects with
+/// `400 invalid_encrypted_content` (docs/journal/engine.md, the multi-item entry).
+///
 /// Other backends (llama.cpp Chat Completions) ignore the field. Not needed between turns
 /// (reload/new request) — both providers only require it for the most
 /// recent assistant turn, so it isn't persisted in the domain `Message`. `text` is what
@@ -127,10 +133,12 @@ pub struct ApiMessage {
     pub tool_call_id: Option<String>,
     /// Tool calls (for the `Assistant` role that initiated a tool call).
     pub tool_calls: Vec<ApiToolCall>,
-    /// A reasoning block (Anthropic extended thinking) for resending in the current
-    /// agentic-loop turn. Set only on an assistant turn with `tool_use` (see
-    /// [`ThinkingBlock`]); other backends ignore it. `None` by default.
-    pub thinking: Option<ThinkingBlock>,
+    /// The reasoning blocks (Anthropic extended thinking, OpenAI Responses reasoning
+    /// items) for resending in the current agentic-loop turn, in the order the reply
+    /// produced them. Set only on an assistant turn with `tool_use` (see
+    /// [`ThinkingBlock`]); other backends ignore it. Empty by default; one block on
+    /// Anthropic, one **per reasoning item** on Responses.
+    pub thinking: Vec<ThinkingBlock>,
 }
 
 impl ApiMessage {
@@ -140,7 +148,7 @@ impl ApiMessage {
             content: content.into(),
             tool_call_id: None,
             tool_calls: Vec::new(),
-            thinking: None,
+            thinking: Vec::new(),
             images: Vec::new(),
         }
     }
@@ -151,7 +159,7 @@ impl ApiMessage {
             content: content.into(),
             tool_call_id: None,
             tool_calls: Vec::new(),
-            thinking: None,
+            thinking: Vec::new(),
             images: Vec::new(),
         }
     }
@@ -163,14 +171,14 @@ impl ApiMessage {
             content: content.into(),
             tool_call_id: None,
             tool_calls,
-            thinking: None,
+            thinking: Vec::new(),
             images: Vec::new(),
         }
     }
 
-    /// Attaches a thinking block (Anthropic/OpenAI Responses) to the message
-    /// (builder-style).
-    pub fn with_thinking(mut self, thinking: Option<ThinkingBlock>) -> Self {
+    /// Attaches the reply's thinking blocks, in order (builder-style) — several on
+    /// OpenAI Responses, see [`ThinkingBlock`].
+    pub fn with_thinking_blocks(mut self, thinking: Vec<ThinkingBlock>) -> Self {
         self.thinking = thinking;
         self
     }
@@ -187,7 +195,7 @@ impl ApiMessage {
             content: content.into(),
             tool_call_id: Some(tool_call_id.into()),
             tool_calls: Vec::new(),
-            thinking: None,
+            thinking: Vec::new(),
             images: Vec::new(),
         }
     }
@@ -388,6 +396,39 @@ impl ToolCallAccumulator {
             .into_iter()
             .filter(|c| !c.name.is_empty())
             .collect()
+    }
+}
+
+/// An accumulator of the reasoning references a round streams
+/// ([`ChatChunk::ThoughtsSignature`]), one entry per block to resend.
+///
+/// Two shapes arrive. **OpenAI Responses** sends a reference **with an id** per
+/// reasoning item, and a reply may carry several (gpt-5.6: two to five in half
+/// the replies probed) — each is its own entry, in order, because the API
+/// verifies every item's ciphertext under its own id and rejects a fusion of two
+/// with `400 invalid_encrypted_content`. **Anthropic** sends the signature of its
+/// one thinking block **without an id**; an id-less reference appends to a
+/// trailing id-less entry — a signature split across deltas stays one block, the
+/// behaviour the loop had before the accumulator existed.
+#[derive(Debug, Default)]
+pub struct ThinkingAccumulator {
+    refs: Vec<ThinkingRef>,
+}
+
+impl ThinkingAccumulator {
+    pub fn push(&mut self, r: ThinkingRef) {
+        match (r.id, self.refs.last_mut()) {
+            (None, Some(last)) if last.id.is_none() => last.signature.push_str(&r.signature),
+            (id, _) => self.refs.push(ThinkingRef {
+                id,
+                signature: r.signature,
+            }),
+        }
+    }
+
+    /// The references in the order they arrived.
+    pub fn finish(self) -> Vec<ThinkingRef> {
+        self.refs
     }
 }
 
@@ -629,5 +670,67 @@ mod tests {
             arguments: "{}".into(),
         });
         assert_eq!(acc.finish().len(), 2);
+    }
+
+    #[test]
+    fn thinking_accumulator_keeps_one_entry_per_reasoning_item() {
+        // OpenAI Responses: a reply with three reasoning items, each with its own
+        // id and ciphertext — three entries, in the reply's order, none fused.
+        let mut acc = ThinkingAccumulator::default();
+        for (id, enc) in [("rs_1", "AAA"), ("rs_2", "BBB"), ("rs_3", "CCC")] {
+            acc.push(ThinkingRef {
+                id: Some(id.into()),
+                signature: enc.into(),
+            });
+        }
+        let refs = acc.finish();
+        assert_eq!(refs.len(), 3);
+        assert_eq!(refs[0].id.as_deref(), Some("rs_1"));
+        assert_eq!(refs[0].signature, "AAA");
+        assert_eq!(refs[1].id.as_deref(), Some("rs_2"));
+        assert_eq!(refs[2].id.as_deref(), Some("rs_3"));
+        assert_eq!(refs[2].signature, "CCC");
+    }
+
+    #[test]
+    fn thinking_accumulator_appends_idless_deltas_into_one_block() {
+        // Anthropic: the one block's signature, however many deltas carry it —
+        // the shape the loop kept before the accumulator existed.
+        let mut acc = ThinkingAccumulator::default();
+        acc.push(ThinkingRef {
+            id: None,
+            signature: "sig-".into(),
+        });
+        acc.push(ThinkingRef {
+            id: None,
+            signature: "tail".into(),
+        });
+        let refs = acc.finish();
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].id, None);
+        assert_eq!(refs[0].signature, "sig-tail");
+    }
+
+    #[test]
+    fn thinking_accumulator_never_appends_to_an_item_with_an_id() {
+        let mut acc = ThinkingAccumulator::default();
+        acc.push(ThinkingRef {
+            id: Some("rs_1".into()),
+            signature: "AAA".into(),
+        });
+        acc.push(ThinkingRef {
+            id: None,
+            signature: "sig".into(),
+        });
+        let refs = acc.finish();
+        assert_eq!(refs.len(), 2);
+        assert_eq!(refs[0].signature, "AAA");
+        assert_eq!(refs[1].id, None);
+        assert_eq!(refs[1].signature, "sig");
+    }
+
+    #[test]
+    fn thinking_accumulator_without_input_gives_no_blocks() {
+        assert!(ThinkingAccumulator::default().finish().is_empty());
     }
 }

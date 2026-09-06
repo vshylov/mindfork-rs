@@ -143,10 +143,10 @@ pub fn build_request(req: &ChatRequest, model: &str, stream: bool) -> RespReques
     }
 }
 
-/// Translates history into Responses' `input` array. A reasoning item (with `id`+
-/// `encrypted_content`) is placed **before** the `function_call` items of the same
-/// assistant turn — Responses expects it immediately before the call (see
-/// [`ThinkingBlock`](crate::shared::api::contract::ThinkingBlock)).
+/// Translates history into Responses' `input` array. The reasoning items (each
+/// `id`+`encrypted_content`) are placed **before** the `function_call` items of the
+/// same assistant turn — Responses expects them ahead of the calls, every one of
+/// them and untouched (see [`ThinkingBlock`](crate::shared::api::contract::ThinkingBlock)).
 fn build_input(req: &ChatRequest) -> Vec<Value> {
     let mut items = Vec::new();
     for m in &req.messages {
@@ -222,14 +222,17 @@ fn image_parts(images: &[ApiImage]) -> Vec<Value> {
     parts
 }
 
-/// An assistant turn's `input` items: the reasoning item (which must precede
+/// An assistant turn's `input` items: the reasoning items (which must precede
 /// the calls), the text message, then the `function_call` items.
 fn push_assistant_items(m: &ApiMessage, items: &mut Vec<Value>) {
-    // The current turn's reasoning item (only if there's an id — only
-    // OpenAI Responses carries it; other backends have thinking.id == None).
-    if let Some(tb) = &m.thinking
-        && let Some(id) = &tb.id
-    {
+    // The current turn's reasoning items, in the reply's order (only those with an
+    // id — only OpenAI Responses carries it; other backends have thinking.id == None).
+    // A reply carries several when the model reasons in stages (gpt-5.6: two to
+    // five in half the replies probed), every one before the calls in every shape
+    // observed; the API accepts them in that order and rejects a fusion of two
+    // under one id (`400 invalid_encrypted_content`) — docs/journal/engine.md.
+    for tb in &m.thinking {
+        let Some(id) = &tb.id else { continue };
         // `summary` is a REQUIRED field of a reasoning item in the Responses API
         // (otherwise 400 `Missing required parameter: 'input[N].summary'`). Send an
         // empty array: the meaning is carried by `encrypted_content`, and the summary text
@@ -660,11 +663,11 @@ mod tests {
                     arguments: "{}".into(),
                 }],
             )
-            .with_thinking(Some(ThinkingBlock {
+            .with_thinking_blocks(vec![ThinkingBlock {
                 text: "резюме".into(),
                 signature: "gAAA-enc".into(),
                 id: Some("rs_42".into()),
-            })),
+            }]),
             ApiMessage::tool("call_1", "2"),
         ]);
         let json = serde_json::to_value(build_request(&r, "gpt-x", true)).unwrap();
@@ -691,14 +694,56 @@ mod tests {
                     arguments: "{}".into(),
                 }],
             )
-            .with_thinking(Some(ThinkingBlock {
+            .with_thinking_blocks(vec![ThinkingBlock {
                 text: "x".into(),
                 signature: "sig".into(),
                 id: None,
-            })),
+            }]),
         ]);
         let json = serde_json::to_value(build_request(&r, "gpt-x", true)).unwrap();
         assert_eq!(json["input"][1]["type"], "function_call");
+    }
+
+    #[test]
+    fn several_reasoning_items_are_resent_each_under_its_own_id_in_order() {
+        // gpt-5.6 returns two to five reasoning items in one reply; every one goes
+        // back as its own item, in the reply's order, before the calls. Fusing them
+        // under the last id is what the API rejects (400 invalid_encrypted_content).
+        let blocks: Vec<ThinkingBlock> = ["rs_1", "rs_2", "rs_3"]
+            .iter()
+            .enumerate()
+            .map(|(i, id)| ThinkingBlock {
+                text: String::new(),
+                signature: format!("enc-{i}"),
+                id: Some((*id).into()),
+            })
+            .collect();
+        let r = base_req(vec![
+            ApiMessage::user("hi"),
+            ApiMessage::assistant_tool_calls(
+                "",
+                vec![ApiToolCall {
+                    thought_signature: None,
+                    id: "call_1".into(),
+                    name: "calc".into(),
+                    arguments: "{}".into(),
+                }],
+            )
+            .with_thinking_blocks(blocks),
+            ApiMessage::tool("call_1", "2"),
+        ]);
+        let json = serde_json::to_value(build_request(&r, "gpt-x", true)).unwrap();
+        let input = json["input"].as_array().unwrap();
+        // [0] user, [1..=3] the three reasoning items, [4] function_call, [5] output.
+        assert_eq!(input.len(), 6);
+        for (i, id) in ["rs_1", "rs_2", "rs_3"].iter().enumerate() {
+            assert_eq!(input[i + 1]["type"], "reasoning");
+            assert_eq!(input[i + 1]["id"], *id);
+            assert_eq!(input[i + 1]["encrypted_content"], format!("enc-{i}"));
+            assert_eq!(input[i + 1]["summary"], json!([]));
+        }
+        assert_eq!(input[4]["type"], "function_call");
+        assert_eq!(input[5]["type"], "function_call_output");
     }
 
     #[test]

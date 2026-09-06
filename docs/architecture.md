@@ -1110,11 +1110,15 @@ Details:
   tool call in the same turn (otherwise `400`/quality drop):
   `ChatChunk::ThoughtsSignature(ThinkingRef{id, signature})` — only OpenAI carries
   an `id` (the `rs_…` reasoning element); Anthropic's is `None`. The agentic loop
-  accumulates the round's `ThinkingRef` and attaches `ApiMessage.thinking`
-  (`with_thinking`, `ThinkingBlock{text,signature,id}`) to the turn with the calls.
-  Anthropic: `build_messages` puts `AntBlock::Thinking` **first** in the assistant
-  turn; OpenAI Responses: `build_input` puts the reasoning element
-  (`id`+`encrypted_content`) **before** its `function_call`. It only lives in the
+  accumulates the round's references (`ThinkingAccumulator`: one entry per
+  id-bearing reasoning element — a Responses reply may carry **several** — and
+  Anthropic's id-less signature deltas fused into its one block) and attaches
+  `ApiMessage.thinking` (`with_thinking_blocks`, `Vec<ThinkingBlock{text,signature,id}>`)
+  to the turn with the calls. Anthropic: `build_messages` puts `AntBlock::Thinking`
+  **first** in the assistant turn; OpenAI Responses: `build_input` puts every
+  reasoning element (`id`+`encrypted_content`), in order, **before** the
+  `function_call`s — fusing them under one id is rejected
+  (`400 invalid_encrypted_content`). It only lives in the
   turn's memory (between turns both providers auto-drop old thinking → not
   persisted). `supported_sampling_fields(Claude)` = `max_tokens`+`thinking`+
   `reasoning_effort`.
@@ -1349,8 +1353,9 @@ its own — or named by `api_key_env`, resolved through the same
   (`prompt_tokens`/`completion_tokens`) arrives as a final chunk when
   `stream_options.include_usage=true` — the token counter. `ThoughtsSignature`
   is emitted by **Anthropic** (a thinking-block signature) and **OpenAI
-  Responses** (a reasoning element `id`+`encrypted_content`) — one signature per
-  turn. **Gemini** doesn't send its signature through `ThoughtsSignature`: it's
+  Responses** (a reasoning element `id`+`encrypted_content`) — one per Anthropic
+  thinking block, one per Responses reasoning element, of which a reply may
+  carry several. **Gemini** doesn't send its signature through `ThoughtsSignature`: it's
   per-tool-call, riding the `ToolCallDelta.thought_signature`→`ApiToolCall`→
   `ToolCallRecord` field (persisted). Other backends don't emit signatures.
 - **`RetryBackend`** (`retry.rs`) is an `EngineBackend` **decorator**, applied by

@@ -24,8 +24,8 @@ use crate::features::tools::{
     ChatEffect, ToolContext, ToolParams, ToolRegistry, TurnInfo, control, effective_tool_ids,
 };
 use crate::shared::api::{
-    ApiMessage, ApiToolCall, ChatChunk, ChatRequest, EngineBackend, FinishReason, ThinkingBlock,
-    ThinkingRef, ToolCallAccumulator,
+    ApiMessage, ApiToolCall, ChatChunk, ChatRequest, EngineBackend, FinishReason,
+    ThinkingAccumulator, ThinkingBlock, ThinkingRef, ToolCallAccumulator,
 };
 use crate::shared::config::ServerMode;
 use crate::shared::session_budget::SessionBudget;
@@ -1300,11 +1300,12 @@ async fn wait_for_decision(
 struct RoundOutput {
     text: String,
     thoughts: String,
-    /// A reference to the reasoning (Anthropic signature / OpenAI reasoning item):
-    /// needed to resend the thinking block on an assistant turn with a tool call in
-    /// the same turn. `None` for backends with no extended thinking (llama.cpp) or
-    /// when there were no "thoughts".
-    thinking_ref: Option<ThinkingRef>,
+    /// The references to the reasoning (Anthropic's signature / OpenAI's reasoning
+    /// items), in order: needed to resend the thinking blocks on an assistant turn
+    /// with a tool call in the same turn. Empty for backends with no extended
+    /// thinking (llama.cpp) or when there were no "thoughts"; several on Responses
+    /// ([`ThinkingAccumulator`]).
+    thinking: Vec<ThinkingRef>,
     calls: Vec<ApiToolCall>,
     reason: FinishReason,
     /// Tokens generated in the round: the exact value from the server's `usage`, else
@@ -2133,19 +2134,30 @@ impl TurnLoop<'_> {
 
         // The assistant turn with calls — into the request history (also
         // needed for inference in the next continuation/rewrite round). With
-        // extended thinking (Anthropic) we attach a thinking block with a
-        // signature: an assistant turn with tool_use in the same turn is
-        // required to carry it, otherwise the next request → 400. The
-        // signature exists only if the model actually returned "thoughts";
-        // other backends ignore the field.
-        let thinking = out.thinking_ref.clone().map(|r| ThinkingBlock {
-            text: out.thoughts.clone(),
-            signature: r.signature,
-            id: r.id,
-        });
+        // extended thinking (Anthropic) or reasoning items (OpenAI Responses)
+        // we attach the thinking blocks, in order: an assistant turn with
+        // tool_use in the same turn is required to carry them, otherwise the
+        // next request → 400. They exist only if the model actually returned
+        // "thoughts"; other backends ignore the field. The round's thoughts
+        // text rides on the first block — Anthropic's one block resends its
+        // text with the signature, Responses sends only id + ciphertext.
+        let thinking: Vec<ThinkingBlock> = out
+            .thinking
+            .iter()
+            .enumerate()
+            .map(|(i, r)| ThinkingBlock {
+                text: if i == 0 {
+                    out.thoughts.clone()
+                } else {
+                    String::new()
+                },
+                signature: r.signature.clone(),
+                id: r.id.clone(),
+            })
+            .collect();
         self.request.messages.push(
             ApiMessage::assistant_tool_calls(out.text.clone(), out.calls.clone())
-                .with_thinking(thinking),
+                .with_thinking_blocks(thinking),
         );
         let (records, tool_msgs) = self.execute_round(&out.calls, rewrite).await;
 
@@ -4577,8 +4589,7 @@ async fn stream_round(
 ) -> RoundOutput {
     let mut text = String::new();
     let mut thoughts = String::new();
-    let mut thoughts_signature: Option<String> = None;
-    let mut thoughts_id: Option<String> = None;
+    let mut thinking = ThinkingAccumulator::default();
     let mut acc = ToolCallAccumulator::default();
     let mut reason = FinishReason::Stop;
     // Live count: the number of reply deltas (≈ tokens). If it arrives, the exact
@@ -4632,15 +4643,9 @@ async fn stream_round(
                     }
                     // A reference to the reasoning (Anthropic signature / OpenAI
                     // reasoning item) — not shown in the UI, accumulated for resending
-                    // on tool use. `id` is carried only by OpenAI Responses (reasoning
-                    // `rs_…`); the signature/encrypted content — by both.
-                    ChatChunk::ThoughtsSignature(r) => {
-                        thoughts_signature
-                            .get_or_insert_with(String::new)
-                            .push_str(&r.signature);
-                        // A chunk without an id keeps the one accumulated so far.
-                        thoughts_id = r.id.or(thoughts_id);
-                    }
+                    // on tool use: one entry per reasoning item on Responses (a reply
+                    // may carry several), one block on Anthropic (`ThinkingAccumulator`).
+                    ChatChunk::ThoughtsSignature(r) => thinking.push(r),
                     ChatChunk::ToolCall(delta) => acc.push(delta),
                     ChatChunk::Usage(u) => {
                         // The exact count from the server: both the reply and the
@@ -4728,16 +4733,10 @@ async fn stream_round(
         }
     }
 
-    let thinking_ref =
-        (thoughts_signature.is_some() || thoughts_id.is_some()).then(|| ThinkingRef {
-            id: thoughts_id,
-            signature: thoughts_signature.unwrap_or_default(),
-        });
-
     RoundOutput {
         text,
         thoughts,
-        thinking_ref,
+        thinking: thinking.finish(),
         calls: acc.finish(),
         reason,
         tokens: usage_tokens.unwrap_or(streamed),
@@ -4996,7 +4995,7 @@ fn cancelled_round() -> RoundOutput {
     RoundOutput {
         text: String::new(),
         thoughts: String::new(),
-        thinking_ref: None,
+        thinking: Vec::new(),
         calls: Vec::new(),
         reason: FinishReason::Cancelled,
         tokens: 0,
