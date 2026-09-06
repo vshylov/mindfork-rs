@@ -874,6 +874,18 @@ the width of its neighbours and let the description carry the rest; the sibling
 subcommands read just as well there.
 — *the code workspace — stage 3*.
 
+**The settings hint panel is as tall as the tallest hint in the catalog — so
+lengthening one hint costs every tab a row.** `desc_panel_height` measures every
+field set the screen can show, on purpose (a per-section height jerked the layout
+on every `Tab`), which means the one hint that is longest sets the field list's
+height on all eight sections at once. A sentence added to the "Sessions" hint
+made it the longest and turned the screenshot drift gate red on the *Tools*
+tab's dumps, which nothing had edited. Before growing a hint, compare it with
+the tallest one (`sub_background`, in both locales) and trim elsewhere in the
+same hint to stay below it; if it must be the tallest, the screenshots are part
+of the change.
+— *the "Sessions" hint names the knob that widens the group*.
+
 **A wide glyph's trailing cell is where terminal rendering goes wrong.** ratatui resets
 it to the default style, `Buffer::diff` normally omits it, and `CrosstermBackend::draw`
 tracks `last_pos` **by cell number without accounting for glyph width** — so when the

@@ -199,6 +199,13 @@ split by subsystem.
 
 ### Fixed
 
+- **The "Sessions (parallel streams)" hint now says what it does not do.**
+  Raising it alone never made the sub-agents of one reply run together —
+  that number is "Subagent: parallel runs" in Settings → Tools, which
+  stayed at 1 while the hint's "1 (default): they take turns" read as if
+  sessions were the switch. The hint now names the second field and its
+  default, and says to raise both.
+
 - **A long chat or run title no longer ends mid-word.** Every title was cut
   to 100 characters when it was stored, without a mark to say so — so a
   sub-agent run named after the first line of its instruction read as its own
