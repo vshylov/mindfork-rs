@@ -1,7 +1,8 @@
 # The silent tasks under the app-wide budget
 
-**Status:** design; the forks in §6 are open for the user's decision. The
-last item [background-subagents.md](background-subagents.md) §8 and
+**Status:** design **accepted** — every fork at its recommendation (the
+user's decision, 2026-09-07: F1–F9 → (a)); stage 0 (the probe of §3) is
+recorded in §3.1. The last item [background-subagents.md](background-subagents.md) §8 and
 [admission-by-budget.md](admission-by-budget.md) §8 left for later, and the
 one [tasks-screen.md](tasks-screen.md) §8 carried forward. The parent's fork
 F9 ([parallel-subagents.md](parallel-subagents.md) §6) put these tasks
@@ -207,6 +208,45 @@ work. The instrument is `admission_control_e2e_live`'s shape
 round holds the pool on the LAN stack (the 27B at ~50 tok/s and a 2048 cap
 is up to ~40 s worst case, but reflections rarely fill their cap); the
 number decides F3.
+
+### 3.1 Stage 0 — measured (2026-09-07): GO
+
+The CPU build (`llama-server` b10807, Gemma 3 4B Q8_0) launched with the
+managed launcher's own line at one session — `--host --port -ngl 0 -c 2048
+-m … --jinja`, **no `-np`** — reports on `/props` `total_slots: 4`,
+`n_ctx: 2048`, and logs `n_slots = 4, n_ctx_slot = 2048, kv_unified =
+'true'`: four slots over one 2048 pool, §2.3's claim as a fact.
+
+**Arm 1** is `silent_roll_smoke` in `tests/live.rs`: the hybrid backend the
+admission smokes use, routing the run's persona *and* the compaction
+prompt (`COMPACT_MARKER`) to the real server; a chat seeded with 37
+paragraphs of archive (55 % of the pool) by a scripted turn, a
+`start_subagent` run handed another 37 paragraphs with a codename, then
+`/compact` the moment the parent's turn lands — the roll's digest and the
+run's prompt do not fit together.
+
+| arm | belief | most open at once | the run | the roll | wall |
+|---|---:|---:|---|---|---:|
+| control (`silent_roll_control_e2e_live`, lie ×4) | 8192 | **2** | `Failed`, reply `“` | `Err`: *Context size has been exceeded* | 174 s |
+| guarded (`silent_roll_e2e_live`), on `main` | 2048 | **2** | `Failed`, reply `“` | a summary (the server ended the other slot) | 171 s |
+
+The server's log for the control arm: the run's slot launched at 2:58.046,
+the roll's 80 ms later; from 3:18 the prefill of the second prompt found no
+free space and the batch halved 1024 → 1 over 36 s; at 3:54 `decode()
+failed: Context size has been exceeded` — both slots. The guarded arm on
+`main` is the same event with the other slot losing: the code before the
+lane has nothing that would make it differ, which is the GO — the arm's
+assertions (both complete, one stream at a time) are what stage 1 has to
+make true. A wording defect surfaced on the way: the roll's failure is
+worded with the **title's** key (`ui.err.title_gen_failed`,
+`compaction.rs:497` — "title generation error: Context size…"); not this
+track's, filed with it.
+
+**Arm 2** needed no server: `tests/silent.rs` fires the five triggers of
+`handle_done` on a bare orchestrator with every cadence at one over a
+recorder that counts open streams — **5 requests opened, 5 open at once**.
+The test asserts the lane's target (one at a time) and is red on `main`
+by exactly that number; it is stage 1's first test.
 
 ## 4. Design
 
