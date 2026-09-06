@@ -39,6 +39,8 @@ impl Orchestrator {
         let _ = self
             .evt_tx
             .send(AppEvent::BackgroundTask { kind, active: true });
+        // The tasks screen's "the app's own work" rows (spec §11.10).
+        self.emit_task_list();
     }
 
     /// The shared background-task outcome handler (formerly `handle_reflect_done`/
@@ -69,6 +71,7 @@ impl Orchestrator {
             kind,
             active: false,
         });
+        self.emit_task_list();
         if result.is_ok()
             && matches!(
                 kind,

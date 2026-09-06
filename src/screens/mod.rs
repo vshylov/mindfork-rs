@@ -10,3 +10,4 @@ pub mod chat_list;
 pub mod search;
 pub mod self_model;
 pub mod settings;
+pub mod tasks;

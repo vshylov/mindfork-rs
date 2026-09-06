@@ -916,15 +916,10 @@ impl ChatListState {
         let marker = if row.is_child() { "  └ " } else { "● " };
 
         // A transcript that did not complete says so beside its count.
-        let outcome = match (row.is_child(), row.outcome) {
-            (false, _) | (true, Some(RunOutcome::Completed)) => None,
-            (true, None) if row.running => Some("ui.chatlist.run.running"),
-            (true, None) if row.background => Some("ui.chatlist.run.unfinished"),
-            (true, Some(RunOutcome::Cancelled)) => Some("ui.chatlist.run.cancelled"),
-            (true, Some(RunOutcome::TimedOut)) => Some("ui.chatlist.run.timed_out"),
-            (true, Some(RunOutcome::Failed)) => Some("ui.chatlist.run.failed"),
-            (true, Some(RunOutcome::RoundLimit)) => Some("ui.chatlist.run.round_limit"),
-            (true, None) => Some("ui.chatlist.run.interrupted"),
+        let outcome = if row.is_child() {
+            run_state_key(row.outcome, row.running, row.background)
+        } else {
+            None
         };
         let mut count = loc.tf(
             "ui.chatlist.messages",
@@ -1068,6 +1063,29 @@ fn display_width_str(s: &str) -> usize {
 }
 
 /// A localized search-mode label (the search line and the `Ctrl+F` hint).
+/// The bundle key for a run's state beside its row — the one wording the
+/// chat list and the tasks screen share (spec §11.2, §11.10). `None` for a
+/// completed run: the list says nothing there, the tasks screen its own word.
+/// A run with no outcome is *running* while its mirror says so, otherwise
+/// *unfinished* when it was out in the background (the app was closed while
+/// it ran) and *interrupted* when it was a turn's child.
+pub(crate) fn run_state_key(
+    outcome: Option<RunOutcome>,
+    running: bool,
+    background: bool,
+) -> Option<&'static str> {
+    match outcome {
+        Some(RunOutcome::Completed) => None,
+        None if running => Some("ui.chatlist.run.running"),
+        None if background => Some("ui.chatlist.run.unfinished"),
+        None => Some("ui.chatlist.run.interrupted"),
+        Some(RunOutcome::Cancelled) => Some("ui.chatlist.run.cancelled"),
+        Some(RunOutcome::TimedOut) => Some("ui.chatlist.run.timed_out"),
+        Some(RunOutcome::Failed) => Some("ui.chatlist.run.failed"),
+        Some(RunOutcome::RoundLimit) => Some("ui.chatlist.run.round_limit"),
+    }
+}
+
 fn mode_label(scope: SearchScope, loc: &'static Locale) -> &'static str {
     match scope {
         SearchScope::Title => loc.t("ui.chatlist.mode.title"),

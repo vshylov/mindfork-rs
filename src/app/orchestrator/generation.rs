@@ -80,6 +80,16 @@ pub(super) enum TurnProgress {
         completion: u64,
         reasoning: Option<u32>,
     },
+    /// Where a run stands (spec §11.10, docs/research/tasks-screen.md §4.3):
+    /// the same report the status-bar chip gets straight from the task
+    /// ([`AppEvent::SubagentProgress`]), carried to the orchestrator too and
+    /// stored on the run's mirror — so a background run's position outlives
+    /// the screen that happens to be open, and the tasks screen reads it
+    /// off the seat.
+    ChildProgress {
+        run: Uuid,
+        progress: crate::app::events::SubagentProgress,
+    },
     /// A dialogue's next line begins (spec §9.13): which side of the
     /// transcript the coming stream belongs to, so the open transcript draws
     /// it in the right bubble. Also resets the round-in-progress partial.
@@ -1801,15 +1811,22 @@ impl TurnLoop<'_> {
         // tool belongs to the round already counted; a stream opens the next.
         let counted = self.round + self.workspace_rounds;
         let round = if tool.is_some() { counted } else { counted + 1 };
+        let progress = crate::app::events::SubagentProgress {
+            name: name.clone(),
+            round,
+            tool: tool.map(str::to_string),
+            kind: crate::app::events::RunProgressKind::Subagent,
+        };
+        // The same position to the orchestrator, for the run's mirror and
+        // the tasks screen (spec §11.10) — one value, two readers.
+        self.progress(TurnProgress::ChildProgress {
+            run,
+            progress: progress.clone(),
+        });
         let _ = self.shared.evt_tx.send(AppEvent::SubagentProgress {
             generation_id: self.shared.id,
             run,
-            progress: Some(crate::app::events::SubagentProgress {
-                name: name.clone(),
-                round,
-                tool: tool.map(str::to_string),
-                kind: crate::app::events::RunProgressKind::Subagent,
-            }),
+            progress: Some(progress),
         });
     }
 
@@ -3574,15 +3591,22 @@ impl DialogueCtx<'_> {
         round: u32,
         kind: crate::app::events::RunProgressKind,
     ) {
+        let progress = crate::app::events::SubagentProgress {
+            name: title.to_string(),
+            round,
+            tool: None,
+            kind,
+        };
+        // The scene's position to the orchestrator too — the tasks screen
+        // reads it off the run's mirror (spec §11.10).
+        self.progress(TurnProgress::ChildProgress {
+            run,
+            progress: progress.clone(),
+        });
         let _ = self.shared.evt_tx.send(AppEvent::SubagentProgress {
             generation_id: self.shared.id,
             run,
-            progress: Some(crate::app::events::SubagentProgress {
-                name: title.to_string(),
-                round,
-                tool: None,
-                kind,
-            }),
+            progress: Some(progress),
         });
     }
 

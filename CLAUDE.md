@@ -171,7 +171,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-06, version 0.9.8)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2830 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **2857 unit tests
 green, 138 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
@@ -183,6 +183,21 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 `tools/doc_index_check.py`. A new track adds a line; a line that has stopped
 being recent is dropped, not shortened.
 
+- **The tasks screen — everything the app is doing, on one surface** —
+  `F7`/`/tasks`: every sub-agent and dialogue run of every chat, running
+  first with its **position** (round · tool, line, director) and elapsed
+  time, then landed with its outcome (50, the rest counted), then the four
+  silent tasks as running/idle; `Enter` opens the transcript, `P` the
+  parent, `F6` stops a running background run through the command
+  `/subagents stop` sends, `Esc` from a chat opened there returns to the
+  list. A projection and nothing else: `AppEvent::TaskList` built off the
+  seats, the turn's children and `Chat::children()`, sent on request and
+  unasked on every change — which is why the screen opens on the key and
+  an event may only refresh it; the position reaches the orchestrator as a
+  new `TurnProgress::ChildProgress` step stored on the run's mirror; the
+  bar's count and the running rows share one predicate
+  ([docs/research/tasks-screen.md](docs/research/tasks-screen.md), spec
+  §11.10, [docs/journal/ui-screens.md](docs/journal/ui-screens.md)).
 - **Background dialogues — a directed scene that outlives its turn** —
   `start_dialogue`, the scene's twin of `start_subagent` behind the same
   switch: the call answers with the transcript's address and the director's
@@ -398,26 +413,6 @@ being recent is dropped, not shortened.
   each got a typed route through the settings paths they mirror, and the
   draft flush now precedes the intent, so a spent command no longer resurfaces
   in the box ([docs/history/commands-stage3.md](docs/history/commands-stage3.md)).
-- **Subagent chats, PRs 2–7 of 7 — the subagent with the agent's tools,
-  the migration of old calls, the transcript in the list, in search, titled,
-  and live while it runs** — `call_subagent` runs as a nested turn with the
-  turn's tools (minus itself, `history_*`, the self-model), its transcript
-  lives on the call's record, shows nested under the parent in the list,
-  opens read-only, is a conversation of its own to every search surface
-  (`cache.db` `sub_id`, `CACHE_SCHEMA` 2) and to `chat_search`/`chat_read`,
-  is auto-titled at landing, and — through the turn's progress channel and an
-  in-flight mirror — is listed, openable and streaming while it runs, with
-  the parent ↔ transcript switch not cancelling the turn; `CHAT_SCHEMA` 2
-  synthesizes one for every old record, and a tool call's card opens the
-  moment the call starts. Go on Gemma 4 31B, 5/5; the track is complete
-  ([docs/history/subagent-live.md](docs/history/subagent-live.md))
-  ([docs/research/subagent-chats.md](docs/research/subagent-chats.md),
-  [ADR 0010](docs/decisions/0010-subagent-nested-turn.md)).
-- **A code project attached to a chat** — `/project attach <directory>`: list,
-  read, search and change it, run the user's build/run/test command lines, `F4`
-  shows every change as a diff with per-file revert. Attaching *is* the
-  permission, and the model cannot compose a command
-  ([docs/history/code-workspace.md](docs/history/code-workspace.md), spec §9.12).
 
 For what exists and how it works, read architecture.md and spec.md — they are
 the source of truth for the current state. For how any of it came to be, and

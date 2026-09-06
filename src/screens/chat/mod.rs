@@ -82,6 +82,7 @@ pub(crate) static HELP_SECTION: HelpSection = HelpSection {
         ("Ctrl+P", "ui.help.settings"),
         ("F3", "ui.help.self_model"),
         ("F4", "ui.help.changes"),
+        ("F7", "ui.help.tasks"),
         ("Ctrl+F", "ui.help.find_in_chat"),
         ("Ctrl+T", "ui.help.thoughts"),
         ("Ctrl+O", "ui.help.tool_calls"),
@@ -236,6 +237,9 @@ pub enum ChatIntent {
     /// Open the changes screen (`F4`, `/changes`): what the assistant changed
     /// in the attached project. See spec §9.12.
     OpenChanges,
+    /// Open the tasks screen (`F7`, `/tasks`): everything the app is doing in
+    /// the background. See spec §11.10.
+    OpenTasks,
     /// Open the help dialog (`/help`). `F1` never reaches the screen — the
     /// runtime routes it above every screen and owns the overlay (spec §11.7,
     /// docs/history/help-hotkeys-context.md stage 2).

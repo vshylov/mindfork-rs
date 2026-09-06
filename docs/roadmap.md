@@ -112,8 +112,11 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
     forks F1–F10 at their recommendations, F3 → no confirmations; go on
     Qwen 3.6 27B and Gemma 4 31B):
     [docs/research/background-subagents.md](research/background-subagents.md).
-    What its §8 leaves for later: a tasks screen across chats; the silent
-    background tasks under the app-wide budget. **Background dialogues are
+    **The tasks screen is done** (2026-09-06: `F7`/`/tasks`, every run
+    across every chat with its position or outcome and the silent tasks
+    below, [docs/research/tasks-screen.md](research/tasks-screen.md), every
+    fork at its recommendation); what its §8 still leaves for later: the
+    silent background tasks under the app-wide budget. **Background dialogues are
     done** (2026-09-06: `start_dialogue` behind the same switch, the
     director's brief snapshotted at the call, every dialogue stream priced by
     the session budget — which also closed a live defect, a foreground scene

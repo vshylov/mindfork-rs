@@ -56,6 +56,15 @@ pub(super) struct BackgroundRun {
     pub(super) child: InflightChild,
 }
 
+impl BackgroundRun {
+    /// The run is still out: it has not ended. An ended run waiting for its
+    /// turn to land keeps its seat, and is not out. The one predicate behind
+    /// the status bar's count and the tasks screen's running rows.
+    pub(super) fn is_out(&self) -> bool {
+        self.child.run.outcome.is_none()
+    }
+}
+
 impl Orchestrator {
     /// Spawns a background run the turn in flight handed over
     /// (research §4.2): a seat here, a fresh generation id, the app's budget,
@@ -85,6 +94,7 @@ impl Orchestrator {
                 stream: Uuid::new_v4(),
                 partial: Default::default(),
                 line_role: MessageRole::Assistant,
+                position: None,
             },
         });
         self.emit_chat_list();
@@ -415,13 +425,11 @@ impl Orchestrator {
 
     /// The status bar's count of runs out in the background — the seats
     /// whose run has not ended (an ended one waiting for its turn to land
-    /// is no longer out).
+    /// is no longer out). The predicate is [`BackgroundRun::is_out`], which
+    /// the tasks screen's *running* rows share (spec §11.10), so the two
+    /// surfaces cannot drift apart.
     pub(super) fn emit_background_runs(&self) {
-        let out = self
-            .background_runs
-            .iter()
-            .filter(|b| b.child.run.outcome.is_none())
-            .count() as u32;
+        let out = self.background_runs.iter().filter(|b| b.is_out()).count() as u32;
         let _ = self.evt_tx.send(AppEvent::BackgroundRuns { out });
     }
 

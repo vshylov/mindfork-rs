@@ -27,7 +27,7 @@ use crate::features::workspace_diff::{ChangeSet, DiffKind, FileChange, FileState
 use crate::shared::i18n::Locale;
 use crate::shared::keys;
 use crate::shared::theme::Palette;
-use crate::shared::ui::{confirm_popup, render_scrollbar, screen_chrome};
+use crate::shared::ui::{confirm_popup, keep_visible, render_scrollbar, screen_chrome};
 use crate::widgets::help_dialog::{HelpContext, HelpSection};
 
 /// The changes screen's "Shortcuts" section (`F1`): one row per key
@@ -479,20 +479,6 @@ impl FileState {
     /// bytes to put back where they were.
     fn is_revertable(self) -> bool {
         !matches!(self, FileState::Gone)
-    }
-}
-
-/// Keeps `selected` inside a `view`-row window starting at `scroll`.
-fn keep_visible(scroll: usize, selected: usize, view: usize) -> usize {
-    if view == 0 {
-        return 0;
-    }
-    if selected < scroll {
-        selected
-    } else if selected >= scroll + view {
-        selected + 1 - view
-    } else {
-        scroll
     }
 }
 

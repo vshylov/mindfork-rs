@@ -774,7 +774,7 @@ Since the inference server doesn't provide built-in web search, we implement it 
 - **The result** the main agent gets: the subagent's final reply, then one line naming the transcript's `chat://` address and — when the run did not complete — why. The run lands on the record together with the turn; until the list snapshot carries it, the address in the card is plain text (the "resolves or it is not a reference" rule).
 - **Limits**: `max_tool_rounds` and `workspace.max_rounds` apply to the run as to the turn (each run spends one round of the parent's budget, as before); `tools.subagent_max_tokens` caps each of its replies (min'ed with the effective `max_tokens`); `tools.subagent_run_timeout_secs` bounds the whole run. `Esc` on the turn cancels the run with it; the partial transcript lands as `cancelled`. The run's request streams count against the engine's `sessions` ([11.6](#116-the-settings-screen)) like the turn's own: at the default of 1 the parent's stream, the subagent's rounds and any sibling run take turns, one stream at a time ([docs/research/parallel-subagents.md](docs/research/parallel-subagents.md) §4.2); above 1, each round reserves its share of a shared KV pool and waits for room rather than overflowing it ([6.3](#63-client-side-agentic-loop)).
 - **Several subagents in one reply — the parallel group** (research §4.1–§4.6; ADR 0010, amended). The model decides, the way Claude Code's agents do: when a reply carries several `call_subagent` calls, the round runs in three phases — the ordinary calls resolve in the model's order as they always did; then the subagent calls run **at once**, at most `tools.subagent_parallel` of them (default **1**: one after another, in the model's order — the behaviour the tool shipped with), the rest starting as siblings finish; then the tool results and records are written in the model's order, so the request history and the stored message are exactly what a sequential round would have left. Their request streams share the engine's `sessions` ([11.6](#116-the-settings-screen)): with fewer sessions than runs the subagents take turns round by round — measured free on llama.cpp, whose RAM prompt cache restores an interleaved context — with more, they stream together, as far as the pool holds them: a round that would not fit next to a sibling's stream waits for it to end instead of provoking the server's collective "Context size has been exceeded" ([6.3](#63-client-side-agentic-loop)). Each card opens when the group starts and closes as its run lands, whatever the order; every run is a row of the list while it runs, opens read-only and streams while open, and moving between the parent and any of them does not cancel the turn. A dangerous call inside two runs asks **one popup at a time** — the second waits for the first answer, and "allow for this turn" given to the first covers the second. One run's timeout ends that run alone; `Esc` ends them all. The status-bar chip counts the runs and names the latest report (*"3 sub-agents · «Critic» · round 2 · web_search"*). Above 1 the tool's description tells the model the contract with the number (*"several call_subagent calls in one message run concurrently, up to N at a time"* — measured to lift a small model from three two-call replies in five to five); at 1 the description is unchanged. `run_dialogue` is not a member of the group: it runs at its position, sequentially inside, as ADR 0011 requires. The parent's round budget spends one round per round, whatever the group's size.
-- **A run in the background — `start_subagent`** ([docs/research/background-subagents.md](docs/research/background-subagents.md) §4; ADR 0010, amended a second time). Opt-in: `tools.subagent_background` (off) puts the twin in the catalog's effective set — same parameters, its own description — and until then no request differs by a byte. The call **returns at once** with a *started* line naming the transcript's `chat://` address, and the run leaves the turn: its own task, its own cancellation token (`Esc` ends the turn and not the run), the app's session budget — one `Arc` the turns and the runs share, so at `sessions = 1` a run and the next turn take turns round by round, and under a pool the admission guard covers both ([6.3](#63-client-side-agentic-loop)). Everything else a subagent is, a background one is: the same tools and environment (minus the nested-run family), the same limits and timeout, the transcript on the call's record, the row under its parent marked *running* past the turn's end, the read-only screen that streams while it runs, search, titling, and a switch to it that cancels nothing. The record lands **with the turn as a placeholder** (`background`, no outcome) and is filled in **by id** when the run ends — the auto-title's route; a run that ends while a turn is still running in its chat waits for that turn to land, so its rows never come first. The result is a **task notification**: a stored `System` row of the parent chat (the feed's note look; `Message::notification` names the run) that the model reads as *user* text — merged in front of the next user message on the wire, alone when it starts a turn — worded with the run's reply or the same status line a foreground run returns, and a preamble saying it is not the user's message and grants nothing. When the chat is open and idle the app **starts a turn on it** (`tools.subagent_background_wake`, on) and the assistant reports the result; a chat the user is not looking at keeps the note for their return **and is marked unread in the chat list** (`Chat.unread`, additive: set as the notification lands, cleared by opening the chat — so a result nobody came back to is still visible after a restart). A background run **never asks for a confirmation** — its calls run as with `confirm_dangerous` off, whatever the setting says; the profile's tool set is the control (the research's fork F3, the user's decision). `/subagents stop [n]` ends the n-th run out ([11.7](#117-commands)), and so does **`F6` on that run's own open transcript** — the key the screen advertises only while the run streams, where `Esc` merely goes back ([11.2](#112-the-chat-list-an-overlay)); taking back or regenerating the exchange that started one ends it and lands it onto the archived record without a notification; `Quit` lands every run out as *cancelled* before the exit flush; a record stored with `background` and no outcome reads as *unfinished* in the list — never as running, which only the live mirror can say. `tools.subagent_background_max` (2) caps the runs out at once — sub-agents and background dialogues ([9.13](#913-the-directed-dialogue-run_dialogue)) together, since what the cap protects is shared: a call past it is refused with a result naming the setting. A dialogue's notification is worded for a scene and carries the director's closing result where a sub-agent's carries its final reply. The status bar shows *"in background: n"* while any run is out.
+- **A run in the background — `start_subagent`** ([docs/research/background-subagents.md](docs/research/background-subagents.md) §4; ADR 0010, amended a second time). Opt-in: `tools.subagent_background` (off) puts the twin in the catalog's effective set — same parameters, its own description — and until then no request differs by a byte. The call **returns at once** with a *started* line naming the transcript's `chat://` address, and the run leaves the turn: its own task, its own cancellation token (`Esc` ends the turn and not the run), the app's session budget — one `Arc` the turns and the runs share, so at `sessions = 1` a run and the next turn take turns round by round, and under a pool the admission guard covers both ([6.3](#63-client-side-agentic-loop)). Everything else a subagent is, a background one is: the same tools and environment (minus the nested-run family), the same limits and timeout, the transcript on the call's record, the row under its parent marked *running* past the turn's end, the read-only screen that streams while it runs, search, titling, and a switch to it that cancels nothing. The record lands **with the turn as a placeholder** (`background`, no outcome) and is filled in **by id** when the run ends — the auto-title's route; a run that ends while a turn is still running in its chat waits for that turn to land, so its rows never come first. The result is a **task notification**: a stored `System` row of the parent chat (the feed's note look; `Message::notification` names the run) that the model reads as *user* text — merged in front of the next user message on the wire, alone when it starts a turn — worded with the run's reply or the same status line a foreground run returns, and a preamble saying it is not the user's message and grants nothing. When the chat is open and idle the app **starts a turn on it** (`tools.subagent_background_wake`, on) and the assistant reports the result; a chat the user is not looking at keeps the note for their return **and is marked unread in the chat list** (`Chat.unread`, additive: set as the notification lands, cleared by opening the chat — so a result nobody came back to is still visible after a restart). A background run **never asks for a confirmation** — its calls run as with `confirm_dangerous` off, whatever the setting says; the profile's tool set is the control (the research's fork F3, the user's decision). `/subagents stop [n]` ends the n-th run out ([11.7](#117-commands)), and so does **`F6` on that run's own open transcript** — the key the screen advertises only while the run streams, where `Esc` merely goes back ([11.2](#112-the-chat-list-an-overlay)); taking back or regenerating the exchange that started one ends it and lands it onto the archived record without a notification; `Quit` lands every run out as *cancelled* before the exit flush; a record stored with `background` and no outcome reads as *unfinished* in the list — never as running, which only the live mirror can say. `tools.subagent_background_max` (2) caps the runs out at once — sub-agents and background dialogues ([9.13](#913-the-directed-dialogue-run_dialogue)) together, since what the cap protects is shared: a call past it is refused with a result naming the setting. A dialogue's notification is worded for a scene and carries the director's closing result where a sub-agent's carries its final reply. The status bar shows *"in background: n"* while any run is out; the tasks screen (`F7`, [11.10](#1110-the-tasks-screen-f7)) lists every run — out or landed — across every chat, a running one with its position, and stops one with the same `F6`.
 
 #### 9.3.3. Conversation control tools (`send_followup_message` / `rewrite_current_message`)
 
@@ -1985,6 +1985,7 @@ Two main screens + overlays (modals):
 - **Settings screen** — a separate screen (via `Ctrl+P`/a button) with sections (see [11.6](#116-the-settings-screen)).
 - **The message-level search screen** — a separate screen opened from the chat list's content mode (`Ctrl+G`): the messages matching the query, with `Enter` jumping the feed onto one and highlighting the query inside it; `Esc` from that chat comes back to the results (see [11.2.1](#1121-the-message-level-search-screen)).
 - **The "self-model" screen** — a separate screen (`F3`) for viewing and editing the agent's self-model (see [17.7](#177-ui--the-self-model-screen-f3)).
+- **The tasks screen** — a separate screen (`F7`, `/tasks`): every sub-agent and dialogue run across every chat, running with its position or landed with its outcome, and the app's own background work (see [11.10](#1110-the-tasks-screen-f7)).
 - **Overlays**: the chat list, profile picker when creating a chat, confirmations, the spellcheck-suggestion popup, key-binding help (`F1`), the server startup log.
 - **Token counter** in the status bar: the total "conversation (prompt) + response" count,
   updates live during generation and is visible right from the start (not "starting from one").
@@ -2072,8 +2073,8 @@ Two main screens + overlays (modals):
   filled row-by-row, columns lined up vertically, an incomplete bottom row
   right-aligned **under the columns above**, the block hugging the right edge —
   is one implementation (`shared::ui::render_hint_grid`), and the chat list, the
-  settings screen, the self-model screen (`F3`), the changes screen (`F4`) and
-  the message-search screen all draw their footers with it. Only the chat bar
+  settings screen, the self-model screen (`F3`), the changes screen (`F4`), the
+  tasks screen (`F7`) and the message-search screen all draw their footers with it. Only the chat bar
   caps its depth and sheds: it shares a row with indicators that swell at every
   turn boundary, while a full-screen panel's footer has the whole width and no
   competitor, so **a screen's footer wraps to as many rows as it needs and never
@@ -3037,6 +3038,7 @@ docs/history/external-api-key.md.
 | `F2` | rename the chat |
 | `F5` | copy the entire chat conversation to the clipboard (the active chat / the one selected in the list) |
 | `F6` | on the open transcript of a **background** subagent run: stop the run (§9.3.2; `/subagents stop [n]` is the typed route). Anywhere else the key does nothing and is not advertised |
+| `F7` | the tasks screen: every sub-agent and dialogue run across every chat — running with its position, landed with its outcome — and the app's own background work (§11.10; `/tasks` is the typed route). There: `Enter` opens a run's transcript, `P` its chat, `F6` stops a running background run |
 | `Ctrl+R` | in a chat: regenerate the last response; in the chat list: ask the model to title the selected chat (§11.2) |
 | `Ctrl+U` | write a message as the user (impersonation, §11.8) |
 | `Ctrl+E` | delete the last exchange (the text is returned to the input box) |
@@ -3220,8 +3222,8 @@ crossterm sees them — VS Code's integrated terminal claims `Ctrl+P`, `Ctrl+E`,
 the last of which **closes the tab the session runs in**. Typing survives every
 host, so the interface is fully operable by commands plus the safe key subset
 (printable characters, `Enter`, `Esc`, `Backspace`/`Delete`, `Tab`, the arrows,
-`Home`/`End`, `PageUp`/`PageDown`, `Shift`+arrows). Twenty-three commands:
-`/settings` `/self` `/chats` `/changes` `/help` · `/new [profile]`
+`Home`/`End`, `PageUp`/`PageDown`, `Shift`+arrows). Twenty-four commands:
+`/settings` `/self` `/chats` `/changes` `/tasks` `/help` · `/new [profile]`
 `/rename [title]` `/autotitle` `/clone` `/copy` `/regen`·`/retry` `/continue`
 `/takeback` `/impersonate [text]` `/stop` · `/find [text]` `/search <text>`
 `/links` · `/thoughts` `/toolcalls` `/subagents [expand|collapse|stop [n]]` `/mouse`
@@ -3573,6 +3575,72 @@ the text being spoken no longer exists. While synthesis/playback is in progress,
 a quiet "♪ speaking" chip is shown in the status bar.
 
 ---
+
+### 11.10. The tasks screen (F7)
+
+**Everything the app is doing in the background, on one surface** (`F7`, or
+`/tasks`; [docs/research/tasks-screen.md](docs/research/tasks-screen.md), every
+fork at its recommendation, the user's decisions of 2026-09-06). Three surfaces
+reported background work before it, and each answered a different question
+badly once more than one run was out: the chat list nests a run under its
+parent — one chat at a time, and with no position ([11.2](#112-the-chat-list-an-overlay));
+the status bar counts them (*"in background: 2"*); the transcript shows one run
+in full. The screen answers the question those left open — *what is the machine
+doing for me right now, and where did the last thing land* — in two sections:
+
+- **Runs** — every sub-agent and dialogue run of every chat the list shows,
+  cross-profile like the list itself: the ones in flight first (newest first),
+  then the landed ones (newest first, the most recent **50** with a counted
+  "…and n more" line). A row is the state glyph, the run's title, its parent
+  chat, its **position** while it runs (`round 3 · fs_read`, `line 5`,
+  `director`; *starting* before the first round) or its **outcome** once landed
+  (the chat list's words — cancelled, timed out, failed, round limit,
+  unfinished, interrupted — plus *completed*), the elapsed time (`4:12`,
+  rendered from `created_at`; nothing is stored) or the finish clock, and its
+  tokens. A run in flight is either a child of the turn in flight or a
+  background seat ([9.3.2](#93-tools-and-the-agentic-loop)); both are listed —
+  a screen whose premise is that nothing the app does is hidden cannot omit
+  the run the chat list shows as running — and they differ in one key (below).
+- **The app's own work** — the four silent tasks (reflection, notes
+  consolidation, self-model consolidation, history compaction), each *running*
+  or *idle*, which is all the slot registry can honestly say: there is no
+  last-run time and no last outcome, by decision (the research's fork F2).
+
+**Keys**, under [11.2](#112-the-chat-list-an-overlay)'s rule that the footer
+names only what works on the **selected** row: `↑↓`/`PageUp`/`PageDown`/
+`Home`/`End` select; `Enter` opens the selected run's transcript, read-only,
+through the ordinary activation; `P` opens its parent chat; `F6` stops a
+**running background** run through the very command `/subagents stop` sends
+— not offered on a landed run, nor on a child of the turn in flight, whose
+seat that command does not know (such a run ends with its turn, by `Esc` in
+the chat); `Esc` goes back; `F1` is the runtime's. A silent task's row offers
+none of the three. Opening a transcript or a parent chat from here **stashes
+the screen as the way back** (`Back::Tasks`, the third way down beside a
+search hit and a followed reference, [11.3](#113-the-message-feed)): `Esc` in
+that chat returns to the task list — re-asked, since runs may have moved
+meanwhile — rather than to the chat list, and the status bar's `Esc` hint says
+so.
+
+**Data.** A purpose-built snapshot, `AppEvent::TaskList` (fork F4): the
+orchestrator builds every row off what it already holds — the mirrors of the
+runs in flight and the records on the chats, through `Chat::children()`, so a
+run whose exchange was taken back is on the screen no more than in the
+conversation — and sends it in reply to `AppCommand::RequestTasks` and,
+unasked, whenever the rows may have changed: on every chat-list emit (the two
+projections share their sources), on a run's position step, on a silent task's
+begin and end. The screen opens on the key, waiting, and asks; an unasked
+snapshot only ever refreshes an open screen (or the one stashed behind a chat)
+and never opens one — it would steal whatever the user was reading. The
+position is what the orchestrator did not have before: the report the
+status-bar chip gets straight from the task (`SubagentProgress`) now also
+travels to the orchestrator as a progress step (`TurnProgress::ChildProgress`)
+and is stored on the run's mirror (fork F3), so a background run's position
+outlives whichever screen happens to be open. The status bar's count and the
+screen's running rows are one predicate (`BackgroundRun::is_out`), pinned by
+test. While a run is out the screen repaints once a second so the elapsed
+column moves; a list that is all landed repaints on input alone (fork F5).
+Nothing is stored for the screen's sake: closing the app forgets the ordering,
+not the runs.
 
 ## 12. Configuration, portability, migration
 

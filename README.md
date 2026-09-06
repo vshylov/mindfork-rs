@@ -227,7 +227,10 @@ build the moment they drift from what the app actually renders
   idle — otherwise the chat list marks that chat unread until you open it.
   `/subagents stop [n]`, or `F6` on the run's open transcript, ends one; a
   background run never asks for confirmations — the profile's tool set is
-  the control.
+  the control. **`F7` (or `/tasks`) lists every run** across every chat —
+  running with the round and tool it is in and how long it has been out,
+  landed with how it ended — with the app's own quiet work below; `Enter`
+  opens one, `F6` stops a running one.
 - **Parallel tool calls** — when the assistant issues several reads in one
   reply (two files, three pages), they run at once on a cloud engine (**4** at
   a time by default; `Ctrl+P` → the engine's Model tab → "Parallel tool
@@ -389,6 +392,7 @@ screen you were on, marked *you are here*. The highlights:
 | `F1` | help and about (tabs: hotkeys, commands, license, legal, components) |
 | `Ctrl+P` | settings |
 | `F3` | the self-model screen — what the assistant currently thinks about itself, and about you |
+| `F7` | the tasks screen — every sub-agent and dialogue run across every chat, running with its round and tool or landed with its outcome, and the app's own background work below |
 | `Ctrl+N` | new chat (with a profile picker) |
 | `Ctrl+R` | regenerate the last reply |
 | `Ctrl+E` | take back the last exchange (your text returns to the input box) |
@@ -436,6 +440,7 @@ Slash commands, typed straight into the input box:
 | `/project build-cmd [line]` · `run-cmd` · `test-cmd` | set the command the assistant may build / run / test with — or, with no argument, show it. It runs the line as typed and can never change or extend it |
 | `/project clear build\|run\|test` | unset one of those commands (the assistant then has no such tool at all) |
 | `/changes` (`F4`) | what the assistant changed in the attached project, as a diff, with `r` to put one file back |
+| `/tasks` (`F7`) | everything the app is doing in the background: every sub-agent and dialogue run — running with its position, or landed with how it ended — and the app's own quiet work; `Enter` opens a run's transcript, `P` its chat, `F6` stops a running one |
 | `/rag add <path> [-r]` · `/rag remove <path>` | index a file or directory into the knowledge base / remove it |
 | `/rag list` · `/rag rebuild` | show the store's sources / reindex after changing chunking |
 | `/reindex` | re-embed everything with the current embedding model, and rebuild attachment indexes that are missing |
@@ -453,7 +458,7 @@ confirmations included:
 
 | Command | Same as | What it does |
 |---|---|---|
-| `/settings` · `/self` · `/help` · `/chats` | `Ctrl+P` · `F3` · `F1` · `Esc` | the screens |
+| `/settings` · `/self` · `/tasks` · `/help` · `/chats` | `Ctrl+P` · `F3` · `F7` · `F1` · `Esc` | the screens |
 | `/new [profile]` | `Ctrl+N` | new chat; a name picks the profile (a prefix is enough) |
 | `/rename [title]` · `/clone` · `/copy` | `F2` · `Ctrl+D` · `F5` | this chat: rename (bare — edit the current title), clone, copy the conversation |
 | `/autotitle` | `Ctrl+R` in the list | have the model title this chat — in a browser tab that key reloads the page |
