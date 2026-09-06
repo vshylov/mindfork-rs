@@ -3201,6 +3201,42 @@ tests green (2857 before; 138 `#[ignore]`).
 
 **Live**: not required — a pure string function and three render paths.
 
+**Stage 2 — the data already on disk.** The user rebuilt, opened `F7`, and the
+column was cut exactly as before. Of course it was: the cap ran **at write
+time**, so every existing title was already 100 characters in
+`chats/*.json` — verified against their own data, four run titles at exactly
+100. Removing a cap fixes what is written from now on and can do nothing for
+what it has already thrown away.
+
+Except here it had not thrown it away: a sub-agent run stores its instruction
+as its own first `User` message, and the title was the first line of it. So
+`CHAT_SCHEMA` 3→4 (`chat_to_v4`) rewrites a cut title with what
+`initial_title` would have produced had the cap never existed — the same seed
+rule the language-model history used, *what the recorder would have written had
+it existed then*. Deliberately narrow, three guards: the title is **exactly**
+100 characters, it is not `renamed_manually`, and the re-derivation **starts
+with it** — so the step can only give a title its tail back, never replace one,
+and a hand-edited file or a rename the flag missed is safe. Chat titles are
+left alone (a model-written or typed one has no source), and so are dialogue
+runs (`A ↔ B` over labels that may be a localized default `shared` cannot
+reproduce). Idempotent for free: a restored title is no longer 100 characters,
+so the first guard stops the second pass.
+
+Probed against the user's real data before the fixture was written: 4/4
+restored, to 802, 165, 162 and 159 characters. The 802 is the honest answer
+rather than an argument for a cap — that run's instruction is one paragraph
+with no line break, the title *is* its first line, and the row now shows as
+much of it as the column has and ends in "…".
+
+- **Tests**: 6 more — a golden `chat_v3_cut_run_title.json` (the shape the cap
+  stored: a cut run, the same title marked as the user's own, a persona-named
+  run, a fourth cut run in the `deleted` archive) with the fixture's own
+  parse check, the restore + `v = 4` stamp, everything-else-untouched, the
+  not-a-prefix guard, the dialogue guard, and idempotency. 2866 green.
+- **Not a shape change**, but a version bump all the same: the step rewrites
+  stored values, so it goes through the framework's backup-then-write path and
+  runs exactly once (ADR 0006).
+
 **Not done, deliberately**: the model-facing surfaces (`chats` listings,
 `chat_search` labels) print a title verbatim and now have no bound at all. The
 text is the model's own instruction line, one row per chat, and inventing a

@@ -208,7 +208,8 @@ split by subsystem.
   screen actually has, and always ends in "…". Two places that used to clip a
   long title silently now cut it the same way: the chat panel's top border
   (the model caption keeps its corner) and the chat-reference picker (the
-  date keeps its place).
+  date keeps its place). Titles already on disk are repaired on the next
+  start where the text is recoverable — see **Data**.
 
 - **A server error inside an open stream no longer passes for a finished
   reply.** When `llama-server` (or an OpenAI-compatible proxy) put an error
@@ -268,6 +269,14 @@ split by subsystem.
   `mindfork sandbox setup --force`.
 
 ### Data
+
+- **Chat files: `CHAT_SCHEMA` 3 → 4.** A sub-agent run whose title the old
+  100-character limit had cut gets the rest of it back, re-derived from the
+  instruction the run still holds — so runs from before this version read
+  the same way as new ones. Only a title that is exactly 100 characters, was
+  not renamed by you, and matches the start of that instruction is touched;
+  chat titles and dialogue titles are left as they are. As with every
+  migration, the app makes a full backup before writing anything.
 
 - Chat files move to schema **v3** (a version stamp, no shape change): a chat
   may now carry a dialogue transcript, and an older mindfork refuses such a

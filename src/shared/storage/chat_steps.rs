@@ -1,5 +1,8 @@
 //! Chat-file migration steps (ADR 0006; the registry is [`super::schema`]).
 //!
+//! **3 → 4** (`chat_to_v4`): a run title the old 100-character title cap cut
+//! gets its tail back, re-derived from the instruction the run still holds.
+//!
 //! **1 → 2** (`chat_to_v2`): the sub-agent track (docs/research/subagent-chats.md
 //! §3.13, ADR 0010) keeps a `call_subagent` call's transcript on the call's
 //! record. A record written before that holds everything such a transcript
@@ -23,6 +26,104 @@ const SUBAGENT_NS: Uuid = Uuid::from_u128(0x6d66_5f73_7562_6167_656e_745f_7631_0
 /// The name of the call this step knows. A literal, not the tool's constant: a
 /// step describes the past, and `shared` cannot reach `features` anyway (FSD).
 const CALL_SUBAGENT: &str = "call_subagent";
+
+/// The character ceiling the title normalizer used to apply before it was
+/// removed (spec §11.2). A literal, not a constant imported from there: the
+/// constant is gone, and a step describes the past.
+const OLD_TITLE_CAP: usize = 100;
+
+/// `chats/<id>.json` 3 → 4: a run title the old cap cut gets its tail back.
+///
+/// Every title used to be shortened to [`OLD_TITLE_CAP`] characters **as it
+/// was stored**, with nothing to say it had been — so a sub-agent run named
+/// after the first line of its instruction read as its own full name, and the
+/// tasks screen drew it ending mid-word with half the row still empty
+/// (spec §11.10). Removing the cap fixes what is written from now on and can
+/// do nothing for what is already on disk, but the text is not lost: the
+/// instruction is the run's own first `User` message. So the step rewrites the
+/// title with what `initial_title` would have produced had the cap never
+/// existed — the seed rule the language-model history uses, *what the recorder
+/// would have written had it existed then*.
+///
+/// Deliberately narrow. It touches a title only when it is **exactly** the
+/// cap's worth of characters, is not the user's own (`renamed_manually`), and
+/// the re-derivation **starts with it** — so a rename the flag missed or a
+/// hand-edited file can never be overwritten, only extended. Chat titles are
+/// left alone: a model-written or user-typed one has no source to re-derive
+/// from. Dialogue runs too — their `A ↔ B` title is built from labels that may
+/// be a localized default, which a `shared` step cannot reproduce.
+pub(super) fn chat_to_v4(mut v: Value) -> Result<Value> {
+    if let Some(messages) = v.get_mut("messages").and_then(Value::as_array_mut) {
+        restore_run_titles(messages);
+    }
+    if let Some(deleted) = v.get_mut("deleted").and_then(Value::as_array_mut) {
+        for exchange in deleted {
+            if let Some(messages) = exchange.get_mut("messages").and_then(Value::as_array_mut) {
+                restore_run_titles(messages);
+            }
+        }
+    }
+    v["v"] = json!(4);
+    Ok(v)
+}
+
+/// Every run hanging off these messages' records.
+fn restore_run_titles(messages: &mut [Value]) {
+    for message in messages.iter_mut() {
+        let Some(records) = message.get_mut("tool_calls").and_then(Value::as_array_mut) else {
+            continue;
+        };
+        for record in records.iter_mut() {
+            if let Some(run) = record.get_mut("subagent") {
+                restore_run_title(run);
+            }
+        }
+    }
+}
+
+/// One run's title, under the guards in [`chat_to_v4`]'s doc.
+fn restore_run_title(run: &mut Value) {
+    let title = run
+        .get("title")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let manual = run.get("renamed_manually").and_then(Value::as_bool) == Some(true);
+    let dialogue = run
+        .get("participants")
+        .and_then(Value::as_array)
+        .is_some_and(|p| !p.is_empty());
+    if title.chars().count() != OLD_TITLE_CAP || manual || dialogue {
+        return;
+    }
+    let Some(whole) = derive_title(run) else {
+        return;
+    };
+    if whole.len() > title.len() && whole.starts_with(&title) {
+        run["title"] = json!(whole);
+    }
+}
+
+/// The title the run was named with: the persona's name, else the first
+/// non-empty line of the instruction — which is the run's first `User`
+/// message (`CallSubagentArgs::initial_title`, spec §9.3.2).
+fn derive_title(run: &Value) -> Option<String> {
+    let named = run
+        .get("name")
+        .and_then(Value::as_str)
+        .and_then(crate::shared::title::sanitize_title);
+    named.or_else(|| {
+        run.get("messages")?
+            .as_array()?
+            .iter()
+            .find(|m| m.get("role").and_then(Value::as_str) == Some("user"))?
+            .get("text")?
+            .as_str()?
+            .lines()
+            .find(|l| !l.trim().is_empty())
+            .and_then(crate::shared::title::sanitize_title)
+    })
+}
 
 /// `chats/<id>.json` 2 → 3: no shape change. The step exists so every file is
 /// stamped with a version an older binary **refuses politely** — a file may
@@ -189,6 +290,102 @@ mod tests {
     /// `v`), one call in the live messages with its `Tool` answer, one in the
     /// deleted archive, and an ordinary tool call that must be left alone.
     const V1_CHAT: &str = include_str!("fixtures/chat_v1_call_subagent.json");
+
+    /// A chat file as it was stored while the title cap was in force: `v = 3`,
+    /// a run whose title is exactly the cap's 100 characters of the
+    /// instruction's first line, the same title marked as the user's own, a
+    /// run named after its persona, and a fourth cut run in the deleted
+    /// archive.
+    const V3_CHAT: &str = include_str!("fixtures/chat_v3_cut_run_title.json");
+
+    /// The instruction's first line, whole — what the title would have been
+    /// had the cap never existed.
+    const WHOLE: &str = concat!(
+        "Read the changelog of every dependency we bumped this quarter and list ",
+        "the ones whose breaking changes we have not yet handled anywhere in the tree"
+    );
+
+    fn v4() -> Value {
+        chat_to_v4(serde_json::from_str(V3_CHAT).unwrap()).unwrap()
+    }
+
+    fn run_of(out: &Value, call: usize) -> Value {
+        out["messages"][1]["tool_calls"][call]["subagent"].clone()
+    }
+
+    #[test]
+    fn the_v3_fixture_is_what_the_cap_stored() {
+        let v: Value = serde_json::from_str(V3_CHAT).unwrap();
+        assert_eq!(v["v"], json!(3));
+        let title = v["messages"][1]["tool_calls"][0]["subagent"]["title"]
+            .as_str()
+            .unwrap();
+        assert_eq!(title.chars().count(), OLD_TITLE_CAP);
+        assert!(WHOLE.starts_with(title), "the cap cut this line: {title}");
+        // And it still parses as a chat today.
+        let chat: Chat = serde_json::from_value(v).unwrap();
+        assert_eq!(chat.v, 3);
+    }
+
+    #[test]
+    fn a_cut_run_title_gets_its_tail_back_and_stamps_v4() {
+        let out = v4();
+        assert_eq!(out["v"], json!(4));
+        assert_eq!(run_of(&out, 0)["title"], json!(WHOLE));
+        // The archive is walked too — a taken-back exchange keeps its runs.
+        assert_eq!(
+            out["deleted"][0]["messages"][0]["tool_calls"][0]["subagent"]["title"],
+            json!(WHOLE)
+        );
+    }
+
+    #[test]
+    fn the_step_leaves_every_other_title_alone() {
+        let out = v4();
+        // The user's own title, even at exactly the cap's length.
+        let manual = run_of(&out, 1);
+        assert_eq!(manual["title"].as_str().unwrap().chars().count(), 100);
+        assert_ne!(manual["title"], json!(WHOLE));
+        // A title that was never cut.
+        assert_eq!(run_of(&out, 2)["title"], json!("Reviewer"));
+        // The chat's own title has no source to re-derive from.
+        assert_eq!(out["title"], json!("Dependency sweep"));
+    }
+
+    /// The guard, not the length, is what makes the step safe: a title that is
+    /// the cap's length but **not** a prefix of the instruction is somebody's
+    /// own text and stays.
+    #[test]
+    fn a_title_that_is_not_a_prefix_is_never_rewritten() {
+        let mut out: Value = serde_json::from_str(V3_CHAT).unwrap();
+        let title: String = "z".repeat(OLD_TITLE_CAP);
+        out["messages"][1]["tool_calls"][0]["subagent"]["title"] = json!(title);
+        let out = chat_to_v4(out).unwrap();
+        assert_eq!(run_of(&out, 0)["title"], json!(title));
+    }
+
+    /// A dialogue's title is built from labels that may be a localized
+    /// default, which a `shared` step cannot reproduce — so it is left alone
+    /// whatever its length.
+    #[test]
+    fn a_dialogue_run_is_left_alone() {
+        let mut out: Value = serde_json::from_str(V3_CHAT).unwrap();
+        let run = &mut out["messages"][1]["tool_calls"][0]["subagent"];
+        run["kind"] = json!("dialogue");
+        run["participants"] = json!([{"name": "A"}, {"name": "B"}]);
+        let out = chat_to_v4(out).unwrap();
+        assert_eq!(run_of(&out, 0)["title"].as_str().unwrap(), &WHOLE[..100]);
+    }
+
+    /// Re-running the step changes nothing: the restored title is no longer
+    /// the cap's length, so the first guard already stops it (a step lands on
+    /// a restored backup exactly as on live data, ADR 0006).
+    #[test]
+    fn the_step_is_idempotent() {
+        let once = v4();
+        let twice = chat_to_v4(once.clone()).unwrap();
+        assert_eq!(once, twice);
+    }
 
     fn migrated() -> Value {
         chat_to_v2(serde_json::from_str(V1_CHAT).unwrap()).unwrap()

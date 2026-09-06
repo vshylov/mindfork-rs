@@ -1,0 +1,185 @@
+{
+  "v": 3,
+  "id": "5c3d6f2b-8e4a-4f3c-ab2d-1e7f9a8b6c5d",
+  "profile_id": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+  "title": "Dependency sweep",
+  "created_at": "2026-06-20T10:00:00Z",
+  "modified_at": "2026-06-20T10:05:00Z",
+  "system_message": "You are an assistant.",
+  "character_names": {
+    "user": "",
+    "assistant": "",
+    "system": ""
+  },
+  "messages": [
+    {
+      "id": "a0000000-0000-0000-0000-000000000001",
+      "role": "user",
+      "text": "Delegate the sweep.",
+      "timestamp": "2026-06-20T10:00:00Z"
+    },
+    {
+      "id": "a0000000-0000-0000-0000-000000000002",
+      "role": "assistant",
+      "text": "On it.",
+      "timestamp": "2026-06-20T10:01:00Z",
+      "tool_calls": [
+        {
+          "id": "call_1",
+          "name": "call_subagent",
+          "arguments": {
+            "system_message": "You are a careful reviewer.",
+            "message": "Read the changelog of every dependency we bumped this quarter and list the ones whose breaking changes we have not yet handled anywhere in the tree\nBe brief."
+          },
+          "result": "Two of them.",
+          "subagent": {
+            "id": "c0000000-0000-0000-0000-000000000001",
+            "kind": "subagent",
+            "title": "Read the changelog of every dependency we bumped this quarter and list the ones whose breaking chang",
+            "created_at": "2026-06-20T10:01:00Z",
+            "finished_at": "2026-06-20T10:02:30Z",
+            "system_message": "You are a careful reviewer.",
+            "messages": [
+              {
+                "id": "c0000000-0000-0000-0000-00000000000a",
+                "role": "user",
+                "text": "Read the changelog of every dependency we bumped this quarter and list the ones whose breaking changes we have not yet handled anywhere in the tree\nBe brief.",
+                "timestamp": "2026-06-20T10:01:00Z"
+              },
+              {
+                "id": "c0000000-0000-0000-0000-00000000000b",
+                "role": "assistant",
+                "text": "Two of them.",
+                "timestamp": "2026-06-20T10:02:30Z"
+              }
+            ],
+            "outcome": "completed"
+          }
+        },
+        {
+          "id": "call_2",
+          "name": "call_subagent",
+          "arguments": {
+            "system_message": "You are a careful reviewer.",
+            "message": "Read the changelog of every dependency we bumped this quarter and list the ones whose breaking changes we have not yet handled anywhere in the tree\nBe brief."
+          },
+          "result": "Two of them.",
+          "subagent": {
+            "id": "c0000000-0000-0000-0000-000000000002",
+            "kind": "subagent",
+            "title": "Read the changelog of every dependency we bumped this quarter and list the ones whose breaking chang",
+            "created_at": "2026-06-20T10:01:00Z",
+            "finished_at": "2026-06-20T10:02:30Z",
+            "system_message": "You are a careful reviewer.",
+            "messages": [
+              {
+                "id": "c0000000-0000-0000-0000-00000000000a",
+                "role": "user",
+                "text": "Read the changelog of every dependency we bumped this quarter and list the ones whose breaking changes we have not yet handled anywhere in the tree\nBe brief.",
+                "timestamp": "2026-06-20T10:01:00Z"
+              },
+              {
+                "id": "c0000000-0000-0000-0000-00000000000b",
+                "role": "assistant",
+                "text": "Two of them.",
+                "timestamp": "2026-06-20T10:02:30Z"
+              }
+            ],
+            "outcome": "completed",
+            "renamed_manually": true
+          }
+        },
+        {
+          "id": "call_3",
+          "name": "call_subagent",
+          "arguments": {
+            "system_message": "You are a careful reviewer.",
+            "message": "Read the changelog of every dependency we bumped this quarter and list the ones whose breaking changes we have not yet handled anywhere in the tree\nBe brief."
+          },
+          "result": "Two of them.",
+          "subagent": {
+            "id": "c0000000-0000-0000-0000-000000000003",
+            "kind": "subagent",
+            "title": "Reviewer",
+            "created_at": "2026-06-20T10:01:00Z",
+            "finished_at": "2026-06-20T10:02:30Z",
+            "system_message": "You are a careful reviewer.",
+            "messages": [
+              {
+                "id": "c0000000-0000-0000-0000-00000000000a",
+                "role": "user",
+                "text": "Read the changelog of every dependency we bumped this quarter and list the ones whose breaking changes we have not yet handled anywhere in the tree\nBe brief.",
+                "timestamp": "2026-06-20T10:01:00Z"
+              },
+              {
+                "id": "c0000000-0000-0000-0000-00000000000b",
+                "role": "assistant",
+                "text": "Two of them.",
+                "timestamp": "2026-06-20T10:02:30Z"
+              }
+            ],
+            "outcome": "completed",
+            "name": "Reviewer"
+          }
+        }
+      ]
+    },
+    {
+      "id": "a0000000-0000-0000-0000-000000000003",
+      "role": "tool",
+      "text": "Two of them.",
+      "timestamp": "2026-06-20T10:02:30Z",
+      "tool_call_id": "call_1",
+      "tool_name": "call_subagent"
+    }
+  ],
+  "draft": "",
+  "deleted": [
+    {
+      "deleted_at": "2026-06-20T10:05:00Z",
+      "messages": [
+        {
+          "id": "b0000000-0000-0000-0000-000000000001",
+          "role": "assistant",
+          "text": "An earlier try.",
+          "timestamp": "2026-06-20T09:00:00Z",
+          "tool_calls": [
+            {
+              "id": "call_0",
+              "name": "call_subagent",
+              "arguments": {
+                "system_message": "You are a careful reviewer.",
+                "message": "Read the changelog of every dependency we bumped this quarter and list the ones whose breaking changes we have not yet handled anywhere in the tree"
+              },
+              "result": "None yet.",
+              "subagent": {
+                "id": "c0000000-0000-0000-0000-000000000004",
+                "kind": "subagent",
+                "title": "Read the changelog of every dependency we bumped this quarter and list the ones whose breaking chang",
+                "created_at": "2026-06-20T10:01:00Z",
+                "finished_at": "2026-06-20T10:02:30Z",
+                "system_message": "You are a careful reviewer.",
+                "messages": [
+                  {
+                    "id": "c0000000-0000-0000-0000-00000000000a",
+                    "role": "user",
+                    "text": "Read the changelog of every dependency we bumped this quarter and list the ones whose breaking changes we have not yet handled anywhere in the tree",
+                    "timestamp": "2026-06-20T10:01:00Z"
+                  },
+                  {
+                    "id": "c0000000-0000-0000-0000-00000000000b",
+                    "role": "assistant",
+                    "text": "None yet.",
+                    "timestamp": "2026-06-20T10:02:30Z"
+                  }
+                ],
+                "outcome": "completed"
+              }
+            }
+          ]
+        }
+      ],
+      "draft": ""
+    }
+  ]
+}
