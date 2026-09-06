@@ -1010,6 +1010,36 @@ mod tests {
         );
     }
 
+    /// A title is cut by the column and by nothing else: whole where it fits,
+    /// marked with "…" where it does not (spec §11.2 — nothing bounds a title
+    /// in storage any more, so the row that draws one bounds it).
+    #[test]
+    fn a_title_is_cut_by_the_column_and_marked() {
+        let long = "A run whose title runs on well past any sensible column and then some more";
+        let mut s = screen(vec![landed(long)]);
+        // Wide enough for all of it — no marker on the title.
+        let shown = text_at(&mut s, 160, 12);
+        assert!(
+            shown.contains(long),
+            "the whole title must fit at 160:
+{shown}"
+        );
+        // Too narrow — the head, then the marker, and the columns that follow
+        // still line up (the parent chat is on the row).
+        let shown = text_at(&mut s, 90, 12);
+        assert!(
+            !shown.contains(long),
+            "it cannot fit at 90:
+{shown}"
+        );
+        assert!(shown.contains("A run whose title"), "{shown}");
+        let row = shown
+            .lines()
+            .find(|l| l.contains("A run whose title"))
+            .unwrap();
+        assert!(row.contains('…'), "a cut title says so: {row}");
+    }
+
     /// The elapsed column is derived from `created_at` and a clock — nothing
     /// is stored, and the format switches to hours past sixty minutes.
     #[test]

@@ -148,6 +148,14 @@ split by subsystem.
 
 ### Changed
 
+<!-- cyrillic-ok:start (the ru interface strings this entry is about) -->
+
+- **The tasks screen's Russian section header.** «ПРОГОНЫ» — a literal
+  rendering of "RUNS" — now reads «СУБАГЕНТЫ И ДИАЛОГИ», which is what the
+  section actually lists.
+
+<!-- cyrillic-ok:end -->
+
 - **Parallel sessions never overfill the server's context pool.** Above one
   session a managed `llama-server` shares one context pool between the
   streams the app keeps open, and when they outgrew it together the server
@@ -190,6 +198,17 @@ split by subsystem.
   replaced instead of used.
 
 ### Fixed
+
+- **A long chat or run title no longer ends mid-word.** Every title was cut
+  to 100 characters when it was stored, without a mark to say so — so a
+  sub-agent run named after the first line of its instruction read as its own
+  full name, and on a maximized window the tasks screen showed it cut with
+  half the row still empty. Titles are no longer shortened when they are
+  stored: what does not fit is cut where it is drawn, to the columns that
+  screen actually has, and always ends in "…". Two places that used to clip a
+  long title silently now cut it the same way: the chat panel's top border
+  (the model caption keeps its corner) and the chat-reference picker (the
+  date keeps its place).
 
 - **A server error inside an open stream no longer passes for a finished
   reply.** When `llama-server` (or an OpenAI-compatible proxy) put an error

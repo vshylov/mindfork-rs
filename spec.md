@@ -2158,6 +2158,24 @@ A direct requirement from the task:
   (`Ctrl+←/→`, `Ctrl+Backspace/Delete`), `Ctrl+Home/End`, clear/restore (`Ctrl+K`),
   clipboard paste, and horizontal scrolling of a long title. The spellchecker lives in
   the chat screen; `app` lends it to the list screen for highlighting.
+- **A title is bounded by the surface that draws it, not in storage** (the
+  user's decision of 2026-09-06). `shared::title::sanitize_title` — the one
+  normalizer behind `F2`, `/rename`, the model-written title and the migration
+  step that names a synthesized transcript — collapses whitespace, trims, and
+  rejects an empty result, and **nothing more**: it used to cut at 100
+  characters, and a cut made in storage arrives at a screen looking whole,
+  which is how a sub-agent run named after the first line of its instruction
+  ([§9.3.2](#932-call_subagent)) ended mid-word on a maximized tasks screen
+  ([§11.10](#1110-the-tasks-screen-f7)) with half the row still empty. So
+  every surface that draws a title in a **fixed row** cuts it to its own
+  columns, with the "…" every column cut in this app carries
+  (`wrap::truncate_to_width`): the list's rows, the tasks screen's title and
+  parent columns, the feed's panel border (where the model/ctx caption keeps
+  its corner, [§11.3](#113-the-message-feed)) and the chat-reference picker
+  (where the date that tells two same-named conversations apart keeps its
+  place). The surfaces that **wrap** — the search screen's group headers
+  ([§11.2.1](#1121-the-message-level-search-screen)), a feed note — need
+  nothing and lose nothing.
 - **A model-written title** (`Ctrl+R` in the list; `/autotitle` in the chat for the
   open conversation — the key is browser-taken, `Ctrl+R` reloads the tab, which is
   what earned the action a typed route, [§11.7](#117-keybindings-preliminary)): the

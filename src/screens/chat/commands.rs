@@ -326,11 +326,8 @@ impl ChatScreen {
             self.mark_input_changed();
             return None;
         }
-        // The same ceiling the chat list's rename field enforces.
-        let title: String = title
-            .chars()
-            .take(crate::shared::title::MAX_TITLE_LEN)
-            .collect();
+        // No ceiling: a title is cut by the surface drawing it, in columns
+        // and with a marker (`shared::title::sanitize_title`, spec §11.2).
         Some(ChatIntent::RenameChat { id, title })
     }
 
