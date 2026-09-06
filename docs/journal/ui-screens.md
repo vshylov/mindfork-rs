@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (61)
+## Entries (62)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -73,6 +73,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the stop key on a background transcript, and the unread chat (done)
 - Post-M9: the tasks screen — every background run on one surface (done)
 - Post-M9: a title is cut where it is drawn, not where it is stored (done)
+- Post-M9: the "Sessions" hint names the knob that widens the group (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -3242,3 +3243,58 @@ much of it as the column has and ends in "…".
 text is the model's own instruction line, one row per chat, and inventing a
 budget for a surface with no columns would be a second invisible cut of exactly
 the kind this entry removes.
+
+### Post-M9: the "Sessions" hint names the knob that widens the group (done)
+
+**Symptom** (the user, 2026-09-06, on gpt-5.6 with "Sessions (parallel
+streams)" set to 4): the model delegated four `call_subagent` calls in one
+reply and the tasks screen showed them landing one at a time. The chat's
+records make it exact — each child's `created_at` equals the previous
+child's `finished_at` to the microsecond (the four runs at 18:03:37,
+18:04:34, 18:05:32 and 18:06:35, each starting the instant its predecessor
+ended): the width-1 group of docs/research/parallel-subagents.md §4.2, not a
+scheduler fault. Nor was it the background track the user had in mind —
+`tools.subagent_background` was off, so `start_subagent` was never offered
+and the four ran inside the turn.
+
+**Cause: two knobs, and the hint of the first read as if it were the only
+one.** `sessions` is a budget — the semaphore on the streams a turn may keep
+open, a ceiling. The width of a round's sub-agent group is
+`tools.subagent_parallel` (`run_group`'s `buffer_unordered`,
+`orchestrator/generation.rs`), a separate field in *Tools*, default 1 — and
+still 1 in the user's settings. The "Sessions" hint said *"1 (default): they
+take turns, as before"* — true, and the natural reading is that 4 makes them
+stop taking turns. Nothing on the Model tab pointed at the field that does.
+The `sub_parallel` hint already pointed the other way (it names the *Parallel
+sessions* budget it shares), so the reference was one-directional.
+
+**Fix: the hint names the second knob.** In both locales the sentence after
+the default now says the value is a ceiling, not a switch, names "Subagent:
+parallel runs" in Tools with its default, and says to raise both; the
+"Parallel sessions" paragraph of `docs/install.md` got the same sentence.
+
+**The first draft cost every tab a row, and the drift gate said so.** The
+settings screen sizes its hint panel by the **tallest hint of the whole
+catalog** (`render.rs::desc_panel_height` — one constant per terminal size
+and locale, so that `Tab` never jerks the layout), and the added sentence
+made `sessions` that hint: 801 characters in `en` against `sub_background`'s
+694, 885 in `ru` against 758. At the demo's width the panel grew by one row,
+the field list lost one, and `committed_dumps_match_the_code` went red on
+**all four** settings dumps — the Tools tab's included, which no edit had
+touched. Rather than regenerate the screenshots for a row the user loses on
+every tab, the hint was tightened elsewhere ("at no extra memory" for "so
+the memory cost is unchanged", "the open streams" for "the running
+conversations", the padding words) until it sits below the tallest hint in
+both locales — 659 and 711 characters, measured with the row counts at 60,
+88 and 110 columns — and the regenerated dumps came back byte-identical to
+the committed ones. A lesson in [lessons.md](../lessons.md) §5 now names the
+trap. Not done, recorded so it is not re-derived: folding the two knobs into one by
+deriving the group's width from `sessions`. The research keeps them apart on
+purpose — a wide group on one session interleaves the children's *rounds*,
+measured free on llama.cpp (§3.2), which a single knob could not express —
+and a wording fix is not the place to reopen a design decision.
+
+**Tests**: none new — a locale string and two documents; the bundle tests
+in `shared/i18n.rs` (every key of `en` present in `ru`, arrays joined with a
+space) cover the edit, and the screenshot drift gate covers its height.
+2866 unit tests green (138 `#[ignore]`). No live run required: text only.

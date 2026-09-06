@@ -348,7 +348,10 @@ Two modes (configured on the settings screen, `Ctrl+P`, "Model/server" section):
   - **Parallel sessions** (`sessions`, the "Parallel sessions" group): how many
     request streams the app keeps open against the server at once — the
     assistant's own reply and the sub-agents of one reply share them. **1** by
-    default, and then the launch line is exactly what it was. Above 1 the server
+    default, and then the launch line is exactly what it was. A ceiling, not a
+    switch: how many sub-agents of one reply *start* together is
+    `tools.subagent_parallel` (Settings → Tools, "Subagent: parallel runs",
+    1 by default), so raise both. Above 1 the server
     is launched with `-np N --kv-unified`: N slots over the **one** context pool
     that `-c` sizes — the same shape `llama-server` picks on its own when `-np`
     is not given (four slots over a unified pool, its default since December
