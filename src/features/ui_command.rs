@@ -40,7 +40,8 @@ pub enum UiCommand {
     /// project (spec §9.12).
     Changes,
     /// The tasks screen (`F7`): every background run and the app's own work
-    /// (spec §11.10).
+    /// (spec §11.10). `stop <kind>` stops one of the app's own tasks — the
+    /// typed route to `F6` on its row there (docs/research/tasks-stop-command.md).
     Tasks,
     /// The help/"About" dialog (`F1`).
     Help,
@@ -103,8 +104,11 @@ pub enum Arity {
     /// The argument is optional and drawn from a **closed set** of words rather
     /// than being free text (`/self clear`). Anything else is reported here, in
     /// the parser, rather than by whoever runs the command — a command with two
-    /// places to explain itself grows two wordings. A command whose subcommands
-    /// take arguments of their own belongs in a module instead (`/profile`).
+    /// places to explain itself grows two wordings. The word may carry **one
+    /// token** behind it, which travels with it for the runner to read
+    /// (`/subagents stop 2`, `/tasks stop reflection`); a subcommand that takes
+    /// free text — a name, a title — belongs in a module instead (`/profile`).
+    /// That is the registry's line (docs/research/tasks-stop-command.md §3.1).
     Subcommand(&'static [&'static str]),
 }
 
@@ -173,7 +177,7 @@ pub const COMMANDS: &[Spec] = &[
     row(&["/self"], UiCommand::SelfModel, Arity::Subcommand(&["clear"]), "ui.help.k.self", "ui.help.cmd_self"),
     row(&["/chats"], UiCommand::Chats, Arity::None, "/chats", "ui.help.cmd_chats"),
     row(&["/changes"], UiCommand::Changes, Arity::None, "/changes", "ui.help.cmd_changes"),
-    row(&["/tasks"], UiCommand::Tasks, Arity::None, "/tasks", "ui.help.cmd_tasks"),
+    row(&["/tasks"], UiCommand::Tasks, Arity::Subcommand(&["stop"]), "ui.help.k.tasks", "ui.help.cmd_tasks"),
     row(&["/help"], UiCommand::Help, Arity::None, "/help", "ui.help.cmd_help"),
     // The conversation.
     row(&["/new"], UiCommand::NewChat, Arity::Optional, "ui.help.k.new", "ui.help.cmd_new"),
@@ -475,7 +479,11 @@ mod tests {
     fn errors_are_localized_for_all_langs() {
         for &lang in Lang::ALL {
             let loc = locale(lang);
-            for (input, must_name) in [("/stop now", "/stop"), ("/search", "/search")] {
+            for (input, must_name) in [
+                ("/stop now", "/stop"),
+                ("/search", "/search"),
+                ("/tasks halt", "/tasks"),
+            ] {
                 let Some(Err(msg)) = parse(input, loc) else {
                     panic!("{input:?} should have been reported in {lang:?}");
                 };
@@ -512,5 +520,25 @@ mod tests {
             "stop"
         );
         assert!(parse("/subagents halt 2", ru()).unwrap().is_err());
+    }
+
+    /// `/tasks` keeps its bare meaning (the screen) and gains `stop <kind>`
+    /// (docs/research/tasks-stop-command.md §3.1): the word is normalized, the
+    /// kind travels as typed — it is the runner's to match — and a word outside
+    /// the set is reported naming the usage line.
+    #[test]
+    fn tasks_bare_is_the_screen_and_stop_carries_the_kind() {
+        let bare = parse("/tasks", ru()).expect("recognized").expect("parsed");
+        assert_eq!(bare.command, UiCommand::Tasks);
+        assert_eq!(bare.argument, "");
+        let stop = parse("/tasks STOP Reflection", ru())
+            .expect("recognized")
+            .expect("parsed");
+        assert_eq!(stop.command, UiCommand::Tasks);
+        assert_eq!(stop.argument, "stop Reflection");
+        let Some(Err(msg)) = parse("/tasks halt", ru()) else {
+            panic!("an unknown word must be reported");
+        };
+        assert!(msg.contains("/tasks [stop"), "{msg}");
     }
 }

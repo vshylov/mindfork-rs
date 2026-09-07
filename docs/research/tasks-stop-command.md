@@ -1,8 +1,9 @@
 # `/tasks stop <kind>` — the typed route to stopping a silent task
 
-> **Status:** proposed (2026-09-08) — the forks in §5 await the user's
-> decision; no stage-0 probe, since nothing about a model's behaviour is in
-> question. The item the stop track recorded and did not take
+> **Status:** implemented (2026-09-08) — every fork at its recommendation
+> (the user's decision, 2026-09-08); the regression run in §6.1; no stage-0
+> probe, since nothing about a model's behaviour was in question.
+> The item the stop track recorded and did not take
 > ([stop-silent-task.md](stop-silent-task.md) §7, its fork F2b): `F6` on a
 > task row of the tasks screen stops one of the app's own tasks, and that
 > key has no typed twin — the one action in the interface whose only route
@@ -283,6 +284,15 @@ and only the turn's — `Esc`'s split in §11.7 stands), the count of commands
   sends and measured (its §6.1); that smoke and the two beside it
   (`silent_roll_e2e_live`, `background_subagent_e2e_live`) are run once on
   the LAN stack as the regression, and the outcome recorded in the journal.
+
+### 6.1 The run (2026-09-08)
+
+The unit suite: **2920 green, 146 `#[ignore]`** (+12: one in the parser,
+ten in `screens/chat/tests.rs::tasks_stop`, one in the runtime); the demo
+dumps unchanged. The regression on the LAN stack (Qwen 3.6 27B, four slots
+over 16384): `stop_silent_task_e2e_live`, `silent_roll_e2e_live`,
+`background_subagent_e2e_live` — **3/3 in 58.7 s**, the stop's notice
+0.00 s after the stop, the next `/compact` in 2.2 s.
 
 ## 7. Not in this track (recorded so they are not re-derived)
 

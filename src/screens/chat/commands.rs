@@ -56,6 +56,28 @@ fn resolve_named(items: &[(Uuid, String)], wanted: &str) -> Result<(Uuid, String
     Err(hits.into_iter().map(|(_, name)| name.clone()).collect())
 }
 
+/// The kind words of `/tasks stop <kind>` (docs/research/tasks-stop-command.md
+/// §3.1): each the word of the command or screen the task belongs with
+/// (`/self` is the self-model, `/compact` the roll, the notes are the notes),
+/// one spelling, matched without case — protocol, like every command word,
+/// never localized. In the order the tasks screen lists the rows; the notes
+/// quote this table, so a word cannot exist unadvertised.
+static TASK_KINDS: [(&str, BackgroundKind); 4] = [
+    ("reflection", BackgroundKind::Reflection),
+    ("notes", BackgroundKind::Consolidation),
+    ("self", BackgroundKind::SelfConsolidation),
+    ("compact", BackgroundKind::Compaction),
+];
+
+/// The four words, joined for a note.
+fn task_words() -> String {
+    TASK_KINDS
+        .iter()
+        .map(|(word, _)| *word)
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
 impl ChatScreen {
     /// The registry's commands (`/settings`, `/find`, `/regen`, …) — intercepted
     /// on `Enter` and never sent as a message. Returns `None` when the text is
@@ -104,7 +126,7 @@ impl ChatScreen {
             // "the chat list" (`/stop` is the other half).
             UiCommand::Chats => Some(ChatIntent::OpenChatList),
             UiCommand::Changes => Some(ChatIntent::OpenChanges),
-            UiCommand::Tasks => Some(ChatIntent::OpenTasks),
+            UiCommand::Tasks => self.typed_tasks(argument),
             // The runtime owns the overlay; the typed route reports the intent
             // it opens on, and is the chat's only route of its own — `?` was
             // dropped, `F1` never reaches the screen (spec §11.7).
@@ -247,6 +269,70 @@ impl ChatScreen {
             .tf("ui.cmd.subagents_stopped", &[("title", &title)]);
         self.push_note(&text);
         Some(ChatIntent::StopSubagentRun { id })
+    }
+
+    /// `/tasks [stop <kind>]` (spec §11.10): bare — the screen, as `F7`;
+    /// `stop` — one of the app's own silent tasks, the typed route to `F6` on
+    /// its row there (docs/research/tasks-stop-command.md §3.2). The parser
+    /// normalized `stop` and handed the kind over as typed.
+    fn typed_tasks(&mut self, argument: String) -> Option<ChatIntent> {
+        let Some(which) = argument.strip_prefix("stop") else {
+            return Some(ChatIntent::OpenTasks);
+        };
+        self.typed_tasks_stop(which.trim())
+    }
+
+    /// `/tasks stop [kind]`: the named task if it is running, else a note that
+    /// says so; bare, the only running task — several are listed by word,
+    /// none is a note (the `/subagents stop` shape). *Running* is the chat
+    /// screen's own flag for the kind — the status bar's source, on exactly
+    /// while the task's slot is taken, streaming or waiting — so the answer is
+    /// immediate and the same predicate the tasks screen's `F6` uses. The
+    /// intent ends in the very command that key sends; a kind that landed
+    /// while the command was typed reaches an idle slot and is ignored there.
+    fn typed_tasks_stop(&mut self, which: &str) -> Option<ChatIntent> {
+        let kind = if which.is_empty() {
+            let running: Vec<&(&str, BackgroundKind)> = TASK_KINDS
+                .iter()
+                .filter(|(_, kind)| self.task_running(*kind))
+                .collect();
+            match running.as_slice() {
+                [] => return self.note("ui.cmd.tasks_none_running"),
+                [(_, kind)] => *kind,
+                several => {
+                    let words = several
+                        .iter()
+                        .map(|(word, _)| *word)
+                        .collect::<Vec<_>>()
+                        .join(" · ");
+                    let text = self.loc.tf("ui.cmd.tasks_stop_which", &[("kinds", &words)]);
+                    self.push_note(&text);
+                    return None;
+                }
+            }
+        } else {
+            let known = TASK_KINDS
+                .iter()
+                .find(|(word, _)| which.eq_ignore_ascii_case(word));
+            let Some((_, kind)) = known else {
+                let text = self.loc.tf(
+                    "ui.cmd.tasks_bad_kind",
+                    &[("arg", which), ("kinds", &task_words())],
+                );
+                self.push_note(&text);
+                return None;
+            };
+            *kind
+        };
+        let task = self.loc.t(kind.label_key());
+        if !self.task_running(kind) {
+            let text = self.loc.tf("ui.cmd.tasks_not_running", &[("task", task)]);
+            self.push_note(&text);
+            return None;
+        }
+        let text = self.loc.tf("ui.cmd.tasks_stopping", &[("task", task)]);
+        self.push_note(&text);
+        Some(ChatIntent::StopBackgroundTask { kind })
     }
 
     /// `/regen`·`/retry` and `/takeback`. Both are ignored during generation by

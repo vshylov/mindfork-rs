@@ -3062,7 +3062,7 @@ docs/history/external-api-key.md.
 | `F2` | rename the chat |
 | `F5` | copy the entire chat conversation to the clipboard (the active chat / the one selected in the list) |
 | `F6` | on the open transcript of a **background** subagent run: stop the run (§9.3.2; `/subagents stop [n]` is the typed route). Anywhere else the key does nothing and is not advertised |
-| `F7` | the tasks screen: every sub-agent and dialogue run across every chat — running with its position, landed with its outcome — and the app's own background work (§11.10; `/tasks` is the typed route). There: `Enter` opens a run's transcript, `P` its chat, `F6` stops a running background run |
+| `F7` | the tasks screen: every sub-agent and dialogue run across every chat — running with its position, landed with its outcome — and the app's own background work (§11.10; `/tasks` is the typed route). There: `Enter` opens a run's transcript, `P` its chat, `F6` stops a running background run or one of the app's own tasks (`/tasks stop <kind>` is the typed route to the latter) |
 | `Ctrl+R` | in a chat: regenerate the last response; in the chat list: ask the model to title the selected chat (§11.2) |
 | `Ctrl+U` | write a message as the user (impersonation, §11.8) |
 | `Ctrl+E` | delete the last exchange (the text is returned to the input box) |
@@ -3247,7 +3247,7 @@ the last of which **closes the tab the session runs in**. Typing survives every
 host, so the interface is fully operable by commands plus the safe key subset
 (printable characters, `Enter`, `Esc`, `Backspace`/`Delete`, `Tab`, the arrows,
 `Home`/`End`, `PageUp`/`PageDown`, `Shift`+arrows). Twenty-four commands:
-`/settings` `/self` `/chats` `/changes` `/tasks` `/help` · `/new [profile]`
+`/settings` `/self` `/chats` `/changes` `/tasks [stop <kind>]` `/help` · `/new [profile]`
 `/rename [title]` `/autotitle` `/clone` `/copy` `/regen`·`/retry` `/continue`
 `/takeback` `/impersonate [text]` `/stop` · `/find [text]` `/search <text>`
 `/links` · `/thoughts` `/toolcalls` `/subagents [expand|collapse|stop [n]]` `/mouse`
@@ -3271,7 +3271,10 @@ Load-bearing properties:
 - **One registry, not nineteen parser modules** — each command is an exact word
   plus at most one free-text argument, so copied parsers would be the sliding
   self-duplication the gate keeps catching; commands with real syntax
-  (`/file`, `/image`, `/rag`, `/tts`) keep their own modules. The **help tab's
+  (`/file`, `/image`, `/rag`, `/tts`) keep their own modules. A closed-set
+  word may carry **one token** behind it (`/subagents stop 2`, `/tasks stop
+  reflection`) — the parser closes over the word, the runner over the token;
+  free text behind a word is what earns a module (`/profile`). The **help tab's
   rows are derived from the registry**, so a command cannot exist undiscoverable.
 - **Not commands: text editing.** A command is typed *in* the box, so it cannot
   operate on the box's contents; the safe keys cover editing in every host, and
@@ -3645,8 +3648,13 @@ through the ordinary activation; `P` opens its parent chat; `F6` stops a
 — not offered on a landed run, nor on a child of the turn in flight, whose
 seat that command does not know (such a run ends with its turn, by `Esc` in
 the chat) — and **stops a silent task** on a row that is *running* or
-*waiting* (`AppCommand::StopBackgroundTask`; there is no command for it,
-the screen is the surface): the slot's token is cancelled and the task
+*waiting* (`AppCommand::StopBackgroundTask`; **`/tasks stop <kind>`** is the
+typed route — the words `reflection · notes · self · compact`, bare `stop`
+taking the only running task, listing them by word when several run and
+answering with a note when none does, the running state read off the chat
+screen's own status-bar flags, the task named in the note with this screen's
+words; [docs/research/tasks-stop-command.md](docs/research/tasks-stop-command.md)):
+the slot's token is cancelled and the task
 lands as *cancelled* — its failure streak untouched, the window it advanced
 at spawn skipped as on a failure, `SelfModelChanged` still announced for
 the two self-model kinds since a partial run may have written — and the

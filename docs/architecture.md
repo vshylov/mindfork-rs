@@ -2756,7 +2756,10 @@ a second while a run is out or a silent task runs (`TasksScreen::needs_repaint`)
 — and in the latter case the loop re-sends `RequestTasks` on that tick, since a
 task's *waiting* state (`AppTask::waiting`: the snapshot compares
 `SessionBudget::silent_streaming` against `background::lane_label`) flips
-inside the task — and never when the list is all landed and idle. The run-state words the chat list and this screen share
+inside the task — and never when the list is all landed and idle. A silent task's name is
+`BackgroundKind::label_key` on the enum itself, read by this screen's rows and
+by the `/tasks stop` note alike, so the two surfaces cannot call one task two
+things. The run-state words the chat list and this screen share
 live in one place (`chat_list::run_state_key`), as does the Paragraph-drawn
 lists' scroll rule (`shared::ui::keep_visible`, the changes screen's, now with
 two callers).
@@ -2797,7 +2800,16 @@ precondition blocks it. Three intents are new (`RenameChat`, `CloneChat`,
 `SearchMessages`), all mapping onto `AppCommand`s the chat list already used.
 The help dialog's "Commands" tab is **composed** (`popups::command_rows`) from
 the parser-owning commands, then the registry, then the way out — deriving the
-middle section is what makes a command discoverable by construction.
+middle section is what makes a command discoverable by construction. A
+closed-set word may carry **one token** behind it — `/subagents stop 2`,
+`/tasks stop reflection` — which the runner reads: `typed_tasks_stop` resolves
+the word against `TASK_KINDS` (four protocol words, never localized) and the
+chat screen's own four status-bar flags (`task_running`, on exactly while the
+task's slot is taken), answers with a note naming the task through
+`BackgroundKind::label_key`, and ends in `ChatIntent::StopBackgroundTask` — the
+very `AppCommand` the tasks screen's `F6` sends
+([research/tasks-stop-command.md](research/tasks-stop-command.md)). Free text
+behind a word is what earns a module.
 
 Stage 2 added the two actions that live in *other* screens:
 `features/profile_command.rs` (`/profile list|new|delete` — a subcommand plus an

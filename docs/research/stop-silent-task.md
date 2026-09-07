@@ -282,7 +282,10 @@ regression: 3/3 in 57 s. The unit suite: 2903 green, 144 `#[ignore]`.
 ## 7. Not in this track (recorded so they are not re-derived)
 
 - **Stopping the title** — no row, a private token, and a title is seconds.
-- **A `/tasks stop` command** (F2b).
+- **A `/tasks stop` command** (F2b) — **done** as its own track
+  ([tasks-stop-command.md](tasks-stop-command.md), 2026-09-08): both halves
+  of the reading above turned out light — the names were the screen's, the
+  parser already carried a token behind a word.
 - **Refunding the window on a stop** (F4b), if users turn out to stop tasks
   to *postpone* them rather than to skip them.
 - **A smaller batch** for the CPU build — **done** as its own track

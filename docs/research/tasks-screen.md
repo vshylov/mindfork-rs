@@ -306,7 +306,8 @@ orchestrator gains a progress step.
 - **Cancelling a silent task** from the screen — **done** (2026-09-07,
   [stop-silent-task.md](stop-silent-task.md)): `F6` on a running or
   waiting task row, the outcome *cancelled*, neither a success nor a
-  failure to the streak.
+  failure to the streak; its typed route `/tasks stop <kind>` followed
+  (2026-09-08, [tasks-stop-command.md](tasks-stop-command.md)).
 - **History beyond the cap**: a searchable log of every run ever. The chat
   list and `chat_search` already reach every transcript.
 - **The silent tasks under the app-wide budget**

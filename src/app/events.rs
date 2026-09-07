@@ -949,3 +949,19 @@ pub enum BackgroundKind {
     /// (`/compact`, spec §6.7).
     Compaction,
 }
+
+impl BackgroundKind {
+    /// The bundle key of the task's name in the interface language — the
+    /// tasks screen's row label, and the name a `/tasks stop` note quotes
+    /// (spec §11.10, §11.7). One function for both surfaces, so the two
+    /// cannot call one task two things
+    /// (docs/research/tasks-stop-command.md §3.2).
+    pub fn label_key(self) -> &'static str {
+        match self {
+            BackgroundKind::Reflection => "ui.tasks.app.reflection",
+            BackgroundKind::Consolidation => "ui.tasks.app.consolidation",
+            BackgroundKind::SelfConsolidation => "ui.tasks.app.self_consolidation",
+            BackgroundKind::Compaction => "ui.tasks.app.compaction",
+        }
+    }
+}

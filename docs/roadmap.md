@@ -120,7 +120,11 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
     *cancelled* that touches neither the failure streak nor the spawn-time
     bookkeeping, one notice for a `/compact` the user typed,
     [docs/research/stop-silent-task.md](research/stop-silent-task.md), every
-    fork at its recommendation). **The silent tasks under the app-wide
+    fork at its recommendation), **and its typed route — done** (2026-09-08:
+    `/tasks stop <kind>` on the registry row, the words `reflection · notes ·
+    self · compact`, the answer off the chat screen's own flags,
+    [docs/research/tasks-stop-command.md](research/tasks-stop-command.md),
+    every fork at its recommendation). **The silent tasks under the app-wide
     budget are done** (2026-09-07: the budget's silent lane — one permit
     for the app's own requests over the same pool sum — and the pool known
     at one session, where a `llama-server` without `-np` runs four unified
