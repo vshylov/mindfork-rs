@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (64)
+## Entries (65)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -76,6 +76,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the "Sessions" hint names the knob that widens the group (done)
 - Post-M9: stopping a silent task from the tasks screen (done)
 - Post-M9: `/tasks stop <kind>` — the typed route to stopping a silent task (done)
+- Post-M9: `/tasks stop all` — every running silent task, in one word (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -3434,3 +3435,49 @@ types an underscore); the orchestrator answering "not running" with a
 notice (a round trip and a second wording for one fact); the error family's
 names (`ui.err.bg_*`) in the note (a second name per task); silence as the
 feedback (a typed command that vanishes reads as a refusal).
+
+### Post-M9: `/tasks stop all` — every running silent task, in one word (done)
+
+**What.** The fifth word the previous entry's track recorded as cheap to
+add when someone asked for it (tasks-stop-command.md §7). With several of
+the app's tasks running, bare `/tasks stop` lists their words and asks, so
+stopping both was two commands typed from the list; `all` takes the whole
+set. The design [docs/research/tasks-stop-all.md](../research/tasks-stop-all.md),
+every fork at its recommendation (the user's decision, 2026-09-08); no
+stage-0 probe.
+
+**How.** `all` is a modifier, not a kind: `typed_tasks_stop` checks it
+before the table, case-insensitively, so `TASK_KINDS` stays the set of kinds
+the tasks screen shows and the notes that quote it stay true. The collection
+of the running kinds bare `stop` already did became `running_tasks()` (the
+table's order); `all` over an empty set is the existing "none running" note,
+otherwise one note naming the tasks by the tasks screen's words
+(`ui.cmd.tasks_stopping_all`, joined with ", ") and **one intent carrying
+the kinds** — `ChatIntent::StopBackgroundTasks { kinds }`, which replaced the
+single-kind variant (the named-kind and bare-`stop` routes send a
+one-element list). `dispatch_chat` sends `AppCommand::StopBackgroundTask {
+kind }` **once per kind** and returns — the third shape of an intent beside
+"one command" and "none" — so every stop reaches the orchestrator through
+the very command `F6` sends and nothing in `orchestrator/` changed. The
+"which" and "bad kind" notes end with "— or `all`", the help label reads
+`/tasks [stop <kind>|all]`.
+
+**Tests**: +5 — `screens/chat/tests.rs::tasks_stop` (`all` with two running
+→ both kinds in the table's order and a note naming both, not the third;
+with one → the one-element list, the word matched without case; with none →
+the note; the "which" and "bad kind" notes name `all`; the locale gate
+covers the new key), `runtime/tests.rs` (one kind → one command and no
+more; two kinds → two commands in order) — **2925 unit tests green, 146
+`#[ignore]`**; the demo dumps unchanged.
+
+**Live**: not required — the same command the stop track measured, sent
+more than once. The LAN regression (`stop_silent_task_e2e_live`,
+`silent_roll_e2e_live`, `background_subagent_e2e_live`; Qwen 3.6 27B, four
+slots over 16384): 3/3 in 54.0 s.
+
+**Rejected**: a new `AppCommand::StopAllBackgroundTasks` onto `Quit`'s
+`cancel_all_bg()` (a second verb for one act, and the note would still need
+the flags); one note per task (the feed is not a log); a key for "stop all"
+on the tasks screen (`F6` is per row, the footer names what works on the
+selected row); bare `stop` meaning everything (the `/subagents stop` mirror
+stands).

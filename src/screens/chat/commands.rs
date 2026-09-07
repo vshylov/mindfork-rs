@@ -291,11 +291,29 @@ impl ChatScreen {
     /// intent ends in the very command that key sends; a kind that landed
     /// while the command was typed reaches an idle slot and is ignored there.
     fn typed_tasks_stop(&mut self, which: &str) -> Option<ChatIntent> {
-        let kind = if which.is_empty() {
-            let running: Vec<&(&str, BackgroundKind)> = TASK_KINDS
+        // `all`: every running task, in the table's order — a modifier, not
+        // a kind, so it is checked before the table and never listed as one
+        // (docs/research/tasks-stop-all.md §3). The stops fan out in the
+        // runtime into the very command `F6` sends, once per kind.
+        if which.eq_ignore_ascii_case("all") {
+            let running = self.running_tasks();
+            if running.is_empty() {
+                return self.note("ui.cmd.tasks_none_running");
+            }
+            let names = running
                 .iter()
-                .filter(|(_, kind)| self.task_running(*kind))
-                .collect();
+                .map(|(_, kind)| self.loc.t(kind.label_key()))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let text = self
+                .loc
+                .tf("ui.cmd.tasks_stopping_all", &[("tasks", &names)]);
+            self.push_note(&text);
+            let kinds = running.into_iter().map(|(_, kind)| kind).collect();
+            return Some(ChatIntent::StopBackgroundTasks { kinds });
+        }
+        let kind = if which.is_empty() {
+            let running = self.running_tasks();
             match running.as_slice() {
                 [] => return self.note("ui.cmd.tasks_none_running"),
                 [(_, kind)] => *kind,
@@ -332,7 +350,17 @@ impl ChatScreen {
         }
         let text = self.loc.tf("ui.cmd.tasks_stopping", &[("task", task)]);
         self.push_note(&text);
-        Some(ChatIntent::StopBackgroundTask { kind })
+        Some(ChatIntent::StopBackgroundTasks { kinds: vec![kind] })
+    }
+
+    /// The app's tasks whose slot is taken right now, with their words, in
+    /// the table's order — what bare `stop` chooses among and `all` takes.
+    fn running_tasks(&self) -> Vec<(&'static str, BackgroundKind)> {
+        TASK_KINDS
+            .iter()
+            .copied()
+            .filter(|(_, kind)| self.task_running(*kind))
+            .collect()
     }
 
     /// `/regen`·`/retry` and `/takeback`. Both are ignored during generation by

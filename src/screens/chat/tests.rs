@@ -5130,8 +5130,8 @@ mod tasks_stop {
         set_running(&mut c, BackgroundKind::Reflection, true);
         assert_eq!(
             c.run("/tasks stop reflection"),
-            Some(ChatIntent::StopBackgroundTask {
-                kind: BackgroundKind::Reflection
+            Some(ChatIntent::StopBackgroundTasks {
+                kinds: vec![BackgroundKind::Reflection]
             })
         );
         let note = c.last_note();
@@ -5154,7 +5154,7 @@ mod tasks_stop {
             set_running(&mut c, kind, true);
             assert_eq!(
                 c.run(&format!("/tasks stop {word}")),
-                Some(ChatIntent::StopBackgroundTask { kind }),
+                Some(ChatIntent::StopBackgroundTasks { kinds: vec![kind] }),
                 "word {word:?}"
             );
         }
@@ -5180,8 +5180,8 @@ mod tasks_stop {
         set_running(&mut c, BackgroundKind::Compaction, true);
         assert_eq!(
             c.run("/tasks stop"),
-            Some(ChatIntent::StopBackgroundTask {
-                kind: BackgroundKind::Compaction
+            Some(ChatIntent::StopBackgroundTasks {
+                kinds: vec![BackgroundKind::Compaction]
             })
         );
     }
@@ -5232,8 +5232,8 @@ mod tasks_stop {
         set_running(&mut c, BackgroundKind::Consolidation, true);
         assert_eq!(
             c.run("/tasks stop notes"),
-            Some(ChatIntent::StopBackgroundTask {
-                kind: BackgroundKind::Consolidation
+            Some(ChatIntent::StopBackgroundTasks {
+                kinds: vec![BackgroundKind::Consolidation]
             })
         );
     }
@@ -5246,6 +5246,7 @@ mod tasks_stop {
             let loc = locale(lang);
             for (key, args) in [
                 ("ui.cmd.tasks_stopping", vec![("task", "x")]),
+                ("ui.cmd.tasks_stopping_all", vec![("tasks", "x")]),
                 ("ui.cmd.tasks_not_running", vec![("task", "x")]),
                 ("ui.cmd.tasks_none_running", vec![]),
                 ("ui.cmd.tasks_stop_which", vec![("kinds", "a · b")]),
@@ -5259,7 +5260,7 @@ mod tasks_stop {
                     !text.contains('{') && !text.contains('}'),
                     "unsubstituted placeholder in {lang:?} {key}: {text}"
                 );
-                if key != "ui.cmd.tasks_stopping" {
+                if !key.starts_with("ui.cmd.tasks_stopping") {
                     assert!(
                         text.contains("/tasks"),
                         "{lang:?} {key} names no route: {text}"
@@ -5268,5 +5269,71 @@ mod tasks_stop {
             }
             assert!(loc.t("ui.help.k.tasks").starts_with("/tasks [stop"));
         }
+    }
+
+    // ---- /tasks stop all (docs/research/tasks-stop-all.md) ----
+
+    /// `all` takes every running task in the table's order, in one intent,
+    /// and one note names them all by the tasks screen's words.
+    #[test]
+    fn all_stops_every_running_task_in_the_tables_order() {
+        let mut c = Cmd::new();
+        set_running(&mut c, BackgroundKind::Compaction, true);
+        set_running(&mut c, BackgroundKind::Reflection, true);
+        assert_eq!(
+            c.run("/tasks stop all"),
+            Some(ChatIntent::StopBackgroundTasks {
+                kinds: vec![BackgroundKind::Reflection, BackgroundKind::Compaction]
+            })
+        );
+        let note = c.last_note();
+        let loc = c.s.loc;
+        assert!(
+            note.contains(loc.t("ui.tasks.app.reflection"))
+                && note.contains(loc.t("ui.tasks.app.compaction"))
+                && !note.contains(loc.t("ui.tasks.app.consolidation")),
+            "{note}"
+        );
+    }
+
+    /// `all` with one task running is the same path with one name; the word
+    /// is matched without case.
+    #[test]
+    fn all_with_one_running_names_that_one() {
+        let mut c = Cmd::new();
+        set_running(&mut c, BackgroundKind::Consolidation, true);
+        assert_eq!(
+            c.run("/tasks stop ALL"),
+            Some(ChatIntent::StopBackgroundTasks {
+                kinds: vec![BackgroundKind::Consolidation]
+            })
+        );
+        let note = c.last_note();
+        assert!(
+            note.contains(c.s.loc.t("ui.tasks.app.consolidation")),
+            "{note}"
+        );
+    }
+
+    #[test]
+    fn all_with_none_running_says_so() {
+        let mut c = Cmd::new();
+        assert_eq!(c.run("/tasks stop all"), None);
+        let note = c.last_note();
+        assert!(note.contains("/tasks"), "{note}");
+    }
+
+    /// The two notes that list the kinds name `all` as the route for the whole
+    /// set (lessons §4: an answer that lists the choices and omits the one that
+    /// takes them all is a dead end).
+    #[test]
+    fn the_kind_notes_name_all() {
+        let mut c = Cmd::new();
+        set_running(&mut c, BackgroundKind::Reflection, true);
+        set_running(&mut c, BackgroundKind::Compaction, true);
+        assert_eq!(c.run("/tasks stop"), None);
+        assert!(c.last_note().contains("all"), "{}", c.last_note());
+        assert_eq!(c.run("/tasks stop foo"), None);
+        assert!(c.last_note().contains("all"), "{}", c.last_note());
     }
 }

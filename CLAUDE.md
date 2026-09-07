@@ -171,7 +171,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-08, version 0.9.8)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2920 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **2925 unit tests
 green, 146 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
@@ -183,6 +183,18 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 `tools/doc_index_check.py`. A new track adds a line; a line that has stopped
 being recent is dropped, not shortened.
 
+- **`/tasks stop all` — every running silent task, in one word** — the
+  fifth word the previous track recorded as cheap to add when asked for.
+  `all` is a modifier checked before the kind table, the chat screen
+  collects the running kinds as bare `stop` already did, one note names
+  them with the tasks screen's words, and one intent carries them —
+  `ChatIntent::StopBackgroundTasks { kinds }`, which the runtime fans out
+  into the very `StopBackgroundTask` command `F6` sends, once per kind, so
+  the orchestrator is untouched (the alternative, a new command onto
+  `Quit`'s `cancel_all_bg`, was a second verb for one act); the two notes
+  that list the kinds now name `all` as the route for the whole set
+  ([docs/research/tasks-stop-all.md](docs/research/tasks-stop-all.md),
+  spec §11.7, §11.10, [docs/journal/ui-screens.md](docs/journal/ui-screens.md)).
 - **`/tasks stop <kind>` — the typed route to stopping a silent task** —
   `F6` on a task row of the tasks screen was the one action whose only
   route was a function key on a screen, against spec §11.7's rule that
@@ -400,22 +412,6 @@ being recent is dropped, not shortened.
   seed needs its own semantics (and no "already seeded" flag exists)
   ([docs/research/language-model-history.md](docs/research/language-model-history.md)
   §9, spec §9.14, [docs/journal/tools.md](docs/journal/tools.md)).
-- **`run_dialogue` — a dialogue of two personas, directed by the assistant** —
-  the subagent track's promised next feature, **complete (both stages)**: a
-  loop-executed
-  sibling of `call_subagent` where two caller-composed personas talk (each
-  sees the other as the user, the role-encoded transcript on the call's
-  record, `CHAT_SCHEMA` 3) and a director — the parent persona with a
-  `/compact`-style brief of the conversation — steers via notes/retries/
-  rewrites and stops the scene, with the open transcript streaming each line
-  on its speaker's side while it runs; probed GO on both gate models and two clouds
-  before any product code, with the muted re-ask for the all-thinking empty
-  turn discovered live
-  ([docs/research/two-agent-dialogue.md](docs/research/two-agent-dialogue.md),
-  [ADR 0011](docs/decisions/0011-dialogue-directed-run.md), spec §9.13,
-  [docs/journal/tools.md](docs/journal/tools.md)).
-## Pitfalls
-
 - **The TUI "hangs" on a headless launch** (no TTY) — this is expected; clean
   exit via `Esc`/`Ctrl+Q` is covered by unit tests. Live verification needs a
   real terminal.

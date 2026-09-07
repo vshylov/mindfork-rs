@@ -173,12 +173,13 @@ pub enum ChatIntent {
     StopSubagentRun {
         id: Uuid,
     },
-    /// Stop one of the app's own silent tasks (command `/tasks stop <kind>`,
-    /// spec §11.10) — the typed twin of `F6` on the task's row of the tasks
-    /// screen, ending in the very command that key sends
-    /// (docs/research/tasks-stop-command.md).
-    StopBackgroundTask {
-        kind: BackgroundKind,
+    /// Stop the app's own silent tasks named (command `/tasks stop <kind>`,
+    /// spec §11.10; `/tasks stop all` lists every running one) — the typed
+    /// twin of `F6` on a task's row of the tasks screen: the runtime sends
+    /// the very command that key sends, once per kind, in this order
+    /// (docs/research/tasks-stop-command.md, tasks-stop-all.md §3.2).
+    StopBackgroundTasks {
+        kinds: Vec<BackgroundKind>,
     },
     /// Write the open chat to a file (command `/export [md|json] [path]`).
     /// The orchestrator owns the conversation and the disk, so it formats and

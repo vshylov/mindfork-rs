@@ -1,8 +1,8 @@
 # `/tasks stop all` — every running silent task, in one word
 
-> **Status:** proposed (2026-09-08) — the forks in §5 await the user's
-> decision; no stage-0 probe (nothing about a model's behaviour is in
-> question). The item [tasks-stop-command.md](tasks-stop-command.md) §7
+> **Status:** implemented (2026-09-08) — every fork at its recommendation
+> (the user's decision, 2026-09-08); the regression run in §6.1; no stage-0
+> probe (nothing about a model's behaviour is in question). The item [tasks-stop-command.md](tasks-stop-command.md) §7
 > recorded: *four words typed four times is the rarest case; a fifth word is
 > cheap to add when someone asks for it.* Someone asked. The design is a page
 > because the mechanism is one of two, and the choice is the kind the
@@ -138,6 +138,14 @@ F4): one code path, and the word said *all*.
 - **Live: not required** — the same command the stop track's smoke
   measured, sent more than once; the LAN regression trio run once as the
   habit.
+
+### 6.1 The run (2026-09-08)
+
+The unit suite: **2925 green, 146 `#[ignore]`** (+5: four in
+`screens/chat/tests.rs::tasks_stop`, one in the runtime); the demo dumps
+unchanged. The regression on the LAN stack (Qwen 3.6 27B, four slots over
+16384): `stop_silent_task_e2e_live`, `silent_roll_e2e_live`,
+`background_subagent_e2e_live` — **3/3 in 54.0 s**.
 
 ## 7. Not in this track
 

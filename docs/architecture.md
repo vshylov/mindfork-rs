@@ -2806,9 +2806,13 @@ closed-set word may carry **one token** behind it — `/subagents stop 2`,
 the word against `TASK_KINDS` (four protocol words, never localized) and the
 chat screen's own four status-bar flags (`task_running`, on exactly while the
 task's slot is taken), answers with a note naming the task through
-`BackgroundKind::label_key`, and ends in `ChatIntent::StopBackgroundTask` — the
-very `AppCommand` the tasks screen's `F6` sends
-([research/tasks-stop-command.md](research/tasks-stop-command.md)). Free text
+`BackgroundKind::label_key`, and ends in `ChatIntent::StopBackgroundTasks {
+kinds }` — `all` collects every running kind (`running_tasks`, the table's
+order) — which `dispatch_chat` fans out into the very `AppCommand` the tasks
+screen's `F6` sends, once per kind: the third shape of an intent beside "one
+command" and "none", and the one that leaves the orchestrator untouched
+([research/tasks-stop-command.md](research/tasks-stop-command.md),
+[research/tasks-stop-all.md](research/tasks-stop-all.md)). Free text
 behind a word is what earns a module.
 
 Stage 2 added the two actions that live in *other* screens:
