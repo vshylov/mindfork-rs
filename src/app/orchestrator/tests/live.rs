@@ -4876,7 +4876,10 @@ use futures_util::StreamExt as _;
 struct ScriptedParent {
     live: Arc<dyn EngineBackend>,
     scripts: std::sync::Mutex<std::collections::VecDeque<Vec<ChatChunk>>>,
-    persona: &'static str,
+    /// A request whose system message carries any of these goes to the live
+    /// server (a child's persona, a compaction roll's prompt); every other
+    /// request plays the next script.
+    live_markers: &'static [&'static str],
     in_flight: Arc<std::sync::atomic::AtomicUsize>,
     max_in_flight: Arc<std::sync::atomic::AtomicUsize>,
 }
@@ -4900,7 +4903,7 @@ impl EngineBackend for ScriptedParent {
         if req
             .system
             .as_deref()
-            .is_some_and(|s| s.contains(self.persona))
+            .is_some_and(|s| self.live_markers.iter().any(|m| s.contains(m)))
         {
             let open = self.in_flight.fetch_add(1, SeqCst) + 1;
             self.max_in_flight.fetch_max(open, SeqCst);
@@ -4933,6 +4936,84 @@ impl EngineBackend for ScriptedParent {
 }
 
 const READER: &str = "You are a reader.";
+
+/// `paragraphs` paragraphs of ~30 tokens each on both gate tokenizers
+/// (measured: 36 of them are 1150 tokens with the persona on Gemma 3),
+/// distinct per `tag` so no prefix is shared between two archives and the
+/// cache cannot help either.
+fn archive(tag: &str, paragraphs: usize) -> String {
+    (0..paragraphs)
+        .map(|i| format!("Paragraph {i} of the {tag} archive describes a lighthouse keeper's ordinary evening: the lamp is lit, the log is written, the tide is noted."))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The delegator's chat, as the pool smokes open it: the orchestrator on
+/// `cfg` over `backend`, the server's slot count waited for (external mode's
+/// pool rule needs it in hand), an English "Delegator" profile with `tool`
+/// enabled, and a fresh chat on that profile. Returns the orchestrator's
+/// handles and the chat's id.
+async fn delegator_chat(
+    backend: Arc<dyn EngineBackend>,
+    cfg: AppConfig,
+    tool: &str,
+) -> (
+    tempfile::TempDir,
+    UnboundedSender<AppCommand>,
+    UnboundedReceiver<AppEvent>,
+    tokio::task::JoinHandle<()>,
+    Uuid,
+) {
+    let (dir, cmd_tx, mut evt_rx, handle) = spawn_orch_cfg(Some(backend), cfg);
+    let reported = tokio::time::timeout(
+        std::time::Duration::from_secs(20),
+        wait_for(&mut evt_rx, |e| matches!(e, AppEvent::EngineSlots(Some(_)))),
+    )
+    .await
+    .ok()
+    .flatten();
+    eprintln!("slots reported to the orchestrator: {reported:?}");
+
+    cmd_tx
+        .send(AppCommand::CreateProfile {
+            name: "Delegator".into(),
+            system_message: "You coordinate readers.".into(),
+        })
+        .unwrap();
+    let pl = wait_for(
+        &mut evt_rx,
+        |e| matches!(e, AppEvent::ProfileList(v) if v.len() >= 2),
+    )
+    .await
+    .unwrap();
+    let pid = match pl {
+        AppEvent::ProfileList(v) => v.last().unwrap().id,
+        _ => unreachable!(),
+    };
+    cmd_tx
+        .send(AppCommand::UpdateProfile {
+            id: pid,
+            edit: Box::new(ProfileEdit {
+                language: Some(crate::shared::i18n::Lang::En),
+                enabled_tools: Some(vec![tool.to_string()]),
+                ..Default::default()
+            }),
+        })
+        .unwrap();
+    cmd_tx
+        .send(AppCommand::NewChat {
+            profile_id: Some(pid),
+        })
+        .unwrap();
+    let chat_id = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .and_then(|e| match e {
+            AppEvent::ChatActivated { id, .. } => Some(id),
+            _ => None,
+        })
+        .unwrap();
+    (dir, cmd_tx, evt_rx, handle, chat_id)
+}
 
 /// One arm of the admission smoke, sized to the pool the server reports.
 struct AdmissionArm {
@@ -4989,12 +5070,7 @@ async fn admission_smoke(arm: AdmissionArm) -> Option<AdmissionResult> {
         "server: {slots} slots over {pool}; {} children × {paragraphs} paragraphs, cap {max_tokens}, belief {belief}",
         arm.children
     );
-    let filler = |tag: &str| {
-        (0..paragraphs)
-            .map(|i| format!("Paragraph {i} of the {tag} archive describes a lighthouse keeper's ordinary evening: the lamp is lit, the log is written, the tide is noted."))
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
+    let filler = |tag: &str| archive(tag, paragraphs);
     let delegate = |index: usize| {
         let (tag, code) = (TAGS[index], CODES[index]);
         ChatChunk::ToolCall(crate::shared::api::contract::ToolCallDelta {
@@ -5024,7 +5100,7 @@ async fn admission_smoke(arm: AdmissionArm) -> Option<AdmissionResult> {
             ]
             .into(),
         ),
-        persona: READER,
+        live_markers: &[READER],
         in_flight: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         max_in_flight: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
     });
@@ -5041,57 +5117,12 @@ async fn admission_smoke(arm: AdmissionArm) -> Option<AdmissionResult> {
     cfg.compaction.context_tokens = Some(belief as usize);
     cfg.compaction.enabled = false;
     cfg.interface.auto_title = crate::shared::config::AutoTitleMode::Off;
-    let (dir, cmd_tx, mut evt_rx, handle) =
-        spawn_orch_cfg(Some(backend.clone() as Arc<dyn EngineBackend>), cfg);
-
-    // External mode's pool rule needs the server's slot count in hand.
-    let reported = tokio::time::timeout(
-        std::time::Duration::from_secs(20),
-        wait_for(&mut evt_rx, |e| matches!(e, AppEvent::EngineSlots(Some(_)))),
+    let (dir, cmd_tx, mut evt_rx, handle, chat_id) = delegator_chat(
+        backend.clone() as Arc<dyn EngineBackend>,
+        cfg,
+        "call_subagent",
     )
-    .await
-    .ok()
-    .flatten();
-    eprintln!("slots reported to the orchestrator: {reported:?}");
-
-    cmd_tx
-        .send(AppCommand::CreateProfile {
-            name: "Delegator".into(),
-            system_message: "You coordinate readers.".into(),
-        })
-        .unwrap();
-    let pl = wait_for(
-        &mut evt_rx,
-        |e| matches!(e, AppEvent::ProfileList(v) if v.len() >= 2),
-    )
-    .await
-    .unwrap();
-    let pid = match pl {
-        AppEvent::ProfileList(v) => v.last().unwrap().id,
-        _ => unreachable!(),
-    };
-    cmd_tx
-        .send(AppCommand::UpdateProfile {
-            id: pid,
-            edit: Box::new(ProfileEdit {
-                language: Some(crate::shared::i18n::Lang::En),
-                enabled_tools: Some(vec!["call_subagent".to_string()]),
-                ..Default::default()
-            }),
-        })
-        .unwrap();
-    cmd_tx
-        .send(AppCommand::NewChat {
-            profile_id: Some(pid),
-        })
-        .unwrap();
-    let chat_id = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
-        .await
-        .and_then(|e| match e {
-            AppEvent::ChatActivated { id, .. } => Some(id),
-            _ => None,
-        })
-        .unwrap();
+    .await;
 
     let started = std::time::Instant::now();
     let (reply, calls) =
@@ -5247,6 +5278,251 @@ async fn admission_four_e2e_live() {
     assert_eq!(
         res.most, 2,
         "a quarter of the pool plus the cap each: two fit together, three do not"
+    );
+}
+
+/// A stable line of the summarizer's system prompt (`prompt.compact.system`,
+/// en) — what routes a compaction roll to the live server in the hybrid.
+const COMPACT_MARKER: &str = "compressing the earlier part of a conversation";
+
+/// One arm of the silent-lane probe (docs/research/silent-tasks-budget.md §3).
+struct SilentArm {
+    /// `None`: the app believes the pool the server reports; `Some(k)`: it is
+    /// told the pool is `k` times that — the control arm's lie, which disarms
+    /// the guard the same way `admission_control_e2e_live`'s does.
+    lie: Option<u64>,
+}
+
+struct SilentResult {
+    /// The background run's outcome and its final reply.
+    run: (Option<crate::entities::subagent::RunOutcome>, String),
+    /// The roll: the summary it produced, or the error it reported.
+    roll: Result<String, String>,
+    /// The most live streams the server saw open at once.
+    most: usize,
+}
+
+/// **The silent-lane probe** (stage 0 of docs/research/silent-tasks-budget.md,
+/// its §3 arm 1): a compaction roll opened beside a background run, at
+/// `sessions = 1`, on a server whose slots share one pool — the shape the
+/// managed launcher produces at the default (no `-np`: the server's own
+/// four-slot unified default). The parent is scripted; the run's persona and
+/// the roll's request go to the real server. Sized from `/props`: the chat's
+/// earlier history and the run's archive are each 55% of the pool, so the
+/// roll's digest and the run's prompt do not fit together. The roll is asked
+/// for by `/compact` rather than the automatic trigger, which needs the exact
+/// usage a scripted parent cannot report. `None` when there is no live
+/// server or it reports at most one slot.
+async fn silent_roll_smoke(arm: SilentArm) -> Option<SilentResult> {
+    let live = live_backend()?;
+    let slots = live.parallel_slots().await;
+    let pool = live.context_budget().await;
+    let (Some(slots), Some(pool)) = (slots, pool) else {
+        eprintln!("skip: the server reports slots {slots:?}, pool {pool:?}");
+        return None;
+    };
+    if slots < 2 {
+        eprintln!("skip: the server reports {slots} slot(s); the collision needs two or more");
+        return None;
+    }
+    let pool = pool as u64;
+    let paragraphs = ((0.55 * pool as f64) / 30.0) as usize;
+    let max_tokens = (pool / 8) as usize;
+    let belief = pool * arm.lie.unwrap_or(1);
+    eprintln!(
+        "server: {slots} slots over {pool}; history and archive {paragraphs} paragraphs each, cap {max_tokens}, belief {belief}"
+    );
+    let delegate = ChatChunk::ToolCall(crate::shared::api::contract::ToolCallDelta {
+        thought_signature: None,
+        index: 0,
+        id: Some("c0".into()),
+        name: Some("start_subagent".into()),
+        arguments: serde_json::json!({
+            "name": "alpha reader",
+            "system_message": format!("{READER} You are given an archive; report the codename it contains in one short sentence, quoting it exactly."),
+            "message": format!("{}\nThe alpha codename is {}.\n\nWhat is the codename?", archive("alpha", paragraphs), CODES[0]),
+        })
+        .to_string(),
+    });
+    let backend = Arc::new(ScriptedParent {
+        live,
+        scripts: std::sync::Mutex::new(
+            vec![
+                // Turn 1 seeds the history: the user's archive, a one-word reply.
+                vec![
+                    ChatChunk::Text("Noted.".into()),
+                    ChatChunk::Finished(FinishReason::Stop),
+                ],
+                // Turn 2 starts the run and ends at once.
+                vec![delegate, ChatChunk::Finished(FinishReason::ToolCalls)],
+                vec![
+                    ChatChunk::Text("Started.".into()),
+                    ChatChunk::Finished(FinishReason::Stop),
+                ],
+            ]
+            .into(),
+        ),
+        live_markers: &[READER, COMPACT_MARKER],
+        in_flight: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        max_in_flight: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+    });
+
+    let mut cfg = AppConfig::default();
+    cfg.tools.subagent_background = true;
+    // No wake: the probe is about the roll and the run, not the turn after.
+    cfg.tools.subagent_background_wake = false;
+    cfg.tools.subagent_max_tokens = max_tokens;
+    cfg.default_sampling.max_tokens = Some(max_tokens);
+    cfg.engine.external.sessions = 1;
+    cfg.engine.managed.sessions = 1;
+    cfg.compaction.enabled = true;
+    // The automatic trigger stays off (the roll is typed); the window the app
+    // believes in is the pool, or the lie.
+    cfg.compaction.threshold_pct = 0;
+    cfg.compaction.context_tokens = Some(belief as usize);
+    // A short tail, so the roll folds the seeded history and nothing less.
+    cfg.compaction.tail_tokens = 64;
+    cfg.interface.auto_title = crate::shared::config::AutoTitleMode::Off;
+    let (dir, cmd_tx, mut evt_rx, handle, chat_id) = delegator_chat(
+        backend.clone() as Arc<dyn EngineBackend>,
+        cfg,
+        "start_subagent",
+    )
+    .await;
+
+    // The history the roll will fold: the user's own archive, scripted "Noted.".
+    run_turn_capture_args(
+        &cmd_tx,
+        &mut evt_rx,
+        &format!(
+            "{}\nKeep this archive in mind.",
+            archive("history", paragraphs)
+        ),
+    )
+    .await;
+    let started = std::time::Instant::now();
+    let (reply, calls) = run_turn_capture_args(
+        &cmd_tx,
+        &mut evt_rx,
+        "Have the alpha reader report its codename in the background.",
+    )
+    .await;
+    eprintln!("parent: {reply} ({:.1} s)", started.elapsed().as_secs_f64());
+    for (n, _, r) in &calls {
+        eprintln!("call {n} -> {}", r.chars().take(120).collect::<String>());
+    }
+    // The run's stream is opening on the server; now the roll beside it.
+    cmd_tx.send(AppCommand::Compact).unwrap();
+    let mut roll: Option<Result<String, String>> = None;
+    let mut landed = false;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(300);
+    while (roll.is_none() || !landed) && std::time::Instant::now() < deadline {
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        match tokio::time::timeout(left, evt_rx.recv()).await {
+            Ok(Some(AppEvent::Compacted { summary, .. })) => roll = Some(Ok(summary)),
+            Ok(Some(AppEvent::Error(msg))) if roll.is_none() => roll = Some(Err(msg)),
+            Ok(Some(AppEvent::Notice(msg))) if roll.is_none() => roll = Some(Err(msg)),
+            Ok(Some(AppEvent::BackgroundRuns { out: 0 })) => landed = true,
+            Ok(Some(_)) => {}
+            _ => break,
+        }
+    }
+    eprintln!(
+        "roll: {roll:?}, run landed: {landed} ({:.1} s)",
+        started.elapsed().as_secs_f64()
+    );
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    let chat = Storage::open(Paths::with_root(dir.path()))
+        .unwrap()
+        .json()
+        .load_chat(chat_id)
+        .unwrap()
+        .unwrap();
+    let run = chat
+        .children()
+        .next()
+        .map(|run| {
+            eprintln!(
+                "run «{}»: {} messages, outcome {:?}, reply {:?}",
+                run.title,
+                run.messages.len(),
+                run.outcome,
+                run.final_reply()
+                    .map(|r| r.chars().take(120).collect::<String>())
+            );
+            (
+                run.outcome,
+                run.final_reply().unwrap_or_default().to_string(),
+            )
+        })
+        .expect("the run landed on its record");
+    let most = backend
+        .max_in_flight
+        .load(std::sync::atomic::Ordering::SeqCst);
+    eprintln!("most live streams open at once: {most}");
+    Some(SilentResult {
+        run,
+        roll: roll.unwrap_or_else(|| Err("the roll never reported".into())),
+        most,
+    })
+}
+
+/// **The silent lane, live** (docs/research/silent-tasks-budget.md §7): the
+/// roll waits for the run's stream to end — one live stream at a time — and
+/// both complete: the run with its codename, the roll with a summary. On the
+/// code before the lane this arm **fails**, which is the probe's GO (§3).
+/// `#[ignore]`, manual: the CPU build launched as the managed launcher would
+/// at one session (`-c 2048`, no `-np`), `MINDFORK_ENGINE_URL` at it.
+#[tokio::test]
+#[ignore = "requires a live llama-server with several slots over one pool (MINDFORK_ENGINE_URL)"]
+async fn silent_roll_e2e_live() {
+    let Some(res) = silent_roll_smoke(SilentArm { lie: None }).await else {
+        eprintln!("skipped (see above)");
+        return;
+    };
+    assert_eq!(
+        res.run.0,
+        Some(crate::entities::subagent::RunOutcome::Completed),
+        "the run completes beside the roll: {:?}",
+        res.run
+    );
+    assert!(
+        fold_dashes(&res.run.1).contains(CODES[0]),
+        "the run's code: {}",
+        res.run.1
+    );
+    let summary = res.roll.expect("the roll produced a summary");
+    assert!(!summary.trim().is_empty(), "an empty summary");
+    assert_eq!(
+        res.most, 1,
+        "the roll's digest and the run's archive do not fit the pool together: one at a time"
+    );
+}
+
+/// **The control arm**: the same run with the app told the pool is four
+/// times what it is — the roll opens beside the run, the real pool cannot
+/// hold both prompts, and the server ends the running conversations together
+/// (admission-by-budget §3.2): the run does not complete or the roll fails.
+/// This is what proves the guarded arm above did something. `#[ignore]`,
+/// manual, the same server.
+#[tokio::test]
+#[ignore = "requires a live llama-server with several slots over one pool (MINDFORK_ENGINE_URL)"]
+async fn silent_roll_control_e2e_live() {
+    let Some(res) = silent_roll_smoke(SilentArm { lie: Some(4) }).await else {
+        eprintln!("skipped (see above)");
+        return;
+    };
+    assert_eq!(
+        res.most, 2,
+        "unguarded, the roll and the run streamed at once"
+    );
+    assert!(
+        res.run.0 != Some(crate::entities::subagent::RunOutcome::Completed) || res.roll.is_err(),
+        "the lie about the pool went unpunished — the server did not overflow: run {:?}, roll {:?}",
+        res.run,
+        res.roll
     );
 }
 
