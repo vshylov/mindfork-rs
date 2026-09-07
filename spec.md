@@ -3247,7 +3247,7 @@ the last of which **closes the tab the session runs in**. Typing survives every
 host, so the interface is fully operable by commands plus the safe key subset
 (printable characters, `Enter`, `Esc`, `Backspace`/`Delete`, `Tab`, the arrows,
 `Home`/`End`, `PageUp`/`PageDown`, `Shift`+arrows). Twenty-four commands:
-`/settings` `/self` `/chats` `/changes` `/tasks [stop <kind>]` `/help` · `/new [profile]`
+`/settings` `/self` `/chats` `/changes` `/tasks [stop <kind>|all]` `/help` · `/new [profile]`
 `/rename [title]` `/autotitle` `/clone` `/copy` `/regen`·`/retry` `/continue`
 `/takeback` `/impersonate [text]` `/stop` · `/find [text]` `/search <text>`
 `/links` · `/thoughts` `/toolcalls` `/subagents [expand|collapse|stop [n]]` `/mouse`
@@ -3651,9 +3651,12 @@ the chat) — and **stops a silent task** on a row that is *running* or
 *waiting* (`AppCommand::StopBackgroundTask`; **`/tasks stop <kind>`** is the
 typed route — the words `reflection · notes · self · compact`, bare `stop`
 taking the only running task, listing them by word when several run and
-answering with a note when none does, the running state read off the chat
-screen's own status-bar flags, the task named in the note with this screen's
-words; [docs/research/tasks-stop-command.md](docs/research/tasks-stop-command.md)):
+answering with a note when none does, **`all`** taking every running one in
+one note and one intent the runtime fans out into this command once per
+kind, the running state read off the chat screen's own status-bar flags,
+the task named in the note with this screen's words;
+[docs/research/tasks-stop-command.md](docs/research/tasks-stop-command.md),
+[tasks-stop-all.md](docs/research/tasks-stop-all.md)):
 the slot's token is cancelled and the task
 lands as *cancelled* — its failure streak untouched, the window it advanced
 at spawn skipped as on a failure, `SelfModelChanged` still announced for

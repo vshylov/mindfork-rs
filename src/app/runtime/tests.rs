@@ -1990,8 +1990,8 @@ fn a_task_stop_intent_becomes_the_stop_command() {
 fn a_typed_task_stop_becomes_the_stop_command() {
     let mut h = Harness::new();
     h.drain_commands();
-    h.dispatch(ChatIntent::StopBackgroundTask {
-        kind: BackgroundKind::Reflection,
+    h.dispatch(ChatIntent::StopBackgroundTasks {
+        kinds: vec![BackgroundKind::Reflection],
     });
     assert!(matches!(
         h.next_command(),
@@ -1999,5 +1999,33 @@ fn a_typed_task_stop_becomes_the_stop_command() {
             kind: BackgroundKind::Reflection
         })
     ));
+    assert!(h.next_command().is_none(), "one kind, one command");
+    assert!(matches!(h.active, ActiveScreen::Chat));
+}
+
+/// `/tasks stop all` names several kinds in one intent, and the runtime sends
+/// the same command once per kind, in the order named
+/// (docs/research/tasks-stop-all.md §3.2) — the orchestrator sees nothing it
+/// did not see from `F6` pressed on each row.
+#[test]
+fn a_typed_stop_of_several_tasks_fans_out_into_one_command_each() {
+    let mut h = Harness::new();
+    h.drain_commands();
+    h.dispatch(ChatIntent::StopBackgroundTasks {
+        kinds: vec![BackgroundKind::Reflection, BackgroundKind::Compaction],
+    });
+    assert!(matches!(
+        h.next_command(),
+        Some(AppCommand::StopBackgroundTask {
+            kind: BackgroundKind::Reflection
+        })
+    ));
+    assert!(matches!(
+        h.next_command(),
+        Some(AppCommand::StopBackgroundTask {
+            kind: BackgroundKind::Compaction
+        })
+    ));
+    assert!(h.next_command().is_none());
     assert!(matches!(h.active, ActiveScreen::Chat));
 }

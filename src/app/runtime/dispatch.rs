@@ -653,10 +653,19 @@ pub(super) fn dispatch(
         // `/subagents stop` — the run's id, resolved on the screen from the
         // list's cards (spec §9.3.2).
         ChatIntent::StopSubagentRun { id } => AppCommand::StopSubagentRun { id },
-        // `/tasks stop <kind>` — the very command `F6` on the task's row of
-        // the tasks screen sends (spec §11.10); the screen resolved the kind
-        // and answered already.
-        ChatIntent::StopBackgroundTask { kind } => AppCommand::StopBackgroundTask { kind },
+        // `/tasks stop <kind>` and `/tasks stop all` — the very command `F6`
+        // on the task's row of the tasks screen sends, once per kind named
+        // (spec §11.10); the screen resolved the kinds and answered already.
+        // Several commands from one intent: the third shape beside "one" and
+        // "none" (docs/research/tasks-stop-all.md §3.2). None of them works
+        // on the open chat, so `back` is left alone, as the exhaustive match
+        // below would leave it.
+        ChatIntent::StopBackgroundTasks { kinds } => {
+            for kind in kinds {
+                let _ = cmd_tx.send(AppCommand::StopBackgroundTask { kind });
+            }
+            return false;
+        }
         ChatIntent::ExportChat { id, format, path } => AppCommand::ExportChat { id, format, path },
         // Profile CRUD and the self-model wipe reach the same orchestrator
         // commands the settings and self-model screens send — the typed routes

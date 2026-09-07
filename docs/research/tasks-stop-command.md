@@ -297,7 +297,10 @@ over 16384): `stop_silent_task_e2e_live`, `silent_roll_e2e_live`,
 ## 7. Not in this track (recorded so they are not re-derived)
 
 - **`/tasks stop all`** — four words typed four times is the rarest case;
-  a fifth word is cheap to add when someone asks for it.
+  a fifth word is cheap to add when someone asks for it. **Asked for and
+  done** the same day ([tasks-stop-all.md](tasks-stop-all.md)): one intent
+  carrying the running kinds, the runtime sending this track's command once
+  per kind.
 - **Stopping the title** — no row on the screen, no flag on the bar, and
   a title is seconds (the stop track's §7).
 - **A confirmation** — a stop is per attempt and undoes nothing written

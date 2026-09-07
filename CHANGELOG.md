@@ -20,7 +20,8 @@ split by subsystem.
   background tasks — `reflection`, `notes`, `self` or `compact` — for a
   terminal where `F6` on the tasks screen never arrives. Bare `/tasks stop`
   stops the only task running; with several running it lists them, with none
-  it says so. `/tasks` on its own still opens the screen.
+  it says so; `/tasks stop all` stops every one running. `/tasks` on its own
+  still opens the screen.
 
 - **A batch setting for the managed server.** *Performance* → *Batch (-b)*:
   how many prompt tokens `llama-server` processes per pass. Empty means
