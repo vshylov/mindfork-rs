@@ -169,9 +169,9 @@ Backend selection: `MINDFORK_ENGINE_URL` (external, any OpenAI server) OR
 rented instead of hosted — `python tools/e2e_hf.py run`, see
 `docs/history/remote-e2e-hf.md`.
 
-## Status (2026-09-07, version 0.9.8)
+## Status (2026-09-08, version 0.9.8)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2908 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **2920 unit tests
 green, 146 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
@@ -183,6 +183,20 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 `tools/doc_index_check.py`. A new track adds a line; a line that has stopped
 being recent is dropped, not shortened.
 
+- **`/tasks stop <kind>` — the typed route to stopping a silent task** —
+  `F6` on a task row of the tasks screen was the one action whose only
+  route was a function key on a screen, against spec §11.7's rule that
+  every action has a typed route. The reading that deferred the command
+  ("localized kind names and a parser") turned out light: the screen already
+  names the four tasks in both locales, `Arity::Subcommand` already carries
+  a token behind its word, and the chat screen already keeps the four
+  running flags for the status bar. Now `/tasks [stop <kind>]` on the
+  existing registry row — the words `reflection · notes · self · compact`,
+  bare `stop` mirroring `/subagents stop` — ends in the very
+  `StopBackgroundTask` the key sends; the note names the task with the
+  screen's words through `BackgroundKind::label_key`, the one function both
+  surfaces read ([docs/research/tasks-stop-command.md](docs/research/tasks-stop-command.md),
+  spec §11.7, §11.10, [docs/journal/ui-screens.md](docs/journal/ui-screens.md)).
 - **The batch a cancel waits for — `-b` on the CPU build's launch line** —
   llama.cpp looks at its queue between batches of `-b` prompt tokens, so a
   stream the app cancels during its prefill (a displaced roll, a stopped
@@ -400,30 +414,6 @@ being recent is dropped, not shortened.
   ([docs/research/two-agent-dialogue.md](docs/research/two-agent-dialogue.md),
   [ADR 0011](docs/decisions/0011-dialogue-directed-run.md), spec §9.13,
   [docs/journal/tools.md](docs/journal/tools.md)).
-- **The chat list counts messages as the conversation reads** — the row's
-  `N msg` was `messages.len()`, and an agentic loop stores a row per round and
-  per tool result, so one tool-assisted exchange said "34 msg"; now one rule,
-  `entities::chat::visible_message_count`, counts the feed's bubbles for chat
-  and transcript cards alike, pinned to the feed's projection by an
-  every-prefix equality test
-  ([docs/journal/ui-screens.md](docs/journal/ui-screens.md), spec §11.2).
-- **The model's name in `external` mode — asked of the server, and sent to it** —
-  connect by URL with the "Model (opt.)" field blank and the engine is now asked
-  what it is running (`EngineBackend::model_id`: `GET /v1/models` when it lists
-  exactly one, then `/props`), so the feed's caption and every reply's metadata
-  stop being empty in the commonest local setup; a typed name always wins and
-  nothing is written back to settings. Fixed on the way: that field had **never
-  been sent to the server**, which is what every multi-model endpoint routes on.
-  `RetryBackend`'s missing delegation — the third of its kind — was caught by the
-  live gate and nothing else
-  ([docs/research/external-model-name.md](docs/research/external-model-name.md),
-  spec §11.3, [docs/journal/engine.md](docs/journal/engine.md)).
-
-For what exists and how it works, read architecture.md and spec.md — they are
-the source of truth for the current state. For how any of it came to be, and
-what was measured and rejected on the way, read the journal file for that area
-(the map above). For what is still open, read `docs/roadmap.md`.
-
 ## Pitfalls
 
 - **The TUI "hangs" on a headless launch** (no TTY) — this is expected; clean

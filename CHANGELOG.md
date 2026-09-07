@@ -16,6 +16,12 @@ split by subsystem.
 
 ### Added
 
+- **`/tasks stop <kind>`.** The typed route to stopping one of the app's own
+  background tasks — `reflection`, `notes`, `self` or `compact` — for a
+  terminal where `F6` on the tasks screen never arrives. Bare `/tasks stop`
+  stops the only task running; with several running it lists them, with none
+  it says so. `/tasks` on its own still opens the screen.
+
 - **A batch setting for the managed server.** *Performance* → *Batch (-b)*:
   how many prompt tokens `llama-server` processes per pass. Empty means
   auto — 256 when *GPU layers* is 0, the server's default otherwise; a

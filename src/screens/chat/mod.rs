@@ -20,7 +20,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, List, ListItem, Paragraph, Wrap};
 use uuid::Uuid;
 
-use crate::app::events::ChildView;
+use crate::app::events::{BackgroundKind, ChildView};
 use crate::entities::attachment::AttachmentInfo;
 use crate::entities::chat::{ChatSummary, FeedView};
 use crate::entities::message::Message;
@@ -172,6 +172,13 @@ pub enum ChatIntent {
     /// open chat.
     StopSubagentRun {
         id: Uuid,
+    },
+    /// Stop one of the app's own silent tasks (command `/tasks stop <kind>`,
+    /// spec §11.10) — the typed twin of `F6` on the task's row of the tasks
+    /// screen, ending in the very command that key sends
+    /// (docs/research/tasks-stop-command.md).
+    StopBackgroundTask {
+        kind: BackgroundKind,
     },
     /// Write the open chat to a file (command `/export [md|json] [path]`).
     /// The orchestrator owns the conversation and the disk, so it formats and
@@ -902,6 +909,19 @@ impl ChatScreen {
     /// automatic roll) — a quiet status-bar indicator. See spec §6.7.
     pub fn set_compacting(&mut self, active: bool) {
         self.compacting = active;
+    }
+
+    /// Whether one of the app's own silent tasks is running — its slot
+    /// taken, streaming or waiting on the lane (`AppEvent::BackgroundTask`,
+    /// on from the spawn to the landing): the status bar's own source, and
+    /// what `/tasks stop` answers from (spec §11.10).
+    pub(super) fn task_running(&self, kind: BackgroundKind) -> bool {
+        match kind {
+            BackgroundKind::Reflection => self.reflecting,
+            BackgroundKind::Consolidation => self.consolidating,
+            BackgroundKind::SelfConsolidation => self.self_consolidating,
+            BackgroundKind::Compaction => self.compacting,
+        }
     }
 
     /// Sets/clears the active-speech flag (`/tts`) — a status-bar chip.

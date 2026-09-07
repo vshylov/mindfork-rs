@@ -431,7 +431,7 @@ impl TasksScreen {
         let label_w = list
             .app
             .iter()
-            .map(|t| wrap::str_width(loc.t(app_label_key(t.kind))))
+            .map(|t| wrap::str_width(loc.t(t.kind.label_key())))
             .max()
             .unwrap_or(0);
         for (i, task) in list.app.iter().enumerate() {
@@ -508,7 +508,7 @@ impl TasksScreen {
     fn app_line(&self, task: &AppTask, label_w: usize, selected: bool) -> Line<'static> {
         let p = &self.palette;
         let loc = self.loc;
-        let label = loc.t(app_label_key(task.kind));
+        let label = loc.t(task.kind.label_key());
         let pad = label_w.saturating_sub(wrap::str_width(label));
         let (glyph, state, state_style) = if task.running && task.waiting {
             // Its slot is taken, its stream is not open: behind another
@@ -645,16 +645,6 @@ impl Columns {
 /// A right-hand column's width with its gap, or nothing when it is hidden.
 fn gap(col: usize) -> usize {
     if col == 0 { 0 } else { 2 + col }
-}
-
-/// The bundle key of a silent task's row label.
-fn app_label_key(kind: BackgroundKind) -> &'static str {
-    match kind {
-        BackgroundKind::Reflection => "ui.tasks.app.reflection",
-        BackgroundKind::Consolidation => "ui.tasks.app.consolidation",
-        BackgroundKind::SelfConsolidation => "ui.tasks.app.self_consolidation",
-        BackgroundKind::Compaction => "ui.tasks.app.compaction",
-    }
 }
 
 /// The time column: how long a running run has been out, rendered from

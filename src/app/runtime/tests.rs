@@ -1982,3 +1982,22 @@ fn a_task_stop_intent_becomes_the_stop_command() {
         "the screen stays open"
     );
 }
+
+/// `/tasks stop <kind>` ends in the very command `F6` on the task's row sends
+/// (docs/research/tasks-stop-command.md §3.2): the chat screen resolved the
+/// kind and answered, the runtime maps one to one and switches nothing.
+#[test]
+fn a_typed_task_stop_becomes_the_stop_command() {
+    let mut h = Harness::new();
+    h.drain_commands();
+    h.dispatch(ChatIntent::StopBackgroundTask {
+        kind: BackgroundKind::Reflection,
+    });
+    assert!(matches!(
+        h.next_command(),
+        Some(AppCommand::StopBackgroundTask {
+            kind: BackgroundKind::Reflection
+        })
+    ));
+    assert!(matches!(h.active, ActiveScreen::Chat));
+}

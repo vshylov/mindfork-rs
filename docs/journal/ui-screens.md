@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (63)
+## Entries (64)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -75,6 +75,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a title is cut where it is drawn, not where it is stored (done)
 - Post-M9: the "Sessions" hint names the knob that widens the group (done)
 - Post-M9: stopping a silent task from the tasks screen (done)
+- Post-M9: `/tasks stop <kind>` — the typed route to stopping a silent task (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -3364,3 +3365,72 @@ a notice per stop (a stop is not a failure and the feed is not a log);
 refunding the window on a stop (the task would come back sooner, the
 opposite of what a stop asks); suppressing the automatic roll after a stop
 (the protection stays; a stop is per attempt).
+
+### Post-M9: `/tasks stop <kind>` — the typed route to stopping a silent task (done)
+
+**What.** The item the stop track recorded and did not take (its §7, fork
+F2b): `F6` on a task row of the tasks screen was the one action in the
+interface whose only route was a function key on a screen, against the rule
+spec §11.7 has stated since the command-only-control track — every action
+has a typed route, because an embedding host claims chords before crossterm
+sees them. The design
+[docs/research/tasks-stop-command.md](../research/tasks-stop-command.md),
+every fork at its recommendation (the user's decision, 2026-09-08); no
+stage-0 probe — nothing about a model's behaviour was in question.
+
+**Why it was light.** The reading that deferred the command ("localized kind
+names and a parser for a thing four rows away") had both halves already
+paid for: the tasks screen names the four tasks in both locales
+(`ui.tasks.app.*`) and command words are protocol, never localized;
+`Arity::Subcommand` already carried a token behind its word (`/subagents
+stop 2`); and the chat screen already kept the one fact the command needs —
+whether each task's slot is taken — as the four status-bar flags
+`AppEvent::BackgroundTask` sets from the spawn to the landing. Those flags
+are the same predicate the screen's `F6` uses (`Stoppable::Task` off
+`AppTask.running`; *waiting* is a refinement of it), so the answer is
+immediate and no new event was needed.
+
+**How.** The registry row became
+`Arity::Subcommand(&["stop"])` with the label `ui.help.k.tasks`
+(`/tasks [stop <kind>]`); bare stays the screen, `/tasks halt` is reported
+by the parser naming the usage line. `typed_tasks` strips `stop` and
+`typed_tasks_stop` resolves the tail against `TASK_KINDS` — `reflection ·
+notes · self · compact`, each the word of the command or screen the task
+belongs with, one spelling, matched without case — then reads
+`ChatScreen::task_running(kind)`: on → a note naming the task and
+`ChatIntent::StopBackgroundTask { kind }`, which `dispatch_chat` maps one to
+one onto the very `AppCommand::StopBackgroundTask` the key sends; off → a
+note naming the task and `/tasks`; an unknown word → a note naming the
+four; bare `stop` mirrors `/subagents stop` — the only running task is
+stopped, several are listed by word, none is a note. No `no_chat` gate: the
+tasks are the app's. The task's name in a note comes from
+`BackgroundKind::label_key`, moved onto the enum from the tasks screen's
+private helper so the two surfaces read one function. The `Arity` doc
+comment now states the registry's line the `/subagents stop [n]` precedent
+had crossed in silence: a token rides with a closed-set word, free text
+earns a module.
+
+**Tests**: +12 — `ui_command.rs` (bare `/tasks` is the screen, `stop
+Reflection` carries the kind as typed, `halt` is reported naming the usage;
+the localized-errors gate gained the row), `screens/chat/tests.rs`
+(`mod tasks_stop`: a running kind stopped and named, every word to its kind
+without case, an idle kind refused naming `/tasks`, bare `stop` taking the
+only running task, listing the words of several, saying so for none, an
+unknown word answered with the four, the route with no chat open, every
+note under both locales with no placeholder and a route named),
+`runtime/tests.rs` (the intent becomes the command, the screen unchanged) —
+**2920 unit tests green, 146 `#[ignore]`**; the demo dumps unchanged.
+
+**Live**: not required — a pure UI route into the command the stop track's
+smoke measured. As the regression, `stop_silent_task_e2e_live`,
+`silent_roll_e2e_live` and `background_subagent_e2e_live` on the LAN stack
+(Qwen 3.6 27B, four slots over 16384): 3/3 in 58.7 s — the stop's notice
+0.00 s after the stop, the next `/compact` in 2.2 s.
+
+**Rejected**: a parser module of its own (the `/profile` shape, for a
+command with no free text in it); `/stop <kind>` (`/stop` is the half of
+`Esc` that always means the turn); the lane labels as the words (nobody
+types an underscore); the orchestrator answering "not running" with a
+notice (a round trip and a second wording for one fact); the error family's
+names (`ui.err.bg_*`) in the note (a second name per task); silence as the
+feedback (a typed command that vanishes reads as a refusal).

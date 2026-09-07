@@ -5095,3 +5095,178 @@ fn the_chip_counts_several_running_runs_and_names_the_latest() {
     s.set_subagent_progress(generation, a, None);
     assert!(!s.background_hint().unwrap_or_default().contains("Критик"));
 }
+
+// ---------- /tasks stop <kind>: the typed route to F6 on a task row ----------
+
+/// `/tasks [stop <kind>]` (docs/research/tasks-stop-command.md §3.2): the
+/// named task ends in the very intent the tasks screen's `F6` sends when the
+/// screen's own flag says it is running, and every other shape leaves a note
+/// that names a route — the idle task, no word while several run, a word the
+/// command does not know. The note names the task with the tasks screen's
+/// word for it, in the interface language.
+mod tasks_stop {
+    use super::*;
+    use crate::app::events::BackgroundKind;
+    use crate::shared::i18n::{Lang, locale};
+
+    fn set_running(c: &mut Cmd, kind: BackgroundKind, on: bool) {
+        match kind {
+            BackgroundKind::Reflection => c.s.set_reflecting(on),
+            BackgroundKind::Consolidation => c.s.set_consolidating(on),
+            BackgroundKind::SelfConsolidation => c.s.set_self_consolidating(on),
+            BackgroundKind::Compaction => c.s.set_compacting(on),
+        }
+    }
+
+    #[test]
+    fn bare_tasks_is_still_the_screen() {
+        let mut c = Cmd::new();
+        assert_eq!(c.run("/tasks"), Some(ChatIntent::OpenTasks));
+    }
+
+    #[test]
+    fn a_running_kind_is_stopped_and_named() {
+        let mut c = Cmd::new();
+        set_running(&mut c, BackgroundKind::Reflection, true);
+        assert_eq!(
+            c.run("/tasks stop reflection"),
+            Some(ChatIntent::StopBackgroundTask {
+                kind: BackgroundKind::Reflection
+            })
+        );
+        let note = c.last_note();
+        assert!(
+            note.contains(c.s.loc.t("ui.tasks.app.reflection")),
+            "the note names the task: {note}"
+        );
+    }
+
+    /// Each word reaches its kind, whatever the case it was typed in.
+    #[test]
+    fn every_word_maps_to_its_kind_without_case() {
+        for (word, kind) in [
+            ("reflection", BackgroundKind::Reflection),
+            ("NOTES", BackgroundKind::Consolidation),
+            ("Self", BackgroundKind::SelfConsolidation),
+            ("compact", BackgroundKind::Compaction),
+        ] {
+            let mut c = Cmd::new();
+            set_running(&mut c, kind, true);
+            assert_eq!(
+                c.run(&format!("/tasks stop {word}")),
+                Some(ChatIntent::StopBackgroundTask { kind }),
+                "word {word:?}"
+            );
+        }
+    }
+
+    /// An idle task is not "stopped": the note says so and names the screen
+    /// that shows what is running (docs/lessons.md §4).
+    #[test]
+    fn an_idle_kind_is_refused_with_the_route() {
+        let mut c = Cmd::new();
+        assert_eq!(c.run("/tasks stop compact"), None);
+        let note = c.last_note();
+        assert!(
+            note.contains(c.s.loc.t("ui.tasks.app.compaction")) && note.contains("/tasks"),
+            "{note}"
+        );
+    }
+
+    /// Bare `stop` mirrors `/subagents stop`: the only running task is the one.
+    #[test]
+    fn bare_stop_takes_the_only_running_task() {
+        let mut c = Cmd::new();
+        set_running(&mut c, BackgroundKind::Compaction, true);
+        assert_eq!(
+            c.run("/tasks stop"),
+            Some(ChatIntent::StopBackgroundTask {
+                kind: BackgroundKind::Compaction
+            })
+        );
+    }
+
+    /// …and with several running it lists their words, so the answer is the
+    /// next command rather than a guess.
+    #[test]
+    fn bare_stop_with_several_running_lists_their_words() {
+        let mut c = Cmd::new();
+        set_running(&mut c, BackgroundKind::Reflection, true);
+        set_running(&mut c, BackgroundKind::Compaction, true);
+        assert_eq!(c.run("/tasks stop"), None);
+        let note = c.last_note();
+        assert!(
+            note.contains("/tasks stop")
+                && note.contains("reflection")
+                && note.contains("compact")
+                && !note.contains("notes"),
+            "{note}"
+        );
+    }
+
+    #[test]
+    fn bare_stop_with_none_running_says_so() {
+        let mut c = Cmd::new();
+        assert_eq!(c.run("/tasks stop"), None);
+        let note = c.last_note();
+        assert!(note.contains("/tasks"), "{note}");
+    }
+
+    /// A word outside the set is answered with the whole set.
+    #[test]
+    fn an_unknown_word_names_the_four() {
+        let mut c = Cmd::new();
+        set_running(&mut c, BackgroundKind::Reflection, true);
+        assert_eq!(c.run("/tasks stop foo"), None);
+        let note = c.last_note();
+        for word in ["foo", "reflection", "notes", "self", "compact"] {
+            assert!(note.contains(word), "{word:?} missing from: {note}");
+        }
+    }
+
+    /// The tasks are the app's, not a chat's: the route works with no chat
+    /// open, as `/tasks` itself does.
+    #[test]
+    fn the_route_needs_no_open_chat() {
+        let mut c = Cmd::bare();
+        set_running(&mut c, BackgroundKind::Consolidation, true);
+        assert_eq!(
+            c.run("/tasks stop notes"),
+            Some(ChatIntent::StopBackgroundTask {
+                kind: BackgroundKind::Consolidation
+            })
+        );
+    }
+
+    /// Per-locale gate (docs/history/i18n-ui.md §3.5): every note renders under
+    /// every bundled language with no placeholder left, and each names a route.
+    #[test]
+    fn every_note_renders_in_both_locales() {
+        for &lang in Lang::ALL {
+            let loc = locale(lang);
+            for (key, args) in [
+                ("ui.cmd.tasks_stopping", vec![("task", "x")]),
+                ("ui.cmd.tasks_not_running", vec![("task", "x")]),
+                ("ui.cmd.tasks_none_running", vec![]),
+                ("ui.cmd.tasks_stop_which", vec![("kinds", "a · b")]),
+                (
+                    "ui.cmd.tasks_bad_kind",
+                    vec![("arg", "foo"), ("kinds", "a · b")],
+                ),
+            ] {
+                let text = loc.tf(key, &args);
+                assert!(
+                    !text.contains('{') && !text.contains('}'),
+                    "unsubstituted placeholder in {lang:?} {key}: {text}"
+                );
+                if key != "ui.cmd.tasks_stopping" {
+                    assert!(
+                        text.contains("/tasks"),
+                        "{lang:?} {key} names no route: {text}"
+                    );
+                }
+            }
+            assert!(loc.t("ui.help.k.tasks").starts_with("/tasks [stop"));
+        }
+    }
+}

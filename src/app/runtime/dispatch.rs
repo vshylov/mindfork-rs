@@ -653,6 +653,10 @@ pub(super) fn dispatch(
         // `/subagents stop` — the run's id, resolved on the screen from the
         // list's cards (spec §9.3.2).
         ChatIntent::StopSubagentRun { id } => AppCommand::StopSubagentRun { id },
+        // `/tasks stop <kind>` — the very command `F6` on the task's row of
+        // the tasks screen sends (spec §11.10); the screen resolved the kind
+        // and answered already.
+        ChatIntent::StopBackgroundTask { kind } => AppCommand::StopBackgroundTask { kind },
         ChatIntent::ExportChat { id, format, path } => AppCommand::ExportChat { id, format, path },
         // Profile CRUD and the self-model wipe reach the same orchestrator
         // commands the settings and self-model screens send — the typed routes
