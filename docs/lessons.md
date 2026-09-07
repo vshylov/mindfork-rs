@@ -692,6 +692,21 @@ calls safe — and reproduce it through the app's own paths before believing
 either answer (the probe took an afternoon; the fix an evening).
 — *the silent tasks under the app-wide budget*.
 
+**The client's end of a cancelled stream is not the server's release — a
+request sent in between is placed as if the stream were still running.**
+The preemption probe cancelled a turn, saw `Finished(Cancelled)` in 1 ms and
+sent the next turn at once; the server's `cancel task` came 1 ms later and
+the slot's release 110 ms after that, so the new request was placed by LRU
+on a *different* slot and prefilled its 1300-token prompt cold — 36 s on the
+CPU build, for a prefix the cancelled slot still held. Sent after the
+release it landed on that slot by prefix similarity and answered in 0.79 s.
+The room a waiter needs is free at the release either way; what the gap
+costs is the cache, and only for a request whose prefix lives on the
+cancelled slot — which is why the product adds no delay and the probe
+waits 300 ms. A latency measured across such a gap measures the placement,
+not the mechanism.
+— *the silent stream yields to the turn*.
+
 ## 4. The recurring defect class: a message must close the door
 
 **Never let a message describe a situation without saying what is and is not possible

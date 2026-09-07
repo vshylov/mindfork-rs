@@ -110,13 +110,27 @@ impl EngineBackend for KeyedRecorder {
         let delay = self.delay_ms;
         let s = async_stream::stream! {
             let _open = guard;
+            let mut cancelled = false;
             for chunk in script.chunks {
                 if delay > 0 {
-                    tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                    // A delayed script ends the way a real stream does when
+                    // its token fires mid-way — `Finished(Cancelled)` at once
+                    // — so a displaced silent stream (silent-preemption §4)
+                    // reads on the recorder as it reads on the engine.
+                    tokio::select! {
+                        _ = tokio::time::sleep(std::time::Duration::from_millis(delay)) => {}
+                        _ = cancel.cancelled() => {
+                            cancelled = true;
+                        }
+                    }
+                }
+                if cancelled {
+                    yield ChatChunk::Finished(FinishReason::Cancelled);
+                    break;
                 }
                 yield chunk;
             }
-            if script.hang {
+            if script.hang && !cancelled {
                 cancel.cancelled().await;
                 yield ChatChunk::Finished(FinishReason::Cancelled);
             }

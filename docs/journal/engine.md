@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (40)
+## Entries (41)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -52,6 +52,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: parallel sub-agents — stage 1, sessions per engine and the slot count (done)
 - Post-M9: several reasoning items in one reply — each resent as its own item (done)
 - Post-M9: the silent tasks under the app-wide budget — the budget's silent lane (done)
+- Post-M9: the silent stream yields to the turn — preemption on the session budget (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -2547,3 +2548,95 @@ probes, 6/6.
   `parallel_subagents_e2e_live` — 3/3 in 83 s, and the probe's guarded arm
   there too (`silent_roll_e2e_live`: the roll waited for the run, most open
   1, both completed, 16.5 s).
+
+### Post-M9: the silent stream yields to the turn — preemption on the session budget (done)
+- **What**: the silent-lane design's fork F3(b), deferred until the wait it
+  introduced was measured and chosen against: an interactive stream — a
+  turn's round, a sub-agent's, a dialogue's line, a background run's round,
+  a turn's own summary — that does not fit beside the app's own open request
+  no longer waits for that request's round; the request is **displaced**
+  (cancelled, and made again by its own task after the turn). The design
+  [docs/research/silent-preemption.md](../research/silent-preemption.md),
+  every fork at its recommendation (the user's decision, 2026-09-07).
+- **Measured before designing** (stage 0, research §3.1): two `#[ignore]`
+  arms of `preemption_smoke` in `tests/live.rs` over the hybrid
+  `ScriptedParent` (which gained `live_after_scripts`: a request with no
+  script left goes live, so the seed is scripted and the measured turn is
+  live). On the CPU build launched as the managed launcher launches it at
+  one session, a one-word turn sent half a second behind the compaction
+  roll waited **45.9 s** for the roll's end (the roll 46.4 s), where a turn
+  sent after a cancelled one had its first token in **0.79 s**; on the LAN
+  stack 5.6 s against 0.35 s. The server honours the closed connection in
+  1 ms (`stop: cancel task`) and releases the slot 110 ms later. Two
+  protocol facts: a one-exchange chat has nothing for `plan_cut` to fold
+  (the seed is two exchanges, the second longer than the tail), and a
+  request sent in the gap before the server's release lands on another slot
+  by LRU and prefills cold — 36 s for a prompt whose prefix the cancelled
+  slot still held (lessons §3).
+- **How**: `SessionBudget` — a silent `Reservation` carries a **child
+  token** of the holder's own (`stream_token`), and the budget records the
+  silent stream open (`SilentOpen`: label, token, tokens, `yields`). An
+  interactive waiter that does not fit calls `displace`: when the silent
+  stream yields and the waiter would fit without its reservation, the child
+  is cancelled (once — a second waiter only counts itself) and the waiter is
+  marked **displacing** (`Displacing`, a drop guard: uncounted with a
+  wake-up when the waiter is admitted — after its reservation is in — or
+  gives up); a silent request takes no room while a displacing waiter is
+  pending, so the displaced task's retry cannot slip back in ahead of it. A
+  holder reads `displaced()` (the child fired, the parent did not).
+  `acquire_silent` gained `yields`; `SILENT_YIELDS_MAX = 3`. The holders:
+  `spawn_title` and `spawn_compact` loop — acquire (yielding while the
+  count is under the cap), stream on the child token, and on a
+  `Finished(Cancelled)` that reads displaced go round with the same request;
+  a cancelled stream that is not a displacement (the app's quit) ends the
+  title silently and the roll with the timeout's wording — never a fragment
+  as the summary. `tool_loop::run_rounds` is split into `stream_round`
+  (the reservation, the stream under what is left of the task's clock,
+  `Streamed::{Round, Displaced, Cancelled, TimedOut}`) and `run_tools`
+  (the calls under the clock's remainder): the task's `timeout` is now a
+  **clock over streaming and tools**, the waits for the lane and for room
+  outside it (`RoundsEnd::TimedOut` is what the spawn maps to the
+  time-limit outcome). Impersonation and the in-loop `fetch_url` summary
+  acquire with `yields: false`. Nothing on the tasks screen changed: a
+  displaced task's label leaves the budget with its reservation and the
+  row reads *waiting* on the next tick. `KeyedRecorder` ends a delayed
+  script with `Finished(Cancelled)` when its token fires, as the engine does.
+- **Tests**: +13 — `session_budget.rs` (a yielding stream displaced by a
+  waiter that would then fit; one that would still not fit displaces
+  nothing; a holding stream never; a silent waiter never; the displacing
+  waiter admitted before the displaced task's retry; a waiter that gives up
+  uncounts itself; no pool, no displacement; the holder's own cancel is not
+  a displacement), `tests/silent.rs` (the roll waiting for the run and
+  yielding to the wake turn — the turn streaming between the roll's two
+  identical requests, the stored summary the retry's and never the
+  fragment; a reflection round and the title displaced and made again;
+  impersonation holding while a stream waits for it; a task holding after
+  its third displacement; the loop's wait for room off its clock and its
+  stream on it) — **2894 unit tests green, 143 `#[ignore]`**. The lane's
+  own budget tests pass `yields: false`, so they still pin the lane and
+  nothing else; the fan-out order test waits for the title to land before
+  the second turn, which would otherwise displace it.
+- **Live** (mandatory — every path here is an engine path): the CPU
+  build's two arms after the change — the turn's first token at **62.9 s**
+  against 85.2 s before, and before the roll's end (the roll 112.3 s:
+  cancelled 1.1 s into its prefill, its slot released only when that batch
+  had run out 23 s later, the retry placed cold by LRU, 49 s); the floor
+  unchanged at 0.83 s. The LAN stack — the turn at **7.9 s** against
+  12.1 s (the roll 14.3 s against 6.1 s), the floor 0.37 s — and the
+  regression `silent_roll_e2e_live`, `admission_e2e_live`,
+  `background_subagent_e2e_live` green: 5/5 in 80 s. What the server's log
+  added (research §3.2): a cancel is honoured *between batches*, so a
+  stream cancelled during its prefill holds its slot to the batch's end —
+  the turn's wait fell to the roll's prefill batch (about 24 s on the CPU
+  build, under two on the GPU), not to the floor — and the parked cache of
+  a cancelled stream is evicted under pressure (`failed to find free space
+  in the KV cache, retrying with smaller batch size`), while the retry
+  prefilled cold. A smaller `-ub` is the launch-line follow-up, recorded and
+  not taken.
+- **Rejected**: the retry in the orchestrator (the task landing *displaced*,
+  the watermark, the counters and the owed title refunded — four handlers
+  for what one loop inside the task does with the spawn-time bookkeeping
+  left honest); a fourth word on the tasks screen for a state that lasts a
+  round; displacing whenever the waiter does not fit (above one session it
+  cancels rounds that were not the problem); an unbounded number of yields
+  (a 32-round turn could starve a task and waste a round per round).

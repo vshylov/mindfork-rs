@@ -122,6 +122,13 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
     slots; measured before designing: the compaction roll beside a
     background run ended both at the default,
     [docs/research/silent-tasks-budget.md](research/silent-tasks-budget.md),
+    every fork at its recommendation). **The silent stream yields to the
+    turn — done** (2026-09-07: a silent reservation's child token,
+    cancelled by an interactive waiter that would then fit and admitted
+    ahead of the task's retry, the retry inside the task, at most three
+    yields; measured first — a one-word turn waited 45.9 s behind the roll
+    on the CPU build where a cancelled stream's room is free in 0.79 s,
+    [docs/research/silent-preemption.md](research/silent-preemption.md),
     every fork at its recommendation). **Background dialogues are
     done** (2026-09-06: `start_dialogue` behind the same switch, the
     director's brief snapshotted at the call, every dialogue stream priced by

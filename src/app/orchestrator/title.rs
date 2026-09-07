@@ -13,6 +13,7 @@ use crate::app::events::AppEvent;
 use crate::entities::sampling::{ReasoningEffort, SamplingConfig};
 use crate::shared::api::{ApiMessage, ChatChunk, ChatRequest, EngineBackend};
 use crate::shared::config::AutoTitleMode;
+use crate::shared::session_budget::SILENT_YIELDS_MAX;
 
 use super::Orchestrator;
 
@@ -245,49 +246,77 @@ fn spawn_title(
             0,
             request.sampling.max_tokens.map(|m| m as u64),
         );
-        let Some(_lane) = sessions.acquire_silent(need, &cancel, "title").await else {
-            return;
-        };
-        let collect = async {
-            let mut stream = backend.chat_stream(request, cancel.clone()).await?;
-            let mut text = String::new();
-            let mut thoughts = String::new();
-            while let Some(chunk) = stream.next().await {
-                match chunk {
-                    ChatChunk::Text(t) => text.push_str(&t),
-                    // Accumulate "thoughts" as a fallback source: if the model never
-                    // "finished thinking" (produced only reasoning), we'll pull the title
-                    // out of the last substantive line of the reasoning.
-                    ChatChunk::Thoughts(t) => thoughts.push_str(&t),
-                    ChatChunk::Finished(_) => break,
-                    // A background turn: the streak counter reports the failure to the
-                    // user (three in a row), and the log is where the reason belongs.
-                    // A background turn: the retry is worth a log line (a flaky provider is
-                    // otherwise invisible here) but has nothing to show — these turns have no
-                    // chip of their own.
-                    ChatChunk::Retry {
-                        attempt,
-                        max,
-                        delay,
-                    } => {
-                        tracing::info!(attempt, max, ?delay, "retrying a a title turn");
+        // A turn that does not fit beside the title's stream displaces it
+        // (docs/research/silent-preemption.md §4.4): the same request is made
+        // again, up to `SILENT_YIELDS_MAX` times; then the stream holds.
+        let mut yields: u32 = 0;
+        let text = loop {
+            let Some(lane) = sessions
+                .acquire_silent(need, &cancel, "title", yields < SILENT_YIELDS_MAX)
+                .await
+            else {
+                return;
+            };
+            let token = lane.stream_token();
+            let request = request.clone();
+            let collect = async {
+                let mut stream = backend.chat_stream(request, token.clone()).await?;
+                let mut text = String::new();
+                let mut thoughts = String::new();
+                let mut cancelled = false;
+                while let Some(chunk) = stream.next().await {
+                    match chunk {
+                        ChatChunk::Text(t) => text.push_str(&t),
+                        // Accumulate "thoughts" as a fallback source: if the model never
+                        // "finished thinking" (produced only reasoning), we'll pull the title
+                        // out of the last substantive line of the reasoning.
+                        ChatChunk::Thoughts(t) => thoughts.push_str(&t),
+                        ChatChunk::Finished(reason) => {
+                            cancelled =
+                                matches!(reason, crate::shared::api::FinishReason::Cancelled);
+                            break;
+                        }
+                        // A background turn: the streak counter reports the failure to the
+                        // user (three in a row), and the log is where the reason belongs.
+                        // A background turn: the retry is worth a log line (a flaky provider is
+                        // otherwise invisible here) but has nothing to show — these turns have no
+                        // chip of their own.
+                        ChatChunk::Retry {
+                            attempt,
+                            max,
+                            delay,
+                        } => {
+                            tracing::info!(attempt, max, ?delay, "retrying a a title turn");
+                        }
+                        ChatChunk::Error { message, .. } => {
+                            tracing::warn!(error = %message, "engine error while generating a title");
+                        }
+                        ChatChunk::ThoughtsSignature(_)
+                        | ChatChunk::ToolCall(_)
+                        | ChatChunk::Usage(_) => {}
                     }
-                    ChatChunk::Error { message, .. } => {
-                        tracing::warn!(error = %message, "engine error while generating a title");
-                    }
-                    ChatChunk::ThoughtsSignature(_)
-                    | ChatChunk::ToolCall(_)
-                    | ChatChunk::Usage(_) => {}
                 }
-            }
-            Ok::<(String, String), anyhow::Error>((text, thoughts))
-        };
-        let text = match tokio::time::timeout(TITLE_TIMEOUT, collect).await {
-            Ok(Ok((text, thoughts))) => Ok(salvage_title_source(text, thoughts)),
-            Ok(Err(err)) => Err(loc.tf("ui.err.title_gen_failed", &[("err", &err.to_string())])),
-            Err(_) => {
-                cancel.cancel();
-                Err(loc.t("ui.err.title_timeout").to_string())
+                Ok::<(String, String, bool), anyhow::Error>((text, thoughts, cancelled))
+            };
+            match tokio::time::timeout(TITLE_TIMEOUT, collect).await {
+                Ok(Ok((_, _, true))) if lane.displaced() => {
+                    yields += 1;
+                    tracing::info!(
+                        chat = %chat_id,
+                        yields,
+                        "the title's stream was displaced by an interactive one; made again"
+                    );
+                }
+                // The app is quitting: nobody reads a title now.
+                Ok(Ok((_, _, true))) => return,
+                Ok(Ok((text, thoughts, false))) => break Ok(salvage_title_source(text, thoughts)),
+                Ok(Err(err)) => {
+                    break Err(loc.tf("ui.err.title_gen_failed", &[("err", &err.to_string())]));
+                }
+                Err(_) => {
+                    cancel.cancel();
+                    break Err(loc.t("ui.err.title_timeout").to_string());
+                }
             }
         };
         let _ = title_tx.send(TitleResult {

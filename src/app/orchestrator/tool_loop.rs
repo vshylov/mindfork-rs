@@ -8,7 +8,7 @@
 //! signatures, usage, effects — its complexity doesn't pay for a shared sink right now.
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
 use tokio::sync::mpsc::UnboundedSender;
@@ -24,7 +24,7 @@ use crate::shared::api::{
     ToolCallAccumulator,
 };
 use crate::shared::i18n::Locale;
-use crate::shared::session_budget::{Reservation, SessionBudget};
+use crate::shared::session_budget::{Reservation, SILENT_YIELDS_MAX, SessionBudget};
 use crate::shared::storage::Storage;
 
 /// An async layer over the background task's digest (§A2): a semantic comparison of
@@ -56,7 +56,8 @@ pub(super) struct SilentLoop {
     pub cancel: CancellationToken,
     /// A backstop against looping (the round count).
     pub max_rounds: u32,
-    /// The time limit for the whole task.
+    /// The time limit for the task's streaming and tools; its waits for the
+    /// silent lane and for room are outside it (silent-preemption §4.5).
     pub timeout: Duration,
     /// A label for diagnostic logs ("auto-reflection"/"auto-consolidation").
     pub label: &'static str,
@@ -120,21 +121,51 @@ pub(super) fn spawn_silent_loop(spawn: SilentLoop) {
             &cancel,
             max_rounds,
             super::background::lane_label(kind),
+            timeout,
         );
-        let outcome: Result<(), String> = match tokio::time::timeout(timeout, run).await {
-            Ok(Ok(())) => Ok(()),
-            Ok(Err(e)) => {
-                tracing::warn!(%profile_id, "{label}: error: {e}");
-                Err(e.to_string())
-            }
-            Err(_) => {
+        let outcome: Result<(), String> = match run.await {
+            Ok(RoundsEnd::Done) => Ok(()),
+            Ok(RoundsEnd::TimedOut) => {
                 cancel.cancel();
                 tracing::warn!(%profile_id, "{label}: time limit exceeded");
                 Err(ctx.loc.t("loop.time_limit_exceeded").to_string())
             }
+            Err(e) => {
+                tracing::warn!(%profile_id, "{label}: error: {e}");
+                Err(e.to_string())
+            }
         };
         let _ = done_tx.send((kind, outcome));
     });
+}
+
+/// How a run of rounds ended: the task's work is done (a round with no
+/// calls, or the round limit), or its clock ran out.
+pub(super) enum RoundsEnd {
+    Done,
+    TimedOut,
+}
+
+/// One round's stream: its text, accumulated tool calls, finish reason and
+/// the server's exact `usage` when it sent one.
+type RoundOut = (
+    String,
+    Vec<ApiToolCall>,
+    FinishReason,
+    Option<crate::shared::api::contract::TokenUsage>,
+);
+
+/// How one round's stream ended under the lane and the clock
+/// ([`stream_round`]).
+enum Streamed {
+    /// The round streamed to its end.
+    Round(RoundOut),
+    /// Displaced by an interactive stream: the round is made again.
+    Displaced,
+    /// The wait for the lane was cancelled: the app is quitting.
+    Cancelled,
+    /// The task's clock ran out while streaming.
+    TimedOut,
 }
 
 /// The mini agentic loop's body: rounds of stream→calls→execution up to `max_rounds` or
@@ -148,6 +179,14 @@ pub(super) fn spawn_silent_loop(spawn: SilentLoop) {
 /// dropped before the round's tools run, as a turn's loop does. A wait
 /// cancelled (the app is quitting) ends the task quietly: nothing ran, so
 /// nothing failed.
+///
+/// A round whose stream was **displaced** by an interactive one
+/// (docs/research/silent-preemption.md §4.4) is made again with the same
+/// request — the messages are pushed only once a round completes — up to
+/// [`SILENT_YIELDS_MAX`] times, after which the round holds. `clock` is the
+/// task's time over its streaming and its tools; the waits for the lane and
+/// for room are outside it (§4.5), so a task queued behind a long roll, or
+/// displaced by a turn, is not timed out for the queue.
 #[allow(clippy::too_many_arguments)]
 async fn run_rounds(
     backend: &Arc<dyn EngineBackend>,
@@ -158,26 +197,39 @@ async fn run_rounds(
     cancel: &CancellationToken,
     max_rounds: u32,
     lane: &'static str,
-) -> Result<(), anyhow::Error> {
+    clock: Duration,
+) -> Result<RoundsEnd, anyhow::Error> {
     let mut round: u32 = 0;
     let mut last_exact: u64 = 0;
+    let mut yields: u32 = 0;
+    let mut left = clock;
     loop {
         let estimate = super::generation::estimate_prompt_tokens(request);
-        let (text, calls, reason, usage) = {
-            let Ok(_lane) = lane_reservation(
-                ctx.sessions.as_deref(),
-                request,
-                estimate,
-                last_exact,
-                cancel,
-                lane,
-            )
-            .await
-            else {
-                return Ok(());
-            };
-            let stream = backend.chat_stream(request.clone(), cancel.clone()).await?;
-            read_round(stream).await
+        let streamed = stream_round(
+            backend,
+            ctx,
+            request,
+            estimate,
+            last_exact,
+            cancel,
+            lane,
+            yields < SILENT_YIELDS_MAX,
+            &mut left,
+        )
+        .await?;
+        let (text, calls, reason, usage) = match streamed {
+            Streamed::Round(out) => out,
+            Streamed::Displaced => {
+                yields += 1;
+                tracing::info!(
+                    lane,
+                    yields,
+                    "a silent round was displaced by an interactive stream; made again"
+                );
+                continue;
+            }
+            Streamed::Cancelled => return Ok(RoundsEnd::Done),
+            Streamed::TimedOut => return Ok(RoundsEnd::TimedOut),
         };
         if let Some(u) = usage {
             if let Some(budget) = ctx.sessions.as_deref() {
@@ -194,14 +246,85 @@ async fn run_rounds(
             text.clone(),
             calls.clone(),
         ));
-        for call in &calls {
+        if !run_tools(registry, ctx, allowed, request, &calls, &mut left).await {
+            return Ok(RoundsEnd::TimedOut);
+        }
+    }
+    Ok(RoundsEnd::Done)
+}
+
+/// One round's stream: the lane's reservation (a wait outside the clock),
+/// the stream on the reservation's token under what is `left` of the clock,
+/// and the reading of how it ended. The reservation is dropped with this
+/// call, before the round's tools run.
+#[allow(clippy::too_many_arguments)]
+async fn stream_round(
+    backend: &Arc<dyn EngineBackend>,
+    ctx: &ToolContext,
+    request: &ChatRequest,
+    estimate: u64,
+    floor: u64,
+    cancel: &CancellationToken,
+    lane: &'static str,
+    yields: bool,
+    left: &mut Duration,
+) -> Result<Streamed, anyhow::Error> {
+    let Ok(held) = lane_reservation(
+        ctx.sessions.as_deref(),
+        request,
+        estimate,
+        floor,
+        cancel,
+        lane,
+        yields,
+    )
+    .await
+    else {
+        return Ok(Streamed::Cancelled);
+    };
+    let token = held
+        .as_ref()
+        .map_or_else(|| cancel.clone(), Reservation::stream_token);
+    let started = Instant::now();
+    let streamed = async {
+        let stream = backend.chat_stream(request.clone(), token.clone()).await?;
+        Ok::<RoundOut, anyhow::Error>(read_round(stream).await)
+    };
+    let Ok(out) = tokio::time::timeout(*left, streamed).await else {
+        return Ok(Streamed::TimedOut);
+    };
+    let out = out?;
+    *left = left.saturating_sub(started.elapsed());
+    if out.2 == FinishReason::Cancelled && held.as_ref().is_some_and(Reservation::displaced) {
+        return Ok(Streamed::Displaced);
+    }
+    Ok(Streamed::Round(out))
+}
+
+/// The round's calls in the model's order, under what is `left` of the
+/// task's clock; `false` when the clock ran out.
+async fn run_tools(
+    registry: &Arc<ToolRegistry>,
+    ctx: &ToolContext,
+    allowed: &[ToolId],
+    request: &mut ChatRequest,
+    calls: &[ApiToolCall],
+    left: &mut Duration,
+) -> bool {
+    let started = Instant::now();
+    let tools = async {
+        for call in calls {
             let args: serde_json::Value =
                 serde_json::from_str(&call.arguments).unwrap_or_else(|_| serde_json::json!({}));
             let result = invoke_allowed(registry, ctx, allowed, call, args).await;
             request.messages.push(ApiMessage::tool(&call.id, &result));
         }
+    };
+    if tokio::time::timeout(*left, tools).await.is_err() {
+        return false;
     }
-    Ok(())
+    *left = left.saturating_sub(started.elapsed());
+    true
 }
 
 /// The wait for the silent lane ended without a permit: the app is quitting,
@@ -211,7 +334,8 @@ struct Cancelled;
 /// The round's place on the budget's silent lane (spec §6.3): `None` where
 /// the engine has no session budget, otherwise the reservation — the
 /// request's calibrated `estimate` floored by the last round's exact size
-/// (`floor`), plus the reply cap — held until dropped.
+/// (`floor`), plus the reply cap — held until dropped; `yields` says whether
+/// an interactive waiter may displace its stream (silent-preemption §4.3).
 async fn lane_reservation<'a>(
     budget: Option<&'a SessionBudget>,
     request: &ChatRequest,
@@ -219,6 +343,7 @@ async fn lane_reservation<'a>(
     floor: u64,
     cancel: &CancellationToken,
     lane: &'static str,
+    yields: bool,
 ) -> Result<Option<Reservation<'a>>, Cancelled> {
     let Some(budget) = budget else {
         return Ok(None);
@@ -229,7 +354,7 @@ async fn lane_reservation<'a>(
         request.sampling.max_tokens.map(|m| m as u64),
     );
     budget
-        .acquire_silent(need, cancel, lane)
+        .acquire_silent(need, cancel, lane, yields)
         .await
         .map(Some)
         .ok_or(Cancelled)
@@ -239,14 +364,7 @@ async fn lane_reservation<'a>(
 /// reason and the server's exact `usage` when it sent one (the budget's floor
 /// and calibration read it); `Thoughts`/`ThoughtsSignature` are tolerated and
 /// ignored (a silent task has no UI to stream them to).
-async fn read_round(
-    mut stream: ChatStream,
-) -> (
-    String,
-    Vec<ApiToolCall>,
-    FinishReason,
-    Option<crate::shared::api::contract::TokenUsage>,
-) {
+async fn read_round(mut stream: ChatStream) -> RoundOut {
     let mut acc = ToolCallAccumulator::default();
     let mut text = String::new();
     let mut reason = FinishReason::Stop;
