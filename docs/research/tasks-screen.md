@@ -305,7 +305,10 @@ orchestrator gains a progress step.
 
 - **Cancelling a silent task** from the screen (reflection, consolidation):
   they have cancel tokens, but a user-facing stop for them is its own
-  question — they are supposed to be invisible.
+  question — they are supposed to be invisible. The child token the
+  silent-preemption track put on a silent reservation
+  ([silent-preemption.md](silent-preemption.md) §4.1 — a stream ended
+  from outside, and a holder that re-makes its request) is a piece of it.
 - **History beyond the cap**: a searchable log of every run ever. The chat
   list and `chat_search` already reach every transcript.
 - **The silent tasks under the app-wide budget**

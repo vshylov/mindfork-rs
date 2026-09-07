@@ -1,6 +1,8 @@
 # The silent stream yields to the turn — preemption on the session budget
 
-> **Status:** research and design (2026-09-07), stage 0 measured — see §3.1.
+> **Status:** implemented (2026-09-07) — stage 0 measured in §3.1, stage 1's
+> live runs in §3.2; every fork at its recommendation (the user's decision,
+> 2026-09-07).
 > The track the silent-lane design deferred as its fork F3(b)
 > ([silent-tasks-budget.md](silent-tasks-budget.md) §4.4, §8): the app's own
 > request open on the pool is *cancelled* to make room for the user's turn,
@@ -262,6 +264,55 @@ cancelled stream's compute and its room within a decode step, so
 §2.4's reading of the parked cache holds, and a displaced roll's retry
 lands on a warm slot as long as no third conversation evicted it.
 
+### 3.2 Stage 1 — the same arms after the change (2026-09-07)
+
+**The turn no longer waits for the roll's round — it waits for the
+server's current batch.** The same two arms, the CPU build and the LAN stack,
+after the change; the arm gained the assertion that the turn's first token
+comes before the roll's end.
+
+| stack | the roll, both attempts | the turn's first token | before (§3.1) | the floor |
+|---|---:|---:|---:|---:|
+| CPU, 2048 | 112.3 s (cancelled 1.1 s in, made again after the turn) | **62.9 s** | 85.2 s | 0.83 s |
+| LAN, 16384 | 14.3 s | **7.9 s** | 12.1 s | 0.37 s |
+
+The turn streamed before the roll's end on both, the roll landed a summary
+from its second attempt, and the LAN regression — `silent_roll_e2e_live`,
+`admission_e2e_live`, `background_subagent_e2e_live` — was green with the
+two arms, 5/5 in 80 s. But the turn's first token is not at the floor, and
+the server's log says why, in two parts §2.4's reading did not foresee:
+
+- **A displacement takes effect at the end of the server's current batch.**
+  The floor arm cancelled a stream that was *decoding* — one token per
+  step, the cancel seen within 1 ms. The roll was cancelled 1.1 s into its
+  **prefill**, and llama.cpp's loop honours a cancel between batches: the
+  roll's slot was released only when its prefill batch had run to the end
+  (`n_tokens = 888`, 23 s later on the CPU build), and the turn's request,
+  queued behind that batch, launched at the same instant. So the turn now
+  waits the roll's prefill batch rather than its prefill and its whole
+  reply: on the CPU build about 24 s of its 62.9 s (the rest is its own
+  cold prefill, 39 s, the scripted seed's artefact of §3.1), against the
+  lane's 45.9 s; on the GPU about 1.4 s (7.9 s less the same ~6.5 s
+  prefill) against 5.6 s.
+- **The retry prefilled cold.** The roll's second attempt was placed by
+  LRU on a never-used slot, not on the cancelled one whose cache still held
+  its prefix (the floor arm's next turn *did* land on the cancelled slot by
+  prefix similarity — a decoding stream's cache survives, a stream cancelled
+  mid-prefill apparently does not): 49 s on the CPU build, the roll's total
+  112 s against 46 s; on the LAN 14.3 s against 6.1 s. And while the turn
+  prefilled beside the cancelled slot's parked tokens the server logged
+  `failed to find free space in the KV cache, retrying with smaller batch
+  size`: a parked cache is evicted under pressure, at the price of retried
+  batches — the pool's room is free at the release, as §2.4 said, but not
+  for free.
+
+What the design buys is therefore what the server's batch leaves: on the
+GPU stack the turn's wait fell from 5.6 s to under two, on the CPU build
+from 46 s to 24 s, and the roll pays its prefill twice. Both are the
+server's granularity — a smaller micro-batch (`-ub`) would shorten the
+batch a cancel waits for, and that is a launch-line decision recorded in
+§8, not this track's.
+
 ## 4. Design
 
 ### 4.1 The yield token
@@ -438,6 +489,8 @@ inside one run of a task); the clouds and the one-slot server (R5).
 
 ## 6. Forks
 
+The user's decision (2026-09-07): every fork at its recommendation.
+
 - **F1. Who displaces.** (a) **Every interactive waiter** — the lane
   decides: the turn's rounds, a sub-agent's, a dialogue's line, a
   background run's round, a turn's summary *(recommended — one rule in one
@@ -514,6 +567,12 @@ Stage 0 is §3's probe, on this branch with the design. Stage 1, one PR:
   interactive lane; the run is the user's work, and at one session they
   already take turns round by round.
 - **Impersonation on its own engine** — its own pool, no contention.
+- **A smaller micro-batch on the launch line** (`-ub`) for the CPU build:
+  §3.2 measured that a cancel is honoured between the server's batches,
+  so a stream displaced during its prefill holds its slot to the batch's
+  end — 23 s on the CPU build, about a second on the GPU. Shortening the
+  batch trades prefill throughput for that latency and belongs to the
+  launcher's line, measured on its own.
 
 ## 9. Documentation touch list (AGENTS.md §4)
 

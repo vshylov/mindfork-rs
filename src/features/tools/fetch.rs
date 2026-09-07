@@ -460,7 +460,11 @@ async fn summarize_text(
             // A silent loop's summary takes the silent lane: one of the
             // app's own requests at a time (silent-tasks-budget §4.2).
             let reservation = if ctx.silent_lane {
-                budget.acquire_silent(need, &ctx.cancel, "summary").await
+                // One tool call inside a round that already dropped its own
+                // reservation: it holds (silent-preemption §4.3).
+                budget
+                    .acquire_silent(need, &ctx.cancel, "summary", false)
+                    .await
             } else {
                 budget.acquire(need, &ctx.cancel).await
             };

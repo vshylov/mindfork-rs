@@ -5749,12 +5749,13 @@ async fn preemption_smoke(arm: PreemptArm) -> Option<PreemptProbe> {
     Some(probe)
 }
 
-/// **Arm 1 — the wait today** (docs/research/silent-preemption.md §3): the
-/// turn behind the roll starts only when the roll ends; the numbers are the
-/// record, the assertions only that both completed. `#[ignore]`, manual:
-/// the CPU build launched as the managed launcher would at one session
-/// (`-c 2048`, no `-np`), `MINDFORK_ENGINE_URL` at it; the LAN stack for
-/// the GPU numbers.
+/// **Arm 1 — the turn behind the roll** (docs/research/silent-preemption.md
+/// §3, §7): before the track the turn started only when the roll ended (the
+/// wait it measured, §3.1); now the turn **displaces** the roll — its first
+/// token arrives before the roll's end — and the roll is made again after
+/// it and lands a summary. `#[ignore]`, manual: the CPU build launched as
+/// the managed launcher would at one session (`-c 2048`, no `-np`),
+/// `MINDFORK_ENGINE_URL` at it; the LAN stack for the GPU numbers.
 #[tokio::test]
 #[ignore = "requires a live llama-server with several slots over one pool (MINDFORK_ENGINE_URL)"]
 async fn preemption_wait_e2e_live() {
@@ -5769,6 +5770,11 @@ async fn preemption_wait_e2e_live() {
     );
     assert!(probe.finished.is_some(), "the turn finished");
     assert!(!probe.reply.trim().is_empty(), "the turn replied");
+    let (first_token, roll_end) = (probe.first_token.unwrap(), probe.wait.unwrap());
+    assert!(
+        first_token < roll_end,
+        "the turn streamed before the roll ended: first token at {first_token:.1} s, the roll's end at {roll_end:.1} s"
+    );
 }
 
 /// **Arm 2 — the floor**: a turn cancelled at its first token, the next one

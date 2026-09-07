@@ -26,38 +26,73 @@
 //! §4.1): one permit for the app's own background requests (the title, the
 //! silent loops, the compaction roll, impersonation on the shared engine)
 //! over the *same* pool sum. So the silent tasks take turns among
-//! themselves, a silent stream never overfills the pool beside an
-//! interactive one, and an interactive stream that does not fit beside an
-//! open silent round waits for that one round — bounded by its reply cap —
-//! never the reverse. The lane records the label of the request it is
+//! themselves, and a silent stream never overfills the pool beside an
+//! interactive one. The lane records the label of the request it is
 //! streaming, so the tasks screen can say which task waits.
+//!
+//! The reverse wait — an interactive stream that does not fit beside an open
+//! silent one — ends by **displacement** (docs/research/silent-preemption.md
+//! §4): a silent reservation carries a child token its holder streams on, and
+//! an interactive waiter that would fit once that reservation is gone cancels
+//! it, counts itself as *displacing* — the silent lane takes no room while
+//! such a waiter is pending, so the displaced task's retry cannot slip back in
+//! ahead of it — and is admitted when the reservation drops. The holder reads
+//! the displacement off its reservation and makes the same request again;
+//! after [`SILENT_YIELDS_MAX`] displacements it asks for a reservation that
+//! does not yield, and the interactive waiter waits that one round out, as it
+//! waited every round before this existed. Impersonation and a summary inside
+//! a silent loop never yield. Without a pool there is no reservation and no
+//! displacement.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, PoisonError};
 
 use tokio::sync::{Notify, Semaphore, SemaphorePermit};
 use tokio_util::sync::CancellationToken;
+
+/// How many times one silent task yields its stream to an interactive waiter
+/// before it holds (docs/research/silent-preemption.md §4.4, fork F5): a
+/// bound on the rounds wasted and on how long a long agentic turn can keep a
+/// task from finishing — its fourth attempt streams to its end, and the turn
+/// waits that one round.
+pub const SILENT_YIELDS_MAX: u32 = 3;
+
+/// The silent stream open right now, as the interactive lane sees it.
+struct SilentOpen {
+    label: &'static str,
+    /// The child token the holder streams on — what a displacement cancels.
+    token: CancellationToken,
+    /// Its reservation, in tokens (`0` with no pool).
+    tokens: u64,
+    /// Whether it yields to an interactive waiter (research §4.3).
+    yields: bool,
+}
 
 /// The budget: the permit count and, when a pool is known, the token sum.
 pub struct SessionBudget {
     permits: Semaphore,
     /// The silent lane's one permit (research §4.1, fork F5).
     silent_permits: Semaphore,
-    /// The label of the silent request streaming right now (`None` — the
-    /// lane is idle, or its holder is still waiting for room). A `std`
-    /// mutex, never held across an await.
-    silent_streaming: Mutex<Option<&'static str>>,
+    /// The silent request streaming right now (`None` — the lane is idle, or
+    /// its holder is still waiting for room). A `std` mutex, never held
+    /// across an await.
+    silent_open: Mutex<Option<SilentOpen>>,
     /// The KV pool the open streams share, in tokens. `None`: no guard.
     pool: Option<u64>,
     /// The sum of the reservations of the streams currently open. A `std`
     /// mutex, never held across an await.
     in_flight: Mutex<u64>,
-    /// Woken (all waiters) whenever a reservation is released.
+    /// Woken (all waiters) whenever a reservation is released, and whenever a
+    /// displacing waiter stops being one.
     room: Notify,
     /// The estimator's correction (research §4.3): the latest ratio of an exact
     /// `usage.prompt_tokens` to the estimate of the same request, as `f64`
     /// bits; `0` — none recorded yet, read as `1.0`.
     density: AtomicU64,
+    /// Interactive waiters that displaced a silent stream and are not
+    /// admitted yet (silent-preemption §4.2): while one is pending, the
+    /// silent lane takes no room.
+    displacing: AtomicUsize,
 }
 
 /// A stream's place in the budget: one permit and its token reservation,
@@ -68,15 +103,34 @@ pub struct Reservation<'a> {
     tokens: u64,
     /// The silent lane's label this reservation holds, if it is a silent one.
     label: Option<&'static str>,
+    /// The holder's own token.
+    cancel: CancellationToken,
+    /// A silent reservation's stream token: a child of `cancel`, cancelled by
+    /// a displacement as well.
+    child: Option<CancellationToken>,
     _permit: SemaphorePermit<'a>,
+}
+
+impl Reservation<'_> {
+    /// The token to stream on: for a silent reservation the child a
+    /// displacement cancels, otherwise the holder's own.
+    pub fn stream_token(&self) -> CancellationToken {
+        self.child.clone().unwrap_or_else(|| self.cancel.clone())
+    }
+
+    /// Whether the stream was displaced by an interactive waiter: the child
+    /// fired while the holder's own token did not (silent-preemption §4.1).
+    pub fn displaced(&self) -> bool {
+        self.child.as_ref().is_some_and(|c| c.is_cancelled()) && !self.cancel.is_cancelled()
+    }
 }
 
 impl Drop for Reservation<'_> {
     fn drop(&mut self) {
         if let Some(label) = self.label {
-            let mut streaming = self.budget.streaming();
-            if *streaming == Some(label) {
-                *streaming = None;
+            let mut silent = self.budget.silent();
+            if silent.as_ref().is_some_and(|s| s.label == label) {
+                *silent = None;
             }
         }
         if self.tokens > 0 {
@@ -88,6 +142,25 @@ impl Drop for Reservation<'_> {
     }
 }
 
+/// An interactive waiter's mark while it displaces a silent stream
+/// (silent-preemption §4.2): counted at the cancel, uncounted — with a
+/// wake-up for the silent lane — when the waiter is admitted or gives up.
+struct Displacing<'a>(&'a SessionBudget);
+
+impl<'a> Displacing<'a> {
+    fn new(budget: &'a SessionBudget) -> Self {
+        budget.displacing.fetch_add(1, Ordering::SeqCst);
+        Self(budget)
+    }
+}
+
+impl Drop for Displacing<'_> {
+    fn drop(&mut self) {
+        self.0.displacing.fetch_sub(1, Ordering::SeqCst);
+        self.0.room.notify_waiters();
+    }
+}
+
 impl std::fmt::Debug for SessionBudget {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SessionBudget")
@@ -95,6 +168,7 @@ impl std::fmt::Debug for SessionBudget {
             .field("pool", &self.pool)
             .field("in_flight", &*self.open())
             .field("density", &self.density())
+            .field("displacing", &self.displacing.load(Ordering::SeqCst))
             .finish()
     }
 }
@@ -106,11 +180,12 @@ impl SessionBudget {
         Self {
             permits: Semaphore::new(sessions.max(1) as usize),
             silent_permits: Semaphore::new(1),
-            silent_streaming: Mutex::new(None),
+            silent_open: Mutex::new(None),
             pool: pool.filter(|&n| n > 0),
             in_flight: Mutex::new(0),
             room: Notify::new(),
             density: AtomicU64::new(0),
+            displacing: AtomicUsize::new(0),
         }
     }
 
@@ -132,14 +207,20 @@ impl SessionBudget {
         *self.open()
     }
 
+    /// Interactive waiters displacing a silent stream right now.
+    #[cfg(test)]
+    pub fn displacing(&self) -> usize {
+        self.displacing.load(Ordering::SeqCst)
+    }
+
     fn open(&self) -> std::sync::MutexGuard<'_, u64> {
         self.in_flight
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
     }
 
-    fn streaming(&self) -> std::sync::MutexGuard<'_, Option<&'static str>> {
-        self.silent_streaming
+    fn silent(&self) -> std::sync::MutexGuard<'_, Option<SilentOpen>> {
+        self.silent_open
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
     }
@@ -148,7 +229,7 @@ impl SessionBudget {
     /// the tasks screen reads to tell a task that waits from the one that
     /// runs (spec §11.10). `None` while the lane's holder waits for room.
     pub fn silent_streaming(&self) -> Option<&'static str> {
-        *self.streaming()
+        self.silent().as_ref().map(|s| s.label)
     }
 
     /// The estimator's correction factor: the latest exact-to-estimate ratio
@@ -192,22 +273,28 @@ impl SessionBudget {
     /// the open reservations — or no stream is open at all. `None` when the
     /// turn is cancelled while waiting, for either. The reservation is the
     /// caller's to drop, which it does the moment its stream ends, so a
-    /// round's tools never hold one.
+    /// round's tools never hold one. A silent stream in the way is displaced
+    /// when its room would let this one in (silent-preemption §4.2).
     pub async fn acquire(&self, need: u64, cancel: &CancellationToken) -> Option<Reservation<'_>> {
-        self.acquire_in(&self.permits, need, cancel, None).await
+        self.acquire_in(&self.permits, need, cancel, None, false)
+            .await
     }
 
     /// The silent lane's [`Self::acquire`] (research §4.1): the lane's one
     /// permit — so the app's own background requests take turns among
     /// themselves — then the same wait for room under the pool. `label`
-    /// names the request for [`Self::silent_streaming`].
+    /// names the request for [`Self::silent_streaming`]; `yields` says
+    /// whether an interactive waiter may displace the stream
+    /// (silent-preemption §4.3) — the holder then streams on
+    /// [`Reservation::stream_token`] and reads [`Reservation::displaced`].
     pub async fn acquire_silent(
         &self,
         need: u64,
         cancel: &CancellationToken,
         label: &'static str,
+        yields: bool,
     ) -> Option<Reservation<'_>> {
-        self.acquire_in(&self.silent_permits, need, cancel, Some(label))
+        self.acquire_in(&self.silent_permits, need, cancel, Some(label), yields)
             .await
     }
 
@@ -217,6 +304,7 @@ impl SessionBudget {
         need: u64,
         cancel: &CancellationToken,
         label: Option<&'static str>,
+        yields: bool,
     ) -> Option<Reservation<'a>> {
         let permit = tokio::select! {
             biased;
@@ -225,18 +313,20 @@ impl SessionBudget {
             // reads as "cancelled" rather than as a panic.
             permit = permits.acquire() => permit.ok()?,
         };
+        let child = label.map(|_| cancel.child_token());
         let Some(pool) = self.pool else {
-            if label.is_some() {
-                *self.streaming() = label;
-            }
+            self.admit_silent(label, child.as_ref(), 0, yields);
             return Some(Reservation {
                 budget: self,
                 tokens: 0,
                 label,
+                cancel: cancel.clone(),
+                child,
                 _permit: permit,
             });
         };
         let mut waited = false;
+        let mut displacing: Option<Displacing<'_>> = None;
         loop {
             // Registered before the check, so a release between the check and
             // the wait is not missed.
@@ -245,18 +335,32 @@ impl SessionBudget {
             notified.as_mut().enable();
             {
                 let mut open = self.open();
-                if *open == 0 || open.saturating_add(need) <= pool {
+                let fits = *open == 0 || open.saturating_add(need) <= pool;
+                // A silent request behind a displacing waiter takes no room
+                // until that waiter is in (silent-preemption §4.2).
+                let deferred = label.is_some() && self.displacing.load(Ordering::SeqCst) > 0;
+                if fits && !deferred {
                     *open += need;
                     drop(open);
-                    if label.is_some() {
-                        *self.streaming() = label;
-                    }
+                    self.admit_silent(label, child.as_ref(), need, yields);
+                    // Uncounted after the reservation is in, so the displaced
+                    // task's retry finds the room taken.
+                    drop(displacing);
                     return Some(Reservation {
                         budget: self,
                         tokens: need,
                         label,
+                        cancel: cancel.clone(),
+                        child,
                         _permit: permit,
                     });
+                }
+                if label.is_none()
+                    && !fits
+                    && displacing.is_none()
+                    && self.displace(*open, need, pool)
+                {
+                    displacing = Some(Displacing::new(self));
                 }
                 if !waited {
                     tracing::info!(
@@ -275,6 +379,55 @@ impl SessionBudget {
                 _ = &mut notified => {}
             }
         }
+    }
+
+    /// Records the silent stream admitted, for the tasks screen and for the
+    /// interactive lane's displacement.
+    fn admit_silent(
+        &self,
+        label: Option<&'static str>,
+        child: Option<&CancellationToken>,
+        tokens: u64,
+        yields: bool,
+    ) {
+        if let (Some(label), Some(token)) = (label, child) {
+            *self.silent() = Some(SilentOpen {
+                label,
+                token: token.clone(),
+                tokens,
+                yields,
+            });
+        }
+    }
+
+    /// Displaces the silent stream open (silent-preemption §4.2) when it
+    /// yields and its room would let a waiter of `need` in beside the rest
+    /// of `open`: its token is cancelled once, and the answer is whether
+    /// the waiter should count itself as displacing — also when another
+    /// waiter cancelled the same stream first.
+    fn displace(&self, open: u64, need: u64, pool: u64) -> bool {
+        let silent = self.silent();
+        let Some(s) = silent.as_ref() else {
+            return false;
+        };
+        if !s.yields || s.tokens == 0 {
+            return false;
+        }
+        let without = open.saturating_sub(s.tokens);
+        if without != 0 && without.saturating_add(need) > pool {
+            return false;
+        }
+        if !s.token.is_cancelled() {
+            s.token.cancel();
+            tracing::info!(
+                need,
+                in_flight = open,
+                pool,
+                displaced = s.label,
+                "an interactive stream displaces the silent one"
+            );
+        }
+        true
     }
 }
 
@@ -419,11 +572,11 @@ mod tests {
         let budget = SessionBudget::new(4, None);
         let cancel = CancellationToken::new();
         let a = budget
-            .acquire_silent(10, &cancel, "reflection")
+            .acquire_silent(10, &cancel, "reflection", false)
             .await
             .unwrap();
         assert_eq!(budget.silent_streaming(), Some("reflection"));
-        let mut b = std::pin::pin!(budget.acquire_silent(10, &cancel, "compaction"));
+        let mut b = std::pin::pin!(budget.acquire_silent(10, &cancel, "compaction", false));
         assert!(pending(&mut b).await, "one silent stream at a time");
         assert_eq!(
             budget.available_sessions(),
@@ -445,7 +598,7 @@ mod tests {
         let budget = SessionBudget::new(2, Some(1000));
         let cancel = CancellationToken::new();
         let silent = budget
-            .acquire_silent(700, &cancel, "compaction")
+            .acquire_silent(700, &cancel, "compaction", false)
             .await
             .unwrap();
         assert_eq!(budget.in_flight(), 700);
@@ -459,7 +612,7 @@ mod tests {
         assert_eq!(budget.in_flight(), 400);
         // …and the reverse: a silent request that does not fit beside an
         // interactive stream waits, with its silent permit.
-        let mut quiet = std::pin::pin!(budget.acquire_silent(700, &cancel, "reflection"));
+        let mut quiet = std::pin::pin!(budget.acquire_silent(700, &cancel, "reflection", false));
         assert!(pending(&mut quiet).await);
         assert_eq!(
             budget.silent_streaming(),
@@ -477,7 +630,7 @@ mod tests {
         let budget = SessionBudget::new(1, Some(1000));
         let cancel = CancellationToken::new();
         let big = budget
-            .acquire_silent(5000, &cancel, "compaction")
+            .acquire_silent(5000, &cancel, "compaction", false)
             .await
             .expect("alone: admitted");
         let mut turn = std::pin::pin!(budget.acquire(1, &cancel));
@@ -494,7 +647,7 @@ mod tests {
         let calm = CancellationToken::new();
         let _turn = budget.acquire(900, &calm).await.unwrap();
         let cancel = CancellationToken::new();
-        let mut w = std::pin::pin!(budget.acquire_silent(400, &cancel, "title"));
+        let mut w = std::pin::pin!(budget.acquire_silent(400, &cancel, "title", false));
         assert!(pending(&mut w).await);
         cancel.cancel();
         assert!(w.await.is_none());
@@ -502,7 +655,7 @@ mod tests {
         assert_eq!(budget.silent_streaming(), None);
         assert!(
             budget
-                .acquire_silent(1, &CancellationToken::new(), "title")
+                .acquire_silent(1, &CancellationToken::new(), "title", false)
                 .await
                 .is_some(),
             "the silent permit came back"
@@ -531,5 +684,192 @@ mod tests {
         assert_eq!(budget.density(), 1.0);
         // No pool: the reply half is what it is; the figure is unused anyway.
         assert_eq!(SessionBudget::new(1, None).price(100, 0, None), 100);
+    }
+
+    /// A yielding silent stream is displaced by an interactive waiter that
+    /// would fit once its reservation is gone (silent-preemption §4.2): the
+    /// child token the holder streams on is cancelled, the holder's own is
+    /// not, the reservation reads displaced, and the waiter is admitted the
+    /// moment the reservation drops.
+    #[tokio::test]
+    async fn an_interactive_waiter_displaces_the_silent_stream_it_would_then_fit_beside() {
+        let budget = SessionBudget::new(1, Some(1000));
+        let calm = CancellationToken::new();
+        let roll = budget
+            .acquire_silent(600, &calm, "compaction", true)
+            .await
+            .unwrap();
+        let token = roll.stream_token();
+        let mut turn = std::pin::pin!(budget.acquire(600, &calm));
+        assert!(pending(&mut turn).await, "no room beside the roll");
+        assert!(token.is_cancelled(), "the roll was told to yield");
+        assert!(roll.displaced());
+        assert!(!calm.is_cancelled(), "the holder's own token is untouched");
+        assert_eq!(budget.displacing(), 1);
+        drop(roll);
+        let turn = turn
+            .await
+            .expect("admitted once the roll's reservation dropped");
+        assert_eq!(budget.displacing(), 0, "uncounted at admission");
+        assert_eq!(budget.in_flight(), 600);
+        drop(turn);
+    }
+
+    /// A waiter that would still not fit without the silent stream displaces
+    /// nothing (§4.2's "when it helps"): above one session another
+    /// interactive stream is what is in the way.
+    #[tokio::test]
+    async fn a_waiter_that_would_still_not_fit_displaces_nothing() {
+        let budget = SessionBudget::new(2, Some(1000));
+        let calm = CancellationToken::new();
+        let a = budget.acquire(500, &calm).await.unwrap();
+        let quiet = budget
+            .acquire_silent(300, &calm, "reflection", true)
+            .await
+            .unwrap();
+        let token = quiet.stream_token();
+        let mut b = std::pin::pin!(budget.acquire(600, &calm));
+        assert!(pending(&mut b).await, "500 + 300 + 600 > 1000");
+        assert!(
+            !token.is_cancelled(),
+            "500 + 600 > 1000 even without the reflection"
+        );
+        assert_eq!(budget.displacing(), 0);
+        drop(a);
+        let b = b
+            .await
+            .expect("300 + 600 fit: admitted beside the reflection");
+        assert!(!token.is_cancelled());
+        assert!(!quiet.displaced());
+        drop(b);
+        drop(quiet);
+    }
+
+    /// A silent stream asked for without yielding — impersonation, a summary
+    /// inside a silent loop, a task past its yields — is never displaced: the
+    /// waiter waits it out.
+    #[tokio::test]
+    async fn a_holding_silent_stream_is_never_displaced() {
+        let budget = SessionBudget::new(1, Some(1000));
+        let calm = CancellationToken::new();
+        let preview = budget
+            .acquire_silent(600, &calm, "impersonation", false)
+            .await
+            .unwrap();
+        let token = preview.stream_token();
+        let mut turn = std::pin::pin!(budget.acquire(600, &calm));
+        assert!(pending(&mut turn).await);
+        assert!(!token.is_cancelled());
+        assert!(!preview.displaced());
+        assert_eq!(budget.displacing(), 0);
+        drop(preview);
+        assert!(turn.await.is_some());
+    }
+
+    /// A silent waiter displaces nothing: the silent tasks yield, never the
+    /// reverse (the lane's R2).
+    #[tokio::test]
+    async fn a_silent_waiter_displaces_nothing() {
+        let budget = SessionBudget::new(1, Some(1000));
+        let calm = CancellationToken::new();
+        let turn = budget.acquire(600, &calm).await.unwrap();
+        let mut quiet = std::pin::pin!(budget.acquire_silent(600, &calm, "title", true));
+        assert!(pending(&mut quiet).await);
+        assert!(!turn.stream_token().is_cancelled());
+        assert_eq!(budget.displacing(), 0);
+        drop(turn);
+        assert!(quiet.await.is_some());
+    }
+
+    /// The waiter that displaced a stream is admitted before the displaced
+    /// task's retry (§4.2): the retry takes the lane's permit but no room
+    /// while the waiter is pending, and finds the room taken once it is in.
+    #[tokio::test]
+    async fn the_displacing_waiter_is_admitted_before_the_displaced_streams_retry() {
+        let budget = SessionBudget::new(1, Some(1000));
+        let calm = CancellationToken::new();
+        let roll = budget
+            .acquire_silent(600, &calm, "compaction", true)
+            .await
+            .unwrap();
+        let mut turn = std::pin::pin!(budget.acquire(600, &calm));
+        assert!(pending(&mut turn).await);
+        assert!(roll.displaced());
+        drop(roll);
+        // The retry, made before the waiter has been polled again.
+        let mut retry = std::pin::pin!(budget.acquire_silent(600, &calm, "compaction", true));
+        assert!(
+            pending(&mut retry).await,
+            "deferred behind the displacing waiter"
+        );
+        assert_eq!(budget.in_flight(), 0);
+        let turn = turn.await.expect("the waiter first");
+        assert!(
+            pending(&mut retry).await,
+            "600 + 600 > 1000: the retry waits for the turn"
+        );
+        drop(turn);
+        let retry = retry.await.expect("then the retry");
+        assert!(!retry.displaced());
+        drop(retry);
+    }
+
+    /// A displacing waiter that gives up (its turn cancelled) uncounts
+    /// itself, so the displaced task's retry is not held back for nothing.
+    #[tokio::test]
+    async fn a_displacing_waiter_that_gives_up_uncounts_itself() {
+        let budget = SessionBudget::new(1, Some(1000));
+        let calm = CancellationToken::new();
+        let roll = budget
+            .acquire_silent(600, &calm, "compaction", true)
+            .await
+            .unwrap();
+        let cancel = CancellationToken::new();
+        let mut turn = std::pin::pin!(budget.acquire(600, &cancel));
+        assert!(pending(&mut turn).await);
+        assert_eq!(budget.displacing(), 1);
+        cancel.cancel();
+        assert!(turn.await.is_none());
+        assert_eq!(budget.displacing(), 0);
+        drop(roll);
+        let retry = budget.acquire_silent(600, &calm, "compaction", true).await;
+        assert!(retry.is_some(), "nothing holds the retry back");
+    }
+
+    /// No pool: nothing is reserved, nothing waits, nothing is displaced —
+    /// the clouds and the one-slot server are untouched (R5).
+    #[tokio::test]
+    async fn without_a_pool_nothing_is_displaced() {
+        let budget = SessionBudget::new(2, None);
+        let calm = CancellationToken::new();
+        let roll = budget
+            .acquire_silent(600, &calm, "compaction", true)
+            .await
+            .unwrap();
+        let turn = budget
+            .acquire(600, &calm)
+            .await
+            .expect("no wait without a pool");
+        assert!(!roll.stream_token().is_cancelled());
+        assert!(!roll.displaced());
+        assert_eq!(budget.displacing(), 0);
+        drop(turn);
+        drop(roll);
+    }
+
+    /// The holder's own cancellation (the app quitting, a timeout) reads as
+    /// what it is, not as a displacement: the child fires with its parent.
+    #[tokio::test]
+    async fn a_holder_that_cancelled_itself_was_not_displaced() {
+        let budget = SessionBudget::new(1, Some(1000));
+        let cancel = CancellationToken::new();
+        let roll = budget
+            .acquire_silent(600, &cancel, "compaction", true)
+            .await
+            .unwrap();
+        let token = roll.stream_token();
+        cancel.cancel();
+        assert!(token.is_cancelled(), "the child follows its parent");
+        assert!(!roll.displaced());
     }
 }

@@ -1,8 +1,10 @@
 //! Orchestrator tests — the silent lane (docs/research/silent-tasks-budget.md
 //! §4, §7): the app's own background requests — the title, the three silent
 //! loops, the compaction roll, impersonation on the shared engine — under the
-//! app-wide session budget. Part of the [`super`] module (fixtures in mod.rs;
-//! the keyed engine in parallel.rs; the background fixtures in background.rs).
+//! app-wide session budget; and the lane yielding to an interactive stream
+//! (docs/research/silent-preemption.md §4, §7). Part of the [`super`] module
+//! (fixtures in mod.rs; the keyed engine in parallel.rs; the background
+//! fixtures in background.rs).
 
 use super::background::{cfg, finished, next, running_run, runs_out, start};
 use super::parallel::{KeyedRecorder, long_text, sized};
@@ -12,6 +14,7 @@ use crate::entities::note::Note;
 use crate::features::tools::notes::SELF_NOTE_TAG;
 use crate::features::tools::self_model::GET_SELF_MODEL_ID;
 use crate::shared::config::AutoTitleMode;
+use crate::shared::session_budget::SILENT_YIELDS_MAX;
 use tokio_util::sync::CancellationToken;
 
 /// Stable lines of the silent requests' system prompts (the `en` bundle) —
@@ -182,15 +185,18 @@ async fn a_landing_opens_the_silent_requests_one_at_a_time() {
     assert_eq!(running.len(), 4);
 }
 
-/// The probe's arm 1 as a unit test (research §3.1): a compaction roll
-/// asked for while a background run streams, on a pool the two do not fit
-/// together — the roll **waits** for the run to end (it arrives with no
-/// stream open); the wake turn the landing starts then does not fit beside
-/// the roll and waits for it in turn. Two sessions, so the permits allow two
-/// at once and only the pool serialises: nothing ever overlaps, and all
-/// three complete.
+/// The probe's arm 1 as a unit test (silent-tasks-budget §3.1, then
+/// silent-preemption §4): a compaction roll asked for while a background run
+/// streams, on a pool the two do not fit together — the roll **waits** for
+/// the run to end (it arrives with no stream open); the wake turn the
+/// landing starts then does not fit beside the roll and **displaces** it:
+/// the roll's stream ends, the turn streams at once, and the roll is made
+/// again — the same request, arriving after the turn — and lands a summary,
+/// never the fragment its first stream left. Two sessions, so the permits
+/// allow two at once and only the pool serialises: nothing ever overlaps,
+/// and all three complete.
 #[tokio::test]
-async fn the_roll_waits_for_the_run_and_the_wake_turn_waits_for_the_roll() {
+async fn the_roll_waits_for_the_run_and_yields_to_the_wake_turn() {
     let backend = KeyedRecorder::new(
         vec![
             (
@@ -205,7 +211,9 @@ async fn the_roll_waits_for_the_run_and_the_wake_turn_waits_for_the_roll() {
                 ],
             ),
             ("be harsh", vec![hang("thinking")]),
-            (COMPACT_KEY, vec![long_text(30)]),
+            // The first stream is long enough to be displaced mid-way; the
+            // retry's is the summary.
+            (COMPACT_KEY, vec![long_text(30), text("a summary")]),
         ],
         30,
     );
@@ -236,8 +244,8 @@ async fn the_roll_waits_for_the_run_and_the_wake_turn_waits_for_the_roll() {
     cmd_tx
         .send(AppCommand::StopSubagentRun { id: run_id })
         .unwrap();
-    // The run lands, the roll streams, the wake turn follows it: collect
-    // both ends in whichever order they come.
+    // The run lands, the roll streams, the wake turn displaces it and the
+    // roll is made again: collect both ends in whichever order they come.
     let (mut compacted, mut woke) = (false, false);
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
     while !(compacted && woke) && std::time::Instant::now() < deadline {
@@ -252,21 +260,146 @@ async fn the_roll_waits_for_the_run_and_the_wake_turn_waits_for_the_roll() {
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
 
-    assert!(compacted, "the roll completed after the run ended");
-    assert!(woke, "the wake turn completed after the roll");
+    assert!(compacted, "the roll completed");
+    assert!(woke, "the wake turn completed");
     assert_eq!(
         backend.open_at_arrival(COMPACT_KEY),
-        vec![0],
-        "the roll arrived once the run's stream was gone"
+        vec![0, 0],
+        "the roll arrived once the run's stream was gone, and again once the wake turn's was"
     );
     assert_eq!(
         backend.max_in_flight(),
         1,
         "two sessions, one pool: the run, the roll and the wake turn took turns"
     );
+    let requests = backend.requests();
+    let is_roll = |r: &crate::shared::api::ChatRequest| {
+        r.system.as_deref().is_some_and(|s| s.contains(COMPACT_KEY))
+    };
+    let rolls: Vec<usize> = (0..requests.len())
+        .filter(|&i| is_roll(&requests[i]))
+        .collect();
+    let wake = requests
+        .iter()
+        .rposition(|r| {
+            r.system
+                .as_deref()
+                .is_none_or(|s| !s.contains(COMPACT_KEY) && !s.contains("be harsh"))
+        })
+        .unwrap();
+    assert_eq!(rolls.len(), 2, "the roll was made twice");
+    assert!(
+        rolls[0] < wake && wake < rolls[1],
+        "the wake turn streamed between the roll's two attempts: rolls {rolls:?}, wake {wake}"
+    );
+    let same = |a: &crate::shared::api::ChatRequest, b: &crate::shared::api::ChatRequest| {
+        a.messages.len() == b.messages.len()
+            && a.messages.last().map(|m| &m.content) == b.messages.last().map(|m| &m.content)
+    };
+    assert!(
+        same(&requests[rolls[0]], &requests[rolls[1]]),
+        "the retry is the same request"
+    );
     let chat = super::subagent::load(dir.path(), chat_id);
-    assert!(chat.compaction.is_some(), "the summary landed");
+    let compaction = chat.compaction.as_ref().expect("the summary landed");
+    assert_eq!(
+        compaction.summary, "a summary",
+        "the retry's summary, not the displaced stream's fragment"
+    );
     assert_eq!(chat.messages.last().unwrap().text, "noted", "the wake turn");
+}
+
+/// A reflection round displaced by the user's next turn (silent-preemption
+/// §4.4): the turn does not fit beside the round's stream on the pool, the
+/// stream ends, the turn streams at once, and the round is made again with
+/// the same request — the task lands as a success, its spawn-time watermark
+/// honest.
+#[tokio::test]
+async fn a_reflection_round_displaced_by_a_turn_is_made_again() {
+    let backend = KeyedRecorder::new(
+        vec![
+            ("", vec![text("ok"), text("again")]),
+            (REFLECT_KEY, vec![long_text(30), text("reflected")]),
+        ],
+        30,
+    );
+    let mut cfg = cfg(1);
+    cfg.engine.managed.context_size = 4000;
+    cfg.self_model.auto_reflect_every = 1;
+    let (_dir, cmd_tx, mut rx, handle, _chat) = spawn_english(backend.clone(), cfg).await;
+    cmd_tx.send(AppCommand::SendMessage("one".into())).unwrap();
+    next(&mut rx, finished).await;
+    // The reflection's first round is streaming (30 chunks at 30 ms).
+    settle(2000, || !backend.open_at_arrival(REFLECT_KEY).is_empty()).await;
+    cmd_tx.send(AppCommand::SendMessage("two".into())).unwrap();
+    next(&mut rx, finished).await;
+    settle(3000, || backend.open_at_arrival(REFLECT_KEY).len() >= 2).await;
+    next(&mut rx, |e| {
+        matches!(
+            e,
+            AppEvent::BackgroundTask {
+                kind: BackgroundKind::Reflection,
+                active: false
+            }
+        )
+    })
+    .await;
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    assert_eq!(
+        backend.open_at_arrival(REFLECT_KEY),
+        vec![0, 0],
+        "displaced, then made again once the turn's stream was gone"
+    );
+    assert_eq!(backend.max_in_flight(), 1);
+    let order: Vec<bool> = backend
+        .requests()
+        .iter()
+        .map(|r| r.system.as_deref().is_some_and(|s| s.contains(REFLECT_KEY)))
+        .collect();
+    assert_eq!(
+        order,
+        vec![false, true, false, true],
+        "the turn streamed between the round's two attempts"
+    );
+}
+
+/// The automatic title displaced by the user's next turn is made again and
+/// lands (silent-preemption §4.4): a title is owed once per point, so the
+/// same task re-asks rather than giving up.
+#[tokio::test]
+async fn the_title_displaced_by_a_turn_is_made_again() {
+    let backend = KeyedRecorder::new(
+        vec![
+            ("", vec![text("ok"), text("again")]),
+            (TITLE_KEY, vec![long_text(30), text("A title")]),
+        ],
+        30,
+    );
+    let mut cfg = cfg(1);
+    cfg.engine.managed.context_size = 4000;
+    cfg.interface.auto_title = AutoTitleMode::AfterAssistantReply;
+    let (dir, cmd_tx, mut rx, handle, chat_id) = spawn_english(backend.clone(), cfg).await;
+    cmd_tx.send(AppCommand::SendMessage("one".into())).unwrap();
+    next(&mut rx, finished).await;
+    settle(2000, || !backend.open_at_arrival(TITLE_KEY).is_empty()).await;
+    cmd_tx.send(AppCommand::SendMessage("two".into())).unwrap();
+    next(&mut rx, finished).await;
+    settle(3000, || backend.open_at_arrival(TITLE_KEY).len() >= 2).await;
+    // The title lands on the list once the retry's stream ends.
+    next(
+        &mut rx,
+        |e| matches!(e, AppEvent::ChatList(list) if list.iter().any(|c| c.title == "A title")),
+    )
+    .await;
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    assert_eq!(backend.open_at_arrival(TITLE_KEY), vec![0, 0]);
+    assert_eq!(backend.max_in_flight(), 1);
+    let chat = super::subagent::load(dir.path(), chat_id);
+    assert_eq!(chat.title, "A title");
 }
 
 /// Under a pool a silent loop's second round is priced from its first round's
@@ -353,6 +486,14 @@ async fn the_fan_out_asks_for_the_title_then_the_roll_then_the_loops() {
     // Long enough that the second exchange alone outgrows the roll's tail.
     cmd_tx.send(AppCommand::SendMessage(long("one"))).unwrap();
     next(&mut rx, finished).await;
+    // The title landed before the next turn: this test is about the order
+    // the landing asks in, not about the turn displacing the title's stream
+    // (silent-preemption §4.4, `the_title_displaced_by_a_turn_is_made_again`).
+    next(
+        &mut rx,
+        |e| matches!(e, AppEvent::ChatList(list) if list.iter().any(|c| c.title == "A title")),
+    )
+    .await;
     cmd_tx.send(AppCommand::SendMessage(long("two"))).unwrap();
     next(&mut rx, finished).await;
     settle(3000, || {
@@ -382,10 +523,15 @@ async fn the_fan_out_asks_for_the_title_then_the_roll_then_the_loops() {
 }
 
 /// Impersonation on the shared engine is one of the app's own requests: it
-/// takes the silent lane, and the budget names it while it streams.
+/// takes the silent lane, and the budget names it while it streams — and it
+/// **holds** it: an interactive stream that does not fit beside the preview
+/// waits it out, since the user's own request is never displaced
+/// (silent-preemption §4.3, R4).
 #[tokio::test]
-async fn impersonation_on_the_shared_engine_takes_the_silent_lane() {
+async fn impersonation_on_the_shared_engine_takes_the_silent_lane_and_holds_it() {
     let (_d, mut orch, _pid) = orch_with_active_profile();
+    // A pool, so a stream can fail to fit beside the preview.
+    orch.config.compaction.context_tokens = Some(1000);
     let chat_id = orch.active_id.unwrap();
     orch.chat_mut(chat_id)
         .unwrap()
@@ -397,9 +543,185 @@ async fn impersonation_on_the_shared_engine_takes_the_silent_lane() {
     let budget = orch.session_budget();
     settle(1000, || budget.silent_streaming() == Some("impersonation")).await;
     assert_eq!(budget.silent_streaming(), Some("impersonation"));
-    settle(3000, || budget.silent_streaming().is_none()).await;
+    let calm = CancellationToken::new();
+    let mut turn = std::pin::pin!(budget.acquire(900, &calm));
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(200), &mut turn)
+            .await
+            .is_err(),
+        "no room beside the preview: waits"
+    );
+    assert_eq!(
+        budget.silent_streaming(),
+        Some("impersonation"),
+        "still streaming — not displaced"
+    );
+    assert!(turn.await.is_some(), "admitted once the preview ended");
     assert_eq!(budget.silent_streaming(), None, "released with the stream");
+    assert_eq!(backend.requests().len(), 1, "streamed once, to its end");
+}
+
+/// A silent loop spawned by hand on `orch`'s budget: one round at most, the
+/// request keyed on `system`, `clock` over its streaming — the pieces the
+/// yields cap and the clock are tested on without a landing to trigger.
+fn spawn_loop(
+    orch: &mut Orchestrator,
+    backend: Arc<KeyedRecorder>,
+    chat_id: Uuid,
+    system: &str,
+    clock: std::time::Duration,
+) -> UnboundedReceiver<(BackgroundKind, Result<(), String>)> {
+    let profile_id = orch
+        .chats
+        .iter()
+        .find(|c| c.id == chat_id)
+        .unwrap()
+        .profile_id;
+    let cancel = CancellationToken::new();
+    let sessions = orch.session_budget();
+    let ctx = orch.background_tool_ctx(
+        backend.clone() as Arc<dyn EngineBackend>,
+        sessions,
+        profile_id,
+        chat_id,
+        system.to_string(),
+        None,
+        crate::shared::i18n::Lang::En,
+        cancel.clone(),
+    );
+    let (done_tx, done_rx) = tokio::sync::mpsc::unbounded_channel();
+    super::super::tool_loop::spawn_silent_loop(super::super::tool_loop::SilentLoop {
+        backend: backend as Arc<dyn EngineBackend>,
+        registry: orch.registry.clone(),
+        ctx,
+        request: crate::shared::api::ChatRequest {
+            continue_final: false,
+            system: Some(system.to_string()),
+            messages: vec![crate::shared::api::ApiMessage::user("reflect")],
+            sampling: crate::entities::sampling::SamplingConfig {
+                max_tokens: Some(500),
+                ..Default::default()
+            },
+            tools: Vec::new(),
+        },
+        allowed: Vec::new(),
+        cancel,
+        max_rounds: 1,
+        timeout: clock,
+        label: "test loop",
+        profile_id,
+        kind: BackgroundKind::Reflection,
+        done_tx,
+        summary_semantics: None,
+    });
+    done_rx
+}
+
+/// A silent task yields at most `SILENT_YIELDS_MAX` times (silent-preemption
+/// §4.4, fork F5): each of the first three interactive streams displaces its
+/// round and is admitted at once; the fourth attempt holds, the waiter waits
+/// that round out, and the task lands as a success.
+#[tokio::test]
+async fn a_silent_task_holds_after_its_third_displacement() {
+    let (_d, mut orch, chat_id) = orch_ready_for_reflection();
+    orch.config.compaction.context_tokens = Some(1000);
+    let backend = KeyedRecorder::new(
+        vec![(
+            "quiet loop",
+            (0..4).map(|_| long_text(30)).collect::<Vec<_>>(),
+        )],
+        30,
+    );
+    let mut done_rx = spawn_loop(
+        &mut orch,
+        backend.clone(),
+        chat_id,
+        "quiet loop",
+        std::time::Duration::from_secs(30),
+    );
+    let budget = orch.session_budget();
+    let calm = CancellationToken::new();
+    for yields in 1..=SILENT_YIELDS_MAX {
+        settle(2000, || {
+            backend.open_at_arrival("quiet loop").len() as u32 == yields
+        })
+        .await;
+        let turn = budget
+            .acquire(900, &calm)
+            .await
+            .expect("the round's stream displaced, the waiter in");
+        drop(turn);
+    }
+    settle(2000, || backend.open_at_arrival("quiet loop").len() == 4).await;
+    let mut turn = std::pin::pin!(budget.acquire(900, &calm));
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(300), &mut turn)
+            .await
+            .is_err(),
+        "the fourth attempt holds: the waiter waits"
+    );
+    assert!(turn.await.is_some(), "admitted once the held stream ended");
+    let (kind, outcome) = tokio::time::timeout(std::time::Duration::from_secs(5), done_rx.recv())
+        .await
+        .expect("the task landed")
+        .unwrap();
+    assert_eq!(kind, BackgroundKind::Reflection);
+    assert_eq!(outcome, Ok(()));
+    assert_eq!(
+        backend.requests().len(),
+        4,
+        "three displaced rounds and the held one"
+    );
+}
+
+/// The loop's clock runs over its streaming and tools, not over its wait for
+/// room (silent-preemption §4.5): a task held back longer than its limit
+/// still runs when the room comes.
+#[tokio::test]
+async fn a_silent_loops_wait_for_room_is_not_on_its_clock() {
+    let (_d, mut orch, chat_id) = orch_ready_for_reflection();
+    orch.config.compaction.context_tokens = Some(1000);
+    let backend = KeyedRecorder::new(vec![("quiet loop", vec![text("done")])], 20);
+    let budget = orch.session_budget();
+    let calm = CancellationToken::new();
+    let turn = budget.acquire(900, &calm).await.unwrap();
+    let mut done_rx = spawn_loop(
+        &mut orch,
+        backend.clone(),
+        chat_id,
+        "quiet loop",
+        std::time::Duration::from_millis(300),
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+    assert!(backend.requests().is_empty(), "waiting for room");
+    assert!(done_rx.try_recv().is_err(), "not timed out while waiting");
+    drop(turn);
+    let (_, outcome) = tokio::time::timeout(std::time::Duration::from_secs(5), done_rx.recv())
+        .await
+        .expect("the task landed")
+        .unwrap();
+    assert_eq!(outcome, Ok(()));
     assert_eq!(backend.requests().len(), 1);
+}
+
+/// …and a stream longer than the limit ends the task as it always did.
+#[tokio::test]
+async fn a_silent_loops_stream_is_on_its_clock() {
+    let (_d, mut orch, chat_id) = orch_ready_for_reflection();
+    let backend = KeyedRecorder::new(vec![("quiet loop", vec![hang("thinking")])], 20);
+    let mut done_rx = spawn_loop(
+        &mut orch,
+        backend.clone(),
+        chat_id,
+        "quiet loop",
+        std::time::Duration::from_millis(200),
+    );
+    let (_, outcome) = tokio::time::timeout(std::time::Duration::from_secs(5), done_rx.recv())
+        .await
+        .expect("the task landed")
+        .unwrap();
+    let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::En);
+    assert_eq!(outcome, Err(loc.t("loop.time_limit_exceeded").to_string()));
 }
 
 /// A silent request whose wait for room is cancelled leaves no reservation

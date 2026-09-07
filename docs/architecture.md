@@ -633,10 +633,14 @@ src/
    │                       the pool; `price`/`acquire`/`record_usage`, plus the
    │                       **silent lane** (`acquire_silent`: one permit for the
    │                       app's own background requests over the same pool sum,
-   │                       labelled so the tasks screen can say which task waits).
+   │                       labelled so the tasks screen can say which task waits,
+   │                       and displaceable: a child token the holder streams on,
+   │                       cancelled by an interactive waiter that would then fit —
+   │                       `stream_token`/`displaced`, `SILENT_YIELDS_MAX`).
    │                       Here rather than in `app` because `features::tools`
    │                       (the summary) reserves too. Spec §6.3,
-   │                       docs/research/admission-by-budget.md, silent-tasks-budget.md
+   │                       docs/research/admission-by-budget.md, silent-tasks-budget.md,
+   │                       silent-preemption.md
    ├─ video/               video understanding for `youtube_watch`: the
    │                       `VideoUnderstanding` contract + `GeminiVideo`
    │                       (`generateContent` with a `file_data` YouTube URL).
@@ -939,7 +943,13 @@ Details:
   `spawn_compact`, `spawn_impersonation` on the shared engine, and a summary
   inside a silent loop through `ToolContext.silent_lane`; the pool is known
   at one session too, since a managed server without `-np` runs four
-  unified slots — docs/research/silent-tasks-budget.md §4) — is one struct owned by the generation task; the loop itself holds
+  unified slots — docs/research/silent-tasks-budget.md §4; and an
+  interactive stream that does not fit beside a silent one **displaces**
+  it: the holder streams on the reservation's child token, reads
+  `displaced()` and makes the same request again, at most
+  `SILENT_YIELDS_MAX` times, the displacing waiter admitted ahead of the
+  retry; impersonation and the in-loop summary hold —
+  docs/research/silent-preemption.md §4) — is one struct owned by the generation task; the loop itself holds
   only its own request, context, cancellation token, allowed set, accumulators
   and a `depth`. A nested loop (a subagent run,
   [docs/research/subagent-chats.md](research/subagent-chats.md) §3.2) is the
@@ -1853,7 +1863,8 @@ around its summary stream and around nothing else (`features/tools/fetch.rs`,
 ADR 0012; docs/research/admission-by-budget.md §4.5). A background task's
 context carries the same budget with **`silent_lane: true`**, so a summary a
 silent loop asks for takes the lane the loop's own rounds stream on
-(silent-tasks-budget.md §4.2). FSD is kept: the type lives in `shared`, not
+(silent-tasks-budget.md §4.2) — and holds it: one tool call inside a
+round is not displaced (silent-preemption.md §4.3). FSD is kept: the type lives in `shared`, not
 in `app`.
 
 **`OrchestratorDeps.extra_tools`** — tools registered on top of the standard
@@ -2478,7 +2489,13 @@ also shared. Every round of `run_rounds` streams under the session budget's
 like a turn's round — the estimate, floored by the previous round's exact
 `usage`, plus the cap — with the reservation dropped before the round's
 tools run, and a wait cancelled (the app is quitting) ending the task
-quietly, `Ok` with nothing run (docs/research/silent-tasks-budget.md §4.2). The main generation loop (§5) was deliberately **not** folded
+quietly, `Ok` with nothing run (docs/research/silent-tasks-budget.md §4.2).
+A round **displaced** by an interactive stream (`Streamed::Displaced`:
+the stream ended `Cancelled` on the reservation's child token while the
+task's own token did not) is made again with the same request, up to
+`SILENT_YIELDS_MAX` times; the task's `timeout` is a clock over its
+streaming and tools (`stream_round`, `run_tools`), not over its waits
+(docs/research/silent-preemption.md §4.4–§4.5). The main generation loop (§5) was deliberately **not** folded
 in — it has UI streaming, control-flow tools, Anthropic thinking signatures,
 usage, effects; its complexity doesn't pay off the shared drain.
 
@@ -3065,7 +3082,11 @@ Principles:
   the compaction roll and impersonation on the shared engine — so a
   landing's requests (`handle_done`: the title, the roll, then the three
   loops, in that order) run one at a time and never overfill the pool beside
-  the next turn (docs/research/silent-tasks-budget.md).
+  the next turn (docs/research/silent-tasks-budget.md). A turn that does
+  not fit beside one displaces it: `spawn_title` and `spawn_compact` loop
+  on the reservation as `run_rounds` does — the same request again, up to
+  `SILENT_YIELDS_MAX` — and a displaced roll's fragment is never stored as
+  the summary (docs/research/silent-preemption.md §4.4).
 - **Cancellation** — a `CancellationToken` interrupts an HTTP stream/
   background task; a partial reply is preserved; a new task of the same kind
   cancels the previous one (RAG, impersonation).

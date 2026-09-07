@@ -28,6 +28,7 @@ use crate::features::compaction::{
 };
 use crate::shared::api::{ApiMessage, ChatChunk, ChatRequest, EngineBackend};
 use crate::shared::config::ServerMode;
+use crate::shared::session_budget::SILENT_YIELDS_MAX;
 
 use super::Orchestrator;
 use super::generation::TurnUsage;
@@ -454,76 +455,105 @@ fn spawn_compact(
         );
         // Taken before the timeout starts: waiting behind an open stream is
         // not this roll's slowness. A wait cancelled (the app is quitting)
-        // reports as the timeout would — nothing was summarized.
-        let Some(_lane) = sessions.acquire_silent(need, &cancel, "compaction").await else {
-            let _ = compact_tx.send(CompactResult {
-                chat_id,
-                boundary_id,
-                rolls,
-                origin,
-                text: Err(loc.t("ui.err.compact_timeout").to_string()),
-            });
-            return;
-        };
-        let collect = async {
-            let mut stream = backend.chat_stream(request, cancel.clone()).await?;
-            let mut text = String::new();
-            let mut thoughts = String::new();
-            let mut truncated = false;
-            let mut failure: Option<String> = None;
-            while let Some(chunk) = stream.next().await {
-                match chunk {
-                    ChatChunk::Text(t) => text.push_str(&t),
-                    // Kept as a salvage source for the same reason as auto-title:
-                    // a model that never "finished thinking" leaves `content` empty.
-                    ChatChunk::Thoughts(t) => thoughts.push_str(&t),
-                    ChatChunk::Finished(reason) => {
-                        truncated = matches!(reason, crate::shared::api::FinishReason::Length);
-                        break;
+        // reports as the timeout would — nothing was summarized. A turn that
+        // does not fit beside the roll's stream displaces it
+        // (docs/research/silent-preemption.md §4.4): the same request is
+        // made again, up to `SILENT_YIELDS_MAX` times; then the stream holds.
+        let mut yields: u32 = 0;
+        let text = loop {
+            let Some(lane) = sessions
+                .acquire_silent(need, &cancel, "compaction", yields < SILENT_YIELDS_MAX)
+                .await
+            else {
+                let _ = compact_tx.send(CompactResult {
+                    chat_id,
+                    boundary_id,
+                    rolls,
+                    origin,
+                    text: Err(loc.t("ui.err.compact_timeout").to_string()),
+                });
+                return;
+            };
+            let token = lane.stream_token();
+            let request = request.clone();
+            let collect = async {
+                let mut stream = backend.chat_stream(request, token.clone()).await?;
+                let mut text = String::new();
+                let mut thoughts = String::new();
+                let mut truncated = false;
+                let mut cancelled = false;
+                let mut failure: Option<String> = None;
+                while let Some(chunk) = stream.next().await {
+                    match chunk {
+                        ChatChunk::Text(t) => text.push_str(&t),
+                        // Kept as a salvage source for the same reason as auto-title:
+                        // a model that never "finished thinking" leaves `content` empty.
+                        ChatChunk::Thoughts(t) => thoughts.push_str(&t),
+                        ChatChunk::Finished(reason) => {
+                            truncated = matches!(reason, crate::shared::api::FinishReason::Length);
+                            cancelled =
+                                matches!(reason, crate::shared::api::FinishReason::Cancelled);
+                            break;
+                        }
+                        // Unlike the other background turns this one is reported to the
+                        // user when they asked for it (`/compact` is owed an answer), so
+                        // the reason is carried out instead of only logged — otherwise a
+                        // roll killed mid-stream would report whatever fragment arrived
+                        // as if it were a summary.
+                        // A background turn: the retry is worth a log line (a flaky provider is
+                        // otherwise invisible here) but has nothing to show — these turns have no
+                        // chip of their own.
+                        ChatChunk::Retry {
+                            attempt,
+                            max,
+                            delay,
+                        } => {
+                            tracing::info!(attempt, max, ?delay, "retrying a a compaction turn");
+                        }
+                        ChatChunk::Error { message, .. } => failure = Some(message),
+                        ChatChunk::ThoughtsSignature(_)
+                        | ChatChunk::ToolCall(_)
+                        | ChatChunk::Usage(_) => {}
                     }
-                    // Unlike the other background turns this one is reported to the
-                    // user when they asked for it (`/compact` is owed an answer), so
-                    // the reason is carried out instead of only logged — otherwise a
-                    // roll killed mid-stream would report whatever fragment arrived
-                    // as if it were a summary.
-                    // A background turn: the retry is worth a log line (a flaky provider is
-                    // otherwise invisible here) but has nothing to show — these turns have no
-                    // chip of their own.
-                    ChatChunk::Retry {
-                        attempt,
-                        max,
-                        delay,
-                    } => {
-                        tracing::info!(attempt, max, ?delay, "retrying a a compaction turn");
-                    }
-                    ChatChunk::Error { message, .. } => failure = Some(message),
-                    ChatChunk::ThoughtsSignature(_)
-                    | ChatChunk::ToolCall(_)
-                    | ChatChunk::Usage(_) => {}
                 }
-            }
-            if let Some(err) = failure {
-                anyhow::bail!("{err}");
-            }
-            Ok::<(String, String, bool), anyhow::Error>((text, thoughts, truncated))
-        };
-        let text = match tokio::time::timeout(COMPACT_TIMEOUT, collect).await {
-            Ok(Ok((text, thoughts, truncated))) => {
-                if truncated {
-                    // Don't hide a truncation — the same rule the conversation's
-                    // own overflow follows (§1.2). The summary is still usable,
-                    // so this is a log line, not a refusal.
-                    tracing::warn!(
+                if let Some(err) = failure {
+                    anyhow::bail!("{err}");
+                }
+                Ok::<(String, String, bool, bool), anyhow::Error>((
+                    text, thoughts, truncated, cancelled,
+                ))
+            };
+            match tokio::time::timeout(COMPACT_TIMEOUT, collect).await {
+                Ok(Ok((_, _, _, true))) if lane.displaced() => {
+                    yields += 1;
+                    tracing::info!(
                         chat = %chat_id,
-                        "the summary hit the token ceiling and was cut; raise the ceiling or lower the word limit"
+                        yields,
+                        "the roll's stream was displaced by an interactive one; made again"
                     );
                 }
-                Ok(salvage_title_source(text, thoughts))
-            }
-            Ok(Err(err)) => Err(loc.tf("ui.err.compact_failed", &[("err", &err.to_string())])),
-            Err(_) => {
-                cancel.cancel();
-                Err(loc.t("ui.err.compact_timeout").to_string())
+                // Cancelled by the app's own quit: a fragment is not a summary,
+                // and the cancelled wait's wording says nothing was summarized.
+                Ok(Ok((_, _, _, true))) => break Err(loc.t("ui.err.compact_timeout").to_string()),
+                Ok(Ok((text, thoughts, truncated, false))) => {
+                    if truncated {
+                        // Don't hide a truncation — the same rule the conversation's
+                        // own overflow follows (§1.2). The summary is still usable,
+                        // so this is a log line, not a refusal.
+                        tracing::warn!(
+                            chat = %chat_id,
+                            "the summary hit the token ceiling and was cut; raise the ceiling or lower the word limit"
+                        );
+                    }
+                    break Ok(salvage_title_source(text, thoughts));
+                }
+                Ok(Err(err)) => {
+                    break Err(loc.tf("ui.err.compact_failed", &[("err", &err.to_string())]));
+                }
+                Err(_) => {
+                    cancel.cancel();
+                    break Err(loc.t("ui.err.compact_timeout").to_string());
+                }
             }
         };
         let _ = compact_tx.send(CompactResult {

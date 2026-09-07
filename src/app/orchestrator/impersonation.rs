@@ -275,7 +275,12 @@ fn spawn_impersonation(
                         0,
                         request.sampling.max_tokens.map(|m| m as u64),
                     );
-                    match budget.acquire_silent(need, &cancel, "impersonation").await {
+                    // The user's own request, never displaced for a background
+                    // run's round (silent-preemption §4.3, R4).
+                    match budget
+                        .acquire_silent(need, &cancel, "impersonation", false)
+                        .await
+                    {
                         Some(reservation) => Some(reservation),
                         None => return Ok(FinishReason::Cancelled),
                     }

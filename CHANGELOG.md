@@ -148,6 +148,18 @@ split by subsystem.
 
 ### Changed
 
+- **Your message no longer waits for the app's own request.** When one of
+  the app's background requests — a history compaction, a reflection, a
+  title — is streaming and your message would not fit beside it on the
+  server, the app now cancels that request and makes it again after your
+  reply, instead of holding your message until the request ends — what
+  remains is the server finishing the batch it is processing (measured: a
+  message that waited 46 s on a CPU-only server now waits about 24 s, one
+  that waited 5.6 s on a GPU under two). A request yields at most three
+  times, then finishes; the impersonation
+  preview (`Ctrl+U`) is never cancelled this way. The background tasks'
+  time limits no longer count the time they spent waiting for the server.
+
 - **The app's own background requests run one at a time.** The automatic
   title, reflection, the two consolidations, history compaction and
   impersonation on the shared engine now take turns rather than opening

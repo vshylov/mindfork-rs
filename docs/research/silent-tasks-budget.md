@@ -526,8 +526,10 @@ an engine path (AGENTS.md §3).
 
 ## 8. Not in this track (recorded so they are not re-derived)
 
-- **Preemption** (F3b), if §3's bound says the wait is too long on the
-  27B: the same `acquire_silent`, plus the watermark-at-success change.
+- **Preemption** (F3b) — **done** as its own track
+  ([silent-preemption.md](silent-preemption.md), 2026-09-07): the same
+  `acquire_silent` with a child token the holder streams on, the retry
+  inside the task, and no watermark change needed after all.
 - **Cancelling a silent task from the tasks screen** — tasks-screen.md §8's
   item; a lane makes it cheaper (the waiting task has nothing to undo) but
   it is its own question.
