@@ -65,6 +65,12 @@ pub enum AppCommand {
     /// cancelled and it lands as `cancelled` through the same route every
     /// end takes; an id that names no running background run is ignored.
     StopSubagentRun { id: Uuid },
+    /// Stop one of the app's own silent tasks (`F6` on its row of the tasks
+    /// screen, spec §11.10): the slot's token is cancelled and the task
+    /// lands as *cancelled* through the outcome route every end takes —
+    /// the failure streak untouched, the window skipped; a kind with no
+    /// task running is ignored (docs/research/stop-silent-task.md §3).
+    StopBackgroundTask { kind: BackgroundKind },
     /// Regenerate the last assistant reply: delete everything after the last
     /// user message and restart generation from the same request.
     RegenerateLast,
@@ -341,6 +347,9 @@ impl AppCommand {
             | AppCommand::SetDraft(_)
             | AppCommand::SetFeedView(_)
             | AppCommand::SetChildrenExpanded { .. }
+            // Stops one of the app's own tasks: nothing in the conversation
+            // changes (docs/research/stop-silent-task.md §3.3).
+            | AppCommand::StopBackgroundTask { .. }
             | AppCommand::Cancel
             | AppCommand::CancelImpersonation
             | AppCommand::NewChat { .. }

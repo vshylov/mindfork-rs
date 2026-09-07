@@ -115,6 +115,11 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
     **The tasks screen is done** (2026-09-06: `F7`/`/tasks`, every run
     across every chat with its position or outcome and the silent tasks
     below, [docs/research/tasks-screen.md](research/tasks-screen.md), every
+    fork at its recommendation). **Stopping a silent task from it — done**
+    (2026-09-07: `F6` on a running or waiting task row, a third outcome
+    *cancelled* that touches neither the failure streak nor the spawn-time
+    bookkeeping, one notice for a `/compact` the user typed,
+    [docs/research/stop-silent-task.md](research/stop-silent-task.md), every
     fork at its recommendation). **The silent tasks under the app-wide
     budget are done** (2026-09-07: the budget's silent lane — one permit
     for the app's own requests over the same pool sum — and the pool known

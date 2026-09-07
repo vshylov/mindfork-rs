@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (62)
+## Entries (63)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -74,6 +74,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the tasks screen — every background run on one surface (done)
 - Post-M9: a title is cut where it is drawn, not where it is stored (done)
 - Post-M9: the "Sessions" hint names the knob that widens the group (done)
+- Post-M9: stopping a silent task from the tasks screen (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -3298,3 +3299,68 @@ and a wording fix is not the place to reopen a design decision.
 in `shared/i18n.rs` (every key of `en` present in `ru`, arrays joined with a
 space) cover the edit, and the screenshot drift gate covers its height.
 2866 unit tests green (138 `#[ignore]`). No live run required: text only.
+
+### Post-M9: stopping a silent task from the tasks screen (done)
+
+**What.** The item the tasks-screen design left out (§8) and the
+silent-preemption track pointed back at: `F6` on a task row of the tasks
+screen that reads *running* or *waiting* stops that task. The design
+[docs/research/stop-silent-task.md](../research/stop-silent-task.md), every
+fork at its recommendation (the user's decision, 2026-09-07); no stage-0
+probe — nothing about a model's behaviour was in question.
+
+**What was actually missing.** Not the mechanism — every slot already held a
+`CancellationToken` (`Quit`'s `cancel_all_bg`), every stream ends
+`Finished(Cancelled)` on it, and the holders tell their own token from a
+displacement since the preemption track — but the *reading*: the loops
+landed a cancelled task as **`Ok`** (`run_rounds` broke out of the round and
+reported success — the streak reset, `SelfModelChanged` announced for an
+unfinished window), and the roll reported the **timeout's** wording. Only
+`Quit` could reach those paths, and nobody reads an outcome during a quit;
+a user's stop is read at once.
+
+**How.** The screen's `selected_stoppable()` answers `Stoppable::{Run(id),
+Task(kind)}` — a running background run, or a task whose row is running
+(streaming or waiting) — and `F6` maps them to `TasksIntent::{StopRun,
+StopTask}`; the footer offers `F6` for either, worded *stop*, and an idle
+task row keeps it silent. `dispatch_tasks` sends
+`AppCommand::StopBackgroundTask { kind }` (a command that changes nothing in
+the conversation, on `works_on_the_open_chat`'s false side);
+`handle_stop_background_task` cancels the slot's token if the slot is
+active and ignores a kind with nothing running. The outcome channel carries
+`BgOutcome::{Done, Cancelled, Failed(reason)}` instead of
+`Result<(), String>`: `handle_bg_done` on `Cancelled` clears the slot and
+the indicator, re-sends the task list, sends `SelfModelChanged` for the
+two self-model kinds (a partial run may have written) and touches the streak
+not at all. The holders: `run_rounds` returns `RoundsEnd::Cancelled` when
+its wait was cancelled or a round's stream ended `Cancelled` without a
+displacement; `spawn_compact`'s result is `Result<String, CompactEnd>` with
+`CompactEnd::{Failed, Cancelled}`, and `handle_compact_result` answers a
+manual roll's `Cancelled` with one notice (`ui.compact.cancelled`) and an
+automatic one's with silence — the next landing plans the roll again if the
+conversation is still over the threshold. The spawn-time bookkeeping (the
+watermark, the counters) stays: a stop skips the window, as a failure does.
+
+**Tests**: +9 — `screens/tasks.rs` (`F6` on a running task row is
+`StopTask`, on a waiting one too, on an idle one nothing, the footer
+following), `runtime` (the intent becomes the command, the screen stays
+open), `tests/silent.rs` (a loop stopped mid-stream, while waiting for room,
+and during a displacement's retry lands `Cancelled` with no retry; a manual
+`/compact` stopped answers with the notice and the next one runs; an
+automatic roll stopped is quiet and planned again at the next landing),
+`tests/reflection.rs` (`Cancelled` leaves the streak at two, clears the
+slot, emits the indicator, the list and `SelfModelChanged`, no error;
+stopping an idle kind does nothing) — **2903 unit tests green, 144
+`#[ignore]`**.
+
+**Live** (the paths are engine paths): `stop_silent_task_e2e_live` on the
+LAN stack — `/compact`, the stop 1.0 s later, the notice 0.00 s after the
+stop (the roll had not opened its stream yet: a cancelled wait returns at
+once), nothing folded, the next `/compact` in 5.8 s; with
+`silent_roll_e2e_live` and `background_subagent_e2e_live` 3/3 in 57 s.
+
+**Rejected**: a command (`/tasks stop <kind>` — the screen is the surface);
+a notice per stop (a stop is not a failure and the feed is not a log);
+refunding the window on a stop (the task would come back sooner, the
+opposite of what a stop asks); suppressing the automatic roll after a stop
+(the protection stays; a stop is per attempt).

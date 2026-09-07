@@ -17,7 +17,7 @@ use std::sync::Mutex;
 
 use tokio_util::sync::CancellationToken;
 
-use super::super::compaction::CompactOrigin;
+use super::super::compaction::{CompactEnd, CompactOrigin};
 use crate::features::compaction::summary_system_message;
 use crate::shared::api::ChatRequest;
 use crate::shared::api::contract::ChatStream;
@@ -581,7 +581,7 @@ async fn a_failed_roll_is_reported_and_clears_the_indicator() {
         chat_id,
         boundary_id: chat_of(&orch, chat_id).messages[2].id,
         rolls: 1,
-        text: Err("сервер недоступен".into()),
+        text: Err(CompactEnd::Failed("сервер недоступен".into())),
     });
 
     let events = drain(&mut rx);
@@ -816,7 +816,7 @@ fn an_automatic_failure_advances_the_streak_without_reporting() {
         boundary_id,
         rolls: 1,
         origin: CompactOrigin::Auto,
-        text: Err("сервер недоступен".into()),
+        text: Err(CompactEnd::Failed("сервер недоступен".into())),
     });
     assert_eq!(orch.bg_failures(BackgroundKind::Compaction), 1);
     let events = drain(&mut rx);

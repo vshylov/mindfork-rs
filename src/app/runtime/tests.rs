@@ -1948,3 +1948,37 @@ fn f6_on_the_tasks_screen_stops_the_run_and_stays() {
     assert!(matches!(h.next_command(), Some(AppCommand::StopSubagentRun { id }) if id == run_id));
     assert!(matches!(h.active, ActiveScreen::Tasks(_)));
 }
+
+/// `F6` on a task row of the tasks screen becomes the stop command for that
+/// kind (docs/research/stop-silent-task.md §3.2), and the screen stays open:
+/// the row goes idle on the next snapshot, which is the feedback.
+#[test]
+fn a_task_stop_intent_becomes_the_stop_command() {
+    let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut screen = ChatScreen::new();
+    let mut active = ActiveScreen::Tasks(Box::new(TasksScreen::new(
+        Palette::default(),
+        crate::shared::i18n::locale(crate::shared::i18n::Lang::En),
+    )));
+    let mut back = None;
+    let quit = dispatch_any(
+        AnyIntent::Tasks(crate::screens::tasks::TasksIntent::StopTask(
+            BackgroundKind::Compaction,
+        )),
+        &cmd_tx,
+        &mut screen,
+        &mut active,
+        &mut back,
+    );
+    assert!(!quit);
+    assert!(matches!(
+        cmd_rx.try_recv(),
+        Ok(AppCommand::StopBackgroundTask {
+            kind: BackgroundKind::Compaction
+        })
+    ));
+    assert!(
+        matches!(active, ActiveScreen::Tasks(_)),
+        "the screen stays open"
+    );
+}

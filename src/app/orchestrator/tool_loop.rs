@@ -15,6 +15,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+use super::background::BgOutcome;
 use crate::app::events::BackgroundKind;
 use crate::entities::profile::ToolId;
 use crate::features::tools::{ToolContext, ToolRegistry};
@@ -65,9 +66,9 @@ pub(super) struct SilentLoop {
     pub profile_id: Uuid,
     /// The task kind — goes into `done_tx` along with the outcome (the loop handles it in one branch).
     pub kind: BackgroundKind,
-    /// A single outcome channel: `(kind, Ok(()))` on success, `(kind, Err(reason))` on
-    /// an error/timeout.
-    pub done_tx: UnboundedSender<(BackgroundKind, Result<(), String>)>,
+    /// A single outcome channel: the task's work done, stopped by its own
+    /// token, or failed with a reason (an error, the timeout).
+    pub done_tx: UnboundedSender<(BackgroundKind, BgOutcome)>,
     /// An optional async layer over the digest, computed in the task BEFORE the loop
     /// (embedding summary paragraphs isn't available in the synchronous handler): the result
     /// is appended to the request's first user message. See
@@ -123,16 +124,20 @@ pub(super) fn spawn_silent_loop(spawn: SilentLoop) {
             super::background::lane_label(kind),
             timeout,
         );
-        let outcome: Result<(), String> = match run.await {
-            Ok(RoundsEnd::Done) => Ok(()),
+        let outcome = match run.await {
+            Ok(RoundsEnd::Done) => BgOutcome::Done,
+            Ok(RoundsEnd::Cancelled) => {
+                tracing::info!(%profile_id, "{label}: stopped");
+                BgOutcome::Cancelled
+            }
             Ok(RoundsEnd::TimedOut) => {
                 cancel.cancel();
                 tracing::warn!(%profile_id, "{label}: time limit exceeded");
-                Err(ctx.loc.t("loop.time_limit_exceeded").to_string())
+                BgOutcome::Failed(ctx.loc.t("loop.time_limit_exceeded").to_string())
             }
             Err(e) => {
                 tracing::warn!(%profile_id, "{label}: error: {e}");
-                Err(e.to_string())
+                BgOutcome::Failed(e.to_string())
             }
         };
         let _ = done_tx.send((kind, outcome));
@@ -140,9 +145,12 @@ pub(super) fn spawn_silent_loop(spawn: SilentLoop) {
 }
 
 /// How a run of rounds ended: the task's work is done (a round with no
-/// calls, or the round limit), or its clock ran out.
+/// calls, or the round limit), the task's own token fired (a stop from the
+/// tasks screen, or `Quit` — docs/research/stop-silent-task.md §3.3), or its
+/// clock ran out.
 pub(super) enum RoundsEnd {
     Done,
+    Cancelled,
     TimedOut,
 }
 
@@ -162,7 +170,8 @@ enum Streamed {
     Round(RoundOut),
     /// Displaced by an interactive stream: the round is made again.
     Displaced,
-    /// The wait for the lane was cancelled: the app is quitting.
+    /// The wait for the lane was cancelled: the task was stopped, or the app
+    /// is quitting.
     Cancelled,
     /// The task's clock ran out while streaming.
     TimedOut,
@@ -228,7 +237,7 @@ async fn run_rounds(
                 );
                 continue;
             }
-            Streamed::Cancelled => return Ok(RoundsEnd::Done),
+            Streamed::Cancelled => return Ok(RoundsEnd::Cancelled),
             Streamed::TimedOut => return Ok(RoundsEnd::TimedOut),
         };
         if let Some(u) = usage {
@@ -236,6 +245,11 @@ async fn run_rounds(
                 budget.record_usage(estimate, u.prompt_tokens as u64);
             }
             last_exact = u.prompt_tokens as u64 + u.completion_tokens as u64;
+        }
+        // A stream ended by the task's own token (a displacement returned
+        // `Streamed::Displaced` above): stopped, whatever it had produced.
+        if reason == FinishReason::Cancelled {
+            return Ok(RoundsEnd::Cancelled);
         }
         // A round with no calls, or the limit was reached — the task is done.
         if reason != FinishReason::ToolCalls || calls.is_empty() || round >= max_rounds {
