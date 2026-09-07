@@ -171,8 +171,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-07, version 0.9.8)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2903 unit tests
-green, 144 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **2908 unit tests
+green, 146 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -183,6 +183,17 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 `tools/doc_index_check.py`. A new track adds a line; a line that has stopped
 being recent is dropped, not shortened.
 
+- **The batch a cancel waits for — `-b` on the CPU build's launch line** —
+  llama.cpp looks at its queue between batches of `-b` prompt tokens, so a
+  stream the app cancels during its prefill (a displaced roll, a stopped
+  task) holds its slot for one: 23 s at the default on the CPU build.
+  Measured on five lines, a fresh server per arm: the wait is **linear in
+  `-b`** (13.1 / 6.5 / 2.8 s at 512 / 256 / 128 for +5 / +14 / +20 % on the
+  prefill) and `-ub` alone makes both worse. Now `-ngl 0` launches with
+  `-b 256 -ub 256` unless *Batch (-b)* names a number; a GPU host's line is
+  byte for byte what it was; the docker stand's chat container carries the
+  flags itself ([docs/research/cpu-batch.md](docs/research/cpu-batch.md),
+  spec §3.4, [docs/journal/engine.md](docs/journal/engine.md)).
 - **Stopping a silent task from the tasks screen** — `F6` on a task row
   that reads *running* or *waiting* stops it: the slot's token is cancelled
   and the task lands as a **third outcome**, `BgOutcome::Cancelled`, which
@@ -407,16 +418,6 @@ being recent is dropped, not shortened.
   live gate and nothing else
   ([docs/research/external-model-name.md](docs/research/external-model-name.md),
   spec §11.3, [docs/journal/engine.md](docs/journal/engine.md)).
-- **`/continue` — an interrupted reply resumes in place, track complete** —
-  assistant prefill on managed/external, Gemini, and Claude ≤4.5 (an
-  allowlist-by-version gate; OpenAI/Grok refuse with the route that works),
-  the server's echo of the prefill stripped byte-exactly, `MessageFinish`
-  recorded on every reply, a tool-result tail resuming the loop, and the
-  interruption notes naming `/continue` where it applies — a length-cut reply
-  finally gets a note at all; probes + live runs on Qwen 3.6/b10659 and the
-  real cloud keys
-  ([docs/research/continue-generation.md](docs/research/continue-generation.md),
-  spec §6.4, [docs/journal/engine.md](docs/journal/engine.md)).
 
 For what exists and how it works, read architecture.md and spec.md — they are
 the source of truth for the current state. For how any of it came to be, and

@@ -1406,7 +1406,10 @@ its own — or named by `api_key_env`, resolved through the same
   is handed to a **monitor task** (`spawn_monitor`), which `select!`s between
   its exit (raising an `exited` token) and a `kill` signal (raised in the
   handle's `Drop` → `start_kill`; `kill_on_drop` is kept as a backstop).
-  `build_args` assembles the CLI (`-m`, `-ngl`, `-c`, `--jinja`, `--no-mmap`,
+  `build_args` assembles the CLI (`-m`, `-ngl`, `-c`, `-b`/`-ub` on a CPU-only
+  host — `CPU_BATCH` 256 when `gpu_layers` is 0 and no batch was typed, a
+  typed one as is with `-ub` clamped at `SERVER_UBATCH`, nothing on a GPU
+  host: docs/research/cpu-batch.md §4.1 — `--jinja`, `--no-mmap`,
   `--flash-attn`; speculative decoding `--spec-type` + draft `-md`/`-ngld`/
   `--spec-draft-n-max`/`-n-min`; for embeddings — `--embeddings -ub <ctx> -b
   <ctx>`; `-np N --kv-unified` when `ManagedConfig.parallel` — the section's

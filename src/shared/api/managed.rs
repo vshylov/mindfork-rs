@@ -28,6 +28,11 @@ pub struct ManagedConfig {
     pub gpu_layers: i32,
     /// Context size (`-c`).
     pub context_size: u32,
+    /// The batch (`-b`) the chat server is launched with, `-ub` following it
+    /// clamped at [`SERVER_UBATCH`]; `None` — [`CPU_BATCH`] when `gpu_layers`
+    /// is 0, nothing passed otherwise (docs/research/cpu-batch.md §4.1). The
+    /// embedding server ignores it: its batch is the context size.
+    pub batch_size: Option<u32>,
     /// Server slots the app will drive at once (`engine.managed.sessions`).
     /// Above 1 → `-np N --kv-unified`: N slots over the one pool `-c` sizes,
     /// the shape llama.cpp's own auto default has (four slots, unified), so
@@ -71,6 +76,15 @@ impl ManagedConfig {
 }
 
 /// Builds `llama-server`'s command-line arguments from the config (a pure function).
+/// The batch the chat server runs at on a CPU-only host when the user typed
+/// none (`-ngl 0`): the knee docs/research/cpu-batch.md §3.1 measured — the
+/// batch a cancel waits for falls from 23 s to 6.5 s, prompt processing slows
+/// by a seventh. A GPU host at its defaults gets no `-b` at all.
+pub const CPU_BATCH: u32 = 256;
+/// llama.cpp's default micro-batch (`-ub`); the launcher names it beside `-b`
+/// so the line reads whole, clamped to the batch as the server would clamp it.
+pub const SERVER_UBATCH: u32 = 512;
+
 pub fn build_args(cfg: &ManagedConfig) -> Vec<String> {
     let mut args = vec![
         "--host".to_string(),
@@ -89,6 +103,24 @@ pub fn build_args(cfg: &ManagedConfig) -> Vec<String> {
         args.push("-np".into());
         args.push(cfg.parallel.to_string());
         args.push("--kv-unified".into());
+    }
+    // The batch a cancel waits for (docs/research/cpu-batch.md §4.1): the
+    // server looks at its queue between batches of `-b` prompt tokens, so a
+    // stopped or displaced stream holds its slot for one — 23 s at the
+    // default on a CPU-only host, 6.5 s at 256. Auto passes `CPU_BATCH` where
+    // the user runs the engine on the CPU (`-ngl 0`); a typed number is passed
+    // as is; a GPU host at its defaults keeps the line byte for byte. `-ub` is
+    // named too, clamped as the server clamps it. The embedding server has a
+    // batch of its own below.
+    if !cfg.embeddings
+        && let Some(batch) = cfg
+            .batch_size
+            .or((cfg.gpu_layers == 0).then_some(CPU_BATCH))
+    {
+        args.push("-b".into());
+        args.push(batch.to_string());
+        args.push("-ub".into());
+        args.push(batch.min(SERVER_UBATCH).to_string());
     }
     if let Some(m) = &cfg.model_path {
         args.push("-m".into());
@@ -408,6 +440,7 @@ mod tests {
             mmproj: None,
             gpu_layers: 99,
             context_size: 8192,
+            batch_size: None,
             parallel: 1,
             jinja: true,
             reasoning_format: None,
@@ -423,6 +456,90 @@ mod tests {
             port: 8000,
             extra_args: vec![],
         }
+    }
+
+    /// A CPU-only host (`-ngl 0`, no batch typed) gets the measured batch,
+    /// `-ub` named beside it (docs/research/cpu-batch.md §4.1).
+    #[test]
+    fn a_cpu_only_line_gets_the_measured_batch() {
+        let cfg = ManagedConfig {
+            gpu_layers: 0,
+            ..base_cfg()
+        };
+        let args = build_args(&cfg);
+        let at = |flag: &str| {
+            args.iter()
+                .position(|a| a == flag)
+                .map(|i| args[i + 1].clone())
+        };
+        assert_eq!(at("-b").as_deref(), Some("256"));
+        assert_eq!(at("-ub").as_deref(), Some("256"));
+    }
+
+    /// A GPU host at its defaults keeps its line byte for byte (R2): no
+    /// `-b`, no `-ub`.
+    #[test]
+    fn a_gpu_line_is_byte_for_byte_what_it_was() {
+        let args = build_args(&base_cfg());
+        assert!(!args.iter().any(|a| a == "-b" || a == "-ub"), "{args:?}");
+        let partial = ManagedConfig {
+            gpu_layers: 20,
+            ..base_cfg()
+        };
+        assert!(!build_args(&partial).iter().any(|a| a == "-b"));
+    }
+
+    /// A typed batch is passed as is, whatever `-ngl` says, and the
+    /// micro-batch follows it clamped at the server's default.
+    #[test]
+    fn a_typed_batch_is_passed_as_is_with_the_micro_batch_clamped() {
+        let at = |cfg: &ManagedConfig, flag: &str| {
+            let args = build_args(cfg);
+            args.iter()
+                .position(|a| a == flag)
+                .map(|i| args[i + 1].clone())
+        };
+        let big = ManagedConfig {
+            batch_size: Some(1024),
+            ..base_cfg()
+        };
+        assert_eq!(at(&big, "-b").as_deref(), Some("1024"));
+        assert_eq!(at(&big, "-ub").as_deref(), Some("512"));
+        let small = ManagedConfig {
+            batch_size: Some(128),
+            gpu_layers: 0,
+            ..base_cfg()
+        };
+        assert_eq!(at(&small, "-b").as_deref(), Some("128"));
+        assert_eq!(at(&small, "-ub").as_deref(), Some("128"));
+        let cpu_default = ManagedConfig {
+            batch_size: Some(2048),
+            gpu_layers: 0,
+            ..base_cfg()
+        };
+        assert_eq!(at(&cpu_default, "-b").as_deref(), Some("2048"));
+        assert_eq!(at(&cpu_default, "-ub").as_deref(), Some("512"));
+    }
+
+    /// The embedding server keeps its own batch — the context size, for a
+    /// non-causal model's sake — whatever the field or `-ngl` say (R4).
+    #[test]
+    fn the_embedding_server_keeps_its_own_batch() {
+        let cfg = ManagedConfig {
+            embeddings: true,
+            gpu_layers: 0,
+            batch_size: Some(128),
+            context_size: 8192,
+            ..base_cfg()
+        };
+        let args = build_args(&cfg);
+        let values: Vec<&String> = args
+            .iter()
+            .enumerate()
+            .filter(|(i, a)| (*a == "-b" || *a == "-ub") && *i + 1 < args.len())
+            .map(|(i, _)| &args[i + 1])
+            .collect();
+        assert_eq!(values, vec!["8192", "8192"], "{args:?}");
     }
 
     /// One session leaves the launch line exactly as it was before the setting
@@ -779,6 +896,63 @@ mod tests {
             .await
             .expect("the monitor must arm exited on process exit");
         assert!(exited.is_cancelled());
+    }
+
+    /// A **real** `llama-server` launched by the app's own line for a CPU-only
+    /// host (`-ngl 0`, no batch typed) must accept `-b 256 -ub 256` and come
+    /// up with its four unified slots over the whole `-c`
+    /// (docs/research/cpu-batch.md §4.1, §7). The numbers that batch buys
+    /// are §3.1's, measured on this same line launched by hand.
+    ///
+    ///     MINDFORK_LLAMA_BIN=.../llama-server.exe MINDFORK_MODEL=.../small.gguf \
+    ///       cargo test managed_cpu_line -- --ignored --nocapture
+    #[tokio::test]
+    #[ignore = "requires a local llama-server binary + model (MINDFORK_LLAMA_BIN, MINDFORK_MODEL)"]
+    async fn managed_cpu_line_launches_with_the_measured_batch_live() {
+        use crate::shared::api::EngineBackend;
+        let (Ok(bin), Ok(model)) = (
+            std::env::var("MINDFORK_LLAMA_BIN"),
+            std::env::var("MINDFORK_MODEL"),
+        ) else {
+            eprintln!("skip: MINDFORK_LLAMA_BIN / MINDFORK_MODEL not set");
+            return;
+        };
+        let cfg = ManagedConfig {
+            binary: bin.into(),
+            model_path: Some(model),
+            gpu_layers: 0,
+            context_size: 2048,
+            port: 18124,
+            ..base_cfg()
+        };
+        let args = build_args(&cfg);
+        eprintln!("the line: {}", args.join(" "));
+        let at = |flag: &str| {
+            args.iter()
+                .position(|a| a == flag)
+                .map(|i| args[i + 1].clone())
+        };
+        assert_eq!(at("-b").as_deref(), Some("256"));
+        assert_eq!(at("-ub").as_deref(), Some("256"));
+        let handle = ServerHandle::launch(&cfg, locale(Lang::En)).expect("launch");
+        let client = OpenAiClient::new(handle.base_url());
+        wait_until_ready(
+            &client,
+            Duration::from_secs(600),
+            Some(handle.exited()),
+            locale(Lang::En),
+        )
+        .await
+        .expect("the server should come up on the CPU line");
+        let slots = client.parallel_slots().await;
+        let window = client.context_budget().await;
+        eprintln!("live CPU launch: slots {slots:?}, window {window:?}");
+        assert_eq!(
+            slots,
+            Some(4),
+            "the server's own default: four unified slots"
+        );
+        assert_eq!(window, Some(2048));
     }
 
     /// A **real** `llama-server` launched with the pair of flags `sessions > 1`

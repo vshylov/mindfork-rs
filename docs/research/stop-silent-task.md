@@ -285,8 +285,9 @@ regression: 3/3 in 57 s. The unit suite: 2903 green, 144 `#[ignore]`.
 - **A `/tasks stop` command** (F2b).
 - **Refunding the window on a stop** (F4b), if users turn out to stop tasks
   to *postpone* them rather than to skip them.
-- **A smaller `-ub`** for the CPU build (silent-preemption §8) — the batch
-  a cancel waits for is the server's, for a stop as for a displacement.
+- **A smaller batch** for the CPU build — **done** as its own track
+  ([cpu-batch.md](cpu-batch.md), 2026-09-07): `-b`, not `-ub`; a stop's
+  slot frees in 6.5 s rather than 23 on a CPU-only host.
 
 ## 8. Documentation touch list (AGENTS.md §4)
 

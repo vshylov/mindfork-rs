@@ -16,6 +16,11 @@ split by subsystem.
 
 ### Added
 
+- **A batch setting for the managed server.** *Performance* → *Batch (-b)*:
+  how many prompt tokens `llama-server` processes per pass. Empty means
+  auto — 256 when *GPU layers* is 0, the server's default otherwise; a
+  number is passed as is. Changing it restarts the server.
+
 - **Stop the app's own background task.** On the tasks screen (`F7`) `F6`
   now also stops one of the app's own tasks — a reflection, a consolidation,
   a history compaction — when its row says *running* or *waiting*, not only
@@ -154,6 +159,15 @@ split by subsystem.
 
 
 ### Changed
+
+- **A CPU-only host's server now runs a smaller batch.** With *GPU layers*
+  at 0 the app launches `llama-server` with `-b 256 -ub 256`. The server
+  looks at its queue between batches, so a background request the app
+  cancels while it is still reading its prompt — a compaction or reflection
+  your message displaced, a task you stopped from the tasks screen — used
+  to hold its slot for the whole default batch (measured: 23 s); now for
+  6.5 s, at about a seventh slower prompt processing. A GPU host at its
+  defaults is untouched.
 
 - **Your message no longer waits for the app's own request.** When one of
   the app's background requests — a history compaction, a reflection, a

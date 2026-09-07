@@ -134,7 +134,12 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
     yields; measured first — a one-word turn waited 45.9 s behind the roll
     on the CPU build where a cancelled stream's room is free in 0.79 s,
     [docs/research/silent-preemption.md](research/silent-preemption.md),
-    every fork at its recommendation). **Background dialogues are
+    every fork at its recommendation). **The batch on a CPU-only host —
+    done** (2026-09-07: the batch a cancel waits for is linear in `-b`,
+    measured on five launch lines; `-b 256 -ub 256` at `-ngl 0` unless a
+    number is typed, a GPU host's line untouched,
+    [docs/research/cpu-batch.md](research/cpu-batch.md), every fork at its
+    recommendation). **Background dialogues are
     done** (2026-09-06: `start_dialogue` behind the same switch, the
     director's brief snapshotted at the call, every dialogue stream priced by
     the session budget — which also closed a live defect, a foreground scene

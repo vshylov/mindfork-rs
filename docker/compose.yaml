@@ -48,12 +48,18 @@ services:
 
   # Chat. `--jinja` is not optional: it is what loads Gemma's own chat template,
   # without which formatting and tool-calling are both wrong (docs/install.md §3).
+  # `-b 256 -ub 256` is the CPU batch the app's own launcher passes at `-ngl 0`
+  # (docs/research/cpu-batch.md §3.1): the server looks at its queue between
+  # batches, and a stream cancelled during prompt processing holds its slot for
+  # one — 23 s at the default on a CPU, 6.5 s here. This container is an external
+  # server to the app, so the line is this file's.
   chat:
     <<: *llama
     command: >
       -m /models/${CHAT_GGUF:-google_gemma-4-E2B-it-Q8_0.gguf}
       --host 0.0.0.0 --port 8000
       -c ${CHAT_CTX:-16384}
+      -b 256 -ub 256
       --jinja
       ${CHAT_EXTRA_ARGS-}
     ports:

@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (41)
+## Entries (42)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -53,6 +53,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: several reasoning items in one reply — each resent as its own item (done)
 - Post-M9: the silent tasks under the app-wide budget — the budget's silent lane (done)
 - Post-M9: the silent stream yields to the turn — preemption on the session budget (done)
+- Post-M9: the batch a cancel waits for — `-b` on the CPU build's launch line (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -2640,3 +2641,49 @@ probes, 6/6.
   round; displacing whenever the waiter does not fit (above one session it
   cancels rounds that were not the problem); an unbounded number of yields
   (a 32-round turn could starve a task and waste a round per round).
+
+### Post-M9: the batch a cancel waits for — `-b` on the CPU build's launch line (done)
+- **What**: the item the preemption track recorded and did not take
+  (silent-preemption §8): llama.cpp honours a cancel between batches, and on
+  the CPU build a stream displaced or stopped during its prefill held its
+  slot for the whole default batch — 23 s. The design
+  [docs/research/cpu-batch.md](../research/cpu-batch.md), every fork at its
+  recommendation (the user's decision, 2026-09-07).
+- **Measured before designing** (stage 0, research §3.1): five launch lines
+  on the CPU build, a fresh server per arm, the probe's new third arm
+  (`preemption_cold_e2e_live`: the one-word turn alone, the cold prefill
+  reference) beside the roll displaced during its prefill; the batch read off
+  the server's log as the gap from `cancel task` to `release`. **Linear in
+  `-b`**: 23.3 s at the default 2048, 13.1 at 512, 6.5 at 256, 2.8 at 128,
+  with the cold prefill +5 / +14 / +20 %; `-b 2048 -ub 128` worse on both
+  counts (39.8 s, +21 %) — the micro-batch sets the matmul's width, the batch
+  sets when the server looks at its queue. The knee at 256: a quarter of the
+  wait for a seventh of the prefill. The retry's cold prefill and the
+  KV-pressure halving stay the server's.
+- **How**: `ManagedSettings.batch_size: Option<u32>` (`#[serde(default)]`
+  on the struct — an old `settings.json` reads `None`) → `ManagedConfig`
+  → `build_args`: for the chat server, `-b n -ub min(n, SERVER_UBATCH)` when
+  a number was typed, `-b 256 -ub 256` (`CPU_BATCH`) when none was and
+  `gpu_layers == 0`, nothing otherwise — a GPU host's line byte for byte;
+  the embedding server keeps `-ub <ctx> -b <ctx>`. A *Batch (-b)* row in
+  the *Performance* group after `-ngl` (`num_row`: empty reads auto), the
+  same for the impersonation engine, a hint under the dumps' ceiling. The
+  docker stand's chat container gets the flags in `compose.yaml` — it is an
+  external server to the app, so F5's "left to auto" was corrected to the
+  line where the batch actually lives.
+- **Tests**: +5 — `managed.rs` (`-ngl 0` → `-b 256 -ub 256`; a GPU line
+  byte for byte; a typed 1024 → `-ub 512`, 128 → 128, 2048 on a CPU host →
+  the server's default; the embedding server unchanged), `settings/tests.rs`
+  (the field stores a number, an emptied field reads auto, the hint under
+  the ceiling; the field is described) — **2908 unit tests green, 146
+  `#[ignore]`**; the settings dumps and screenshots regenerated.
+- **Live**: `managed_cpu_line_launches_with_the_measured_batch_live` — the
+  app's own line for `-ngl 0` (`… -c 2048 -b 256 -ub 256 -m … --jinja`)
+  launched through `ServerHandle::launch` against the CPU build, ready with
+  four unified slots over 2048; the LAN regression 2/2 in 55 s. The gain is
+  §3.1's 256 row, measured on the same flags by hand.
+- **Rejected**: `-ub` as the knob (measured: it is not); the field without
+  auto (a CPU host would have to know the flag exists); auto without the
+  field; 512 (most of the wait kept) and 128 (+20 % for 3.7 s more) as the
+  auto value; a runtime detection of a slow prefill (the batch is a
+  launch-time argument).
