@@ -5542,6 +5542,9 @@ enum PreemptArm {
     RollThenTurn,
     /// A long turn cancelled at its first token, then a one-word turn.
     CancelThenTurn,
+    /// The one-word turn alone on an idle server: its cold prefill, the
+    /// reference the other arms' first tokens are read against.
+    TurnAlone,
 }
 
 /// What the probe read, all in seconds from the moment the measured turn was
@@ -5615,7 +5618,6 @@ async fn probe_cancel_then_turn(
     word: &str,
 ) -> PreemptProbe {
     let mut probe = PreemptProbe::default();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(600);
     cmd_tx
         .send(AppCommand::SendMessage(
             "Write a long story about the lighthouse keeper's year, at least four hundred words."
@@ -5646,6 +5648,19 @@ async fn probe_cancel_then_turn(
     // waiter is admitted after the displaced stream's reservation drops, on
     // the same side of that gap.
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    read_word_turn(cmd_tx, evt_rx, word, &mut probe).await;
+    probe
+}
+
+/// Sends the one-word turn and reads its first token and its end into
+/// `probe`, from the moment it was sent.
+async fn read_word_turn(
+    cmd_tx: &UnboundedSender<AppCommand>,
+    evt_rx: &mut UnboundedReceiver<AppEvent>,
+    word: &str,
+    probe: &mut PreemptProbe,
+) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(600);
     let sent = std::time::Instant::now();
     cmd_tx.send(AppCommand::SendMessage(word.into())).unwrap();
     while std::time::Instant::now() < deadline {
@@ -5665,7 +5680,6 @@ async fn probe_cancel_then_turn(
             _ => break,
         }
     }
-    probe
 }
 
 /// **The preemption probe** (stage 0 of docs/research/silent-preemption.md):
@@ -5739,6 +5753,11 @@ async fn preemption_smoke(arm: PreemptArm) -> Option<PreemptProbe> {
     let probe = match arm {
         PreemptArm::RollThenTurn => probe_roll_then_turn(&cmd_tx, &mut evt_rx, word).await,
         PreemptArm::CancelThenTurn => probe_cancel_then_turn(&cmd_tx, &mut evt_rx, word).await,
+        PreemptArm::TurnAlone => {
+            let mut probe = PreemptProbe::default();
+            read_word_turn(&cmd_tx, &mut evt_rx, word, &mut probe).await;
+            probe
+        }
     };
     let most = backend
         .max_in_flight
@@ -5775,6 +5794,21 @@ async fn preemption_wait_e2e_live() {
         first_token < roll_end,
         "the turn streamed before the roll ended: first token at {first_token:.1} s, the roll's end at {roll_end:.1} s"
     );
+}
+
+/// **The reference — the one-word turn alone** (docs/research/cpu-batch.md
+/// §3): on an idle server its first token is the cold prefill of the seeded
+/// prompt and nothing else — what the other arms' first tokens are read
+/// against. `#[ignore]`, manual, the same servers.
+#[tokio::test]
+#[ignore = "requires a live llama-server with several slots over one pool (MINDFORK_ENGINE_URL)"]
+async fn preemption_cold_e2e_live() {
+    let Some(probe) = preemption_smoke(PreemptArm::TurnAlone).await else {
+        eprintln!("skipped (see above)");
+        return;
+    };
+    assert!(probe.finished.is_some(), "the turn finished");
+    assert!(!probe.reply.trim().is_empty(), "the turn replied");
 }
 
 /// **Arm 2 — the floor**: a turn cancelled at its first token, the next one
