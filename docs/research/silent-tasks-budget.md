@@ -268,7 +268,12 @@ both completed. The roll's failure is worded as its own now (the rider of
 16384`, b10807): `admission_e2e_live` (two 55 % children took turns, most
 open at once 1, both codes), `background_subagent_e2e_live` (the wake
 reply named the planted codename) and `parallel_subagents_e2e_live` (both
-runs `Completed`) — 3/3 in 83 s.
+runs `Completed`) — 3/3 in 83 s. The probe's guarded arm on the same
+stack (`silent_roll_e2e_live`, history and archive 300 paragraphs each
+over 16384): the roll waited for the run, most open at once 1, the run
+`Completed` with its codename and the roll a summary — 16.5 s end to end
+against the CPU build's 88 s, so the wait for one silent round that §8
+leaves preemption for is seconds on the GPU stack.
 
 ## 4. Design
 

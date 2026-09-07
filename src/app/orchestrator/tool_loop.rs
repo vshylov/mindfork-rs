@@ -24,6 +24,7 @@ use crate::shared::api::{
     ToolCallAccumulator,
 };
 use crate::shared::i18n::Locale;
+use crate::shared::session_budget::{Reservation, SessionBudget};
 use crate::shared::storage::Storage;
 
 /// An async layer over the background task's digest (§A2): a semantic comparison of
@@ -163,19 +164,17 @@ async fn run_rounds(
     loop {
         let estimate = super::generation::estimate_prompt_tokens(request);
         let (text, calls, reason, usage) = {
-            let _lane = match ctx.sessions.as_deref() {
-                Some(budget) => {
-                    let need = budget.price(
-                        estimate,
-                        last_exact,
-                        request.sampling.max_tokens.map(|m| m as u64),
-                    );
-                    match budget.acquire_silent(need, cancel, lane).await {
-                        Some(reservation) => Some(reservation),
-                        None => return Ok(()),
-                    }
-                }
-                None => None,
+            let Ok(_lane) = lane_reservation(
+                ctx.sessions.as_deref(),
+                request,
+                estimate,
+                last_exact,
+                cancel,
+                lane,
+            )
+            .await
+            else {
+                return Ok(());
             };
             let stream = backend.chat_stream(request.clone(), cancel.clone()).await?;
             read_round(stream).await
@@ -203,6 +202,37 @@ async fn run_rounds(
         }
     }
     Ok(())
+}
+
+/// The wait for the silent lane ended without a permit: the app is quitting,
+/// the round never streamed, and the task ends quietly (`run_rounds`).
+struct Cancelled;
+
+/// The round's place on the budget's silent lane (spec §6.3): `None` where
+/// the engine has no session budget, otherwise the reservation — the
+/// request's calibrated `estimate` floored by the last round's exact size
+/// (`floor`), plus the reply cap — held until dropped.
+async fn lane_reservation<'a>(
+    budget: Option<&'a SessionBudget>,
+    request: &ChatRequest,
+    estimate: u64,
+    floor: u64,
+    cancel: &CancellationToken,
+    lane: &'static str,
+) -> Result<Option<Reservation<'a>>, Cancelled> {
+    let Some(budget) = budget else {
+        return Ok(None);
+    };
+    let need = budget.price(
+        estimate,
+        floor,
+        request.sampling.max_tokens.map(|m| m as u64),
+    );
+    budget
+        .acquire_silent(need, cancel, lane)
+        .await
+        .map(Some)
+        .ok_or(Cancelled)
 }
 
 /// Consumes one round's stream into its text, accumulated tool calls, finish

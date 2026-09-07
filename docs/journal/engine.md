@@ -2544,4 +2544,6 @@ probes, 6/6.
   codename and the roll a summary, 88 s); and the regression on the LAN
   stack (Qwen 3.6 27B Q4_K_M, `-np 4 --kv-unified -c 16384`, b10807):
   `admission_e2e_live`, `background_subagent_e2e_live`,
-  `parallel_subagents_e2e_live` — 3/3 in 83 s.
+  `parallel_subagents_e2e_live` — 3/3 in 83 s, and the probe's guarded arm
+  there too (`silent_roll_e2e_live`: the roll waited for the run, most open
+  1, both completed, 16.5 s).
