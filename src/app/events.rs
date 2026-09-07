@@ -538,6 +538,11 @@ impl TaskRun {
 pub struct AppTask {
     pub kind: BackgroundKind,
     pub running: bool,
+    /// Running, but not streaming: waiting for the silent lane's permit
+    /// behind another task, or for room in the pool beside an interactive
+    /// stream (docs/research/silent-tasks-budget.md §4.6). Read off the
+    /// budget, never stored.
+    pub waiting: bool,
 }
 
 /// The tasks screen's snapshot ([`AppEvent::TaskList`]): the runs — running

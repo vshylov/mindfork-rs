@@ -171,8 +171,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-06, version 0.9.8)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2871 unit tests
-green, 139 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **2881 unit tests
+green, 141 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -183,6 +183,21 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 `tools/doc_index_check.py`. A new track adds a line; a line that has stopped
 being recent is dropped, not shortened.
 
+- **The silent tasks under the app-wide budget — the budget's silent lane** —
+  the app's own requests (the automatic title, reflection, the two
+  consolidations, the compaction roll, impersonation on the shared engine,
+  a summary inside a silent loop) stream on a **second permit** of the one
+  `SessionBudget`, over the same pool sum: one at a time among themselves,
+  never overfilling the pool beside a turn or a run, a turn that does not
+  fit beside an open silent round waiting for that one round. The pool is
+  known at one session too: a `llama-server` launched without `-np` runs
+  four unified slots, and the roll — sized by the conversation, fired when
+  it is largest — landed on them beside the turn; measured before designing
+  on the CPU build (both ended, "Context size has been exceeded"), then the
+  same arms green after the lane. `handle_done` asks for the roll ahead of
+  the loops; the tasks screen's third state is *waiting*
+  ([docs/research/silent-tasks-budget.md](docs/research/silent-tasks-budget.md),
+  spec §6.3, [docs/journal/engine.md](docs/journal/engine.md)).
 - **The tasks screen — everything the app is doing, on one surface** —
   `F7`/`/tasks`: every sub-agent and dialogue run of every chat, running
   first with its **position** (round · tool, line, director) and elapsed
@@ -400,19 +415,6 @@ being recent is dropped, not shortened.
   section, and each screen owns its section table next to its key handler
   ([docs/history/help-hotkeys-context.md](docs/history/help-hotkeys-context.md),
   [docs/journal/ui-screens.md](docs/journal/ui-screens.md), spec §11.7).
-- **The binary/command is `mindfork`** — one `[[bin]]` stanza over the
-  unchanged package `mindfork-rs`; the Linux symlink/`.desktop`/icons, the
-  Windows installer, CI and the docs' command examples follow, while data
-  locations, package/artifact names and the encryption/lock identifiers
-  deliberately keep the project id; pre-release, so no compat shims
-  ([docs/research/binary-rename.md](docs/research/binary-rename.md)).
-- **Commands — stage 3: `/autotitle`, the personas, the profile texts, and the
-  command residue** — the JupyterLab pass's gaps closed: the model-written
-  title, the impersonation profiles (`/impersonation list|new|delete|use|system`)
-  and the profile texts (`/profile system|greeting`, reserved word `clear`)
-  each got a typed route through the settings paths they mirror, and the
-  draft flush now precedes the intent, so a spent command no longer resurfaces
-  in the box ([docs/history/commands-stage3.md](docs/history/commands-stage3.md)).
 
 For what exists and how it works, read architecture.md and spec.md — they are
 the source of truth for the current state. For how any of it came to be, and

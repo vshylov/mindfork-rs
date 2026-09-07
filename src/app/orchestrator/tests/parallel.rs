@@ -485,7 +485,7 @@ fn two_running_transcripts_are_mirrored_and_forwarded_apart() {
 
 /// A script that reports an exact `usage` before it finishes — what a real
 /// server does, and what the budget's floor and calibration read.
-fn sized(mut script: Script, prompt_tokens: u32, completion_tokens: u32) -> Script {
+pub(super) fn sized(mut script: Script, prompt_tokens: u32, completion_tokens: u32) -> Script {
     let end = script.chunks.pop().expect("a script ends with Finished");
     script
         .chunks
@@ -500,7 +500,7 @@ fn sized(mut script: Script, prompt_tokens: u32, completion_tokens: u32) -> Scri
 
 /// A reply of `n` text chunks — long enough on the recorder's delay to still
 /// be streaming when a sibling comes back for its second round.
-fn long_text(n: usize) -> Script {
+pub(super) fn long_text(n: usize) -> Script {
     let mut chunks: Vec<ChatChunk> = (0..n).map(|_| ChatChunk::Text("kind ".into())).collect();
     chunks.push(ChatChunk::Finished(FinishReason::Stop));
     Script {

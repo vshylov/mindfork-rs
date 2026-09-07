@@ -457,7 +457,14 @@ async fn summarize_text(
     let _permit = match ctx.sessions.as_deref() {
         Some(budget) => {
             let need = budget.price(estimate, 0, Some(max_tokens as u64));
-            match budget.acquire(need, &ctx.cancel).await {
+            // A silent loop's summary takes the silent lane: one of the
+            // app's own requests at a time (silent-tasks-budget §4.2).
+            let reservation = if ctx.silent_lane {
+                budget.acquire_silent(need, &ctx.cancel, "summary").await
+            } else {
+                budget.acquire(need, &ctx.cancel).await
+            };
+            match reservation {
                 Some(reservation) => Some(reservation),
                 None => anyhow::bail!(ctx.loc.t("tool.fetch_url.err.summary_cancelled")),
             }

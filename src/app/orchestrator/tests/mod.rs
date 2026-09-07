@@ -636,6 +636,7 @@ mod search;
 mod self_consolidation;
 mod self_model;
 mod settings;
+mod silent;
 mod subagent;
 mod tasks;
 mod title;

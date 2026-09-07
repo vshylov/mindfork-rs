@@ -148,6 +148,13 @@ split by subsystem.
 
 ### Changed
 
+- **The app's own background requests run one at a time.** The automatic
+  title, reflection, the two consolidations, history compaction and
+  impersonation on the shared engine now take turns rather than opening
+  together after a reply, and each waits for room in the server's context
+  pool beside your reply or a background run. The tasks screen (`F7`) says
+  which of them is *waiting*.
+
 <!-- cyrillic-ok:start (the ru interface strings this entry is about) -->
 
 - **The tasks screen's Russian section header.** «ПРОГОНЫ» — a literal
@@ -198,6 +205,17 @@ split by subsystem.
   replaced instead of used.
 
 ### Fixed
+
+- **A compaction or a reflection beside a running reply could end both.** At
+  the default of one session a local `llama-server` runs four slots over
+  one context pool, and the app's background requests landed on them
+  outside the guard that keeps sub-agents from overfilling it — a history
+  compaction fires exactly when the conversation is at its largest, so the
+  next reply and the compaction could exceed the pool together and the
+  server ended both ("Context size has been exceeded"), the compaction
+  failing silently. The guard now covers every request the app makes.
+- A failed history compaction was reported with the title generator's
+  wording ("Title generation error"); it now says the summary request failed.
 
 - **A tool round on OpenAI no longer fails when the model reasons in
   stages.** gpt-5.6 often returns two to five reasoning items in one reply;

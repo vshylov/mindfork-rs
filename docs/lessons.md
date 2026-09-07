@@ -675,6 +675,23 @@ query, no answer" says nothing about whether tmux itself implements the request;
 out fine. Ask the multiplexer unwrapped before concluding it is silent.
 — *terminal background detection*.
 
+**A guard keyed on the app's own count is blind to what the server does
+where the app writes nothing.** `pool_for` answered *no pool* at one session
+— "one permit; no two streams ever overlap" — and at one session the
+launcher writes no `-np`, where a `llama-server` runs **four unified slots**
+on its own. Every request the app made outside the turn machinery (the
+compaction roll first among them: sized by the conversation, fired when it
+is largest) landed on those slots beside the turn, and the collective
+failure the admission track had measured and guarded against above one
+session stayed live at the default — silently, since the silent loops read
+the in-stream error as a round's end and land `Ok`. Two designs had put
+those requests "outside the budget" on the argument that they had always
+shared the server; sharing was the hazard. When a rule says *this cannot
+overlap*, ask what the server does by default in the configuration the rule
+calls safe — and reproduce it through the app's own paths before believing
+either answer (the probe took an afternoon; the fix an evening).
+— *the silent tasks under the app-wide budget*.
+
 ## 4. The recurring defect class: a message must close the door
 
 **Never let a message describe a situation without saying what is and is not possible

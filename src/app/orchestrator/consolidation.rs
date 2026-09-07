@@ -120,8 +120,10 @@ impl Orchestrator {
 
         // The cancellation token — before the context: its clone goes into `ToolContext.cancel`.
         let cancel = CancellationToken::new();
+        let sessions = self.session_budget();
         let ctx = self.background_tool_ctx(
             backend.clone(),
+            sessions,
             profile_id,
             chat_id,
             system_message,

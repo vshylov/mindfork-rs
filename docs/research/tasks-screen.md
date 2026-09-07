@@ -309,5 +309,7 @@ orchestrator gains a progress step.
 - **History beyond the cap**: a searchable log of every run ever. The chat
   list and `chat_search` already reach every transcript.
 - **The silent tasks under the app-wide budget**
-  ([admission-by-budget.md](admission-by-budget.md) §8), which stays open.
+  ([admission-by-budget.md](admission-by-budget.md) §8) — done 2026-09-07,
+  [silent-tasks-budget.md](silent-tasks-budget.md); the screen's third
+  state, *waiting*, came with it.
 - **Notifications across profiles** (background-subagents.md §8).

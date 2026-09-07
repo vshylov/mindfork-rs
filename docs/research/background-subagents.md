@@ -445,7 +445,8 @@ stream takes a permit and a reservation like a turn's — so at the default
 parallel track's F3a semantics, and under a unified pool a stream that
 would not fit beside the other waits instead of provoking the collective
 failure (R6). The silent background tasks stay outside (the parent's F9;
-the admission track's §8 names bringing them in as its own item). The
+the admission track's §8 names bringing them in as its own item — done since,
+[silent-tasks-budget.md](silent-tasks-budget.md)). The
 parked-set advice of §3.3 goes into the tool's settings hint.
 
 ### 4.8 Limits
@@ -658,7 +659,8 @@ pass; and the Gemma arm above.
 - **Nested background** (a child starting a background run): no nesting, as
   for `call_subagent`.
 - **The silent tasks under the budget**: admission-by-budget.md §8's item,
-  unchanged by this track's app-wide budget (they stay outside).
+  unchanged by this track's app-wide budget (they stay outside). *Done
+  2026-09-07 — [silent-tasks-budget.md](silent-tasks-budget.md).*
 - **A tasks screen** listing every background run across chats: the list's
   rows under each parent are the v1 surface.
 - **Notifications across profiles**: a run belongs to a chat, a chat to a

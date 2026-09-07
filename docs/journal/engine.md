@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (39)
+## Entries (40)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -51,6 +51,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the model's name in `external` mode — asked of the server, and sent to it (done)
 - Post-M9: parallel sub-agents — stage 1, sessions per engine and the slot count (done)
 - Post-M9: several reasoning items in one reply — each resent as its own item (done)
+- Post-M9: the silent tasks under the app-wide budget — the budget's silent lane (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -2468,3 +2469,81 @@ app's wire was accepted (a 23 480-character reply), and the control arm's
 fused item was rejected with `invalid_encrypted_content`; the four Anthropic
 smokes (the single-block signature round trip intact) and the two continue
 probes, 6/6.
+
+### Post-M9: the silent tasks under the app-wide budget — the budget's silent lane (done)
+- **What**: the item three tracks recorded and two designs had argued away
+  (parallel-subagents F9, background-subagents §4.7/§8, admission-by-budget
+  §8, tasks-screen §8); the design
+  [docs/research/silent-tasks-budget.md](../research/silent-tasks-budget.md),
+  every fork at its recommendation (the user's decision, 2026-09-07). Seven
+  request paths reached `chat_stream` outside the session budget — the
+  title, the three silent loops, the compaction roll, impersonation on the
+  shared engine, a `fetch_url` summary inside a silent loop — and at the
+  default `sessions = 1` the launcher writes no `-np`, so the server runs
+  **four slots over one unified pool** while `pool_for` answered *none*.
+  Now `SessionBudget` has a **silent lane**: one permit for the app's own
+  requests (`acquire_silent`, a label per request) over the *same* pool sum,
+  so they take turns among themselves and never overfill the pool beside a
+  turn or a run, and a turn that does not fit beside an open silent round
+  waits for that one round; `pool_for` keys on the server's reported slots
+  (managed: the context budget unless exactly one slot is reported; the
+  launcher's default reads as four); `handle_done` asks for the roll right
+  after the title and ahead of the loops (fork F6); the tasks screen gained
+  a third state, *waiting*, read off `silent_streaming` against
+  `background::lane_label`, with the runtime re-asking for the rows on its
+  tick while a silent task runs. A silent loop's later rounds are floored by
+  the previous round's exact `usage` (the loop reads the chunk it used to
+  ignore); a wait cancelled ends the loop `Ok` with nothing run. On the way:
+  the roll's failure was worded with the title's key
+  (`ui.err.title_gen_failed`) — it says the summary request failed now.
+- **Measured before designing** (stage 0, research §3.1): the CPU build
+  (b10807, Gemma 3 4B) launched with the managed launcher's own line at one
+  session logs `n_slots = 4, kv_unified = 'true'` over `-c 2048`; the probe —
+  a chat seeded with 55 % of the pool, a background run holding another
+  55 %, `/compact` at the landing — reproduced the collision through the
+  app's own paths: two streams at once, the run `Failed` with a one-glyph
+  reply, the roll "Context size has been exceeded", the server's batch
+  halved 1024 → 1 over 36 s; the guarded arm was red on `main` by the same
+  event. A landing with every cadence due opened **five** silent requests at
+  once. The collision was invisible on the silent side: `read_round` logged
+  the in-stream error as a `warn`, took the `Finished(Error)` as a round's
+  end, and the task landed `Ok` — the streak reset, reflection announced
+  `SelfModelChanged` for a window it never read.
+- **Rejected**: the silent tasks on the *interactive* permits (F2b — at one
+  session every silent round would stall the next message, and the fan-out
+  would serialise ahead of a wake turn); room without a permit (F2c — five
+  streams still open at once); preemption of the silent stream (F3b —
+  deferred behind the same `acquire_silent`, with the watermark-at-success
+  bookkeeping it needs); a knob for the wait (F3c). Keeping the pool rule
+  keyed on `sessions` (F4b) would have left the default unguarded.
+- **Two things the tests taught.** The default profile speaks Russian, so a
+  recorder keyed on the English prompts routed every silent request to the
+  parent's fallback queue and ate its scripts — the harness switches the
+  profile to English first; and the self-model tools are off by default, so
+  reflection never fires on a fresh profile until they are enabled. The
+  `sessions` hint grew past the longest settings hint (694 → 763 chars) and
+  the settings hint panel gained a row on every tab — visible only as four
+  drifted demo dumps; the hint was trimmed to 702 and the dumps came back
+  byte-identical, so no screenshot was regenerated.
+- **Tests**: +16 — `session_budget.rs` (the silent lane is one wide, the
+  lanes share the pool both ways, a silent stream alone is admitted, a
+  cancelled silent waiter leaves nothing), `pool.rs` (managed unless one
+  slot is reported, none reported reads as four), `tests/silent.rs` (the
+  fan-out one at a time with all four slots taken; the roll waiting for the
+  run and the wake turn waiting for the roll on a 4000 pool at two sessions
+  — `open_at_arrival` 0, `max_in_flight` 1; a loop's later round floored by
+  its exact size — `[1, 0]`; the title, the roll, then the loops; impersonation
+  on the shared engine labelled on the lane; a cancelled wait opening no
+  stream), the tasks screen's *waiting* word — 2881 unit tests green,
+  141 `#[ignore]` (+2: the probe's two arms).
+- **Live** (mandatory — every path here is an engine path): the probe's two arms on the CPU build after the lane —
+  the control arm (belief 8192) still reproduces the collision (two streams
+  at once, the run `Failed`, the roll "The summary request failed: … Context
+  size has been exceeded", 133 s), the guarded arm now passes (the roll
+  waited for the run, one stream at a time, the run `Completed` with its
+  codename and the roll a summary, 88 s); and the regression on the LAN
+  stack (Qwen 3.6 27B Q4_K_M, `-np 4 --kv-unified -c 16384`, b10807):
+  `admission_e2e_live`, `background_subagent_e2e_live`,
+  `parallel_subagents_e2e_live` — 3/3 in 83 s, and the probe's guarded arm
+  there too (`silent_roll_e2e_live`: the roll waited for the run, most open
+  1, both completed, 16.5 s).

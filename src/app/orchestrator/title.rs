@@ -158,6 +158,7 @@ impl Orchestrator {
             sampling,
             tools: Vec::new(),
         };
+        let sessions = self.session_budget();
         spawn_title(
             backend,
             request,
@@ -165,6 +166,7 @@ impl Orchestrator {
             origin,
             self.ui_locale(),
             self.title_tx.clone(),
+            sessions,
         );
     }
 
@@ -231,9 +233,21 @@ fn spawn_title(
     origin: TitleOrigin,
     loc: &'static crate::shared::i18n::Locale,
     title_tx: UnboundedSender<TitleResult>,
+    sessions: Arc<crate::shared::session_budget::SessionBudget>,
 ) {
     tokio::spawn(async move {
         let cancel = CancellationToken::new();
+        // The silent lane of the app's budget, held for the stream
+        // (docs/research/silent-tasks-budget.md §4.2): a title is a request
+        // like any other, and it waits its turn beside the loops' rounds.
+        let need = sessions.price(
+            super::generation::estimate_prompt_tokens(&request),
+            0,
+            request.sampling.max_tokens.map(|m| m as u64),
+        );
+        let Some(_lane) = sessions.acquire_silent(need, &cancel, "title").await else {
+            return;
+        };
         let collect = async {
             let mut stream = backend.chat_stream(request, cancel.clone()).await?;
             let mut text = String::new();

@@ -180,12 +180,14 @@ src/
 │  │  │                     per applied engine, epoch-guarded against a stale
 │  │  │                     answer). Never edits `chat.messages` — only what a
 │  │  │                     request carries, spec §6.7
-│  │  ├─ pool.rs            the KV pool a turn's streams share, when the app can
-│  │  │                     know it (`pool_for`: managed `-c` above one session;
-│  │  │                     an external llama.cpp's `n_ctx` when it reports more
-│  │  │                     than one slot; none on the clouds) — the figure the
-│  │  │                     turn's `SessionBudget` is built with. Spec §6.3,
-│  │  │                     docs/research/admission-by-budget.md §4.4
+│  │  ├─ pool.rs            the KV pool the app's streams share, when the app can
+│  │  │                     know it (`pool_for`: managed `-c` unless the server
+│  │  │                     reported exactly one slot — without `-np` it runs four
+│  │  │                     unified ones; an external llama.cpp's `n_ctx` when it
+│  │  │                     reports more than one slot; none on the clouds) — the
+│  │  │                     figure the `SessionBudget` is built with. Spec §6.3,
+│  │  │                     docs/research/admission-by-budget.md §4.4,
+│  │  │                     silent-tasks-budget.md §4.3
 │  │  ├─ model_name.rs      `ModelDiscovery` — what the engine says it is running
 │  │  │                     when settings cannot say (`external` with a blank
 │  │  │                     "Model (opt.)"): the `ContextDiscovery` shape, but
@@ -624,13 +626,17 @@ src/
    ├─ keys.rs              layout-independent Ctrl shortcuts (`hotkey_char`: Windows
    │                       keyboard-layout resolution → JCUKEN table → pass-through)
    ├─ server.rs            ServerStatus (server status for the UI)
-   ├─ session_budget.rs    `SessionBudget` — a turn's request streams: the permit
+   ├─ session_budget.rs    `SessionBudget` — the app's request streams: the permit
    │                       count of `sessions` and, over a shared KV pool, a token
    │                       reservation per stream (calibrated prompt estimate +
    │                       reply cap) that waits for room rather than overflowing
-   │                       the pool; `price`/`acquire`/`record_usage`. Here rather
-   │                       than in `app` because `features::tools` (the summary)
-   │                       reserves too. Spec §6.3, docs/research/admission-by-budget.md
+   │                       the pool; `price`/`acquire`/`record_usage`, plus the
+   │                       **silent lane** (`acquire_silent`: one permit for the
+   │                       app's own background requests over the same pool sum,
+   │                       labelled so the tasks screen can say which task waits).
+   │                       Here rather than in `app` because `features::tools`
+   │                       (the summary) reserves too. Spec §6.3,
+   │                       docs/research/admission-by-budget.md, silent-tasks-budget.md
    ├─ video/               video understanding for `youtube_watch`: the
    │                       `VideoUnderstanding` contract + `GeminiVideo`
    │                       (`generateContent` with a `file_data` YouTube URL).
@@ -926,7 +932,14 @@ Details:
   of one the turn's loops take turns exactly as before, under a shared pool a
   stream that would not fit waits for room, and a loop cancelled while waiting
   lands what it has; every round's exact `usage` is recorded back as the
-  ratio; docs/research/parallel-subagents.md §4.2, admission-by-budget.md §4) — is one struct owned by the generation task; the loop itself holds
+  ratio; docs/research/parallel-subagents.md §4.2, admission-by-budget.md §4 —
+  and beside that interactive lane the budget's **silent lane**
+  (`acquire_silent`: one permit, the same pool sum, a label) is what the
+  app's own requests stream on: `tool_loop::run_rounds`, `spawn_title`,
+  `spawn_compact`, `spawn_impersonation` on the shared engine, and a summary
+  inside a silent loop through `ToolContext.silent_lane`; the pool is known
+  at one session too, since a managed server without `-np` runs four
+  unified slots — docs/research/silent-tasks-budget.md §4) — is one struct owned by the generation task; the loop itself holds
   only its own request, context, cancellation token, allowed set, accumulators
   and a `depth`. A nested loop (a subagent run,
   [docs/research/subagent-chats.md](research/subagent-chats.md) §3.2) is the
@@ -1837,9 +1850,11 @@ of the engine on its own counts against `sessions` too, and reserves its share
 of a shared KV pool: `fetch_url`'s `summarize_text` prices its request (the
 page's text plus the summary's cap) and holds a permit and the reservation
 around its summary stream and around nothing else (`features/tools/fetch.rs`,
-ADR 0012; docs/research/admission-by-budget.md §4.5). `None` for a background
-task's context, which carries no budget. FSD is kept: the type lives in
-`shared`, not in `app`.
+ADR 0012; docs/research/admission-by-budget.md §4.5). A background task's
+context carries the same budget with **`silent_lane: true`**, so a summary a
+silent loop asks for takes the lane the loop's own rounds stream on
+(silent-tasks-budget.md §4.2). FSD is kept: the type lives in `shared`, not
+in `app`.
 
 **`OrchestratorDeps.extra_tools`** — tools registered on top of the standard
 set and re-registered on every `rebuild_registry`; empty in production. The
@@ -2458,7 +2473,12 @@ round) is **shared** between reflection and note auto-consolidation:
 `SilentLoop { backend, request, allowed, max_rounds, timeout, label,
 done_tx, … }` and differ only in parameters (the tool set, limits, log
 label) and the system message. The cadence predicate `tool_loop::due` is
-also shared. The main generation loop (§5) was deliberately **not** folded
+also shared. Every round of `run_rounds` streams under the session budget's
+**silent lane** (`ctx.sessions`, `background::lane_label(kind)`): priced
+like a turn's round — the estimate, floored by the previous round's exact
+`usage`, plus the cap — with the reservation dropped before the round's
+tools run, and a wait cancelled (the app is quitting) ending the task
+quietly, `Ok` with nothing run (docs/research/silent-tasks-budget.md §4.2). The main generation loop (§5) was deliberately **not** folded
 in — it has UI streaming, control-flow tools, Anthropic thinking signatures,
 usage, effects; its complexity doesn't pay off the shared drain.
 
@@ -2709,8 +2729,11 @@ half capped at `TASK_LANDED_CAP` with a count. `Back::Tasks` is the third way
 down: `Enter`/`P` stash the screen whole and switch chats through the ordinary
 route, `ChatIntent::OpenChatList` restores it and re-requests the rows,
 `EscTarget::Tasks` words the bar's hint. `spinner_frame_needed` repaints it once
-a second while a run is out (`TasksScreen::needs_repaint`) and never when the
-list is all landed. The run-state words the chat list and this screen share
+a second while a run is out or a silent task runs (`TasksScreen::needs_repaint`)
+— and in the latter case the loop re-sends `RequestTasks` on that tick, since a
+task's *waiting* state (`AppTask::waiting`: the snapshot compares
+`SessionBudget::silent_streaming` against `background::lane_label`) flips
+inside the task — and never when the list is all landed and idle. The run-state words the chat list and this screen share
 live in one place (`chat_list::run_state_key`), as does the Paragraph-drawn
 lists' scroll rule (`shared::ui::keep_visible`, the changes screen's, now with
 two callers).
@@ -3037,7 +3060,12 @@ Principles:
   `cancel_all_bg`. This way the family's 3rd task (self-model
   auto-consolidation, §9.9) doesn't touch the `run()`/`Quit` scaffold.
   Consolidation cadence (`consolidate_counts`) is separate data, not
-  lifecycle. See docs/history/refactoring-solid.md §4.
+  lifecycle. See docs/history/refactoring-solid.md §4. The family's streams
+  take the session budget's **silent lane** (`lane_label`), as do the title,
+  the compaction roll and impersonation on the shared engine — so a
+  landing's requests (`handle_done`: the title, the roll, then the three
+  loops, in that order) run one at a time and never overfill the pool beside
+  the next turn (docs/research/silent-tasks-budget.md).
 - **Cancellation** — a `CancellationToken` interrupts an HTTP stream/
   background task; a partial reply is preserved; a new task of the same kind
   cancels the previous one (RAG, impersonation).

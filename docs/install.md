@@ -348,7 +348,11 @@ Two modes (configured on the settings screen, `Ctrl+P`, "Model/server" section):
   - **Parallel sessions** (`sessions`, the "Parallel sessions" group): how many
     request streams the app keeps open against the server at once — the
     assistant's own reply and the sub-agents of one reply share them. **1** by
-    default, and then the launch line is exactly what it was. A ceiling, not a
+    default, and then the launch line is exactly what it was — which means the
+    server's own default: **four slots over one pool**, where the app's own
+    background requests (the title, reflection, consolidation, the compaction
+    roll) go one at a time, waiting for room beside your reply instead of
+    overfilling the pool together with it. A ceiling, not a
     switch: how many sub-agents of one reply *start* together is
     `tools.subagent_parallel` (Settings → Tools, "Subagent: parallel runs",
     1 by default), so raise both. Above 1 the server

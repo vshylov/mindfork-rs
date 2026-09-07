@@ -747,6 +747,7 @@ impl Orchestrator {
                 model_name: model_name.clone(),
                 engine_mode,
                 sessions: Some(sessions.clone()),
+                silent_lane: false,
             };
             ctx = ToolContext::new(
                 self.tool_deps(backend.clone()),
@@ -954,17 +955,19 @@ impl Orchestrator {
         for run in landed_runs {
             self.maybe_auto_title_run(run);
         }
-        // After a successful reply — maybe it's time for background auto-reflection
-        // (Tier 3), notes auto-consolidation ("sleep", Tier 3), and/or self-model
-        // auto-consolidation ("sleep" for the self-model, stage A1 —
-        // docs/history/self-model-consolidation.md).
+        // Maybe the conversation is approaching the model's context window
+        // (spec §6.7) — it reads what this turn actually cost, the freshest
+        // measurement available. **Ahead** of the three loops below: the
+        // silent lane runs one request at a time in the order they were
+        // asked for, and the roll is the one silent task that protects the
+        // *next* turn (docs/research/silent-tasks-budget.md §4.5, fork F6).
+        self.maybe_auto_compact(res.chat_id, res.usage);
+        // Then background auto-reflection (Tier 3), notes auto-consolidation
+        // ("sleep", Tier 3), and/or self-model auto-consolidation ("sleep"
+        // for the self-model, stage A1 — docs/history/self-model-consolidation.md).
         self.maybe_auto_reflect(res.chat_id);
         self.maybe_auto_consolidate(res.chat_id);
         self.maybe_auto_self_consolidate(res.chat_id);
-        // …and maybe the conversation is approaching the model's context window
-        // (spec §6.7). Last of the four deliberately: it reads what this turn
-        // actually cost, which is the freshest measurement available.
-        self.maybe_auto_compact(res.chat_id, res.usage);
     }
 
     /// Appends a record to the chat's profile's language-model history when
@@ -4771,7 +4774,7 @@ fn relay_text(visible: String, text: &mut String, sink: &RoundSink<'_>, id: Uuid
 /// the live indicator before the server's exact `usage.prompt_tokens` arrives.
 /// Accounts for the system message, message texts, and tool-call arguments in
 /// the history.
-fn estimate_prompt_tokens(req: &ChatRequest) -> u64 {
+pub(super) fn estimate_prompt_tokens(req: &ChatRequest) -> u64 {
     let mut parts: Vec<&str> = Vec::with_capacity(req.messages.len());
     for m in &req.messages {
         parts.push(m.content.as_str());

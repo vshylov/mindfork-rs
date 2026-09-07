@@ -17,9 +17,20 @@
 //! single conversation fits its window, exactly as before this type existed),
 //! which is also what makes the wait always end.
 //!
-//! With no pool known (`sessions = 1`, a cloud, an external server that
-//! answers no `/props`) the type is the bare semaphore it replaced, bit for
+//! With no pool known (a cloud, an external server that answers no `/props`
+//! or reports one slot) the type is the bare semaphore it replaced, bit for
 //! bit: the count bounds, nothing is priced, nothing waits for room.
+//!
+//! Beside the interactive lane — the turns, the runs, the scenes, a tool's
+//! summary — sits the **silent lane** (docs/research/silent-tasks-budget.md
+//! §4.1): one permit for the app's own background requests (the title, the
+//! silent loops, the compaction roll, impersonation on the shared engine)
+//! over the *same* pool sum. So the silent tasks take turns among
+//! themselves, a silent stream never overfills the pool beside an
+//! interactive one, and an interactive stream that does not fit beside an
+//! open silent round waits for that one round — bounded by its reply cap —
+//! never the reverse. The lane records the label of the request it is
+//! streaming, so the tasks screen can say which task waits.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, PoisonError};
@@ -30,6 +41,12 @@ use tokio_util::sync::CancellationToken;
 /// The budget: the permit count and, when a pool is known, the token sum.
 pub struct SessionBudget {
     permits: Semaphore,
+    /// The silent lane's one permit (research §4.1, fork F5).
+    silent_permits: Semaphore,
+    /// The label of the silent request streaming right now (`None` — the
+    /// lane is idle, or its holder is still waiting for room). A `std`
+    /// mutex, never held across an await.
+    silent_streaming: Mutex<Option<&'static str>>,
     /// The KV pool the open streams share, in tokens. `None`: no guard.
     pool: Option<u64>,
     /// The sum of the reservations of the streams currently open. A `std`
@@ -49,11 +66,19 @@ pub struct SessionBudget {
 pub struct Reservation<'a> {
     budget: &'a SessionBudget,
     tokens: u64,
+    /// The silent lane's label this reservation holds, if it is a silent one.
+    label: Option<&'static str>,
     _permit: SemaphorePermit<'a>,
 }
 
 impl Drop for Reservation<'_> {
     fn drop(&mut self) {
+        if let Some(label) = self.label {
+            let mut streaming = self.budget.streaming();
+            if *streaming == Some(label) {
+                *streaming = None;
+            }
+        }
         if self.tokens > 0 {
             let mut open = self.budget.open();
             *open = open.saturating_sub(self.tokens);
@@ -80,6 +105,8 @@ impl SessionBudget {
     pub fn new(sessions: u32, pool: Option<u64>) -> Self {
         Self {
             permits: Semaphore::new(sessions.max(1) as usize),
+            silent_permits: Semaphore::new(1),
+            silent_streaming: Mutex::new(None),
             pool: pool.filter(|&n| n > 0),
             in_flight: Mutex::new(0),
             room: Notify::new(),
@@ -109,6 +136,19 @@ impl SessionBudget {
         self.in_flight
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn streaming(&self) -> std::sync::MutexGuard<'_, Option<&'static str>> {
+        self.silent_streaming
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The label of the silent request streaming right now, if any — what
+    /// the tasks screen reads to tell a task that waits from the one that
+    /// runs (spec §11.10). `None` while the lane's holder waits for room.
+    pub fn silent_streaming(&self) -> Option<&'static str> {
+        *self.streaming()
     }
 
     /// The estimator's correction factor: the latest exact-to-estimate ratio
@@ -154,17 +194,45 @@ impl SessionBudget {
     /// caller's to drop, which it does the moment its stream ends, so a
     /// round's tools never hold one.
     pub async fn acquire(&self, need: u64, cancel: &CancellationToken) -> Option<Reservation<'_>> {
+        self.acquire_in(&self.permits, need, cancel, None).await
+    }
+
+    /// The silent lane's [`Self::acquire`] (research §4.1): the lane's one
+    /// permit — so the app's own background requests take turns among
+    /// themselves — then the same wait for room under the pool. `label`
+    /// names the request for [`Self::silent_streaming`].
+    pub async fn acquire_silent(
+        &self,
+        need: u64,
+        cancel: &CancellationToken,
+        label: &'static str,
+    ) -> Option<Reservation<'_>> {
+        self.acquire_in(&self.silent_permits, need, cancel, Some(label))
+            .await
+    }
+
+    async fn acquire_in<'a>(
+        &'a self,
+        permits: &'a Semaphore,
+        need: u64,
+        cancel: &CancellationToken,
+        label: Option<&'static str>,
+    ) -> Option<Reservation<'a>> {
         let permit = tokio::select! {
             biased;
             _ = cancel.cancelled() => return None,
             // A closed semaphore cannot happen here (nothing closes it), and
             // reads as "cancelled" rather than as a panic.
-            permit = self.permits.acquire() => permit.ok()?,
+            permit = permits.acquire() => permit.ok()?,
         };
         let Some(pool) = self.pool else {
+            if label.is_some() {
+                *self.streaming() = label;
+            }
             return Some(Reservation {
                 budget: self,
                 tokens: 0,
+                label,
                 _permit: permit,
             });
         };
@@ -179,9 +247,14 @@ impl SessionBudget {
                 let mut open = self.open();
                 if *open == 0 || open.saturating_add(need) <= pool {
                     *open += need;
+                    drop(open);
+                    if label.is_some() {
+                        *self.streaming() = label;
+                    }
                     return Some(Reservation {
                         budget: self,
                         tokens: need,
+                        label,
                         _permit: permit,
                     });
                 }
@@ -190,6 +263,7 @@ impl SessionBudget {
                         need,
                         in_flight = *open,
                         pool,
+                        lane = label.unwrap_or("interactive"),
                         "stream waits for room in the KV pool"
                     );
                     waited = true;
@@ -336,6 +410,103 @@ mod tests {
         let _a = budget.acquire(1, &cancel).await.unwrap();
         let mut b = std::pin::pin!(budget.acquire(1, &cancel));
         assert!(pending(&mut b).await);
+    }
+
+    /// The silent lane is one permit wide: a second silent request waits
+    /// for the first to end, whatever the interactive count says.
+    #[tokio::test]
+    async fn the_silent_lane_is_one_stream_wide() {
+        let budget = SessionBudget::new(4, None);
+        let cancel = CancellationToken::new();
+        let a = budget
+            .acquire_silent(10, &cancel, "reflection")
+            .await
+            .unwrap();
+        assert_eq!(budget.silent_streaming(), Some("reflection"));
+        let mut b = std::pin::pin!(budget.acquire_silent(10, &cancel, "compaction"));
+        assert!(pending(&mut b).await, "one silent stream at a time");
+        assert_eq!(
+            budget.available_sessions(),
+            4,
+            "the interactive lane is untouched"
+        );
+        drop(a);
+        let b = b.await.expect("admitted once the first ended");
+        assert_eq!(budget.silent_streaming(), Some("compaction"));
+        drop(b);
+        assert_eq!(budget.silent_streaming(), None);
+    }
+
+    /// Under a pool the two lanes share one sum: a silent reservation counts,
+    /// an interactive stream that does not fit beside it waits for it, and
+    /// one that fits is admitted at once.
+    #[tokio::test]
+    async fn the_lanes_share_the_pool() {
+        let budget = SessionBudget::new(2, Some(1000));
+        let cancel = CancellationToken::new();
+        let silent = budget
+            .acquire_silent(700, &cancel, "compaction")
+            .await
+            .unwrap();
+        assert_eq!(budget.in_flight(), 700);
+        let mut big = std::pin::pin!(budget.acquire(400, &cancel));
+        assert!(pending(&mut big).await, "700 + 400 > 1000: the turn waits");
+        let small = budget.acquire(200, &cancel).await.expect("fits beside it");
+        assert_eq!(budget.in_flight(), 900);
+        drop(small);
+        drop(silent);
+        let big = big.await.expect("admitted once the silent round ended");
+        assert_eq!(budget.in_flight(), 400);
+        // …and the reverse: a silent request that does not fit beside an
+        // interactive stream waits, with its silent permit.
+        let mut quiet = std::pin::pin!(budget.acquire_silent(700, &cancel, "reflection"));
+        assert!(pending(&mut quiet).await);
+        assert_eq!(
+            budget.silent_streaming(),
+            None,
+            "waiting for room is not streaming"
+        );
+        drop(big);
+        assert!(quiet.await.is_some());
+    }
+
+    /// A silent request alone is admitted whatever its size — the roll's
+    /// digest plus its cap can exceed a small pool, and the server decides.
+    #[tokio::test]
+    async fn a_silent_stream_alone_is_admitted_whatever_its_size() {
+        let budget = SessionBudget::new(1, Some(1000));
+        let cancel = CancellationToken::new();
+        let big = budget
+            .acquire_silent(5000, &cancel, "compaction")
+            .await
+            .expect("alone: admitted");
+        let mut turn = std::pin::pin!(budget.acquire(1, &cancel));
+        assert!(pending(&mut turn).await, "nothing fits beside it");
+        drop(big);
+        assert!(turn.await.is_some());
+    }
+
+    /// A silent waiter cancelled while waiting leaves no reservation and no
+    /// label behind, and returns its permit.
+    #[tokio::test]
+    async fn a_cancelled_silent_waiter_leaves_nothing_behind() {
+        let budget = SessionBudget::new(1, Some(1000));
+        let calm = CancellationToken::new();
+        let _turn = budget.acquire(900, &calm).await.unwrap();
+        let cancel = CancellationToken::new();
+        let mut w = std::pin::pin!(budget.acquire_silent(400, &cancel, "title"));
+        assert!(pending(&mut w).await);
+        cancel.cancel();
+        assert!(w.await.is_none());
+        assert_eq!(budget.in_flight(), 900);
+        assert_eq!(budget.silent_streaming(), None);
+        assert!(
+            budget
+                .acquire_silent(1, &CancellationToken::new(), "title")
+                .await
+                .is_some(),
+            "the silent permit came back"
+        );
     }
 
     /// Pricing: the density corrects the estimate and never below 1.0, the

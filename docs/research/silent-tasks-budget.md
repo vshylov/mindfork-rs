@@ -1,8 +1,10 @@
 # The silent tasks under the app-wide budget
 
-**Status:** design **accepted** — every fork at its recommendation (the
+**Status:** **implemented** 2026-09-07 — stage 1, the silent lane (spec
+§6.3, §6.7, §11.10; architecture §5, §9; the journal entry in
+[engine.md](../journal/engine.md)) — every fork at its recommendation (the
 user's decision, 2026-09-07: F1–F9 → (a)); stage 0 (the probe of §3) is
-recorded in §3.1. The last item [background-subagents.md](background-subagents.md) §8 and
+recorded in §3.1, the same arms after the lane in §3.2. The last item [background-subagents.md](background-subagents.md) §8 and
 [admission-by-budget.md](admission-by-budget.md) §8 left for later, and the
 one [tasks-screen.md](tasks-screen.md) §8 carried forward. The parent's fork
 F9 ([parallel-subagents.md](parallel-subagents.md) §6) put these tasks
@@ -247,6 +249,31 @@ track's, filed with it.
 recorder that counts open streams — **5 requests opened, 5 open at once**.
 The test asserts the lane's target (one at a time) and is red on `main`
 by exactly that number; it is stage 1's first test.
+
+### 3.2 Stage 1 — the same arms after the lane (2026-09-07)
+
+The same server, the same two arms, the lane in place:
+
+| arm | belief | most open at once | the run | the roll | wall |
+|---|---:|---:|---|---|---:|
+| control (lie ×4) | 8192 | **2** | `Failed`, no reply | `Err`: *The summary request failed: … Context size has been exceeded* | 133 s |
+| guarded | 2048 | **1** | `Completed`, *“The alpha codename is ZARNOVIK-7741.”* | a summary of the archive | 88 s |
+
+The control arm still reproduces the collision — the lie disarms the guard
+exactly as `admission_control_e2e_live`'s does, which is what proves the
+guarded arm did something — and the guarded arm now does what §7 asked:
+the roll waited for the run's stream to end, one live stream at a time, and
+both completed. The roll's failure is worded as its own now (the rider of
+§3.1). The regression on the LAN stack (Qwen 3.6 27B Q4_K_M, `-np 4 --kv-unified -c
+16384`, b10807): `admission_e2e_live` (two 55 % children took turns, most
+open at once 1, both codes), `background_subagent_e2e_live` (the wake
+reply named the planted codename) and `parallel_subagents_e2e_live` (both
+runs `Completed`) — 3/3 in 83 s. The probe's guarded arm on the same
+stack (`silent_roll_e2e_live`, history and archive 300 paragraphs each
+over 16384): the roll waited for the run, most open at once 1, the run
+`Completed` with its codename and the roll a summary — 16.5 s end to end
+against the CPU build's 88 s, so the wait for one silent round that §8
+leaves preemption for is seconds on the GPU stack.
 
 ## 4. Design
 

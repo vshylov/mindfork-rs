@@ -83,14 +83,25 @@ impl Orchestrator {
         let more_landed = landed.len().saturating_sub(TASK_LANDED_CAP);
         landed.truncate(TASK_LANDED_CAP);
         running.extend(landed);
+        // The one silent request streaming right now, by the lane's label:
+        // every other running task is waiting — for the lane's permit, or
+        // for room (research §4.6).
+        let streaming = self
+            .session_budget_memo
+            .as_ref()
+            .and_then(|(_, budget)| budget.silent_streaming());
         TaskList {
             runs: running,
             more_landed,
             app: APP_TASKS
                 .iter()
-                .map(|&kind| AppTask {
-                    kind,
-                    running: self.bg_running(kind),
+                .map(|&kind| {
+                    let running = self.bg_running(kind);
+                    AppTask {
+                        kind,
+                        running,
+                        waiting: running && streaming != Some(super::background::lane_label(kind)),
+                    }
                 })
                 .collect(),
         }

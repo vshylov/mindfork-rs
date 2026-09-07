@@ -120,6 +120,15 @@ impl Orchestrator {
         let _ = self
             .evt_tx
             .send(AppEvent::ImpersonationStarted { generation_id: id });
+        // On the shared engine the request is one more stream on the chat
+        // engine's pool, so it takes the budget's silent lane and waits for
+        // room like the app's other background requests
+        // (docs/research/silent-tasks-budget.md §4.2, fork F1); a separate
+        // impersonation server has a pool of its own and one stream at a
+        // time by this method's gate — nothing to guard.
+        let sessions = (self.config.impersonation_engine.mode
+            == crate::shared::config::ImpersonationMode::Shared)
+            .then(|| self.session_budget());
         spawn_impersonation(
             backend,
             request,
@@ -128,6 +137,7 @@ impl Orchestrator {
             self.ui_locale(),
             self.evt_tx.clone(),
             self.imp_done_tx.clone(),
+            sessions,
         );
     }
 
@@ -244,6 +254,7 @@ pub(super) fn swap_role_message(message: &Message) -> Option<ApiMessage> {
 /// Starts the background impersonation task: streams the reply text into the preview
 /// (`ImpersonationChunk`), and on completion/timeout/cancellation sends `(id, reason)` into
 /// `done_tx`. "Thoughts" and tool calls are ignored (only text goes into the input box).
+#[allow(clippy::too_many_arguments)]
 fn spawn_impersonation(
     backend: Arc<dyn EngineBackend>,
     request: ChatRequest,
@@ -252,10 +263,25 @@ fn spawn_impersonation(
     loc: &'static crate::shared::i18n::Locale,
     evt_tx: UnboundedSender<AppEvent>,
     done_tx: UnboundedSender<(Uuid, FinishReason)>,
+    sessions: Option<Arc<crate::shared::session_budget::SessionBudget>>,
 ) {
     tokio::spawn(async move {
         let run = async {
             let mut reason = FinishReason::Stop;
+            let _lane = match sessions.as_deref() {
+                Some(budget) => {
+                    let need = budget.price(
+                        super::generation::estimate_prompt_tokens(&request),
+                        0,
+                        request.sampling.max_tokens.map(|m| m as u64),
+                    );
+                    match budget.acquire_silent(need, &cancel, "impersonation").await {
+                        Some(reservation) => Some(reservation),
+                        None => return Ok(FinishReason::Cancelled),
+                    }
+                }
+                None => None,
+            };
             let mut stream = backend.chat_stream(request, cancel.clone()).await?;
             while let Some(chunk) = stream.next().await {
                 match chunk {
