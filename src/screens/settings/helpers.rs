@@ -111,6 +111,7 @@ pub(super) struct ManagedFieldIds {
     model: FieldId,
     mmproj: FieldId,
     ngl: FieldId,
+    batch: FieldId,
     ctx: FieldId,
     flash_attn: FieldId,
     jinja: FieldId,
@@ -135,6 +136,7 @@ pub(super) const ASSISTANT_MANAGED_IDS: ManagedFieldIds = ManagedFieldIds {
     model: FieldId::XModel,
     mmproj: FieldId::XMmproj,
     ngl: FieldId::XNgl,
+    batch: FieldId::XBatch,
     ctx: FieldId::XCtx,
     flash_attn: FieldId::XFlashAttn,
     jinja: FieldId::XJinja,
@@ -156,6 +158,7 @@ pub(super) const IMP_MANAGED_IDS: ManagedFieldIds = ManagedFieldIds {
     model: FieldId::IxModel,
     mmproj: FieldId::IxMmproj,
     ngl: FieldId::IxNgl,
+    batch: FieldId::IxBatch,
     ctx: FieldId::IxCtx,
     flash_attn: FieldId::IxFlashAttn,
     jinja: FieldId::IxJinja,
@@ -209,6 +212,10 @@ pub(super) fn managed_rows(
         vec![
             num_field(ids.ngl, loc.t("ui.settings.field.ngl"), m.gpu_layers)
                 .describe(loc.t(ids.ngl_desc)),
+            // Empty reads auto (the hint says what auto does — 256 on the CPU,
+            // the server's default otherwise; docs/research/cpu-batch.md §4.3).
+            num_row(ids.batch, loc.t("ui.settings.field.batch"), m.batch_size)
+                .describe(loc.t("ui.settings.desc.batch")),
             row(
                 ids.flash_attn,
                 "FlashAttn (--flash-attn)",

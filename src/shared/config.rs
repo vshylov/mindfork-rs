@@ -348,6 +348,14 @@ pub struct ManagedSettings {
     pub gpu_layers: i32,
     /// Context size (`-c`).
     pub context_size: u32,
+    /// The server's batch (`-b`, with `-ub min(n, 512)`): how many prompt
+    /// tokens one pass processes before the server looks at its queue — the
+    /// batch a stopped or displaced stream holds its slot for
+    /// (docs/research/cpu-batch.md §4). `None` — auto: 256 when `gpu_layers`
+    /// is 0 (the engine runs on the CPU by the user's own setting; measured:
+    /// a quarter of the wait for a seventh of the prompt processing),
+    /// otherwise the flag is not passed and the server's default stands.
+    pub batch_size: Option<u32>,
     /// Simultaneous request streams the app may keep open against this server
     /// (spec §11.6). Above 1 the server is launched with `-np N --kv-unified`:
     /// N slots sharing the one context pool `-c` sizes — the shape llama.cpp
@@ -396,6 +404,7 @@ impl Default for ManagedSettings {
             mmproj: None,
             gpu_layers: DEFAULT_GPU_LAYERS,
             context_size: DEFAULT_CONTEXT_SIZE,
+            batch_size: None,
             sessions: DEFAULT_SESSIONS,
             concurrent_calls: DEFAULT_CONCURRENT_CALLS_LOCAL,
             jinja: true,

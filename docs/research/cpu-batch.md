@@ -1,6 +1,8 @@
 # The batch a cancel waits for — `-b`/`-ub` on the CPU build's launch line
 
-> **Status:** research and design (2026-09-07), stage 0 measured — see §3.1.
+> **Status:** implemented (2026-09-07) — stage 0 measured in §3.1, stage 1's
+> live runs in §3.2; every fork at its recommendation (the user's decision,
+> 2026-09-07), F5 restated in §4.4 once the stand's shape was checked.
 > The item the silent-preemption track recorded and did not take
 > ([silent-preemption.md](silent-preemption.md) §8): a displaced stream holds
 > its slot until the server's current batch runs out, and on the CPU build
@@ -178,6 +180,19 @@ batch under KV pressure (`failed to find free space in the KV cache`, seen
 again in the default and the 2048/128 arms only — the settings whose batch
 is larger than the room left).
 
+### 3.2 Stage 1 — the line, launched by the app (2026-09-07)
+
+`managed_cpu_line_launches_with_the_measured_batch_live` (`managed.rs`):
+the app's own `build_args` for `-ngl 0` with no batch typed —
+`--host 127.0.0.1 --port 18124 -ngl 0 -c 2048 -b 256 -ub 256 -m … --jinja` —
+launched through `ServerHandle::launch` against the CPU build: ready,
+four unified slots over 2048 on `/props`. The numbers that line buys are
+§3.1's 256 row, measured on the same flags by hand. The LAN regression
+(`silent_roll_e2e_live`, `background_subagent_e2e_live`, external mode —
+the GPU stack's line is not the app's) 2/2 in 55 s. The unit suite: 2908
+green, 146 `#[ignore]`; the settings screen's demo dumps and screenshots
+regenerated for the new row.
+
 ## 4. Design
 
 ### 4.1 One optional field: the batch
@@ -221,8 +236,13 @@ The impersonation engine's managed section gets the same field (F4).
 Nothing new unless they look: a CPU-only host's server log says
 `n_batch = 256`, and a turn typed while a reflection or a roll prefills
 starts in seconds rather than half a minute. install.md §3 gets the number
-and the reasoning in the paragraph on CPU hosts; the docker stand's
-containers run `-ngl 0` and inherit auto through the seeded settings (F5).
+and the reasoning in the paragraph on CPU hosts. The docker stand (F5, as
+decided and then checked): its two `llama-server`s are **containers the
+app talks to as external servers** — the seeded settings are external
+mode, and the launcher never runs there — so "left to auto" would have
+meant *no batch at all*; the chat container's line in `compose.yaml`
+carries `-b 256 -ub 256` itself, with the reason beside it, which is the
+same decision made where the line actually is.
 
 ### 4.5 What does not change
 

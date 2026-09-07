@@ -1823,6 +1823,7 @@ fn flag_fields_have_descriptions() {
     assert!(field_desc(&s, FieldId::XNgl).is_some());
     assert!(field_desc(&s, FieldId::XJinja).is_some());
     assert!(field_desc(&s, FieldId::XNoMmap).is_some());
+    assert!(field_desc(&s, FieldId::XBatch).is_some());
     assert!(field_desc(&s, FieldId::XPort).is_none());
     // The new FlashAttention/speculative-decoding fields are also described.
     assert!(field_desc(&s, FieldId::XFlashAttn).is_some());
@@ -4933,4 +4934,45 @@ fn background_rows_save_their_fields() {
         Some(SettingsIntent::SaveConfig(c)) => assert_eq!(c.tools.subagent_background_max, 1),
         other => panic!("expected SaveConfig, got {other:?}"),
     }
+}
+
+/// The batch field (docs/research/cpu-batch.md §4.3): a number is stored as
+/// typed, an emptied field reads auto (`None`), and the hint stays under the
+/// demo dumps' ceiling — the longest hint sets the settings panel's height.
+#[test]
+fn editing_the_batch_stores_a_number_and_an_empty_field_reads_auto() {
+    let edit = |s: &mut SettingsScreen, text: &str| {
+        goto_section(s, Section::Model);
+        goto_field(s, FieldId::XBatch);
+        s.handle_key(key(KeyCode::Enter));
+        s.handle_key(ctrl('k'));
+        for c in text.chars() {
+            s.handle_key(key(KeyCode::Char(c)));
+        }
+        s.handle_key(key(KeyCode::Enter))
+    };
+    let mut s = screen();
+    s.config.engine.mode = ServerMode::Managed;
+    match edit(&mut s, "256") {
+        Some(SettingsIntent::SaveConfig(c)) => {
+            assert_eq!(c.engine.managed.batch_size, Some(256));
+            assert_eq!(c.impersonation_engine.managed.batch_size, None);
+        }
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+    s.config.engine.managed.batch_size = Some(256);
+    match edit(&mut s, "") {
+        Some(SettingsIntent::SaveConfig(c)) => assert_eq!(c.engine.managed.batch_size, None),
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+    let hint = field_desc(&s, FieldId::XBatch).expect("described");
+    let ceiling = crate::shared::i18n::locale(crate::shared::i18n::Lang::En)
+        .t("ui.settings.desc.sessions")
+        .chars()
+        .count();
+    assert!(
+        hint.chars().count() <= ceiling,
+        "the batch hint ({}) must not outgrow the sessions hint ({ceiling})",
+        hint.chars().count()
+    );
 }

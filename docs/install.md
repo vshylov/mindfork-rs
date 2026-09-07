@@ -311,7 +311,19 @@ Two modes (configured on the settings screen, `Ctrl+P`, "Model/server" section):
   + GGUF model `-m`, `-ngl`, `-c`, `--jinja`, `--no-mmap`, host/port). `--no-mmap`
   loads the weights fully into RAM instead of mapping the file from disk — helps on
   network/slow drives, but needs more memory (off by default). Changing the model in
-  settings **restarts** the server. Before launch the model file's presence is
+  settings **restarts** the server.
+  - **The batch on a CPU-only host.** `llama-server` looks at its queue between
+    batches of `-b` prompt tokens (2048 by default), so a stream the app cancels
+    during its prompt processing — a compaction or reflection displaced by your
+    message, a task stopped from the tasks screen — holds its slot until the
+    batch runs out: 23 s on a CPU-only host, measured
+    ([docs/research/cpu-batch.md](research/cpu-batch.md) §3.1). With *GPU layers*
+    at 0 the app therefore launches with **`-b 256 -ub 256`**: the wait falls to
+    6.5 s, prompt processing slows by about a seventh. The *Batch (-b)* field in
+    *Performance* overrides it (2048 restores the server's default; 128 buys a
+    2.8 s wait for a fifth); a GPU host at its defaults gets no `-b` at all. The
+    server's log says `n_batch = 256` when it applies. For an **external** CPU
+    server pass the flags yourself, e.g. `llama-server … -b 256 -ub 256`. Before launch the model file's presence is
   checked: if the GGUF isn't found or isn't accessible, the status bar immediately
   shows a clear error ("model file not found or inaccessible …") instead of hanging
   in "connecting…".
@@ -1001,7 +1013,9 @@ their own keys and are unrelated to the GPU.
 `docker/` holds a compose stack that ends in a **browser JupyterLab terminal**
 with `mindfork` built from the current working tree, talking to two CPU
 `llama-server` containers — Gemma 4 E2B-it Q8_0 for chat, bge-m3 Q8_0 for
-embeddings:
+embeddings (the chat container runs `-b 256 -ub 256`, the CPU batch of §3 —
+the containers are external servers to the app, so the line is the compose
+file's, not the launcher's):
 
 ```bash
 cd docker && cp .env.example .env && docker compose up --build

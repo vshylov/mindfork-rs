@@ -568,12 +568,10 @@ Stage 0 is §3's probe, on this branch with the design. Stage 1, one PR:
   interactive lane; the run is the user's work, and at one session they
   already take turns round by round.
 - **Impersonation on its own engine** — its own pool, no contention.
-- **A smaller micro-batch on the launch line** (`-ub`) for the CPU build:
-  §3.2 measured that a cancel is honoured between the server's batches,
-  so a stream displaced during its prefill holds its slot to the batch's
-  end — 23 s on the CPU build, about a second on the GPU. Shortening the
-  batch trades prefill throughput for that latency and belongs to the
-  launcher's line, measured on its own.
+- **A smaller batch on the launch line** for the CPU build — **done** as
+  its own track ([cpu-batch.md](cpu-batch.md), 2026-09-07): the knob is
+  `-b`, not `-ub` (measured on five lines), and `-ngl 0` now launches with
+  `-b 256 -ub 256` — the batch a cancel waits for 6.5 s instead of 23.
 
 ## 9. Documentation touch list (AGENTS.md §4)
 

@@ -470,6 +470,7 @@ enum FieldId {
     /// See `shared::secrets`, docs/research/api-key-storage.md.
     XApiKey,
     XNgl,
+    XBatch,
     XCtx,
     XFlashAttn,
     XJinja,
@@ -503,6 +504,7 @@ enum FieldId {
     /// The cloud API key for the impersonation engine (see [`FieldId::XApiKey`]).
     IxApiKey,
     IxNgl,
+    IxBatch,
     IxCtx,
     IxFlashAttn,
     IxJinja,

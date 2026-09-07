@@ -244,6 +244,9 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
         XDraftNMax => int(|c, t| {
             c.engine.managed.draft_n_max = parse_opt_num(t, c.engine.managed.draft_n_max)
         }),
+        XBatch => {
+            int(|c, t| c.engine.managed.batch_size = parse_opt_num(t, c.engine.managed.batch_size))
+        }
         XDraftNMin => int(|c, t| {
             c.engine.managed.draft_n_min = parse_opt_num(t, c.engine.managed.draft_n_min)
         }),
@@ -334,6 +337,10 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
         IxDraftNMax => int(|c, t| {
             let m = &mut c.impersonation_engine.managed;
             m.draft_n_max = parse_opt_num(t, m.draft_n_max)
+        }),
+        IxBatch => int(|c, t| {
+            let m = &mut c.impersonation_engine.managed;
+            m.batch_size = parse_opt_num(t, m.batch_size)
         }),
         IxDraftNMin => int(|c, t| {
             let m = &mut c.impersonation_engine.managed;
