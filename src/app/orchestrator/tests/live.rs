@@ -4880,6 +4880,10 @@ struct ScriptedParent {
     /// server (a child's persona, a compaction roll's prompt); every other
     /// request plays the next script.
     live_markers: &'static [&'static str],
+    /// When the scripts run out, a request goes to the live server instead
+    /// of playing an empty reply — a smoke whose *measured* turn is live
+    /// after a scripted seed.
+    live_after_scripts: bool,
     in_flight: Arc<std::sync::atomic::AtomicUsize>,
     max_in_flight: Arc<std::sync::atomic::AtomicUsize>,
 }
@@ -4900,11 +4904,19 @@ impl EngineBackend for ScriptedParent {
         cancel: tokio_util::sync::CancellationToken,
     ) -> anyhow::Result<crate::shared::api::contract::ChatStream> {
         use std::sync::atomic::Ordering::SeqCst;
-        if req
+        let by_marker = req
             .system
             .as_deref()
-            .is_some_and(|s| self.live_markers.iter().any(|m| s.contains(m)))
-        {
+            .is_some_and(|s| self.live_markers.iter().any(|m| s.contains(m)));
+        let script = if by_marker {
+            None
+        } else {
+            self.scripts.lock().unwrap().pop_front()
+        };
+        if let Some(chunks) = script {
+            return Ok(Box::pin(futures_util::stream::iter(chunks)));
+        }
+        if by_marker || self.live_after_scripts {
             let open = self.in_flight.fetch_add(1, SeqCst) + 1;
             self.max_in_flight.fetch_max(open, SeqCst);
             let guard = LiveOpen(self.in_flight.clone());
@@ -4917,13 +4929,9 @@ impl EngineBackend for ScriptedParent {
             };
             return Ok(Box::pin(s));
         }
-        let chunks = self
-            .scripts
-            .lock()
-            .unwrap()
-            .pop_front()
-            .unwrap_or_else(|| vec![ChatChunk::Finished(FinishReason::Stop)]);
-        Ok(Box::pin(futures_util::stream::iter(chunks)))
+        Ok(Box::pin(futures_util::stream::iter(vec![
+            ChatChunk::Finished(FinishReason::Stop),
+        ])))
     }
 
     async fn context_budget(&self) -> Option<u32> {
@@ -5015,6 +5023,25 @@ async fn delegator_chat(
     (dir, cmd_tx, evt_rx, handle, chat_id)
 }
 
+/// The live server with several slots over one pool, as `/props` reports
+/// them — `(backend, slots, pool)` — or `None` with the reason printed: no
+/// server, no `/props`, or one slot, where `what` (a pool-sharing smoke's
+/// subject) has nothing to measure.
+async fn pooled_live(what: &str) -> Option<(Arc<dyn EngineBackend>, u32, u64)> {
+    let live = live_backend()?;
+    let slots = live.parallel_slots().await;
+    let pool = live.context_budget().await;
+    let (Some(slots), Some(pool)) = (slots, pool) else {
+        eprintln!("skip: the server reports slots {slots:?}, pool {pool:?}");
+        return None;
+    };
+    if slots < 2 {
+        eprintln!("skip: the server reports {slots} slot(s); {what} needs two or more");
+        return None;
+    }
+    Some((live, slots, pool as u64))
+}
+
 /// One arm of the admission smoke, sized to the pool the server reports.
 struct AdmissionArm {
     /// How many readers the parent delegates in its one reply.
@@ -5046,18 +5073,7 @@ struct AdmissionResult {
 /// `None` when there is no live server, or when it reports at most one slot
 /// — the guard is off by design below two (`pool.rs`), and one slot queues.
 async fn admission_smoke(arm: AdmissionArm) -> Option<AdmissionResult> {
-    let live = live_backend()?;
-    let slots = live.parallel_slots().await;
-    let pool = live.context_budget().await;
-    let (Some(slots), Some(pool)) = (slots, pool) else {
-        eprintln!("skip: the server reports slots {slots:?}, pool {pool:?}");
-        return None;
-    };
-    if slots < 2 {
-        eprintln!("skip: the server reports {slots} slot(s); the guard needs two or more");
-        return None;
-    }
-    let pool = pool as u64;
+    let (live, slots, pool) = pooled_live("the guard").await?;
     // A paragraph is ~30 tokens on both gate tokenizers (measured: 36 of them
     // are 1150 tokens with the persona on Gemma 3). The planted text rides the
     // message rather than a file, since the CPU build's Gemma 3 template drops
@@ -5101,6 +5117,7 @@ async fn admission_smoke(arm: AdmissionArm) -> Option<AdmissionResult> {
             .into(),
         ),
         live_markers: &[READER],
+        live_after_scripts: false,
         in_flight: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         max_in_flight: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
     });
@@ -5314,18 +5331,7 @@ struct SilentResult {
 /// usage a scripted parent cannot report. `None` when there is no live
 /// server or it reports at most one slot.
 async fn silent_roll_smoke(arm: SilentArm) -> Option<SilentResult> {
-    let live = live_backend()?;
-    let slots = live.parallel_slots().await;
-    let pool = live.context_budget().await;
-    let (Some(slots), Some(pool)) = (slots, pool) else {
-        eprintln!("skip: the server reports slots {slots:?}, pool {pool:?}");
-        return None;
-    };
-    if slots < 2 {
-        eprintln!("skip: the server reports {slots} slot(s); the collision needs two or more");
-        return None;
-    }
-    let pool = pool as u64;
+    let (live, slots, pool) = pooled_live("the collision").await?;
     let paragraphs = ((0.55 * pool as f64) / 30.0) as usize;
     let max_tokens = (pool / 8) as usize;
     let belief = pool * arm.lie.unwrap_or(1);
@@ -5363,6 +5369,7 @@ async fn silent_roll_smoke(arm: SilentArm) -> Option<SilentResult> {
             .into(),
         ),
         live_markers: &[READER, COMPACT_MARKER],
+        live_after_scripts: false,
         in_flight: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         max_in_flight: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
     });
@@ -5524,6 +5531,265 @@ async fn silent_roll_control_e2e_live() {
         res.run,
         res.roll
     );
+}
+
+/// The two arms of the preemption probe (docs/research/silent-preemption.md
+/// §3): what a turn pays today behind a silent stream, and the floor a
+/// preemption could reach.
+#[derive(Clone, Copy, Debug)]
+enum PreemptArm {
+    /// The roll first, then a one-word turn that does not fit beside it.
+    RollThenTurn,
+    /// A long turn cancelled at its first token, then a one-word turn.
+    CancelThenTurn,
+}
+
+/// What the probe read, all in seconds from the moment the measured turn was
+/// sent unless said otherwise.
+#[derive(Debug, Default)]
+struct PreemptProbe {
+    /// Arm 1: from `/compact` to the roll's result, and the result itself.
+    roll: Option<(f64, Result<String, String>)>,
+    /// Arm 1: from the turn's send to the roll's end — the wait the lane's
+    /// rule makes the turn pay today.
+    wait: Option<f64>,
+    /// Arm 2: from the cancel to the cancelled turn's `Finished`.
+    cancel_latency: Option<f64>,
+    /// The measured turn's time to first token and to `Finished`.
+    first_token: Option<f64>,
+    finished: Option<f64>,
+    /// The measured turn's reply.
+    reply: String,
+}
+
+/// Arm 1: the roll first, the one-word turn half a second behind it; reads
+/// the roll's end and result, the turn's first token and its end.
+async fn probe_roll_then_turn(
+    cmd_tx: &UnboundedSender<AppCommand>,
+    evt_rx: &mut UnboundedReceiver<AppEvent>,
+    word: &str,
+) -> PreemptProbe {
+    let mut probe = PreemptProbe::default();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(600);
+    let compacted = std::time::Instant::now();
+    cmd_tx.send(AppCommand::Compact).unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    let sent = std::time::Instant::now();
+    cmd_tx.send(AppCommand::SendMessage(word.into())).unwrap();
+    let mut turn_done = false;
+    while (probe.roll.is_none() || !turn_done) && std::time::Instant::now() < deadline {
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        match tokio::time::timeout(left, evt_rx.recv()).await {
+            Ok(Some(AppEvent::Compacted { summary, .. })) => {
+                probe.roll = Some((compacted.elapsed().as_secs_f64(), Ok(summary)));
+                probe.wait = Some(sent.elapsed().as_secs_f64());
+            }
+            Ok(Some(AppEvent::Error(msg))) | Ok(Some(AppEvent::Notice(msg)))
+                if probe.roll.is_none() =>
+            {
+                probe.roll = Some((compacted.elapsed().as_secs_f64(), Err(msg)));
+                probe.wait = Some(sent.elapsed().as_secs_f64());
+            }
+            Ok(Some(AppEvent::Chunk { text, .. })) => {
+                probe
+                    .first_token
+                    .get_or_insert(sent.elapsed().as_secs_f64());
+                probe.reply.push_str(&text);
+            }
+            Ok(Some(AppEvent::Finished { .. })) => {
+                probe.finished = Some(sent.elapsed().as_secs_f64());
+                turn_done = true;
+            }
+            Ok(Some(_)) => {}
+            _ => break,
+        }
+    }
+    probe
+}
+
+/// Arm 2: a long turn cancelled at its first token (or thought), the
+/// one-word turn sent 300 ms after the cancelled one reports `Finished`.
+async fn probe_cancel_then_turn(
+    cmd_tx: &UnboundedSender<AppCommand>,
+    evt_rx: &mut UnboundedReceiver<AppEvent>,
+    word: &str,
+) -> PreemptProbe {
+    let mut probe = PreemptProbe::default();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(600);
+    cmd_tx
+        .send(AppCommand::SendMessage(
+            "Write a long story about the lighthouse keeper's year, at least four hundred words."
+                .into(),
+        ))
+        .unwrap();
+    let mut cancelled_at: Option<std::time::Instant> = None;
+    loop {
+        match evt_rx.recv().await {
+            Some(AppEvent::Chunk { .. }) | Some(AppEvent::Thoughts { .. })
+                if cancelled_at.is_none() =>
+            {
+                cancelled_at = Some(std::time::Instant::now());
+                cmd_tx.send(AppCommand::Cancel).unwrap();
+            }
+            Some(AppEvent::Finished { .. }) => {
+                probe.cancel_latency = cancelled_at.map(|t| t.elapsed().as_secs_f64());
+                break;
+            }
+            Some(_) => {}
+            None => break,
+        }
+    }
+    // The client's `Finished` comes before the server has noticed the
+    // closed connection (measured: its `cancel task` is ~1 ms behind, the
+    // slot's release ~110 ms) — a request sent in that gap lands on another
+    // slot and pays a cold prefill for the same prompt. A preemption's
+    // waiter is admitted after the displaced stream's reservation drops, on
+    // the same side of that gap.
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    let sent = std::time::Instant::now();
+    cmd_tx.send(AppCommand::SendMessage(word.into())).unwrap();
+    while std::time::Instant::now() < deadline {
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        match tokio::time::timeout(left, evt_rx.recv()).await {
+            Ok(Some(AppEvent::Chunk { text, .. })) => {
+                probe
+                    .first_token
+                    .get_or_insert(sent.elapsed().as_secs_f64());
+                probe.reply.push_str(&text);
+            }
+            Ok(Some(AppEvent::Finished { .. })) => {
+                probe.finished = Some(sent.elapsed().as_secs_f64());
+                break;
+            }
+            Ok(Some(_)) => {}
+            _ => break,
+        }
+    }
+    probe
+}
+
+/// **The preemption probe** (stage 0 of docs/research/silent-preemption.md):
+/// a chat seeded with 55 % of the pool by a scripted turn; then either the
+/// compaction roll opened on the live server with a one-word turn sent half
+/// a second behind it (the turn's prompt is the same 55 %, so the two do
+/// not fit together and the turn waits — the lane's rule, whose length is
+/// what is measured), or a long live turn cancelled at its first token with
+/// the one-word turn sent the instant it reports `Finished` (the whole path
+/// a preemption would take). `None` without a live server or with at most
+/// one reported slot.
+async fn preemption_smoke(arm: PreemptArm) -> Option<PreemptProbe> {
+    let (live, slots, pool) = pooled_live("the shape").await?;
+    let paragraphs = ((0.55 * pool as f64) / 30.0) as usize;
+    eprintln!("server: {slots} slots over {pool}; history {paragraphs} paragraphs, arm {arm:?}");
+    let backend = Arc::new(ScriptedParent {
+        live,
+        scripts: std::sync::Mutex::new(
+            vec![
+                vec![
+                    ChatChunk::Text("Noted.".into()),
+                    ChatChunk::Finished(FinishReason::Stop),
+                ],
+                vec![
+                    ChatChunk::Text("Nothing to add.".into()),
+                    ChatChunk::Finished(FinishReason::Stop),
+                ],
+            ]
+            .into(),
+        ),
+        live_markers: &[COMPACT_MARKER],
+        live_after_scripts: true,
+        in_flight: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        max_in_flight: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+    });
+    let mut cfg = AppConfig::default();
+    cfg.default_sampling.max_tokens = Some(256);
+    cfg.engine.external.sessions = 1;
+    cfg.engine.managed.sessions = 1;
+    cfg.compaction.enabled = true;
+    cfg.compaction.threshold_pct = 0;
+    cfg.compaction.context_tokens = Some(pool as usize);
+    cfg.compaction.tail_tokens = 64;
+    cfg.interface.auto_title = crate::shared::config::AutoTitleMode::Off;
+    let (_dir, cmd_tx, mut evt_rx, handle, _chat_id) = delegator_chat(
+        backend.clone() as Arc<dyn EngineBackend>,
+        cfg,
+        "call_subagent",
+    )
+    .await;
+    run_turn_capture_args(
+        &cmd_tx,
+        &mut evt_rx,
+        &format!(
+            "{}\nKeep this archive in mind.",
+            archive("history", paragraphs)
+        ),
+    )
+    .await;
+    // A second exchange longer than the tail (`tail_tokens` 64): `plan_cut`
+    // keeps that many trailing tokens whole and folds the exchanges before
+    // them, so this one is the tail and the archive's is what the roll folds.
+    run_turn_capture_args(
+        &cmd_tx,
+        &mut evt_rx,
+        &format!("{}\nAnything to add?", archive("tail", 4)),
+    )
+    .await;
+
+    let word = "Reply with the single word READY and nothing else.";
+    let probe = match arm {
+        PreemptArm::RollThenTurn => probe_roll_then_turn(&cmd_tx, &mut evt_rx, word).await,
+        PreemptArm::CancelThenTurn => probe_cancel_then_turn(&cmd_tx, &mut evt_rx, word).await,
+    };
+    let most = backend
+        .max_in_flight
+        .load(std::sync::atomic::Ordering::SeqCst);
+    eprintln!("{probe:#?}\nmost live streams open at once: {most}");
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+    Some(probe)
+}
+
+/// **Arm 1 — the wait today** (docs/research/silent-preemption.md §3): the
+/// turn behind the roll starts only when the roll ends; the numbers are the
+/// record, the assertions only that both completed. `#[ignore]`, manual:
+/// the CPU build launched as the managed launcher would at one session
+/// (`-c 2048`, no `-np`), `MINDFORK_ENGINE_URL` at it; the LAN stack for
+/// the GPU numbers.
+#[tokio::test]
+#[ignore = "requires a live llama-server with several slots over one pool (MINDFORK_ENGINE_URL)"]
+async fn preemption_wait_e2e_live() {
+    let Some(probe) = preemption_smoke(PreemptArm::RollThenTurn).await else {
+        eprintln!("skipped (see above)");
+        return;
+    };
+    let (_, roll) = probe.roll.expect("the roll reported");
+    assert!(
+        roll.is_ok_and(|s| !s.trim().is_empty()),
+        "the roll produced a summary"
+    );
+    assert!(probe.finished.is_some(), "the turn finished");
+    assert!(!probe.reply.trim().is_empty(), "the turn replied");
+}
+
+/// **Arm 2 — the floor**: a turn cancelled at its first token, the next one
+/// sent at once; its time to first token is the whole path a preemption
+/// would take. `#[ignore]`, manual, the same server.
+#[tokio::test]
+#[ignore = "requires a live llama-server with several slots over one pool (MINDFORK_ENGINE_URL)"]
+async fn preemption_floor_e2e_live() {
+    let Some(probe) = preemption_smoke(PreemptArm::CancelThenTurn).await else {
+        eprintln!("skipped (see above)");
+        return;
+    };
+    assert!(
+        probe.cancel_latency.is_some(),
+        "the cancelled turn finished"
+    );
+    assert!(
+        probe.finished.is_some(),
+        "the turn after the cancel finished"
+    );
+    assert!(!probe.reply.trim().is_empty(), "the turn replied");
 }
 
 /// The background run's live proof (docs/research/background-subagents.md
