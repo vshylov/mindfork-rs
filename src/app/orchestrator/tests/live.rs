@@ -5023,6 +5023,25 @@ async fn delegator_chat(
     (dir, cmd_tx, evt_rx, handle, chat_id)
 }
 
+/// The live server with several slots over one pool, as `/props` reports
+/// them — `(backend, slots, pool)` — or `None` with the reason printed: no
+/// server, no `/props`, or one slot, where `what` (a pool-sharing smoke's
+/// subject) has nothing to measure.
+async fn pooled_live(what: &str) -> Option<(Arc<dyn EngineBackend>, u32, u64)> {
+    let live = live_backend()?;
+    let slots = live.parallel_slots().await;
+    let pool = live.context_budget().await;
+    let (Some(slots), Some(pool)) = (slots, pool) else {
+        eprintln!("skip: the server reports slots {slots:?}, pool {pool:?}");
+        return None;
+    };
+    if slots < 2 {
+        eprintln!("skip: the server reports {slots} slot(s); {what} needs two or more");
+        return None;
+    }
+    Some((live, slots, pool as u64))
+}
+
 /// One arm of the admission smoke, sized to the pool the server reports.
 struct AdmissionArm {
     /// How many readers the parent delegates in its one reply.
@@ -5054,18 +5073,7 @@ struct AdmissionResult {
 /// `None` when there is no live server, or when it reports at most one slot
 /// — the guard is off by design below two (`pool.rs`), and one slot queues.
 async fn admission_smoke(arm: AdmissionArm) -> Option<AdmissionResult> {
-    let live = live_backend()?;
-    let slots = live.parallel_slots().await;
-    let pool = live.context_budget().await;
-    let (Some(slots), Some(pool)) = (slots, pool) else {
-        eprintln!("skip: the server reports slots {slots:?}, pool {pool:?}");
-        return None;
-    };
-    if slots < 2 {
-        eprintln!("skip: the server reports {slots} slot(s); the guard needs two or more");
-        return None;
-    }
-    let pool = pool as u64;
+    let (live, slots, pool) = pooled_live("the guard").await?;
     // A paragraph is ~30 tokens on both gate tokenizers (measured: 36 of them
     // are 1150 tokens with the persona on Gemma 3). The planted text rides the
     // message rather than a file, since the CPU build's Gemma 3 template drops
@@ -5323,18 +5331,7 @@ struct SilentResult {
 /// usage a scripted parent cannot report. `None` when there is no live
 /// server or it reports at most one slot.
 async fn silent_roll_smoke(arm: SilentArm) -> Option<SilentResult> {
-    let live = live_backend()?;
-    let slots = live.parallel_slots().await;
-    let pool = live.context_budget().await;
-    let (Some(slots), Some(pool)) = (slots, pool) else {
-        eprintln!("skip: the server reports slots {slots:?}, pool {pool:?}");
-        return None;
-    };
-    if slots < 2 {
-        eprintln!("skip: the server reports {slots} slot(s); the collision needs two or more");
-        return None;
-    }
-    let pool = pool as u64;
+    let (live, slots, pool) = pooled_live("the collision").await?;
     let paragraphs = ((0.55 * pool as f64) / 30.0) as usize;
     let max_tokens = (pool / 8) as usize;
     let belief = pool * arm.lie.unwrap_or(1);
@@ -5565,6 +5562,112 @@ struct PreemptProbe {
     reply: String,
 }
 
+/// Arm 1: the roll first, the one-word turn half a second behind it; reads
+/// the roll's end and result, the turn's first token and its end.
+async fn probe_roll_then_turn(
+    cmd_tx: &UnboundedSender<AppCommand>,
+    evt_rx: &mut UnboundedReceiver<AppEvent>,
+    word: &str,
+) -> PreemptProbe {
+    let mut probe = PreemptProbe::default();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(600);
+    let compacted = std::time::Instant::now();
+    cmd_tx.send(AppCommand::Compact).unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    let sent = std::time::Instant::now();
+    cmd_tx.send(AppCommand::SendMessage(word.into())).unwrap();
+    let mut turn_done = false;
+    while (probe.roll.is_none() || !turn_done) && std::time::Instant::now() < deadline {
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        match tokio::time::timeout(left, evt_rx.recv()).await {
+            Ok(Some(AppEvent::Compacted { summary, .. })) => {
+                probe.roll = Some((compacted.elapsed().as_secs_f64(), Ok(summary)));
+                probe.wait = Some(sent.elapsed().as_secs_f64());
+            }
+            Ok(Some(AppEvent::Error(msg))) | Ok(Some(AppEvent::Notice(msg)))
+                if probe.roll.is_none() =>
+            {
+                probe.roll = Some((compacted.elapsed().as_secs_f64(), Err(msg)));
+                probe.wait = Some(sent.elapsed().as_secs_f64());
+            }
+            Ok(Some(AppEvent::Chunk { text, .. })) => {
+                probe
+                    .first_token
+                    .get_or_insert(sent.elapsed().as_secs_f64());
+                probe.reply.push_str(&text);
+            }
+            Ok(Some(AppEvent::Finished { .. })) => {
+                probe.finished = Some(sent.elapsed().as_secs_f64());
+                turn_done = true;
+            }
+            Ok(Some(_)) => {}
+            _ => break,
+        }
+    }
+    probe
+}
+
+/// Arm 2: a long turn cancelled at its first token (or thought), the
+/// one-word turn sent 300 ms after the cancelled one reports `Finished`.
+async fn probe_cancel_then_turn(
+    cmd_tx: &UnboundedSender<AppCommand>,
+    evt_rx: &mut UnboundedReceiver<AppEvent>,
+    word: &str,
+) -> PreemptProbe {
+    let mut probe = PreemptProbe::default();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(600);
+    cmd_tx
+        .send(AppCommand::SendMessage(
+            "Write a long story about the lighthouse keeper's year, at least four hundred words."
+                .into(),
+        ))
+        .unwrap();
+    let mut cancelled_at: Option<std::time::Instant> = None;
+    loop {
+        match evt_rx.recv().await {
+            Some(AppEvent::Chunk { .. }) | Some(AppEvent::Thoughts { .. })
+                if cancelled_at.is_none() =>
+            {
+                cancelled_at = Some(std::time::Instant::now());
+                cmd_tx.send(AppCommand::Cancel).unwrap();
+            }
+            Some(AppEvent::Finished { .. }) => {
+                probe.cancel_latency = cancelled_at.map(|t| t.elapsed().as_secs_f64());
+                break;
+            }
+            Some(_) => {}
+            None => break,
+        }
+    }
+    // The client's `Finished` comes before the server has noticed the
+    // closed connection (measured: its `cancel task` is ~1 ms behind, the
+    // slot's release ~110 ms) — a request sent in that gap lands on another
+    // slot and pays a cold prefill for the same prompt. A preemption's
+    // waiter is admitted after the displaced stream's reservation drops, on
+    // the same side of that gap.
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    let sent = std::time::Instant::now();
+    cmd_tx.send(AppCommand::SendMessage(word.into())).unwrap();
+    while std::time::Instant::now() < deadline {
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        match tokio::time::timeout(left, evt_rx.recv()).await {
+            Ok(Some(AppEvent::Chunk { text, .. })) => {
+                probe
+                    .first_token
+                    .get_or_insert(sent.elapsed().as_secs_f64());
+                probe.reply.push_str(&text);
+            }
+            Ok(Some(AppEvent::Finished { .. })) => {
+                probe.finished = Some(sent.elapsed().as_secs_f64());
+                break;
+            }
+            Ok(Some(_)) => {}
+            _ => break,
+        }
+    }
+    probe
+}
+
 /// **The preemption probe** (stage 0 of docs/research/silent-preemption.md):
 /// a chat seeded with 55 % of the pool by a scripted turn; then either the
 /// compaction roll opened on the live server with a one-word turn sent half
@@ -5575,18 +5678,7 @@ struct PreemptProbe {
 /// a preemption would take). `None` without a live server or with at most
 /// one reported slot.
 async fn preemption_smoke(arm: PreemptArm) -> Option<PreemptProbe> {
-    let live = live_backend()?;
-    let slots = live.parallel_slots().await;
-    let pool = live.context_budget().await;
-    let (Some(slots), Some(pool)) = (slots, pool) else {
-        eprintln!("skip: the server reports slots {slots:?}, pool {pool:?}");
-        return None;
-    };
-    if slots < 2 {
-        eprintln!("skip: the server reports {slots} slot(s); the shape needs two or more");
-        return None;
-    }
-    let pool = pool as u64;
+    let (live, slots, pool) = pooled_live("the shape").await?;
     let paragraphs = ((0.55 * pool as f64) / 30.0) as usize;
     eprintln!("server: {slots} slots over {pool}; history {paragraphs} paragraphs, arm {arm:?}");
     let backend = Arc::new(ScriptedParent {
@@ -5643,97 +5735,11 @@ async fn preemption_smoke(arm: PreemptArm) -> Option<PreemptProbe> {
     )
     .await;
 
-    let mut probe = PreemptProbe::default();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(600);
     let word = "Reply with the single word READY and nothing else.";
-    match arm {
-        PreemptArm::RollThenTurn => {
-            let compacted = std::time::Instant::now();
-            cmd_tx.send(AppCommand::Compact).unwrap();
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-            let sent = std::time::Instant::now();
-            cmd_tx.send(AppCommand::SendMessage(word.into())).unwrap();
-            let mut turn_done = false;
-            while (probe.roll.is_none() || !turn_done) && std::time::Instant::now() < deadline {
-                let left = deadline.saturating_duration_since(std::time::Instant::now());
-                match tokio::time::timeout(left, evt_rx.recv()).await {
-                    Ok(Some(AppEvent::Compacted { summary, .. })) => {
-                        probe.roll = Some((compacted.elapsed().as_secs_f64(), Ok(summary)));
-                        probe.wait = Some(sent.elapsed().as_secs_f64());
-                    }
-                    Ok(Some(AppEvent::Error(msg))) | Ok(Some(AppEvent::Notice(msg)))
-                        if probe.roll.is_none() =>
-                    {
-                        probe.roll = Some((compacted.elapsed().as_secs_f64(), Err(msg)));
-                        probe.wait = Some(sent.elapsed().as_secs_f64());
-                    }
-                    Ok(Some(AppEvent::Chunk { text, .. })) => {
-                        probe
-                            .first_token
-                            .get_or_insert(sent.elapsed().as_secs_f64());
-                        probe.reply.push_str(&text);
-                    }
-                    Ok(Some(AppEvent::Finished { .. })) => {
-                        probe.finished = Some(sent.elapsed().as_secs_f64());
-                        turn_done = true;
-                    }
-                    Ok(Some(_)) => {}
-                    _ => break,
-                }
-            }
-        }
-        PreemptArm::CancelThenTurn => {
-            cmd_tx
-                .send(AppCommand::SendMessage(
-                    "Write a long story about the lighthouse keeper's year, at least four hundred words."
-                        .into(),
-                ))
-                .unwrap();
-            let mut cancelled_at: Option<std::time::Instant> = None;
-            loop {
-                match evt_rx.recv().await {
-                    Some(AppEvent::Chunk { .. }) | Some(AppEvent::Thoughts { .. })
-                        if cancelled_at.is_none() =>
-                    {
-                        cancelled_at = Some(std::time::Instant::now());
-                        cmd_tx.send(AppCommand::Cancel).unwrap();
-                    }
-                    Some(AppEvent::Finished { .. }) => {
-                        probe.cancel_latency = cancelled_at.map(|t| t.elapsed().as_secs_f64());
-                        break;
-                    }
-                    Some(_) => {}
-                    None => break,
-                }
-            }
-            // The client's `Finished` comes before the server has noticed the
-            // closed connection (measured: its `cancel task` is ~1 ms behind,
-            // the slot's release ~110 ms) — a request sent in that gap lands on
-            // another slot and pays a cold prefill for the same prompt. A
-            // preemption's waiter is admitted after the displaced stream's
-            // reservation drops, on the same side of that gap.
-            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-            let sent = std::time::Instant::now();
-            cmd_tx.send(AppCommand::SendMessage(word.into())).unwrap();
-            while std::time::Instant::now() < deadline {
-                let left = deadline.saturating_duration_since(std::time::Instant::now());
-                match tokio::time::timeout(left, evt_rx.recv()).await {
-                    Ok(Some(AppEvent::Chunk { text, .. })) => {
-                        probe
-                            .first_token
-                            .get_or_insert(sent.elapsed().as_secs_f64());
-                        probe.reply.push_str(&text);
-                    }
-                    Ok(Some(AppEvent::Finished { .. })) => {
-                        probe.finished = Some(sent.elapsed().as_secs_f64());
-                        break;
-                    }
-                    Ok(Some(_)) => {}
-                    _ => break,
-                }
-            }
-        }
-    }
+    let probe = match arm {
+        PreemptArm::RollThenTurn => probe_roll_then_turn(&cmd_tx, &mut evt_rx, word).await,
+        PreemptArm::CancelThenTurn => probe_cancel_then_turn(&cmd_tx, &mut evt_rx, word).await,
+    };
     let most = backend
         .max_in_flight
         .load(std::sync::atomic::Ordering::SeqCst);
