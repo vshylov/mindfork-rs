@@ -74,7 +74,10 @@ async fn self_consolidation_gated_when_nothing_to_consolidate() {
 async fn self_consolidation_success_emits_self_model_changed() {
     // A successful self-model "sleep" updates the open F3 screen (like reflection): SelfModelChanged.
     let (_d, mut orch, mut rx) = bare_orch_rx();
-    orch.handle_bg_done(BackgroundKind::SelfConsolidation, Ok(()));
+    orch.handle_bg_done(
+        BackgroundKind::SelfConsolidation,
+        super::super::background::BgOutcome::Done,
+    );
     let mut changed = false;
     while let Ok(e) = rx.try_recv() {
         if matches!(e, AppEvent::SelfModelChanged) {

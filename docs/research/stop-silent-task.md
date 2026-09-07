@@ -1,6 +1,7 @@
 # Stopping a silent task from the tasks screen
 
-> **Status:** research and design (2026-09-07). The item the tasks-screen
+> **Status:** implemented (2026-09-07) — every fork at its recommendation
+> (the user's decision, 2026-09-07); the live run in §6.1. The item the tasks-screen
 > design left out ([tasks-screen.md](tasks-screen.md) §8: "they have cancel
 > tokens, but a user-facing stop for them is its own question") and the
 > silent-preemption track pointed back at ([silent-preemption.md](silent-preemption.md)
@@ -266,6 +267,17 @@ it was yielding to is admitted as before.
   early; then `/compact` again completes. Plus `silent_roll_e2e_live` and
   `background_subagent_e2e_live` as the regression. The screen itself needs
   a real terminal; its logic is under unit test.
+
+### 6.1 The live run (2026-09-07)
+
+On the LAN stack (Qwen 3.6 27B, four slots over 16384)
+`stop_silent_task_e2e_live`: `/compact` on a chat seeded with 55 % of the
+pool, the stop command 1.0 s later — the notice arrived **0.00 s** after
+the stop (the wait for the lane was still on: the roll had not opened its
+stream, and a cancelled wait returns at once), nothing was folded, at most
+one live stream open; the next `/compact` completed in 5.8 s. With
+`silent_roll_e2e_live` and `background_subagent_e2e_live` as the
+regression: 3/3 in 57 s. The unit suite: 2903 green, 144 `#[ignore]`.
 
 ## 7. Not in this track (recorded so they are not re-derived)
 

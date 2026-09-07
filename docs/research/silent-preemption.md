@@ -557,9 +557,10 @@ Stage 0 is §3's probe, on this branch with the design. Stage 1, one PR:
 
 ## 8. Not in this track (recorded so they are not re-derived)
 
-- **Cancelling a silent task from the tasks screen** — tasks-screen §8;
-  the yield token is a piece of it (a stream that can be ended from
-  outside) but the command, the key and the outcome are their own design.
+- **Cancelling a silent task from the tasks screen** — **done** as its
+  own track ([stop-silent-task.md](stop-silent-task.md), 2026-09-07): the
+  slot's token, a third outcome, and the holders' readings this track
+  taught them.
 - **A smarter roll** that re-plans against the conversation as it stands at
   the retry — the plan is cut once; a retry folds what the first attempt
   would have.

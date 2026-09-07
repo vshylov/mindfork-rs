@@ -179,7 +179,8 @@ pub async fn run(deps: OrchestratorDeps) {
     // A single outcome channel for "silent" background tasks (auto-reflection/
     // consolidation): the task sends `(kind, Ok/Err(reason))`, the loop handles
     // it in one branch via `handle_bg_done`.
-    let (bg_done_tx, mut bg_done_rx) = unbounded_channel::<(BackgroundKind, Result<(), String>)>();
+    let (bg_done_tx, mut bg_done_rx) =
+        unbounded_channel::<(BackgroundKind, background::BgOutcome)>();
     // The background sub-agent runs' channel (progress and ends): their own,
     // since a run outlives the turn whose channel a child normally shares.
     let (bg_run_tx, mut bg_run_rx) = unbounded_channel::<generation::BackgroundMessage>();
@@ -691,7 +692,7 @@ struct Orchestrator {
     /// `Chat.reflected_upto` watermark (survives a restart), not by a field here.
     bg: HashMap<BackgroundKind, BgSlot>,
     /// A single outcome channel for "silent" background tasks (`(kind, Ok/Err(reason))` → loop).
-    bg_done_tx: UnboundedSender<(BackgroundKind, Result<(), String>)>,
+    bg_done_tx: UnboundedSender<(BackgroundKind, background::BgOutcome)>,
     /// Assistant-reply counters since the last auto-consolidation of notes (per chat).
     /// Consolidation-cadence data (not task lifecycle — that's in `bg`).
     consolidate_counts: HashMap<Uuid, u32>,
@@ -825,6 +826,7 @@ impl Orchestrator {
                 self.handle_set_children_expanded(id, expanded)
             }
             AppCommand::StopSubagentRun { id } => self.handle_stop_subagent_run(id),
+            AppCommand::StopBackgroundTask { kind } => self.handle_stop_background_task(kind),
             AppCommand::RegenerateLast => self.handle_regenerate(),
             AppCommand::ContinueLast => self.handle_continue(),
             AppCommand::DeleteLastExchange => self.handle_delete_last(),

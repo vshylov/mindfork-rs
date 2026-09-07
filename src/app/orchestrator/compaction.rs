@@ -30,6 +30,8 @@ use crate::shared::api::{ApiMessage, ChatChunk, ChatRequest, EngineBackend};
 use crate::shared::config::ServerMode;
 use crate::shared::session_budget::SILENT_YIELDS_MAX;
 
+use super::background::BgOutcome;
+
 use super::Orchestrator;
 use super::generation::TurnUsage;
 use super::title::salvage_title_source;
@@ -54,8 +56,18 @@ pub(super) struct CompactResult {
     pub(super) rolls: u32,
     /// Who asked — a failure is reported differently (see [`CompactOrigin`]).
     pub(super) origin: CompactOrigin,
-    /// The summary text, or a message to show the user.
-    pub(super) text: Result<String, String>,
+    /// The summary text, or how the roll ended short of one.
+    pub(super) text: Result<String, CompactEnd>,
+}
+
+/// How a roll ended short of a summary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum CompactEnd {
+    /// An error or the timeout, worded for the user.
+    Failed(String),
+    /// Stopped by the app's own token — the tasks screen's `F6`, or `Quit`
+    /// (docs/research/stop-silent-task.md §3.3): nothing was folded.
+    Cancelled,
 }
 
 /// What started a roll. The two differ **only** in how a failure is reported
@@ -363,14 +375,29 @@ impl Orchestrator {
         // slot closes as a success — the failure streak exists for *silent* runs,
         // and alerting twice would be noise. A background roll does the opposite:
         // it stays quiet and lets the streak alert once at the third consecutive
-        // failure.
+        // failure. A roll **stopped** (docs/research/stop-silent-task.md §3.3)
+        // is neither: the command the user typed is answered with one notice,
+        // the automatic roll says nothing and is planned again at the next
+        // landing if the conversation is still over the threshold.
         let outcome = match (text, origin) {
-            (Ok(summary), _) => self.apply_compaction(chat_id, boundary_id, rolls, summary, origin),
-            (Err(msg), CompactOrigin::Manual) => {
-                let _ = self.evt_tx.send(AppEvent::Error(msg));
-                Ok(())
+            (Ok(summary), _) => {
+                match self.apply_compaction(chat_id, boundary_id, rolls, summary, origin) {
+                    Ok(()) => BgOutcome::Done,
+                    Err(msg) => BgOutcome::Failed(msg),
+                }
             }
-            (Err(msg), CompactOrigin::Auto) => Err(msg),
+            (Err(CompactEnd::Cancelled), CompactOrigin::Manual) => {
+                let _ = self.evt_tx.send(AppEvent::Notice(
+                    self.ui_locale().t("ui.compact.cancelled").into(),
+                ));
+                BgOutcome::Cancelled
+            }
+            (Err(CompactEnd::Cancelled), CompactOrigin::Auto) => BgOutcome::Cancelled,
+            (Err(CompactEnd::Failed(msg)), CompactOrigin::Manual) => {
+                let _ = self.evt_tx.send(AppEvent::Error(msg));
+                BgOutcome::Done
+            }
+            (Err(CompactEnd::Failed(msg)), CompactOrigin::Auto) => BgOutcome::Failed(msg),
         };
         self.handle_bg_done(BackgroundKind::Compaction, outcome);
     }
@@ -470,7 +497,7 @@ fn spawn_compact(
                     boundary_id,
                     rolls,
                     origin,
-                    text: Err(loc.t("ui.err.compact_timeout").to_string()),
+                    text: Err(CompactEnd::Cancelled),
                 });
                 return;
             };
@@ -532,9 +559,9 @@ fn spawn_compact(
                         "the roll's stream was displaced by an interactive one; made again"
                     );
                 }
-                // Cancelled by the app's own quit: a fragment is not a summary,
-                // and the cancelled wait's wording says nothing was summarized.
-                Ok(Ok((_, _, _, true))) => break Err(loc.t("ui.err.compact_timeout").to_string()),
+                // Cancelled by the app's own token — a stop from the tasks
+                // screen, or the quit: a fragment is not a summary.
+                Ok(Ok((_, _, _, true))) => break Err(CompactEnd::Cancelled),
                 Ok(Ok((text, thoughts, truncated, false))) => {
                     if truncated {
                         // Don't hide a truncation — the same rule the conversation's
@@ -548,11 +575,15 @@ fn spawn_compact(
                     break Ok(salvage_title_source(text, thoughts));
                 }
                 Ok(Err(err)) => {
-                    break Err(loc.tf("ui.err.compact_failed", &[("err", &err.to_string())]));
+                    break Err(CompactEnd::Failed(
+                        loc.tf("ui.err.compact_failed", &[("err", &err.to_string())]),
+                    ));
                 }
                 Err(_) => {
                     cancel.cancel();
-                    break Err(loc.t("ui.err.compact_timeout").to_string());
+                    break Err(CompactEnd::Failed(
+                        loc.t("ui.err.compact_timeout").to_string(),
+                    ));
                 }
             }
         };

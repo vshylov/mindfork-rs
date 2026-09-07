@@ -6,6 +6,7 @@
 //! (fixtures in mod.rs; the keyed engine in parallel.rs; the background
 //! fixtures in background.rs).
 
+use super::super::background::BgOutcome;
 use super::background::{cfg, finished, next, running_run, runs_out, start};
 use super::parallel::{KeyedRecorder, long_text, sized};
 use super::subagent::{hang, text};
@@ -570,7 +571,10 @@ fn spawn_loop(
     chat_id: Uuid,
     system: &str,
     clock: std::time::Duration,
-) -> UnboundedReceiver<(BackgroundKind, Result<(), String>)> {
+) -> (
+    CancellationToken,
+    UnboundedReceiver<(BackgroundKind, BgOutcome)>,
+) {
     let profile_id = orch
         .chats
         .iter()
@@ -605,7 +609,7 @@ fn spawn_loop(
             tools: Vec::new(),
         },
         allowed: Vec::new(),
-        cancel,
+        cancel: cancel.clone(),
         max_rounds: 1,
         timeout: clock,
         label: "test loop",
@@ -614,7 +618,7 @@ fn spawn_loop(
         done_tx,
         summary_semantics: None,
     });
-    done_rx
+    (cancel, done_rx)
 }
 
 /// A silent task yields at most `SILENT_YIELDS_MAX` times (silent-preemption
@@ -632,7 +636,7 @@ async fn a_silent_task_holds_after_its_third_displacement() {
         )],
         30,
     );
-    let mut done_rx = spawn_loop(
+    let (_stop, mut done_rx) = spawn_loop(
         &mut orch,
         backend.clone(),
         chat_id,
@@ -666,7 +670,7 @@ async fn a_silent_task_holds_after_its_third_displacement() {
         .expect("the task landed")
         .unwrap();
     assert_eq!(kind, BackgroundKind::Reflection);
-    assert_eq!(outcome, Ok(()));
+    assert_eq!(outcome, BgOutcome::Done);
     assert_eq!(
         backend.requests().len(),
         4,
@@ -685,7 +689,7 @@ async fn a_silent_loops_wait_for_room_is_not_on_its_clock() {
     let budget = orch.session_budget();
     let calm = CancellationToken::new();
     let turn = budget.acquire(900, &calm).await.unwrap();
-    let mut done_rx = spawn_loop(
+    let (_stop, mut done_rx) = spawn_loop(
         &mut orch,
         backend.clone(),
         chat_id,
@@ -700,7 +704,7 @@ async fn a_silent_loops_wait_for_room_is_not_on_its_clock() {
         .await
         .expect("the task landed")
         .unwrap();
-    assert_eq!(outcome, Ok(()));
+    assert_eq!(outcome, BgOutcome::Done);
     assert_eq!(backend.requests().len(), 1);
 }
 
@@ -709,7 +713,7 @@ async fn a_silent_loops_wait_for_room_is_not_on_its_clock() {
 async fn a_silent_loops_stream_is_on_its_clock() {
     let (_d, mut orch, chat_id) = orch_ready_for_reflection();
     let backend = KeyedRecorder::new(vec![("quiet loop", vec![hang("thinking")])], 20);
-    let mut done_rx = spawn_loop(
+    let (_stop, mut done_rx) = spawn_loop(
         &mut orch,
         backend.clone(),
         chat_id,
@@ -721,7 +725,10 @@ async fn a_silent_loops_stream_is_on_its_clock() {
         .expect("the task landed")
         .unwrap();
     let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::En);
-    assert_eq!(outcome, Err(loc.t("loop.time_limit_exceeded").to_string()));
+    assert_eq!(
+        outcome,
+        BgOutcome::Failed(loc.t("loop.time_limit_exceeded").to_string())
+    );
 }
 
 /// A silent request whose wait for room is cancelled leaves no reservation
@@ -754,4 +761,235 @@ async fn a_cancelled_wait_opens_no_stream_and_leaves_no_reservation() {
     );
     assert_eq!(budget.in_flight(), 900, "no reservation left behind");
     assert_eq!(budget.silent_streaming(), None);
+}
+
+/// The notice a stopped manual roll answers with, in whichever interface
+/// language the orchestrator is speaking.
+fn is_compact_cancelled(e: &AppEvent) -> bool {
+    matches!(e, AppEvent::Notice(m) if [crate::shared::i18n::Lang::En, crate::shared::i18n::Lang::Ru]
+        .iter()
+        .any(|l| m == crate::shared::i18n::locale(*l).t("ui.compact.cancelled")))
+}
+
+/// A silent loop stopped mid-stream lands as **cancelled**
+/// (docs/research/stop-silent-task.md §3.3): its own token fired, the
+/// stream ended on the next chunk, and the outcome is neither a success
+/// nor a failure.
+#[tokio::test]
+async fn a_loop_stopped_mid_stream_lands_cancelled() {
+    let (_d, mut orch, chat_id) = orch_ready_for_reflection();
+    orch.config.compaction.context_tokens = Some(1000);
+    let backend = KeyedRecorder::new(vec![("quiet loop", vec![long_text(30)])], 30);
+    let (stop, mut done_rx) = spawn_loop(
+        &mut orch,
+        backend.clone(),
+        chat_id,
+        "quiet loop",
+        std::time::Duration::from_secs(30),
+    );
+    settle(2000, || !backend.open_at_arrival("quiet loop").is_empty()).await;
+    stop.cancel();
+    let (kind, outcome) = tokio::time::timeout(std::time::Duration::from_secs(5), done_rx.recv())
+        .await
+        .expect("the task landed")
+        .unwrap();
+    assert_eq!(kind, BackgroundKind::Reflection);
+    assert_eq!(outcome, BgOutcome::Cancelled);
+    assert_eq!(backend.requests().len(), 1, "no retry after a stop");
+}
+
+/// A silent loop stopped while it waits for room lands as cancelled and
+/// opens no stream (R5).
+#[tokio::test]
+async fn a_loop_stopped_while_waiting_lands_cancelled() {
+    let (_d, mut orch, chat_id) = orch_ready_for_reflection();
+    orch.config.compaction.context_tokens = Some(1000);
+    let backend = KeyedRecorder::new(vec![("quiet loop", vec![text("done")])], 20);
+    let budget = orch.session_budget();
+    let calm = CancellationToken::new();
+    let turn = budget.acquire(900, &calm).await.unwrap();
+    let (stop, mut done_rx) = spawn_loop(
+        &mut orch,
+        backend.clone(),
+        chat_id,
+        "quiet loop",
+        std::time::Duration::from_secs(30),
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert!(backend.requests().is_empty(), "waiting for room");
+    stop.cancel();
+    let (_, outcome) = tokio::time::timeout(std::time::Duration::from_secs(5), done_rx.recv())
+        .await
+        .expect("the task landed")
+        .unwrap();
+    assert_eq!(outcome, BgOutcome::Cancelled);
+    assert!(
+        backend.requests().is_empty(),
+        "the stopped wait never streamed"
+    );
+    drop(turn);
+}
+
+/// A silent loop stopped while it waits to re-make a displaced round lands
+/// as cancelled, and the waiter that displaced it is unaffected (§4).
+#[tokio::test]
+async fn a_loop_stopped_during_its_retry_lands_cancelled() {
+    let (_d, mut orch, chat_id) = orch_ready_for_reflection();
+    orch.config.compaction.context_tokens = Some(1000);
+    let backend = KeyedRecorder::new(vec![("quiet loop", vec![long_text(30), long_text(30)])], 30);
+    let (stop, mut done_rx) = spawn_loop(
+        &mut orch,
+        backend.clone(),
+        chat_id,
+        "quiet loop",
+        std::time::Duration::from_secs(30),
+    );
+    settle(2000, || !backend.open_at_arrival("quiet loop").is_empty()).await;
+    let budget = orch.session_budget();
+    let calm = CancellationToken::new();
+    // The turn displaces the round and is admitted; the loop's retry now
+    // waits for room beside it (500 + 900 > 1000).
+    let turn = budget.acquire(900, &calm).await.expect("the round yielded");
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    assert_eq!(backend.requests().len(), 1, "the retry is waiting");
+    stop.cancel();
+    let (_, outcome) = tokio::time::timeout(std::time::Duration::from_secs(5), done_rx.recv())
+        .await
+        .expect("the task landed")
+        .unwrap();
+    assert_eq!(outcome, BgOutcome::Cancelled);
+    assert_eq!(backend.requests().len(), 1, "the retry never streamed");
+    drop(turn);
+}
+
+/// A manual `/compact` stopped from the tasks screen answers with one
+/// notice and folds nothing; the next `/compact` runs (R4).
+#[tokio::test]
+async fn a_manual_roll_stopped_answers_with_a_notice_and_the_next_one_runs() {
+    let backend = KeyedRecorder::new(
+        vec![
+            ("", vec![text("ok"), text("again")]),
+            (COMPACT_KEY, vec![long_text(30), text("a summary")]),
+        ],
+        30,
+    );
+    let mut cfg = cfg(1);
+    cfg.engine.managed.context_size = 4000;
+    cfg.compaction.enabled = true;
+    cfg.compaction.threshold_pct = 0;
+    cfg.compaction.tail_tokens = 32;
+    let (dir, cmd_tx, mut rx, handle, chat_id) = spawn_english(backend.clone(), cfg).await;
+    cmd_tx.send(AppCommand::SendMessage(long("one"))).unwrap();
+    next(&mut rx, finished).await;
+    cmd_tx.send(AppCommand::SendMessage(long("two"))).unwrap();
+    next(&mut rx, finished).await;
+    cmd_tx.send(AppCommand::Compact).unwrap();
+    settle(2000, || !backend.open_at_arrival(COMPACT_KEY).is_empty()).await;
+    cmd_tx
+        .send(AppCommand::StopBackgroundTask {
+            kind: BackgroundKind::Compaction,
+        })
+        .unwrap();
+    let (mut stopped, mut compacted_early) = (false, false);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !stopped && std::time::Instant::now() < deadline {
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        match tokio::time::timeout(left, rx.recv()).await {
+            Ok(Some(e)) => {
+                compacted_early |= matches!(e, AppEvent::Compacted { .. });
+                stopped = is_compact_cancelled(&e);
+            }
+            _ => break,
+        }
+    }
+    assert!(stopped, "the notice arrived");
+    assert!(!compacted_early, "nothing was folded");
+    cmd_tx.send(AppCommand::Compact).unwrap();
+    next(&mut rx, |e| matches!(e, AppEvent::Compacted { .. })).await;
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    assert_eq!(backend.open_at_arrival(COMPACT_KEY), vec![0, 0]);
+    let chat = super::subagent::load(dir.path(), chat_id);
+    assert_eq!(
+        chat.compaction.as_ref().map(|c| c.summary.as_str()),
+        Some("a summary"),
+        "the second roll's summary, never the stopped stream's fragment"
+    );
+}
+
+/// An automatic roll stopped from the tasks screen says nothing and is
+/// planned again at the next landing, the conversation still being over the
+/// threshold (R4, fork F5).
+#[tokio::test]
+async fn an_automatic_roll_stopped_is_quiet_and_planned_again_at_the_next_landing() {
+    let backend = KeyedRecorder::new(
+        vec![
+            (
+                "",
+                vec![
+                    sized(text("ok"), 3000, 10),
+                    sized(text("again"), 3000, 10),
+                    sized(text("more"), 3000, 10),
+                ],
+            ),
+            (COMPACT_KEY, vec![long_text(30), text("a summary")]),
+        ],
+        30,
+    );
+    let mut cfg = cfg(1);
+    cfg.engine.managed.context_size = 4000;
+    cfg.compaction.enabled = true;
+    cfg.compaction.threshold_pct = 75;
+    cfg.compaction.tail_tokens = 32;
+    let (dir, cmd_tx, mut rx, handle, chat_id) = spawn_english(backend.clone(), cfg).await;
+    // The first landing is over the threshold but has one exchange and
+    // nothing to fold; the second starts the roll.
+    cmd_tx.send(AppCommand::SendMessage(long("one"))).unwrap();
+    next(&mut rx, finished).await;
+    cmd_tx.send(AppCommand::SendMessage(long("two"))).unwrap();
+    next(&mut rx, finished).await;
+    settle(2000, || !backend.open_at_arrival(COMPACT_KEY).is_empty()).await;
+    cmd_tx
+        .send(AppCommand::StopBackgroundTask {
+            kind: BackgroundKind::Compaction,
+        })
+        .unwrap();
+    next(&mut rx, |e| {
+        matches!(
+            e,
+            AppEvent::BackgroundTask {
+                kind: BackgroundKind::Compaction,
+                active: false
+            }
+        )
+    })
+    .await;
+    // Quiet: no notice, no error, nothing folded.
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    while let Ok(e) = rx.try_recv() {
+        assert!(
+            !matches!(
+                e,
+                AppEvent::Notice(_) | AppEvent::Error(_) | AppEvent::Compacted { .. }
+            ),
+            "an automatic roll stops quietly: {e:?}"
+        );
+    }
+    cmd_tx.send(AppCommand::SendMessage(long("three"))).unwrap();
+    next(&mut rx, finished).await;
+    next(&mut rx, |e| matches!(e, AppEvent::Compacted { .. })).await;
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    assert_eq!(
+        backend.open_at_arrival(COMPACT_KEY),
+        vec![0, 0],
+        "the roll was planned again at the next landing"
+    );
+    let chat = super::subagent::load(dir.path(), chat_id);
+    assert_eq!(
+        chat.compaction.as_ref().map(|c| c.summary.as_str()),
+        Some("a summary")
+    );
 }

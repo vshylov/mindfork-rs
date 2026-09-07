@@ -14,6 +14,17 @@ use crate::shared::i18n::Locale;
 
 use super::Orchestrator;
 
+/// How a silent task ended (`bg_done_tx`): its work done, stopped by its
+/// own token — the tasks screen's `F6`, or `Quit` — or failed with a
+/// reason worded for the user. A stop is neither a success nor a failure
+/// to the streak (docs/research/stop-silent-task.md §3.3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum BgOutcome {
+    Done,
+    Cancelled,
+    Failed(String),
+}
+
 /// A silent background task's slot: the active-run token + a failure streak. The streak
 /// outlives a single run (it survives completions) — hence a slot, not a separate task.
 #[derive(Default)]
@@ -50,18 +61,24 @@ impl Orchestrator {
     /// `SelfModelChanged` (an open `F3` screen re-requests a fresh snapshot);
     /// *notes* consolidation doesn't (it changes notes, not the "self-model"). The task's
     /// tools have already written the changes into `Storage`; this doesn't touch the chat/feed.
-    pub(super) fn handle_bg_done(&mut self, kind: BackgroundKind, result: Result<(), String>) {
+    /// A task **stopped** by its own token (docs/research/stop-silent-task.md
+    /// §3.3) clears the slot like the others and touches the streak not at
+    /// all — neither reset nor counted — and still announces
+    /// `SelfModelChanged` for the two self-model kinds, since a partial run
+    /// may have written before the stop.
+    pub(super) fn handle_bg_done(&mut self, kind: BackgroundKind, outcome: BgOutcome) {
         // Mutate the slot and compute whether an error alert is needed BEFORE sending events
         // (the borrow of `self.bg` doesn't overlap `self.evt_tx` in the send below).
         let alert = {
             let slot = self.bg.entry(kind).or_default();
             slot.cancel = None;
-            match &result {
-                Ok(()) => {
+            match &outcome {
+                BgOutcome::Done => {
                     slot.failures = 0;
                     None
                 }
-                Err(reason) => {
+                BgOutcome::Cancelled => None,
+                BgOutcome::Failed(reason) => {
                     slot.failures += 1;
                     (slot.failures == super::BACKGROUND_FAILURE_ALERT).then(|| reason.clone())
                 }
@@ -72,7 +89,7 @@ impl Orchestrator {
             active: false,
         });
         self.emit_task_list();
-        if result.is_ok()
+        if !matches!(outcome, BgOutcome::Failed(_))
             && matches!(
                 kind,
                 BackgroundKind::Reflection | BackgroundKind::SelfConsolidation
@@ -86,6 +103,18 @@ impl Orchestrator {
                 "ui.err.bg_failed",
                 &[("label", kind_label(loc, kind)), ("reason", &reason)],
             )));
+        }
+    }
+
+    /// Stops one running task of `kind` (`AppCommand::StopBackgroundTask`:
+    /// the tasks screen's `F6` on its row, docs/research/stop-silent-task.md
+    /// §3.2): its token is cancelled and it lands as `Cancelled` on its own
+    /// path, at once — a wait returns, a stream ends on its next chunk. A
+    /// kind with no task running is ignored: the screen may be a snapshot
+    /// behind.
+    pub(super) fn handle_stop_background_task(&self, kind: BackgroundKind) {
+        if let Some(token) = self.bg.get(&kind).and_then(|s| s.cancel.as_ref()) {
+            token.cancel();
         }
     }
 

@@ -77,6 +77,9 @@ pub enum TasksIntent {
     StopRun(Uuid),
     /// Open the run's parent chat (`P` on a run row).
     OpenParent(Uuid),
+    /// Stop one of the app's own silent tasks (`F6` on a task row that is
+    /// running or waiting — docs/research/stop-silent-task.md §3.1).
+    StopTask(BackgroundKind),
 }
 
 /// A selectable row: which half of the snapshot, and the index into it.
@@ -92,6 +95,14 @@ enum Row {
 enum Ident {
     Run(Uuid),
     App(BackgroundKind),
+}
+
+/// What `F6` stops on the selected row: a background run's seat, or a
+/// silent task's slot (docs/research/stop-silent-task.md §3.1).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Stoppable {
+    Run(Uuid),
+    Task(BackgroundKind),
 }
 
 /// The tasks screen: the latest snapshot plus where the user is in it.
@@ -208,14 +219,26 @@ impl TasksScreen {
         self.ident_of(self.selected_row()?)
     }
 
-    /// Whether `F6` does anything on the selected row: only a **running
+    /// Whether `F6` does anything on the selected row: a **running
     /// background** run has a seat the stop command can cancel — a child of
     /// the turn in flight is ended by cancelling the turn, and a landed run
-    /// has nothing to stop.
-    fn selected_stoppable(&self) -> Option<Uuid> {
-        self.selected_run()
-            .filter(|r| r.running && r.background)
-            .map(|r| r.id)
+    /// has nothing to stop — and a silent task that is running (streaming or
+    /// waiting) has a slot whose token the stop command cancels
+    /// (docs/research/stop-silent-task.md §3.1); an idle task has nothing.
+    fn selected_stoppable(&self) -> Option<Stoppable> {
+        let list = self.list.as_ref()?;
+        match self.selected_row()? {
+            Row::Run(i) => list
+                .runs
+                .get(i)
+                .filter(|r| r.running && r.background)
+                .map(|r| Stoppable::Run(r.id)),
+            Row::App(i) => list
+                .app
+                .get(i)
+                .filter(|t| t.running)
+                .map(|t| Stoppable::Task(t.kind)),
+        }
     }
 
     /// Handles a key press, returning an intent for `app` (`None` — handled
@@ -241,7 +264,12 @@ impl TasksScreen {
             KeyCode::Home => self.selected = 0,
             KeyCode::End => self.selected = last,
             KeyCode::Enter => return self.selected_run().map(|r| TasksIntent::OpenRun(r.id)),
-            KeyCode::F(6) => return self.selected_stoppable().map(TasksIntent::StopRun),
+            KeyCode::F(6) => {
+                return self.selected_stoppable().map(|s| match s {
+                    Stoppable::Run(id) => TasksIntent::StopRun(id),
+                    Stoppable::Task(kind) => TasksIntent::StopTask(kind),
+                });
+            }
             KeyCode::Char(_) if keys::hotkey_char(&key) == Some('p') => {
                 return self
                     .selected_run()
@@ -254,7 +282,8 @@ impl TasksScreen {
 
     /// The footer's hints for the selected row — built from the same values
     /// `handle_key` dispatches on, in the same frame (spec §11.2): `Enter`
-    /// and `P` on a run row, `F6` only where a seat can be cancelled.
+    /// and `P` on a run row, `F6` only where a seat or a slot can be
+    /// cancelled.
     fn hints(&self) -> Vec<(&'static str, &'static str, bool)> {
         let loc = self.loc;
         let mut hk = vec![("↑↓", loc.t("ui.tasks.hk.select"), false)];
@@ -809,21 +838,52 @@ mod tests {
             Some(TasksIntent::OpenParent(done_parent))
         );
 
-        // A silent task: nothing to open, nothing to stop.
+        // A running silent task: nothing to open, but it can be stopped
+        // (docs/research/stop-silent-task.md §3.1).
         press(&mut s, KeyCode::Down);
-        for k in ["Enter", "P", "F6"] {
+        for k in ["Enter", "P"] {
             assert!(
                 !keys(&s).contains(&k),
                 "{k} offered on a task row: {:?}",
                 s.hints()
             );
         }
+        assert!(keys(&s).contains(&"F6"), "{:?}", s.hints());
         assert_eq!(press(&mut s, KeyCode::Enter), None);
-        assert_eq!(press(&mut s, KeyCode::F(6)), None);
+        assert_eq!(
+            press(&mut s, KeyCode::F(6)),
+            Some(TasksIntent::StopTask(BackgroundKind::Reflection))
+        );
         assert_eq!(press(&mut s, KeyCode::Char('p')), None);
+
+        // An idle silent task: nothing at all.
+        press(&mut s, KeyCode::Down);
+        assert!(!keys(&s).contains(&"F6"), "{:?}", s.hints());
+        assert_eq!(press(&mut s, KeyCode::F(6)), None);
 
         // The two global keys, always.
         assert!(keys(&s).contains(&"F1") && keys(&s).contains(&"Esc"));
+    }
+
+    /// A task that is *waiting* — its slot taken, its stream not open — is
+    /// running by the registry and can be stopped like a streaming one: the
+    /// stop ends the wait (docs/research/stop-silent-task.md R5).
+    #[test]
+    fn a_waiting_task_can_be_stopped_too() {
+        let mut s = TasksScreen::new(Palette::default(), loc());
+        let mut l = list(Vec::new());
+        l.app[3] = AppTask {
+            kind: BackgroundKind::Compaction,
+            running: true,
+            waiting: true,
+        };
+        s.set_list(l);
+        press(&mut s, KeyCode::End);
+        assert!(keys(&s).contains(&"F6"), "{:?}", s.hints());
+        assert_eq!(
+            press(&mut s, KeyCode::F(6)),
+            Some(TasksIntent::StopTask(BackgroundKind::Compaction))
+        );
     }
 
     /// A child of the turn in flight is running but has no seat of its own:

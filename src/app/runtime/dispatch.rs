@@ -518,6 +518,10 @@ pub(super) fn dispatch_tasks(
             let _ = cmd_tx.send(AppCommand::StopSubagentRun { id });
             false
         }
+        TasksIntent::StopTask(kind) => {
+            let _ = cmd_tx.send(AppCommand::StopBackgroundTask { kind });
+            false
+        }
         TasksIntent::OpenRun(chat) | TasksIntent::OpenParent(chat) => {
             if let ActiveScreen::Tasks(screen) = std::mem::replace(active, ActiveScreen::Chat) {
                 *back = Some(Back::Tasks { screen, chat });

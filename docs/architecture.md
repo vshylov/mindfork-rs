@@ -272,7 +272,8 @@ src/
 │  │                        snippet; Enter → a jump into the feed, → SearchIntent
 │  ├─ tasks.rs              TasksScreen: every sub-agent/dialogue run across every chat —
 │  │                        running with its position, landed with its outcome — and the
-│  │                        app's own silent tasks (F7, /tasks; spec §11.10), → TasksIntent
+│  │                        app's own silent tasks (F7, /tasks; spec §11.10), → TasksIntent;
+│  │                        `Stoppable`: F6 stops a run's seat or a silent task's slot
 │  └─ settings/             SettingsScreen: sections (Model/Sampling/Tools/Plugins/
 │     │                     Memory/Data/Profiles/Interface) with field groups; "Plugins" is the
 │     │                     MCP host — master switch, server editor (Ctrl+N/Ctrl+D over
@@ -2495,7 +2496,9 @@ the stream ended `Cancelled` on the reservation's child token while the
 task's own token did not) is made again with the same request, up to
 `SILENT_YIELDS_MAX` times; the task's `timeout` is a clock over its
 streaming and tools (`stream_round`, `run_tools`), not over its waits
-(docs/research/silent-preemption.md §4.4–§4.5). The main generation loop (§5) was deliberately **not** folded
+(docs/research/silent-preemption.md §4.4–§4.5). A stream ended `Cancelled`
+on the task's own token, or a wait cancelled, is `RoundsEnd::Cancelled` →
+`BgOutcome::Cancelled` (docs/research/stop-silent-task.md §3.3). The main generation loop (§5) was deliberately **not** folded
 in — it has UI streaming, control-flow tools, Anthropic thinking signatures,
 usage, effects; its complexity doesn't pay off the shared drain.
 
@@ -3070,11 +3073,13 @@ Principles:
   `tool_loop::spawn_silent_loop`) is served by a **slot registry**,
   `bg: HashMap<BackgroundKind, BgSlot>` (`orchestrator/background.rs`): a
   slot = the active run's token ("running", one at a time) + a failure
-  streak. One channel `bg_done_tx` carries `(kind, outcome)`, one `select!`
-  branch calls `handle_bg_done` (the shared lifecycle: clearing the
-  indicator, a failure streak → a single error at the threshold, for
-  reflection a success → `SelfModelChanged`); `Quit` cancels all slots via
-  `cancel_all_bg`. This way the family's 3rd task (self-model
+  streak. One channel `bg_done_tx` carries `(kind, BgOutcome)` — `Done`,
+  `Cancelled`, `Failed(reason)` — one `select!` branch calls
+  `handle_bg_done` (the shared lifecycle: clearing the indicator, a failure
+  streak → a single error at the threshold, for reflection a success or a
+  stop → `SelfModelChanged`; a stop touches the streak not at all); `Quit`
+  cancels all slots via `cancel_all_bg`, the tasks screen's `F6` one via
+  `handle_stop_background_task` (docs/research/stop-silent-task.md §3). This way the family's 3rd task (self-model
   auto-consolidation, §9.9) doesn't touch the `run()`/`Quit` scaffold.
   Consolidation cadence (`consolidate_counts`) is separate data, not
   lifecycle. See docs/history/refactoring-solid.md §4. The family's streams

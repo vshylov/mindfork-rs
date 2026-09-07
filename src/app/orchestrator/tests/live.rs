@@ -5798,6 +5798,135 @@ async fn preemption_floor_e2e_live() {
     assert!(!probe.reply.trim().is_empty(), "the turn replied");
 }
 
+/// **A roll stopped from the tasks screen, live**
+/// (docs/research/stop-silent-task.md §6): `/compact` on a seeded chat, the
+/// stop command a second later — the notice arrives, nothing is folded, the
+/// live stream ended early — then `/compact` again completes. `#[ignore]`,
+/// manual: `MINDFORK_ENGINE_URL` at a server with several slots over one
+/// pool (the LAN stack, or the CPU build as the launcher launches it).
+#[tokio::test]
+#[ignore = "requires a live llama-server with several slots over one pool (MINDFORK_ENGINE_URL)"]
+async fn stop_silent_task_e2e_live() {
+    let Some((live, slots, pool)) = pooled_live("the roll").await else {
+        eprintln!("skipped (see above)");
+        return;
+    };
+    let paragraphs = ((0.55 * pool as f64) / 30.0) as usize;
+    eprintln!("server: {slots} slots over {pool}; history {paragraphs} paragraphs");
+    let backend = Arc::new(ScriptedParent {
+        live,
+        scripts: std::sync::Mutex::new(
+            vec![
+                vec![
+                    ChatChunk::Text("Noted.".into()),
+                    ChatChunk::Finished(FinishReason::Stop),
+                ],
+                vec![
+                    ChatChunk::Text("Nothing to add.".into()),
+                    ChatChunk::Finished(FinishReason::Stop),
+                ],
+            ]
+            .into(),
+        ),
+        live_markers: &[COMPACT_MARKER],
+        live_after_scripts: false,
+        in_flight: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        max_in_flight: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+    });
+    let mut cfg = AppConfig::default();
+    cfg.engine.external.sessions = 1;
+    cfg.engine.managed.sessions = 1;
+    cfg.compaction.enabled = true;
+    cfg.compaction.threshold_pct = 0;
+    cfg.compaction.context_tokens = Some(pool as usize);
+    cfg.compaction.tail_tokens = 64;
+    cfg.interface.auto_title = crate::shared::config::AutoTitleMode::Off;
+    let (dir, cmd_tx, mut evt_rx, handle, chat_id) = delegator_chat(
+        backend.clone() as Arc<dyn EngineBackend>,
+        cfg,
+        "call_subagent",
+    )
+    .await;
+    run_turn_capture_args(
+        &cmd_tx,
+        &mut evt_rx,
+        &format!(
+            "{}\nKeep this archive in mind.",
+            archive("history", paragraphs)
+        ),
+    )
+    .await;
+    run_turn_capture_args(
+        &cmd_tx,
+        &mut evt_rx,
+        &format!("{}\nAnything to add?", archive("tail", 4)),
+    )
+    .await;
+
+    let started = std::time::Instant::now();
+    cmd_tx.send(AppCommand::Compact).unwrap();
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    cmd_tx
+        .send(AppCommand::StopBackgroundTask {
+            kind: BackgroundKind::Compaction,
+        })
+        .unwrap();
+    let stopped_at = std::time::Instant::now();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    let (mut notice, mut compacted) = (None, false);
+    while notice.is_none() && std::time::Instant::now() < deadline {
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        match tokio::time::timeout(left, evt_rx.recv()).await {
+            Ok(Some(AppEvent::Notice(m))) => notice = Some(m),
+            Ok(Some(AppEvent::Compacted { .. })) => compacted = true,
+            Ok(Some(AppEvent::Error(m))) => panic!("the stop reported an error: {m}"),
+            Ok(Some(_)) => {}
+            _ => break,
+        }
+    }
+    let notice = notice.expect("the stopped roll answered with a notice");
+    eprintln!(
+        "stopped {:.1} s after /compact; the notice {:.2} s after the stop: {notice}",
+        (stopped_at - started).as_secs_f64(),
+        stopped_at.elapsed().as_secs_f64()
+    );
+    assert!(!compacted, "nothing was folded by the stopped roll");
+    assert_eq!(
+        backend
+            .max_in_flight
+            .load(std::sync::atomic::Ordering::SeqCst),
+        1
+    );
+
+    let again = std::time::Instant::now();
+    cmd_tx.send(AppCommand::Compact).unwrap();
+    let done = tokio::time::timeout(
+        std::time::Duration::from_secs(300),
+        wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Compacted { .. })),
+    )
+    .await
+    .ok()
+    .flatten();
+    eprintln!(
+        "the second roll: {:?} ({:.1} s)",
+        done.as_ref().map(|_| "compacted"),
+        again.elapsed().as_secs_f64()
+    );
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+    assert!(done.is_some(), "the next /compact completed");
+    let chat = Storage::open(Paths::with_root(dir.path()))
+        .unwrap()
+        .json()
+        .load_chat(chat_id)
+        .unwrap()
+        .unwrap();
+    assert!(
+        chat.compaction.is_some(),
+        "the second roll's summary landed"
+    );
+}
+
 /// The background run's live proof (docs/research/background-subagents.md
 /// §7): the parent is told to have a planted file read in the background and
 /// to answer an unrelated question at once; the turn lands with a

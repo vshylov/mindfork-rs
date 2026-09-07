@@ -16,6 +16,13 @@ split by subsystem.
 
 ### Added
 
+- **Stop the app's own background task.** On the tasks screen (`F7`) `F6`
+  now also stops one of the app's own tasks — a reflection, a consolidation,
+  a history compaction — when its row says *running* or *waiting*, not only
+  a background run. The task lands as cancelled: nothing it already wrote is
+  undone, it is not counted as a failure, and the next scheduled one runs as
+  usual; a `/compact` you asked for answers with a short notice.
+
 - **A tasks screen.** `F7` (or `/tasks`) shows everything the app is doing
   in the background on one screen: every sub-agent and dialogue run across
   all your chats — the ones running, with the round and tool they are in and

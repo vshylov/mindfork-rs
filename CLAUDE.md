@@ -171,8 +171,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-07, version 0.9.8)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2894 unit tests
-green, 143 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **2903 unit tests
+green, 144 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -183,6 +183,17 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 `tools/doc_index_check.py`. A new track adds a line; a line that has stopped
 being recent is dropped, not shortened.
 
+- **Stopping a silent task from the tasks screen** — `F6` on a task row
+  that reads *running* or *waiting* stops it: the slot's token is cancelled
+  and the task lands as a **third outcome**, `BgOutcome::Cancelled`, which
+  clears the slot and touches neither the failure streak nor the spawn-time
+  watermark and counters (the window is skipped, as on a failure); a
+  `/compact` the user typed answers with one notice, an automatic roll stops
+  quietly and is planned again at the next landing. What was missing was
+  the reading, not the mechanism: the loops landed a cancelled task as `Ok`
+  and the roll as a timeout, since only `Quit` could reach those paths
+  ([docs/research/stop-silent-task.md](docs/research/stop-silent-task.md),
+  spec §11.10, [docs/journal/ui-screens.md](docs/journal/ui-screens.md)).
 - **The silent stream yields to the turn — preemption on the budget** —
   an interactive stream (a turn's round, a run's, a dialogue's line) that
   does not fit beside the app's own open request no longer waits for it:
@@ -406,17 +417,6 @@ being recent is dropped, not shortened.
   real cloud keys
   ([docs/research/continue-generation.md](docs/research/continue-generation.md),
   spec §6.4, [docs/journal/engine.md](docs/journal/engine.md)).
-- **`Theme::Auto` actually follows the terminal** — it claimed to "follow the
-  system setting" and detected nothing, so code blocks and the *selection
-  backdrop* (which `keycap_bg` turns out to drive app-wide) were dark on a light
-  terminal; now OSC 11 asks the terminal at startup, measured across six hosts —
-  everything but legacy conhost answers — tmux included, and it alone with BEL
-  where the rest use ST though asked with BEL — and
-  JupyterLab takes 382 ms cold, which is why the query is emitted before storage
-  opens and collected once the UI is up
-  ([docs/terminal-background-detection.md](docs/terminal-background-detection.md),
-  [docs/research/auto-theme-detection.md](docs/research/auto-theme-detection.md),
-  spec §11.6).
 
 For what exists and how it works, read architecture.md and spec.md — they are
 the source of truth for the current state. For how any of it came to be, and
