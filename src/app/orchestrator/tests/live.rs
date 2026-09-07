@@ -4948,6 +4948,73 @@ fn archive(tag: &str, paragraphs: usize) -> String {
         .join("\n")
 }
 
+/// The delegator's chat, as the pool smokes open it: the orchestrator on
+/// `cfg` over `backend`, the server's slot count waited for (external mode's
+/// pool rule needs it in hand), an English "Delegator" profile with `tool`
+/// enabled, and a fresh chat on that profile. Returns the orchestrator's
+/// handles and the chat's id.
+async fn delegator_chat(
+    backend: Arc<dyn EngineBackend>,
+    cfg: AppConfig,
+    tool: &str,
+) -> (
+    tempfile::TempDir,
+    UnboundedSender<AppCommand>,
+    UnboundedReceiver<AppEvent>,
+    tokio::task::JoinHandle<()>,
+    Uuid,
+) {
+    let (dir, cmd_tx, mut evt_rx, handle) = spawn_orch_cfg(Some(backend), cfg);
+    let reported = tokio::time::timeout(
+        std::time::Duration::from_secs(20),
+        wait_for(&mut evt_rx, |e| matches!(e, AppEvent::EngineSlots(Some(_)))),
+    )
+    .await
+    .ok()
+    .flatten();
+    eprintln!("slots reported to the orchestrator: {reported:?}");
+
+    cmd_tx
+        .send(AppCommand::CreateProfile {
+            name: "Delegator".into(),
+            system_message: "You coordinate readers.".into(),
+        })
+        .unwrap();
+    let pl = wait_for(
+        &mut evt_rx,
+        |e| matches!(e, AppEvent::ProfileList(v) if v.len() >= 2),
+    )
+    .await
+    .unwrap();
+    let pid = match pl {
+        AppEvent::ProfileList(v) => v.last().unwrap().id,
+        _ => unreachable!(),
+    };
+    cmd_tx
+        .send(AppCommand::UpdateProfile {
+            id: pid,
+            edit: Box::new(ProfileEdit {
+                language: Some(crate::shared::i18n::Lang::En),
+                enabled_tools: Some(vec![tool.to_string()]),
+                ..Default::default()
+            }),
+        })
+        .unwrap();
+    cmd_tx
+        .send(AppCommand::NewChat {
+            profile_id: Some(pid),
+        })
+        .unwrap();
+    let chat_id = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .and_then(|e| match e {
+            AppEvent::ChatActivated { id, .. } => Some(id),
+            _ => None,
+        })
+        .unwrap();
+    (dir, cmd_tx, evt_rx, handle, chat_id)
+}
+
 /// One arm of the admission smoke, sized to the pool the server reports.
 struct AdmissionArm {
     /// How many readers the parent delegates in its one reply.
@@ -5050,57 +5117,12 @@ async fn admission_smoke(arm: AdmissionArm) -> Option<AdmissionResult> {
     cfg.compaction.context_tokens = Some(belief as usize);
     cfg.compaction.enabled = false;
     cfg.interface.auto_title = crate::shared::config::AutoTitleMode::Off;
-    let (dir, cmd_tx, mut evt_rx, handle) =
-        spawn_orch_cfg(Some(backend.clone() as Arc<dyn EngineBackend>), cfg);
-
-    // External mode's pool rule needs the server's slot count in hand.
-    let reported = tokio::time::timeout(
-        std::time::Duration::from_secs(20),
-        wait_for(&mut evt_rx, |e| matches!(e, AppEvent::EngineSlots(Some(_)))),
+    let (dir, cmd_tx, mut evt_rx, handle, chat_id) = delegator_chat(
+        backend.clone() as Arc<dyn EngineBackend>,
+        cfg,
+        "call_subagent",
     )
-    .await
-    .ok()
-    .flatten();
-    eprintln!("slots reported to the orchestrator: {reported:?}");
-
-    cmd_tx
-        .send(AppCommand::CreateProfile {
-            name: "Delegator".into(),
-            system_message: "You coordinate readers.".into(),
-        })
-        .unwrap();
-    let pl = wait_for(
-        &mut evt_rx,
-        |e| matches!(e, AppEvent::ProfileList(v) if v.len() >= 2),
-    )
-    .await
-    .unwrap();
-    let pid = match pl {
-        AppEvent::ProfileList(v) => v.last().unwrap().id,
-        _ => unreachable!(),
-    };
-    cmd_tx
-        .send(AppCommand::UpdateProfile {
-            id: pid,
-            edit: Box::new(ProfileEdit {
-                language: Some(crate::shared::i18n::Lang::En),
-                enabled_tools: Some(vec!["call_subagent".to_string()]),
-                ..Default::default()
-            }),
-        })
-        .unwrap();
-    cmd_tx
-        .send(AppCommand::NewChat {
-            profile_id: Some(pid),
-        })
-        .unwrap();
-    let chat_id = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
-        .await
-        .and_then(|e| match e {
-            AppEvent::ChatActivated { id, .. } => Some(id),
-            _ => None,
-        })
-        .unwrap();
+    .await;
 
     let started = std::time::Instant::now();
     let (reply, calls) =
@@ -5361,55 +5383,12 @@ async fn silent_roll_smoke(arm: SilentArm) -> Option<SilentResult> {
     // A short tail, so the roll folds the seeded history and nothing less.
     cfg.compaction.tail_tokens = 64;
     cfg.interface.auto_title = crate::shared::config::AutoTitleMode::Off;
-    let (dir, cmd_tx, mut evt_rx, handle) =
-        spawn_orch_cfg(Some(backend.clone() as Arc<dyn EngineBackend>), cfg);
-    let reported = tokio::time::timeout(
-        std::time::Duration::from_secs(20),
-        wait_for(&mut evt_rx, |e| matches!(e, AppEvent::EngineSlots(Some(_)))),
+    let (dir, cmd_tx, mut evt_rx, handle, chat_id) = delegator_chat(
+        backend.clone() as Arc<dyn EngineBackend>,
+        cfg,
+        "start_subagent",
     )
-    .await
-    .ok()
-    .flatten();
-    eprintln!("slots reported to the orchestrator: {reported:?}");
-
-    cmd_tx
-        .send(AppCommand::CreateProfile {
-            name: "Delegator".into(),
-            system_message: "You coordinate readers.".into(),
-        })
-        .unwrap();
-    let pl = wait_for(
-        &mut evt_rx,
-        |e| matches!(e, AppEvent::ProfileList(v) if v.len() >= 2),
-    )
-    .await
-    .unwrap();
-    let pid = match pl {
-        AppEvent::ProfileList(v) => v.last().unwrap().id,
-        _ => unreachable!(),
-    };
-    cmd_tx
-        .send(AppCommand::UpdateProfile {
-            id: pid,
-            edit: Box::new(ProfileEdit {
-                language: Some(crate::shared::i18n::Lang::En),
-                enabled_tools: Some(vec!["start_subagent".to_string()]),
-                ..Default::default()
-            }),
-        })
-        .unwrap();
-    cmd_tx
-        .send(AppCommand::NewChat {
-            profile_id: Some(pid),
-        })
-        .unwrap();
-    let chat_id = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
-        .await
-        .and_then(|e| match e {
-            AppEvent::ChatActivated { id, .. } => Some(id),
-            _ => None,
-        })
-        .unwrap();
+    .await;
 
     // The history the roll will fold: the user's own archive, scripted "Noted.".
     run_turn_capture_args(
