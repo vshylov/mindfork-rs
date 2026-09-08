@@ -175,7 +175,9 @@ split by subsystem.
   already written something keeps its place, so nothing is written twice;
   one that had only looked — read its self-model, searched the notes —
   gives the window back. Quitting the app while one runs follows the same
-  rule: the next launch picks the task up where it was interrupted.
+  rule: the next launch picks the task up where it was interrupted — and
+  if the task was in the middle of a tool call, the app waits up to two
+  seconds for it to finish so the decision is exact.
 
 - **A CPU-only host's server now runs a smaller batch.** With *GPU layers*
   at 0 the app launches `llama-server` with `-b 256 -ub 256`. The server

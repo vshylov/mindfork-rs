@@ -171,7 +171,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-08, version 0.9.8)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2941 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **2946 unit tests
 green, 146 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
@@ -183,6 +183,20 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 `tools/doc_index_check.py`. A new track adds a line; a line that has stopped
 being recent is dropped, not shortened.
 
+- **The quit waits for the landing — a stop's own path decides, the state
+  rule only past a cap** — at a quit a silent task caught mid-tools kept
+  its window because its round's write, if any, had not reported; but a
+  cancelled loop lands on its own, and fast — its lane wait returns at
+  once, its stream ends at the next chunk, its tools finish — on the very
+  channel `run` polls. Now the `Quit` arm only cancels (`cancel_bg_all`),
+  `run` listens on `bg_done_rx` a little longer (`settle_silent_tasks`,
+  each landing through `handle_bg_done` — the stop's path, `consumed` from
+  the loop — while any slot is active, 2 s in all), then
+  `refund_unlanded` decides whatever has not landed by its state, then
+  the flush; a token check before the stream keeps a cancelled loop from
+  asking the engine once more where it has no session budget
+  ([docs/research/quit-waits-for-the-landing.md](docs/research/quit-waits-for-the-landing.md),
+  spec §17.6, §11.10, [docs/journal/engine.md](docs/journal/engine.md)).
 - **"Acted on" by effect — a silent task's window is consumed by a write,
   not by a round** — the refund rule's criterion had been "a round of the
   task's tools was about to run", coarse for a reflection whose first
@@ -396,21 +410,6 @@ being recent is dropped, not shortened.
   ([docs/research/parallel-subagents.md](docs/research/parallel-subagents.md),
   [ADR 0010](docs/decisions/0010-subagent-nested-turn.md) amended, spec
   §9.3.2, [docs/journal/tools.md](docs/journal/tools.md)).
-- **The web tools became opt-in, and the last unhashed download got a hash** —
-  writing a privacy policy for the code-signing track meant inventorying every
-  outbound connection rather than trusting SECURITY.md's summary, and the
-  summary lost twice: `web_search` shipped **on** although the engines it
-  queries are picked by the app and the query is built from the conversation
-  (every other address in the app is one the user chose), and
-  `TAVILY_API_KEY` was assumed by default, so a key exported for an unrelated
-  tool routed the model's searches and spent its credits. Both are decisions
-  the user makes now. `python.webc`, fetched by `wasmer` and therefore
-  coverable by no lock-list row, is verified against the digest that had sat
-  quoted in a comment since August — re-verified live against a fresh registry
-  download. Signing, donations and the policy itself:
-  [docs/research/code-signing.md](docs/research/code-signing.md),
-  [PRIVACY.md](PRIVACY.md),
-  [docs/journal/tools.md](docs/journal/tools.md).
 
 For what exists and how it works, read architecture.md and spec.md — they are
 the source of truth for the current state. For how any of it came to be, and

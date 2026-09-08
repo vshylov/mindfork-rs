@@ -204,7 +204,10 @@ stack (Qwen 3.6 27B, four slots over 16384): `stop_silent_task_e2e_live`,
 
 - **A quit that waits for a running round's reads** to settle to `Idle`
   before deciding — a few hundred milliseconds at the door for a rare
-  case.
+  case — **done** as its own track
+  ([quit-waits-for-the-landing.md](quit-waits-for-the-landing.md)): the
+  quit listens for the cancelled task's own landing, and the stop's path
+  decides.
 - **Reporting on the main loop's side** (a turn's own writes) — no consumer.
 
 ## 8. Documentation touch list (AGENTS.md §4)

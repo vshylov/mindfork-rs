@@ -9,8 +9,10 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
+use std::time::Duration;
 
 use chrono::{DateTime, Utc};
+use tokio::sync::mpsc::UnboundedReceiver;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -266,24 +268,62 @@ impl Orchestrator {
         }
     }
 
-    /// The `Quit` branch: cancels every running task in the family and gives
-    /// back the window of each one that had not yet acted on it — the same
-    /// rule a stop applies at the landing, read off the slot's state since a
-    /// quit has no landing (docs/research/quit-refunds-window.md §3.2): only
-    /// a task that is `Idle` — nothing written, no round of tools running —
-    /// is refunded (docs/research/acted-by-effect.md §3.2). The token is
-    /// cancelled **before** the state is read: a loop that stores `InTools`
-    /// after this read checks the token before its tools and starts none,
-    /// so a refunded window is never written into (§3.3). The exit flush
-    /// after the loop writes what `give_back` marked dirty.
-    pub(super) fn quit_bg(&mut self) {
+    /// The `Quit` branch's first step: cancels every running task in the
+    /// family and nothing else — the refunds stay on the slots for the
+    /// landings to decide (docs/research/quit-waits-for-the-landing.md
+    /// §3.1). The token is cancelled **before** any state is read: a loop
+    /// that stores `InTools` after that read checks the token before its
+    /// tools and starts none, so a refunded window is never written into
+    /// (docs/research/quit-refunds-window.md §3.3).
+    pub(super) fn cancel_bg_all(&self) {
+        for slot in self.bg.values() {
+            if let Some(token) = &slot.cancel {
+                token.cancel();
+            }
+        }
+    }
+
+    /// Whether any silent task's slot is still taken — a landing has not
+    /// cleared it.
+    fn any_bg_active(&self) -> bool {
+        self.bg.values().any(|s| s.cancel.is_some())
+    }
+
+    /// The `Quit` branch's second step, after `run`'s loop has broken:
+    /// listens on the tasks' outcome channel a little longer, so that every
+    /// cancelled loop's own landing — a wait returned, a stream ended, a
+    /// round of tools finished — decides its window through the very path a
+    /// stop takes (`handle_bg_done`, `consumed` from the loop). Bounded by
+    /// `cap` in all, and over as soon as no slot is active; a task that has
+    /// not landed by then is left to [`Self::refund_unlanded`]
+    /// (docs/research/quit-waits-for-the-landing.md §3.1).
+    pub(super) async fn settle_silent_tasks(
+        &mut self,
+        done_rx: &mut UnboundedReceiver<(BackgroundKind, BgOutcome)>,
+        cap: Duration,
+    ) {
+        let deadline = tokio::time::Instant::now() + cap;
+        while self.any_bg_active() {
+            let landed = tokio::time::timeout_at(deadline, done_rx.recv()).await;
+            match landed {
+                Ok(Some((kind, outcome))) => self.handle_bg_done(kind, outcome),
+                // The channel closed, or the cap ran out.
+                Ok(None) | Err(_) => break,
+            }
+        }
+    }
+
+    /// The `Quit` branch's last step: the window of every task that did not
+    /// land within the cap is decided by its state — `Idle` (nothing
+    /// written, no round of tools running) given back, `InTools` and
+    /// `Wrote` kept, since the round may be writing or has
+    /// (docs/research/acted-by-effect.md §3.2). The exit flush after this
+    /// writes what `give_back` marked dirty.
+    pub(super) fn refund_unlanded(&mut self) {
         let refunds: Vec<(BackgroundKind, Window)> = self
             .bg
             .iter_mut()
             .filter_map(|(kind, slot)| {
-                if let Some(token) = &slot.cancel {
-                    token.cancel();
-                }
                 let refund = slot.refund.take()?;
                 (refund.acted.get() == Acting::Idle).then_some((*kind, refund.window))
             })

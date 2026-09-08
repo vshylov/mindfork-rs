@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (45)
+## Entries (46)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -57,6 +57,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a stop gives the window back — the silent task returns at the next landing (done)
 - Post-M9: a quit gives the window back too — the fact the loop keeps in the open (done)
 - Post-M9: "acted on" by effect — a silent task's window is consumed by a write, not by a round (done)
+- Post-M9: the quit waits for the landing — a stop's own path decides, the state rule only past a cap (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -2900,3 +2901,67 @@ window being written); an `Err` not counting (the loop cannot know how far
 the tool got); keeping the round count beside the fact (no reader); marking
 only the seven writers in the loops' sets (the contract would lie for a
 later caller).
+
+### Post-M9: the quit waits for the landing — a stop's own path decides, the state rule only past a cap (done)
+
+**What.** The item the effect track recorded
+([docs/research/acted-by-effect.md](../research/acted-by-effect.md) §7):
+at a quit, a silent task whose round of tools was running (`InTools`)
+kept its window because the round's write, if any, had not reported —
+the conservative side of the rule, taken for a case a few hundred
+milliseconds wide, and exactly the round the effect track was about (a
+first round of reads interrupted while a recall's embedding is in
+flight). The design
+[docs/research/quit-waits-for-the-landing.md](../research/quit-waits-for-the-landing.md),
+every fork at its recommendation (the user's decision, 2026-09-08); no
+stage-0 probe.
+
+**The observation.** A cancelled loop lands on its own, and fast: its lane
+wait returns at once (`acquire_silent` selects on the token first), its
+stream ends at the next chunk, its tools finish and the next wait returns
+— and the landing arrives on `bg_done_rx`, the very channel `run` polls,
+carrying the exact fact. The quit did not have to *decide*; it had to
+listen a little longer before the exit flush and let the stop's own path
+decide.
+
+**How.** `quit_bg` became `cancel_bg_all` — every slot's token cancelled,
+the refunds left on the slots. `run`, once its `select!` loop has broken
+on the `Quit` arm and before `flush_saves`, calls
+`settle_silent_tasks(&mut bg_done_rx, QUIT_SETTLE)`: while any slot is
+active, `timeout_at(deadline, bg_done_rx.recv())`, each landing through
+`handle_bg_done` — `consumed` from the loop, `give_back` on `false`,
+nothing on `true`; over as soon as no slot is active, or at the cap.
+`QUIT_SETTLE` is **2 s** in all: a task not in its tools lands in
+milliseconds, a round of reads in tens, an embedding in hundreds on a GPU
+host; two seconds covers a CPU embedding and is still a quit. Then
+`refund_unlanded` — the old `quit_bg` minus the cancel — decides whatever
+has not landed by its state: `Idle` given back, `InTools` and `Wrote`
+kept. And `stream_round` checks the token before opening a stream, so a
+loop cancelled during its tools lands without a request even where the
+engine has no session budget (the lane wait already covers the pooled
+ones). The roll's channel is not drained: a cancelled roll has no window.
+
+**Tests**: +5 — `tests/silent.rs`, at the orchestrator level with a slow
+test tool registered through `extra_tools` + `rebuild_registry` and a loop
+calling it whose token and state sit on the reflection slot the way a
+spawn leaves them: a quit mid-**reads** (300 ms under a 2 s cap) waits
+for the landing and gives the window back, over in under 1.5 s and with
+no request after the cancel; mid-**write** keeps the advance; a reader
+that outlasts a 300 ms cap is decided by its state (`InTools`, kept) and
+the quit is over at the cap; a loop cancelled in its stream lands within
+milliseconds and is refunded; an unbudgeted loop cancelled before its
+stream sends no request. The quit-track tests through `run` keep their
+expectations under the new path. — **2946 unit tests green, 146
+`#[ignore]`**.
+
+**Live**: not required — the exit path. The LAN regression
+(`stop_silent_task_e2e_live`, `silent_roll_e2e_live`,
+`background_subagent_e2e_live`; Qwen 3.6 27B, four slots over 16384):
+3/3 in 37.9 s.
+
+**Rejected**: polling the `Acted` state until it leaves `InTools` and
+deciding by the state rule (a second decision path beside the landing's);
+a `Notify` in `Acted` (the same second path); an unbounded wait (a quit
+stays a quit); waiting only for `InTools` slots (the idle ones land at
+once, and one rule is simpler); no request guard (a cloud request ended
+at once still costs a connection).

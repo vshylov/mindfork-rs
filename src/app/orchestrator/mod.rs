@@ -398,6 +398,13 @@ pub async fn run(deps: OrchestratorDeps) {
             _ = sleep_until_opt(restart_deadline) => orch.flush_restarts(),
         }
     }
+    // The silent tasks were cancelled by the `Quit` arm; their landings —
+    // a cancelled loop lands on its own, and fast — decide their windows
+    // through the stop's own path, listened for a little longer here, and
+    // whatever has not landed by the cap is decided by its state
+    // (docs/research/quit-waits-for-the-landing.md §3.1).
+    orch.settle_silent_tasks(&mut bg_done_rx, QUIT_SETTLE).await;
+    orch.refund_unlanded();
     // Deferred restarts on exit are deliberately NOT applied: servers get torn
     // down via Drop/kill_on_drop anyway — no point bringing up a process right
     // before it's dropped.
@@ -409,6 +416,13 @@ pub async fn run(deps: OrchestratorDeps) {
 /// After that — stays quiet until the first success (counter reset).
 /// Observability without spam. See the "refinements" stage 5.
 pub(super) const BACKGROUND_FAILURE_ALERT: u32 = 3;
+
+/// How long a quit listens for the cancelled silent tasks' landings before
+/// deciding the rest by their state (docs/research/quit-waits-for-the-landing.md
+/// §3.1): a task not in its tools lands in milliseconds, a round of reads in
+/// tens, an embedding in hundreds on a GPU host — two seconds covers a CPU
+/// embedding and is still a quit.
+const QUIT_SETTLE: Duration = Duration::from_secs(2);
 
 /// Builds the tool registry from the configuration (`config.tools`).
 /// `sandbox_dir` — the Python sandbox directory (`data/sandbox/`, from
@@ -803,10 +817,11 @@ impl Orchestrator {
                 // Every background run lands `cancelled` from its mirror
                 // before the exit flush (research fork F7).
                 self.stop_all_background_runs();
-                // Every silent task is cancelled, and the window of one that
-                // had not yet acted on it is given back before the flush
-                // (docs/research/quit-refunds-window.md §3.2).
-                self.quit_bg();
+                // Every silent task is cancelled; their windows are decided
+                // by their landings, which `run` listens for a little longer
+                // before the flush (docs/research/quit-waits-for-the-landing.md
+                // §3.1).
+                self.cancel_bg_all();
                 self.mcp.shutdown();
                 return true;
             }
