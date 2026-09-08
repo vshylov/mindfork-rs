@@ -259,12 +259,7 @@ async fn run_rounds(
             Streamed::Cancelled => return Ok(RoundsEnd::Cancelled { rounds: round }),
             Streamed::TimedOut => return Ok(RoundsEnd::TimedOut),
         };
-        if let Some(u) = usage {
-            if let Some(budget) = ctx.sessions.as_deref() {
-                budget.record_usage(estimate, u.prompt_tokens as u64);
-            }
-            last_exact = u.prompt_tokens as u64 + u.completion_tokens as u64;
-        }
+        record_round_usage(ctx, estimate, usage, &mut last_exact);
         // A stream ended by the task's own token (a displacement returned
         // `Streamed::Displaced` above): stopped, whatever it had produced.
         if reason == FinishReason::Cancelled {
@@ -294,6 +289,24 @@ async fn run_rounds(
         }
     }
     Ok(RoundsEnd::Done)
+}
+
+/// A round's exact `usage`, when the server sent one: calibrates the budget's
+/// estimate against it and becomes the next round's floor (`last_exact`).
+/// Its own function so the loop reads as the sequence of decisions it is
+/// (the analyzer's complexity bar, docs/lessons.md §2).
+fn record_round_usage(
+    ctx: &ToolContext,
+    estimate: u64,
+    usage: Option<crate::shared::api::contract::TokenUsage>,
+    last_exact: &mut u64,
+) {
+    if let Some(u) = usage {
+        if let Some(budget) = ctx.sessions.as_deref() {
+            budget.record_usage(estimate, u.prompt_tokens as u64);
+        }
+        *last_exact = u.prompt_tokens as u64 + u.completion_tokens as u64;
+    }
 }
 
 /// One round's stream: the lane's reservation (a wait outside the clock),
