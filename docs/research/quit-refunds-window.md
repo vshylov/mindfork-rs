@@ -1,8 +1,9 @@
 # A quit gives the window back too — the fact the loop keeps in the open
 
-> **Status:** proposed (2026-09-08) — the forks in §5 await the user's
-> decision; no stage-0 probe (nothing about a model's behaviour is in
-> question). The item the refund track recorded and did not take
+> **Status:** implemented (2026-09-08) — every fork at its recommendation
+> (the user's decision, 2026-09-08); the regression run in §6.1; no stage-0
+> probe (nothing about a model's behaviour is in question).
+> The item the refund track recorded and did not take
 > ([stop-refunds-window.md](stop-refunds-window.md) §7, its fork F6b): a
 > stop gives a silent task's window back when no round of its tools ran,
 > but a **quit** is not a stop — `cancel_all_bg` ends the tasks, nothing
@@ -175,6 +176,19 @@ tasks screen and the commands.
   call.
 - **Live: not required** — the loop gains a store on one line and a check
   before its tools; the LAN regression trio is run once as the habit.
+
+### 6.1 The run (2026-09-08)
+
+The unit suite: **2937 green, 146 `#[ignore]`** (+5: three in
+`tests/silent.rs` — the flag's two states, and two quits through the
+orchestrator's own loop with the chat read back from disk — two in
+`tests/reflection.rs`). The `Quit` arm was tested through `run`, since the
+`spawn_english` harness can enable reflection on its profile. The guard's
+race itself is reasoned, not timed: the recorder cannot end a stream
+`ToolCalls` after its token fired, so no test can place a cancel between a
+stream's end and the loop's store. The regression on the LAN stack (Qwen
+3.6 27B, four slots over 16384): `stop_silent_task_e2e_live`,
+`silent_roll_e2e_live`, `background_subagent_e2e_live` — **3/3 in 40.1 s**.
 
 ## 7. Not in this track
 

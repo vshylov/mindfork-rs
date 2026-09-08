@@ -191,6 +191,7 @@ impl Orchestrator {
         };
 
         // Spawn the task and set the slot (the "running" flag + a quiet status-bar indicator).
+        let acted = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         tool_loop::spawn_silent_loop(tool_loop::SilentLoop {
             backend,
             registry: self.registry.clone(),
@@ -204,6 +205,7 @@ impl Orchestrator {
             profile_id,
             kind: BackgroundKind::SelfConsolidation,
             done_tx: self.bg_done_tx.clone(),
+            acted: acted.clone(),
             // A2: summary↔observation semantics (embedding summary paragraphs on the fly in
             // the task). See docs/history/self-model-consolidation.md §A2.
             summary_semantics: Some(tool_loop::SummarySemantics {
@@ -213,7 +215,11 @@ impl Orchestrator {
                 loc,
             }),
         });
-        self.begin_bg(BackgroundKind::SelfConsolidation, cancel, window);
+        self.begin_bg(
+            BackgroundKind::SelfConsolidation,
+            cancel,
+            window.map(|window| super::background::Refund { window, acted }),
+        );
     }
 }
 

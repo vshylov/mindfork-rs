@@ -7,6 +7,9 @@
 //! roadmap — architecture.md §9.9) doesn't touch the `run()`/`Quit` scaffolding.
 //! See docs/history/refactoring-solid.md §4.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use chrono::{DateTime, Utc};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -49,6 +52,17 @@ pub(super) enum Window {
     Counter { chat: Uuid, count: u32 },
 }
 
+/// What a stop or a quit can give back, and whether it still may: the
+/// [`Window`] the spawn advanced, and the flag the loop sets at the very
+/// line it counts a round — "a round of the task's tools is about to run"
+/// — so the fact is readable outside the loop at any moment, a quit's
+/// included, and not only from the outcome the loop sends last
+/// (docs/research/quit-refunds-window.md §3.1).
+pub(super) struct Refund {
+    pub window: Window,
+    pub acted: Arc<AtomicBool>,
+}
+
 /// A silent background task's slot: the active-run token + a failure streak. The streak
 /// outlives a single run (it survives completions) — hence a slot, not a separate task.
 #[derive(Default)]
@@ -58,9 +72,10 @@ pub(super) struct BgSlot {
     /// The count of consecutive failures; at the [`BACKGROUND_FAILURE_ALERT`](super::BACKGROUND_FAILURE_ALERT)
     /// threshold we show a UI error once, then stay quiet until the first success.
     failures: u32,
-    /// What the running task's spawn advanced ([`Window`]); taken at the
-    /// landing, given back on a stop before the first round.
-    window: Option<Window>,
+    /// What the running task's spawn advanced, with the loop's flag
+    /// ([`Refund`]); taken at the landing, given back on a stop — or a quit
+    /// — before the first round of tools.
+    refund: Option<Refund>,
 }
 
 impl Orchestrator {
@@ -70,19 +85,19 @@ impl Orchestrator {
     }
 
     /// Records a run: the slot is marked active (`cancel = Some`), what the
-    /// spawn advanced is kept for a stop to give back (`window`; `None` for
-    /// the roll, which has nothing to refund), and a quiet "running …"
-    /// indicator goes into the status bar. Called by the spawn tails of
-    /// `maybe_auto_reflect`/`maybe_auto_consolidate`/`spawn_compact`.
+    /// spawn advanced is kept for a stop or a quit to give back (`refund`;
+    /// `None` for the roll, which has nothing to refund), and a quiet
+    /// "running …" indicator goes into the status bar. Called by the spawn
+    /// tails of `maybe_auto_reflect`/`maybe_auto_consolidate`/`spawn_compact`.
     pub(super) fn begin_bg(
         &mut self,
         kind: BackgroundKind,
         cancel: CancellationToken,
-        window: Option<Window>,
+        refund: Option<Refund>,
     ) {
         let slot = self.bg.entry(kind).or_default();
         slot.cancel = Some(cancel);
-        slot.window = window;
+        slot.refund = refund;
         let _ = self
             .evt_tx
             .send(AppEvent::BackgroundTask { kind, active: true });
@@ -111,7 +126,7 @@ impl Orchestrator {
         let (alert, window) = {
             let slot = self.bg.entry(kind).or_default();
             slot.cancel = None;
-            let window = slot.window.take();
+            let window = slot.refund.take().map(|r| r.window);
             let alert = match &outcome {
                 BgOutcome::Done => {
                     slot.failures = 0;
@@ -193,12 +208,28 @@ impl Orchestrator {
         }
     }
 
-    /// Cancels every running task in the family (the `Quit` branch).
-    pub(super) fn cancel_all_bg(&self) {
-        for slot in self.bg.values() {
-            if let Some(token) = &slot.cancel {
-                token.cancel();
-            }
+    /// The `Quit` branch: cancels every running task in the family and gives
+    /// back the window of each one that had not yet acted on it — the same
+    /// rule a stop applies at the landing, read off the slot's flag since a
+    /// quit has no landing (docs/research/quit-refunds-window.md §3.2). The
+    /// token is cancelled **before** the flag is read: a loop that stores
+    /// its flag after this read checks the token before its tools and
+    /// starts none, so a refunded window is never written into (§3.3). The
+    /// exit flush after the loop writes what `give_back` marked dirty.
+    pub(super) fn quit_bg(&mut self) {
+        let refunds: Vec<(BackgroundKind, Window)> = self
+            .bg
+            .iter_mut()
+            .filter_map(|(kind, slot)| {
+                if let Some(token) = &slot.cancel {
+                    token.cancel();
+                }
+                let refund = slot.refund.take()?;
+                (!refund.acted.load(Ordering::SeqCst)).then_some((*kind, refund.window))
+            })
+            .collect();
+        for (kind, window) in refunds {
+            self.give_back(kind, window);
         }
     }
 

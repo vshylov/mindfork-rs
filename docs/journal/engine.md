@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (43)
+## Entries (44)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -55,6 +55,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the silent stream yields to the turn — preemption on the session budget (done)
 - Post-M9: the batch a cancel waits for — `-b` on the CPU build's launch line (done)
 - Post-M9: a stop gives the window back — the silent task returns at the next landing (done)
+- Post-M9: a quit gives the window back too — the fact the loop keeps in the open (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -2764,3 +2765,66 @@ carrying the window through the loop (the loop would learn about chats'
 watermarks); re-planning a stopped manual `/compact`; a note at the stop
 saying the task returns (the feed is not a log); refunding on `Quit` (the
 loop's fact is unavailable there — recorded as a later item).
+
+### Post-M9: a quit gives the window back too — the fact the loop keeps in the open (done)
+
+**What.** The refund track's fork F6b
+([docs/research/stop-refunds-window.md](../research/stop-refunds-window.md)
+§7): a stop gives a silent task's window back when no round of its tools
+ran, but a quit cancelled every slot's token and returned — nothing landed,
+the spawn-time advance stayed, and a restart mid-reflection skipped the
+window as every stop used to. The design
+[docs/research/quit-refunds-window.md](../research/quit-refunds-window.md),
+every fork at its recommendation (the user's decision, 2026-09-08); no
+stage-0 probe.
+
+**The missing piece was a fact, not a decision.** "A round of the task's
+tools ran" was `run_rounds`' own `round`, returned in
+`RoundsEnd::Cancelled { rounds }` and read at the landing; a quit has no
+landing, and waiting for one at the door would hold the exit for a round of
+tools while the outcome channel's reader had already returned.
+
+**How.** The spawn tail creates `acted: Arc<AtomicBool>`, hands a clone to
+the loop (`SilentLoop.acted` → `run_rounds`) and keeps the original on the
+slot beside the window — `Refund { window, acted }`, `begin_bg(kind, cancel,
+Option<Refund>)`, the roll passing `None` as before. The loop stores `true`
+at the very line it increments `round` — "a round of tools is about to run"
+— so the flag and `rounds > 0` are one fact from one line; the landing keeps
+reading the outcome's `consumed`, the quit reads the flag.
+`cancel_all_bg(&self)` became `quit_bg(&mut self)`: every slot's token
+cancelled, then every window whose flag is unset given back through the
+same `give_back` a stop uses, before `run`'s exit flush writes the restored
+watermark. The one race — the orchestrator reading `false` between the end
+of a `ToolCalls` stream and the loop's store, then the tools writing into a
+refunded window — is closed by a token check placed **after** the store:
+the quit cancels before it reads, so a loop that stored after that read
+sees the cancel at its check and starts no tools (`Cancelled { rounds }`
+with the round counted — conservative, and consistent with the flag). On
+its own the check also stops a task from running a round nobody will read
+when a stop lands in a stream's last chunks.
+
+**Tests**: +5 — `tests/silent.rs` (a loop whose first round calls a tool
+has the flag set once its second stream opens, a loop stopped in its first
+stream has it unset; through the orchestrator's own loop: a quit
+mid-reflection leaves the chat on disk with the pre-spawn watermark and
+stamp, a quit after a tool-calling round keeps them),
+`tests/reflection.rs` (`quit_bg` after a spawn whose advance was already
+flushed: the watermark and stamp back, the chat dirty, and after
+`flush_saves` the file reads `None`; a slot whose flag is set keeps its
+counter and the roll's slot is only cancelled) — **2937 unit tests green,
+146 `#[ignore]`**. The guard's race itself is reasoned, not timed: the
+recorder cannot end a stream `ToolCalls` after its token fired.
+
+**Live**: not required — the loop gained a store on one line and a check
+before its tools. The LAN regression (`stop_silent_task_e2e_live`,
+`silent_roll_e2e_live`, `background_subagent_e2e_live`; Qwen 3.6 27B, four
+slots over 16384): 3/3 in 40.1 s.
+
+**Rejected**: refunding blind at a quit (a read window written twice at the
+next launch — the defect the criterion exists for); waiting at the quit for
+every task to land (the door held for a round of tools, the outcome
+channel read by a loop that has returned); reflection's window only (one
+path; a counter's refund at a quit is moot and harmless); deriving the
+landing's `consumed` from the flag and dropping `rounds` (the last track's
+shape stands, both set at one line); no guard before the tools (a race of
+microseconds whose cost is one duplicate).

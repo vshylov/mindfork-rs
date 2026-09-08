@@ -171,7 +171,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-08, version 0.9.8)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2932 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **2937 unit tests
 green, 146 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
@@ -183,6 +183,19 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 `tools/doc_index_check.py`. A new track adds a line; a line that has stopped
 being recent is dropped, not shortened.
 
+- **A quit gives the window back too — the fact the loop keeps in the
+  open** — the refund track's fork F6b: a quit cancelled every silent
+  task and returned, nothing landed, and the spawn-time advance stayed, so
+  a restart mid-reflection skipped the window. The missing piece was a
+  fact, not a decision: "a round of my tools is about to run" was read
+  only from the outcome. Now the loop stores it on a flag the spawn tail
+  keeps beside the window (`Refund { window, acted }`, `SilentLoop.acted`)
+  at the very line it counts a round, and `quit_bg` cancels every token
+  and then gives back every window whose flag is unset, before the exit
+  flush; a token check right after the store means a cancelled loop
+  starts no tools into a window already given back
+  ([docs/research/quit-refunds-window.md](docs/research/quit-refunds-window.md),
+  spec §17.6, §11.10, [docs/journal/engine.md](docs/journal/engine.md)).
 - **A stop gives the window back — the silent task returns at the next
   landing** — the stop track's fork F4b, taken on its premise's other
   reading: a stop postpones. Reflection advances its watermark and stamp
@@ -400,20 +413,6 @@ being recent is dropped, not shortened.
   advertised everywhere
   ([docs/history/status-hints-unified.md](docs/history/status-hints-unified.md),
   spec §11.1, [docs/journal/ui-screens.md](docs/journal/ui-screens.md)).
-- **A third model on the live gate: gpt-oss-120b, split across two files** —
-  the gate had only ever run single-file models, so `shared/gguf.rs` (which
-  exists to strip a `-00001-of-00002` tail off a name) had met nothing but
-  fixtures; now `--chat-model gpt-oss-120b` deploys 63.39 GB of Q8_0 out of a
-  **1010 GB** repository — the undocumented `variant` field is what keeps the
-  other 946 GB on the Hub — onto an H200 the model's own record names, and the
-  live chain reports `gpt-oss-120b-Q8_0` from `/v1/models` through the header
-  to the `llm_history` record. Text-only and split are **declarations derived
-  from what was deployed**, never flags, so the three vision smokes skip in
-  writing and a new smoke checks a part number never reaches a header. On this
-  platform the H100 is neither available (quota 0) nor cheap ($10/hr against
-  the H200's $5)
-  ([docs/research/e2e-gpt-oss-120b.md](docs/research/e2e-gpt-oss-120b.md),
-  [docs/journal/ci.md](docs/journal/ci.md)).
 
 For what exists and how it works, read architecture.md and spec.md — they are
 the source of truth for the current state. For how any of it came to be, and
