@@ -279,6 +279,15 @@ split by subsystem.
 
 ### Fixed
 
+- **The conversation's token estimate counts the tool schemas.** The `~`
+  figure shown before the server's exact count, and the size the app
+  reserves for a request beside others on a shared context, had counted
+  the messages and not the tool schemas — the largest part of a request
+  with tools: a fresh chat read about 85 tokens where the server counted
+  4358. Both now count the schemas as they are sent; the estimate lands a
+  tenth over the exact count instead of a fiftieth under, and a
+  compression roll — which carries no tools — is reserved at its own size
+  rather than nine times it.
 - **A compaction or a reflection beside a running reply could end both.** At
   the default of one session a local `llama-server` runs four slots over
   one context pool, and the app's background requests landed on them

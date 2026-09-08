@@ -1633,3 +1633,43 @@ mod slow_prefill {
         assert!(second.is_empty(), "the same server, told once: {second:?}");
     }
 }
+
+/// The estimate counts the tool schemas as the wire sends them
+/// (docs/research/roll-usage-calibration.md §3.1): one part at the text's
+/// bytes-per-token, plus the per-message overhead once for the block; a
+/// request without tools estimates as before.
+#[test]
+fn the_estimate_counts_the_tool_schemas() {
+    use crate::shared::api::contract::ToolSchema;
+    let bare = crate::shared::api::ChatRequest {
+        continue_final: false,
+        system: Some("sys".into()),
+        messages: vec![crate::shared::api::ApiMessage::user("hi")],
+        sampling: Default::default(),
+        tools: Vec::new(),
+    };
+    let schema = ToolSchema {
+        name: "note_save".into(),
+        description: "Saves a note.".into(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": { "text": { "type": "string" } }
+        }),
+    };
+    let with = crate::shared::api::ChatRequest {
+        tools: vec![schema],
+        ..bare.clone()
+    };
+    let json = crate::shared::api::openai::tools_json(&with.tools);
+    assert!(
+        json.starts_with(r#"[{"type":"function","function":{"name":"note_save""#),
+        "the wire's own wrapper: {json}"
+    );
+    let bare_estimate = super::super::generation::estimate_prompt_tokens(&bare);
+    let with_estimate = super::super::generation::estimate_prompt_tokens(&with);
+    assert_eq!(
+        with_estimate - bare_estimate,
+        (json.len() as u64).div_ceil(4) + 4,
+        "the block's bytes over four, plus one message overhead"
+    );
+}

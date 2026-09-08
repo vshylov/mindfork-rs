@@ -629,9 +629,12 @@ src/
    ├─ server.rs            ServerStatus (server status for the UI)
    ├─ session_budget.rs    `SessionBudget` — the app's request streams: the permit
    │                       count of `sessions` and, over a shared KV pool, a token
-   │                       reservation per stream (calibrated prompt estimate +
-   │                       reply cap) that waits for room rather than overflowing
-   │                       the pool; `price`/`acquire`/`record_usage`, plus the
+   │                       reservation per stream (calibrated prompt estimate —
+   │                       the tool schemas counted as the wire sends them,
+   │                       `openai::tools_json`; roll-usage-calibration §3.1 —
+   │                       + reply cap) that waits for room rather than overflowing
+   │                       the pool; `price`/`acquire`/`record_usage` (recorded by
+   │                       the turn's and the loops' rounds and by the roll), plus the
    │                       **silent lane** (`acquire_silent`: one permit for the
    │                       app's own background requests over the same pool sum,
    │                       labelled so the tasks screen can say which task waits,

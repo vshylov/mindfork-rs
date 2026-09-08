@@ -1238,7 +1238,10 @@ async fn the_collect_keeps_the_figure_only_off_a_stream_that_ended() {
         .await
         .unwrap();
     assert_eq!(c.text, "сводка");
-    assert_eq!(c.prefill.map(|p| (p.tokens, p.ms)), Some((1466, 628)));
+    assert_eq!(
+        c.usage.and_then(|u| u.prefill).map(|p| (p.tokens, p.ms)),
+        Some((1466, 628))
+    );
     assert!(!c.cancelled && !c.truncated);
 
     let cut = scripted(vec![
@@ -1249,7 +1252,7 @@ async fn the_collect_keeps_the_figure_only_off_a_stream_that_ended() {
         .await
         .unwrap();
     assert!(c.cancelled, "read as a cut, not a summary");
-    assert!(c.prefill.is_none(), "the usage chunk never came");
+    assert!(c.usage.is_none(), "the usage chunk never came");
 
     let broken = scripted(vec![
         ChatChunk::Text("сво".into()),
@@ -1295,5 +1298,47 @@ async fn a_discarded_summarys_landing_still_offers_the_sample() {
             .iter()
             .any(|e| matches!(e, AppEvent::Notice(t) if t.contains(ROUTE))),
         "the engine's figure, whatever became of the text: {events:?}"
+    );
+}
+
+/// The roll records its exact usage beside the estimate its reservation was
+/// priced from, as every loop's round does (docs/research/roll-usage-calibration.md
+/// §3.2): the budget's density is exact over estimate once the stream has
+/// reached its usage chunk.
+#[tokio::test]
+async fn a_roll_records_its_usage_for_the_budget() {
+    let (_d, mut orch, _rx, _chat_id, backend) = orch_with_history(3);
+    orch.config.compaction = CompactionSettings {
+        enabled: true,
+        tail_tokens: 1,
+        ..Default::default()
+    };
+    backend.report_usage(TokenUsage {
+        prompt_tokens: 100_000,
+        completion_tokens: 3,
+        reasoning_tokens: 0,
+        prefill: None,
+    });
+    let budget = orch.session_budget();
+    assert_eq!(budget.density(), 1.0, "nothing recorded yet");
+
+    orch.handle_compact();
+    assert!(
+        orch.bg_running(BackgroundKind::Compaction),
+        "the roll started"
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while budget.density() == 1.0 && std::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    let rolls = backend.rolls();
+    assert_eq!(rolls.len(), 1, "one roll streamed");
+    let estimate = super::super::generation::estimate_prompt_tokens(&rolls[0]);
+    assert!(estimate > 0);
+    let expected = 100_000.0 / estimate as f64;
+    assert!(
+        (budget.density() - expected).abs() < 1e-9,
+        "exact over the roll's own estimate: {} against {expected}",
+        budget.density()
     );
 }

@@ -17,3 +17,4 @@ mod wire;
 
 pub use client::OpenAiClient;
 pub use responses::ResponsesClient;
+pub use wire::tools_json;

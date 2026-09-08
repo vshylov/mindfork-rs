@@ -171,8 +171,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-08, version 0.9.8)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2967 unit tests
-green, 149 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **2969 unit tests
+green, 150 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -183,6 +183,22 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 `tools/doc_index_check.py`. A new track adds a line; a line that has stopped
 being recent is dropped, not shortened.
 
+- **The roll's usage for the budget — and the estimate it would
+  calibrate** — the item was "let the roll record its usage as the loops
+  do"; measured first, it turned on its precondition: the prompt estimate
+  never counted the tool schemas (24 of them, 18 116 bytes, about 4270
+  tokens — a fresh chat's first request estimated 85 against 4358 exact),
+  so the ratio the budget "calibrates" with was that overhead in disguise
+  (51 falling to 6 across one conversation), the first request of a
+  session was priced at a fiftieth of its size, and a request without
+  schemas — the roll — nine times over; its own ratio recorded would have
+  priced the next turn six times under. Now `estimate_prompt_tokens`
+  counts the schemas as the wire sends them (`openai::tools_json`, one
+  rendering behind both), and the roll records its usage in its task
+  beside the estimate its reservation was priced from. Measured after:
+  the turn's estimate a tenth over the exact, the roll's price 3109 for
+  8722 ([docs/research/roll-usage-calibration.md](docs/research/roll-usage-calibration.md),
+  spec §6.3, §11.1, [docs/journal/engine.md](docs/journal/engine.md)).
 - **The loops' timings — the silent tasks' cold prompts, sampled at the
   landing** — the note's sample came from the turn or the roll, and the
   warm server's ordinary day has neither: a conversation under the
@@ -393,22 +409,6 @@ being recent is dropped, not shortened.
   bar's count and the running rows share one predicate
   ([docs/research/tasks-screen.md](docs/research/tasks-screen.md), spec
   §11.10, [docs/journal/ui-screens.md](docs/journal/ui-screens.md)).
-- **Background dialogues — a directed scene that outlives its turn** —
-  `start_dialogue`, the scene's twin of `start_subagent` behind the same
-  switch: the call answers with the transcript's address and the director's
-  closing result arrives later as a task notification. Small because the
-  background machinery was already keyed by run id; what it added is a
-  two-variant `RunSpec`, a `DialogueSpec` whose director inputs are
-  **snapshotted at the call**, and one branch in the spawn into the same
-  driver the foreground scene uses — a driver the preceding refactor lifted
-  off `TurnLoop` onto an explicit context. Two measured fixes rode along: the
-  dialogue had been streaming **outside the session budget** (so a foreground
-  scene could already overlap a background run), and the turn the app starts
-  on a notification could spend its whole cap thinking and land empty — now
-  re-asked once with thinking muted, 2/2 recovered in the probe
-  ([docs/research/background-dialogues.md](docs/research/background-dialogues.md),
-  [ADR 0011](docs/decisions/0011-dialogue-directed-run.md) amended, spec
-  §9.13, [docs/journal/tools.md](docs/journal/tools.md)).
 
 
 For what exists and how it works, read architecture.md and spec.md — they are

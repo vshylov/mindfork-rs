@@ -616,7 +616,7 @@ async fn a_childs_second_round_reserves_at_least_its_last_exact_size() {
         // An exact prompt *below* the estimate keeps the density at 1.0, so
         // only the floor can make the difference here.
         let first = if floored {
-            sized(call_unknown(), 1, 5000)
+            sized(call_unknown(), 1, 12_000)
         } else {
             call_unknown()
         };
@@ -635,10 +635,12 @@ async fn a_childs_second_round_reserves_at_least_its_last_exact_size() {
             40,
         )
     };
-    // Fan's stream reserves ~2100 (its estimate plus the 2048 cap); Critic's
-    // second round reserves ~2100 raw, 5001 + 2048 floored.
+    // Fan's stream reserves its estimate — the tool schemas included, about
+    // 4600 (docs/research/roll-usage-calibration.md §3.1) — plus the 2048
+    // cap; Critic's second round the same raw, 12 001 + 2048 floored: two
+    // raw fit a pool of 16 000, the floored one does not.
     let mut c = cfg(2, 2);
-    c.engine.managed.context_size = 8000;
+    c.engine.managed.context_size = 16_000;
 
     let raw = recorder(false);
     let (_d, _e, _id) = run_turn_on(raw.clone(), c.clone()).await;
