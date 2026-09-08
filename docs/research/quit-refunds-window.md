@@ -192,7 +192,9 @@ stream's end and the loop's store. The regression on the LAN stack (Qwen
 
 ## 7. Not in this track
 
-- **Effects-based "acted on"** (the refund track's §7) — unchanged.
+- **Effects-based "acted on"** (the refund track's §7) — unchanged here;
+  done next ([acted-by-effect.md](acted-by-effect.md)): the flag became a
+  three-valued state, and a quit refunds `Idle` only.
 - **A quit that waits for the tools** (F1c).
 
 ## 8. Documentation touch list (AGENTS.md §4)

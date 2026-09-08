@@ -271,7 +271,7 @@ impl Orchestrator {
         };
 
         // Spawn the task and take the slot (the "running" flag + a quiet status-bar indicator).
-        let acted = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let acted = std::sync::Arc::new(super::background::Acted::default());
         tool_loop::spawn_silent_loop(tool_loop::SilentLoop {
             backend,
             registry: self.registry.clone(),

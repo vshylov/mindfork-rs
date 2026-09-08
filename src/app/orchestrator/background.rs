@@ -8,7 +8,7 @@
 //! See docs/history/refactoring-solid.md §4.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU8, Ordering};
 
 use chrono::{DateTime, Utc};
 use tokio_util::sync::CancellationToken;
@@ -52,15 +52,56 @@ pub(super) enum Window {
     Counter { chat: Uuid, count: u32 },
 }
 
+/// Where a silent task stands with respect to the window its spawn
+/// advanced (docs/research/acted-by-effect.md §3.2): nothing written and no
+/// tools running — a quit gives the window back; a round's tools running —
+/// a quit keeps it, since the write the round may make has not reported
+/// yet; a call wrote — kept for good.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub(super) enum Acting {
+    Idle = 0,
+    InTools = 1,
+    Wrote = 2,
+}
+
+/// The [`Acting`] state, shared between the loop that sets it and the slot
+/// that reads it at a quit. `SeqCst` on both sides: the quit cancels the
+/// token and then reads, the loop stores `InTools` and then checks the
+/// token, and that order is what keeps a refunded window unwritten
+/// (docs/research/quit-refunds-window.md §3.3).
+#[derive(Debug, Default)]
+pub(super) struct Acted(AtomicU8);
+
+impl Acted {
+    /// A state to start from (the tests' quits: a slot mid-tools, one that
+    /// wrote).
+    #[cfg(test)]
+    pub(super) fn at(state: Acting) -> Self {
+        Self(AtomicU8::new(state as u8))
+    }
+
+    pub(super) fn set(&self, state: Acting) {
+        self.0.store(state as u8, Ordering::SeqCst);
+    }
+
+    pub(super) fn get(&self) -> Acting {
+        match self.0.load(Ordering::SeqCst) {
+            0 => Acting::Idle,
+            1 => Acting::InTools,
+            _ => Acting::Wrote,
+        }
+    }
+}
+
 /// What a stop or a quit can give back, and whether it still may: the
-/// [`Window`] the spawn advanced, and the flag the loop sets at the very
-/// line it counts a round — "a round of the task's tools is about to run"
-/// — so the fact is readable outside the loop at any moment, a quit's
-/// included, and not only from the outcome the loop sends last
+/// [`Window`] the spawn advanced, and the [`Acted`] state the loop keeps —
+/// readable outside the loop at any moment, a quit's included, and not
+/// only from the outcome the loop sends last
 /// (docs/research/quit-refunds-window.md §3.1).
 pub(super) struct Refund {
     pub window: Window,
-    pub acted: Arc<AtomicBool>,
+    pub acted: Arc<Acted>,
 }
 
 /// A silent background task's slot: the active-run token + a failure streak. The streak
@@ -210,12 +251,14 @@ impl Orchestrator {
 
     /// The `Quit` branch: cancels every running task in the family and gives
     /// back the window of each one that had not yet acted on it — the same
-    /// rule a stop applies at the landing, read off the slot's flag since a
-    /// quit has no landing (docs/research/quit-refunds-window.md §3.2). The
-    /// token is cancelled **before** the flag is read: a loop that stores
-    /// its flag after this read checks the token before its tools and
-    /// starts none, so a refunded window is never written into (§3.3). The
-    /// exit flush after the loop writes what `give_back` marked dirty.
+    /// rule a stop applies at the landing, read off the slot's state since a
+    /// quit has no landing (docs/research/quit-refunds-window.md §3.2): only
+    /// a task that is `Idle` — nothing written, no round of tools running —
+    /// is refunded (docs/research/acted-by-effect.md §3.2). The token is
+    /// cancelled **before** the state is read: a loop that stores `InTools`
+    /// after this read checks the token before its tools and starts none,
+    /// so a refunded window is never written into (§3.3). The exit flush
+    /// after the loop writes what `give_back` marked dirty.
     pub(super) fn quit_bg(&mut self) {
         let refunds: Vec<(BackgroundKind, Window)> = self
             .bg
@@ -225,7 +268,7 @@ impl Orchestrator {
                     token.cancel();
                 }
                 let refund = slot.refund.take()?;
-                (!refund.acted.load(Ordering::SeqCst)).then_some((*kind, refund.window))
+                (refund.acted.get() == Acting::Idle).then_some((*kind, refund.window))
             })
             .collect();
         for (kind, window) in refunds {

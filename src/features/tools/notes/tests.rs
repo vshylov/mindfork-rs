@@ -1347,3 +1347,61 @@ async fn merge_transfers_links_to_new_note() {
     assert!(nb.result.contains("единая"));
     assert!(!nb.result.contains("часть один"));
 }
+
+/// The note writers report a write on the path that wrote and nothing on a
+/// refusal or a no-op — a link that already existed changed nothing
+/// (docs/research/acted-by-effect.md §3.1).
+#[tokio::test]
+async fn note_writers_report_a_write_only_when_they_wrote() {
+    let (_d, storage, ctx) = ctx_with_storage(Uuid::new_v4());
+    let profile = ctx.profile_id;
+    let saved = NoteSave
+        .invoke(&ctx, serde_json::json!({"content": "первая заметка"}))
+        .await
+        .unwrap();
+    assert!(saved.wrote);
+    NoteSave
+        .invoke(&ctx, serde_json::json!({"content": "вторая заметка"}))
+        .await
+        .unwrap();
+    let ids: Vec<Uuid> = storage
+        .db()
+        .note_list(profile, None, &[], None)
+        .unwrap()
+        .iter()
+        .map(|n| n.id)
+        .collect();
+    let (a, b) = (ids[0], ids[1]);
+
+    let revised = NoteRevise
+        .invoke(
+            &ctx,
+            serde_json::json!({"id": a.to_string(), "content": "новое"}),
+        )
+        .await
+        .unwrap();
+    assert!(revised.wrote);
+    let missing = NoteRevise
+        .invoke(
+            &ctx,
+            serde_json::json!({"id": Uuid::new_v4().to_string(), "content": "x"}),
+        )
+        .await
+        .unwrap();
+    assert!(!missing.wrote, "a refusal: {}", missing.result);
+
+    let link = serde_json::json!({"from_id": a.to_string(), "to_id": b.to_string(), "relation": "refines"});
+    let linked = NoteLink.invoke(&ctx, link.clone()).await.unwrap();
+    assert!(linked.wrote);
+    let again = NoteLink.invoke(&ctx, link).await.unwrap();
+    assert!(!again.wrote, "an existing link changes nothing");
+
+    let superseded = NoteSupersede
+        .invoke(
+            &ctx,
+            serde_json::json!({"old_id": b.to_string(), "content": "замена"}),
+        )
+        .await
+        .unwrap();
+    assert!(superseded.wrote);
+}

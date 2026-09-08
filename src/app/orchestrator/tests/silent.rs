@@ -6,14 +6,14 @@
 //! (fixtures in mod.rs; the keyed engine in parallel.rs; the background
 //! fixtures in background.rs).
 
-use super::super::background::BgOutcome;
+use super::super::background::{Acted, Acting, BgOutcome};
 use super::background::{cfg, finished, next, running_run, runs_out, start};
 use super::parallel::{KeyedRecorder, long_text, sized};
 use super::subagent::{hang, text};
 use super::*;
 use crate::entities::note::Note;
 use crate::features::tools::notes::SELF_NOTE_TAG;
-use crate::features::tools::self_model::GET_SELF_MODEL_ID;
+use crate::features::tools::self_model::{GET_SELF_MODEL_ID, UPDATE_SELF_MODEL_ID};
 use crate::shared::config::AutoTitleMode;
 use crate::shared::session_budget::SILENT_YIELDS_MAX;
 use tokio_util::sync::CancellationToken;
@@ -574,7 +574,25 @@ fn spawn_loop(
 ) -> (
     CancellationToken,
     UnboundedReceiver<(BackgroundKind, BgOutcome)>,
-    Arc<std::sync::atomic::AtomicBool>,
+    Arc<Acted>,
+) {
+    spawn_loop_allowing(orch, backend, chat_id, system, clock, Vec::new())
+}
+
+/// [`spawn_loop`] with a tool set the loop may call — a reader or a writer
+/// of the profile's memory, for the tests of what consumes a window
+/// (docs/research/acted-by-effect.md §6).
+fn spawn_loop_allowing(
+    orch: &mut Orchestrator,
+    backend: Arc<KeyedRecorder>,
+    chat_id: Uuid,
+    system: &str,
+    clock: std::time::Duration,
+    allowed: Vec<crate::entities::profile::ToolId>,
+) -> (
+    CancellationToken,
+    UnboundedReceiver<(BackgroundKind, BgOutcome)>,
+    Arc<Acted>,
 ) {
     let profile_id = orch
         .chats
@@ -583,7 +601,7 @@ fn spawn_loop(
         .unwrap()
         .profile_id;
     let cancel = CancellationToken::new();
-    let acted = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let acted = Arc::new(Acted::default());
     let sessions = orch.session_budget();
     let ctx = orch.background_tool_ctx(
         backend.clone() as Arc<dyn EngineBackend>,
@@ -610,7 +628,7 @@ fn spawn_loop(
             },
             tools: Vec::new(),
         },
-        allowed: Vec::new(),
+        allowed,
         cancel: cancel.clone(),
         acted: acted.clone(),
         max_rounds: 1,
@@ -1015,83 +1033,7 @@ fn one_call() -> super::subagent::Script {
     }
 }
 
-/// A loop stopped after a round of its tools ran lands `consumed: true`
-/// (docs/research/stop-refunds-window.md §3.2): the window was acted on, and
-/// the landing keeps the advance. The mid-stream, waiting and retry stops
-/// above land `consumed: false` — no round had run.
-#[tokio::test]
-async fn a_loop_stopped_after_a_round_of_tools_lands_consumed() {
-    let (_d, mut orch, chat_id) = orch_ready_for_reflection();
-    orch.config.compaction.context_tokens = Some(1000);
-    let backend = KeyedRecorder::new(vec![("quiet loop", vec![one_call(), long_text(30)])], 30);
-    let (stop, mut done_rx, _acted) = spawn_loop(
-        &mut orch,
-        backend.clone(),
-        chat_id,
-        "quiet loop",
-        std::time::Duration::from_secs(30),
-    );
-    settle(3000, || backend.requests().len() == 2).await;
-    assert_eq!(
-        backend.requests().len(),
-        2,
-        "the round's tools ran, the next stream opened"
-    );
-    stop.cancel();
-    let (_, outcome) = tokio::time::timeout(std::time::Duration::from_secs(5), done_rx.recv())
-        .await
-        .expect("the task landed")
-        .unwrap();
-    assert_eq!(outcome, BgOutcome::Cancelled { consumed: true });
-}
-
 // ---------- a quit gives the window back (docs/research/quit-refunds-window.md) ----------
-
-/// The loop says, for a reader outside it, when a round of its tools is
-/// about to run (§3.1): the flag is set as the second stream opens after a
-/// tool-calling round, and stays unset for a loop stopped in its first
-/// stream.
-#[tokio::test]
-async fn the_loop_says_when_a_round_of_tools_is_about_to_run() {
-    let (_d, mut orch, chat_id) = orch_ready_for_reflection();
-    orch.config.compaction.context_tokens = Some(1000);
-    let backend = KeyedRecorder::new(
-        vec![
-            ("acting loop", vec![one_call(), long_text(30)]),
-            ("quiet loop", vec![long_text(30)]),
-        ],
-        30,
-    );
-    let (stop_a, mut done_a, acted_a) = spawn_loop(
-        &mut orch,
-        backend.clone(),
-        chat_id,
-        "acting loop",
-        std::time::Duration::from_secs(30),
-    );
-    settle(3000, || backend.open_at_arrival("acting loop").len() == 2).await;
-    assert!(
-        acted_a.load(std::sync::atomic::Ordering::SeqCst),
-        "a round's tools ran"
-    );
-    stop_a.cancel();
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), done_a.recv()).await;
-
-    let (stop_q, mut done_q, acted_q) = spawn_loop(
-        &mut orch,
-        backend.clone(),
-        chat_id,
-        "quiet loop",
-        std::time::Duration::from_secs(30),
-    );
-    settle(2000, || !backend.open_at_arrival("quiet loop").is_empty()).await;
-    stop_q.cancel();
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), done_q.recv()).await;
-    assert!(
-        !acted_q.load(std::sync::atomic::Ordering::SeqCst),
-        "stopped in its first stream: no round of tools"
-    );
-}
 
 /// A quit mid-reflection, through the orchestrator's own loop (§3.2): the
 /// reflection was still in its first stream, so the chat on disk after the
@@ -1126,10 +1068,127 @@ async fn a_quit_mid_reflection_gives_the_window_back() {
     assert_eq!(chat.reflected_at, None);
 }
 
-/// …and a reflection whose first round had already called a tool keeps its
-/// advance at a quit (R1): the window was acted on.
+// ---------- "acted on" by effect (docs/research/acted-by-effect.md) ----------
+
+/// One round that calls the self-model writer with a change — the shape
+/// that consumes a window (docs/research/acted-by-effect.md §3.1).
+fn write_call() -> super::subagent::Script {
+    super::subagent::Script {
+        chunks: vec![
+            ChatChunk::ToolCall(crate::shared::api::contract::ToolCallDelta {
+                thought_signature: None,
+                index: 0,
+                id: Some("w1".into()),
+                name: Some(UPDATE_SELF_MODEL_ID.into()),
+                arguments: r#"{"summary": "I value brevity"}"#.into(),
+            }),
+            ChatChunk::Finished(FinishReason::ToolCalls),
+        ],
+        hang: false,
+    }
+}
+
+async fn landed(done: &mut UnboundedReceiver<(BackgroundKind, BgOutcome)>) -> BgOutcome {
+    tokio::time::timeout(std::time::Duration::from_secs(5), done.recv())
+        .await
+        .expect("the task landed")
+        .unwrap()
+        .1
+}
+
+/// A round of reads consumes nothing (§3.3): a loop whose first round called
+/// `get_self_model` — allowed, and run — and whose second stream is stopped
+/// lands `consumed: false`, its state back at `Idle`; a loop whose round
+/// wrote lands `consumed: true` and stays `Wrote`; one stopped in its first
+/// stream never left `Idle`.
 #[tokio::test]
-async fn a_quit_after_a_round_of_tools_keeps_the_advance() {
+async fn a_round_of_reads_consumes_nothing_and_a_write_does() {
+    let (_d, mut orch, chat_id) = orch_ready_for_reflection();
+    orch.config.compaction.context_tokens = Some(1000);
+    let backend = KeyedRecorder::new(
+        vec![
+            ("reading loop", vec![one_call(), long_text(30)]),
+            ("writing loop", vec![write_call(), long_text(30)]),
+            ("quiet loop", vec![long_text(30)]),
+        ],
+        30,
+    );
+    let clock = std::time::Duration::from_secs(30);
+
+    let (stop, mut done, acted) = spawn_loop_allowing(
+        &mut orch,
+        backend.clone(),
+        chat_id,
+        "reading loop",
+        clock,
+        vec![GET_SELF_MODEL_ID.into()],
+    );
+    settle(3000, || backend.open_at_arrival("reading loop").len() == 2).await;
+    assert_eq!(acted.get(), Acting::Idle, "a round of reads: back to idle");
+    stop.cancel();
+    assert_eq!(
+        landed(&mut done).await,
+        BgOutcome::Cancelled { consumed: false }
+    );
+
+    let (stop, mut done, acted) = spawn_loop_allowing(
+        &mut orch,
+        backend.clone(),
+        chat_id,
+        "writing loop",
+        clock,
+        vec![UPDATE_SELF_MODEL_ID.into()],
+    );
+    settle(3000, || backend.open_at_arrival("writing loop").len() == 2).await;
+    assert_eq!(acted.get(), Acting::Wrote, "the writer reported");
+    stop.cancel();
+    assert_eq!(
+        landed(&mut done).await,
+        BgOutcome::Cancelled { consumed: true }
+    );
+
+    let (stop, mut done, acted) =
+        spawn_loop(&mut orch, backend.clone(), chat_id, "quiet loop", clock);
+    settle(2000, || !backend.open_at_arrival("quiet loop").is_empty()).await;
+    stop.cancel();
+    assert_eq!(
+        landed(&mut done).await,
+        BgOutcome::Cancelled { consumed: false }
+    );
+    assert_eq!(acted.get(), Acting::Idle, "never in a round of tools");
+}
+
+/// A call outside the task's set runs nothing and reports nothing: the
+/// window stays refundable.
+#[tokio::test]
+async fn a_disallowed_call_consumes_nothing() {
+    let (_d, mut orch, chat_id) = orch_ready_for_reflection();
+    orch.config.compaction.context_tokens = Some(1000);
+    let backend = KeyedRecorder::new(
+        vec![("refused loop", vec![write_call(), long_text(30)])],
+        30,
+    );
+    let (stop, mut done, acted) = spawn_loop(
+        &mut orch,
+        backend.clone(),
+        chat_id,
+        "refused loop",
+        std::time::Duration::from_secs(30),
+    );
+    settle(3000, || backend.open_at_arrival("refused loop").len() == 2).await;
+    assert_eq!(acted.get(), Acting::Idle);
+    stop.cancel();
+    assert_eq!(
+        landed(&mut done).await,
+        BgOutcome::Cancelled { consumed: false }
+    );
+}
+
+/// A quit after a reflection's first round that only read gives the window
+/// back — through the orchestrator's own loop, the chat read from disk
+/// (§3.2): the reads changed nothing.
+#[tokio::test]
+async fn a_quit_after_a_round_of_reads_gives_the_window_back() {
     let backend = KeyedRecorder::new(
         vec![
             ("", vec![text("ok")]),
@@ -1147,7 +1206,38 @@ async fn a_quit_after_a_round_of_tools_keeps_the_advance() {
     assert_eq!(
         backend.open_at_arrival(REFLECT_KEY).len(),
         2,
-        "a round of tools ran"
+        "a round of reads ran"
+    );
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    let chat = super::subagent::load(dir.path(), chat_id);
+    assert_eq!(chat.reflected_upto, None, "reads consumed nothing");
+    assert_eq!(chat.reflected_at, None);
+}
+
+/// …and a reflection whose first round wrote keeps its advance at a quit
+/// (R2): the write is in the store, and the window must not be read twice.
+#[tokio::test]
+async fn a_quit_after_a_write_keeps_the_advance() {
+    let backend = KeyedRecorder::new(
+        vec![
+            ("", vec![text("ok")]),
+            (REFLECT_KEY, vec![write_call(), hang("thinking")]),
+        ],
+        30,
+    );
+    let mut cfg = cfg(1);
+    cfg.engine.managed.context_size = 4000;
+    cfg.self_model.auto_reflect_every = 1;
+    let (dir, cmd_tx, mut rx, handle, chat_id) = spawn_english(backend.clone(), cfg).await;
+    cmd_tx.send(AppCommand::SendMessage("one".into())).unwrap();
+    next(&mut rx, finished).await;
+    settle(3000, || backend.open_at_arrival(REFLECT_KEY).len() == 2).await;
+    assert_eq!(
+        backend.open_at_arrival(REFLECT_KEY).len(),
+        2,
+        "the write ran"
     );
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
@@ -1155,7 +1245,7 @@ async fn a_quit_after_a_round_of_tools_keeps_the_advance() {
     let chat = super::subagent::load(dir.path(), chat_id);
     assert!(
         chat.reflected_upto.is_some(),
-        "kept: the window was acted on"
+        "kept: the window was written into"
     );
     assert!(chat.reflected_at.is_some());
 }

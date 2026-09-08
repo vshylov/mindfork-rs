@@ -696,7 +696,11 @@ pub enum ChatEffect {                       // returned by a tool, applied by th
     SetSamplingOverride(PartialSamplingConfig),
 }
 
-pub struct ToolOutcome { pub result: String, pub effects: Vec<ChatEffect> }
+pub struct ToolOutcome { pub result: String, pub effects: Vec<ChatEffect>, pub wrote: bool }
+// `wrote` — this call changed the profile's stored memory (the self-model or a note):
+// set by a memory writer on the success path that returns after its storage call, never
+// by a refusal; read by the silent loops to tell a stopped or quit task that acted on its
+// window from one that only looked (docs/research/acted-by-effect.md §3.1).
 
 pub trait Tool: Send + Sync {
     fn id(&self) -> ToolId;
@@ -3659,10 +3663,12 @@ the task named in the note with this screen's words;
 [tasks-stop-all.md](docs/research/tasks-stop-all.md)):
 the slot's token is cancelled and the task
 lands as *cancelled* — its failure streak untouched, the window it advanced
-at spawn **given back** when no round of its tools had run (a stop
-postpones: the ordinary cadence makes the same window due again at the
-next landing) and kept once one has (a window acted on is never read
-twice; [docs/research/stop-refunds-window.md](docs/research/stop-refunds-window.md);
+at spawn **given back** when none of its calls had written to the
+profile's memory (a stop postpones: the ordinary cadence makes the same
+window due again at the next landing; a round of reads consumes nothing)
+and kept once one has (a window written into is never read twice;
+[docs/research/stop-refunds-window.md](docs/research/stop-refunds-window.md),
+[acted-by-effect.md](docs/research/acted-by-effect.md);
 a quit of the app applies the same rule before its exit flush,
 [quit-refunds-window.md](docs/research/quit-refunds-window.md)),
 `SelfModelChanged` still announced for
@@ -3973,7 +3979,7 @@ When `auto_reflect_every > 0`, every N assistant replies a background task
 this is a **mini agentic loop**: the reflection is given the SelfModel tools, and the loop executes
 their calls (writing to `Storage`); up to 6 rounds, with a timeout. The chat/feed **aren't mutated**,
 nothing is streamed to the UI — the reflection is silent. Gates: the feature is enabled, the profile enabled
-the tools, a reflection isn't already running (one at a time), the server is `Ready`, there's enough conversation. Its rounds stream on the session budget's **silent lane** ([§6.3](#63-client-side-agentic-loop)): one of the app's own requests at a time, each round priced and waiting for room beside a turn rather than overfilling the pool with it. A round displaced by a turn is made again with the same request (at most three times, then it holds), and the task's time limit runs over its streaming and tools, not over its waits ([docs/research/silent-preemption.md](docs/research/silent-preemption.md) §4.4–§4.5). A reflection **stopped** from the tasks screen ([§11.10](#1110-the-tasks-screen-f7)) lands as cancelled: the streak untouched, `SelfModelChanged` still announced for what a partial run may have written, and the window it advanced at spawn **given back** — the watermark and stamp restored and saved — when no round of its tools had run, so the same replies are reflected on at the next landing; once a round has run the advance stands, since its observations from that window are already written and a window read twice would write them twice ([docs/research/stop-refunds-window.md](docs/research/stop-refunds-window.md)). The two consolidations' counters follow the same rule, added back rather than restored, since the landings during the run were real. **Quitting the app** mid-reflection follows it too: the loop keeps the fact "a round of my tools is about to run" where the orchestrator can read it without a landing, and the quit gives the window back before its exit flush unless that fact is set — so a restart begins where the interrupted reflection did ([docs/research/quit-refunds-window.md](docs/research/quit-refunds-window.md)).
+the tools, a reflection isn't already running (one at a time), the server is `Ready`, there's enough conversation. Its rounds stream on the session budget's **silent lane** ([§6.3](#63-client-side-agentic-loop)): one of the app's own requests at a time, each round priced and waiting for room beside a turn rather than overfilling the pool with it. A round displaced by a turn is made again with the same request (at most three times, then it holds), and the task's time limit runs over its streaming and tools, not over its waits ([docs/research/silent-preemption.md](docs/research/silent-preemption.md) §4.4–§4.5). A reflection **stopped** from the tasks screen ([§11.10](#1110-the-tasks-screen-f7)) lands as cancelled: the streak untouched, `SelfModelChanged` still announced for what a partial run may have written, and the window it advanced at spawn **given back** — the watermark and stamp restored and saved — when none of its calls had **written** to the profile's memory, so the same replies are reflected on at the next landing; a round that only looked (`get_self_model`, a recall, a note's neighbours) consumes nothing, and once a call has written the advance stands, since its observations from that window are already in the store and a window read twice would write them twice ([docs/research/stop-refunds-window.md](docs/research/stop-refunds-window.md); the fact is the writer's own report, `ToolOutcome.wrote`, [docs/research/acted-by-effect.md](docs/research/acted-by-effect.md)). The two consolidations' counters follow the same rule, added back rather than restored, since the landings during the run were real. **Quitting the app** mid-reflection follows it too: the loop keeps where it stands — idle, a round of tools running, a call has written — where the orchestrator can read it without a landing, and the quit gives the window back before its exit flush only when the task is idle: a round of tools still running may be about to write, and the conservative side is the rule's ([docs/research/quit-refunds-window.md](docs/research/quit-refunds-window.md), [acted-by-effect.md](docs/research/acted-by-effect.md) §3.2).
 
 ### 17.7. UI — the self-model screen (`F3`)
 

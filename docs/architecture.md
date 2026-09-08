@@ -1820,7 +1820,7 @@ The tool contract: a read-only snapshot + returned effects (no locks on
 flowchart TB
     REG["ToolRegistry<br/>schemas_for = profile ∩ registry · invoke(name,args,ctx)"]
     CTX["ToolContext (snapshot at the start of the turn)<br/>profile_id, chat_id, system_message,<br/>effective_sampling, last_user_message_at,<br/>storage: Arc&lt;Storage&gt;, engine, embedder, self_model_params"]
-    OUT["ToolOutcome { result: String, effects: Vec&lt;ChatEffect&gt; }"]
+    OUT["ToolOutcome { result: String, effects: Vec&lt;ChatEffect&gt;, wrote: bool }"]
     EFF["ChatEffect: SetSystemMessage | SetSamplingOverride | AddAttachment"]
 
     REG --> CTX
@@ -2501,15 +2501,19 @@ task's own token did not) is made again with the same request, up to
 streaming and tools (`stream_round`, `run_tools`), not over its waits
 (docs/research/silent-preemption.md §4.4–§4.5). A stream ended `Cancelled`
 on the task's own token, or a wait cancelled, is `RoundsEnd::Cancelled {
-rounds }` — how many rounds' tools had run by then — →
-`BgOutcome::Cancelled { consumed: rounds > 0 }` (docs/research/stop-silent-task.md
+wrote }` — whether any call of the task changed the profile's stored
+memory by then, the tools' own reports (`ToolOutcome.wrote`) ORed per
+round by `run_tools`, an `Err` counting as a write — →
+`BgOutcome::Cancelled { consumed: wrote }` (docs/research/stop-silent-task.md
 §3.3; the flag decides whether the landing gives the task's window back,
-docs/research/stop-refunds-window.md §3.2). The same fact is said for a
-reader outside the loop: `SilentLoop.acted` is stored `true` at the line
-that counts a round — "a round of tools is about to run" — and the token is
-checked right after that store, so a loop whose token was cancelled before
-its tools ran starts none (the quit reads the flag after cancelling the
-token; docs/research/quit-refunds-window.md §3.1, §3.3). The main generation loop (§5) was deliberately **not** folded
+docs/research/stop-refunds-window.md §3.2, docs/research/acted-by-effect.md
+§3.3). The same fact is kept for a reader outside the loop as a state,
+`SilentLoop.acted` (`Acting::{Idle, InTools, Wrote}`): `InTools` is stored
+at the line that counts a round — "a round of tools is about to run" — and
+the token is checked right after that store, so a loop whose token was
+cancelled before its tools ran starts none (the quit reads the state after
+cancelling the token; docs/research/quit-refunds-window.md §3.1, §3.3);
+after the round `Wrote` if a call reported a write, else back to `Idle`. The main generation loop (§5) was deliberately **not** folded
 in — it has UI streaming, control-flow tools, Anthropic thinking signatures,
 usage, effects; its complexity doesn't pay off the shared drain.
 
@@ -3109,14 +3113,17 @@ Principles:
   clearing the indicator, a failure streak → a single error at the
   threshold, for reflection a success or a stop → `SelfModelChanged`; a
   stop touches the streak not at all, and one landed `consumed: false` —
-  no round of the task's tools had run — gets its window back through
-  `give_back`: the watermark and stamp restored and the chat marked dirty,
-  a counter added back; docs/research/stop-refunds-window.md §3.3). The
-  window travels with the loop's own flag (`Refund { window, acted }`,
-  `acted` stored by the loop at the line that counts a round), so `Quit` —
-  which has no landing — applies the same rule through `quit_bg`: every
-  slot's token cancelled, then every window whose flag is unset given back
-  before the exit flush (docs/research/quit-refunds-window.md §3.2); the
+  none of the task's calls had written to the profile's memory — gets its
+  window back through `give_back`: the watermark and stamp restored and
+  the chat marked dirty, a counter added back;
+  docs/research/stop-refunds-window.md §3.3, acted-by-effect.md §3.3). The
+  window travels with the loop's own state (`Refund { window, acted:
+  Arc<Acted> }` — `Idle`, `InTools`, `Wrote`, set by the loop around each
+  round's tools), so `Quit` — which has no landing — applies the same rule
+  through `quit_bg`: every slot's token cancelled, then every window whose
+  state is `Idle` given back before the exit flush (a round of tools still
+  running may be about to write: kept; docs/research/quit-refunds-window.md
+  §3.2, acted-by-effect.md §3.2); the
   tasks screen's `F6` stops one via `handle_stop_background_task`
   (docs/research/stop-silent-task.md §3). This way the family's 3rd task (self-model
   auto-consolidation, §9.9) doesn't touch the `run()`/`Quit` scaffold.

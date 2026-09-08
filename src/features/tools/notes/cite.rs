@@ -71,6 +71,7 @@ impl Tool for NoteCiteSource {
                 ("note_id", &note_id.to_string()),
                 ("source", &source),
             ],
-        )))
+        ))
+        .wrote_if(created))
     }
 }

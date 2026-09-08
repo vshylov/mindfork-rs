@@ -90,7 +90,7 @@ impl Tool for NoteRevise {
                 &[("links", &links.to_string())],
             ));
         }
-        Ok(ToolOutcome::text(msg))
+        Ok(ToolOutcome::text(msg).wrote())
     }
 }
 
@@ -157,7 +157,8 @@ impl Tool for NoteSupersede {
                 ("old_id", &old_id.to_string()),
                 ("new_id", &new_id.to_string()),
             ],
-        )))
+        ))
+        .wrote())
     }
 }
 
@@ -244,6 +245,7 @@ impl Tool for NoteMerge {
                 ("n", &active.len().to_string()),
                 ("new_id", &new_id.to_string()),
             ],
-        )))
+        ))
+        .wrote())
     }
 }

@@ -72,7 +72,8 @@ impl Tool for NoteLink {
                 ("relation", relation),
                 ("to", &to.to_string()),
             ],
-        )))
+        ))
+        .wrote_if(created))
     }
 }
 
