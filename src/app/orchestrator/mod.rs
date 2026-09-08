@@ -803,7 +803,10 @@ impl Orchestrator {
                 // Every background run lands `cancelled` from its mirror
                 // before the exit flush (research fork F7).
                 self.stop_all_background_runs();
-                self.cancel_all_bg();
+                // Every silent task is cancelled, and the window of one that
+                // had not yet acted on it is given back before the flush
+                // (docs/research/quit-refunds-window.md §3.2).
+                self.quit_bg();
                 self.mcp.shutdown();
                 return true;
             }

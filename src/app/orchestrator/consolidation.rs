@@ -157,6 +157,7 @@ impl Orchestrator {
         };
 
         // Spawn the task and set the slot (the "running" flag + a quiet status-bar indicator).
+        let acted = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         tool_loop::spawn_silent_loop(tool_loop::SilentLoop {
             backend,
             registry: self.registry.clone(),
@@ -170,10 +171,15 @@ impl Orchestrator {
             profile_id,
             kind: BackgroundKind::Consolidation,
             done_tx: self.bg_done_tx.clone(),
+            acted: acted.clone(),
             // Notes consolidation is about user notes, not the self-model's summary;
             // summary↔observation semantics don't apply to it.
             summary_semantics: None,
         });
-        self.begin_bg(BackgroundKind::Consolidation, cancel, window);
+        self.begin_bg(
+            BackgroundKind::Consolidation,
+            cancel,
+            window.map(|window| super::background::Refund { window, acted }),
+        );
     }
 }

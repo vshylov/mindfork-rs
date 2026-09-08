@@ -574,6 +574,7 @@ fn spawn_loop(
 ) -> (
     CancellationToken,
     UnboundedReceiver<(BackgroundKind, BgOutcome)>,
+    Arc<std::sync::atomic::AtomicBool>,
 ) {
     let profile_id = orch
         .chats
@@ -582,6 +583,7 @@ fn spawn_loop(
         .unwrap()
         .profile_id;
     let cancel = CancellationToken::new();
+    let acted = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let sessions = orch.session_budget();
     let ctx = orch.background_tool_ctx(
         backend.clone() as Arc<dyn EngineBackend>,
@@ -610,6 +612,7 @@ fn spawn_loop(
         },
         allowed: Vec::new(),
         cancel: cancel.clone(),
+        acted: acted.clone(),
         max_rounds: 1,
         timeout: clock,
         label: "test loop",
@@ -618,7 +621,7 @@ fn spawn_loop(
         done_tx,
         summary_semantics: None,
     });
-    (cancel, done_rx)
+    (cancel, done_rx, acted)
 }
 
 /// A silent task yields at most `SILENT_YIELDS_MAX` times (silent-preemption
@@ -636,7 +639,7 @@ async fn a_silent_task_holds_after_its_third_displacement() {
         )],
         30,
     );
-    let (_stop, mut done_rx) = spawn_loop(
+    let (_stop, mut done_rx, _acted) = spawn_loop(
         &mut orch,
         backend.clone(),
         chat_id,
@@ -689,7 +692,7 @@ async fn a_silent_loops_wait_for_room_is_not_on_its_clock() {
     let budget = orch.session_budget();
     let calm = CancellationToken::new();
     let turn = budget.acquire(900, &calm).await.unwrap();
-    let (_stop, mut done_rx) = spawn_loop(
+    let (_stop, mut done_rx, _acted) = spawn_loop(
         &mut orch,
         backend.clone(),
         chat_id,
@@ -713,7 +716,7 @@ async fn a_silent_loops_wait_for_room_is_not_on_its_clock() {
 async fn a_silent_loops_stream_is_on_its_clock() {
     let (_d, mut orch, chat_id) = orch_ready_for_reflection();
     let backend = KeyedRecorder::new(vec![("quiet loop", vec![hang("thinking")])], 20);
-    let (_stop, mut done_rx) = spawn_loop(
+    let (_stop, mut done_rx, _acted) = spawn_loop(
         &mut orch,
         backend.clone(),
         chat_id,
@@ -753,7 +756,7 @@ async fn a_cancelled_wait_opens_no_stream_and_leaves_no_reservation() {
     assert_eq!(budget.in_flight(), 900);
     assert_eq!(budget.silent_streaming(), None);
 
-    orch.cancel_all_bg();
+    orch.quit_bg();
     tokio::time::sleep(std::time::Duration::from_millis(150)).await;
     assert!(
         backend.requests().is_empty(),
@@ -780,7 +783,7 @@ async fn a_loop_stopped_mid_stream_lands_cancelled() {
     let (_d, mut orch, chat_id) = orch_ready_for_reflection();
     orch.config.compaction.context_tokens = Some(1000);
     let backend = KeyedRecorder::new(vec![("quiet loop", vec![long_text(30)])], 30);
-    let (stop, mut done_rx) = spawn_loop(
+    let (stop, mut done_rx, _acted) = spawn_loop(
         &mut orch,
         backend.clone(),
         chat_id,
@@ -808,7 +811,7 @@ async fn a_loop_stopped_while_waiting_lands_cancelled() {
     let budget = orch.session_budget();
     let calm = CancellationToken::new();
     let turn = budget.acquire(900, &calm).await.unwrap();
-    let (stop, mut done_rx) = spawn_loop(
+    let (stop, mut done_rx, _acted) = spawn_loop(
         &mut orch,
         backend.clone(),
         chat_id,
@@ -837,7 +840,7 @@ async fn a_loop_stopped_during_its_retry_lands_cancelled() {
     let (_d, mut orch, chat_id) = orch_ready_for_reflection();
     orch.config.compaction.context_tokens = Some(1000);
     let backend = KeyedRecorder::new(vec![("quiet loop", vec![long_text(30), long_text(30)])], 30);
-    let (stop, mut done_rx) = spawn_loop(
+    let (stop, mut done_rx, _acted) = spawn_loop(
         &mut orch,
         backend.clone(),
         chat_id,
@@ -1021,7 +1024,7 @@ async fn a_loop_stopped_after_a_round_of_tools_lands_consumed() {
     let (_d, mut orch, chat_id) = orch_ready_for_reflection();
     orch.config.compaction.context_tokens = Some(1000);
     let backend = KeyedRecorder::new(vec![("quiet loop", vec![one_call(), long_text(30)])], 30);
-    let (stop, mut done_rx) = spawn_loop(
+    let (stop, mut done_rx, _acted) = spawn_loop(
         &mut orch,
         backend.clone(),
         chat_id,
@@ -1040,4 +1043,119 @@ async fn a_loop_stopped_after_a_round_of_tools_lands_consumed() {
         .expect("the task landed")
         .unwrap();
     assert_eq!(outcome, BgOutcome::Cancelled { consumed: true });
+}
+
+// ---------- a quit gives the window back (docs/research/quit-refunds-window.md) ----------
+
+/// The loop says, for a reader outside it, when a round of its tools is
+/// about to run (§3.1): the flag is set as the second stream opens after a
+/// tool-calling round, and stays unset for a loop stopped in its first
+/// stream.
+#[tokio::test]
+async fn the_loop_says_when_a_round_of_tools_is_about_to_run() {
+    let (_d, mut orch, chat_id) = orch_ready_for_reflection();
+    orch.config.compaction.context_tokens = Some(1000);
+    let backend = KeyedRecorder::new(
+        vec![
+            ("acting loop", vec![one_call(), long_text(30)]),
+            ("quiet loop", vec![long_text(30)]),
+        ],
+        30,
+    );
+    let (stop_a, mut done_a, acted_a) = spawn_loop(
+        &mut orch,
+        backend.clone(),
+        chat_id,
+        "acting loop",
+        std::time::Duration::from_secs(30),
+    );
+    settle(3000, || backend.open_at_arrival("acting loop").len() == 2).await;
+    assert!(
+        acted_a.load(std::sync::atomic::Ordering::SeqCst),
+        "a round's tools ran"
+    );
+    stop_a.cancel();
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), done_a.recv()).await;
+
+    let (stop_q, mut done_q, acted_q) = spawn_loop(
+        &mut orch,
+        backend.clone(),
+        chat_id,
+        "quiet loop",
+        std::time::Duration::from_secs(30),
+    );
+    settle(2000, || !backend.open_at_arrival("quiet loop").is_empty()).await;
+    stop_q.cancel();
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), done_q.recv()).await;
+    assert!(
+        !acted_q.load(std::sync::atomic::Ordering::SeqCst),
+        "stopped in its first stream: no round of tools"
+    );
+}
+
+/// A quit mid-reflection, through the orchestrator's own loop (§3.2): the
+/// reflection was still in its first stream, so the chat on disk after the
+/// exit flush carries the watermark and stamp from before the spawn — the
+/// next launch reflects on the same replies.
+#[tokio::test]
+async fn a_quit_mid_reflection_gives_the_window_back() {
+    let backend = KeyedRecorder::new(
+        vec![
+            ("", vec![text("ok")]),
+            (REFLECT_KEY, vec![hang("thinking")]),
+        ],
+        30,
+    );
+    let mut cfg = cfg(1);
+    cfg.engine.managed.context_size = 4000;
+    cfg.self_model.auto_reflect_every = 1;
+    let (dir, cmd_tx, mut rx, handle, chat_id) = spawn_english(backend.clone(), cfg).await;
+    cmd_tx.send(AppCommand::SendMessage("one".into())).unwrap();
+    next(&mut rx, finished).await;
+    settle(3000, || !backend.open_at_arrival(REFLECT_KEY).is_empty()).await;
+    assert_eq!(
+        backend.open_at_arrival(REFLECT_KEY).len(),
+        1,
+        "the reflection is streaming"
+    );
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    let chat = super::subagent::load(dir.path(), chat_id);
+    assert_eq!(chat.reflected_upto, None, "the window is unread again");
+    assert_eq!(chat.reflected_at, None);
+}
+
+/// …and a reflection whose first round had already called a tool keeps its
+/// advance at a quit (R1): the window was acted on.
+#[tokio::test]
+async fn a_quit_after_a_round_of_tools_keeps_the_advance() {
+    let backend = KeyedRecorder::new(
+        vec![
+            ("", vec![text("ok")]),
+            (REFLECT_KEY, vec![one_call(), hang("thinking")]),
+        ],
+        30,
+    );
+    let mut cfg = cfg(1);
+    cfg.engine.managed.context_size = 4000;
+    cfg.self_model.auto_reflect_every = 1;
+    let (dir, cmd_tx, mut rx, handle, chat_id) = spawn_english(backend.clone(), cfg).await;
+    cmd_tx.send(AppCommand::SendMessage("one".into())).unwrap();
+    next(&mut rx, finished).await;
+    settle(3000, || backend.open_at_arrival(REFLECT_KEY).len() == 2).await;
+    assert_eq!(
+        backend.open_at_arrival(REFLECT_KEY).len(),
+        2,
+        "a round of tools ran"
+    );
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    let chat = super::subagent::load(dir.path(), chat_id);
+    assert!(
+        chat.reflected_upto.is_some(),
+        "kept: the window was acted on"
+    );
+    assert!(chat.reflected_at.is_some());
 }

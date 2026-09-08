@@ -257,7 +257,9 @@ slots over 16384): `stop_silent_task_e2e_live`, `silent_roll_e2e_live`,
 ## 7. Not in this track
 
 - **Refund on `Quit`** (F6b) — if a restart mid-reflection turns out to
-  matter.
+  matter — **done** as its own track the same day
+  ([quit-refunds-window.md](quit-refunds-window.md)): the loop keeps the
+  fact in the open, and the quit reads it.
 - **Effects-based "acted on"** — reading the tool results' effects rather
   than counting rounds; the cheap criterion first.
 - **A note at the stop** (F5b).

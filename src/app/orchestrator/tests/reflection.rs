@@ -1,7 +1,7 @@
 //! Orchestrator tests — auto-reflection: cadence/watermark, failure alerting. Part of the
 //! [`super`] module (fixtures in mod.rs). See docs/history/refactoring-god-objects.md, stage 3.
 
-use super::super::background::{BgOutcome, Window};
+use super::super::background::{BgOutcome, Refund, Window};
 use super::*;
 use tokio_util::sync::CancellationToken;
 
@@ -131,6 +131,15 @@ fn watermark(orch: &Orchestrator, chat_id: Uuid) -> (Option<usize>, bool) {
     (chat.reflected_upto, chat.reflected_at.is_some())
 }
 
+/// A window on a slot whose task has not acted yet (the flag the loop would
+/// set is fresh).
+fn refund(window: Window) -> Refund {
+    Refund {
+        window,
+        acted: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    }
+}
+
 /// A reflection stopped before a round of its tools ran gives its window
 /// back (§3.3): the watermark and the stamp are what they were before the
 /// spawn, the chat is saved the way the advance was, and the next landing
@@ -223,7 +232,7 @@ fn a_consolidation_stopped_before_its_first_round_gets_its_count_back() {
         orch.begin_bg(
             BackgroundKind::Consolidation,
             CancellationToken::new(),
-            Some(Window::Counter { chat, count: 5 }),
+            Some(refund(Window::Counter { chat, count: 5 })),
         );
         orch.handle_bg_done(BackgroundKind::Consolidation, outcome.clone());
         assert_eq!(
@@ -243,15 +252,76 @@ fn a_refund_for_a_chat_that_is_gone_does_nothing() {
     orch.begin_bg(
         BackgroundKind::Reflection,
         CancellationToken::new(),
-        Some(Window::Reflection {
+        Some(refund(Window::Reflection {
             chat,
             upto: None,
             at: None,
-        }),
+        })),
     );
     orch.handle_bg_done(
         BackgroundKind::Reflection,
         BgOutcome::Cancelled { consumed: false },
     );
     assert!(!orch.saves.is_dirty(chat));
+}
+
+// ---------- a quit gives the window back (docs/research/quit-refunds-window.md) ----------
+
+/// `quit_bg` is the `Quit` arm's call (§3.2): every slot's token is
+/// cancelled, and a task that had not yet acted on its window gets it back
+/// before the exit flush — which writes the pre-spawn values to disk.
+#[tokio::test]
+async fn a_quit_before_the_first_round_gives_the_window_back_and_flushes_it() {
+    let (dir, mut orch, chat_id) = orch_ready_for_reflection();
+    orch.engines.backend = Some(Arc::new(MockBackend::scripted(vec![ChatChunk::Finished(
+        FinishReason::Stop,
+    )])) as Arc<dyn EngineBackend>);
+    orch.maybe_auto_reflect(chat_id);
+    assert_eq!(watermark(&orch, chat_id), (Some(2), true));
+    orch.flush_saves();
+    assert_eq!(
+        super::subagent::load(dir.path(), chat_id).reflected_upto,
+        Some(2),
+        "the advance was flushed before the quit"
+    );
+
+    orch.quit_bg();
+
+    assert_eq!(watermark(&orch, chat_id), (None, false));
+    assert!(orch.saves.is_dirty(chat_id));
+    orch.flush_saves();
+    let on_disk = super::subagent::load(dir.path(), chat_id);
+    assert_eq!(
+        on_disk.reflected_upto, None,
+        "the next launch reads the window"
+    );
+    assert_eq!(on_disk.reflected_at, None);
+}
+
+/// A task whose flag says a round of its tools ran keeps its advance at a
+/// quit (R1), and a slot with nothing to refund (the roll) is only cancelled.
+#[test]
+fn a_quit_keeps_an_acted_window_and_ignores_the_roll() {
+    let (_d, mut orch, _rx) = bare_orch_rx();
+    let chat = Uuid::new_v4();
+    orch.consolidate_counts.insert(chat, 3);
+    let token = CancellationToken::new();
+    orch.begin_bg(
+        BackgroundKind::Consolidation,
+        token.clone(),
+        Some(Refund {
+            window: Window::Counter { chat, count: 5 },
+            acted: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        }),
+    );
+    let roll = CancellationToken::new();
+    orch.begin_bg(BackgroundKind::Compaction, roll.clone(), None);
+
+    orch.quit_bg();
+
+    assert!(
+        token.is_cancelled() && roll.is_cancelled(),
+        "every task ended"
+    );
+    assert_eq!(orch.consolidate_counts.get(&chat), Some(&3), "kept: acted");
 }

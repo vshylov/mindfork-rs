@@ -2504,7 +2504,12 @@ on the task's own token, or a wait cancelled, is `RoundsEnd::Cancelled {
 rounds }` — how many rounds' tools had run by then — →
 `BgOutcome::Cancelled { consumed: rounds > 0 }` (docs/research/stop-silent-task.md
 §3.3; the flag decides whether the landing gives the task's window back,
-docs/research/stop-refunds-window.md §3.2). The main generation loop (§5) was deliberately **not** folded
+docs/research/stop-refunds-window.md §3.2). The same fact is said for a
+reader outside the loop: `SilentLoop.acted` is stored `true` at the line
+that counts a round — "a round of tools is about to run" — and the token is
+checked right after that store, so a loop whose token was cancelled before
+its tools ran starts none (the quit reads the flag after cancelling the
+token; docs/research/quit-refunds-window.md §3.1, §3.3). The main generation loop (§5) was deliberately **not** folded
 in — it has UI streaming, control-flow tools, Anthropic thinking signatures,
 usage, effects; its complexity doesn't pay off the shared drain.
 
@@ -3106,9 +3111,14 @@ Principles:
   stop touches the streak not at all, and one landed `consumed: false` —
   no round of the task's tools had run — gets its window back through
   `give_back`: the watermark and stamp restored and the chat marked dirty,
-  a counter added back; docs/research/stop-refunds-window.md §3.3); `Quit`
-  cancels all slots via `cancel_all_bg`, the tasks screen's `F6` one via
-  `handle_stop_background_task` (docs/research/stop-silent-task.md §3). This way the family's 3rd task (self-model
+  a counter added back; docs/research/stop-refunds-window.md §3.3). The
+  window travels with the loop's own flag (`Refund { window, acted }`,
+  `acted` stored by the loop at the line that counts a round), so `Quit` —
+  which has no landing — applies the same rule through `quit_bg`: every
+  slot's token cancelled, then every window whose flag is unset given back
+  before the exit flush (docs/research/quit-refunds-window.md §3.2); the
+  tasks screen's `F6` stops one via `handle_stop_background_task`
+  (docs/research/stop-silent-task.md §3). This way the family's 3rd task (self-model
   auto-consolidation, §9.9) doesn't touch the `run()`/`Quit` scaffold.
   Consolidation cadence (`consolidate_counts`) is separate data, not
   lifecycle. See docs/history/refactoring-solid.md §4. The family's streams

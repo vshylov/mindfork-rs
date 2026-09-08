@@ -8,6 +8,7 @@
 //! signatures, usage, effects — its complexity doesn't pay for a shared sink right now.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
@@ -69,6 +70,11 @@ pub(super) struct SilentLoop {
     /// A single outcome channel: the task's work done, stopped by its own
     /// token, or failed with a reason (an error, the timeout).
     pub done_tx: UnboundedSender<(BackgroundKind, BgOutcome)>,
+    /// Set by the loop at the very line it counts a round — "a round of the
+    /// task's tools is about to run" — for a reader outside the loop (the
+    /// quit's refund, docs/research/quit-refunds-window.md §3.1); the same
+    /// fact `RoundsEnd::Cancelled { rounds }` reports at the landing.
+    pub acted: Arc<AtomicBool>,
     /// An optional async layer over the digest, computed in the task BEFORE the loop
     /// (embedding summary paragraphs isn't available in the synchronous handler): the result
     /// is appended to the request's first user message. See
@@ -93,6 +99,7 @@ pub(super) fn spawn_silent_loop(spawn: SilentLoop) {
         profile_id,
         kind,
         done_tx,
+        acted,
         summary_semantics,
     } = spawn;
 
@@ -123,6 +130,7 @@ pub(super) fn spawn_silent_loop(spawn: SilentLoop) {
             max_rounds,
             super::background::lane_label(kind),
             timeout,
+            &acted,
         );
         let outcome = match run.await {
             Ok(RoundsEnd::Done) => BgOutcome::Done,
@@ -217,6 +225,7 @@ async fn run_rounds(
     max_rounds: u32,
     lane: &'static str,
     clock: Duration,
+    acted: &AtomicBool,
 ) -> Result<RoundsEnd, anyhow::Error> {
     let mut round: u32 = 0;
     let mut last_exact: u64 = 0;
@@ -250,12 +259,7 @@ async fn run_rounds(
             Streamed::Cancelled => return Ok(RoundsEnd::Cancelled { rounds: round }),
             Streamed::TimedOut => return Ok(RoundsEnd::TimedOut),
         };
-        if let Some(u) = usage {
-            if let Some(budget) = ctx.sessions.as_deref() {
-                budget.record_usage(estimate, u.prompt_tokens as u64);
-            }
-            last_exact = u.prompt_tokens as u64 + u.completion_tokens as u64;
-        }
+        record_round_usage(ctx, estimate, usage, &mut last_exact);
         // A stream ended by the task's own token (a displacement returned
         // `Streamed::Displaced` above): stopped, whatever it had produced.
         if reason == FinishReason::Cancelled {
@@ -265,7 +269,17 @@ async fn run_rounds(
         if reason != FinishReason::ToolCalls || calls.is_empty() || round >= max_rounds {
             break;
         }
+        // A round of tools is about to run: counted here, and said here for
+        // a reader outside the loop. The token is checked **after** the
+        // flag is stored — a quit cancels the token and then reads the flag,
+        // so a loop that stored after that read sees the cancel here and
+        // starts no tools into a window already given back
+        // (docs/research/quit-refunds-window.md §3.3).
         round += 1;
+        acted.store(true, Ordering::SeqCst);
+        if cancel.is_cancelled() {
+            return Ok(RoundsEnd::Cancelled { rounds: round });
+        }
         request.messages.push(ApiMessage::assistant_tool_calls(
             text.clone(),
             calls.clone(),
@@ -275,6 +289,24 @@ async fn run_rounds(
         }
     }
     Ok(RoundsEnd::Done)
+}
+
+/// A round's exact `usage`, when the server sent one: calibrates the budget's
+/// estimate against it and becomes the next round's floor (`last_exact`).
+/// Its own function so the loop reads as the sequence of decisions it is
+/// (the analyzer's complexity bar, docs/lessons.md §2).
+fn record_round_usage(
+    ctx: &ToolContext,
+    estimate: u64,
+    usage: Option<crate::shared::api::contract::TokenUsage>,
+    last_exact: &mut u64,
+) {
+    if let Some(u) = usage {
+        if let Some(budget) = ctx.sessions.as_deref() {
+            budget.record_usage(estimate, u.prompt_tokens as u64);
+        }
+        *last_exact = u.prompt_tokens as u64 + u.completion_tokens as u64;
+    }
 }
 
 /// One round's stream: the lane's reservation (a wait outside the clock),
