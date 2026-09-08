@@ -111,6 +111,9 @@ argued why: a task that fails or is displaced-and-retried leaves them honest.
 A stop is the user's decision to skip; nothing needs refunding, and the
 alternative — re-reading the window at the next cadence — would make the
 stopped task come back sooner, which is the opposite of what a stop asks.
+*(Revisited 2026-09-08 — [stop-refunds-window.md](stop-refunds-window.md):
+a stop postpones; the window is given back when no round of the task's
+tools had run, and kept once one has.)*
 
 ### 2.5 What the tests can already say
 
@@ -287,7 +290,11 @@ regression: 3/3 in 57 s. The unit suite: 2903 green, 144 `#[ignore]`.
   of the reading above turned out light — the names were the screen's, the
   parser already carried a token behind a word.
 - **Refunding the window on a stop** (F4b), if users turn out to stop tasks
-  to *postpone* them rather than to skip them.
+  to *postpone* them rather than to skip them — **done** as its own track
+  ([stop-refunds-window.md](stop-refunds-window.md), 2026-09-08): the
+  window comes back when the task was stopped before a round of its tools
+  ran, and stays advanced once one has — R3 above is superseded to that
+  extent.
 - **A smaller batch** for the CPU build — **done** as its own track
   ([cpu-batch.md](cpu-batch.md), 2026-09-07): `-b`, not `-ub`; a stop's
   slot frees in 6.5 s rather than 23 on a CPU-only host.

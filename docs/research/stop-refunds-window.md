@@ -1,8 +1,9 @@
 # A stop gives the window back — the silent task returns at the next landing
 
-> **Status:** proposed (2026-09-08) — the forks in §5 await the user's
-> decision; no stage-0 probe (nothing about a model's behaviour is in
-> question). The item the stop track recorded and did not take
+> **Status:** implemented (2026-09-08) — every fork at its recommendation
+> (the user's decision, 2026-09-08); the regression run in §6.1; no stage-0
+> probe (nothing about a model's behaviour is in question).
+> The item the stop track recorded and did not take
 > ([stop-silent-task.md](stop-silent-task.md) §7, its fork F4b): a stopped
 > task keeps the bookkeeping it advanced at spawn, so the window it was
 > reading is **skipped** — a stop is a skip. The premise of this track is
@@ -244,6 +245,14 @@ and the two commands.
   (its §6.1); what changes is the orchestrator's bookkeeping after the
   landing, under unit test. The LAN regression trio is run once as the
   habit.
+
+### 6.1 The run (2026-09-08)
+
+The unit suite: **2932 green, 146 `#[ignore]`** (+7: five in
+`tests/reflection.rs`, one in `tests/self_consolidation.rs`, one in
+`tests/silent.rs`). The regression on the LAN stack (Qwen 3.6 27B, four
+slots over 16384): `stop_silent_task_e2e_live`, `silent_roll_e2e_live`,
+`background_subagent_e2e_live` — **3/3 in 44.9 s**.
 
 ## 7. Not in this track
 

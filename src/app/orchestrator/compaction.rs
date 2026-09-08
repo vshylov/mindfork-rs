@@ -358,7 +358,9 @@ impl Orchestrator {
             self.compact_tx.clone(),
             sessions,
         );
-        self.begin_bg(BackgroundKind::Compaction, cancel);
+        // No window to give back: an automatic roll stopped is planned again
+        // at the next landing anyway, a manual one was the user's to retype.
+        self.begin_bg(BackgroundKind::Compaction, cancel, None);
         Ok(())
     }
 
@@ -390,9 +392,11 @@ impl Orchestrator {
                 let _ = self.evt_tx.send(AppEvent::Notice(
                     self.ui_locale().t("ui.compact.cancelled").into(),
                 ));
-                BgOutcome::Cancelled
+                BgOutcome::Cancelled { consumed: false }
             }
-            (Err(CompactEnd::Cancelled), CompactOrigin::Auto) => BgOutcome::Cancelled,
+            (Err(CompactEnd::Cancelled), CompactOrigin::Auto) => {
+                BgOutcome::Cancelled { consumed: false }
+            }
             (Err(CompactEnd::Failed(msg)), CompactOrigin::Manual) => {
                 let _ = self.evt_tx.send(AppEvent::Error(msg));
                 BgOutcome::Done

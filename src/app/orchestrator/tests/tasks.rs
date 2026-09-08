@@ -254,7 +254,7 @@ fn a_request_is_answered_and_the_silent_tasks_are_followed() {
     assert_eq!(list.app.len(), 4);
     assert!(list.app.iter().all(|t| !t.running));
 
-    orch.begin_bg(BackgroundKind::Reflection, CancellationToken::new());
+    orch.begin_bg(BackgroundKind::Reflection, CancellationToken::new(), None);
     let list = last_task_list(&mut rx);
     let reflection = list
         .app

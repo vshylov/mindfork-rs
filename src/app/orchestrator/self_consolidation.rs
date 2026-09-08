@@ -144,8 +144,14 @@ impl Orchestrator {
         let Ok(backend) = self.engines.backend_if_ready(self.ui_locale()) else {
             return;
         };
-        // All gates passed — reset the counter and spawn.
-        self.self_consolidate_counts.insert(chat_id, 0);
+        // All gates passed — reset the counter and spawn, remembering what the
+        // reset took so a stop before the first round can give it back
+        // (docs/research/stop-refunds-window.md §3.1).
+        let count = self.self_consolidate_counts.insert(chat_id, 0).unwrap_or(0);
+        let window = Some(super::background::Window::Counter {
+            chat: chat_id,
+            count,
+        });
 
         // The digest: the self-consolidation overview (similar observation pairs / contradicts / with no
         // links; `None` when observations < 2) + a hint about a bloated description (if any).
@@ -207,7 +213,7 @@ impl Orchestrator {
                 loc,
             }),
         });
-        self.begin_bg(BackgroundKind::SelfConsolidation, cancel);
+        self.begin_bg(BackgroundKind::SelfConsolidation, cancel, window);
     }
 }
 

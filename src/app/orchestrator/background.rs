@@ -7,7 +7,9 @@
 //! roadmap — architecture.md §9.9) doesn't touch the `run()`/`Quit` scaffolding.
 //! See docs/history/refactoring-solid.md §4.
 
+use chrono::{DateTime, Utc};
 use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 
 use crate::app::events::{AppEvent, BackgroundKind};
 use crate::shared::i18n::Locale;
@@ -17,12 +19,34 @@ use super::Orchestrator;
 /// How a silent task ended (`bg_done_tx`): its work done, stopped by its
 /// own token — the tasks screen's `F6`, or `Quit` — or failed with a
 /// reason worded for the user. A stop is neither a success nor a failure
-/// to the streak (docs/research/stop-silent-task.md §3.3).
+/// to the streak (docs/research/stop-silent-task.md §3.3); `consumed` says
+/// whether a round of the task's tools had run by then, which decides
+/// whether the window it advanced at spawn is given back
+/// (docs/research/stop-refunds-window.md §3.2).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum BgOutcome {
     Done,
-    Cancelled,
+    Cancelled { consumed: bool },
     Failed(String),
+}
+
+/// What a spawn advanced, and how to put it back: reflection's watermark
+/// and stamp before the spawn, or the reply count a consolidation's reset
+/// took. Kept on the task's slot from the spawn to the landing; given back
+/// only when the task was stopped before a round of its tools ran, so the
+/// ordinary cadence makes it due again at the next landing — a window the
+/// task acted on must not be read twice
+/// (docs/research/stop-refunds-window.md §3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum Window {
+    /// Reflection: the chat's `reflected_upto` and `reflected_at` before the spawn.
+    Reflection {
+        chat: Uuid,
+        upto: Option<usize>,
+        at: Option<DateTime<Utc>>,
+    },
+    /// A consolidation: the chat's reply count the spawn reset to zero.
+    Counter { chat: Uuid, count: u32 },
 }
 
 /// A silent background task's slot: the active-run token + a failure streak. The streak
@@ -34,6 +58,9 @@ pub(super) struct BgSlot {
     /// The count of consecutive failures; at the [`BACKGROUND_FAILURE_ALERT`](super::BACKGROUND_FAILURE_ALERT)
     /// threshold we show a UI error once, then stay quiet until the first success.
     failures: u32,
+    /// What the running task's spawn advanced ([`Window`]); taken at the
+    /// landing, given back on a stop before the first round.
+    window: Option<Window>,
 }
 
 impl Orchestrator {
@@ -42,11 +69,20 @@ impl Orchestrator {
         self.bg.get(&kind).is_some_and(|s| s.cancel.is_some())
     }
 
-    /// Records a run: the slot is marked active (`cancel = Some`) and a quiet
-    /// "running …" indicator goes into the status bar. Called by the spawn tails of
-    /// `maybe_auto_reflect`/`maybe_auto_consolidate`.
-    pub(super) fn begin_bg(&mut self, kind: BackgroundKind, cancel: CancellationToken) {
-        self.bg.entry(kind).or_default().cancel = Some(cancel);
+    /// Records a run: the slot is marked active (`cancel = Some`), what the
+    /// spawn advanced is kept for a stop to give back (`window`; `None` for
+    /// the roll, which has nothing to refund), and a quiet "running …"
+    /// indicator goes into the status bar. Called by the spawn tails of
+    /// `maybe_auto_reflect`/`maybe_auto_consolidate`/`spawn_compact`.
+    pub(super) fn begin_bg(
+        &mut self,
+        kind: BackgroundKind,
+        cancel: CancellationToken,
+        window: Option<Window>,
+    ) {
+        let slot = self.bg.entry(kind).or_default();
+        slot.cancel = Some(cancel);
+        slot.window = window;
         let _ = self
             .evt_tx
             .send(AppEvent::BackgroundTask { kind, active: true });
@@ -65,25 +101,33 @@ impl Orchestrator {
     /// §3.3) clears the slot like the others and touches the streak not at
     /// all — neither reset nor counted — and still announces
     /// `SelfModelChanged` for the two self-model kinds, since a partial run
-    /// may have written before the stop.
+    /// may have written before the stop. Stopped **before a round of its
+    /// tools ran**, it also gets the window its spawn advanced back
+    /// ([`Window`]; docs/research/stop-refunds-window.md §3.3); on every
+    /// other outcome the window is dropped and the advance stands.
     pub(super) fn handle_bg_done(&mut self, kind: BackgroundKind, outcome: BgOutcome) {
         // Mutate the slot and compute whether an error alert is needed BEFORE sending events
         // (the borrow of `self.bg` doesn't overlap `self.evt_tx` in the send below).
-        let alert = {
+        let (alert, window) = {
             let slot = self.bg.entry(kind).or_default();
             slot.cancel = None;
-            match &outcome {
+            let window = slot.window.take();
+            let alert = match &outcome {
                 BgOutcome::Done => {
                     slot.failures = 0;
                     None
                 }
-                BgOutcome::Cancelled => None,
+                BgOutcome::Cancelled { .. } => None,
                 BgOutcome::Failed(reason) => {
                     slot.failures += 1;
                     (slot.failures == super::BACKGROUND_FAILURE_ALERT).then(|| reason.clone())
                 }
-            }
+            };
+            (alert, window)
         };
+        if let (Some(window), BgOutcome::Cancelled { consumed: false }) = (window, &outcome) {
+            self.give_back(kind, window);
+        }
         let _ = self.evt_tx.send(AppEvent::BackgroundTask {
             kind,
             active: false,
@@ -103,6 +147,37 @@ impl Orchestrator {
                 "ui.err.bg_failed",
                 &[("label", kind_label(loc, kind)), ("reason", &reason)],
             )));
+        }
+    }
+
+    /// Puts back what a spawn advanced (docs/research/stop-refunds-window.md
+    /// §3.3): the task was stopped before a round of its tools ran, so the
+    /// window it was about to read is unread, and the ordinary cadence makes
+    /// it due again at the next landing. Reflection's watermark and stamp
+    /// are restored and the chat saved the way the advance was; a chat gone
+    /// meanwhile is left alone. A counter is **added back**, since the
+    /// landings during the run incremented it legitimately and the sum is
+    /// what it would read had the spawn never happened.
+    fn give_back(&mut self, kind: BackgroundKind, window: Window) {
+        match window {
+            Window::Reflection { chat, upto, at } => {
+                let found = self.chats.iter_mut().find(|c| c.id == chat).map(|c| {
+                    c.reflected_upto = upto;
+                    c.reflected_at = at;
+                });
+                if found.is_some() {
+                    self.mark_dirty(chat);
+                }
+            }
+            Window::Counter { chat, count } => {
+                let counts = match kind {
+                    BackgroundKind::Consolidation => &mut self.consolidate_counts,
+                    BackgroundKind::SelfConsolidation => &mut self.self_consolidate_counts,
+                    // Neither keeps a counter; a spawn never records one for them.
+                    BackgroundKind::Reflection | BackgroundKind::Compaction => return,
+                };
+                *counts.entry(chat).or_insert(0) += count;
+            }
         }
     }
 

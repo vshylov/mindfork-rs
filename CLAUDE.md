@@ -171,7 +171,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-08, version 0.9.8)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2925 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **2932 unit tests
 green, 146 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
@@ -183,6 +183,21 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 `tools/doc_index_check.py`. A new track adds a line; a line that has stopped
 being recent is dropped, not shortened.
 
+- **A stop gives the window back — the silent task returns at the next
+  landing** — the stop track's fork F4b, taken on its premise's other
+  reading: a stop postpones. Reflection advances its watermark and stamp
+  at spawn and the two consolidations reset their counters there, so a
+  stopped task skipped the window it was about to read; now the spawn
+  records what it advanced on the task's slot (`BgSlot.window`), the loop
+  reports whether a round of its tools ran before the stop
+  (`RoundsEnd::Cancelled { rounds }` → `BgOutcome::Cancelled { consumed }`),
+  and the landing puts the window back only when it had not been acted on
+  — a read window written twice is the defect the spawn-time rule exists
+  to prevent — the watermark restored and saved, a counter added back;
+  the ordinary cadence then spawns the task again. The roll, `Quit` and
+  the preemption retry are untouched
+  ([docs/research/stop-refunds-window.md](docs/research/stop-refunds-window.md),
+  spec §17.6, §11.10, [docs/journal/engine.md](docs/journal/engine.md)).
 - **`/tasks stop all` — every running silent task, in one word** — the
   fifth word the previous track recorded as cheap to add when asked for.
   `all` is a modifier checked before the kind table, the chat screen
@@ -399,19 +414,14 @@ being recent is dropped, not shortened.
   the H200's $5)
   ([docs/research/e2e-gpt-oss-120b.md](docs/research/e2e-gpt-oss-120b.md),
   [docs/journal/ci.md](docs/journal/ci.md)).
-- **`get_llm_name`/`get_llm_history` — the language model, named and dated** —
-  the assistant can say which **LLM** is running it (from the turn's own
-  frozen name — header, metadata and tool answer share one read) and read the
-  profile's dated history of model changes, recorded in `data.db` after each
-  landed exchange when the pair (name, mode) differs from the newest record;
-  `llm_*` deliberately mirrors the `self_model` family it must never be
-  confused with, and an engine that names no model records nothing and says so.
-  A history that has **never** been written to is seeded once at startup from
-  the model names the profile's stored replies already carry — one rule, *what
-  the recorder would have written had it existed then*, so nothing about the
-  seed needs its own semantics (and no "already seeded" flag exists)
-  ([docs/research/language-model-history.md](docs/research/language-model-history.md)
-  §9, spec §9.14, [docs/journal/tools.md](docs/journal/tools.md)).
+
+For what exists and how it works, read architecture.md and spec.md — they are
+the source of truth for the current state. For how any of it came to be, and
+what was measured and rejected on the way, read the journal file for that area
+(the map above). For what is still open, read `docs/roadmap.md`.
+
+## Pitfalls
+
 - **The TUI "hangs" on a headless launch** (no TTY) — this is expected; clean
   exit via `Esc`/`Ctrl+Q` is covered by unit tests. Live verification needs a
   real terminal.

@@ -2500,8 +2500,11 @@ task's own token did not) is made again with the same request, up to
 `SILENT_YIELDS_MAX` times; the task's `timeout` is a clock over its
 streaming and tools (`stream_round`, `run_tools`), not over its waits
 (docs/research/silent-preemption.md §4.4–§4.5). A stream ended `Cancelled`
-on the task's own token, or a wait cancelled, is `RoundsEnd::Cancelled` →
-`BgOutcome::Cancelled` (docs/research/stop-silent-task.md §3.3). The main generation loop (§5) was deliberately **not** folded
+on the task's own token, or a wait cancelled, is `RoundsEnd::Cancelled {
+rounds }` — how many rounds' tools had run by then — →
+`BgOutcome::Cancelled { consumed: rounds > 0 }` (docs/research/stop-silent-task.md
+§3.3; the flag decides whether the landing gives the task's window back,
+docs/research/stop-refunds-window.md §3.2). The main generation loop (§5) was deliberately **not** folded
 in — it has UI streaming, control-flow tools, Anthropic thinking signatures,
 usage, effects; its complexity doesn't pay off the shared drain.
 
@@ -3092,11 +3095,18 @@ Principles:
   `tool_loop::spawn_silent_loop`) is served by a **slot registry**,
   `bg: HashMap<BackgroundKind, BgSlot>` (`orchestrator/background.rs`): a
   slot = the active run's token ("running", one at a time) + a failure
-  streak. One channel `bg_done_tx` carries `(kind, BgOutcome)` — `Done`,
-  `Cancelled`, `Failed(reason)` — one `select!` branch calls
-  `handle_bg_done` (the shared lifecycle: clearing the indicator, a failure
-  streak → a single error at the threshold, for reflection a success or a
-  stop → `SelfModelChanged`; a stop touches the streak not at all); `Quit`
+  streak + the **window** the spawn advanced (`Window::Reflection` — the
+  chat's watermark and stamp before the spawn; `Window::Counter` — the
+  reply count a consolidation's reset took; `None` for the roll), passed
+  to `begin_bg` by the spawn tails. One channel `bg_done_tx` carries
+  `(kind, BgOutcome)` — `Done`, `Cancelled { consumed }`, `Failed(reason)`
+  — one `select!` branch calls `handle_bg_done` (the shared lifecycle:
+  clearing the indicator, a failure streak → a single error at the
+  threshold, for reflection a success or a stop → `SelfModelChanged`; a
+  stop touches the streak not at all, and one landed `consumed: false` —
+  no round of the task's tools had run — gets its window back through
+  `give_back`: the watermark and stamp restored and the chat marked dirty,
+  a counter added back; docs/research/stop-refunds-window.md §3.3); `Quit`
   cancels all slots via `cancel_all_bg`, the tasks screen's `F6` one via
   `handle_stop_background_task` (docs/research/stop-silent-task.md §3). This way the family's 3rd task (self-model
   auto-consolidation, §9.9) doesn't touch the `run()`/`Quit` scaffold.

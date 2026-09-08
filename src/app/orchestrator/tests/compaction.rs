@@ -516,7 +516,7 @@ async fn a_second_roll_rolls_the_summary_forward() {
 #[tokio::test]
 async fn a_boundary_that_vanished_mid_roll_discards_the_summary() {
     let (_d, mut orch, mut rx, chat_id, _backend) = orch_with_history(3);
-    orch.begin_bg(BackgroundKind::Compaction, CancellationToken::new());
+    orch.begin_bg(BackgroundKind::Compaction, CancellationToken::new(), None);
     let _ = drain(&mut rx);
 
     orch.handle_compact_result(CompactResult {
@@ -573,7 +573,7 @@ async fn a_compaction_does_not_bump_modified_at() {
 #[tokio::test]
 async fn a_failed_roll_is_reported_and_clears_the_indicator() {
     let (_d, mut orch, mut rx, chat_id, _backend) = orch_with_history(3);
-    orch.begin_bg(BackgroundKind::Compaction, CancellationToken::new());
+    orch.begin_bg(BackgroundKind::Compaction, CancellationToken::new(), None);
     let _ = drain(&mut rx);
 
     orch.handle_compact_result(CompactResult {
@@ -710,7 +710,7 @@ fn the_switch_and_a_zero_threshold_both_disable_the_auto_path() {
 fn a_roll_already_running_is_not_started_twice() {
     let (_d, mut orch, _rx, chat_id, backend) = orch_with_history(3);
     orch.config = auto_cfg(1000, 75);
-    orch.begin_bg(BackgroundKind::Compaction, CancellationToken::new());
+    orch.begin_bg(BackgroundKind::Compaction, CancellationToken::new(), None);
     let before = backend.requests().len();
     orch.maybe_auto_compact(chat_id, usage(900, 50));
     assert_eq!(backend.requests().len(), before, "no second roll was sent");
