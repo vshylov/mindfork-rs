@@ -1981,6 +1981,8 @@
   "tool.chat_read.header": "[Conversation \"{title}\" {id}, page {page} of {total}]",
   "ui.feed.compacted": "earlier messages are summarized",
   "ui.compact.done": "Compressed {count} earlier messages into a summary.",
+  "ui.notice.slow_prefill_managed": "This server processes prompts at {tps} tokens/s: a background request stopped or displaced during its prompt would hold its slot for about {hold} s, since the server looks at its queue between batches of {batch} tokens. Set Batch (-b) to 256 in Settings → Model → Performance — the server restarts.",
+  "ui.notice.slow_prefill_external": "This server processes prompts at {tps} tokens/s: a background request stopped or displaced during its prompt would hold its slot for about {hold} s at the default batch of {batch} tokens, since llama-server looks at its queue between batches. Launch it with -b 256 -ub 256.",
   "ui.compact.nothing": "Nothing to compress yet: the conversation is still short enough to send whole.",
   "ui.compact.disabled": "History compression is off. Turn it on in settings, section \"Memory\" -> \"Context\".",
   "ui.compact.busy": "A compression is already running for this chat.",

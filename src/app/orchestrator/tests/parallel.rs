@@ -507,6 +507,7 @@ pub(super) fn sized(mut script: Script, prompt_tokens: u32, completion_tokens: u
             prompt_tokens,
             completion_tokens,
             reasoning_tokens: 0,
+            prefill: None,
         }));
     script.chunks.push(end);
     script

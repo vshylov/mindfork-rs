@@ -145,6 +145,7 @@ async fn emits_token_counter_during_generation() {
             prompt_tokens: 12,
             completion_tokens: 5,
             reasoning_tokens: 0,
+            prefill: None,
         }),
         ChatChunk::Finished(FinishReason::Stop),
     ])) as Arc<dyn EngineBackend>;
@@ -1482,4 +1483,153 @@ async fn continue_refusals_answer_with_the_route_that_works() {
         Some(true),
         "a legacy partial without the end-state field must still continue"
     );
+}
+
+// ---------- the slow-prefill note (docs/research/slow-prefill-detection.md) ----------
+
+mod slow_prefill {
+    use super::*;
+    use crate::shared::api::contract::{Prefill, TokenUsage};
+    use crate::shared::config::ServerMode;
+    use crate::shared::server::ServerStatus;
+
+    /// The CPU build at the default batch: ~90 tok/s over a real prompt.
+    const SLOW: Prefill = Prefill {
+        tokens: 1800,
+        ms: 20_000,
+    };
+
+    fn notices(rx: &mut UnboundedReceiver<AppEvent>) -> Vec<String> {
+        let mut out = Vec::new();
+        while let Ok(e) = rx.try_recv() {
+            if let AppEvent::Notice(text) = e {
+                out.push(text);
+            }
+        }
+        out
+    }
+
+    /// A managed server at the default batch: one note per server session,
+    /// naming the field, the hold and the batch; the next turn says nothing;
+    /// a server that reaches `Ready` again — a relaunch — may be told once
+    /// more (§3.3).
+    #[test]
+    fn a_managed_server_is_told_once_per_session() {
+        let (_d, mut orch, mut rx) = bare_orch_rx();
+        orch.config.engine.mode = ServerMode::Managed;
+        orch.config.engine.managed.gpu_layers = 99;
+        orch.config.engine.managed.batch_size = None;
+
+        orch.note_slow_prefill(Some(SLOW));
+        let notes = notices(&mut rx);
+        assert_eq!(notes.len(), 1, "{notes:?}");
+        assert!(
+            notes[0].contains("Batch (-b)") && notes[0].contains("23") && notes[0].contains("2048"),
+            "{}",
+            notes[0]
+        );
+
+        orch.note_slow_prefill(Some(SLOW));
+        assert!(notices(&mut rx).is_empty(), "once per session");
+
+        orch.engines.set_chat_status(ServerStatus::Ready);
+        orch.note_slow_prefill(Some(SLOW));
+        assert_eq!(notices(&mut rx).len(), 1, "a new session, told again");
+    }
+
+    /// Nothing to say: the batch already at the knee (typed, or the CPU auto),
+    /// a fast prefill, a cloud, no sample.
+    #[test]
+    fn nothing_is_said_where_the_rule_does_not_hold() {
+        let (_d, mut orch, mut rx) = bare_orch_rx();
+        orch.config.engine.mode = ServerMode::Managed;
+        orch.config.engine.managed.gpu_layers = 99;
+        orch.config.engine.managed.batch_size = Some(256);
+        orch.note_slow_prefill(Some(SLOW));
+        assert!(notices(&mut rx).is_empty(), "typed 256: the change is made");
+
+        orch.config.engine.managed.batch_size = None;
+        orch.config.engine.managed.gpu_layers = 0;
+        orch.note_slow_prefill(Some(SLOW));
+        assert!(notices(&mut rx).is_empty(), "the CPU auto: 256 already");
+
+        orch.config.engine.managed.gpu_layers = 99;
+        orch.note_slow_prefill(Some(Prefill {
+            tokens: 1800,
+            ms: 900,
+        }));
+        assert!(notices(&mut rx).is_empty(), "a GPU's second");
+
+        orch.config.engine.mode = ServerMode::OpenAi;
+        orch.note_slow_prefill(Some(SLOW));
+        assert!(notices(&mut rx).is_empty(), "a cloud has no batch");
+
+        orch.config.engine.mode = ServerMode::Managed;
+        orch.note_slow_prefill(None);
+        assert!(notices(&mut rx).is_empty(), "no sample");
+    }
+
+    /// An external server: the launch line's wording, at the default batch the
+    /// app assumes (fork F3).
+    #[test]
+    fn an_external_server_is_told_the_launch_line() {
+        let (_d, mut orch, mut rx) = bare_orch_rx();
+        orch.config.engine.mode = ServerMode::External;
+        orch.note_slow_prefill(Some(SLOW));
+        let notes = notices(&mut rx);
+        assert_eq!(notes.len(), 1, "{notes:?}");
+        assert!(
+            notes[0].contains("-b 256 -ub 256") && notes[0].contains("2048"),
+            "{}",
+            notes[0]
+        );
+    }
+
+    /// The whole path: the engine's `timings` on the stream's usage chunk
+    /// travel through the round, the turn and the landing to the note
+    /// (§3.1) — and the second turn on the same server says nothing.
+    #[tokio::test]
+    async fn a_turn_carries_the_engines_figure_to_the_note() {
+        let backend = Arc::new(MockBackend::scripted(vec![
+            ChatChunk::Text("hi".into()),
+            ChatChunk::Usage(TokenUsage {
+                prompt_tokens: 1850,
+                completion_tokens: 1,
+                reasoning_tokens: 0,
+                prefill: Some(SLOW),
+            }),
+            ChatChunk::Finished(FinishReason::Stop),
+        ])) as Arc<dyn EngineBackend>;
+        let mut config = AppConfig::default();
+        config.engine.mode = ServerMode::External;
+        let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch_cfg(Some(backend), config);
+        wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+            .await
+            .unwrap();
+
+        cmd_tx.send(AppCommand::SendMessage("one".into())).unwrap();
+        let note = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Notice(_)))
+            .await
+            .unwrap();
+        let AppEvent::Notice(text) = note else {
+            unreachable!()
+        };
+        assert!(text.contains("-b 256 -ub 256"), "{text}");
+
+        cmd_tx.send(AppCommand::SendMessage("two".into())).unwrap();
+        wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
+            .await
+            .unwrap();
+        // The landing's note, had there been one, follows `Finished` at once;
+        // a quit flushes the channel in order.
+        cmd_tx.send(AppCommand::Quit).unwrap();
+        handle.await.unwrap();
+        let mut second = Vec::new();
+        while let Ok(e) = evt_rx.try_recv() {
+            if let AppEvent::Notice(t) = e {
+                second.push(t);
+            }
+        }
+        assert!(second.is_empty(), "the same server, told once: {second:?}");
+    }
 }

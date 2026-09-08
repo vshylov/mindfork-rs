@@ -208,6 +208,7 @@ impl EngineBackend for GeminiClient {
                                         prompt_tokens: u.prompt_token_count,
                                         completion_tokens: u.candidates_token_count,
                                         reasoning_tokens: u.thoughts_token_count,
+                                        prefill: None,
                                     });
                                 }
                                 if let Some(reason) = candidate.and_then(|c| c.finish_reason) {

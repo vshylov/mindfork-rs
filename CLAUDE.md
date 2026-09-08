@@ -171,8 +171,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-08, version 0.9.8)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2950 unit tests
-green, 146 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **2958 unit tests
+green, 147 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -183,6 +183,22 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 `tools/doc_index_check.py`. A new track adds a line; a line that has stopped
 being recent is dropped, not shortened.
 
+- **A slow prefill, detected on the fly — the batch a cancel waits for,
+  told to the user** — the batch track's automatic `-b 256` covers a
+  managed server with no GPU layers and nothing else; every other slow
+  prefill held its slot for seconds on a cancel and said nothing. The
+  signal was on the wire: `llama-server`'s stream ends with `timings` —
+  `prompt_n` over `prompt_ms`, net of the prefix cache — which the client
+  now carries as `TokenUsage.prefill`; the turn keeps its largest sample,
+  and at the landing a pure rule (`prefill_hold`: the hold `batch / tps`
+  above 5 s on a sample of 256+ tokens with the batch above 256, the batch
+  the launch line's or 2048 assumed for an external server) sends **one
+  feed note per server session** naming the throughput, the hold and the
+  change — the *Batch (-b)* field, or `-b 256 -ub 256` on the launch line.
+  Measured: the CPU build at the default batch, 38 tok/s and a 54 s hold,
+  the note; the 4090, no note
+  ([docs/research/slow-prefill-detection.md](docs/research/slow-prefill-detection.md),
+  spec §3.4, [docs/journal/engine.md](docs/journal/engine.md)).
 - **The quit's settle hears the roll, and its cap is a setting** — the
   roll takes a silent slot but lands on `compact_rx`, so the settle of
   the previous track waited its whole cap during an automatic roll and
@@ -393,19 +409,7 @@ being recent is dropped, not shortened.
   swallowing llama.cpp's in-stream error as an empty chunk — fixed
   ([docs/research/admission-by-budget.md](docs/research/admission-by-budget.md),
   spec §6.3, [docs/journal/tools.md](docs/journal/tools.md)).
-- **Concurrent ordinary tools — the round's read-only calls run at once** —
-  the reads the model issues in one reply (measured unprompted, 26/26, on
-  Gemma 4 31B and four clouds) run as a *segment*: a maximal run of
-  consecutive calls their authors marked `Tool::concurrent()` (the file,
-  project, attachment, chat, history and introspection readers, `fetch_url`;
-  default `false`, never dangerous), at most the engine section's
-  `concurrent_calls` at once — **1** on managed/external, the sequential round
-  bit for bit, **4** on the clouds — with results, records and effects in the
-  model's order, so no read moves across a write; the sub-agent group
-  unchanged; `fetch_url`'s summary under `sessions`
-  ([docs/research/concurrent-tools.md](docs/research/concurrent-tools.md),
-  [ADR 0012](docs/decisions/0012-concurrent-tool-calls.md), spec §6.3,
-  [docs/journal/tools.md](docs/journal/tools.md)).
+
 
 For what exists and how it works, read architecture.md and spec.md — they are
 the source of truth for the current state. For how any of it came to be, and

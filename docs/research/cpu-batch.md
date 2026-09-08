@@ -330,7 +330,11 @@ one PR:
 - **An external server's line** — not the app's to set; install.md §3 can
   say what to pass by hand.
 - **Detecting a CPU build at runtime** (the prefill's measured tokens per
-  second) — the batch is a launch-time argument, so a runtime reading could
+  second) — **done** as its own track
+  ([slow-prefill-detection.md](slow-prefill-detection.md), 2026-09-08): the
+  engine's own `timings`, a note once per server session naming the hold
+  and the change; 38 tok/s and a 54 s hold measured on this build at the
+  default batch. The batch is a launch-time argument, so a runtime reading could
   only advise a restart.
 
 ## 9. Documentation touch list (AGENTS.md §4)

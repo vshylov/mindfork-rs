@@ -268,6 +268,29 @@ pub struct TokenUsage {
     /// OpenAI-compat/llama.cpp `completion_tokens_details.reasoning_tokens`). `0` —
     /// the provider doesn't separate them (Anthropic: "thoughts" are counted in `completion_tokens`).
     pub reasoning_tokens: u32,
+    /// The prompt's processing as the engine measured it — `llama-server`'s
+    /// `timings` on the stream's last chunk: the tokens actually processed,
+    /// **net of the prefix cache**, and the time they took. `None` from every
+    /// other provider. What the slow-prefill note is computed from
+    /// (docs/research/slow-prefill-detection.md §3.1).
+    pub prefill: Option<Prefill>,
+}
+
+/// A prompt's processing, measured by the engine: `tokens` processed (the
+/// cached prefix excluded) in `ms`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Prefill {
+    pub tokens: u32,
+    pub ms: u32,
+}
+
+impl Prefill {
+    /// Prompt tokens per second, `None` when nothing was processed or the
+    /// clock read zero.
+    pub fn tokens_per_second(self) -> Option<f64> {
+        (self.tokens > 0 && self.ms > 0)
+            .then(|| f64::from(self.tokens) * 1000.0 / f64::from(self.ms))
+    }
 }
 
 /// A tool-call delta from the stream (accumulated by `index`). See spec §6.3.

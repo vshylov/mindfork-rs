@@ -1366,7 +1366,13 @@ its own — or named by `api_key_env`, resolved through the same
   by `RetryBackend` with its test from the start
   (docs/research/parallel-subagents.md §4.7).
 - **`ChatChunk`** = `Text` | `Thoughts` | `ThoughtsSignature(ThinkingRef)` |
-  `ToolCall(ToolCallDelta)` | `Usage(TokenUsage)` | `Error{message,transient}` |
+  `ToolCall(ToolCallDelta)` | `Usage(TokenUsage)` — carrying `prefill: Option<Prefill>`,
+  llama.cpp's `timings` (`prompt_n` net of the prefix cache, `prompt_ms`),
+  `None` from the other clients; the turn loop keeps its largest sample on
+  `TurnUsage.prefill`, and `handle_done`'s `note_slow_prefill` turns it,
+  through `launched_batch`/`prefill_hold` in `shared/api/managed.rs`, into one
+  `Notice` per chat-server session (`EngineManager.prefill_noted`, cleared at
+  `Ready`; docs/research/slow-prefill-detection.md §3) — | `Error{message,transient}` |
   `Finished`. `Error` is the stream's error channel: a failure that arrives after
   the response cannot be an `Err` (the caller holds the stream), so each client
   yields it right before `Finished(Error)` — Anthropic's in-stream `error` event,

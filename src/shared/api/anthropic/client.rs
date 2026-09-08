@@ -149,6 +149,7 @@ impl EngineBackend for AnthropicClient {
                                             // Anthropic doesn't separate reasoning tokens — "thoughts"
                                             // are already counted in output_tokens.
                                             reasoning_tokens: 0,
+                                            prefill: None,
                                         });
                                         let reason = delta
                                             .stop_reason

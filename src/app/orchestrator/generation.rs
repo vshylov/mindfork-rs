@@ -166,6 +166,10 @@ pub(super) struct GenResult {
 pub(super) struct TurnUsage {
     pub(super) prompt_tokens: u32,
     pub(super) completion_tokens: u64,
+    /// The turn's largest prefill sample as the engine measured it (llama.cpp
+    /// only; `None` elsewhere) — what the slow-prefill note is computed
+    /// from (docs/research/slow-prefill-detection.md §3).
+    pub(super) prefill: Option<crate::shared::api::contract::Prefill>,
 }
 
 impl TurnUsage {
@@ -845,6 +849,57 @@ impl Orchestrator {
                 })
     }
 
+    /// The slow-prefill note (docs/research/slow-prefill-detection.md §3.3):
+    /// from the turn's largest prefill sample as the engine measured it, the
+    /// seconds a stream cancelled during its prompt would hold its slot at
+    /// the batch this server runs — the managed launch line's, or llama.cpp's
+    /// default for an external server — and, when that is worth saying, one
+    /// feed note per server session naming the figures and the one change:
+    /// the *Batch (-b)* field for a managed server, the launch line for an
+    /// external one. A cloud, a server without timings, a batch at the knee
+    /// or a prompt too short to measure say nothing.
+    pub(super) fn note_slow_prefill(
+        &mut self,
+        prefill: Option<crate::shared::api::contract::Prefill>,
+    ) {
+        use crate::shared::api::managed::{LLAMA_DEFAULT_BATCH, launched_batch, prefill_hold};
+        use crate::shared::config::ServerMode;
+        let Some(prefill) = prefill else { return };
+        let managed = &self.config.engine.managed;
+        let (batch, key) = match self.config.engine.mode {
+            ServerMode::Managed => (
+                launched_batch(managed.batch_size, managed.gpu_layers),
+                "ui.notice.slow_prefill_managed",
+            ),
+            ServerMode::External => (LLAMA_DEFAULT_BATCH, "ui.notice.slow_prefill_external"),
+            _ => return,
+        };
+        let Some(hold) = prefill_hold(batch, prefill) else {
+            return;
+        };
+        let tps = prefill.tokens_per_second().unwrap_or_default().round() as u32;
+        tracing::info!(
+            tokens = prefill.tokens,
+            ms = prefill.ms,
+            tps,
+            batch,
+            hold,
+            "slow prefill: a cancelled stream would hold its slot for a batch"
+        );
+        if !self.engines.claim_prefill_note() {
+            return;
+        }
+        let loc = self.ui_locale();
+        let _ = self.evt_tx.send(AppEvent::Notice(loc.tf(
+            key,
+            &[
+                ("tps", &tps.to_string()),
+                ("hold", &hold.to_string()),
+                ("batch", &batch.to_string()),
+            ],
+        )));
+    }
+
     pub(super) fn handle_done(&mut self, res: GenResult) {
         // Apply only the result of the current generation (protection against
         // stale ones): finish() transitions to Idle only on a matching id.
@@ -961,6 +1016,10 @@ impl Orchestrator {
         // silent lane runs one request at a time in the order they were
         // asked for, and the roll is the one silent task that protects the
         // *next* turn (docs/research/silent-tasks-budget.md §4.5, fork F6).
+        // The slow-prefill note, from the engine's own clock over the prompt
+        // (docs/research/slow-prefill-detection.md §3.3): once per server
+        // session, before the roll it may be about to advise on.
+        self.note_slow_prefill(res.usage.as_ref().and_then(|u| u.prefill));
         self.maybe_auto_compact(res.chat_id, res.usage);
         // Then background auto-reflection (Tier 3), notes auto-consolidation
         // ("sleep", Tier 3), and/or self-model auto-consolidation ("sleep"
@@ -1315,6 +1374,10 @@ struct RoundOutput {
     /// the count of streamed deltas (an approximation — for llama-server one delta ≈
     /// one token).
     tokens: u64,
+    /// The prompt's processing as the engine measured it (llama.cpp's `timings`;
+    /// `None` elsewhere) — the slow-prefill note's sample
+    /// (docs/research/slow-prefill-detection.md §3.1).
+    prefill: Option<crate::shared::api::contract::Prefill>,
     /// The **exact** prompt size the server reported for this round, from `usage`.
     /// `None` when the provider reported none — and then it stays `None` rather
     /// than falling back to the byte estimate: auto-compaction reads this, and
@@ -1923,9 +1986,20 @@ impl TurnLoop<'_> {
             self.shared
                 .sessions
                 .record_usage(estimate, prompt_tokens as u64);
+            // The turn keeps its largest prefill sample: a session's first
+            // round processes the prompt cold, later rounds ride the cache
+            // (docs/research/slow-prefill-detection.md §3.1).
+            let prefill = [
+                out.prefill,
+                self.last_usage.as_ref().and_then(|u| u.prefill),
+            ]
+            .into_iter()
+            .flatten()
+            .max_by_key(|p| p.tokens);
             self.last_usage = Some(TurnUsage {
                 prompt_tokens,
                 completion_tokens: out.tokens,
+                prefill,
             });
         }
         out
@@ -4602,6 +4676,9 @@ async fn stream_round(
     // The exact prompt size, when the server reports one. Deliberately without an
     // estimate fallback — see `RoundOutput::prompt_tokens`.
     let mut usage_prompt: Option<u32> = None;
+    // The engine's own clock over the prompt (llama.cpp's `timings`), for
+    // the slow-prefill note (docs/research/slow-prefill-detection.md §3.1).
+    let mut usage_prefill: Option<crate::shared::api::contract::Prefill> = None;
     // The round's reasoning tokens (from `usage`; `0` — the provider doesn't separate them).
     let mut round_reasoning: u32 = 0;
 
@@ -4659,6 +4736,7 @@ async fn stream_round(
                         let exact = u.completion_tokens as u64;
                         usage_tokens = Some(exact);
                         usage_prompt = Some(u.prompt_tokens);
+                        usage_prefill = u.prefill.or(usage_prefill);
                         round_reasoning = u.reasoning_tokens;
                         // Correct the turn's total from the delta count to the
                         // server's figure — the two differ by whatever a delta
@@ -4744,6 +4822,7 @@ async fn stream_round(
         reason,
         tokens: usage_tokens.unwrap_or(streamed),
         prompt_tokens: usage_prompt,
+        prefill: usage_prefill,
         reasoning_tokens: round_reasoning,
     }
 }
@@ -5003,6 +5082,7 @@ fn cancelled_round() -> RoundOutput {
         reason: FinishReason::Cancelled,
         tokens: 0,
         prompt_tokens: None,
+        prefill: None,
         reasoning_tokens: 0,
     }
 }

@@ -647,6 +647,7 @@ fn usage(prompt: u32, completion: u64) -> Option<TurnUsage> {
     Some(TurnUsage {
         prompt_tokens: prompt,
         completion_tokens: completion,
+        prefill: None,
     })
 }
 

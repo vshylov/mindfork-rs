@@ -1,9 +1,9 @@
 # A slow prefill, detected on the fly — the batch a cancel waits for, told to the user
 
-> **Status:** proposed (2026-09-08) — the forks in §5 await the user's
-> decision; stage 0 is a measurement the design already made (§2.1: the
-> engine's own `timings`), stage 1 needs a live run on the CPU build and the
-> GPU stack (§6). The item the batch track recorded
+> **Status:** implemented (2026-09-08) — every fork at its recommendation
+> (the user's decision, 2026-09-08); stage 0 was the measurement in §2.1
+> (the engine's own `timings`), stage 1's live runs on the CPU build and the
+> GPU stack are in §6.1. The item the batch track recorded
 > ([cpu-batch.md](cpu-batch.md) §7): the batch is a launch flag, so a
 > detection at runtime can only *advise* — and the advice is worth giving,
 > because the app's automatic `-b 256` covers exactly one shape, a managed
@@ -219,6 +219,31 @@ figure.
   hold in the tens of seconds; the same build launched with `-b 256`: no
   note. On the **LAN stack**: a seeded turn, no note, the figure logged;
   and the regression trio.
+
+### 6.1 The run (2026-09-08)
+
+The unit suite: **2958 green, 147 `#[ignore]`** (+8: the wire's `timings`
+beside `usage` and their absence; the client's `prefill` from them and
+`None` without; `launched_batch` and the rule over the CPU build's figure,
+the knee, a GPU's second, a short sample, a typed 1024; the note once per
+managed session and again at `Ready`, nothing at the knee, the CPU auto,
+a fast prefill, a cloud or no sample; the external wording; the whole
+path from a scripted usage chunk to the note, and silence on the second
+turn) — plus `slow_prefill_e2e_live`, the ninth, `#[ignore]`.
+
+**Live.** `slow_prefill_e2e_live` (external mode, a forty-paragraph
+seed, `MINDFORK_EXPECT_SLOW_PREFILL` saying which host it is):
+
+- the **CPU build** (`llama-server` b10807, Gemma 3 4B Q8_0, `-ngl 0 -c
+  2048`, no `-b` — the default 2048): the turn took 37.9 s, the reply
+  *Lamp*, and the note came — **38 tokens/s, a hold of 54 s at the default
+  batch of 2048**, the launch-line wording (`-b 256 -ub 256`). The batch
+  track's own reading of this build ("a 1400-token prompt already takes
+  38 s") is the same figure, now from the engine's clock.
+- the **LAN stack** (Qwen 3.6 27B on the 4090, four slots over 16384): the
+  turn took 4.4 s, the reply *lamp*, no note; with the regression trio
+  (`stop_silent_task_e2e_live`, `silent_roll_e2e_live`,
+  `background_subagent_e2e_live`) **4/4 in 49.8 s**.
 
 ## 7. Not in this track
 

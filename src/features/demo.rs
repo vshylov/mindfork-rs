@@ -638,6 +638,7 @@ fn reply(thoughts: Option<&str>, text: &str, prompt_tokens: u32) -> Vec<ChatChun
         prompt_tokens,
         completion_tokens: (text.len() / 4) as u32 + reasoning_tokens,
         reasoning_tokens,
+        prefill: None,
     }));
     chunks.push(ChatChunk::Finished(FinishReason::Stop));
     chunks
