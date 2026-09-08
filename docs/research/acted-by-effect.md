@@ -1,8 +1,9 @@
 # "Acted on" by effect — a silent task's window is consumed by a write, not by a round
 
-> **Status:** proposed (2026-09-08) — the forks in §5 await the user's
-> decision; no stage-0 probe (nothing about a model's behaviour is in
-> question). The item the refund track recorded and the quit track kept
+> **Status:** implemented (2026-09-08) — every fork at its recommendation
+> (the user's decision, 2026-09-08); the regression run in §6.1; no stage-0
+> probe (nothing about a model's behaviour is in question).
+> The item the refund track recorded and the quit track kept
 > ([stop-refunds-window.md](stop-refunds-window.md) §7,
 > [quit-refunds-window.md](quit-refunds-window.md) §7): a stopped or
 > quit silent task gets its window back unless it had **acted on** it,
@@ -185,6 +186,19 @@ place. Nothing else changes: the roll, the streak, the notes.
   to *refunded*, which is the point).
 - **Live: not required** — the loops' engine paths are the same; the LAN
   regression trio run once as the habit.
+
+### 6.1 The run (2026-09-08)
+
+The unit suite: **2941 green, 146 `#[ignore]`** (+4 net: the two previous
+tracks' three round-based tests in `tests/silent.rs` replaced by four
+effect-based ones — a round of reads, a write, a disallowed call, the two
+quits through the orchestrator's own loop with the chat read from disk —
+plus one in `tests/reflection.rs` for a quit mid-tools, one in
+`self_model.rs` and one in `notes/tests.rs` for the writers' reports). The
+`InTools` state is pinned only through the quit's reading of it: the
+recorder cannot hold a round's tools open. The regression on the LAN
+stack (Qwen 3.6 27B, four slots over 16384): `stop_silent_task_e2e_live`,
+`silent_roll_e2e_live`, `background_subagent_e2e_live` — **3/3 in 61.4 s**.
 
 ## 7. Not in this track
 

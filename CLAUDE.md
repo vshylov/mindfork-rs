@@ -171,7 +171,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-08, version 0.9.8)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2937 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **2941 unit tests
 green, 146 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
@@ -183,6 +183,20 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 `tools/doc_index_check.py`. A new track adds a line; a line that has stopped
 being recent is dropped, not shortened.
 
+- **"Acted on" by effect — a silent task's window is consumed by a write,
+  not by a round** — the refund rule's criterion had been "a round of the
+  task's tools was about to run", coarse for a reflection whose first
+  round only reads its self-model and is stopped seconds after it starts.
+  Now the fact is the writer's own: `ToolOutcome.wrote`, set on the
+  success path of each of the nine memory writers (a refusal reports
+  nothing, an `Err` counts as a write), ORed per round by the loop and
+  reported at the landing as `Cancelled { wrote }`; because it arrives
+  after the tools, the slot's flag became a three-valued state
+  (`Acting::{Idle, InTools, Wrote}`) and a quit refunds `Idle` only.
+  `Tool::concurrent()` could not be the criterion: `note_recall` is
+  unmarked for a cache write, `note_neighbors` unmarked at all
+  ([docs/research/acted-by-effect.md](docs/research/acted-by-effect.md),
+  spec §9.2, §17.6, [docs/journal/engine.md](docs/journal/engine.md)).
 - **A quit gives the window back too — the fact the loop keeps in the
   open** — the refund track's fork F6b: a quit cancelled every silent
   task and returned, nothing landed, and the spawn-time advance stayed, so
@@ -397,22 +411,6 @@ being recent is dropped, not shortened.
   [docs/research/code-signing.md](docs/research/code-signing.md),
   [PRIVACY.md](PRIVACY.md),
   [docs/journal/tools.md](docs/journal/tools.md).
-- **One hint grid, and footers that name only the keys that work** — the four
-  screens the chat bar's two recent reworks never reached (chat list, search,
-  `F3`, `F4`) were drawing their hints through a **second, left-aligned**
-  implementation of the same layout; there is now one
-  (`shared::ui::render_hint_grid`), right-aligned everywhere, with only the
-  bar's capped/shedding column choice — the part the status pill's competition
-  for the row makes chat-specific — left behind in `status_bar`. And every
-  footer is built from the state its own key handler dispatches on, so the rule
-  spec §11.2 has stated since the chat list shipped (*an advertised key that is
-  a no-op is worse than a missing hint*) now holds on all six surfaces rather
-  than one: an observation on `F3` no longer offers "Enter edit" against an
-  editor that has always refused it, `R` goes with a file already gone, and
-  `F1` — the door to the full list every hidden hint is on — is finally
-  advertised everywhere
-  ([docs/history/status-hints-unified.md](docs/history/status-hints-unified.md),
-  spec §11.1, [docs/journal/ui-screens.md](docs/journal/ui-screens.md)).
 
 For what exists and how it works, read architecture.md and spec.md — they are
 the source of truth for the current state. For how any of it came to be, and

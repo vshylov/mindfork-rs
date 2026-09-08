@@ -1,7 +1,7 @@
 //! Orchestrator tests — auto-reflection: cadence/watermark, failure alerting. Part of the
 //! [`super`] module (fixtures in mod.rs). See docs/history/refactoring-god-objects.md, stage 3.
 
-use super::super::background::{BgOutcome, Refund, Window};
+use super::super::background::{Acted, Acting, BgOutcome, Refund, Window};
 use super::*;
 use tokio_util::sync::CancellationToken;
 
@@ -136,7 +136,7 @@ fn watermark(orch: &Orchestrator, chat_id: Uuid) -> (Option<usize>, bool) {
 fn refund(window: Window) -> Refund {
     Refund {
         window,
-        acted: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        acted: Arc::new(Acted::default()),
     }
 }
 
@@ -311,7 +311,7 @@ fn a_quit_keeps_an_acted_window_and_ignores_the_roll() {
         token.clone(),
         Some(Refund {
             window: Window::Counter { chat, count: 5 },
-            acted: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            acted: Arc::new(Acted::at(Acting::Wrote)),
         }),
     );
     let roll = CancellationToken::new();
@@ -324,4 +324,28 @@ fn a_quit_keeps_an_acted_window_and_ignores_the_roll() {
         "every task ended"
     );
     assert_eq!(orch.consolidate_counts.get(&chat), Some(&3), "kept: acted");
+}
+
+/// A quit during a round of the task's tools keeps the window as well
+/// (docs/research/acted-by-effect.md §3.2): the round's write, if any, has
+/// not reported yet, and the conservative side is the rule's.
+#[test]
+fn a_quit_during_a_round_of_tools_keeps_the_window() {
+    let (_d, mut orch, _rx) = bare_orch_rx();
+    let chat = Uuid::new_v4();
+    orch.consolidate_counts.insert(chat, 3);
+    orch.begin_bg(
+        BackgroundKind::Consolidation,
+        CancellationToken::new(),
+        Some(Refund {
+            window: Window::Counter { chat, count: 5 },
+            acted: Arc::new(Acted::at(Acting::InTools)),
+        }),
+    );
+    orch.quit_bg();
+    assert_eq!(
+        orch.consolidate_counts.get(&chat),
+        Some(&3),
+        "kept: mid-tools"
+    );
 }

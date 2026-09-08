@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (48)
+## Entries (49)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -60,6 +60,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: sub-agents in the background — a run that outlives its turn, stage 1 (done)
 - Post-M9: sub-agents in the background — the stop key, the unread mark, and Gemma (stage 2, done)
 - Post-M9: background dialogues — a directed scene that outlives its turn (done)
+- Post-M9: `ToolOutcome.wrote` — a memory writer reports its write (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -3589,3 +3590,19 @@ the tag `probe/code-search-stage5`.
   [ci.md](ci.md) already records for open-ended asks on a thinking model. The
   smoke sets 4096 and says so, and it now names an empty parent turn for what
   it is instead of reporting it as a refusal to use the tool.
+
+### Post-M9: `ToolOutcome.wrote` — a memory writer reports its write (done)
+
+**What.** One field on the tool contract: `ToolOutcome.wrote: bool` — *this
+call changed the profile's stored memory*, the self-model or a note —
+`false` from every constructor, set builder-style (`.wrote()`,
+`.wrote_if(created)`) on the success path of each of the nine memory
+writers on the line that returns after the storage call, never by a
+refusal. The consumer is the silent loops' refund rule
+([docs/research/acted-by-effect.md](../research/acted-by-effect.md); the
+engine journal has the track): a stopped or quit reflection or
+consolidation gives its window back unless a call wrote. The turn's loop
+ignores the field. `Tool::concurrent()` was not reused: it is a read-only
+claim for concurrency, and `note_recall` (a cache write inside a read) and
+`note_neighbors` are unmarked. Tests pin each writer's success path to
+`true` and its refusal to `false`, and the reader to `false`.

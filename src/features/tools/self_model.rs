@@ -360,7 +360,7 @@ impl Tool for AddInsight {
                 msg.push_str(&format!("\n- (id={}) {}", n.id, n.content));
             }
         }
-        Ok(ToolOutcome::text(msg))
+        Ok(ToolOutcome::text(msg).wrote())
     }
 }
 
@@ -424,9 +424,7 @@ impl Tool for UpdateSelfModel {
             }
             return Ok(ToolOutcome::text(msg));
         }
-        Ok(ToolOutcome::text(update_self_model_echo(
-            ctx.loc, &model, params, &deltas,
-        )))
+        Ok(ToolOutcome::text(update_self_model_echo(ctx.loc, &model, params, &deltas)).wrote())
     }
 }
 
@@ -683,9 +681,7 @@ impl Tool for UpdateUserModel {
         let dup_pairs =
             near_duplicate_traits(ctx, &added_traits, &deltas.existing_before_traits).await;
 
-        Ok(ToolOutcome::text(update_user_model_echo(
-            ctx.loc, &model, &deltas, &dup_pairs,
-        )))
+        Ok(ToolOutcome::text(update_user_model_echo(ctx.loc, &model, &deltas, &dup_pairs)).wrote())
     }
 }
 
@@ -1577,5 +1573,32 @@ mod tests {
             .filter(|n| n.content.starts_with("[архив цели]"))
             .count();
         assert_eq!(archived, 3);
+    }
+    /// The memory writers report a write on their success path and nothing
+    /// on a refusal; the reader never does
+    /// (docs/research/acted-by-effect.md §3.1).
+    #[tokio::test]
+    async fn writers_report_a_write_and_the_reader_does_not() {
+        let (_d, _s, ctx) = ctx_with_storage(Uuid::new_v4());
+        let read = GetSelfModel
+            .invoke(&ctx, serde_json::json!({}))
+            .await
+            .unwrap();
+        assert!(!read.wrote, "a read");
+        let added = AddInsight
+            .invoke(&ctx, serde_json::json!({"text": "hello observation"}))
+            .await
+            .unwrap();
+        assert!(added.wrote, "an observation was written");
+        let changed = UpdateSelfModel
+            .invoke(&ctx, serde_json::json!({"summary": "ценю ясность"}))
+            .await
+            .unwrap();
+        assert!(changed.wrote, "the summary was written");
+        let nothing = UpdateSelfModel
+            .invoke(&ctx, serde_json::json!({}))
+            .await
+            .unwrap();
+        assert!(!nothing.wrote, "nothing to change: {}", nothing.result);
     }
 }

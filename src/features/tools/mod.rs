@@ -431,6 +431,13 @@ pub struct ToolOutcome {
     /// MCP adapter fills it today, and nothing invents a consumer for a path with no
     /// producer.
     pub images: Vec<ToolImage>,
+    /// **This call changed the profile's stored memory** — the self-model or
+    /// a note. Set by a memory writer on the success path that returns after
+    /// its storage call; a refusal (a missing id, nothing to change) reports
+    /// nothing. The silent loops read it to decide whether a stopped or quit
+    /// task had acted on the window its spawn advanced
+    /// (docs/research/acted-by-effect.md §3.1); the turn's loop ignores it.
+    pub wrote: bool,
 }
 
 /// An image a tool returned: base64 payload plus the MIME type it declared.
@@ -447,6 +454,7 @@ impl ToolOutcome {
             result: result.into(),
             effects: Vec::new(),
             images: Vec::new(),
+            wrote: false,
         }
     }
 
@@ -456,12 +464,26 @@ impl ToolOutcome {
             result: result.into(),
             effects,
             images: Vec::new(),
+            wrote: false,
         }
     }
 
     /// Attaches images the tool produced (builder-style).
     pub fn with_images(mut self, images: Vec<ToolImage>) -> Self {
         self.images = images;
+        self
+    }
+
+    /// Says the call changed the profile's stored memory (builder-style; on
+    /// the line that returns after the storage call succeeded).
+    pub fn wrote(self) -> Self {
+        self.wrote_if(true)
+    }
+
+    /// [`Self::wrote`] under a condition — a link or a citation that already
+    /// existed changed nothing.
+    pub fn wrote_if(mut self, wrote: bool) -> Self {
+        self.wrote = wrote;
         self
     }
 }

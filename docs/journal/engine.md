@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (44)
+## Entries (45)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -56,6 +56,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the batch a cancel waits for — `-b` on the CPU build's launch line (done)
 - Post-M9: a stop gives the window back — the silent task returns at the next landing (done)
 - Post-M9: a quit gives the window back too — the fact the loop keeps in the open (done)
+- Post-M9: "acted on" by effect — a silent task's window is consumed by a write, not by a round (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -2828,3 +2829,74 @@ path; a counter's refund at a quit is moot and harmless); deriving the
 landing's `consumed` from the flag and dropping `rounds` (the last track's
 shape stands, both set at one line); no guard before the tools (a race of
 microseconds whose cost is one duplicate).
+
+### Post-M9: "acted on" by effect — a silent task's window is consumed by a write, not by a round (done)
+
+**What.** The item the refund track recorded and the quit track kept
+([docs/research/stop-refunds-window.md](../research/stop-refunds-window.md)
+§7, [quit-refunds-window.md](../research/quit-refunds-window.md) §7): a
+stopped or quit silent task gets its window back unless it had *acted
+on* it, and "acted on" had meant "a round of its tools was about to run" —
+honest in the rule's direction, coarse the other way. Reflection's tool
+set is half readers, and a first round that only looks (`get_self_model`,
+a recall, a note's neighbours) is the common shape of a run stopped
+seconds after it starts; under the round criterion that stop kept the
+window for a run that changed nothing. The design
+[docs/research/acted-by-effect.md](../research/acted-by-effect.md), every
+fork at its recommendation (the user's decision, 2026-09-08); no stage-0
+probe.
+
+**Why not the mark that exists.** `Tool::concurrent()` (ADR 0012) is a
+read-only claim for a different purpose, and not the reader set the loops
+need: `note_recall` is deliberately unmarked ("it writes vectors inside a
+read"), `note_neighbors` unmarked at all. A criterion on it would keep a
+window that a recall merely searched.
+
+**How.** The fact is the writer's own: `ToolOutcome` gained `wrote: bool`
+(`false` from every constructor; `.wrote()` / `.wrote_if(created)`
+builder-style), set on the success path of each of the nine memory
+writers — `add_insight`, `update_self_model`, `update_user_model`,
+`note_save`, `note_revise`, `note_supersede`, `note_merge`, `note_link`
+(when the link is new), `note_cite_source` (when the citation is new) — on
+the line that returns after the storage call; a refusal (a missing id,
+nothing to change) reports nothing. `invoke_allowed` returns the fact
+beside the result (`Ok(o) → o.wrote`; `Err → true`, since a tool that
+failed may have written before it failed; a name outside `allowed` →
+`false`), `run_tools` ORs it into the round's, and the loop accumulates
+it: `RoundsEnd::Cancelled { wrote }` → `BgOutcome::Cancelled { consumed:
+wrote }` — the round count had no reader left. Because the fact now
+arrives *after* the tools, the slot's flag became a three-valued state,
+`Acting::{Idle, InTools, Wrote}` behind `Acted(AtomicU8)`: the loop stores
+`InTools` where the quit track stored `true` (the guard unchanged — the
+token is checked right after the store), then `Wrote` if the round wrote,
+else back to `Idle` unless already `Wrote`; `quit_bg` refunds `Idle` only,
+so a quit during a round's tools keeps the window — the round may be
+about to write, and the conservative side is the rule's. `handle_bg_done`
+and `give_back` are untouched.
+
+**Tests**: +4 net — `self_model.rs` (the reader reports nothing;
+`add_insight` and a changing `update_self_model` report a write, an empty
+edit does not), `notes/tests.rs` (`note_save`, a revise, a supersede and a
+new link report; a revise of a missing id and an existing link do not),
+`tests/silent.rs` (a round of reads — `get_self_model` allowed and run —
+lands `consumed: false` with the state back at `Idle`; a round that wrote
+lands `consumed: true` and stays `Wrote`; a loop stopped in its first
+stream never left `Idle`; a disallowed call runs nothing; through the
+orchestrator's own loop, a quit after a round of reads leaves the chat on
+disk with the pre-spawn watermark and a quit after a write keeps it — the
+two previous tracks' round-based tests replaced), `tests/reflection.rs`
+(a quit during a round of tools keeps the counter) — **2941 unit tests
+green, 146 `#[ignore]`**.
+
+**Live**: not required — the loops' engine paths are the same. The LAN
+regression (`stop_silent_task_e2e_live`, `silent_roll_e2e_live`,
+`background_subagent_e2e_live`; Qwen 3.6 27B, four slots over 16384):
+3/3 in 61.4 s.
+
+**Rejected**: a static per-tool claim (`Tool::writes_memory()`) — simpler,
+coarser: a refusal would consume; reusing `concurrent()` (above); refunding
+at a quit unless `Wrote` (a quit during a writing tool would refund a
+window being written); an `Err` not counting (the loop cannot know how far
+the tool got); keeping the round count beside the fact (no reader); marking
+only the seven writers in the loops' sets (the contract would lie for a
+later caller).

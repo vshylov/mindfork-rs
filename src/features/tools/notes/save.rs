@@ -91,7 +91,7 @@ impl Tool for NoteSave {
                 }
             }
         }
-        Ok(ToolOutcome::text(out))
+        Ok(ToolOutcome::text(out).wrote())
     }
 }
 

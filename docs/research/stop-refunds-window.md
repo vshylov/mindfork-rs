@@ -261,7 +261,9 @@ slots over 16384): `stop_silent_task_e2e_live`, `silent_roll_e2e_live`,
   ([quit-refunds-window.md](quit-refunds-window.md)): the loop keeps the
   fact in the open, and the quit reads it.
 - **Effects-based "acted on"** — reading the tool results' effects rather
-  than counting rounds; the cheap criterion first.
+  than counting rounds; the cheap criterion first — **done** as its own
+  track ([acted-by-effect.md](acted-by-effect.md), 2026-09-08): the
+  writer's own report on its outcome, a round of reads consuming nothing.
 - **A note at the stop** (F5b).
 
 ## 8. Documentation touch list (AGENTS.md §4)

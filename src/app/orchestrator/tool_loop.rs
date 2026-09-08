@@ -8,7 +8,6 @@
 //! signatures, usage, effects — its complexity doesn't pay for a shared sink right now.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
@@ -16,7 +15,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use super::background::BgOutcome;
+use super::background::{Acted, BgOutcome};
 use crate::app::events::BackgroundKind;
 use crate::entities::profile::ToolId;
 use crate::features::tools::{ToolContext, ToolRegistry};
@@ -70,11 +69,13 @@ pub(super) struct SilentLoop {
     /// A single outcome channel: the task's work done, stopped by its own
     /// token, or failed with a reason (an error, the timeout).
     pub done_tx: UnboundedSender<(BackgroundKind, BgOutcome)>,
-    /// Set by the loop at the very line it counts a round — "a round of the
-    /// task's tools is about to run" — for a reader outside the loop (the
-    /// quit's refund, docs/research/quit-refunds-window.md §3.1); the same
-    /// fact `RoundsEnd::Cancelled { rounds }` reports at the landing.
-    pub acted: Arc<AtomicBool>,
+    /// Where the task stands with respect to its window, for a reader outside
+    /// the loop (the quit's refund, docs/research/quit-refunds-window.md
+    /// §3.1): `InTools` from the line that counts a round until its tools
+    /// have run, `Wrote` once a call reported a write, `Idle` otherwise
+    /// (docs/research/acted-by-effect.md §3.2). The landing reports the same
+    /// fact in `RoundsEnd::Cancelled { wrote }`.
+    pub acted: Arc<Acted>,
     /// An optional async layer over the digest, computed in the task BEFORE the loop
     /// (embedding summary paragraphs isn't available in the synchronous handler): the result
     /// is appended to the request's first user message. See
@@ -134,13 +135,11 @@ pub(super) fn spawn_silent_loop(spawn: SilentLoop) {
         );
         let outcome = match run.await {
             Ok(RoundsEnd::Done) => BgOutcome::Done,
-            Ok(RoundsEnd::Cancelled { rounds }) => {
-                tracing::info!(%profile_id, rounds, "{label}: stopped");
-                // A round of tools ran: the window was acted on and stays
-                // advanced; none did: it is given back at the landing.
-                BgOutcome::Cancelled {
-                    consumed: rounds > 0,
-                }
+            Ok(RoundsEnd::Cancelled { wrote }) => {
+                tracing::info!(%profile_id, wrote, "{label}: stopped");
+                // A call wrote: the window was acted on and stays advanced;
+                // none did: it is given back at the landing.
+                BgOutcome::Cancelled { consumed: wrote }
             }
             Ok(RoundsEnd::TimedOut) => {
                 cancel.cancel();
@@ -162,12 +161,12 @@ pub(super) fn spawn_silent_loop(spawn: SilentLoop) {
 /// clock ran out.
 pub(super) enum RoundsEnd {
     Done,
-    /// Stopped by its own token; `rounds` is how many rounds' tools had run
-    /// by then — `0` when stopped while waiting or during its first stream —
-    /// which is what decides whether the task's window is given back
-    /// (docs/research/stop-refunds-window.md §3.2).
+    /// Stopped by its own token; `wrote` says whether any call of the task
+    /// changed the profile's stored memory by then — what decides whether
+    /// the task's window is given back (docs/research/stop-refunds-window.md
+    /// §3.2, docs/research/acted-by-effect.md §3.3).
     Cancelled {
-        rounds: u32,
+        wrote: bool,
     },
     TimedOut,
 }
@@ -225,12 +224,15 @@ async fn run_rounds(
     max_rounds: u32,
     lane: &'static str,
     clock: Duration,
-    acted: &AtomicBool,
+    acted: &Acted,
 ) -> Result<RoundsEnd, anyhow::Error> {
     let mut round: u32 = 0;
     let mut last_exact: u64 = 0;
     let mut yields: u32 = 0;
     let mut left = clock;
+    // Whether any call so far changed the profile's stored memory — the
+    // tools' own reports (`ToolOutcome::wrote`), accumulated per round.
+    let mut wrote = false;
     loop {
         let estimate = super::generation::estimate_prompt_tokens(request);
         let streamed = stream_round(
@@ -256,14 +258,14 @@ async fn run_rounds(
                 );
                 continue;
             }
-            Streamed::Cancelled => return Ok(RoundsEnd::Cancelled { rounds: round }),
+            Streamed::Cancelled => return Ok(RoundsEnd::Cancelled { wrote }),
             Streamed::TimedOut => return Ok(RoundsEnd::TimedOut),
         };
         record_round_usage(ctx, estimate, usage, &mut last_exact);
         // A stream ended by the task's own token (a displacement returned
         // `Streamed::Displaced` above): stopped, whatever it had produced.
         if reason == FinishReason::Cancelled {
-            return Ok(RoundsEnd::Cancelled { rounds: round });
+            return Ok(RoundsEnd::Cancelled { wrote });
         }
         // A round with no calls, or the limit was reached — the task is done.
         if reason != FinishReason::ToolCalls || calls.is_empty() || round >= max_rounds {
@@ -271,22 +273,36 @@ async fn run_rounds(
         }
         // A round of tools is about to run: counted here, and said here for
         // a reader outside the loop. The token is checked **after** the
-        // flag is stored — a quit cancels the token and then reads the flag,
-        // so a loop that stored after that read sees the cancel here and
-        // starts no tools into a window already given back
+        // state is stored — a quit cancels the token and then reads the
+        // state, so a loop that stored after that read sees the cancel here
+        // and starts no tools into a window already given back
         // (docs/research/quit-refunds-window.md §3.3).
         round += 1;
-        acted.store(true, Ordering::SeqCst);
+        acted.enter_tools(wrote);
         if cancel.is_cancelled() {
-            return Ok(RoundsEnd::Cancelled { rounds: round });
+            return Ok(RoundsEnd::Cancelled { wrote });
         }
         request.messages.push(ApiMessage::assistant_tool_calls(
             text.clone(),
             calls.clone(),
         ));
-        if !run_tools(registry, ctx, allowed, request, &calls, &mut left).await {
+        let mut round_wrote = false;
+        if !run_tools(
+            registry,
+            ctx,
+            allowed,
+            request,
+            &calls,
+            &mut left,
+            &mut round_wrote,
+        )
+        .await
+        {
             return Ok(RoundsEnd::TimedOut);
         }
+        // The round's tools have reported: a write is kept for good, a round
+        // of reads leaves the task where it was (acted-by-effect §3.2).
+        wrote = acted.leave_tools(wrote, round_wrote);
     }
     Ok(RoundsEnd::Done)
 }
@@ -366,13 +382,15 @@ async fn run_tools(
     request: &mut ChatRequest,
     calls: &[ApiToolCall],
     left: &mut Duration,
+    wrote: &mut bool,
 ) -> bool {
     let started = Instant::now();
     let tools = async {
         for call in calls {
             let args: serde_json::Value =
                 serde_json::from_str(&call.arguments).unwrap_or_else(|_| serde_json::json!({}));
-            let result = invoke_allowed(registry, ctx, allowed, call, args).await;
+            let (result, call_wrote) = invoke_allowed(registry, ctx, allowed, call, args).await;
+            *wrote |= call_wrote;
             request.messages.push(ApiMessage::tool(&call.id, &result));
         }
     };
@@ -467,18 +485,29 @@ async fn invoke_allowed(
     allowed: &[ToolId],
     call: &ApiToolCall,
     args: serde_json::Value,
-) -> String {
+) -> (String, bool) {
     let allowed_has = |name: &str| allowed.iter().any(|t| t == name);
     if allowed_has(&call.name) {
         match registry.invoke(&call.name, ctx, args).await {
-            Ok(o) => o.result,
-            Err(e) => ctx.loc.tf(
-                "loop.tool_error",
-                &[("name", &call.name), ("err", &e.to_string())],
+            // The tool's own report of whether it changed stored memory.
+            Ok(o) => (o.result, o.wrote),
+            // A tool that failed may have written before it failed, and the
+            // loop cannot know how far it got: counted as a write
+            // (docs/research/acted-by-effect.md fork F3).
+            Err(e) => (
+                ctx.loc.tf(
+                    "loop.tool_error",
+                    &[("name", &call.name), ("err", &e.to_string())],
+                ),
+                true,
             ),
         }
     } else {
-        ctx.loc.tf("loop.tool_not_allowed", &[("name", &call.name)])
+        // Nothing ran.
+        (
+            ctx.loc.tf("loop.tool_not_allowed", &[("name", &call.name)]),
+            false,
+        )
     }
 }
 

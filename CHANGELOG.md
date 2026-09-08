@@ -172,9 +172,10 @@ split by subsystem.
   `/tasks stop`) before it had done anything gives its window back: the
   same replies are reflected on, or the notes consolidated, after the next
   reply, as if the task had never started. A task stopped after it had
-  already acted keeps its place, so nothing is written twice. Quitting the
-  app while one runs follows the same rule: the next launch picks the task
-  up where it was interrupted.
+  already written something keeps its place, so nothing is written twice;
+  one that had only looked — read its self-model, searched the notes —
+  gives the window back. Quitting the app while one runs follows the same
+  rule: the next launch picks the task up where it was interrupted.
 
 - **A CPU-only host's server now runs a smaller batch.** With *GPU layers*
   at 0 the app launches `llama-server` with `-b 256 -ub 256`. The server
