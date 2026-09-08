@@ -126,9 +126,13 @@ pub(super) fn spawn_silent_loop(spawn: SilentLoop) {
         );
         let outcome = match run.await {
             Ok(RoundsEnd::Done) => BgOutcome::Done,
-            Ok(RoundsEnd::Cancelled) => {
-                tracing::info!(%profile_id, "{label}: stopped");
-                BgOutcome::Cancelled
+            Ok(RoundsEnd::Cancelled { rounds }) => {
+                tracing::info!(%profile_id, rounds, "{label}: stopped");
+                // A round of tools ran: the window was acted on and stays
+                // advanced; none did: it is given back at the landing.
+                BgOutcome::Cancelled {
+                    consumed: rounds > 0,
+                }
             }
             Ok(RoundsEnd::TimedOut) => {
                 cancel.cancel();
@@ -150,7 +154,13 @@ pub(super) fn spawn_silent_loop(spawn: SilentLoop) {
 /// clock ran out.
 pub(super) enum RoundsEnd {
     Done,
-    Cancelled,
+    /// Stopped by its own token; `rounds` is how many rounds' tools had run
+    /// by then — `0` when stopped while waiting or during its first stream —
+    /// which is what decides whether the task's window is given back
+    /// (docs/research/stop-refunds-window.md §3.2).
+    Cancelled {
+        rounds: u32,
+    },
     TimedOut,
 }
 
@@ -237,7 +247,7 @@ async fn run_rounds(
                 );
                 continue;
             }
-            Streamed::Cancelled => return Ok(RoundsEnd::Cancelled),
+            Streamed::Cancelled => return Ok(RoundsEnd::Cancelled { rounds: round }),
             Streamed::TimedOut => return Ok(RoundsEnd::TimedOut),
         };
         if let Some(u) = usage {
@@ -249,7 +259,7 @@ async fn run_rounds(
         // A stream ended by the task's own token (a displacement returned
         // `Streamed::Displaced` above): stopped, whatever it had produced.
         if reason == FinishReason::Cancelled {
-            return Ok(RoundsEnd::Cancelled);
+            return Ok(RoundsEnd::Cancelled { rounds: round });
         }
         // A round with no calls, or the limit was reached — the task is done.
         if reason != FinishReason::ToolCalls || calls.is_empty() || round >= max_rounds {

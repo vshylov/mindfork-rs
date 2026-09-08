@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (42)
+## Entries (43)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -54,6 +54,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the silent tasks under the app-wide budget — the budget's silent lane (done)
 - Post-M9: the silent stream yields to the turn — preemption on the session budget (done)
 - Post-M9: the batch a cancel waits for — `-b` on the CPU build's launch line (done)
+- Post-M9: a stop gives the window back — the silent task returns at the next landing (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -2687,3 +2688,79 @@ probes, 6/6.
   field; 512 (most of the wait kept) and 128 (+20 % for 3.7 s more) as the
   auto value; a runtime detection of a slow prefill (the batch is a
   launch-time argument).
+
+### Post-M9: a stop gives the window back — the silent task returns at the next landing (done)
+
+**What.** The stop track's fork F4b
+([docs/research/stop-silent-task.md](../research/stop-silent-task.md) §7),
+taken on the premise that track named as the condition for revisiting it:
+users stop a silent task to *postpone* it, not to lose what it was about
+to read. The design
+[docs/research/stop-refunds-window.md](../research/stop-refunds-window.md),
+every fork at its recommendation (the user's decision, 2026-09-08); no
+stage-0 probe.
+
+**The problem.** Three of the four silent tasks advance their cadence at
+spawn — reflection its watermark `Chat.reflected_upto` and stamp, the two
+consolidations their per-chat reply counters — and the lane and preemption
+tracks kept them there for a reason: a task that fails or is displaced
+after its first round has *read* its window, and re-reading it at every
+landing would be a loop, or for reflection a duplicate of every
+observation it wrote (the digest is over the window only for exactly that
+reason). The stop track inherited the rule as "a stop skips this window".
+So a reflection stopped seconds after its chip appeared — before its first
+stream had ended, nothing written — lost the replies it was about to
+reflect on for good.
+
+**How.** What the spawn advances is remembered on the task's slot:
+`BgSlot.window: Option<Window>` — `Window::Reflection { chat, upto, at }`
+(the values before the spawn) or `Window::Counter { chat, count }` (what
+the reset took), passed to `begin_bg` by the three spawn tails; the roll
+passes `None` (an automatic roll stopped is already planned again, a
+manual one was typed and stopped by the same hand). The loop reports the
+one fact that decides: `RoundsEnd::Cancelled { rounds }` — `run_rounds`'
+`round` at the moment the stop is read, which is exactly the number of
+rounds whose tools had run, `0` for a stop while waiting for the lane, for
+room, or during the first stream — mapped by `spawn_silent_loop` onto
+`BgOutcome::Cancelled { consumed: rounds > 0 }`. `handle_bg_done` takes the
+slot's window on every outcome and, on `Cancelled { consumed: false }`
+only, gives it back (`give_back`): reflection's watermark and stamp
+restored and the chat marked dirty — saved the way the advance was; a
+counter **added back** (`+= count`), since the landings during the run
+incremented it legitimately and the sum is what it would read had the
+spawn never happened. Then the ordinary cadence does the rest: at the next
+landing `reflect_window` counts the old window plus the new replies, `due`
+holds, the gates run, the task spawns — over the same window extended by
+what came after. Nothing is re-scheduled by hand; a task stopped twice is
+refunded twice. On `Done`, `Failed` and `Cancelled { consumed: true }` the
+window is dropped and the advance stands.
+
+**Tests**: +7 — `tests/reflection.rs` (a reflection spawned through
+`maybe_auto_reflect` and landed `consumed: false` → watermark `None`, stamp
+`None`, the chat dirty, the next `maybe_auto_reflect` spawns again to
+`Some(2)`; `consumed: true` keeps `Some(2)` and marks nothing; `Done` and
+`Failed` keep it; a consolidation's counter at `3` with a window of `5`
+reads `8` after `consumed: false` and `3` after every other outcome; a
+window for a chat that is gone marks nothing), `tests/self_consolidation.rs`
+(a "sleep" spawned at `every = 1`, a landing during the run → `1`, the stop
+→ `2`, the next landing spawns again and resets), `tests/silent.rs` (a loop
+whose first round called a tool and whose second stream is stopped lands
+`consumed: true`; the three existing stops — mid-stream, waiting, retry —
+land `consumed: false`) — **2932 unit tests green, 146 `#[ignore]`**.
+
+**Live**: not required — the engine path is the stop track's, measured
+(its §6.1); what changed is the orchestrator's bookkeeping after the
+landing, under unit test. The LAN regression (`stop_silent_task_e2e_live`,
+`silent_roll_e2e_live`, `background_subagent_e2e_live`; Qwen 3.6 27B, four
+slots over 16384): 3/3 in 44.9 s.
+
+**Rejected**: refunding always (a read window written twice — reflection's
+observations duplicated with nothing to merge them unless
+self-consolidation is on, which it is not by default); refunding only a
+stop made while *waiting* (too narrow — most stops land in the first
+stream, where nothing is written until it ends); restoring a counter
+rather than adding it back (the landings during the run would be lost);
+carrying the window through the loop (the loop would learn about chats'
+watermarks); re-planning a stopped manual `/compact`; a note at the stop
+saying the task returns (the feed is not a log); refunding on `Quit` (the
+loop's fact is unavailable there — recorded as a later item).

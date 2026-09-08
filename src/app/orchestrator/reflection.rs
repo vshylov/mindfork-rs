@@ -227,10 +227,19 @@ impl Orchestrator {
 
         // All gates passed — fix the watermark (the window is covered) and save the chat.
         // `modified_at` is untouched: reflection shouldn't bump the chat up the list.
-        if let Some(chat) = self.chats.iter_mut().find(|c| c.id == chat_id) {
+        // What the advance replaces is remembered on the slot, so a stop
+        // before the first round can put it back
+        // (docs/research/stop-refunds-window.md §3.1).
+        let window = self.chats.iter_mut().find(|c| c.id == chat_id).map(|chat| {
+            let before = super::background::Window::Reflection {
+                chat: chat_id,
+                upto: chat.reflected_upto,
+                at: chat.reflected_at,
+            };
             chat.reflected_upto = Some(watermark);
             chat.reflected_at = Some(Utc::now());
-        }
+            before
+        });
         self.mark_dirty(chat_id);
 
         // Cancellation token — before the context: its clone goes into `ToolContext.cancel`.
@@ -284,7 +293,7 @@ impl Orchestrator {
                 loc: crate::shared::i18n::locale(lang),
             }),
         });
-        self.begin_bg(BackgroundKind::Reflection, cancel);
+        self.begin_bg(BackgroundKind::Reflection, cancel, window);
     }
 }
 

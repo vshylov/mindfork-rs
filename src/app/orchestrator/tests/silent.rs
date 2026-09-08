@@ -794,7 +794,7 @@ async fn a_loop_stopped_mid_stream_lands_cancelled() {
         .expect("the task landed")
         .unwrap();
     assert_eq!(kind, BackgroundKind::Reflection);
-    assert_eq!(outcome, BgOutcome::Cancelled);
+    assert_eq!(outcome, BgOutcome::Cancelled { consumed: false });
     assert_eq!(backend.requests().len(), 1, "no retry after a stop");
 }
 
@@ -822,7 +822,7 @@ async fn a_loop_stopped_while_waiting_lands_cancelled() {
         .await
         .expect("the task landed")
         .unwrap();
-    assert_eq!(outcome, BgOutcome::Cancelled);
+    assert_eq!(outcome, BgOutcome::Cancelled { consumed: false });
     assert!(
         backend.requests().is_empty(),
         "the stopped wait never streamed"
@@ -857,7 +857,7 @@ async fn a_loop_stopped_during_its_retry_lands_cancelled() {
         .await
         .expect("the task landed")
         .unwrap();
-    assert_eq!(outcome, BgOutcome::Cancelled);
+    assert_eq!(outcome, BgOutcome::Cancelled { consumed: false });
     assert_eq!(backend.requests().len(), 1, "the retry never streamed");
     drop(turn);
 }
@@ -992,4 +992,52 @@ async fn an_automatic_roll_stopped_is_quiet_and_planned_again_at_the_next_landin
         chat.compaction.as_ref().map(|c| c.summary.as_str()),
         Some("a summary")
     );
+}
+
+/// One round that calls a tool — the shape that makes a round's tools run
+/// before the next stream (docs/research/stop-refunds-window.md §3.2).
+fn one_call() -> super::subagent::Script {
+    super::subagent::Script {
+        chunks: vec![
+            ChatChunk::ToolCall(crate::shared::api::contract::ToolCallDelta {
+                thought_signature: None,
+                index: 0,
+                id: Some("c1".into()),
+                name: Some("get_self_model".into()),
+                arguments: "{}".into(),
+            }),
+            ChatChunk::Finished(FinishReason::ToolCalls),
+        ],
+        hang: false,
+    }
+}
+
+/// A loop stopped after a round of its tools ran lands `consumed: true`
+/// (docs/research/stop-refunds-window.md §3.2): the window was acted on, and
+/// the landing keeps the advance. The mid-stream, waiting and retry stops
+/// above land `consumed: false` — no round had run.
+#[tokio::test]
+async fn a_loop_stopped_after_a_round_of_tools_lands_consumed() {
+    let (_d, mut orch, chat_id) = orch_ready_for_reflection();
+    orch.config.compaction.context_tokens = Some(1000);
+    let backend = KeyedRecorder::new(vec![("quiet loop", vec![one_call(), long_text(30)])], 30);
+    let (stop, mut done_rx) = spawn_loop(
+        &mut orch,
+        backend.clone(),
+        chat_id,
+        "quiet loop",
+        std::time::Duration::from_secs(30),
+    );
+    settle(3000, || backend.requests().len() == 2).await;
+    assert_eq!(
+        backend.requests().len(),
+        2,
+        "the round's tools ran, the next stream opened"
+    );
+    stop.cancel();
+    let (_, outcome) = tokio::time::timeout(std::time::Duration::from_secs(5), done_rx.recv())
+        .await
+        .expect("the task landed")
+        .unwrap();
+    assert_eq!(outcome, BgOutcome::Cancelled { consumed: true });
 }

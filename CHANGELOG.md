@@ -167,6 +167,13 @@ split by subsystem.
 
 ### Changed
 
+- **A stopped background task no longer skips what it was about to read.**
+  Stopping a reflection or a consolidation (`F6` on the tasks screen,
+  `/tasks stop`) before it had done anything gives its window back: the
+  same replies are reflected on, or the notes consolidated, after the next
+  reply, as if the task had never started. A task stopped after it had
+  already acted keeps its place, so nothing is written twice.
+
 - **A CPU-only host's server now runs a smaller batch.** With *GPU layers*
   at 0 the app launches `llama-server` with `-b 256 -ub 256`. The server
   looks at its queue between batches, so a background request the app

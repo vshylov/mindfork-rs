@@ -86,3 +86,36 @@ async fn self_consolidation_success_emits_self_model_changed() {
     }
     assert!(changed);
 }
+
+/// A "sleep" stopped before a round of its tools ran gets its count back
+/// (docs/research/stop-refunds-window.md §3.3): the reset's count is added
+/// to the landing that happened during the run, and the next landing spawns
+/// it again.
+#[tokio::test]
+async fn a_sleep_stopped_before_its_first_round_gets_its_count_back() {
+    let (_d, mut orch, chat_id) = orch_ready_for_self_consolidation();
+    orch.engines.backend = Some(Arc::new(MockBackend::scripted(vec![ChatChunk::Finished(
+        FinishReason::Stop,
+    )])) as Arc<dyn EngineBackend>);
+    orch.maybe_auto_self_consolidate(chat_id);
+    assert_eq!(orch.self_consolidate_counts.get(&chat_id), Some(&0));
+    // A landing during the run counts, and does not spawn a second one.
+    orch.maybe_auto_self_consolidate(chat_id);
+    assert_eq!(orch.self_consolidate_counts.get(&chat_id), Some(&1));
+
+    orch.handle_stop_background_task(BackgroundKind::SelfConsolidation);
+    orch.handle_bg_done(
+        BackgroundKind::SelfConsolidation,
+        super::super::background::BgOutcome::Cancelled { consumed: false },
+    );
+    assert_eq!(
+        orch.self_consolidate_counts.get(&chat_id),
+        Some(&2),
+        "the reset's one added back to the landing's one"
+    );
+
+    // The ordinary cadence brings it back.
+    orch.maybe_auto_self_consolidate(chat_id);
+    assert!(orch.bg_running(BackgroundKind::SelfConsolidation));
+    assert_eq!(orch.self_consolidate_counts.get(&chat_id), Some(&0));
+}

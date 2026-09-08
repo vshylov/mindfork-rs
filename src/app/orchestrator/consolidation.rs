@@ -110,8 +110,14 @@ impl Orchestrator {
         let Ok(backend) = self.engines.backend_if_ready(self.ui_locale()) else {
             return;
         };
-        // All gates passed — reset the counter and spawn.
-        self.consolidate_counts.insert(chat_id, 0);
+        // All gates passed — reset the counter and spawn, remembering what the
+        // reset took so a stop before the first round can give it back
+        // (docs/research/stop-refunds-window.md §3.1).
+        let count = self.consolidate_counts.insert(chat_id, 0).unwrap_or(0);
+        let window = Some(super::background::Window::Counter {
+            chat: chat_id,
+            count,
+        });
         let overview = notes::build_consolidation_overview(
             &self.storage,
             profile_id,
@@ -168,6 +174,6 @@ impl Orchestrator {
             // summary↔observation semantics don't apply to it.
             summary_semantics: None,
         });
-        self.begin_bg(BackgroundKind::Consolidation, cancel);
+        self.begin_bg(BackgroundKind::Consolidation, cancel, window);
     }
 }

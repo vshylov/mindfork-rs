@@ -3659,7 +3659,11 @@ the task named in the note with this screen's words;
 [tasks-stop-all.md](docs/research/tasks-stop-all.md)):
 the slot's token is cancelled and the task
 lands as *cancelled* — its failure streak untouched, the window it advanced
-at spawn skipped as on a failure, `SelfModelChanged` still announced for
+at spawn **given back** when no round of its tools had run (a stop
+postpones: the ordinary cadence makes the same window due again at the
+next landing) and kept once one has (a window acted on is never read
+twice; [docs/research/stop-refunds-window.md](docs/research/stop-refunds-window.md)),
+`SelfModelChanged` still announced for
 the two self-model kinds since a partial run may have written — and the
 row reads *idle* on the next snapshot; a `/compact` the user typed answers
 its stop with one notice, an automatic roll stops quietly and is planned
@@ -3967,7 +3971,7 @@ When `auto_reflect_every > 0`, every N assistant replies a background task
 this is a **mini agentic loop**: the reflection is given the SelfModel tools, and the loop executes
 their calls (writing to `Storage`); up to 6 rounds, with a timeout. The chat/feed **aren't mutated**,
 nothing is streamed to the UI — the reflection is silent. Gates: the feature is enabled, the profile enabled
-the tools, a reflection isn't already running (one at a time), the server is `Ready`, there's enough conversation. Its rounds stream on the session budget's **silent lane** ([§6.3](#63-client-side-agentic-loop)): one of the app's own requests at a time, each round priced and waiting for room beside a turn rather than overfilling the pool with it. A round displaced by a turn is made again with the same request (at most three times, then it holds), and the task's time limit runs over its streaming and tools, not over its waits ([docs/research/silent-preemption.md](docs/research/silent-preemption.md) §4.4–§4.5). A reflection **stopped** from the tasks screen ([§11.10](#1110-the-tasks-screen-f7)) lands as cancelled: the streak untouched, the window it advanced at spawn skipped, `SelfModelChanged` still announced for what a partial run may have written.
+the tools, a reflection isn't already running (one at a time), the server is `Ready`, there's enough conversation. Its rounds stream on the session budget's **silent lane** ([§6.3](#63-client-side-agentic-loop)): one of the app's own requests at a time, each round priced and waiting for room beside a turn rather than overfilling the pool with it. A round displaced by a turn is made again with the same request (at most three times, then it holds), and the task's time limit runs over its streaming and tools, not over its waits ([docs/research/silent-preemption.md](docs/research/silent-preemption.md) §4.4–§4.5). A reflection **stopped** from the tasks screen ([§11.10](#1110-the-tasks-screen-f7)) lands as cancelled: the streak untouched, `SelfModelChanged` still announced for what a partial run may have written, and the window it advanced at spawn **given back** — the watermark and stamp restored and saved — when no round of its tools had run, so the same replies are reflected on at the next landing; once a round has run the advance stands, since its observations from that window are already written and a window read twice would write them twice ([docs/research/stop-refunds-window.md](docs/research/stop-refunds-window.md)). The two consolidations' counters follow the same rule, added back rather than restored, since the landings during the run were real.
 
 ### 17.7. UI — the self-model screen (`F3`)
 

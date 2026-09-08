@@ -306,7 +306,8 @@ over 16384): `stop_silent_task_e2e_live`, `silent_roll_e2e_live`,
 - **A confirmation** — a stop is per attempt and undoes nothing written
   (the stop track's R3).
 - **Refunding the window on a stop** (the stop track's F4b) — unchanged by
-  the route.
+  the route; done later the same day
+  ([stop-refunds-window.md](stop-refunds-window.md)).
 
 ## 8. Documentation touch list (AGENTS.md §4)
 
