@@ -15,7 +15,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use super::background::{Acted, Acting, BgOutcome};
+use super::background::{Acted, BgOutcome};
 use crate::app::events::BackgroundKind;
 use crate::entities::profile::ToolId;
 use crate::features::tools::{ToolContext, ToolRegistry};
@@ -278,9 +278,7 @@ async fn run_rounds(
         // and starts no tools into a window already given back
         // (docs/research/quit-refunds-window.md §3.3).
         round += 1;
-        if !wrote {
-            acted.set(Acting::InTools);
-        }
+        acted.enter_tools(wrote);
         if cancel.is_cancelled() {
             return Ok(RoundsEnd::Cancelled { wrote });
         }
@@ -304,12 +302,7 @@ async fn run_rounds(
         }
         // The round's tools have reported: a write is kept for good, a round
         // of reads leaves the task where it was (acted-by-effect §3.2).
-        if round_wrote {
-            wrote = true;
-            acted.set(Acting::Wrote);
-        } else if !wrote {
-            acted.set(Acting::Idle);
-        }
+        wrote = acted.leave_tools(wrote, round_wrote);
     }
     Ok(RoundsEnd::Done)
 }

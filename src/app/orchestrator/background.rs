@@ -85,6 +85,23 @@ impl Acted {
         self.0.store(state as u8, Ordering::SeqCst);
     }
 
+    /// A round's tools are about to run: `InTools` — unless a call already
+    /// wrote, since a write is kept for good.
+    pub(super) fn enter_tools(&self, wrote_so_far: bool) {
+        if !wrote_so_far {
+            self.set(Acting::InTools);
+        }
+    }
+
+    /// A round's tools have reported: a write is kept for good, a round of
+    /// reads leaves the task where it was (docs/research/acted-by-effect.md
+    /// §3.2). Returns the fact accumulated so far.
+    pub(super) fn leave_tools(&self, wrote_so_far: bool, round_wrote: bool) -> bool {
+        let wrote = wrote_so_far || round_wrote;
+        self.set(if wrote { Acting::Wrote } else { Acting::Idle });
+        wrote
+    }
+
     pub(super) fn get(&self) -> Acting {
         match self.0.load(Ordering::SeqCst) {
             0 => Acting::Idle,
