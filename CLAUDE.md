@@ -171,7 +171,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-08, version 0.9.8)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2946 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **2950 unit tests
 green, 146 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
@@ -183,6 +183,18 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 `tools/doc_index_check.py`. A new track adds a line; a line that has stopped
 being recent is dropped, not shortened.
 
+- **The quit's settle hears the roll, and its cap is a setting** — the
+  roll takes a silent slot but lands on `compact_rx`, so the settle of
+  the previous track waited its whole cap during an automatic roll and
+  dropped a roll that had just finished; now `settle_silent_tasks`
+  selects over both channels — a cancelled roll clears its slot at once,
+  a finished one is applied through `handle_compact_result` for the flush
+  — and the cap is the user's: `tools.quit_settle_secs`, a *Tools* row
+  beside the other time limits (the user's decision), **no cap by
+  default** so a task caught mid-tool finishes (each task is bounded by
+  its own run time limit), a number in seconds, `0` deciding at once by
+  state ([docs/research/quit-settle-roll-and-cap.md](docs/research/quit-settle-roll-and-cap.md),
+  spec §6.7, §17.6, [docs/journal/engine.md](docs/journal/engine.md)).
 - **The quit waits for the landing — a stop's own path decides, the state
   rule only past a cap** — at a quit a silent task caught mid-tools kept
   its window because its round's write, if any, had not reported; but a
@@ -394,22 +406,6 @@ being recent is dropped, not shortened.
   ([docs/research/concurrent-tools.md](docs/research/concurrent-tools.md),
   [ADR 0012](docs/decisions/0012-concurrent-tool-calls.md), spec §6.3,
   [docs/journal/tools.md](docs/journal/tools.md)).
-- **Parallel sub-agents — track complete, both stages** — the model's
-  several `call_subagent` calls in one reply run **at once**: the round's
-  ordinary calls first, then the group (`buffer_unordered`, at most
-  `tools.subagent_parallel` — default 1, the old sequential behaviour), then
-  the records in the model's order; `TurnShared` borrowed immutably by every
-  loop with the confirmation round trip behind one lock (one popup at a
-  time) and the token totals as atomics; the mirror keyed by run id, the
-  chip a set, the description carrying the number above 1. Stage 1 put
-  `sessions` on every engine section (a semaphore held for one stream), a
-  managed server above 1 on `-np N --kv-unified` (the pool stays whole where
-  `-np` alone splits it), and the `parallel_slots` hint. Rests on a fact:
-  since December 2025 a `llama-server` without `-np` already runs **four
-  slots over one unified KV pool**
-  ([docs/research/parallel-subagents.md](docs/research/parallel-subagents.md),
-  [ADR 0010](docs/decisions/0010-subagent-nested-turn.md) amended, spec
-  §9.3.2, [docs/journal/tools.md](docs/journal/tools.md)).
 
 For what exists and how it works, read architecture.md and spec.md — they are
 the source of truth for the current state. For how any of it came to be, and

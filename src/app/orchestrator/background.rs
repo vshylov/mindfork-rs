@@ -20,6 +20,14 @@ use crate::app::events::{AppEvent, BackgroundKind};
 use crate::shared::i18n::Locale;
 
 use super::Orchestrator;
+use super::compaction::CompactResult;
+
+/// What the quit's settle heard: a silent loop's outcome, or the roll's
+/// result on its own channel.
+enum Landing {
+    Task((BackgroundKind, BgOutcome)),
+    Roll(CompactResult),
+}
 
 /// How a silent task ended (`bg_done_tx`): its work done, stopped by its
 /// own token — the tasks screen's `F6`, or `Quit` — or failed with a
@@ -290,25 +298,40 @@ impl Orchestrator {
     }
 
     /// The `Quit` branch's second step, after `run`'s loop has broken:
-    /// listens on the tasks' outcome channel a little longer, so that every
-    /// cancelled loop's own landing — a wait returned, a stream ended, a
+    /// listens on the tasks' outcome channels a little longer, so that every
+    /// cancelled task's own landing — a wait returned, a stream ended, a
     /// round of tools finished — decides its window through the very path a
-    /// stop takes (`handle_bg_done`, `consumed` from the loop). Bounded by
-    /// `cap` in all, and over as soon as no slot is active; a task that has
-    /// not landed by then is left to [`Self::refund_unlanded`]
+    /// stop takes (`handle_bg_done`, `consumed` from the loop). The roll
+    /// lands on its own channel, through `handle_compact_result`: a cancelled
+    /// roll clears its slot at once, a roll that finished just before the
+    /// quit is applied for the flush (docs/research/quit-settle-roll-and-cap.md
+    /// §3.1). Over as soon as no slot is active, or — with a `cap` — when it
+    /// runs out, leaving the rest to [`Self::refund_unlanded`]; `None` waits
+    /// for every landing, each task bounded by its own run time limit
     /// (docs/research/quit-waits-for-the-landing.md §3.1).
     pub(super) async fn settle_silent_tasks(
         &mut self,
         done_rx: &mut UnboundedReceiver<(BackgroundKind, BgOutcome)>,
-        cap: Duration,
+        compact_rx: &mut UnboundedReceiver<CompactResult>,
+        cap: Option<Duration>,
     ) {
-        let deadline = tokio::time::Instant::now() + cap;
+        let deadline = cap.map(|cap| tokio::time::Instant::now() + cap);
         while self.any_bg_active() {
-            let landed = tokio::time::timeout_at(deadline, done_rx.recv()).await;
+            let next = async {
+                tokio::select! {
+                    landed = done_rx.recv() => landed.map(Landing::Task),
+                    result = compact_rx.recv() => result.map(Landing::Roll),
+                }
+            };
+            let landed = match deadline {
+                Some(deadline) => tokio::time::timeout_at(deadline, next).await.ok(),
+                None => Some(next.await),
+            };
             match landed {
-                Ok(Some((kind, outcome))) => self.handle_bg_done(kind, outcome),
-                // The channel closed, or the cap ran out.
-                Ok(None) | Err(_) => break,
+                Some(Some(Landing::Task((kind, outcome)))) => self.handle_bg_done(kind, outcome),
+                Some(Some(Landing::Roll(result))) => self.handle_compact_result(result),
+                // A channel closed, or the cap ran out.
+                Some(None) | None => break,
             }
         }
     }

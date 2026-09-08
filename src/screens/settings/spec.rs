@@ -533,6 +533,11 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
                 c.tools.dialogue_run_timeout_secs = v;
             }
         }),
+        // Empty reads "until every task has landed"; a number is the cap in
+        // seconds, `0` included (docs/research/quit-settle-roll-and-cap.md §3.2).
+        TQuitSettle => {
+            int(|c, t| c.tools.quit_settle_secs = parse_opt_num(t, c.tools.quit_settle_secs))
+        }
         RagTarget => int(|c, t| {
             if let Ok(v) = t.parse() {
                 c.rag.chunk_target_chars = v;

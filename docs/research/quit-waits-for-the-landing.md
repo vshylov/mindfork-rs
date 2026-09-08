@@ -191,8 +191,12 @@ over 16384): `stop_silent_task_e2e_live`, `silent_roll_e2e_live`,
 ## 7. Not in this track
 
 - **Draining `compact_rx` at the quit** (a cancelled roll has nothing to
-  decide).
-- **A configurable cap.**
+  decide) — **done** as the next track
+  ([quit-settle-roll-and-cap.md](quit-settle-roll-and-cap.md)), and not
+  cosmetic after all: the roll takes a slot but lands on `compact_rx`, so
+  this track's settle waited the whole cap during a roll.
+- **A configurable cap** — done in the same track: `tools.quit_settle_secs`,
+  no cap by default.
 
 ## 8. Documentation touch list (AGENTS.md §4)
 

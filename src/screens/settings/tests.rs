@@ -4976,3 +4976,41 @@ fn editing_the_batch_stores_a_number_and_an_empty_field_reads_auto() {
         hint.chars().count()
     );
 }
+
+/// The quit's wait is a Tools row after the dialogue's run time limit
+/// (docs/research/quit-settle-roll-and-cap.md §3.2): empty by default —
+/// wait until every task has landed — a typed number stored in seconds,
+/// zero included, an emptied field back to no cap; described.
+#[test]
+fn quit_settle_row_follows_the_dialogue_time_limit_and_stores_seconds() {
+    let mut s = screen();
+    let rows = s.tool_fields();
+    let pos = rows
+        .iter()
+        .position(|r| r.id == FieldId::TQuitSettle)
+        .expect("no quit_settle row");
+    assert_eq!(rows[pos - 1].id, FieldId::TDialogueTimeout);
+    assert_eq!(rows[pos].group, rows[pos - 1].group);
+    assert!(
+        matches!(&rows[pos].kind, FieldKind::Text(v) if v.is_empty()),
+        "empty by default: no cap"
+    );
+    assert!(field_desc(&s, FieldId::TQuitSettle).is_some());
+
+    let edit = |s: &mut SettingsScreen, text: &str| {
+        goto_section(s, Section::Tools);
+        goto_field(s, FieldId::TQuitSettle);
+        s.handle_key(key(KeyCode::Enter));
+        s.handle_key(ctrl('k'));
+        for c in text.chars() {
+            s.handle_key(key(KeyCode::Char(c)));
+        }
+        s.handle_key(key(KeyCode::Enter));
+    };
+    edit(&mut s, "5");
+    assert_eq!(s.config.tools.quit_settle_secs, Some(5));
+    edit(&mut s, "0");
+    assert_eq!(s.config.tools.quit_settle_secs, Some(0), "zero is a cap");
+    edit(&mut s, "");
+    assert_eq!(s.config.tools.quit_settle_secs, None, "emptied: no cap");
+}

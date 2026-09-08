@@ -399,11 +399,18 @@ pub async fn run(deps: OrchestratorDeps) {
         }
     }
     // The silent tasks were cancelled by the `Quit` arm; their landings —
-    // a cancelled loop lands on its own, and fast — decide their windows
-    // through the stop's own path, listened for a little longer here, and
-    // whatever has not landed by the cap is decided by its state
-    // (docs/research/quit-waits-for-the-landing.md §3.1).
-    orch.settle_silent_tasks(&mut bg_done_rx, QUIT_SETTLE).await;
+    // a cancelled loop lands on its own, and fast; the roll on its own
+    // channel — decide their windows through the stop's own path, listened
+    // for here, and whatever has not landed by the user's cap is decided by
+    // its state (docs/research/quit-waits-for-the-landing.md §3.1,
+    // quit-settle-roll-and-cap.md §3).
+    let cap = orch
+        .config
+        .tools
+        .quit_settle_secs
+        .map(|secs| Duration::from_secs(secs.into()));
+    orch.settle_silent_tasks(&mut bg_done_rx, &mut compact_rx, cap)
+        .await;
     orch.refund_unlanded();
     // Deferred restarts on exit are deliberately NOT applied: servers get torn
     // down via Drop/kill_on_drop anyway — no point bringing up a process right
@@ -416,13 +423,6 @@ pub async fn run(deps: OrchestratorDeps) {
 /// After that — stays quiet until the first success (counter reset).
 /// Observability without spam. See the "refinements" stage 5.
 pub(super) const BACKGROUND_FAILURE_ALERT: u32 = 3;
-
-/// How long a quit listens for the cancelled silent tasks' landings before
-/// deciding the rest by their state (docs/research/quit-waits-for-the-landing.md
-/// §3.1): a task not in its tools lands in milliseconds, a round of reads in
-/// tens, an embedding in hundreds on a GPU host — two seconds covers a CPU
-/// embedding and is still a quit.
-const QUIT_SETTLE: Duration = Duration::from_secs(2);
 
 /// Builds the tool registry from the configuration (`config.tools`).
 /// `sandbox_dir` — the Python sandbox directory (`data/sandbox/`, from

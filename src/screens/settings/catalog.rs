@@ -762,6 +762,17 @@ impl SettingsScreen {
                     FieldKind::Text(t.dialogue_run_timeout_secs.to_string()),
                 )
                 .describe(loc.t("ui.settings.desc.dialogue_timeout")),
+                // Empty — wait until every task has landed
+                // (docs/research/quit-settle-roll-and-cap.md §3.2).
+                row(
+                    FieldId::TQuitSettle,
+                    loc.t("ui.settings.field.quit_settle"),
+                    FieldKind::Text(
+                        t.quit_settle_secs
+                            .map_or_else(String::new, |secs| secs.to_string()),
+                    ),
+                )
+                .describe(loc.t("ui.settings.desc.quit_settle")),
             ],
         );
         rows.extend(grouped(

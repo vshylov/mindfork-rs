@@ -3121,14 +3121,20 @@ Principles:
   Arc<Acted> }` — `Idle`, `InTools`, `Wrote`, set by the loop around each
   round's tools), so `Quit` applies the same rule in three steps: the arm
   cancels every slot's token (`cancel_bg_all`); `run`, once its loop has
-  broken, **listens for the cancelled tasks' own landings** on `bg_done_rx`
-  (`settle_silent_tasks`, each through `handle_bg_done` — the stop's path,
-  `consumed` from the loop — while any slot is active, `QUIT_SETTLE` = 2 s
-  in all: a task not in its tools lands in milliseconds, a round of tools
-  when it finishes); then `refund_unlanded` decides whatever has not landed
-  by its state — `Idle` given back, `InTools` and `Wrote` kept — before the
-  exit flush (docs/research/quit-waits-for-the-landing.md §3.1,
-  quit-refunds-window.md §3.2, acted-by-effect.md §3.2); the
+  broken, **listens for the cancelled tasks' own landings** — on
+  `bg_done_rx` and on `compact_rx`, since the roll takes a slot but lands
+  on its own channel (`settle_silent_tasks`, a `select!` over both: a
+  loop's outcome through `handle_bg_done` — the stop's path, `consumed`
+  from the loop — a `CompactResult` through `handle_compact_result`, so a
+  cancelled roll clears its slot at once and one that had just finished is
+  applied for the flush) while any slot is active, for as long as
+  `tools.quit_settle_secs` allows — `None`, the default, until every task
+  has landed, each bounded by its own run time limit; a number the cap in
+  seconds; then `refund_unlanded` decides whatever has not landed by its
+  state — `Idle` given back, `InTools` and `Wrote` kept — before the exit
+  flush (docs/research/quit-waits-for-the-landing.md §3.1,
+  quit-settle-roll-and-cap.md §3, quit-refunds-window.md §3.2,
+  acted-by-effect.md §3.2); the
   tasks screen's `F6` stops one via `handle_stop_background_task`
   (docs/research/stop-silent-task.md §3). This way the family's 3rd task (self-model
   auto-consolidation, §9.9) doesn't touch the `run()`/`Quit` scaffold.
