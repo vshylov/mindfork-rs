@@ -33,6 +33,10 @@ use crate::shared::i18n::{Lang, locale};
 struct RecordingBackend {
     requests: Mutex<Vec<ChatRequest>>,
     replies: Mutex<VecDeque<String>>,
+    /// A usage chunk to close every stream with from the moment it is set —
+    /// the way a `llama-server` closes one with its `timings`
+    /// (docs/research/roll-timings.md §6).
+    usage: Mutex<Option<crate::shared::api::contract::TokenUsage>>,
 }
 
 impl RecordingBackend {
@@ -40,7 +44,13 @@ impl RecordingBackend {
         Arc::new(Self {
             requests: Mutex::new(Vec::new()),
             replies: Mutex::new(replies.iter().map(|s| (*s).to_string()).collect()),
+            usage: Mutex::new(None),
         })
+    }
+
+    /// Closes every stream from now on with this usage chunk.
+    fn report_usage(&self, usage: crate::shared::api::contract::TokenUsage) {
+        *self.usage.lock().unwrap() = Some(usage);
     }
 
     fn requests(&self) -> Vec<ChatRequest> {
@@ -73,8 +83,14 @@ impl EngineBackend for RecordingBackend {
             .unwrap()
             .pop_front()
             .unwrap_or_else(|| "ок".to_string());
+        let usage = *self.usage.lock().unwrap();
         let s = async_stream::stream! {
             yield ChatChunk::Text(reply);
+            // Before `Finished`, as the client hands it over (it reads on past
+            // `finish_reason` for exactly this chunk).
+            if let Some(u) = usage {
+                yield ChatChunk::Usage(u);
+            }
             yield ChatChunk::Finished(FinishReason::Stop);
         };
         Ok(Box::pin(s))
@@ -361,6 +377,7 @@ async fn the_read_back_tools_are_offered_only_after_a_compaction() {
         chat_id,
         boundary_id,
         rolls: 1,
+        prefill: None,
         text: Ok("сводка".into()),
     });
 
@@ -395,6 +412,7 @@ fn the_turn_snapshot_carries_the_folded_range() {
         chat_id,
         boundary_id,
         rolls: 1,
+        prefill: None,
         text: Ok("сводка".into()),
     });
 
@@ -433,6 +451,7 @@ async fn compressing_never_edits_the_conversation() {
         chat_id,
         boundary_id,
         rolls: 1,
+        prefill: None,
         text: Ok("сводка".into()),
     });
 
@@ -524,6 +543,7 @@ async fn a_boundary_that_vanished_mid_roll_discards_the_summary() {
         chat_id,
         boundary_id: Uuid::new_v4(), // never belonged to this chat
         rolls: 1,
+        prefill: None,
         text: Ok("сводка".into()),
     });
 
@@ -559,6 +579,7 @@ async fn a_compaction_does_not_bump_modified_at() {
         chat_id,
         boundary_id,
         rolls: 1,
+        prefill: None,
         text: Ok("сводка".into()),
     });
 
@@ -581,6 +602,7 @@ async fn a_failed_roll_is_reported_and_clears_the_indicator() {
         chat_id,
         boundary_id: chat_of(&orch, chat_id).messages[2].id,
         rolls: 1,
+        prefill: None,
         text: Err(CompactEnd::Failed("сервер недоступен".into())),
     });
 
@@ -818,6 +840,7 @@ fn an_automatic_failure_advances_the_streak_without_reporting() {
         rolls: 1,
         origin: CompactOrigin::Auto,
         text: Err(CompactEnd::Failed("сервер недоступен".into())),
+        prefill: None,
     });
     assert_eq!(orch.bg_failures(BackgroundKind::Compaction), 1);
     let events = drain(&mut rx);
@@ -843,6 +866,7 @@ fn an_empty_automatic_summary_is_counted_not_announced() {
         rolls: 1,
         origin: CompactOrigin::Auto,
         text: Ok("   ".into()),
+        prefill: None,
     });
     assert_eq!(orch.bg_failures(BackgroundKind::Compaction), 1);
     assert!(
@@ -1013,5 +1037,233 @@ async fn impersonation_sends_the_compacted_view() {
     assert!(
         !sent.iter().any(|t| t.contains("первый вопрос")),
         "the folded exchange must not be sent verbatim: {sent:?}"
+    );
+}
+
+// ---------- the roll's timings (docs/research/roll-timings.md) ----------
+//
+// The roll's prompt is the session's coldest — a different prefix, a digest
+// that never repeats — and the one sample a warm server gives; its figure is
+// offered to the slow-prefill rule at the landing, after the roll's own.
+
+use super::super::compaction::collect_roll;
+use crate::shared::api::contract::{Prefill, TokenUsage};
+
+/// A figure that holds a slot for 54 s at the default batch — the CPU build's
+/// (slow-prefill-detection.md §6.1): 1900 tokens in 50 s, 38 tok/s.
+const SLOW: Prefill = Prefill {
+    tokens: 1900,
+    ms: 50_000,
+};
+/// The GPU stack's roll (roll-timings.md §2.1): a hold under a second.
+const FAST: Prefill = Prefill {
+    tokens: 1466,
+    ms: 628,
+};
+/// The change the note names on an external server.
+const ROUTE: &str = "-b 256 -ub 256";
+
+fn usage_with(prefill: Prefill) -> TokenUsage {
+    TokenUsage {
+        prompt_tokens: prefill.tokens,
+        completion_tokens: 3,
+        reasoning_tokens: 0,
+        prefill: Some(prefill),
+    }
+}
+
+/// An external server with two exchanges behind it, ready for a manual roll.
+async fn external_with_two_turns(
+    backend: Arc<RecordingBackend>,
+) -> (
+    tempfile::TempDir,
+    UnboundedSender<AppCommand>,
+    UnboundedReceiver<AppEvent>,
+    tokio::task::JoinHandle<()>,
+) {
+    let mut cfg = compact_cfg(1);
+    cfg.engine.mode = ServerMode::External;
+    let (dir, cmd_tx, mut evt_rx, handle) = spawn_orch_cfg(Some(backend), cfg);
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+    turn(&cmd_tx, &mut evt_rx, "первый вопрос").await;
+    turn(&cmd_tx, &mut evt_rx, "второй вопрос").await;
+    (dir, cmd_tx, evt_rx, handle)
+}
+
+/// The slow-prefill notes still in the channel once a quit flushed it in order.
+async fn notes_after_quit(
+    cmd_tx: &UnboundedSender<AppCommand>,
+    evt_rx: &mut UnboundedReceiver<AppEvent>,
+    handle: tokio::task::JoinHandle<()>,
+) -> Vec<String> {
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+    drain(evt_rx)
+        .into_iter()
+        .filter_map(|e| match e {
+            AppEvent::Notice(t) if t.contains(ROUTE) => Some(t),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The roll's figure reaches the rule (§3.2), and the note follows the roll's
+/// own landing — the turns before it ended without a figure and said nothing.
+#[tokio::test]
+async fn a_slow_roll_is_followed_by_the_note() {
+    let backend = RecordingBackend::new(&["ответ один", "ответ два", "сводка"]);
+    let (_d, cmd_tx, mut evt_rx, handle) = external_with_two_turns(backend.clone()).await;
+    // Only the roll's stream carries the figure.
+    backend.report_usage(usage_with(SLOW));
+
+    cmd_tx.send(AppCommand::Compact).unwrap();
+    wait_compacted(&mut evt_rx).await;
+    let note = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        wait_for(
+            &mut evt_rx,
+            |e| matches!(e, AppEvent::Notice(t) if t.contains(ROUTE)),
+        ),
+    )
+    .await
+    .expect("the note follows the landing")
+    .unwrap();
+    let AppEvent::Notice(text) = note else {
+        unreachable!()
+    };
+    assert!(text.contains("38"), "the engine's own figure: {text}");
+
+    let again = notes_after_quit(&cmd_tx, &mut evt_rx, handle).await;
+    assert!(again.is_empty(), "one note per server session: {again:?}");
+}
+
+/// The GPU stack's roll: a hold under the bar, nothing beyond the landing.
+#[tokio::test]
+async fn a_fast_roll_says_nothing() {
+    let backend = RecordingBackend::new(&["ответ один", "ответ два", "сводка"]);
+    let (_d, cmd_tx, mut evt_rx, handle) = external_with_two_turns(backend.clone()).await;
+    backend.report_usage(usage_with(FAST));
+
+    cmd_tx.send(AppCommand::Compact).unwrap();
+    wait_compacted(&mut evt_rx).await;
+    let notes = notes_after_quit(&cmd_tx, &mut evt_rx, handle).await;
+    assert!(notes.is_empty(), "{notes:?}");
+}
+
+/// A session the turn already told (R2): the roll's figure claims nothing
+/// twice. Every event is read here rather than skipped past, so the count is
+/// the session's whole count.
+#[tokio::test]
+async fn a_roll_after_the_turn_was_told_says_nothing_again() {
+    let backend = RecordingBackend::new(&["ответ один", "ответ два", "сводка"]);
+    // The very first stream carries the figure: the turn claims the note.
+    backend.report_usage(usage_with(SLOW));
+    let mut cfg = compact_cfg(1);
+    cfg.engine.mode = ServerMode::External;
+    let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch_cfg(Some(backend), cfg);
+
+    /// Waits for `pred`, keeping the slow-prefill notes it reads past.
+    async fn until(
+        evt_rx: &mut UnboundedReceiver<AppEvent>,
+        notes: &mut Vec<String>,
+        pred: fn(&AppEvent) -> bool,
+    ) {
+        loop {
+            let e = tokio::time::timeout(std::time::Duration::from_secs(10), evt_rx.recv())
+                .await
+                .expect("an event within 10 s")
+                .expect("the loop is alive");
+            if let AppEvent::Notice(t) = &e
+                && t.contains(ROUTE)
+            {
+                notes.push(t.clone());
+            }
+            if pred(&e) {
+                break;
+            }
+        }
+    }
+    let mut notes = Vec::new();
+    until(&mut evt_rx, &mut notes, |e| {
+        matches!(e, AppEvent::ChatActivated { .. })
+    })
+    .await;
+    for text in ["первый вопрос", "второй вопрос"] {
+        cmd_tx.send(AppCommand::SendMessage(text.into())).unwrap();
+        until(&mut evt_rx, &mut notes, |e| {
+            matches!(e, AppEvent::Finished { .. })
+        })
+        .await;
+        until(&mut evt_rx, &mut notes, |e| {
+            matches!(e, AppEvent::ChatList(_))
+        })
+        .await;
+    }
+    cmd_tx.send(AppCommand::Compact).unwrap();
+    until(&mut evt_rx, &mut notes, |e| {
+        matches!(e, AppEvent::Compacted { .. })
+    })
+    .await;
+    notes.extend(notes_after_quit(&cmd_tx, &mut evt_rx, handle).await);
+    assert_eq!(
+        notes.len(),
+        1,
+        "the turn told it, the roll did not repeat it: {notes:?}"
+    );
+}
+
+/// The collect keeps the engine's figure off the usage chunk (§3.1); a stream
+/// that ended short — cancelled, or an error after the usage — carries none.
+#[tokio::test]
+async fn the_collect_keeps_the_figure_only_off_a_stream_that_ended() {
+    use crate::shared::api::FinishReason;
+    let request = || ChatRequest {
+        continue_final: false,
+        system: None,
+        messages: Vec::new(),
+        sampling: Default::default(),
+        tools: Vec::new(),
+    };
+    let scripted =
+        |chunks: Vec<ChatChunk>| Arc::new(MockBackend::scripted(chunks)) as Arc<dyn EngineBackend>;
+
+    let whole = scripted(vec![
+        ChatChunk::Text("сводка".into()),
+        ChatChunk::Usage(usage_with(FAST)),
+        ChatChunk::Finished(FinishReason::Stop),
+    ]);
+    let c = collect_roll(&whole, request(), CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(c.text, "сводка");
+    assert_eq!(c.prefill.map(|p| (p.tokens, p.ms)), Some((1466, 628)));
+    assert!(!c.cancelled && !c.truncated);
+
+    let cut = scripted(vec![
+        ChatChunk::Text("сво".into()),
+        ChatChunk::Finished(FinishReason::Cancelled),
+    ]);
+    let c = collect_roll(&cut, request(), CancellationToken::new())
+        .await
+        .unwrap();
+    assert!(c.cancelled, "read as a cut, not a summary");
+    assert!(c.prefill.is_none(), "the usage chunk never came");
+
+    let broken = scripted(vec![
+        ChatChunk::Text("сво".into()),
+        ChatChunk::Usage(usage_with(SLOW)),
+        ChatChunk::Error {
+            message: "boom".into(),
+            transient: false,
+        },
+        ChatChunk::Finished(FinishReason::Error),
+    ]);
+    assert!(
+        collect_roll(&broken, request(), CancellationToken::new())
+            .await
+            .is_err(),
+        "an error is an error, whatever arrived before it"
     );
 }

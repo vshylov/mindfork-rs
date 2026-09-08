@@ -1,7 +1,9 @@
 # The roll's timings — the session's coldest prompt, sampled
 
-> **Status:** proposed (2026-09-08) — stage 0 is the measurement in §2.1
-> (a turn on a warm prefix against a roll's digest, on the GPU stack).
+> **Status:** implemented (2026-09-08) — every fork at its recommendation
+> (the user's decision, 2026-09-08); stage 0 is the measurement in §2.1
+> (a turn on a warm prefix against a roll's digest, on the GPU stack),
+> stage 1's live runs on the CPU build and the GPU stack are in §6.1.
 > The item the slow-prefill track recorded
 > ([slow-prefill-detection.md](slow-prefill-detection.md) §7, fork F5b):
 > the compaction roll prefills the whole folded conversation cold and
@@ -183,7 +185,26 @@ still a prompt the engine processed at its speed.
 
 ### 6.1 Runs
 
-*(filled in at stage 1.)*
+Both arms of `roll_prefill_e2e_live` — a chat of four exchanges seeded on
+disk, the app started on it, `/compact` its first request:
+
+| host | the roll | folded | the note |
+|---|---:|---|---|
+| the CPU build (gemma-3-4b-it Q8, `-ngl 0 -c 2048`, the default batch) | 78.7 s | 6 messages → 1457 chars | **37 tok/s, a hold of about 55 s at the default 2048, `-b 256 -ub 256`** |
+| the GPU stack (Qwen3.6-27B, the 4090, 4 slots) | 2.7 s | 6 messages → 304 chars | none |
+
+The CPU build's note came from the roll — no turn had run in the session
+— with the figure the slow-prefill track's turn gave on the same server
+(38 tok/s, a 54 s hold). The LAN regression pair after it: the previous
+track's `slow_prefill_e2e_live` (the turn 5.6 s, *Lamp*, no note) and
+`compaction_preserves_a_planted_fact_e2e_live` (the planted code answered
+before and after the roll), 2/2. One run the smoke lost while being
+written: a data root seeded with chats and no `data.db` makes the bootstrap
+put its own notice in the feed, which a wait for "the first `Notice`"
+took for the roll's — the smoke now opens the storage once before the
+app starts, so the database is there.
+
+Unit: 2962 green, 148 ignored (four tests and the smoke added).
 
 ## 7. Not in this track
 

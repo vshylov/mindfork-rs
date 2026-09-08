@@ -1369,7 +1369,11 @@ its own — or named by `api_key_env`, resolved through the same
   `ToolCall(ToolCallDelta)` | `Usage(TokenUsage)` — carrying `prefill: Option<Prefill>`,
   llama.cpp's `timings` (`prompt_n` net of the prefix cache, `prompt_ms`),
   `None` from the other clients; the turn loop keeps its largest sample on
-  `TurnUsage.prefill`, and `handle_done`'s `note_slow_prefill` turns it,
+  `TurnUsage.prefill`, the roll's `collect_roll` its own on
+  `CompactResult.prefill` (the session's coldest prompt;
+  docs/research/roll-timings.md §3), and `note_slow_prefill` — from
+  `handle_done`, and from `handle_compact_result` after the roll's
+  landing — turns it,
   through `launched_batch`/`prefill_hold` in `shared/api/managed.rs`, into one
   `Notice` per chat-server session (`EngineManager.prefill_noted`, cleared at
   `Ready`; docs/research/slow-prefill-detection.md §3) — | `Error{message,transient}` |

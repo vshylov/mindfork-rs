@@ -58,6 +58,11 @@ pub(super) struct CompactResult {
     pub(super) origin: CompactOrigin,
     /// The summary text, or how the roll ended short of one.
     pub(super) text: Result<String, CompactEnd>,
+    /// The roll's prompt as the engine timed it (llama.cpp only; `None`
+    /// elsewhere, and on a stream that ended short — the usage chunk is the
+    /// stream's last). The session's coldest prompt, offered to the
+    /// slow-prefill rule at the landing (docs/research/roll-timings.md §3).
+    pub(super) prefill: Option<crate::shared::api::contract::Prefill>,
 }
 
 /// How a roll ended short of a summary.
@@ -372,6 +377,7 @@ impl Orchestrator {
             rolls,
             origin,
             text,
+            prefill,
         } = res;
         // S6: a command the user just typed reports its failure at once and the
         // slot closes as a success — the failure streak exists for *silent* runs,
@@ -404,6 +410,14 @@ impl Orchestrator {
             (Err(CompactEnd::Failed(msg)), CompactOrigin::Auto) => BgOutcome::Failed(msg),
         };
         self.handle_bg_done(BackgroundKind::Compaction, outcome);
+        // The roll's prompt is the session's coldest — a different prefix,
+        // a digest that never repeats — and the one sample a warm server
+        // gives (docs/research/roll-timings.md §3.2). Offered to the
+        // slow-prefill rule after the roll's own landing, so the note reads
+        // as a footnote to it; whatever the landing made of the text, the
+        // figure is the engine's. The rule's one claim per server session
+        // decides whether anything is said.
+        self.note_slow_prefill(prefill);
     }
 
     /// Stores a completed summary, if the boundary it was written against still
@@ -491,7 +505,7 @@ fn spawn_compact(
         // (docs/research/silent-preemption.md §4.4): the same request is
         // made again, up to `SILENT_YIELDS_MAX` times; then the stream holds.
         let mut yields: u32 = 0;
-        let text = loop {
+        let (text, prefill) = loop {
             let Some(lane) = sessions
                 .acquire_silent(need, &cancel, "compaction", yields < SILENT_YIELDS_MAX)
                 .await
@@ -502,60 +516,13 @@ fn spawn_compact(
                     rolls,
                     origin,
                     text: Err(CompactEnd::Cancelled),
+                    prefill: None,
                 });
                 return;
             };
-            let token = lane.stream_token();
-            let request = request.clone();
-            let collect = async {
-                let mut stream = backend.chat_stream(request, token.clone()).await?;
-                let mut text = String::new();
-                let mut thoughts = String::new();
-                let mut truncated = false;
-                let mut cancelled = false;
-                let mut failure: Option<String> = None;
-                while let Some(chunk) = stream.next().await {
-                    match chunk {
-                        ChatChunk::Text(t) => text.push_str(&t),
-                        // Kept as a salvage source for the same reason as auto-title:
-                        // a model that never "finished thinking" leaves `content` empty.
-                        ChatChunk::Thoughts(t) => thoughts.push_str(&t),
-                        ChatChunk::Finished(reason) => {
-                            truncated = matches!(reason, crate::shared::api::FinishReason::Length);
-                            cancelled =
-                                matches!(reason, crate::shared::api::FinishReason::Cancelled);
-                            break;
-                        }
-                        // Unlike the other background turns this one is reported to the
-                        // user when they asked for it (`/compact` is owed an answer), so
-                        // the reason is carried out instead of only logged — otherwise a
-                        // roll killed mid-stream would report whatever fragment arrived
-                        // as if it were a summary.
-                        // A background turn: the retry is worth a log line (a flaky provider is
-                        // otherwise invisible here) but has nothing to show — these turns have no
-                        // chip of their own.
-                        ChatChunk::Retry {
-                            attempt,
-                            max,
-                            delay,
-                        } => {
-                            tracing::info!(attempt, max, ?delay, "retrying a a compaction turn");
-                        }
-                        ChatChunk::Error { message, .. } => failure = Some(message),
-                        ChatChunk::ThoughtsSignature(_)
-                        | ChatChunk::ToolCall(_)
-                        | ChatChunk::Usage(_) => {}
-                    }
-                }
-                if let Some(err) = failure {
-                    anyhow::bail!("{err}");
-                }
-                Ok::<(String, String, bool, bool), anyhow::Error>((
-                    text, thoughts, truncated, cancelled,
-                ))
-            };
+            let collect = collect_roll(&backend, request.clone(), lane.stream_token());
             match tokio::time::timeout(COMPACT_TIMEOUT, collect).await {
-                Ok(Ok((_, _, _, true))) if lane.displaced() => {
+                Ok(Ok(c)) if c.cancelled && lane.displaced() => {
                     yields += 1;
                     tracing::info!(
                         chat = %chat_id,
@@ -565,9 +532,9 @@ fn spawn_compact(
                 }
                 // Cancelled by the app's own token — a stop from the tasks
                 // screen, or the quit: a fragment is not a summary.
-                Ok(Ok((_, _, _, true))) => break Err(CompactEnd::Cancelled),
-                Ok(Ok((text, thoughts, truncated, false))) => {
-                    if truncated {
+                Ok(Ok(c)) if c.cancelled => break (Err(CompactEnd::Cancelled), None),
+                Ok(Ok(c)) => {
+                    if c.truncated {
                         // Don't hide a truncation — the same rule the conversation's
                         // own overflow follows (§1.2). The summary is still usable,
                         // so this is a log line, not a refusal.
@@ -576,18 +543,24 @@ fn spawn_compact(
                             "the summary hit the token ceiling and was cut; raise the ceiling or lower the word limit"
                         );
                     }
-                    break Ok(salvage_title_source(text, thoughts));
+                    break (Ok(salvage_title_source(c.text, c.thoughts)), c.prefill);
                 }
                 Ok(Err(err)) => {
-                    break Err(CompactEnd::Failed(
-                        loc.tf("ui.err.compact_failed", &[("err", &err.to_string())]),
-                    ));
+                    break (
+                        Err(CompactEnd::Failed(
+                            loc.tf("ui.err.compact_failed", &[("err", &err.to_string())]),
+                        )),
+                        None,
+                    );
                 }
                 Err(_) => {
                     cancel.cancel();
-                    break Err(CompactEnd::Failed(
-                        loc.t("ui.err.compact_timeout").to_string(),
-                    ));
+                    break (
+                        Err(CompactEnd::Failed(
+                            loc.t("ui.err.compact_timeout").to_string(),
+                        )),
+                        None,
+                    );
                 }
             }
         };
@@ -597,6 +570,72 @@ fn spawn_compact(
             rolls,
             origin,
             text,
+            prefill,
         });
     });
+}
+
+/// What one attempt at the roll's stream collected, to its end or short of it.
+#[derive(Default)]
+pub(super) struct Collected {
+    pub(super) text: String,
+    pub(super) thoughts: String,
+    /// The reply hit `max_tokens`.
+    pub(super) truncated: bool,
+    /// Ended by the token — the app's own, or the lane's displacement.
+    pub(super) cancelled: bool,
+    /// The engine's own clock over the prompt, when the stream reached its
+    /// usage chunk (docs/research/roll-timings.md §3.1). That chunk is the
+    /// stream's last, so a stream that ended short leaves this `None`.
+    pub(super) prefill: Option<crate::shared::api::contract::Prefill>,
+}
+
+/// One attempt at the roll's stream, read to its end or to where it broke
+/// off. Its own function so the spawn reads as the sequence of decisions it
+/// is (the analyzer's complexity bar, docs/lessons.md §2).
+pub(super) async fn collect_roll(
+    backend: &Arc<dyn EngineBackend>,
+    request: ChatRequest,
+    token: CancellationToken,
+) -> anyhow::Result<Collected> {
+    let mut stream = backend.chat_stream(request, token).await?;
+    let mut c = Collected::default();
+    let mut failure: Option<String> = None;
+    while let Some(chunk) = stream.next().await {
+        match chunk {
+            ChatChunk::Text(t) => c.text.push_str(&t),
+            // Kept as a salvage source for the same reason as auto-title:
+            // a model that never "finished thinking" leaves `content` empty.
+            ChatChunk::Thoughts(t) => c.thoughts.push_str(&t),
+            // Unlike the other background turns this one is reported to the
+            // user when they asked for it (`/compact` is owed an answer), so
+            // the reason is carried out instead of only logged — otherwise a
+            // roll killed mid-stream would report whatever fragment arrived
+            // as if it were a summary.
+            ChatChunk::Finished(reason) => {
+                c.truncated = matches!(reason, crate::shared::api::FinishReason::Length);
+                c.cancelled = matches!(reason, crate::shared::api::FinishReason::Cancelled);
+                break;
+            }
+            // A background turn: the retry is worth a log line (a flaky provider is
+            // otherwise invisible here) but has nothing to show — these turns have no
+            // chip of their own.
+            ChatChunk::Retry {
+                attempt,
+                max,
+                delay,
+            } => {
+                tracing::info!(attempt, max, ?delay, "retrying a compaction turn");
+            }
+            ChatChunk::Error { message, .. } => failure = Some(message),
+            // The client hands the usage over before `Finished` — it reads on
+            // past `finish_reason` for exactly this chunk.
+            ChatChunk::Usage(u) => c.prefill = u.prefill,
+            ChatChunk::ThoughtsSignature(_) | ChatChunk::ToolCall(_) => {}
+        }
+    }
+    if let Some(err) = failure {
+        anyhow::bail!("{err}");
+    }
+    Ok(c)
 }

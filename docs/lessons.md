@@ -1483,6 +1483,16 @@ probe for the embedding server*.
 
 ---
 
+**A data root seeded with chats and no database makes the bootstrap speak
+first — a smoke waiting for "the first `Notice`" hears it, not the thing under
+test.** The roll-timings smoke seeded a chat on disk through `JsonStore` alone,
+sent `/compact` and waited for the first `Notice`; the one it got was the
+missing-`data.db` notice the bootstrap puts in the feed after activation (chats
+without a database is the "moved from another machine" shape the app is right to
+report). Open `Storage` once before `spawn_orch_at` so the database exists, and
+wait for the specific event rather than the class.
+— *the roll's timings*.
+
 ## 10. CI and infrastructure
 
 **A failed `needs` dependency skips the dependent job regardless of its `if`.** A
