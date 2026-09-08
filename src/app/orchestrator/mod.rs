@@ -179,8 +179,7 @@ pub async fn run(deps: OrchestratorDeps) {
     // A single outcome channel for "silent" background tasks (auto-reflection/
     // consolidation): the task sends `(kind, Ok/Err(reason))`, the loop handles
     // it in one branch via `handle_bg_done`.
-    let (bg_done_tx, mut bg_done_rx) =
-        unbounded_channel::<(BackgroundKind, background::BgOutcome)>();
+    let (bg_done_tx, mut bg_done_rx) = unbounded_channel::<background::BgDone>();
     // The background sub-agent runs' channel (progress and ends): their own,
     // since a run outlives the turn whose channel a child normally shares.
     let (bg_run_tx, mut bg_run_rx) = unbounded_channel::<generation::BackgroundMessage>();
@@ -365,8 +364,8 @@ pub async fn run(deps: OrchestratorDeps) {
                 }
             }
             done = bg_done_rx.recv() => {
-                if let Some((kind, res)) = done {
-                    orch.handle_bg_done(kind, res);
+                if let Some(d) = done {
+                    orch.handle_bg_done(d.kind, d.outcome, d.prefill);
                 }
             }
             message = bg_run_rx.recv() => {
@@ -706,7 +705,7 @@ struct Orchestrator {
     /// `Chat.reflected_upto` watermark (survives a restart), not by a field here.
     bg: HashMap<BackgroundKind, BgSlot>,
     /// A single outcome channel for "silent" background tasks (`(kind, Ok/Err(reason))` → loop).
-    bg_done_tx: UnboundedSender<(BackgroundKind, background::BgOutcome)>,
+    bg_done_tx: UnboundedSender<background::BgDone>,
     /// Assistant-reply counters since the last auto-consolidation of notes (per chat).
     /// Consolidation-cadence data (not task lifecycle — that's in `bg`).
     consolidate_counts: HashMap<Uuid, u32>,

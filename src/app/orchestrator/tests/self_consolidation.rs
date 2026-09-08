@@ -77,6 +77,7 @@ async fn self_consolidation_success_emits_self_model_changed() {
     orch.handle_bg_done(
         BackgroundKind::SelfConsolidation,
         super::super::background::BgOutcome::Done,
+        None,
     );
     let mut changed = false;
     while let Ok(e) = rx.try_recv() {
@@ -107,6 +108,7 @@ async fn a_sleep_stopped_before_its_first_round_gets_its_count_back() {
     orch.handle_bg_done(
         BackgroundKind::SelfConsolidation,
         super::super::background::BgOutcome::Cancelled { consumed: false },
+        None,
     );
     assert_eq!(
         orch.self_consolidate_counts.get(&chat_id),

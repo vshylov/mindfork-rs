@@ -1267,3 +1267,33 @@ async fn the_collect_keeps_the_figure_only_off_a_stream_that_ended() {
         "an error is an error, whatever arrived before it"
     );
 }
+
+/// The roll's figure rides its landing like every silent task's
+/// (docs/research/loop-timings.md §3.3): a summary discarded for a vanished
+/// boundary was still a prompt the engine processed at its speed, and the
+/// landing offers it (roll-timings R3).
+#[tokio::test]
+async fn a_discarded_summarys_landing_still_offers_the_sample() {
+    let (_d, mut orch, mut rx, chat_id, _backend) = orch_with_history(3);
+    orch.config.engine.mode = ServerMode::External;
+    orch.begin_bg(BackgroundKind::Compaction, CancellationToken::new(), None);
+    let _ = drain(&mut rx);
+
+    orch.handle_compact_result(CompactResult {
+        origin: CompactOrigin::Manual,
+        chat_id,
+        boundary_id: Uuid::new_v4(), // never belonged to this chat
+        rolls: 1,
+        prefill: Some(SLOW),
+        text: Ok("сводка".into()),
+    });
+
+    assert!(chat_of(&orch, chat_id).compaction.is_none());
+    let events = drain(&mut rx);
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, AppEvent::Notice(t) if t.contains(ROUTE))),
+        "the engine's figure, whatever became of the text: {events:?}"
+    );
+}

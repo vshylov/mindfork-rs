@@ -6,7 +6,7 @@
 //! (fixtures in mod.rs; the keyed engine in parallel.rs; the background
 //! fixtures in background.rs).
 
-use super::super::background::{Acted, Acting, BgOutcome, Refund, Window};
+use super::super::background::{Acted, Acting, BgDone, BgOutcome, Refund, Window};
 use super::background::{cfg, finished, next, running_run, runs_out, start};
 use super::parallel::{KeyedRecorder, long_text, sized};
 use super::subagent::{hang, text};
@@ -572,11 +572,7 @@ fn spawn_loop(
     chat_id: Uuid,
     system: &str,
     clock: std::time::Duration,
-) -> (
-    CancellationToken,
-    UnboundedReceiver<(BackgroundKind, BgOutcome)>,
-    Arc<Acted>,
-) {
+) -> (CancellationToken, UnboundedReceiver<BgDone>, Arc<Acted>) {
     spawn_loop_allowing(orch, backend, chat_id, system, clock, Vec::new())
 }
 
@@ -590,11 +586,7 @@ fn spawn_loop_allowing(
     system: &str,
     clock: std::time::Duration,
     allowed: Vec<crate::entities::profile::ToolId>,
-) -> (
-    CancellationToken,
-    UnboundedReceiver<(BackgroundKind, BgOutcome)>,
-    Arc<Acted>,
-) {
+) -> (CancellationToken, UnboundedReceiver<BgDone>, Arc<Acted>) {
     spawn_loop_with(orch, backend, chat_id, system, clock, allowed, true)
 }
 
@@ -609,11 +601,7 @@ fn spawn_loop_with(
     clock: std::time::Duration,
     allowed: Vec<crate::entities::profile::ToolId>,
     budgeted: bool,
-) -> (
-    CancellationToken,
-    UnboundedReceiver<(BackgroundKind, BgOutcome)>,
-    Arc<Acted>,
-) {
+) -> (CancellationToken, UnboundedReceiver<BgDone>, Arc<Acted>) {
     let profile_id = orch
         .chats
         .iter()
@@ -709,10 +697,11 @@ async fn a_silent_task_holds_after_its_third_displacement() {
         "the fourth attempt holds: the waiter waits"
     );
     assert!(turn.await.is_some(), "admitted once the held stream ended");
-    let (kind, outcome) = tokio::time::timeout(std::time::Duration::from_secs(5), done_rx.recv())
-        .await
-        .expect("the task landed")
-        .unwrap();
+    let BgDone { kind, outcome, .. } =
+        tokio::time::timeout(std::time::Duration::from_secs(5), done_rx.recv())
+            .await
+            .expect("the task landed")
+            .unwrap();
     assert_eq!(kind, BackgroundKind::Reflection);
     assert_eq!(outcome, BgOutcome::Done);
     assert_eq!(
@@ -744,10 +733,11 @@ async fn a_silent_loops_wait_for_room_is_not_on_its_clock() {
     assert!(backend.requests().is_empty(), "waiting for room");
     assert!(done_rx.try_recv().is_err(), "not timed out while waiting");
     drop(turn);
-    let (_, outcome) = tokio::time::timeout(std::time::Duration::from_secs(5), done_rx.recv())
-        .await
-        .expect("the task landed")
-        .unwrap();
+    let BgDone { outcome, .. } =
+        tokio::time::timeout(std::time::Duration::from_secs(5), done_rx.recv())
+            .await
+            .expect("the task landed")
+            .unwrap();
     assert_eq!(outcome, BgOutcome::Done);
     assert_eq!(backend.requests().len(), 1);
 }
@@ -764,10 +754,11 @@ async fn a_silent_loops_stream_is_on_its_clock() {
         "quiet loop",
         std::time::Duration::from_millis(200),
     );
-    let (_, outcome) = tokio::time::timeout(std::time::Duration::from_secs(5), done_rx.recv())
-        .await
-        .expect("the task landed")
-        .unwrap();
+    let BgDone { outcome, .. } =
+        tokio::time::timeout(std::time::Duration::from_secs(5), done_rx.recv())
+            .await
+            .expect("the task landed")
+            .unwrap();
     let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::En);
     assert_eq!(
         outcome,
@@ -834,10 +825,11 @@ async fn a_loop_stopped_mid_stream_lands_cancelled() {
     );
     settle(2000, || !backend.open_at_arrival("quiet loop").is_empty()).await;
     stop.cancel();
-    let (kind, outcome) = tokio::time::timeout(std::time::Duration::from_secs(5), done_rx.recv())
-        .await
-        .expect("the task landed")
-        .unwrap();
+    let BgDone { kind, outcome, .. } =
+        tokio::time::timeout(std::time::Duration::from_secs(5), done_rx.recv())
+            .await
+            .expect("the task landed")
+            .unwrap();
     assert_eq!(kind, BackgroundKind::Reflection);
     assert_eq!(outcome, BgOutcome::Cancelled { consumed: false });
     assert_eq!(backend.requests().len(), 1, "no retry after a stop");
@@ -863,10 +855,11 @@ async fn a_loop_stopped_while_waiting_lands_cancelled() {
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     assert!(backend.requests().is_empty(), "waiting for room");
     stop.cancel();
-    let (_, outcome) = tokio::time::timeout(std::time::Duration::from_secs(5), done_rx.recv())
-        .await
-        .expect("the task landed")
-        .unwrap();
+    let BgDone { outcome, .. } =
+        tokio::time::timeout(std::time::Duration::from_secs(5), done_rx.recv())
+            .await
+            .expect("the task landed")
+            .unwrap();
     assert_eq!(outcome, BgOutcome::Cancelled { consumed: false });
     assert!(
         backend.requests().is_empty(),
@@ -898,10 +891,11 @@ async fn a_loop_stopped_during_its_retry_lands_cancelled() {
     tokio::time::sleep(std::time::Duration::from_millis(150)).await;
     assert_eq!(backend.requests().len(), 1, "the retry is waiting");
     stop.cancel();
-    let (_, outcome) = tokio::time::timeout(std::time::Duration::from_secs(5), done_rx.recv())
-        .await
-        .expect("the task landed")
-        .unwrap();
+    let BgDone { outcome, .. } =
+        tokio::time::timeout(std::time::Duration::from_secs(5), done_rx.recv())
+            .await
+            .expect("the task landed")
+            .unwrap();
     assert_eq!(outcome, BgOutcome::Cancelled { consumed: false });
     assert_eq!(backend.requests().len(), 1, "the retry never streamed");
     drop(turn);
@@ -1112,12 +1106,12 @@ fn write_call() -> super::subagent::Script {
     }
 }
 
-async fn landed(done: &mut UnboundedReceiver<(BackgroundKind, BgOutcome)>) -> BgOutcome {
+async fn landed(done: &mut UnboundedReceiver<BgDone>) -> BgOutcome {
     tokio::time::timeout(std::time::Duration::from_secs(5), done.recv())
         .await
         .expect("the task landed")
         .unwrap()
-        .1
+        .outcome
 }
 
 /// A round of reads consumes nothing (§3.3): a loop whose first round called
@@ -1345,7 +1339,7 @@ async fn mid_tools(
     Orchestrator,
     Uuid,
     Arc<KeyedRecorder>,
-    UnboundedReceiver<(BackgroundKind, BgOutcome)>,
+    UnboundedReceiver<BgDone>,
 ) {
     let (dir, mut orch, chat_id) = orch_ready_for_reflection();
     orch.config.compaction.context_tokens = Some(1000);
@@ -1393,7 +1387,7 @@ async fn mid_tools(
 /// no roll in flight (its channel empty and open).
 async fn quit(
     orch: &mut Orchestrator,
-    done_rx: &mut UnboundedReceiver<(BackgroundKind, BgOutcome)>,
+    done_rx: &mut UnboundedReceiver<BgDone>,
     cap: Option<std::time::Duration>,
 ) -> std::time::Duration {
     let (_tx, mut compact_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -1404,7 +1398,7 @@ async fn quit(
 /// (docs/research/quit-settle-roll-and-cap.md §3.1).
 async fn quit_with_roll(
     orch: &mut Orchestrator,
-    done_rx: &mut UnboundedReceiver<(BackgroundKind, BgOutcome)>,
+    done_rx: &mut UnboundedReceiver<BgDone>,
     compact_rx: &mut UnboundedReceiver<super::super::compaction::CompactResult>,
     cap: Option<std::time::Duration>,
 ) -> std::time::Duration {
@@ -1642,4 +1636,187 @@ async fn no_cap_waits_and_a_zero_cap_decides_at_once() {
         "decided at once: mid-tools keeps"
     );
     assert!(took < std::time::Duration::from_millis(100), "{took:?}");
+}
+
+// ---------- the loops' timings (docs/research/loop-timings.md) ----------
+//
+// The loop's largest prefill sample — the first round's, processed whole and
+// cold, where the later rounds ride the prefix cache — rides its landing
+// beside the outcome, whatever the outcome (§3.1, §3.2), and the landing
+// offers it to the slow-prefill rule once for every kind (§3.3).
+
+use crate::shared::api::contract::{Prefill, TokenUsage};
+
+/// A stream's closing usage chunk carrying the engine's figure over `tokens`.
+fn timed(tokens: u32, ms: u32) -> ChatChunk {
+    ChatChunk::Usage(TokenUsage {
+        prompt_tokens: tokens,
+        completion_tokens: 3,
+        reasoning_tokens: 0,
+        prefill: Some(Prefill { tokens, ms }),
+    })
+}
+
+/// [`one_call`] with the engine's figure on its stream.
+fn timed_call(tokens: u32, ms: u32) -> super::subagent::Script {
+    let mut s = one_call();
+    s.chunks.insert(1, timed(tokens, ms));
+    s
+}
+
+/// A round of text closing with the engine's figure.
+fn timed_text(t: &str, tokens: u32, ms: u32) -> super::subagent::Script {
+    let mut s = text(t);
+    s.chunks.insert(1, timed(tokens, ms));
+    s
+}
+
+/// The whole landing, not only its outcome.
+async fn landing(done: &mut UnboundedReceiver<BgDone>) -> BgDone {
+    tokio::time::timeout(std::time::Duration::from_secs(5), done.recv())
+        .await
+        .expect("the task landed")
+        .unwrap()
+}
+
+/// Where, among what the orchestrator has emitted so far, the task's own
+/// landing and the slow-prefill notes stood — positions in arrival order.
+fn landing_and_notes(rx: &mut UnboundedReceiver<AppEvent>) -> (Option<usize>, Vec<usize>) {
+    let mut events = Vec::new();
+    while let Ok(e) = rx.try_recv() {
+        events.push(e);
+    }
+    let landing = events
+        .iter()
+        .position(|e| matches!(e, AppEvent::BackgroundTask { active: false, .. }));
+    let notes = events
+        .iter()
+        .enumerate()
+        .filter_map(|(i, e)| match e {
+            AppEvent::Notice(t) if t.contains("-b 256 -ub 256") => Some(i),
+            _ => None,
+        })
+        .collect();
+    (landing, notes)
+}
+
+/// The first round is the sample (§2.1): a call over 2800 cold tokens, then
+/// a round of text over 45 warm ones — the landing carries the larger.
+#[tokio::test]
+async fn the_landing_carries_the_loops_largest_sample() {
+    let (_d, mut orch, chat_id) = orch_ready_for_reflection();
+    let backend = KeyedRecorder::new(
+        vec![(
+            "timed loop",
+            vec![timed_call(2800, 1054), timed_text("done", 45, 183)],
+        )],
+        10,
+    );
+    let (_stop, mut done_rx, _acted) = spawn_loop_allowing(
+        &mut orch,
+        backend,
+        chat_id,
+        "timed loop",
+        std::time::Duration::from_secs(5),
+        vec![GET_SELF_MODEL_ID.into()],
+    );
+    let BgDone {
+        kind,
+        outcome,
+        prefill,
+    } = landing(&mut done_rx).await;
+    assert_eq!(kind, BackgroundKind::Reflection);
+    assert_eq!(outcome, BgOutcome::Done);
+    assert_eq!(
+        prefill.map(|p| (p.tokens, p.ms)),
+        Some((2800, 1054)),
+        "the first round's, the warm second's smaller"
+    );
+}
+
+/// A loop stopped in its second round still measured its first (R3): the
+/// landing is `Cancelled`, and the sample rides beside it.
+#[tokio::test]
+async fn a_loop_stopped_in_its_second_round_still_carries_the_first_rounds_sample() {
+    let (_d, mut orch, chat_id) = orch_ready_for_reflection();
+    let backend = KeyedRecorder::new(
+        vec![("stopped loop", vec![timed_call(2800, 1054), hang("")])],
+        10,
+    );
+    let (stop, mut done_rx, _acted) = spawn_loop_allowing(
+        &mut orch,
+        backend.clone(),
+        chat_id,
+        "stopped loop",
+        std::time::Duration::from_secs(5),
+        vec![GET_SELF_MODEL_ID.into()],
+    );
+    settle(2000, || backend.open_at_arrival("stopped loop").len() == 2).await;
+    stop.cancel();
+    let BgDone {
+        outcome, prefill, ..
+    } = landing(&mut done_rx).await;
+    assert_eq!(outcome, BgOutcome::Cancelled { consumed: false });
+    assert_eq!(prefill.map(|p| p.tokens), Some(2800));
+}
+
+/// A stream that ended short has no usage chunk: nothing to carry.
+#[tokio::test]
+async fn a_stream_that_ended_short_carries_no_sample() {
+    let (_d, mut orch, chat_id) = orch_ready_for_reflection();
+    let backend = KeyedRecorder::new(vec![("cut loop", vec![hang("")])], 10);
+    let (stop, mut done_rx, _acted) = spawn_loop(
+        &mut orch,
+        backend.clone(),
+        chat_id,
+        "cut loop",
+        std::time::Duration::from_secs(5),
+    );
+    settle(2000, || backend.open_at_arrival("cut loop").len() == 1).await;
+    stop.cancel();
+    let BgDone {
+        outcome, prefill, ..
+    } = landing(&mut done_rx).await;
+    assert_eq!(outcome, BgOutcome::Cancelled { consumed: false });
+    assert!(prefill.is_none(), "the usage chunk never came");
+}
+
+/// Every silent task lands in `handle_bg_done`, and the rule is asked there
+/// once (§3.3): a failed loop's sample on an external server is the note all
+/// the same (R3), after the task's own landing; the next task's sample says
+/// nothing — the same server, told once.
+#[test]
+fn the_landing_offers_the_sample_whatever_the_outcome() {
+    let (_d, mut orch, mut rx) = bare_orch_rx();
+    orch.config.engine.mode = crate::shared::config::ServerMode::External;
+    let cold = Some(Prefill {
+        tokens: 2800,
+        ms: 74_000,
+    });
+    orch.begin_bg(BackgroundKind::Reflection, CancellationToken::new(), None);
+    let _ = landing_and_notes(&mut rx);
+
+    orch.handle_bg_done(
+        BackgroundKind::Reflection,
+        BgOutcome::Failed("boom".into()),
+        cold,
+    );
+    let (landing, notes) = landing_and_notes(&mut rx);
+    let landing = landing.expect("the task's own landing");
+    assert_eq!(
+        notes.len(),
+        1,
+        "a failed loop still measured its first round"
+    );
+    assert!(landing < notes[0], "the landing first, the note after it");
+
+    orch.begin_bg(
+        BackgroundKind::Consolidation,
+        CancellationToken::new(),
+        None,
+    );
+    let _ = landing_and_notes(&mut rx);
+    orch.handle_bg_done(BackgroundKind::Consolidation, BgOutcome::Done, cold);
+    let (_, again) = landing_and_notes(&mut rx);
+    assert!(again.is_empty(), "one note per server session: {again:?}");
 }

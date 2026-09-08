@@ -409,15 +409,13 @@ impl Orchestrator {
             }
             (Err(CompactEnd::Failed(msg)), CompactOrigin::Auto) => BgOutcome::Failed(msg),
         };
-        self.handle_bg_done(BackgroundKind::Compaction, outcome);
         // The roll's prompt is the session's coldest — a different prefix,
-        // a digest that never repeats — and the one sample a warm server
-        // gives (docs/research/roll-timings.md §3.2). Offered to the
-        // slow-prefill rule after the roll's own landing, so the note reads
-        // as a footnote to it; whatever the landing made of the text, the
-        // figure is the engine's. The rule's one claim per server session
-        // decides whether anything is said.
-        self.note_slow_prefill(prefill);
+        // a digest that never repeats — and its figure rides the landing
+        // beside the outcome, offered to the slow-prefill rule there like
+        // every silent task's (docs/research/roll-timings.md §3.2,
+        // loop-timings.md §3.3): whatever the landing made of the text, the
+        // figure is the engine's.
+        self.handle_bg_done(BackgroundKind::Compaction, outcome, prefill);
     }
 
     /// Stores a completed summary, if the boundary it was written against still

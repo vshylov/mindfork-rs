@@ -46,15 +46,27 @@ async fn reflect_failures_alert_once_then_reset() {
         seen
     };
     // Two consecutive failures — the UI is still quiet (observability without spam).
-    orch.handle_bg_done(BackgroundKind::Reflection, BgOutcome::Failed("boom".into()));
-    orch.handle_bg_done(BackgroundKind::Reflection, BgOutcome::Failed("boom".into()));
+    orch.handle_bg_done(
+        BackgroundKind::Reflection,
+        BgOutcome::Failed("boom".into()),
+        None,
+    );
+    orch.handle_bg_done(
+        BackgroundKind::Reflection,
+        BgOutcome::Failed("boom".into()),
+        None,
+    );
     assert!(!saw_error(&mut rx));
     // The third in a row — one error.
-    orch.handle_bg_done(BackgroundKind::Reflection, BgOutcome::Failed("boom".into()));
+    orch.handle_bg_done(
+        BackgroundKind::Reflection,
+        BgOutcome::Failed("boom".into()),
+        None,
+    );
     assert!(saw_error(&mut rx));
     assert_eq!(orch.bg_failures(BackgroundKind::Reflection), 3);
     // Success resets the streak and sends SelfModelChanged.
-    orch.handle_bg_done(BackgroundKind::Reflection, BgOutcome::Done);
+    orch.handle_bg_done(BackgroundKind::Reflection, BgOutcome::Done, None);
     assert_eq!(orch.bg_failures(BackgroundKind::Reflection), 0);
     let mut changed = false;
     while let Ok(e) = rx.try_recv() {
@@ -72,8 +84,16 @@ async fn reflect_failures_alert_once_then_reset() {
 #[test]
 fn a_stopped_task_touches_neither_the_streak_nor_the_success_path() {
     let (_d, mut orch, mut rx) = bare_orch_rx();
-    orch.handle_bg_done(BackgroundKind::Reflection, BgOutcome::Failed("boom".into()));
-    orch.handle_bg_done(BackgroundKind::Reflection, BgOutcome::Failed("boom".into()));
+    orch.handle_bg_done(
+        BackgroundKind::Reflection,
+        BgOutcome::Failed("boom".into()),
+        None,
+    );
+    orch.handle_bg_done(
+        BackgroundKind::Reflection,
+        BgOutcome::Failed("boom".into()),
+        None,
+    );
     assert_eq!(orch.bg_failures(BackgroundKind::Reflection), 2);
     let token = tokio_util::sync::CancellationToken::new();
     orch.begin_bg(BackgroundKind::Reflection, token.clone(), None);
@@ -87,6 +107,7 @@ fn a_stopped_task_touches_neither_the_streak_nor_the_success_path() {
     orch.handle_bg_done(
         BackgroundKind::Reflection,
         BgOutcome::Cancelled { consumed: false },
+        None,
     );
 
     assert_eq!(orch.bg_failures(BackgroundKind::Reflection), 2, "untouched");
@@ -162,6 +183,7 @@ async fn a_reflection_stopped_before_its_first_round_gives_the_window_back() {
     orch.handle_bg_done(
         BackgroundKind::Reflection,
         BgOutcome::Cancelled { consumed: false },
+        None,
     );
 
     assert_eq!(
@@ -194,6 +216,7 @@ async fn a_reflection_stopped_after_a_round_keeps_its_advance() {
     orch.handle_bg_done(
         BackgroundKind::Reflection,
         BgOutcome::Cancelled { consumed: true },
+        None,
     );
     assert_eq!(watermark(&orch, chat_id), (Some(2), true), "kept");
     assert!(!orch.saves.is_dirty(chat_id), "nothing to save");
@@ -209,7 +232,7 @@ async fn a_finished_or_failed_reflection_keeps_its_advance() {
             FinishReason::Stop,
         )])) as Arc<dyn EngineBackend>);
         orch.maybe_auto_reflect(chat_id);
-        orch.handle_bg_done(BackgroundKind::Reflection, outcome.clone());
+        orch.handle_bg_done(BackgroundKind::Reflection, outcome.clone(), None);
         assert_eq!(watermark(&orch, chat_id), (Some(2), true), "{outcome:?}");
     }
 }
@@ -234,7 +257,7 @@ fn a_consolidation_stopped_before_its_first_round_gets_its_count_back() {
             CancellationToken::new(),
             Some(refund(Window::Counter { chat, count: 5 })),
         );
-        orch.handle_bg_done(BackgroundKind::Consolidation, outcome.clone());
+        orch.handle_bg_done(BackgroundKind::Consolidation, outcome.clone(), None);
         assert_eq!(
             orch.consolidate_counts.get(&chat),
             Some(&expected),
@@ -261,6 +284,7 @@ fn a_refund_for_a_chat_that_is_gone_does_nothing() {
     orch.handle_bg_done(
         BackgroundKind::Reflection,
         BgOutcome::Cancelled { consumed: false },
+        None,
     );
     assert!(!orch.saves.is_dirty(chat));
 }

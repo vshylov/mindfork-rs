@@ -25,7 +25,7 @@ use super::compaction::CompactResult;
 /// What the quit's settle heard: a silent loop's outcome, or the roll's
 /// result on its own channel.
 enum Landing {
-    Task((BackgroundKind, BgOutcome)),
+    Task(BgDone),
     Roll(CompactResult),
 }
 
@@ -41,6 +41,20 @@ pub(super) enum BgOutcome {
     Done,
     Cancelled { consumed: bool },
     Failed(String),
+}
+
+/// A silent task's landing: the outcome, and beside it the engine's prefill
+/// figure — the largest sample of the task's streams, whatever the outcome,
+/// since the figure is the engine's fact and not the task's verdict
+/// (docs/research/loop-timings.md §3.2); `None` from a stream that ended
+/// short (the usage chunk is the stream's last) or a server without
+/// timings. Offered to the slow-prefill rule at the landing, once for every
+/// kind (§3.3).
+#[derive(Debug)]
+pub(super) struct BgDone {
+    pub(super) kind: BackgroundKind,
+    pub(super) outcome: BgOutcome,
+    pub(super) prefill: Option<crate::shared::api::contract::Prefill>,
 }
 
 /// What a spawn advanced, and how to put it back: reflection's watermark
@@ -188,7 +202,12 @@ impl Orchestrator {
     /// tools ran**, it also gets the window its spawn advanced back
     /// ([`Window`]; docs/research/stop-refunds-window.md §3.3); on every
     /// other outcome the window is dropped and the advance stands.
-    pub(super) fn handle_bg_done(&mut self, kind: BackgroundKind, outcome: BgOutcome) {
+    pub(super) fn handle_bg_done(
+        &mut self,
+        kind: BackgroundKind,
+        outcome: BgOutcome,
+        prefill: Option<crate::shared::api::contract::Prefill>,
+    ) {
         // Mutate the slot and compute whether an error alert is needed BEFORE sending events
         // (the borrow of `self.bg` doesn't overlap `self.evt_tx` in the send below).
         let (alert, window) = {
@@ -231,6 +250,12 @@ impl Orchestrator {
                 &[("label", kind_label(loc, kind)), ("reason", &reason)],
             )));
         }
+        // Every silent task lands here, so the slow-prefill rule is asked here,
+        // once — after the task's own landing, so the note reads as a footnote
+        // to it (docs/research/loop-timings.md §3.3). The figure is the
+        // engine's whatever the outcome; the rule's one claim per server
+        // session decides whether anything is said.
+        self.note_slow_prefill(prefill);
     }
 
     /// Puts back what a spawn advanced (docs/research/stop-refunds-window.md
@@ -311,7 +336,7 @@ impl Orchestrator {
     /// (docs/research/quit-waits-for-the-landing.md §3.1).
     pub(super) async fn settle_silent_tasks(
         &mut self,
-        done_rx: &mut UnboundedReceiver<(BackgroundKind, BgOutcome)>,
+        done_rx: &mut UnboundedReceiver<BgDone>,
         compact_rx: &mut UnboundedReceiver<CompactResult>,
         cap: Option<Duration>,
     ) {
@@ -328,7 +353,7 @@ impl Orchestrator {
                 None => Some(next.await),
             };
             match landed {
-                Some(Some(Landing::Task((kind, outcome)))) => self.handle_bg_done(kind, outcome),
+                Some(Some(Landing::Task(d))) => self.handle_bg_done(d.kind, d.outcome, d.prefill),
                 Some(Some(Landing::Roll(result))) => self.handle_compact_result(result),
                 // A channel closed, or the cap ran out.
                 Some(None) | None => break,

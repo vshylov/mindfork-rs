@@ -175,6 +175,15 @@ match survives the substitution — here the OFL's permission "to create artwork
 
 ---
 
+**Remove a scratch print by reversing its replacement, never by `git checkout --`
+of a file that carries the stage's uncommitted work.** A scratch `eprintln!` for a
+live measurement was dropped with `git checkout -- tool_loop.rs`, which restored
+HEAD and took the stage's own patch in that file with it; the live runs before it
+were valid, the build after it was not, and the patch had to be re-applied from
+its script. Keep the print's insertion and its reverse in one scratch script, or
+commit the stage before measuring and revert only then.
+— *the loops' timings*.
+
 ## 2. Testing discipline
 
 **Mutation-test every load-bearing line, and read a surviving mutation twice.** A
@@ -1492,6 +1501,17 @@ without a database is the "moved from another machine" shape the app is right to
 report). Open `Storage` once before `spawn_orch_at` so the database exists, and
 wait for the specific event rather than the class.
 — *the roll's timings*.
+
+**A silent loop that is gated out never lands, and "never landed" reads exactly
+like "never spawned" — enable what gates it, and wait for the spawn first.** The
+reflection is gated on the profile's enabled tools; the loop-timings smoke started
+on a default profile, sent a turn and waited 300 s for the reflection's landing —
+of a loop that was never spawned. Phase 1 now enables the tools before its turn
+(`enable_all_tools`), and the smoke waits for `BackgroundTask { active: true }`
+before it waits for the landing, so the two silences fail differently. The same
+enablement also fixes what the warm-prefix phase needs: the tool schemas are part
+of the prefix, so they must be in the cache the second phase counts on.
+— *the loops' timings*.
 
 ## 10. CI and infrastructure
 

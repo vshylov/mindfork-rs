@@ -1,8 +1,10 @@
 # The loops' timings — the silent tasks' cold prompts, sampled at the landing
 
-> **Status:** proposed (2026-09-09) — stage 0 is the measurement in §2.1
+> **Status:** implemented (2026-09-09) — every fork at its recommendation
+> (the user's decision, 2026-09-09); stage 0 is the measurement in §2.1
 > (the reflection loop's rounds on the GPU stack, with a scratch print in
-> `record_round_usage`). The item the roll-timings track recorded
+> `record_round_usage`), stage 1's live runs on the CPU build and the GPU
+> stack are in §6.1. The item the roll-timings track recorded
 > ([roll-timings.md](roll-timings.md) §7, fork F2b): the three silent
 > loops — reflection, the notes consolidation, the self-consolidation —
 > stream through the same client as the turn and the roll, their first
@@ -199,7 +201,38 @@ them (§4): the turn's or the roll's sample is what the note has there.
 
 ### 6.1 Runs
 
-*(filled in at stage 1.)*
+`loop_prefill_e2e_live`, two phases on one data root: phase 1 a long turn
+with the memory tools enabled, no reflection, a quit; phase 2 the app
+restarted on the same root against the same server, a short turn, the
+reflection at its landing.
+
+| host | the phase-2 turn | the reflection | the note |
+|---|---|---|---|
+| the CPU build (gemma-3-4b-it Q8, `-ngl 0 -c 8192`, the default batch) | 35.2 s — **52 tokens** processed, under the floor | landed 54.3 s after the turn | **35 tok/s, a hold of about 58 s at 2048, `-b 256 -ub 256`** — from the reflection's landing |
+| the GPU stack (Qwen3.6-27B, the 4090, 4 slots) | 3.0 s | landed 38.9 s after | none |
+
+A second CPU run with a scratch print of every offer and every round's
+usage (reverted) said who gave what: the phase-1 turn offered 6 tokens
+(the seed still in the cache from the first run), the phase-2 turn 52
+tokens in 16 s — the server was prefilling phase 1's cold title request
+beside it, and 3 tok/s is the figure the floor exists to refuse — and the
+reflection's first round 1664 prompt tokens, 514 of them processed (the
+rest cached from the first run's reflection) in 15.0 s, 34 tok/s: the
+landing's offer was that sample, and the note followed the landing. On
+Gemma's tokenizer the reflection's prompt is 1664 tokens, not Qwen's
+2798 — 47 s of prefill on this host, inside the loop's 120 s limit; §4's
+risk did not bite and the fallback was not needed.
+
+The LAN regression trio after it — `roll_prefill_e2e_live` (2.4 s, no
+note), `slow_prefill_e2e_live` (4.8 s, *lamp*, no note),
+`auto_reflect_e2e_live` — 3/3. One run the smoke lost while being written:
+the reflection is gated on the profile's enabled tools, so the first run
+waited 300 s for a loop that was never spawned; phase 1 now enables the
+tools before its turn (the schemas are part of the prefix phase 2 must
+find warm), and the smoke waits for the spawn before the landing, so
+"never spawned" and "never landed" read differently.
+
+Unit: 2967 green, 149 ignored (five tests and the smoke added).
 
 ## 7. Not in this track
 
