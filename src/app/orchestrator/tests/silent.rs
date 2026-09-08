@@ -6,7 +6,7 @@
 //! (fixtures in mod.rs; the keyed engine in parallel.rs; the background
 //! fixtures in background.rs).
 
-use super::super::background::{Acted, Acting, BgOutcome};
+use super::super::background::{Acted, Acting, BgOutcome, Refund, Window};
 use super::background::{cfg, finished, next, running_run, runs_out, start};
 use super::parallel::{KeyedRecorder, long_text, sized};
 use super::subagent::{hang, text};
@@ -594,6 +594,25 @@ fn spawn_loop_allowing(
     UnboundedReceiver<(BackgroundKind, BgOutcome)>,
     Arc<Acted>,
 ) {
+    spawn_loop_with(orch, backend, chat_id, system, clock, allowed, true)
+}
+
+/// The loop behind [`spawn_loop_allowing`]; `budgeted: false` gives the
+/// task no session budget, the shape of an engine without one
+/// (docs/research/quit-waits-for-the-landing.md §3.2).
+fn spawn_loop_with(
+    orch: &mut Orchestrator,
+    backend: Arc<KeyedRecorder>,
+    chat_id: Uuid,
+    system: &str,
+    clock: std::time::Duration,
+    allowed: Vec<crate::entities::profile::ToolId>,
+    budgeted: bool,
+) -> (
+    CancellationToken,
+    UnboundedReceiver<(BackgroundKind, BgOutcome)>,
+    Arc<Acted>,
+) {
     let profile_id = orch
         .chats
         .iter()
@@ -603,7 +622,7 @@ fn spawn_loop_allowing(
     let cancel = CancellationToken::new();
     let acted = Arc::new(Acted::default());
     let sessions = orch.session_budget();
-    let ctx = orch.background_tool_ctx(
+    let mut ctx = orch.background_tool_ctx(
         backend.clone() as Arc<dyn EngineBackend>,
         sessions,
         profile_id,
@@ -613,6 +632,9 @@ fn spawn_loop_allowing(
         crate::shared::i18n::Lang::En,
         cancel.clone(),
     );
+    if !budgeted {
+        ctx.sessions = None;
+    }
     let (done_tx, done_rx) = tokio::sync::mpsc::unbounded_channel();
     super::super::tool_loop::spawn_silent_loop(super::super::tool_loop::SilentLoop {
         backend: backend as Arc<dyn EngineBackend>,
@@ -774,7 +796,8 @@ async fn a_cancelled_wait_opens_no_stream_and_leaves_no_reservation() {
     assert_eq!(budget.in_flight(), 900);
     assert_eq!(budget.silent_streaming(), None);
 
-    orch.quit_bg();
+    orch.cancel_bg_all();
+    orch.refund_unlanded();
     tokio::time::sleep(std::time::Duration::from_millis(150)).await;
     assert!(
         backend.requests().is_empty(),
@@ -1248,4 +1271,246 @@ async fn a_quit_after_a_write_keeps_the_advance() {
         "kept: the window was written into"
     );
     assert!(chat.reflected_at.is_some());
+}
+
+// ---------- the quit waits for the landing (docs/research/quit-waits-for-the-landing.md) ----------
+
+/// A tool that takes its time — a reader or a writer of the profile's
+/// memory, by `wrote` — and says when it has started, so a test can cancel a
+/// loop while its tools are running.
+struct Slow {
+    id: &'static str,
+    wrote: bool,
+    delay_ms: u64,
+    started: Arc<std::sync::atomic::AtomicBool>,
+}
+
+#[async_trait::async_trait]
+impl crate::features::tools::Tool for Slow {
+    fn id(&self) -> crate::entities::profile::ToolId {
+        self.id.into()
+    }
+    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
+        "slow".into()
+    }
+    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
+        serde_json::json!({"type": "object", "properties": {}})
+    }
+    async fn invoke(
+        &self,
+        _ctx: &crate::features::tools::ToolContext,
+        _args: serde_json::Value,
+    ) -> anyhow::Result<crate::features::tools::ToolOutcome> {
+        self.started
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        tokio::time::sleep(std::time::Duration::from_millis(self.delay_ms)).await;
+        Ok(crate::features::tools::ToolOutcome::text("slow").wrote_if(self.wrote))
+    }
+    fn group(&self) -> crate::features::tools::meta::ToolGroup {
+        crate::features::tools::meta::ToolGroup::Files
+    }
+    fn ui_label(&self) -> &'static str {
+        "slow"
+    }
+}
+
+/// One round that calls `id` with no arguments.
+fn call(id: &str) -> super::subagent::Script {
+    super::subagent::Script {
+        chunks: vec![
+            ChatChunk::ToolCall(crate::shared::api::contract::ToolCallDelta {
+                thought_signature: None,
+                index: 0,
+                id: Some("s1".into()),
+                name: Some(id.into()),
+                arguments: "{}".into(),
+            }),
+            ChatChunk::Finished(FinishReason::ToolCalls),
+        ],
+        hang: false,
+    }
+}
+
+/// An orchestrator with a slow tool registered, a chat whose reflection
+/// watermark was advanced (`Some(2)`), and a loop calling that tool, its
+/// token and state on the reflection slot the way a spawn leaves them. The
+/// loop's tools are running when this returns.
+async fn mid_tools(
+    id: &'static str,
+    wrote: bool,
+    delay_ms: u64,
+) -> (
+    tempfile::TempDir,
+    Orchestrator,
+    Uuid,
+    Arc<KeyedRecorder>,
+    UnboundedReceiver<(BackgroundKind, BgOutcome)>,
+) {
+    let (dir, mut orch, chat_id) = orch_ready_for_reflection();
+    orch.config.compaction.context_tokens = Some(1000);
+    let started = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    orch.extra_tools.push(Arc::new(Slow {
+        id,
+        wrote,
+        delay_ms,
+        started: started.clone(),
+    }));
+    orch.rebuild_registry();
+    if let Some(chat) = orch.chats.iter_mut().find(|c| c.id == chat_id) {
+        chat.reflected_upto = Some(2);
+    }
+    let backend = KeyedRecorder::new(vec![("slow loop", vec![call(id), long_text(30)])], 10);
+    let (stop, done_rx, acted) = spawn_loop_allowing(
+        &mut orch,
+        backend.clone(),
+        chat_id,
+        "slow loop",
+        std::time::Duration::from_secs(30),
+        vec![id.into()],
+    );
+    orch.begin_bg(
+        BackgroundKind::Reflection,
+        stop,
+        Some(Refund {
+            window: Window::Reflection {
+                chat: chat_id,
+                upto: None,
+                at: None,
+            },
+            acted,
+        }),
+    );
+    settle(3000, || started.load(std::sync::atomic::Ordering::SeqCst)).await;
+    assert!(
+        started.load(std::sync::atomic::Ordering::SeqCst),
+        "the tool is running"
+    );
+    (dir, orch, chat_id, backend, done_rx)
+}
+
+/// The three steps of a quit, as `handle_command` and `run` take them.
+async fn quit(
+    orch: &mut Orchestrator,
+    done_rx: &mut UnboundedReceiver<(BackgroundKind, BgOutcome)>,
+    cap: std::time::Duration,
+) -> std::time::Duration {
+    let started = std::time::Instant::now();
+    orch.cancel_bg_all();
+    orch.settle_silent_tasks(done_rx, cap).await;
+    orch.refund_unlanded();
+    started.elapsed()
+}
+
+fn upto(orch: &Orchestrator, chat_id: Uuid) -> Option<usize> {
+    orch.chats
+        .iter()
+        .find(|c| c.id == chat_id)
+        .unwrap()
+        .reflected_upto
+}
+
+/// A quit while a round of **reads** is running waits for the landing
+/// (§3.1): the tool finishes, the loop lands `wrote: false` through the
+/// stop's own path, and the window comes back — within the cap, not at it.
+#[tokio::test]
+async fn a_quit_mid_reads_waits_for_the_landing_and_gives_the_window_back() {
+    let (_d, mut orch, chat_id, backend, mut done_rx) = mid_tools("slow_read", false, 300).await;
+    let took = quit(&mut orch, &mut done_rx, std::time::Duration::from_secs(2)).await;
+    assert_eq!(upto(&orch, chat_id), None, "the reads consumed nothing");
+    assert!(!orch.bg_running(BackgroundKind::Reflection), "landed");
+    assert!(
+        took < std::time::Duration::from_millis(1500),
+        "over as it landed: {took:?}"
+    );
+    assert_eq!(backend.requests().len(), 1, "no request after the quit");
+}
+
+/// …and while a round that **writes** is running, the landing keeps it.
+#[tokio::test]
+async fn a_quit_mid_write_waits_for_the_landing_and_keeps_the_advance() {
+    let (_d, mut orch, chat_id, _backend, mut done_rx) = mid_tools("slow_write", true, 300).await;
+    quit(&mut orch, &mut done_rx, std::time::Duration::from_secs(2)).await;
+    assert_eq!(upto(&orch, chat_id), Some(2), "the write is in the store");
+    assert!(!orch.bg_running(BackgroundKind::Reflection), "landed");
+}
+
+/// A round whose tools outlast the cap is decided by its state (R2, fork
+/// F3): `InTools` keeps, and the quit is over at the cap.
+#[tokio::test]
+async fn a_quit_past_the_cap_decides_by_the_state() {
+    let (_d, mut orch, chat_id, _backend, mut done_rx) = mid_tools("slow_read", false, 1500).await;
+    let took = quit(
+        &mut orch,
+        &mut done_rx,
+        std::time::Duration::from_millis(300),
+    )
+    .await;
+    assert_eq!(
+        upto(&orch, chat_id),
+        Some(2),
+        "mid-tools past the cap: kept"
+    );
+    assert!(
+        took < std::time::Duration::from_millis(1200),
+        "a quit stays a quit: {took:?}"
+    );
+}
+
+/// A loop cancelled in its stream lands within milliseconds: the settle is
+/// over long before the cap, and the window comes back.
+#[tokio::test]
+async fn a_quit_mid_stream_lands_at_once() {
+    let (_d, mut orch, chat_id) = orch_ready_for_reflection();
+    orch.config.compaction.context_tokens = Some(1000);
+    if let Some(chat) = orch.chats.iter_mut().find(|c| c.id == chat_id) {
+        chat.reflected_upto = Some(2);
+    }
+    let backend = KeyedRecorder::new(vec![("quiet loop", vec![long_text(30)])], 30);
+    let (stop, mut done_rx, acted) = spawn_loop(
+        &mut orch,
+        backend.clone(),
+        chat_id,
+        "quiet loop",
+        std::time::Duration::from_secs(30),
+    );
+    orch.begin_bg(
+        BackgroundKind::Reflection,
+        stop,
+        Some(Refund {
+            window: Window::Reflection {
+                chat: chat_id,
+                upto: None,
+                at: None,
+            },
+            acted,
+        }),
+    );
+    settle(2000, || !backend.open_at_arrival("quiet loop").is_empty()).await;
+    let took = quit(&mut orch, &mut done_rx, std::time::Duration::from_secs(2)).await;
+    assert_eq!(upto(&orch, chat_id), None);
+    assert!(took < std::time::Duration::from_millis(500), "{took:?}");
+}
+
+/// Where the engine has no session budget, a loop cancelled before its
+/// stream opens sends no request (R3): the token is checked before the
+/// stream, not only in the lane wait.
+#[tokio::test]
+async fn a_cancelled_unbudgeted_loop_sends_no_request() {
+    let (_d, mut orch, chat_id) = orch_ready_for_reflection();
+    let backend = KeyedRecorder::new(vec![("mute loop", vec![long_text(30)])], 30);
+    let (stop, mut done_rx, _acted) = spawn_loop_with(
+        &mut orch,
+        backend.clone(),
+        chat_id,
+        "mute loop",
+        std::time::Duration::from_secs(30),
+        Vec::new(),
+        false,
+    );
+    stop.cancel();
+    assert_eq!(
+        landed(&mut done_rx).await,
+        BgOutcome::Cancelled { consumed: false }
+    );
+    assert!(backend.requests().is_empty(), "no request after the cancel");
 }

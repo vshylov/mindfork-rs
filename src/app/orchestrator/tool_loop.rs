@@ -354,6 +354,13 @@ async fn stream_round(
     else {
         return Ok(Streamed::Cancelled);
     };
+    // A loop cancelled since its last stream — a stop, a quit — lands
+    // without asking the engine once more: where a session budget exists the
+    // lane wait above already returned on the token, and this covers the
+    // engines without one (docs/research/quit-waits-for-the-landing.md §3.2).
+    if cancel.is_cancelled() {
+        return Ok(Streamed::Cancelled);
+    }
     let token = held
         .as_ref()
         .map_or_else(|| cancel.clone(), Reservation::stream_token);

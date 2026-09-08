@@ -3119,11 +3119,16 @@ Principles:
   docs/research/stop-refunds-window.md §3.3, acted-by-effect.md §3.3). The
   window travels with the loop's own state (`Refund { window, acted:
   Arc<Acted> }` — `Idle`, `InTools`, `Wrote`, set by the loop around each
-  round's tools), so `Quit` — which has no landing — applies the same rule
-  through `quit_bg`: every slot's token cancelled, then every window whose
-  state is `Idle` given back before the exit flush (a round of tools still
-  running may be about to write: kept; docs/research/quit-refunds-window.md
-  §3.2, acted-by-effect.md §3.2); the
+  round's tools), so `Quit` applies the same rule in three steps: the arm
+  cancels every slot's token (`cancel_bg_all`); `run`, once its loop has
+  broken, **listens for the cancelled tasks' own landings** on `bg_done_rx`
+  (`settle_silent_tasks`, each through `handle_bg_done` — the stop's path,
+  `consumed` from the loop — while any slot is active, `QUIT_SETTLE` = 2 s
+  in all: a task not in its tools lands in milliseconds, a round of tools
+  when it finishes); then `refund_unlanded` decides whatever has not landed
+  by its state — `Idle` given back, `InTools` and `Wrote` kept — before the
+  exit flush (docs/research/quit-waits-for-the-landing.md §3.1,
+  quit-refunds-window.md §3.2, acted-by-effect.md §3.2); the
   tasks screen's `F6` stops one via `handle_stop_background_task`
   (docs/research/stop-silent-task.md §3). This way the family's 3rd task (self-model
   auto-consolidation, §9.9) doesn't touch the `run()`/`Quit` scaffold.

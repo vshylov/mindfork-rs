@@ -285,7 +285,8 @@ async fn a_quit_before_the_first_round_gives_the_window_back_and_flushes_it() {
         "the advance was flushed before the quit"
     );
 
-    orch.quit_bg();
+    orch.cancel_bg_all();
+    orch.refund_unlanded();
 
     assert_eq!(watermark(&orch, chat_id), (None, false));
     assert!(orch.saves.is_dirty(chat_id));
@@ -317,7 +318,8 @@ fn a_quit_keeps_an_acted_window_and_ignores_the_roll() {
     let roll = CancellationToken::new();
     orch.begin_bg(BackgroundKind::Compaction, roll.clone(), None);
 
-    orch.quit_bg();
+    orch.cancel_bg_all();
+    orch.refund_unlanded();
 
     assert!(
         token.is_cancelled() && roll.is_cancelled(),
@@ -342,7 +344,8 @@ fn a_quit_during_a_round_of_tools_keeps_the_window() {
             acted: Arc::new(Acted::at(Acting::InTools)),
         }),
     );
-    orch.quit_bg();
+    orch.cancel_bg_all();
+    orch.refund_unlanded();
     assert_eq!(
         orch.consolidate_counts.get(&chat),
         Some(&3),

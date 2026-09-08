@@ -1,8 +1,9 @@
 # The quit waits for the landing — a stop's own path decides, the state rule only past a cap
 
-> **Status:** proposed (2026-09-08) — the forks in §5 await the user's
-> decision; no stage-0 probe (nothing about a model's behaviour is in
-> question). The item the effect track recorded
+> **Status:** implemented (2026-09-08) — every fork at its recommendation
+> (the user's decision, 2026-09-08); the regression run in §6.1; no stage-0
+> probe (nothing about a model's behaviour is in question).
+> The item the effect track recorded
 > ([acted-by-effect.md](acted-by-effect.md) §7): at a quit, a silent task
 > whose round of tools is running (`InTools`) keeps its window because the
 > round's write, if any, has not reported yet — the conservative side of
@@ -175,6 +176,17 @@ commands, the roll and the background runs are untouched.
   request where the engine has no session budget.
 - **Live: not required** — the exit path; the LAN regression trio run
   once as the habit.
+
+### 6.1 The run (2026-09-08)
+
+The unit suite: **2946 green, 146 `#[ignore]`** (+5, all in
+`tests/silent.rs`: a quit mid-reads refunded within the cap and with no
+request after the cancel, mid-write kept, past the cap decided by the
+state, mid-stream landed at once, an unbudgeted cancelled loop sending no
+request). The quit-track tests through `run` keep their expectations under
+the new path. The regression on the LAN stack (Qwen 3.6 27B, four slots
+over 16384): `stop_silent_task_e2e_live`, `silent_roll_e2e_live`,
+`background_subagent_e2e_live` — **3/3 in 37.9 s**.
 
 ## 7. Not in this track
 
