@@ -1479,6 +1479,8 @@
   "ui.settings.field.python_path": "Interpreter path",
   "ui.settings.field.python_net": "Network in sandbox",
   "ui.settings.field.python_timeout": "Sandbox timeout (s)",
+  "ui.settings.field.quit_settle": "Quit: wait for background work (s)",
+  "ui.settings.desc.quit_settle": "How long quitting waits for the app's own background work — a reflection, a consolidation, a history compaction — to finish, so a task caught in the middle of a tool call completes it and the next launch picks up exactly where it should. Empty — wait until every task has landed (each has its own run time limit); a number — at most that many seconds, 0 — leave at once.",
   "ui.settings.field.python_memory": "Memory limit (MB, 0=none)",
   "ui.settings.field.video_resolution": "Input resolution",
   "ui.settings.field.video_max_minutes": "Max video length (min)",

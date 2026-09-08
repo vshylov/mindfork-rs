@@ -1,8 +1,10 @@
 # The quit's settle hears the roll, and its cap is a setting
 
-> **Status:** proposed (2026-09-08) — the forks in §5 await the user's
-> decision; no stage-0 probe (nothing about a model's behaviour is in
-> question). The two items the settle track recorded
+> **Status:** implemented (2026-09-08) — the user's decisions of
+> 2026-09-08: F1 and F4 as recommended, **F2 — the cap lives in the Tools
+> group beside the other time limits**, **F3 — seconds, and no cap by
+> default** (better that the tool finishes); the regression run in §6.1;
+> no stage-0 probe. The two items the settle track recorded
 > ([quit-waits-for-the-landing.md](quit-waits-for-the-landing.md) §7):
 > draining `compact_rx` at the quit, and a configurable cap. The first
 > turned out not to be cosmetic — the roll lands on a channel the settle
@@ -68,8 +70,10 @@ for it.
   enums; the settings screen's *Interface* group renders them
   (`screens/settings/spec.rs`, the `I*` field ids). A plain numeric field
   follows `XSessions`: `int(|c, t| if let Ok(v) = t.parse::<u32>() { … })`
-  — an unparsable edit leaves the value. The demo dumps do not show the
-  *Interface* group, so a row there changes no dump.
+  — an unparsable edit leaves the value. The demo dumps show the *Tools*
+  group, so a row there moves the rows below it: the dumps and the
+  screenshots are regenerated with the field (the user's decision put it
+  there, beside the other time limits — fork F2).
 - **Tests**: the settle track's `quit` helper (cancel → settle → refund)
   over a slow test tool; `tests/compaction.rs` builds rolls and reads
   their results; the settings tests edit a field and read the config back.
@@ -163,6 +167,19 @@ a new row in *Settings → Interface* with the wait, and `0` for none.
   config with the field, the exit still under the cap.
 - **Live: not required** — the exit path and a setting; the LAN regression
   trio run once as the habit.
+
+### 6.1 The run (2026-09-08)
+
+As decided: `tools.quit_settle_secs: Option<u32>` — `None` (the default)
+waits until every task has landed, a number is the cap in seconds, `0`
+decides at once — a *Tools* row after the dialogue's run time limit. The
+unit suite: **2950 green, 146 `#[ignore]`** (+4: three in
+`tests/silent.rs` — a streaming roll heard at once, a finished roll in the
+channel applied, no cap waiting and a zero cap deciding at once — and the
+settings row); the demo dumps and screenshots regenerated for the row.
+The regression on the LAN stack (Qwen 3.6 27B, four slots over 16384):
+`stop_silent_task_e2e_live`, `silent_roll_e2e_live`,
+`background_subagent_e2e_live` — **3/3 in 50.8 s**.
 
 ## 7. Not in this track
 

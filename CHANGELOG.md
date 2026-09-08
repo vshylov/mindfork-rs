@@ -16,6 +16,11 @@ split by subsystem.
 
 ### Added
 
+- **A limit on how long quitting waits for background work.** *Tools* →
+  *Quit: wait for background work (s)*: empty — wait until every task has
+  landed (each has its own run time limit); a number — at most that many
+  seconds; `0` — leave at once.
+
 - **`/tasks stop <kind>`.** The typed route to stopping one of the app's own
   background tasks — `reflection`, `notes`, `self` or `compact` — for a
   terminal where `F6` on the tasks screen never arrives. Bare `/tasks stop`
@@ -176,8 +181,11 @@ split by subsystem.
   one that had only looked — read its self-model, searched the notes —
   gives the window back. Quitting the app while one runs follows the same
   rule: the next launch picks the task up where it was interrupted — and
-  if the task was in the middle of a tool call, the app waits up to two
-  seconds for it to finish so the decision is exact.
+  if the task was in the middle of a tool call, the app waits for it to
+  finish so the decision is exact: as long as it takes by default, or at
+  most the limit set in *Tools* → *Quit: wait for background work*. A
+  history compaction that had just finished when you quit is kept rather
+  than dropped, and quitting during one no longer pauses.
 
 - **A CPU-only host's server now runs a smaller batch.** With *GPU layers*
   at 0 the app launches `llama-server` with `-b 256 -ub 256`. The server

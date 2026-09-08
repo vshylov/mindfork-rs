@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (46)
+## Entries (47)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -58,6 +58,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a quit gives the window back too — the fact the loop keeps in the open (done)
 - Post-M9: "acted on" by effect — a silent task's window is consumed by a write, not by a round (done)
 - Post-M9: the quit waits for the landing — a stop's own path decides, the state rule only past a cap (done)
+- Post-M9: the quit's settle hears the roll, and its cap is a setting (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -2965,3 +2966,58 @@ a `Notify` in `Acted` (the same second path); an unbounded wait (a quit
 stays a quit); waiting only for `InTools` slots (the idle ones land at
 once, and one rule is simpler); no request guard (a cloud request ended
 at once still costs a connection).
+
+### Post-M9: the quit's settle hears the roll, and its cap is a setting (done)
+
+**What.** The two items the settle track recorded
+([docs/research/quit-waits-for-the-landing.md](../research/quit-waits-for-the-landing.md)
+§7). The design
+[docs/research/quit-settle-roll-and-cap.md](../research/quit-settle-roll-and-cap.md);
+the user's decisions (2026-09-08): F1 as recommended; **F2 — the cap in
+the Tools group**, beside the other time limits, not the interface
+section; **F3 — seconds, and no cap by default**, so a task caught
+mid-tool finishes; F4 one PR.
+
+**The roll was a regression.** The compaction roll takes a silent slot
+like the three loops, but it lands on `compact_rx`, not on `bg_done_rx`;
+`handle_compact_result` — a `select!` arm of `run` — applies a finished
+summary and clears the slot. The settle track's `settle_silent_tasks`
+listened on `bg_done_rx` alone, so a quit during an automatic roll — the
+commonest silent task on a long conversation, firing exactly when it is
+largest — waited the whole two-second cap for a landing that never came on
+the channel it watched, and a roll that had finished just before the quit
+was dropped with its summary unread. Recorded there as "a cancelled roll
+has nothing to decide" — true of the window, wrong about the wait.
+
+**How.** `settle_silent_tasks(&mut bg_done_rx, &mut compact_rx, cap:
+Option<Duration>)`: a `select!` over both channels under one optional
+deadline (`timeout_at` when there is a cap, a plain await when there is
+none); a loop's outcome through `handle_bg_done`, a `CompactResult`
+through `handle_compact_result` — a cancelled roll clears its slot at once,
+a finished one is applied and marked dirty for the flush; `refund_unlanded`
+unchanged (the roll has no window). The cap: `ToolsSettings.quit_settle_secs:
+Option<u32>` (`#[serde(default)]`, `None`), a *Tools* row after the
+dialogue's run time limit in the `Batch` shape — empty reads "until every
+task has landed", a typed number is seconds, `0` included; `run` reads it
+at the quit; `QUIT_SETTLE` is gone. The settings screen's Tools tab is in
+the demo dumps, so the dumps and screenshots were regenerated.
+
+**Tests**: +4 — `tests/silent.rs` (an automatic roll streaming at the quit
+lands on its own channel and the settle is over in under a second, its
+slot clear, nothing folded; a finished roll's `CompactResult` sitting in
+the channel is applied by the settle and the chat marked dirty; no cap
+waits for a 300 ms round of reads and refunds, a zero cap decides at once
+and keeps a mid-tools task), `screens/settings/tests.rs` (the row follows
+the dialogue time limit in the same group, empty by default, stores `5`
+and `0`, an emptied field reads no cap, described) — **2950 unit tests
+green, 146 `#[ignore]`**; the demo dumps regenerated.
+
+**Live**: not required — the exit path and a setting. The LAN regression
+(`stop_silent_task_e2e_live`, `silent_roll_e2e_live`,
+`background_subagent_e2e_live`; Qwen 3.6 27B, four slots over 16384):
+3/3 in 50.8 s.
+
+**Rejected**: marking the compaction slot landed at the cancel without
+reading its channel (a finished summary would be lost); the cap in the
+interface section (the user: every timeout lives in Tools); a default cap
+(the user: better that the tool finishes); a ceiling on the value.

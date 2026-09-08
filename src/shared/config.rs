@@ -1046,6 +1046,15 @@ pub struct ToolSettings {
     /// Time limit for a whole dialogue run (`run_dialogue`, spec §9.13):
     /// every participant line and director checkpoint of it.
     pub dialogue_run_timeout_secs: u64,
+    /// How long a quit waits for the app's own background tasks — a
+    /// reflection, a consolidation, a compaction roll — to land, so a task
+    /// caught mid-work finishes its tool call and its window is decided
+    /// exactly (docs/research/quit-settle-roll-and-cap.md §3.2). `None`, the
+    /// default, waits until every task has landed (each is bounded by its
+    /// own run time limit); a number is the cap in seconds, `0` deciding at
+    /// once by the task's state.
+    #[serde(default)]
+    pub quit_settle_secs: Option<u32>,
     /// How many of one round's sub-agents may run at once when the model
     /// delegates several tasks in one reply (spec §9.3.2,
     /// docs/research/parallel-subagents.md §4.2). The rest start as siblings
@@ -1101,6 +1110,7 @@ impl Default for ToolSettings {
             subagent_max_tokens: DEFAULT_SUBAGENT_MAX_TOKENS,
             subagent_run_timeout_secs: DEFAULT_SUBAGENT_RUN_TIMEOUT_SECS,
             dialogue_run_timeout_secs: DEFAULT_DIALOGUE_RUN_TIMEOUT_SECS,
+            quit_settle_secs: None,
             subagent_parallel: DEFAULT_SUBAGENT_PARALLEL,
             subagent_background: false,
             subagent_background_wake: true,

@@ -625,6 +625,9 @@ enum FieldId {
     /// The whole-run time limit of a dialogue (`tools.dialogue_run_timeout_secs`,
     /// spec §9.13).
     TDialogueTimeout,
+    /// How long a quit waits for the app's own background tasks to land
+    /// (`tools.quit_settle_secs`; empty — until they do).
+    TQuitSettle,
     /// Ask before the agentic loop runs a tool marked dangerous
     /// (`tools.confirm_dangerous`, spec §9.8).
     TConfirmDangerous,

@@ -1388,15 +1388,28 @@ async fn mid_tools(
     (dir, orch, chat_id, backend, done_rx)
 }
 
-/// The three steps of a quit, as `handle_command` and `run` take them.
+/// The three steps of a quit, as `handle_command` and `run` take them, with
+/// no roll in flight (its channel empty and open).
 async fn quit(
     orch: &mut Orchestrator,
     done_rx: &mut UnboundedReceiver<(BackgroundKind, BgOutcome)>,
-    cap: std::time::Duration,
+    cap: Option<std::time::Duration>,
+) -> std::time::Duration {
+    let (_tx, mut compact_rx) = tokio::sync::mpsc::unbounded_channel();
+    quit_with_roll(orch, done_rx, &mut compact_rx, cap).await
+}
+
+/// [`quit`] over the roll's channel too
+/// (docs/research/quit-settle-roll-and-cap.md §3.1).
+async fn quit_with_roll(
+    orch: &mut Orchestrator,
+    done_rx: &mut UnboundedReceiver<(BackgroundKind, BgOutcome)>,
+    compact_rx: &mut UnboundedReceiver<super::super::compaction::CompactResult>,
+    cap: Option<std::time::Duration>,
 ) -> std::time::Duration {
     let started = std::time::Instant::now();
     orch.cancel_bg_all();
-    orch.settle_silent_tasks(done_rx, cap).await;
+    orch.settle_silent_tasks(done_rx, compact_rx, cap).await;
     orch.refund_unlanded();
     started.elapsed()
 }
@@ -1415,7 +1428,12 @@ fn upto(orch: &Orchestrator, chat_id: Uuid) -> Option<usize> {
 #[tokio::test]
 async fn a_quit_mid_reads_waits_for_the_landing_and_gives_the_window_back() {
     let (_d, mut orch, chat_id, backend, mut done_rx) = mid_tools("slow_read", false, 300).await;
-    let took = quit(&mut orch, &mut done_rx, std::time::Duration::from_secs(2)).await;
+    let took = quit(
+        &mut orch,
+        &mut done_rx,
+        Some(std::time::Duration::from_secs(2)),
+    )
+    .await;
     assert_eq!(upto(&orch, chat_id), None, "the reads consumed nothing");
     assert!(!orch.bg_running(BackgroundKind::Reflection), "landed");
     assert!(
@@ -1429,7 +1447,12 @@ async fn a_quit_mid_reads_waits_for_the_landing_and_gives_the_window_back() {
 #[tokio::test]
 async fn a_quit_mid_write_waits_for_the_landing_and_keeps_the_advance() {
     let (_d, mut orch, chat_id, _backend, mut done_rx) = mid_tools("slow_write", true, 300).await;
-    quit(&mut orch, &mut done_rx, std::time::Duration::from_secs(2)).await;
+    quit(
+        &mut orch,
+        &mut done_rx,
+        Some(std::time::Duration::from_secs(2)),
+    )
+    .await;
     assert_eq!(upto(&orch, chat_id), Some(2), "the write is in the store");
     assert!(!orch.bg_running(BackgroundKind::Reflection), "landed");
 }
@@ -1442,7 +1465,7 @@ async fn a_quit_past_the_cap_decides_by_the_state() {
     let took = quit(
         &mut orch,
         &mut done_rx,
-        std::time::Duration::from_millis(300),
+        Some(std::time::Duration::from_millis(300)),
     )
     .await;
     assert_eq!(
@@ -1486,7 +1509,12 @@ async fn a_quit_mid_stream_lands_at_once() {
         }),
     );
     settle(2000, || !backend.open_at_arrival("quiet loop").is_empty()).await;
-    let took = quit(&mut orch, &mut done_rx, std::time::Duration::from_secs(2)).await;
+    let took = quit(
+        &mut orch,
+        &mut done_rx,
+        Some(std::time::Duration::from_secs(2)),
+    )
+    .await;
     assert_eq!(upto(&orch, chat_id), None);
     assert!(took < std::time::Duration::from_millis(500), "{took:?}");
 }
@@ -1513,4 +1541,102 @@ async fn a_cancelled_unbudgeted_loop_sends_no_request() {
         BgOutcome::Cancelled { consumed: false }
     );
     assert!(backend.requests().is_empty(), "no request after the cancel");
+}
+
+// ---------- the settle hears the roll; the cap is the user's (docs/research/quit-settle-roll-and-cap.md) ----------
+
+/// An automatic roll streaming at the quit lands on its own channel within
+/// milliseconds (§3.1): the settle hears it, its slot clears, and the quit
+/// is over at once rather than at a cap.
+#[tokio::test]
+async fn a_quit_during_a_roll_hears_it_land_at_once() {
+    let (_d, mut orch, chat_id) = orch_ready_for_the_fan_out();
+    let backend = KeyedRecorder::new(vec![(COMPACT_KEY, vec![hang("folding")])], 30);
+    orch.engines.backend = Some(backend.clone() as Arc<dyn EngineBackend>);
+    let (tx, mut compact_rx) = tokio::sync::mpsc::unbounded_channel();
+    orch.compact_tx = tx;
+    orch.maybe_auto_compact(
+        chat_id,
+        Some(super::super::generation::TurnUsage {
+            prompt_tokens: 900,
+            completion_tokens: 10,
+        }),
+    );
+    assert!(orch.bg_running(BackgroundKind::Compaction));
+    settle(3000, || !backend.open_at_arrival(COMPACT_KEY).is_empty()).await;
+
+    let (_tx, mut done_rx) = tokio::sync::mpsc::unbounded_channel();
+    let took = quit_with_roll(
+        &mut orch,
+        &mut done_rx,
+        &mut compact_rx,
+        Some(std::time::Duration::from_secs(5)),
+    )
+    .await;
+    assert!(!orch.bg_running(BackgroundKind::Compaction), "landed");
+    assert!(
+        took < std::time::Duration::from_millis(1000),
+        "not the cap: {took:?}"
+    );
+    assert!(
+        orch.chats
+            .iter()
+            .find(|c| c.id == chat_id)
+            .unwrap()
+            .compaction
+            .is_none(),
+        "a cancelled roll folds nothing"
+    );
+}
+
+/// A roll that finished just before the quit — its result in the channel,
+/// unread — is applied by the settle rather than dropped (R2): the chat
+/// carries the summary for the flush.
+#[tokio::test]
+async fn a_finished_roll_in_the_channel_is_applied_at_the_quit() {
+    let (_d, mut orch, chat_id) = orch_ready_for_the_fan_out();
+    let boundary_id = orch
+        .chats
+        .iter()
+        .find(|c| c.id == chat_id)
+        .unwrap()
+        .messages[2]
+        .id;
+    let (tx, mut compact_rx) = tokio::sync::mpsc::unbounded_channel();
+    tx.send(super::super::compaction::CompactResult {
+        chat_id,
+        boundary_id,
+        rolls: 1,
+        origin: super::super::compaction::CompactOrigin::Auto,
+        text: Ok("the earlier part, folded".into()),
+    })
+    .unwrap();
+    orch.begin_bg(BackgroundKind::Compaction, CancellationToken::new(), None);
+
+    let (_tx, mut done_rx) = tokio::sync::mpsc::unbounded_channel();
+    quit_with_roll(&mut orch, &mut done_rx, &mut compact_rx, None).await;
+    let chat = orch.chats.iter().find(|c| c.id == chat_id).unwrap();
+    assert!(chat.compaction.is_some(), "the summary was applied");
+    assert!(orch.saves.is_dirty(chat_id), "and is on its way to disk");
+    assert!(!orch.bg_running(BackgroundKind::Compaction));
+}
+
+/// No cap — the default — waits for the landing however long the tools
+/// take (bounded by the task's own run time limit); a cap of zero decides
+/// at once by the state (§3.2).
+#[tokio::test]
+async fn no_cap_waits_and_a_zero_cap_decides_at_once() {
+    let (_d, mut orch, chat_id, _backend, mut done_rx) = mid_tools("slow_read", false, 300).await;
+    let took = quit(&mut orch, &mut done_rx, None).await;
+    assert_eq!(upto(&orch, chat_id), None, "waited for the reads to land");
+    assert!(took >= std::time::Duration::from_millis(200), "{took:?}");
+
+    let (_d, mut orch, chat_id, _backend, mut done_rx) = mid_tools("slow_read", false, 300).await;
+    let took = quit(&mut orch, &mut done_rx, Some(std::time::Duration::ZERO)).await;
+    assert_eq!(
+        upto(&orch, chat_id),
+        Some(2),
+        "decided at once: mid-tools keeps"
+    );
+    assert!(took < std::time::Duration::from_millis(100), "{took:?}");
 }
