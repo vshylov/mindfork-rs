@@ -171,8 +171,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-08, version 0.9.8)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2958 unit tests
-green, 147 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **2962 unit tests
+green, 148 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -183,6 +183,21 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 `tools/doc_index_check.py`. A new track adds a line; a line that has stopped
 being recent is dropped, not shortened.
 
+- **The roll's timings — the session's coldest prompt, sampled** — the
+  slow-prefill note read the turn's rounds only, and a server that kept
+  running gives no turn sample: the chat's prefix stays in a slot's cache
+  and every turn processes tens of tokens, under the rule's floor
+  (measured on the LAN stack: 31 against 1430 cold). The compaction roll
+  sends a different prefix — the summarizer's system, a digest that never
+  repeats — so it is processed cold (1466 tokens), the largest prompt a
+  session makes and the very stream a turn displaces; its usage was
+  matched and dropped. Now `collect_roll` keeps the `Usage` chunk's
+  figure, `CompactResult.prefill` carries it, and `handle_compact_result`
+  offers it to the one rule after the roll's own landing. Measured: the
+  CPU build's roll as the session's first request — 37 tok/s, the note;
+  the 4090, none
+  ([docs/research/roll-timings.md](docs/research/roll-timings.md),
+  spec §3.4, §6.7, [docs/journal/engine.md](docs/journal/engine.md)).
 - **A slow prefill, detected on the fly — the batch a cancel waits for,
   told to the user** — the batch track's automatic `-b 256` covers a
   managed server with no GPU layers and nothing else; every other slow
@@ -397,18 +412,6 @@ being recent is dropped, not shortened.
   ([docs/research/background-subagents.md](docs/research/background-subagents.md),
   [ADR 0010](docs/decisions/0010-subagent-nested-turn.md) amended, spec
   §9.3.2, [docs/journal/tools.md](docs/journal/tools.md)).
-- **Admission by budget — the unified KV pool never overfilled by the app** —
-  above one session a managed server's streams share one KV pool, and when
-  they outgrew it together the server ended *every* running conversation
-  at once (reproduced on the CPU build, both routes: two prompts that do
-  not fit, two replies that grow into each other); now every stream of a
-  turn **reserves** its calibrated prompt estimate plus its reply cap in
-  `SessionBudget` and waits for room, a stream alone always admitted, the
-  pool from `pool.rs` (managed `-c`; an external llama.cpp's `n_ctx` above
-  one slot; none on the clouds). The live control arm found the client
-  swallowing llama.cpp's in-stream error as an empty chunk — fixed
-  ([docs/research/admission-by-budget.md](docs/research/admission-by-budget.md),
-  spec §6.3, [docs/journal/tools.md](docs/journal/tools.md)).
 
 
 For what exists and how it works, read architecture.md and spec.md — they are

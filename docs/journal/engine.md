@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (48)
+## Entries (49)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -60,6 +60,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the quit waits for the landing — a stop's own path decides, the state rule only past a cap (done)
 - Post-M9: the quit's settle hears the roll, and its cap is a setting (done)
 - Post-M9: a slow prefill, detected on the fly — the batch a cancel waits for, told to the user (done)
+- Post-M9: the roll's timings — the session's coldest prompt, sampled (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -3091,3 +3092,73 @@ user the batch track could not reach); setting the field and restarting
 (a restart nobody asked for); a hint on the settings field only (read by
 nobody at the moment it matters); reading the roll's timings (its usage
 is not carried — the turn's first round is the sample on every session).
+
+### Post-M9: the roll's timings — the session's coldest prompt, sampled (done)
+
+**What.** The item the slow-prefill track recorded
+([docs/research/slow-prefill-detection.md](../research/slow-prefill-detection.md)
+§7, fork F5b). The design
+[docs/research/roll-timings.md](../research/roll-timings.md), every fork at
+its recommendation (the user's decision, 2026-09-08); stage 0 a
+measurement on the GPU stack made while designing.
+
+**Why.** The detection track samples the turn's rounds, on the reading that
+a session's first turn processes the system prompt and the history cold.
+It does on a fresh server. On one that kept running — the external mode's
+ordinary day, the app reconnecting to a `llama-server` that never stopped —
+the chat's prefix is still in a slot's cache, and every turn of the session
+processes only its own tokens, under the rule's 256-token floor: the rule
+stays silent for the whole session, on exactly the CPU-only external box
+the batch track could not reach. The compaction roll sends a *different*
+prefix — the summarizer's system prompt and a digest that is new every
+roll — so its prompt is processed cold, the largest a session makes; and
+it is the very stream the note is about, the one a turn displaces. Its
+`Usage` chunk was matched and dropped.
+
+**Measured (stage 0, the LAN stack, Qwen3.6-27B, 4 slots).** A cold turn
+with a forty-paragraph seed: 1430 tokens at 2351 tok/s. The same turn
+again: 4 tokens, 38 tok/s — the per-request overhead. A second turn on the
+warm prefix: 31 tokens, 125 tok/s. A roll-shaped request — the summarizer's
+system prompt and a digest of the same text: 1466 tokens cold at 2335
+tok/s; again, 4 tokens. Three readings: the warm turn is under the floor,
+and rightly (its figure is overhead, not throughput); the roll is cold by
+construction and gives the cold turn's figure; the signal arrives on the
+roll's stream as on a turn's — the same client, the same `include_usage`.
+
+**How.** `collect_roll`, lifted out of `spawn_compact` (the analyzer's
+complexity bar was near), reads one attempt at the stream into
+`Collected { text, thoughts, truncated, cancelled, prefill }`, the last off
+the `Usage` chunk — which the client hands over *before* `Finished`, since
+it reads on past `finish_reason` for exactly that chunk. The loop's break
+value became `(text, prefill)`; `CompactResult` gained
+`prefill: Option<Prefill>`, `None` on a cancelled, failed or timed-out
+attempt (the usage chunk is the stream's last, so a stream that ended
+short never received it; a displaced roll's retry is a new collect);
+`handle_compact_result` offers it to `note_slow_prefill` after
+`handle_bg_done`, so `Compacted` precedes the note in the feed, and offers
+it whatever the landing made of the text — a summary discarded for a
+vanished boundary was still a prompt the engine processed at its speed.
+Nothing in the rule changed: the same batch reading, the same floor, the
+same one claim per server session.
+
+**Live.** The CPU build (gemma-3-4b-it Q8, `-ngl 0 -c 2048`, the default
+batch): a chat of four exchanges seeded on disk, the app started on it,
+`/compact` the session's first request — the roll 78.7 s, six messages
+into 1457 chars, and the note from the roll: 37 tok/s, a hold of about
+55 s at 2048, `-b 256 -ub 256` — the figure the turn gave on the same
+server in the previous track (38, 54 s). The GPU stack: 2.7 s, 304 chars,
+no note. The LAN regression pair after it, 2/2. One run the smoke lost
+while being written: a data root seeded with chats and no `data.db` makes
+the bootstrap put its own notice in the feed after activation, which a
+wait for "the first `Notice`" took for the roll's; the smoke opens the
+storage once before the app starts. Unit: 2962 green, 148 ignored.
+
+**Rejected**: the whole `TokenUsage` on the result (the roll's cost has no
+consumer today; the budget's calibration is fed by turns and loops, and a
+digest is not the request shape the ratio is calibrated on); the three
+loops' samples through `BgOutcome::Done` (four constructors and every test
+on them, for a reflection's first round that prefills a window the turn
+before it usually already processed); offering only an applied summary
+(ties the engine's fact to a check about the chat); no live gate (the
+unit tests script the figure, the live arm is what shows it arriving on a
+real roll's stream).

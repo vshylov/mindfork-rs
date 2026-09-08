@@ -20,9 +20,11 @@ split by subsystem.
   `llama-server` looks at its queue only between batches of prompt tokens,
   so a background request stopped or displaced during its prompt holds its
   slot for a whole batch — tens of seconds on a CPU. The app now reads the
-  server's own timing of every prompt and, once per server session, says
-  in the feed how fast prompts are processed, how long such a hold would
-  be, and the one change to make: the *Batch (-b)* setting for a managed
+  server's own timing of every prompt — the history compression's own
+  request included, the one prompt a server that kept its cache still
+  processes whole — and, once per server session, says in the feed how
+  fast prompts are processed, how long such a hold would be, and the one
+  change to make: the *Batch (-b)* setting for a managed
   server, `-b 256 -ub 256` on the launch line for an external one. Nothing
   is said on a GPU host, on the clouds, or where the batch is already
   small.

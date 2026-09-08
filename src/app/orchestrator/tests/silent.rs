@@ -1611,6 +1611,7 @@ async fn a_finished_roll_in_the_channel_is_applied_at_the_quit() {
         rolls: 1,
         origin: super::super::compaction::CompactOrigin::Auto,
         text: Ok("the earlier part, folded".into()),
+        prefill: None,
     })
     .unwrap();
     orch.begin_bg(BackgroundKind::Compaction, CancellationToken::new(), None);

@@ -247,7 +247,7 @@ seed, `MINDFORK_EXPECT_SLOW_PREFILL` saying which host it is):
 
 ## 7. Not in this track
 
-- **The roll's timings** (F5b) — `CompactResult` carrying usage.
+- **The roll's timings** (F5b) — done: [roll-timings.md](roll-timings.md).
 - **A figure on the settings screen** — the measured throughput beside
   the *Batch (-b)* field, once the field's hint has a place for a number.
 - **Setting the batch for the user** (F4b).

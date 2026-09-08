@@ -6222,3 +6222,115 @@ async fn slow_prefill_e2e_live() {
         (false, Some(text)) => panic!("a fast host was told: {text}"),
     }
 }
+
+/// The roll's timings (docs/research/roll-timings.md §6): a chat reopened
+/// from disk and `/compact` the session's first request — the roll is the
+/// session's first cold prompt, and the slow-prefill note, if any, comes
+/// from it. `MINDFORK_EXPECT_SLOW_PREFILL=1` on a slow host (the CPU build),
+/// unset on a GPU host.
+///
+/// `MINDFORK_ENGINE_URL=…/v1 [MINDFORK_EXPECT_SLOW_PREFILL=1] cargo test roll_prefill_e2e_live -- --ignored --nocapture`.
+#[tokio::test]
+#[ignore = "requires a running llama-server (MINDFORK_ENGINE_URL)"]
+async fn roll_prefill_e2e_live() {
+    let Some(backend) = live_backend() else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    let expect_note = std::env::var("MINDFORK_EXPECT_SLOW_PREFILL").is_ok();
+
+    // The conversation is on disk before the app starts: forty lines of the
+    // keeper's evening over four exchanges, none of it sent this session.
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    let json = crate::shared::storage::JsonStore::new(Paths::with_root(&root));
+    let profile = Profile::new("Keeper", "You are a concise assistant.");
+    json.upsert_profile(&profile).unwrap();
+    let mut chat = Chat::from_profile(&profile, "the keeper's evening");
+    for part in 0..4u32 {
+        let seed: String = (part * 10..part * 10 + 10)
+            .map(|i| {
+                format!(
+                    "Paragraph {i}: the keeper climbs the stairs, lights the lamp, writes the log, \
+                     notes the tide, and looks out over the dark water for a while.\n"
+                )
+            })
+            .collect();
+        chat.push_message(Message::user(format!("{seed}\nAcknowledge in one word.")));
+        chat.push_message(Message::assistant(String::from("Noted.")));
+    }
+    let chat_id = chat.id;
+    json.save_chat(&chat).unwrap();
+    // The database beside the chats, so the bootstrap has no note of its own
+    // to put in the feed before the roll's.
+    drop(Storage::open(Paths::with_root(&root)).unwrap());
+
+    let mut config = AppConfig::default();
+    config.engine.mode = crate::shared::config::ServerMode::External;
+    config.compaction = crate::shared::config::CompactionSettings {
+        enabled: true,
+        summary_words: 150,
+        // A small verbatim tail, so the four exchanges leave something to fold.
+        tail_tokens: 120,
+        ..Default::default()
+    };
+    let (cmd_tx, mut evt_rx, handle) = spawn_orch_at(&root, Some(backend), config);
+    let activated = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+    if !matches!(activated, AppEvent::ChatActivated { id, .. } if id == chat_id) {
+        cmd_tx.send(AppCommand::SwitchChat(chat_id)).unwrap();
+        wait_for(
+            &mut evt_rx,
+            |e| matches!(e, AppEvent::ChatActivated { id, .. } if *id == chat_id),
+        )
+        .await
+        .unwrap();
+    }
+
+    // The session's first request is the roll.
+    let started = std::time::Instant::now();
+    cmd_tx.send(AppCommand::Compact).unwrap();
+    let landed = wait_for(&mut evt_rx, |e| {
+        matches!(
+            e,
+            AppEvent::Compacted { .. } | AppEvent::Error(_) | AppEvent::Notice(_)
+        )
+    })
+    .await
+    .unwrap();
+    let AppEvent::Compacted {
+        summary, folded, ..
+    } = landed
+    else {
+        panic!("the roll did not land as a summary: {landed:?}");
+    };
+    let roll = started.elapsed();
+    // The landing's note, if any, follows `Compacted` at once.
+    let note = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Notice(_))),
+    )
+    .await
+    .ok()
+    .flatten()
+    .and_then(|e| match e {
+        AppEvent::Notice(t) => Some(t),
+        _ => None,
+    });
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    eprintln!(
+        "roll prefill: the roll took {:.1} s, folded {folded} messages into {} chars; note = {}",
+        roll.as_secs_f64(),
+        summary.chars().count(),
+        note.as_deref().unwrap_or("none")
+    );
+    match (expect_note, note) {
+        (true, Some(text)) => assert!(text.contains("-b 256 -ub 256"), "{text}"),
+        (true, None) => panic!("a slow host was expected to be told by its roll"),
+        (false, None) => {}
+        (false, Some(text)) => panic!("a fast host was told: {text}"),
+    }
+}
