@@ -6152,3 +6152,73 @@ async fn background_subagent_e2e_live() {
         "the wake reply lacks the codename: {wake}"
     );
 }
+
+/// The slow-prefill note against a live `llama-server` in external mode
+/// (docs/research/slow-prefill-detection.md §6): a seeded turn processes a
+/// batch's worth of prompt tokens, the engine's `timings` travel to the
+/// landing, and the note comes — or not — by the rule. Which is expected
+/// depends on the host: set `MINDFORK_EXPECT_SLOW_PREFILL=1` on a host whose
+/// prompt processing is slow (the CPU build at the default batch), leave it
+/// unset on a GPU stack. Either way the figures are printed.
+/// `MINDFORK_ENGINE_URL=…/v1 [MINDFORK_EXPECT_SLOW_PREFILL=1] cargo test slow_prefill_e2e_live -- --ignored --nocapture`.
+#[tokio::test]
+#[ignore = "requires a running llama-server (MINDFORK_ENGINE_URL)"]
+async fn slow_prefill_e2e_live() {
+    let Some(backend) = live_backend() else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    let expect_note = std::env::var("MINDFORK_EXPECT_SLOW_PREFILL").is_ok();
+    let mut config = AppConfig::default();
+    config.engine.mode = crate::shared::config::ServerMode::External;
+    let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch_cfg(Some(backend), config);
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+
+    // A prompt of a batch's worth and more: forty lines of a lighthouse
+    // keeper's evening, then one question.
+    let seed: String = (0..40)
+        .map(|i| {
+            format!(
+                "Paragraph {i}: the keeper climbs the stairs, lights the lamp, writes the log, \
+                 notes the tide, and looks out over the dark water for a while.\n"
+            )
+        })
+        .collect();
+    let started = std::time::Instant::now();
+    let (reply, _tools) = run_turn_live(
+        &cmd_tx,
+        &mut evt_rx,
+        &format!("{seed}\nIn one word: what does the keeper light?"),
+    )
+    .await;
+    let turn = started.elapsed();
+    // The landing's note, if any, follows `Finished` at once.
+    let note = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Notice(_))),
+    )
+    .await
+    .ok()
+    .flatten()
+    .and_then(|e| match e {
+        AppEvent::Notice(t) => Some(t),
+        _ => None,
+    });
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    eprintln!(
+        "slow prefill: the turn took {:.1} s, reply {:?}; note = {}",
+        turn.as_secs_f64(),
+        reply.trim(),
+        note.as_deref().unwrap_or("none")
+    );
+    match (expect_note, note) {
+        (true, Some(text)) => assert!(text.contains("-b 256 -ub 256"), "{text}"),
+        (true, None) => panic!("a slow host was expected to be told"),
+        (false, None) => {}
+        (false, Some(text)) => panic!("a fast host was told: {text}"),
+    }
+}

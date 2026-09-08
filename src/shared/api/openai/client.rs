@@ -258,10 +258,18 @@ impl EngineBackend for OpenAiClient {
                                         // The token counter (include_usage) arrives as a separate
                                         // chunk (with an empty choices) — emit it before parsing choice.
                                         if let Some(u) = chunk.usage {
+                                            // llama.cpp's `timings` ride the same chunk: the
+                                            // prefill's processed tokens and milliseconds
+                                            // (docs/research/slow-prefill-detection.md §3.1).
+                                            let prefill = chunk.timings.as_ref().map(|t| crate::shared::api::contract::Prefill {
+                                                tokens: t.prompt_n,
+                                                ms: t.prompt_ms.round().max(0.0) as u32,
+                                            });
                                             yield ChatChunk::Usage(TokenUsage {
                                                 prompt_tokens: u.prompt_tokens,
                                                 completion_tokens: u.completion_tokens,
                                                 reasoning_tokens: u.completion_tokens_details.reasoning_tokens,
+                                                prefill,
                                             });
                                         }
                                         let Some(choice) = chunk.choices.into_iter().next() else { continue };
@@ -1059,6 +1067,47 @@ mod tests {
             );
             let _ = server.join();
         }
+    }
+    /// The usage chunk's `timings` become the usage's `prefill` — processed
+    /// tokens and milliseconds — and a chunk without them leaves it `None`
+    /// (docs/research/slow-prefill-detection.md §3.1).
+    #[tokio::test]
+    async fn timings_become_the_usage_prefill() {
+        let url = sse_server(&[
+            r#"{"choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":"stop"}]}"#,
+            r#"{"choices":[],"usage":{"prompt_tokens":1250,"completion_tokens":7,"total_tokens":1257},"timings":{"cache_n":50,"prompt_n":1200,"prompt_ms":13333.4}}"#,
+            "[DONE]",
+        ]);
+        let chunks = collect(url).await;
+        let usage = chunks
+            .iter()
+            .find_map(|c| match c {
+                ChatChunk::Usage(u) => Some(*u),
+                _ => None,
+            })
+            .expect("usage");
+        assert_eq!(
+            usage.prefill,
+            Some(crate::shared::api::contract::Prefill {
+                tokens: 1200,
+                ms: 13333
+            })
+        );
+
+        let url = sse_server(&[
+            r#"{"choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":"stop"}]}"#,
+            r#"{"choices":[],"usage":{"prompt_tokens":9,"completion_tokens":9,"total_tokens":18}}"#,
+            "[DONE]",
+        ]);
+        let chunks = collect(url).await;
+        let usage = chunks
+            .iter()
+            .find_map(|c| match c {
+                ChatChunk::Usage(u) => Some(*u),
+                _ => None,
+            })
+            .expect("usage");
+        assert_eq!(usage.prefill, None, "no timings: another server's chunk");
     }
 }
 

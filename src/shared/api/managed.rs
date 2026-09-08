@@ -84,6 +84,42 @@ pub const CPU_BATCH: u32 = 256;
 /// llama.cpp's default micro-batch (`-ub`); the launcher names it beside `-b`
 /// so the line reads whole, clamped to the batch as the server would clamp it.
 pub const SERVER_UBATCH: u32 = 512;
+/// llama.cpp's default batch (`-b`): what a `llama-server` runs when the line
+/// names none — a managed GPU host at its defaults, or an external server the
+/// user launched without the flag (`/props` does not say; assumed —
+/// docs/research/slow-prefill-detection.md fork F3).
+pub const LLAMA_DEFAULT_BATCH: u32 = 2048;
+/// The slot hold a cancelled stream is worth a note about, in seconds
+/// (docs/research/slow-prefill-detection.md §3.2): far from the CPU build's
+/// 23 s at the default batch and from a GPU's second.
+pub const PREFILL_HOLD_LIMIT_SECS: u32 = 5;
+/// The smallest prefill sample the note trusts — a batch's worth of tokens, so
+/// the per-request overhead does not pass for throughput.
+pub const PREFILL_SAMPLE_MIN: u32 = 256;
+
+/// The batch a managed chat server runs with, from the same two facts
+/// [`build_args`] reads: the typed number, else [`CPU_BATCH`] on a host with
+/// no GPU layers, else the server's default.
+pub fn launched_batch(batch_size: Option<u32>, gpu_layers: i32) -> u32 {
+    batch_size
+        .or((gpu_layers == 0).then_some(CPU_BATCH))
+        .unwrap_or(LLAMA_DEFAULT_BATCH)
+}
+
+/// The slow-prefill rule (docs/research/slow-prefill-detection.md §3.2): the
+/// seconds a stream cancelled during its prompt would hold its slot — one
+/// `batch` of tokens at the measured throughput — when that is worth saying:
+/// a sample of at least [`PREFILL_SAMPLE_MIN`] processed tokens, a hold above
+/// [`PREFILL_HOLD_LIMIT_SECS`], and a batch above [`CPU_BATCH`] (at the knee
+/// the change the note would advise is already made). `None` otherwise.
+pub fn prefill_hold(batch: u32, prefill: crate::shared::api::contract::Prefill) -> Option<u32> {
+    if prefill.tokens < PREFILL_SAMPLE_MIN || batch <= CPU_BATCH {
+        return None;
+    }
+    let tps = prefill.tokens_per_second()?;
+    let hold = f64::from(batch) / tps;
+    (hold > f64::from(PREFILL_HOLD_LIMIT_SECS)).then(|| hold.round() as u32)
+}
 
 pub fn build_args(cfg: &ManagedConfig) -> Vec<String> {
     let mut args = vec![
@@ -1001,6 +1037,59 @@ mod tests {
             window,
             Some(4096),
             "unified pool: every slot may use the whole -c"
+        );
+    }
+    /// The batch the launch line implies, from the same two facts `build_args`
+    /// reads (docs/research/slow-prefill-detection.md §3.2).
+    #[test]
+    fn the_launched_batch_follows_the_launch_line() {
+        assert_eq!(launched_batch(Some(1024), 99), 1024, "typed wins");
+        assert_eq!(launched_batch(Some(1024), 0), 1024);
+        assert_eq!(launched_batch(None, 0), CPU_BATCH, "the CPU auto");
+        assert_eq!(
+            launched_batch(None, 99),
+            LLAMA_DEFAULT_BATCH,
+            "a GPU host at its defaults runs the server's"
+        );
+    }
+
+    /// The slow-prefill rule: the hold `batch / tps` in seconds when it is worth
+    /// saying — a sample of a batch's worth, a hold above the limit, a batch
+    /// above the knee (docs/research/slow-prefill-detection.md §3.2).
+    #[test]
+    fn the_prefill_hold_is_said_only_when_worth_it() {
+        use crate::shared::api::contract::Prefill;
+        // The CPU build at the default batch: ~90 tok/s → 23 s.
+        let slow = Prefill {
+            tokens: 1800,
+            ms: 20_000,
+        };
+        assert_eq!(prefill_hold(LLAMA_DEFAULT_BATCH, slow), Some(23));
+        // The same host at the knee: the change the note would advise is made.
+        assert_eq!(prefill_hold(CPU_BATCH, slow), None);
+        // A GPU host: thousands of tokens a second, a second's hold.
+        let fast = Prefill {
+            tokens: 1800,
+            ms: 900,
+        };
+        assert_eq!(prefill_hold(LLAMA_DEFAULT_BATCH, fast), None);
+        // Too short a sample to trust — the per-request overhead would pass
+        // for throughput.
+        let short = Prefill {
+            tokens: 100,
+            ms: 5_000,
+        };
+        assert_eq!(prefill_hold(LLAMA_DEFAULT_BATCH, short), None);
+        // A typed 1024 on a slowish host: 150 tok/s → 7 s, still worth it.
+        let mid = Prefill {
+            tokens: 1500,
+            ms: 10_000,
+        };
+        assert_eq!(prefill_hold(1024, mid), Some(7));
+        // Nothing processed, or no clock: nothing to say.
+        assert_eq!(
+            prefill_hold(LLAMA_DEFAULT_BATCH, Prefill { tokens: 0, ms: 0 }),
+            None
         );
     }
 }

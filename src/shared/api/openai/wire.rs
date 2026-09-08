@@ -361,6 +361,21 @@ pub struct ChatCompletionChunk {
     /// `stream_options.include_usage=true` (such a chunk's `choices` is usually empty).
     #[serde(default)]
     pub usage: Option<Usage>,
+    /// `llama-server`'s own clock over the request, on the same final chunk:
+    /// the prompt tokens it processed (net of the slot's cached prefix) and
+    /// the milliseconds they took. Absent from every other server
+    /// (docs/research/slow-prefill-detection.md §2.1).
+    #[serde(default)]
+    pub timings: Option<Timings>,
+}
+
+/// `llama-server`'s `timings` object; only the prefill's two fields are read.
+#[derive(Debug, Default, Deserialize)]
+pub struct Timings {
+    #[serde(default)]
+    pub prompt_n: u32,
+    #[serde(default)]
+    pub prompt_ms: f64,
 }
 
 /// An error object delivered **inside** an already-open `200` SSE stream, instead
@@ -1078,5 +1093,21 @@ mod continuation_tests {
             b.as_object_mut().unwrap().remove(k);
         }
         assert_eq!(a, b, "the flag must touch nothing but its three fields");
+    }
+    /// llama.cpp's `timings` ride the final chunk beside `usage`
+    /// (docs/research/slow-prefill-detection.md §2.1): the prefill's processed
+    /// tokens and milliseconds are read, the rest ignored; a chunk without
+    /// them — every other server's — parses to `None`.
+    #[test]
+    fn parses_timings_beside_usage() {
+        let raw = r#"{"choices":[],"usage":{"prompt_tokens":1250,"completion_tokens":7,"total_tokens":1257},"timings":{"cache_n":50,"prompt_n":1200,"prompt_ms":13333.4,"prompt_per_second":90.0,"predicted_n":7,"predicted_ms":700.0}}"#;
+        let chunk: ChatCompletionChunk = serde_json::from_str(raw).unwrap();
+        let t = chunk.timings.expect("timings");
+        assert_eq!(t.prompt_n, 1200);
+        assert!((t.prompt_ms - 13333.4).abs() < 0.01);
+
+        let plain = r#"{"choices":[],"usage":{"prompt_tokens":42,"completion_tokens":7,"total_tokens":49}}"#;
+        let chunk: ChatCompletionChunk = serde_json::from_str(plain).unwrap();
+        assert!(chunk.timings.is_none());
     }
 }

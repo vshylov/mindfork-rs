@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (47)
+## Entries (48)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -59,6 +59,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: "acted on" by effect — a silent task's window is consumed by a write, not by a round (done)
 - Post-M9: the quit waits for the landing — a stop's own path decides, the state rule only past a cap (done)
 - Post-M9: the quit's settle hears the roll, and its cap is a setting (done)
+- Post-M9: a slow prefill, detected on the fly — the batch a cancel waits for, told to the user (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -3021,3 +3022,72 @@ green, 146 `#[ignore]`**; the demo dumps regenerated.
 reading its channel (a finished summary would be lost); the cap in the
 interface section (the user: every timeout lives in Tools); a default cap
 (the user: better that the tool finishes); a ceiling on the value.
+
+### Post-M9: a slow prefill, detected on the fly — the batch a cancel waits for, told to the user (done)
+
+**What.** The item the batch track recorded
+([docs/research/cpu-batch.md](../research/cpu-batch.md) §7). The design
+[docs/research/slow-prefill-detection.md](../research/slow-prefill-detection.md),
+every fork at its recommendation (the user's decision, 2026-09-08); stage
+0 was a measurement made while designing — the signal is on the wire.
+
+**Why.** The batch track fixed the one slow prefill it could see (`-ngl 0`
+→ `-b 256`). A managed server with a partial offload, one on a slow GPU,
+an external `llama-server` at the default batch, a CPU box in external
+mode: each holds its slot for a whole batch when a stream is cancelled
+during its prompt — tens of seconds — and none said so. The app cannot
+change a launch flag at runtime and must not change a setting the user
+did not type; it can measure and say.
+
+**The signal.** `llama-server`'s OpenAI-compatible stream ends with a chunk
+carrying `usage` **and** `timings`: `prompt_n` — the prompt tokens actually
+processed, net of `cache_n`, the prefix reused from the slot — and
+`prompt_ms`. Measured on the LAN stack before designing; the app's client
+dropped it (`dialogue_probe.rs` read it by hand for its own purpose). No
+other provider sends it, which is the quiet on the clouds by construction.
+
+**How.** `TokenUsage.prefill: Option<Prefill { tokens, ms }>` from the
+wire chunk's `timings` (`ChatCompletionChunk.timings`, `Timings { prompt_n,
+prompt_ms }`), `None` from the other four clients; the turn loop keeps the
+round with the largest `prompt_n` (`RoundOutput.prefill` →
+`TurnUsage.prefill`, a session's first round on a cold cache), and
+`handle_done` hands it to `note_slow_prefill` ahead of the roll. The rule
+is pure, beside the batch it needs (`shared/api/managed.rs`):
+`launched_batch(batch_size, gpu_layers)` — the typed number, else
+`CPU_BATCH` at `-ngl 0`, else `LLAMA_DEFAULT_BATCH` = 2048 — and
+`prefill_hold(batch, prefill)`: the hold `batch / tps` in seconds, said
+when the sample is at least `PREFILL_SAMPLE_MIN` = 256 processed tokens
+(the per-request overhead read as 154 tok/s on the 4090 over a 16-token
+prompt), the hold above `PREFILL_HOLD_LIMIT_SECS` = 5, and the batch above
+the knee. An external server's batch is assumed 2048 (`/props` does not
+expose `n_batch`), and the note says so. One `AppEvent::Notice` per chat-
+server session — `EngineManager.prefill_noted`, cleared in `note_recovery`
+when the chat server reaches `Ready` — naming the throughput, the hold,
+the batch and the route: the *Batch (-b)* field for a managed server,
+`-b 256 -ub 256` on the launch line for an external one; the raw figures
+go to the log every time.
+
+**Tests**: +8 unit (the wire's `timings` beside `usage` and their absence;
+the client's `prefill` and `None`; `launched_batch`; the rule over the CPU
+build's figure, the knee, a GPU's second, a short sample, a typed 1024;
+the note once per managed session and again at `Ready`; nothing at the
+knee, the CPU auto, a fast prefill, a cloud, no sample; the external
+wording; the whole path from a scripted usage chunk to the note and
+silence on the second turn) — **2958 unit tests green, 147 `#[ignore]`**.
+
+**Live — GO.** `slow_prefill_e2e_live` (external mode, a forty-paragraph
+seed; `MINDFORK_EXPECT_SLOW_PREFILL` names the host's expectation): the
+**CPU build** (b10807, Gemma 3 4B Q8_0, `-ngl 0 -c 2048`, no `-b`) — the
+turn 37.9 s, the reply *Lamp*, the note: **38 tokens/s, a hold of 54 s at
+the default batch of 2048**, the launch-line wording; the batch track's
+"a 1400-token prompt already takes 38 s" is the same figure from the
+engine's clock. The **LAN stack** (Qwen 3.6 27B, the 4090) — the turn
+4.4 s, the reply *lamp*, no note; with the regression trio 4/4 in 49.8 s.
+
+**Rejected**: time to first token over the app's estimate (a byte ratio,
+the cache invisible); a throughput floor alone (ignores the batch the
+user set); skipping external servers (the CPU-only external box is the
+user the batch track could not reach); setting the field and restarting
+(a restart nobody asked for); a hint on the settings field only (read by
+nobody at the moment it matters); reading the roll's timings (its usage
+is not carried — the turn's first round is the sample on every session).

@@ -96,6 +96,10 @@ pub(super) struct EngineManager {
     /// a still-loading (`Connecting`) managed server would return a 503 ("error
     /// status"), and for regeneration it would also wipe out the previous reply for nothing.
     pub(super) server_status: ServerStatus,
+    /// Whether the slow-prefill note went out this chat-server session
+    /// (docs/research/slow-prefill-detection.md §3.3): once per server, cleared
+    /// when the server reaches `Ready` again — a relaunch measures afresh.
+    prefill_noted: bool,
     /// The impersonation-server status (for managed/external; in `shared` —
     /// `NotConfigured`, the chip in the status line is hidden).
     imp_status: ServerStatus,
@@ -161,6 +165,7 @@ impl EngineManager {
             imp_backend: None,
             imp_handle: None,
             server_status: ServerStatus::NotConfigured,
+            prefill_noted: false,
             imp_status: ServerStatus::NotConfigured,
             embed_status: ServerStatus::NotConfigured,
             status_tx,
@@ -325,7 +330,19 @@ impl EngineManager {
     fn note_recovery(&mut self, server: Server, status: &ServerStatus) {
         if matches!(status, ServerStatus::Ready) {
             self.restarts[server as usize].reset();
+            if matches!(server, Server::Chat) {
+                // A new server session: the slow-prefill note may go out once
+                // more, with the new server's own figure.
+                self.prefill_noted = false;
+            }
         }
+    }
+
+    /// Claims the chat-server session's one slow-prefill note: `true` the
+    /// first time it is asked, `false` after (docs/research/slow-prefill-detection.md
+    /// §3.3).
+    pub(super) fn claim_prefill_note(&mut self) -> bool {
+        !std::mem::replace(&mut self.prefill_noted, true)
     }
 
     /// Whether a dead managed `server` may be relaunched right now (crash-loop guard).

@@ -323,7 +323,11 @@ Two modes (configured on the settings screen, `Ctrl+P`, "Model/server" section):
     *Performance* overrides it (2048 restores the server's default; 128 buys a
     2.8 s wait for a fifth); a GPU host at its defaults gets no `-b` at all. The
     server's log says `n_batch = 256` when it applies. For an **external** CPU
-    server pass the flags yourself, e.g. `llama-server … -b 256 -ub 256`. Before launch the model file's presence is
+    server pass the flags yourself, e.g. `llama-server … -b 256 -ub 256` — the
+    app tells you when it matters: on a server whose prompt processing is slow
+    it says once, in the feed, how fast prompts run, how long a stopped or
+    displaced background request would hold its slot, and this very line
+    ([docs/research/slow-prefill-detection.md](research/slow-prefill-detection.md)). Before launch the model file's presence is
   checked: if the GGUF isn't found or isn't accessible, the status bar immediately
   shows a clear error ("model file not found or inaccessible …") instead of hanging
   in "connecting…".
