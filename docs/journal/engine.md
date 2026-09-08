@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (49)
+## Entries (50)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -61,6 +61,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the quit's settle hears the roll, and its cap is a setting (done)
 - Post-M9: a slow prefill, detected on the fly — the batch a cancel waits for, told to the user (done)
 - Post-M9: the roll's timings — the session's coldest prompt, sampled (done)
+- Post-M9: the loops' timings — the silent tasks' cold prompts, sampled at the landing (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -3162,3 +3163,79 @@ before it usually already processed); offering only an applied summary
 (ties the engine's fact to a check about the chat); no live gate (the
 unit tests script the figure, the live arm is what shows it arriving on a
 real roll's stream).
+
+### Post-M9: the loops' timings — the silent tasks' cold prompts, sampled at the landing (done)
+
+**What.** The item the roll-timings track recorded
+([docs/research/roll-timings.md](../research/roll-timings.md) §7, fork
+F2b). The design [docs/research/loop-timings.md](../research/loop-timings.md),
+every fork at its recommendation (the user's decision, 2026-09-09); stage
+0 a measurement on the GPU stack made while designing.
+
+**Why.** The slow-prefill note is computed from one sample per server
+session. The turn gives it on a fresh server, the roll on a warm one — and
+the warm server's ordinary day has neither: the app reconnecting to a
+`llama-server` that kept running, a conversation under the compaction
+threshold, every turn processing tens of tokens under the rule's floor.
+The three silent loops fire there on their own cadence, each with a
+prefix that is nobody else's — its instructions, its tool schemas, a
+digest — so each first round is processed cold and whole, the largest
+prompt a session makes. `record_round_usage` read that usage for the
+budget's calibration and kept nothing else; the loop landed as
+`(BackgroundKind, BgOutcome)` and the figure was gone.
+
+**Measured (stage 0, the LAN stack, Qwen3.6-27B, a scratch print of each
+round's usage, reverted).** The reflection after one short turn: round 1
+2798 prompt tokens, all 2798 processed, 1054 ms — 2655 tok/s; round 2
+2839 prompt tokens, 45 processed — the tool result on the warm prefix;
+round 3 cut by the quit, no usage. Against the day before: a cold turn
+1430, the roll 1466, a turn on a warm prefix 31. Three readings: the first
+round is the sample, the later rounds ride the cache, and a stream that
+ends short has nothing to give — the usage chunk is the stream's last.
+
+**How.** `run_rounds` takes an out-parameter `prefill: &mut Option<Prefill>`
+— the shape `run_tools` already has for `wrote` — and `record_round_usage`
+keeps the round's sample on it when its `tokens` exceed what is there; an
+out-parameter rather than a field of `RoundsEnd`, since the sample must
+survive every way out of the loop (`Done`, `Cancelled`, `TimedOut`, the
+`?` on a stream error) and the sample is the engine's fact, not the
+task's verdict. The channel's tuple became `BgDone { kind, outcome,
+prefill }`; `handle_bg_done(kind, outcome, prefill)` offers the sample to
+`note_slow_prefill` at its end, after the slot's events, for every kind —
+and the explicit offer in `handle_compact_result` went: the roll passes
+`CompactResult.prefill` through the same landing. Nothing in the rule
+changed.
+
+**Live.** `loop_prefill_e2e_live`, two phases on one data root: phase 1 a
+long turn with the memory tools enabled (the reflection is gated on the
+profile's tool set, and the schemas are part of the prefix phase 2 must
+find warm), no reflection, a quit; phase 2 the app restarted on the same
+root against the same server, a short turn, the reflection at its landing.
+The CPU build (gemma-3-4b-it Q8, `-ngl 0 -c 8192`, the default batch):
+the turn 35.2 s with **52 tokens** processed — under the floor, and
+rightly, since the server was prefilling phase 1's cold title request
+beside it and 3 tok/s is not its throughput — the reflection landed 54 s
+later, and the note came from that landing: 35 tok/s, a hold of about
+58 s at 2048, `-b 256 -ub 256`. A second CPU run with a print of every
+offer said so exactly: the reflection's first round 1664 prompt tokens
+(Gemma's tokenizer; Qwen's 2798), 514 processed in 15.0 s — 47 s of
+prefill for the whole prompt on this host, inside the loop's 120 s limit,
+so the design's §4 risk did not bite. The GPU stack: the turn 3.0 s, the
+reflection 38.9 s later, no note. The LAN trio 3/3. Unit: 2967 green,
+149 ignored.
+
+**Rejected**: the sample inside `BgOutcome::Done { prefill }` (the item's
+own label — a stopped, timed-out or failed loop would drop its sample,
+and keeping the roll's R3 would put the field on `Failed` too); a cell on
+the slot as `Acted` is (right for a fact read before the landing; nothing
+reads this one early); the first round's only (the same figure today,
+and a rule to explain); each spawn's own landing offering (two sites for
+one rule); reflection only; no live gate.
+
+**Two traps, both recorded.** A smoke that expects a silent loop must
+enable the profile's tools first, and wait for the spawn before the
+landing — "never spawned" and "never landed" are otherwise one silence
+(lessons §9). And a scratch print is removed by reversing its
+replacement, never by `git checkout --` of a file that carries the
+stage's uncommitted work (lessons §1): the checkout restored HEAD and
+took the stage's patch with the print.

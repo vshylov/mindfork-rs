@@ -267,6 +267,7 @@ fn a_request_is_answered_and_the_silent_tasks_are_followed() {
     orch.handle_bg_done(
         BackgroundKind::Reflection,
         super::super::background::BgOutcome::Done,
+        None,
     );
     let list = last_task_list(&mut rx);
     assert!(list.app.iter().all(|t| !t.running));

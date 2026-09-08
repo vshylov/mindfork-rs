@@ -1370,10 +1370,13 @@ its own — or named by `api_key_env`, resolved through the same
   llama.cpp's `timings` (`prompt_n` net of the prefix cache, `prompt_ms`),
   `None` from the other clients; the turn loop keeps its largest sample on
   `TurnUsage.prefill`, the roll's `collect_roll` its own on
-  `CompactResult.prefill` (the session's coldest prompt;
-  docs/research/roll-timings.md §3), and `note_slow_prefill` — from
-  `handle_done`, and from `handle_compact_result` after the roll's
-  landing — turns it,
+  `CompactResult.prefill`, a silent loop's `run_rounds` its own on an
+  out-parameter (the first round's, cold and whole;
+  docs/research/roll-timings.md §3, loop-timings.md §3) — every silent
+  task landing as `BgDone { kind, outcome, prefill }` through
+  `handle_bg_done`, which offers the sample once for every kind after the
+  task's own landing — and `note_slow_prefill`, from `handle_done` and
+  from that landing, turns it,
   through `launched_batch`/`prefill_hold` in `shared/api/managed.rs`, into one
   `Notice` per chat-server session (`EngineManager.prefill_noted`, cleared at
   `Ready`; docs/research/slow-prefill-detection.md §3) — | `Error{message,transient}` |

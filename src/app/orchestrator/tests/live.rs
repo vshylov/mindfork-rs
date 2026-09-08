@@ -6334,3 +6334,134 @@ async fn roll_prefill_e2e_live() {
         (false, Some(text)) => panic!("a fast host was told: {text}"),
     }
 }
+
+/// The loops' timings (docs/research/loop-timings.md §6): two phases on one
+/// data root against one server. Phase 1 warms the server's cache with the
+/// chat's prefix — a long turn, no reflection — and quits. Phase 2 restarts
+/// the app on the same root: a short turn, warm and under the floor, then
+/// the reflection — its first round cold — and the note, if any, from its
+/// landing. `MINDFORK_EXPECT_SLOW_PREFILL=1` on a slow host (the CPU build),
+/// unset on a GPU host.
+///
+/// `MINDFORK_ENGINE_URL=…/v1 [MINDFORK_EXPECT_SLOW_PREFILL=1] cargo test loop_prefill_e2e_live -- --ignored --nocapture`.
+#[tokio::test]
+#[ignore = "requires a running llama-server (MINDFORK_ENGINE_URL)"]
+async fn loop_prefill_e2e_live() {
+    let Some(backend) = live_backend() else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    let expect_note = std::env::var("MINDFORK_EXPECT_SLOW_PREFILL").is_ok();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    let external = || {
+        let mut config = AppConfig::default();
+        config.engine.mode = crate::shared::config::ServerMode::External;
+        config
+    };
+
+    // Phase 1: the chat's prefix into the server's cache. The memory tools
+    // are enabled here, before the turn — the reflection is gated on the
+    // profile's tool set, and the schemas are part of the prefix phase 2
+    // must find warm; the edit is persisted, so phase 2 inherits it.
+    let (cmd_tx, mut evt_rx, handle) = spawn_orch_at(&root, Some(backend.clone()), external());
+    let _pid = enable_all_tools(&cmd_tx, &mut evt_rx).await;
+    let seed: String = (0..40)
+        .map(|i| {
+            format!(
+                "Paragraph {i}: the keeper climbs the stairs, lights the lamp, writes the log, \
+                 notes the tide, and looks out over the dark water for a while.\n"
+            )
+        })
+        .collect();
+    let (reply, _) = run_turn_live(
+        &cmd_tx,
+        &mut evt_rx,
+        &format!("{seed}\nIn one word: what does the keeper light?"),
+    )
+    .await;
+    // The exchange is stored by `handle_done`, after `Finished`: the `ChatList`
+    // it emits is what says the quit will flush it.
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatList(_)))
+        .await
+        .unwrap();
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+    eprintln!("phase 1: reply {:?}", reply.trim());
+
+    // Phase 2: the app again on the same root, the same server; the
+    // reflection after the reply.
+    let mut config = external();
+    config.self_model.auto_reflect_every = 1;
+    let (cmd_tx, mut evt_rx, handle) = spawn_orch_at(&root, Some(backend), config);
+    // The app reopens on the chat it left; the reply shows it did.
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+    let started = std::time::Instant::now();
+    let (reply, _) =
+        run_turn_live(&cmd_tx, &mut evt_rx, "And in one word: what does he note?").await;
+    let turn = started.elapsed();
+    // Spawned at all? A loop the profile's tool set gates out never lands,
+    // and "did not land" would hide that.
+    tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        wait_for(&mut evt_rx, |e| {
+            matches!(
+                e,
+                AppEvent::BackgroundTask {
+                    kind: BackgroundKind::Reflection,
+                    active: true
+                }
+            )
+        }),
+    )
+    .await
+    .expect("the reflection was spawned at the landing");
+    // The reflection's own landing — bounded by its time limit over its
+    // streaming, plus its wait for the lane.
+    let landed = tokio::time::timeout(
+        std::time::Duration::from_secs(300),
+        wait_for(&mut evt_rx, |e| {
+            matches!(
+                e,
+                AppEvent::BackgroundTask {
+                    kind: BackgroundKind::Reflection,
+                    active: false
+                }
+            )
+        }),
+    )
+    .await;
+    let loop_took = started.elapsed() - turn;
+    // The landing's note, if any, follows it at once.
+    let note = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Notice(_))),
+    )
+    .await
+    .ok()
+    .flatten()
+    .and_then(|e| match e {
+        AppEvent::Notice(t) => Some(t),
+        _ => None,
+    });
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    eprintln!(
+        "loop prefill: the turn took {:.1} s (reply {:?}), the reflection landed = {}, {:.1} s after it; note = {}",
+        turn.as_secs_f64(),
+        reply.trim(),
+        landed.is_ok(),
+        loop_took.as_secs_f64(),
+        note.as_deref().unwrap_or("none")
+    );
+    assert!(landed.is_ok(), "the reflection did not land");
+    match (expect_note, note) {
+        (true, Some(text)) => assert!(text.contains("-b 256 -ub 256"), "{text}"),
+        (true, None) => panic!("a slow host was expected to be told by its loop"),
+        (false, None) => {}
+        (false, Some(text)) => panic!("a fast host was told: {text}"),
+    }
+}

@@ -171,8 +171,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-08, version 0.9.8)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2962 unit tests
-green, 148 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **2967 unit tests
+green, 149 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -183,6 +183,22 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 `tools/doc_index_check.py`. A new track adds a line; a line that has stopped
 being recent is dropped, not shortened.
 
+- **The loops' timings — the silent tasks' cold prompts, sampled at the
+  landing** — the note's sample came from the turn or the roll, and the
+  warm server's ordinary day has neither: a conversation under the
+  compaction threshold, every turn processing tens of tokens. The three
+  silent loops send their own prefix — instructions, tool schemas, a
+  digest — so their first round is processed cold and whole, the largest
+  prompt a session makes (measured: a reflection's first round 2798
+  tokens against the roll's 1466); its usage was read for the budget and
+  dropped. Now `run_rounds` keeps the loop's largest sample on an
+  out-parameter, every silent task lands as `BgDone { kind, outcome,
+  prefill }`, and `handle_bg_done` offers the sample once for every kind
+  after the task's own landing — the roll's own offer folded in. Measured
+  in two phases on the CPU build: the warm turn 52 tokens, under the
+  floor; the reflection's first round the note
+  ([docs/research/loop-timings.md](docs/research/loop-timings.md),
+  spec §3.4, §17.6, [docs/journal/engine.md](docs/journal/engine.md)).
 - **The roll's timings — the session's coldest prompt, sampled** — the
   slow-prefill note read the turn's rounds only, and a server that kept
   running gives no turn sample: the chat's prefix stays in a slot's cache
@@ -393,25 +409,6 @@ being recent is dropped, not shortened.
   ([docs/research/background-dialogues.md](docs/research/background-dialogues.md),
   [ADR 0011](docs/decisions/0011-dialogue-directed-run.md) amended, spec
   §9.13, [docs/journal/tools.md](docs/journal/tools.md)).
-- **Sub-agents in the background — a run that outlives its turn, both
-  stages** — `start_subagent` (opt-in, `tools.subagent_background`): the
-  call returns at once, the run is owned by the orchestrator over the
-  turn's cloneable parts and the **app-wide** session budget, its record
-  lands with the turn as a placeholder and is filled in **by id** when it
-  ends, and the result is a stored **task notification** the model reads
-  as user text — with a turn the app starts itself when the chat is open
-  and idle. Measured before code on the four clouds and Qwen 3.6: an
-  optional flag is silently omitted by Claude (0/3), a second tool is used
-  3/3 and 5/5. No confirmations in a background run (the user's decision:
-  the tool set is the control). Stage 2 answered the one surface the
-  footer rule left open: a feed that streams under **no** turn
-  (`LiveTurn.background`) — `F6` stops the run there and `Esc` merely goes
-  back, both advertised only while it streams — and a result landing in a
-  chat nobody is looking at marks that chat **unread** in the list
-  (`Chat.unread`, additive, cleared by opening it)
-  ([docs/research/background-subagents.md](docs/research/background-subagents.md),
-  [ADR 0010](docs/decisions/0010-subagent-nested-turn.md) amended, spec
-  §9.3.2, [docs/journal/tools.md](docs/journal/tools.md)).
 
 
 For what exists and how it works, read architecture.md and spec.md — they are

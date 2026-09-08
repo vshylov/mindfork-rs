@@ -15,7 +15,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use super::background::{Acted, BgOutcome};
+use super::background::{Acted, BgDone, BgOutcome};
 use crate::app::events::BackgroundKind;
 use crate::entities::profile::ToolId;
 use crate::features::tools::{ToolContext, ToolRegistry};
@@ -68,7 +68,7 @@ pub(super) struct SilentLoop {
     pub kind: BackgroundKind,
     /// A single outcome channel: the task's work done, stopped by its own
     /// token, or failed with a reason (an error, the timeout).
-    pub done_tx: UnboundedSender<(BackgroundKind, BgOutcome)>,
+    pub done_tx: UnboundedSender<BgDone>,
     /// Where the task stands with respect to its window, for a reader outside
     /// the loop (the quit's refund, docs/research/quit-refunds-window.md
     /// §3.1): `InTools` from the line that counts a round until its tools
@@ -121,6 +121,9 @@ pub(super) fn spawn_silent_loop(spawn: SilentLoop) {
             first.content.push_str("\n\n");
             first.content.push_str(&section);
         }
+        // The engine's prefill figure, kept beside the outcome whatever the
+        // outcome is (docs/research/loop-timings.md §3.1).
+        let mut prefill = None;
         let run = run_rounds(
             &backend,
             &registry,
@@ -132,6 +135,7 @@ pub(super) fn spawn_silent_loop(spawn: SilentLoop) {
             super::background::lane_label(kind),
             timeout,
             &acted,
+            &mut prefill,
         );
         let outcome = match run.await {
             Ok(RoundsEnd::Done) => BgOutcome::Done,
@@ -151,7 +155,11 @@ pub(super) fn spawn_silent_loop(spawn: SilentLoop) {
                 BgOutcome::Failed(e.to_string())
             }
         };
-        let _ = done_tx.send((kind, outcome));
+        let _ = done_tx.send(BgDone {
+            kind,
+            outcome,
+            prefill,
+        });
     });
 }
 
@@ -225,6 +233,7 @@ async fn run_rounds(
     lane: &'static str,
     clock: Duration,
     acted: &Acted,
+    prefill: &mut Option<crate::shared::api::contract::Prefill>,
 ) -> Result<RoundsEnd, anyhow::Error> {
     let mut round: u32 = 0;
     let mut last_exact: u64 = 0;
@@ -261,7 +270,7 @@ async fn run_rounds(
             Streamed::Cancelled => return Ok(RoundsEnd::Cancelled { wrote }),
             Streamed::TimedOut => return Ok(RoundsEnd::TimedOut),
         };
-        record_round_usage(ctx, estimate, usage, &mut last_exact);
+        record_round_usage(ctx, estimate, usage, &mut last_exact, prefill);
         // A stream ended by the task's own token (a displacement returned
         // `Streamed::Displaced` above): stopped, whatever it had produced.
         if reason == FinishReason::Cancelled {
@@ -308,20 +317,29 @@ async fn run_rounds(
 }
 
 /// A round's exact `usage`, when the server sent one: calibrates the budget's
-/// estimate against it and becomes the next round's floor (`last_exact`).
-/// Its own function so the loop reads as the sequence of decisions it is
-/// (the analyzer's complexity bar, docs/lessons.md §2).
+/// estimate against it, becomes the next round's floor (`last_exact`), and
+/// keeps the loop's largest prefill sample as the engine timed it — the
+/// first round's, processed whole and cold, where the later rounds ride the
+/// prefix cache (docs/research/loop-timings.md §3.1). Its own function so
+/// the loop reads as the sequence of decisions it is (the analyzer's
+/// complexity bar, docs/lessons.md §2).
 fn record_round_usage(
     ctx: &ToolContext,
     estimate: u64,
     usage: Option<crate::shared::api::contract::TokenUsage>,
     last_exact: &mut u64,
+    prefill: &mut Option<crate::shared::api::contract::Prefill>,
 ) {
     if let Some(u) = usage {
         if let Some(budget) = ctx.sessions.as_deref() {
             budget.record_usage(estimate, u.prompt_tokens as u64);
         }
         *last_exact = u.prompt_tokens as u64 + u.completion_tokens as u64;
+        if let Some(p) = u.prefill
+            && prefill.is_none_or(|kept| p.tokens > kept.tokens)
+        {
+            *prefill = Some(p);
+        }
     }
 }
 
