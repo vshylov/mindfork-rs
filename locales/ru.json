@@ -1584,6 +1584,7 @@
   "ui.tool.label.update_self_model": "обновить модель себя",
   "ui.tool.label.update_user_model": "обновить собеседника",
   "ui.settings.field.binary": "Бинарник llama-server",
+  "ui.settings.desc.binary": ["Путь к исполняемому файлу llama-server. Оставьте пустым — приложение возьмёт сборку,", "установленную последней через `mindfork llama setup` (data/llama/), или лежащую рядом", "с приложением; голое имя ищется рядом с приложением, затем в PATH. Папку не", "разбирайте: бинарник грузит библиотеки из соседних файлов."],
   "ui.settings.field.port": "Порт",
   "ui.settings.field.gguf": "GGUF-модель (-m)",
   "ui.settings.field.context": "Контекст (-c)",

@@ -16,6 +16,16 @@ split by subsystem.
 
 ### Added
 
+- **The engine binary is found, not just typed.** The *llama-server binary*
+  field may now be left empty: the app takes the build `mindfork llama
+  setup` installed last, or a `llama-server` sitting next to the
+  application — so downloading one, or unpacking a llama.cpp archive beside
+  `mindfork`, is enough to run in managed mode with nothing to type. A bare
+  name like `llama-server` is looked for beside the application and then in
+  `PATH`; a path you actually typed is used exactly as written. The same
+  applies to the impersonation server and the embedder, which run the same
+  binary.
+
 - **The engine, downloaded.** `mindfork llama backends` lists the
   llama.cpp `llama-server` builds published for your OS and architecture —
   `cpu`, `vulkan`, `cuda-13.3`, `rocm-10.0`, … — with their download sizes,

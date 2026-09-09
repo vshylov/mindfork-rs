@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (56)
+## Entries (57)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -68,6 +68,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the one-shot requests' samples — impersonation's prompt is the session's largest, and its own twice (done)
 - Post-M9: impersonation on Gemma's template — the swapped conversation must open with the assistant's silence (done)
 - Post-M9: the engine, downloaded — llama.cpp's backends named, fetched and pointed at (done)
+- Post-M9: the engine binary is found, not just typed — an empty field resolves (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -3689,3 +3690,60 @@ with no turns, unmeasured), the clouds re-measured.
   that fails instead of a user when upstream renames something — and
   `live_install_cpu_into_a_tempdir`, the whole path end to end on the cheapest
   asset.
+
+### Post-M9: the engine binary is found, not just typed — an empty field resolves (done)
+
+- **Why**: spec §3.4 had said the `llama-server` path "is looked up in `PATH`
+  and next to the application binary" since M1, and the launcher was
+  `Command::new(&cfg.binary)` verbatim (`shared/api/managed.rs:303`) — only the
+  `PATH` half, and that half only because the OS does it. The half that was
+  missing had nothing to point at until the downloader landed; with
+  `data/llama/<backend>-<tag>/` on disk it does, and the roadmap item the
+  downloader track opened asked to implement the promise or strike it.
+- **The rule** (`features::llama_setup::resolve_binary`, called through
+  `app::supervisor::BinaryLookup`), by what the field contains:
+  - **a path with a directory part** — used exactly as written, never
+    second-guessed. A typo must surface as the preflight's "model/binary not
+    found", not as a silent launch of something else;
+  - **a bare name** (`llama-server`) — beside the application first, otherwise
+    handed to the OS, i.e. `PATH`. That order costs one `stat` instead of a
+    `PATH` walk of our own, prefers what ships beside the app to whatever the
+    machine happens to have, and makes the two platforms agree: Windows'
+    `CreateProcess` already searches the calling image's directory, Unix's
+    `execvp` does not — so the promise was half-true on one OS and false on the
+    other;
+  - **empty** — the build installed **last** under `data/llama/`, else a
+    `llama-server` next to the application, else nothing, and only then
+    `NotConfigured`. So `llama setup` without `--set-binary` already gives a
+    working server, and unpacking a llama.cpp archive beside `mindfork` is
+    enough with nothing typed.
+- **"Installed last", not "newest tag"** (the user's decision, 2026-09-10).
+  Ordering by build number would move a user from `vulkan-b10871` to
+  `cpu-b10883` — off the GPU — because the CPU build happened to be published
+  later. What they last ran `llama setup` for is what they meant; anything else
+  is what `--set-binary` is for. Read from the directory's creation time,
+  falling back to its modification time. An interrupted install (a directory
+  with no binary in it) and a `.tmp-…` staging directory are not candidates.
+- **Where the directories come from.** `LlamaSupervisor` was a unit struct; it
+  now carries a `BinaryLookup` built from `Paths` (`llama_dir` + the new
+  `Paths::exe_dir()` accessor), and `Default` — what every existing test uses —
+  leaves both `None`, which reduces the resolution to "an explicit path or
+  nothing", i.e. the exact behaviour those tests were written against. The
+  embedder and the impersonation server resolve through the same lookup: one
+  install runs all three.
+- **The field's hint says so.** The *llama-server binary* row had no
+  description; a field whose *empty* value now means something needs one, so
+  `ui.settings.desc.binary` spells out the three cases and repeats that the
+  folder must stay whole.
+- **Live run (2026-09-10)** — the new smoke
+  `empty_binary_launches_the_downloaded_build_live`: a managed section with
+  `binary: None`, a real `data/llama/` holding `cpu-b10871`, `cpu-b10883` and
+  `vulkan-b10883`, and `gemma-3-4b-it-q8_0`. Resolved to `vulkan-b10883` — the
+  one installed last, and the case that separates the two rules, since by tag it
+  would have tied with `cpu-b10883` — launched it through `apply_chat` and the
+  probe reported `Ready`. **Smoke — GO.**
+- **Caught by the lesson written the day before**: the fixture for "an entry
+  that is not a directory" was `notes.txt`, which the i18n gate reads as a key
+  under the `notes.` prefix. Renamed to a dotless `stray-file` (lessons.md §7).
+- **Tests**: 3024 green, 156 ignored (3015 / 155 before) — 8 over the resolution
+  rule, 2 over the supervisor wiring, 1 new `#[ignore]` smoke.

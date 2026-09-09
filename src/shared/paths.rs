@@ -335,6 +335,14 @@ impl Paths {
             .map(|d| d.join(PORTABLE_DATA_SUBDIR).join("dictionaries"))
     }
 
+    /// The application binary's own directory. `None` when it is unknown
+    /// (`with_root`, i.e. tests). Used to look for read-only resources placed
+    /// beside the executable — the dictionaries above, and a `llama-server`
+    /// unpacked next to the app (spec §3.4).
+    pub fn exe_dir(&self) -> Option<&Path> {
+        self.exe_dir.as_deref()
+    }
+
     /// External-locales directory (`locales/`): `<code>.json` overrides the
     /// built-in bundle of the same language or adds a new language without
     /// rebuilding (axis A/B, Tier 3 — docs/history/i18n-external-locales.md).

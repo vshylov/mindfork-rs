@@ -454,7 +454,9 @@ src/
 │  │                        discarding keys typed while a long command was running
 │  ├─ sandbox_setup.rs      Python sandbox provisioning (mindfork sandbox setup): wasmer +
 │  │                        python.webc + wheels from a lock list (sha256); cache warmup
-│  ├─ llama_setup.rs        llama.cpp downloader (mindfork llama backends|setup|installed):
+│  ├─ llama_setup.rs        llama.cpp downloader (mindfork llama backends|setup|installed)
+│  │                        + resolve_binary: what an empty/bare binary setting means
+│  │                        (data/llama/'s last install, beside the app, PATH — spec §3.4);
 │  │                        the backends are DERIVED from the release's asset names, not
 │  │                        pinned; sha256 from the release, resumable download, one
 │  │                        directory per install under data/llama/ (spec §3.4)

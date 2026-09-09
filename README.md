@@ -359,8 +359,10 @@ architecture by the backend they were built with — `cpu`, `vulkan`, `cuda-13.3
 `rocm-10.0`, … — with their sizes; `setup` downloads one into
 `data/llama/<backend>-<tag>/`, checks it against the sha256 the release
 publishes, and then runs it to report the build number and the compute devices
-it found. `--set-binary` writes the path into the settings after a successful
-install; `--build <tag>` pins a build, and llama.cpp ships about a dozen a day.
+it found. `--build <tag>` pins a build, and llama.cpp ships about a dozen a day.
+You need not point the settings at the result: an empty *llama-server binary*
+field resolves to the build installed last (`--set-binary` writes the path
+explicitly if you would rather pin it).
 
 Then set the binary and the GGUF paths in settings (`Ctrl+P`), or via
 `MINDFORK_LLAMA_BIN` and `MINDFORK_MODEL` (plus optional `MINDFORK_NGL`,

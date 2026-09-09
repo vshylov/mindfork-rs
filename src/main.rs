@@ -199,7 +199,7 @@ fn run_tui(paths: &Paths, loc: &Locale) -> anyhow::Result<ExitCode> {
     // The error is an already-localized message (features/data_migration). See release-engineering.md §3.4.
     features::data_migration::run(paths, loc)?;
 
-    launch_tui(paths, Arc::new(LlamaSupervisor), true, loc)
+    launch_tui(paths, Arc::new(LlamaSupervisor::new(paths)), true, loc)
 }
 
 /// `mindfork demo` — the real TUI on a throwaway root with a scripted engine

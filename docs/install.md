@@ -312,7 +312,13 @@ vLLM, LM Studio, Ollama …). The recommended and verified backend is
 Two modes (configured on the settings screen, `Ctrl+P`, "Model/server" section):
 
 - **managed** — the app itself launches a child `llama-server` (path to the binary
-  + GGUF model `-m`, `-ngl`, `-c`, `--jinja`, `--no-mmap`, host/port). `--no-mmap`
+  + GGUF model `-m`, `-ngl`, `-c`, `--jinja`, `--no-mmap`, host/port). **The binary
+  field may be left empty**: the app then takes the build `mindfork llama setup`
+  installed last (§3.1), or a `llama-server` sitting next to the application —
+  so unpacking a llama.cpp archive beside `mindfork` is enough, with nothing to
+  type. A bare name like `llama-server` is looked for beside the application and
+  then in `PATH`; a path with a directory in it is used exactly as written.
+  `--no-mmap`
   loads the weights fully into RAM instead of mapping the file from disk — helps on
   network/slow drives, but needs more memory (off by default). Changing the model in
   settings **restarts** the server.
@@ -503,8 +509,11 @@ the compute devices the backend found. On a GPU backend an empty device list is
 reported explicitly — that means the driver or its runtime is missing and the
 server would silently run on the CPU.
 
-Then put the printed path into the settings (`Ctrl+P` → *Model/server* →
-*llama-server binary*), or into `MINDFORK_LLAMA_BIN` — or let the command do it:
+You do not have to do anything else: an **empty** *llama-server binary* field
+resolves to the build installed last, so the very next launch in managed mode
+uses what you just downloaded. To pin a particular one, put the printed path into
+the settings (`Ctrl+P` → *Model/server* → *llama-server binary*) or into
+`MINDFORK_LLAMA_BIN` — or let the command do it:
 
 ```bash
 mindfork llama setup --backend vulkan --set-binary
