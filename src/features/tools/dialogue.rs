@@ -267,6 +267,31 @@ pub enum Verdict {
 /// Parses the checkpoint reply's calls into verdicts, in order. Returns the
 /// verdicts and how many calls were unknown names (counted with the prose
 /// fallback — research §3.3).
+/// The director's verdict as its own turn in its persistent conversation
+/// (docs/research/dialogue-director-history.md §3.1): the model's text, if
+/// any, then each call as `name(arguments)` on its own line — the fact the
+/// tool-call turn carried, as text, so the history alternates on a template
+/// without a tool role. Gemma 3's rendered the `tool` result that followed a
+/// tool-call turn as a second user turn in a row and refused the pair; the
+/// clouds' wires merge such pairs, which is why they never saw it. Empty
+/// arguments (`{}`) are left out of the parentheses.
+pub fn verdict_turn(text: &str, calls: &[ApiToolCall]) -> String {
+    let mut out = text.trim().to_string();
+    for call in calls {
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(&call.name);
+        out.push('(');
+        let args = call.arguments.trim();
+        if args != "{}" {
+            out.push_str(args);
+        }
+        out.push(')');
+    }
+    out
+}
+
 pub fn parse_verdicts(calls: &[ApiToolCall]) -> (Vec<Verdict>, usize) {
     let mut verdicts = Vec::new();
     let mut unknown = 0;
@@ -783,5 +808,40 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    /// The verdict turn (docs/research/dialogue-director-history.md §3.1):
+    /// a call with arguments, two calls, text with a call, text alone, and
+    /// nothing at all.
+    #[test]
+    fn verdict_turn_renders_the_calls_as_the_directors_own_words() {
+        assert_eq!(
+            verdict_turn("", &[call("dialogue_continue", serde_json::json!({}))]),
+            "dialogue_continue()"
+        );
+        assert_eq!(
+            verdict_turn(
+                "",
+                &[
+                    ApiToolCall {
+                        id: "c1".into(),
+                        name: "dialogue_note".into(),
+                        arguments: r#"{"to":"a","text":"wrap up"}"#.into(),
+                        thought_signature: None,
+                    },
+                    call("dialogue_continue", serde_json::json!({})),
+                ]
+            ),
+            "dialogue_note({\"to\":\"a\",\"text\":\"wrap up\"})\ndialogue_continue()"
+        );
+        assert_eq!(
+            verdict_turn(
+                "Nearly there. ",
+                &[call("dialogue_continue", serde_json::json!({}))]
+            ),
+            "Nearly there.\ndialogue_continue()"
+        );
+        assert_eq!(verdict_turn("dialogue_continue", &[]), "dialogue_continue");
+        assert_eq!(verdict_turn("  ", &[]), "");
     }
 }

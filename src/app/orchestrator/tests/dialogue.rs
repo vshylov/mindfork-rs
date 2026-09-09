@@ -136,10 +136,27 @@ async fn dialogue_runs_alternating_and_lands_on_the_record() {
     );
     assert!(cp.messages[0].content.contains("Jonas: Wrong drink?"));
     // The second checkpoint continues the director's own conversation: the
-    // first ask, its verdict turn, the tool acknowledgement, the new lines.
+    // first ask, its verdict as its own text turn — no `tool` result, so the
+    // history alternates on a template without a tool role
+    // (docs/research/dialogue-director-history.md §3.1) — and the new lines.
     let cp2 = &reqs[6];
-    assert_eq!(cp2.messages.len(), 4);
-    assert!(cp2.messages[3].content.contains("Here you go!"));
+    assert_eq!(cp2.messages.len(), 3);
+    assert_eq!(
+        cp2.messages[1].role,
+        crate::shared::api::contract::ApiRole::Assistant
+    );
+    assert_eq!(cp2.messages[1].content, "dialogue_continue()");
+    assert!(
+        cp2.messages[1].tool_calls.is_empty(),
+        "the verdict as text, not a call"
+    );
+    assert!(
+        cp2.messages
+            .iter()
+            .all(|m| m.role != crate::shared::api::contract::ApiRole::Tool),
+        "no tool role in the director's history"
+    );
+    assert!(cp2.messages[2].content.contains("Here you go!"));
 }
 
 /// The cap is the backstop: with `max_messages` spent the run lands as
