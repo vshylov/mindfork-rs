@@ -171,7 +171,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-09, version 0.9.8)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2982 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **2986 unit tests
 green, 153 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
@@ -183,6 +183,24 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 `tools/doc_index_check.py`. A new track adds a line; a line that has stopped
 being recent is dropped, not shortened.
 
+- **Impersonation on Gemma's template — the swapped conversation must
+  open with the assistant's silence** — the defect the one-shot samples
+  track found: impersonation swaps the roles of the history, so a chat
+  the user opened became a conversation opening with an assistant turn,
+  and Gemma 3's chat template refused it with a `400` before any prefill.
+  Measured on Gemma 4 31B and Gemma 3 4B: Gemma 4's template takes every
+  shape; Gemma 3's refuses a leading assistant turn and two same-role
+  turns in a row, and delivers the system prompt only inside a leading
+  user turn (4 tokens for a 54-token system without one). Now
+  `alternate_for_template` merges adjacent same-role turns and folds a
+  leading assistant turn that a user turn follows into the persona as one
+  sentence (`prompt.impersonation.opening`), for every provider — the
+  same reply on Gemma 4 for five tokens more, a reply instead of a `400`
+  on Gemma 3; the opening-only chat stays the lone turn both accept.
+  Measured after: the user-opened seed impersonated on Gemma 4 in 1.5 s
+  and on Gemma 3 in 69.8 s with the note, no `400` in the log
+  ([docs/research/gemma-impersonation.md](docs/research/gemma-impersonation.md),
+  spec §11.8, [docs/journal/engine.md](docs/journal/engine.md)).
 - **The one-shot requests' samples — impersonation's prompt is the
   session's largest, and its own twice** — the item was "the title's and
   impersonation's timings for the slow-prefill note"; measured,
@@ -393,28 +411,6 @@ being recent is dropped, not shortened.
   screen's words through `BackgroundKind::label_key`, the one function both
   surfaces read ([docs/research/tasks-stop-command.md](docs/research/tasks-stop-command.md),
   spec §11.7, §11.10, [docs/journal/ui-screens.md](docs/journal/ui-screens.md)).
-- **The batch a cancel waits for — `-b` on the CPU build's launch line** —
-  llama.cpp looks at its queue between batches of `-b` prompt tokens, so a
-  stream the app cancels during its prefill (a displaced roll, a stopped
-  task) holds its slot for one: 23 s at the default on the CPU build.
-  Measured on five lines, a fresh server per arm: the wait is **linear in
-  `-b`** (13.1 / 6.5 / 2.8 s at 512 / 256 / 128 for +5 / +14 / +20 % on the
-  prefill) and `-ub` alone makes both worse. Now `-ngl 0` launches with
-  `-b 256 -ub 256` unless *Batch (-b)* names a number; a GPU host's line is
-  byte for byte what it was; the docker stand's chat container carries the
-  flags itself ([docs/research/cpu-batch.md](docs/research/cpu-batch.md),
-  spec §3.4, [docs/journal/engine.md](docs/journal/engine.md)).
-- **Stopping a silent task from the tasks screen** — `F6` on a task row
-  that reads *running* or *waiting* stops it: the slot's token is cancelled
-  and the task lands as a **third outcome**, `BgOutcome::Cancelled`, which
-  clears the slot and touches neither the failure streak nor the spawn-time
-  watermark and counters (the window is skipped, as on a failure); a
-  `/compact` the user typed answers with one notice, an automatic roll stops
-  quietly and is planned again at the next landing. What was missing was
-  the reading, not the mechanism: the loops landed a cancelled task as `Ok`
-  and the roll as a timeout, since only `Quit` could reach those paths
-  ([docs/research/stop-silent-task.md](docs/research/stop-silent-task.md),
-  spec §11.10, [docs/journal/ui-screens.md](docs/journal/ui-screens.md)).
 
 
 For what exists and how it works, read architecture.md and spec.md — they are

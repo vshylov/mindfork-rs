@@ -6613,11 +6613,18 @@ async fn prompt_estimate_e2e_live() {
         let ratio = *exact as f64 / estimate as f64;
         let is_roll = req.system.as_deref() == Some(roll_system.as_str());
         // The JSON message in the history: the turn that carried it, and
-        // impersonation, which sends the whole conversation.
+        // impersonation, which sends the whole conversation — after the
+        // roll the cut lands on that very message, and the swap's leading
+        // assistant turn is folded into the persona, so impersonation's JSON
+        // rides its system prompt (docs/research/gemma-impersonation.md §3.1).
         let carries_json = req
             .messages
             .iter()
-            .any(|m| m.content.contains("catalogue as JSON"));
+            .any(|m| m.content.contains("catalogue as JSON"))
+            || req
+                .system
+                .as_deref()
+                .is_some_and(|s| s.contains("catalogue as JSON"));
         let kind = match (req.tools.is_empty(), is_roll, carries_json) {
             (false, _, _) => "turn",
             (true, true, _) => "roll",
@@ -6662,8 +6669,10 @@ async fn prompt_estimate_e2e_live() {
     );
 }
 
-/// A chat seeded on disk for the one-shot smokes: an assistant opener and
-/// four long exchanges, about a thousand tokens swapped or digested — above the rule's floor, and
+/// A chat seeded on disk for the one-shot smokes: four long exchanges the
+/// user opens — the shape Gemma 3's template refused until the opening was
+/// folded into the persona (docs/research/gemma-impersonation.md) — about a
+/// thousand tokens swapped or digested — above the rule's floor, and
 /// inside a minute of prefill on the CPU build. Seeded rather than made by
 /// turns: a turn's first round on a fresh root processes its schemas cold
 /// and would claim the session's one note before the request under test
@@ -6674,12 +6683,6 @@ fn seed_long_chat(root: &std::path::Path) -> Uuid {
     let profile = Profile::new("Keeper", "You are a concise assistant.");
     json.upsert_profile(&profile).unwrap();
     let mut chat = Chat::from_profile(&profile, "the keeper's evening");
-    // An assistant opener first: impersonation swaps the roles, and Gemma's
-    // template refuses a conversation that then begins with an assistant
-    // turn ("roles must alternate user/assistant", a 400 before any
-    // prefill) — a limit of impersonation on that template family, not of
-    // this smoke (docs/research/oneshot-samples.md §7).
-    chat.push_message(Message::assistant(String::from("How was the evening?")));
     for part in 0..4u32 {
         let seed: String = (part * 8..part * 8 + 8)
             .map(|i| {

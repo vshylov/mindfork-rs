@@ -146,18 +146,34 @@ fn impersonation_folds_the_compacted_prefix_and_carries_the_summary() {
         loc,
     );
 
-    // Only the verbatim tail is sent, and the folded part is not in it.
-    assert_eq!(req.messages.len(), 2, "the tail is messages[3..]");
+    // Only the verbatim tail is sent, and the folded part is not in it. The
+    // tail is messages[3..]: the cut's user message, swapped into a leading
+    // assistant turn, moves into the persona (gemma-impersonation §3.1); the
+    // reply after it is the one turn sent.
+    assert_eq!(
+        req.messages.len(),
+        1,
+        "the tail is messages[3..], its opening folded"
+    );
     let sent: Vec<&str> = req.messages.iter().map(|m| m.content.as_str()).collect();
-    assert_eq!(sent, vec!["Второй вопрос", "Второй ответ"]);
+    assert_eq!(sent, vec!["Второй ответ"]);
     assert!(
         !sent.iter().any(|t| t.contains("Первый")),
         "the folded exchange must not be sent verbatim: {sent:?}"
     );
-    // …and what replaced it is in the system prompt, after the persona.
+    // …and what replaced it is in the system prompt, after the persona and
+    // before the opening the swap moved there.
     let system = req.system.unwrap();
     assert!(system.starts_with("Ты — пользователь"));
     assert!(system.contains("Ранее: обсудили первый вопрос."));
+    assert!(
+        system.contains("Второй вопрос"),
+        "the opening, in the persona: {system}"
+    );
+    assert!(
+        system.find("Ранее: обсудили").unwrap() < system.find("Второй вопрос").unwrap(),
+        "the summary before the opening"
+    );
 }
 
 /// Impersonation has **no** tools, so the block must tell the model to work from
@@ -205,19 +221,22 @@ fn impersonation_is_unchanged_when_compaction_is_off() {
     let off = build(chat.compaction_view(false));
     assert_eq!(off.system.as_deref(), Some("Ты — пользователь"));
     assert_eq!(off.messages.len(), 5, "the whole history is sent");
-    // The stored summary is dormant, not discarded: switching back brings it in.
-    assert_eq!(build(chat.compaction_view(true)).messages.len(), 2);
+    // The stored summary is dormant, not discarded: switching back brings it
+    // in — the tail's two messages, the cut's opening folded into the persona.
+    assert_eq!(build(chat.compaction_view(true)).messages.len(), 1);
 }
 
 /// A cut always lands on a `User` message, and impersonation **swaps** roles —
-/// so the request starts with an assistant turn, which it never did before.
-/// Verified live against Anthropic, native Gemini and OpenAI Responses (all
-/// accept it), but the tail matters more than the head: Anthropic treats a
-/// **trailing** assistant turn as a prefill and answers with nothing. That is
-/// exactly what a future change to the cut could reintroduce silently — hence
-/// this test rather than a comment.
+/// so the request used to start with an assistant turn: accepted by Anthropic,
+/// native Gemini and OpenAI Responses, refused by Gemma 3's template with a
+/// `400` (docs/research/gemma-impersonation.md §2.1). The opening is folded
+/// into the persona now and the list opens with the assistant's reply. The
+/// tail matters as much as the head: Anthropic treats a **trailing** assistant
+/// turn as a prefill and answers with nothing. Both are what a future change
+/// to the cut could reintroduce silently — hence this test rather than a
+/// comment.
 #[test]
-fn compacted_impersonation_starts_with_assistant_and_ends_with_user() {
+fn compacted_impersonation_opens_with_user_and_ends_with_user() {
     use crate::shared::api::contract::ApiRole;
     let chat = compacted_chat();
     let req = build_impersonation_request(
@@ -229,13 +248,163 @@ fn compacted_impersonation_starts_with_assistant_and_ends_with_user() {
         None,
         crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru),
     );
-    assert_eq!(req.messages.first().unwrap().role, ApiRole::Assistant);
+    assert_eq!(req.messages.first().unwrap().role, ApiRole::User);
     assert_eq!(
         req.messages.last().unwrap().role,
         ApiRole::User,
         "a trailing assistant turn reads as a prefill — the model would continue it instead of \
          writing the next message"
     );
+}
+
+/// A chat the user opened — nearly every chat — swaps into a conversation
+/// that opens with an assistant turn, which Gemma 3's template refuses and
+/// which drops the persona there (docs/research/gemma-impersonation.md
+/// §2.1). The opening line moves into the persona as one sentence and the
+/// list opens with the assistant's first reply; order and content are what
+/// they were.
+#[test]
+fn a_user_opened_chat_folds_its_opening_into_the_persona() {
+    use crate::shared::api::contract::ApiRole;
+    let profile = Profile::new("P", "sys");
+    let mut chat = Chat::from_profile(&profile, "c");
+    chat.push_message(Message::user("Ищу книгу о маяках."));
+    chat.push_message(Message::assistant("Художественную или историческую?"));
+    chat.push_message(Message::user("Историческую."));
+    chat.push_message(Message::assistant("Тогда «Маячные Стивенсоны». Найти?"));
+    let req = build_impersonation_request(
+        &chat,
+        None,
+        "Ты — пользователь".into(),
+        "",
+        SamplingConfig::default(),
+        Some("Подсказка о пользователе"),
+        crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru),
+    );
+    let roles: Vec<ApiRole> = req.messages.iter().map(|m| m.role).collect();
+    assert_eq!(
+        roles,
+        vec![ApiRole::User, ApiRole::Assistant, ApiRole::User]
+    );
+    let sent: Vec<&str> = req.messages.iter().map(|m| m.content.as_str()).collect();
+    assert_eq!(
+        sent,
+        vec![
+            "Художественную или историческую?",
+            "Историческую.",
+            "Тогда «Маячные Стивенсоны». Найти?"
+        ]
+    );
+    let system = req.system.unwrap();
+    assert!(system.starts_with("Ты — пользователь"));
+    assert!(
+        system.ends_with("Ищу книгу о маяках."),
+        "the opening closes the persona: {system}"
+    );
+    assert!(
+        system.find("Подсказка о пользователе").unwrap() < system.find("Ищу книгу").unwrap(),
+        "the user hint before the opening"
+    );
+}
+
+/// The seed's hint comes after the opening: the persona, who the human is,
+/// what the human first said, what to continue.
+#[test]
+fn the_seed_hint_follows_the_folded_opening() {
+    let profile = Profile::new("P", "sys");
+    let mut chat = Chat::from_profile(&profile, "c");
+    chat.push_message(Message::user("Ищу книгу о маяках."));
+    chat.push_message(Message::assistant("Художественную или историческую?"));
+    let req = build_impersonation_request(
+        &chat,
+        None,
+        "Ты — пользователь".into(),
+        "Истори",
+        SamplingConfig::default(),
+        None,
+        crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru),
+    );
+    let system = req.system.unwrap();
+    assert!(
+        system.find("Ищу книгу").unwrap() < system.find("Истори»").unwrap(),
+        "{system}"
+    );
+    assert_eq!(req.messages.len(), 1);
+}
+
+/// Two same-role turns in a row — the human wrote twice with no reply
+/// between, or a reply that was tool calls only fell out of the swap — are
+/// one turn for a template that insists on alternation (§3.1, fork F3), in
+/// either role; a chat the assistant opened is otherwise untouched.
+#[test]
+fn adjacent_same_role_turns_are_merged() {
+    use crate::shared::api::ApiMessage;
+    use crate::shared::api::contract::ApiRole;
+    let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::En);
+    let mut system = String::from("persona");
+    let out = super::super::impersonation::alternate_for_template(
+        vec![
+            ApiMessage::user("first reply"),
+            ApiMessage::user("second reply"),
+            ApiMessage::assistant("one"),
+            ApiMessage::assistant("two"),
+            ApiMessage::user("third reply"),
+        ],
+        &mut system,
+        loc,
+    );
+    let sent: Vec<(ApiRole, &str)> = out.iter().map(|m| (m.role, m.content.as_str())).collect();
+    assert_eq!(
+        sent,
+        vec![
+            (ApiRole::User, "first reply\n\nsecond reply"),
+            (ApiRole::Assistant, "one\n\ntwo"),
+            (ApiRole::User, "third reply"),
+        ]
+    );
+    assert_eq!(
+        system, "persona",
+        "no leading assistant turn: nothing folded"
+    );
+
+    // Merged first, then folded: two opening lines of the human become one
+    // sentence of the persona.
+    let mut system = String::from("persona");
+    let out = super::super::impersonation::alternate_for_template(
+        vec![
+            ApiMessage::assistant("hello"),
+            ApiMessage::assistant("anyone there?"),
+            ApiMessage::user("yes"),
+        ],
+        &mut system,
+        loc,
+    );
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].role, ApiRole::User);
+    assert!(system.ends_with("hello\n\nanyone there?"), "{system}");
+}
+
+/// A chat with only the user's opening swaps into a lone assistant turn,
+/// which both templates accept and the model continues — left as it is
+/// (§3.3, fork F4).
+#[test]
+fn the_opening_only_chat_stays_a_lone_assistant_turn() {
+    use crate::shared::api::contract::ApiRole;
+    let profile = Profile::new("P", "sys");
+    let mut chat = Chat::from_profile(&profile, "c");
+    chat.push_message(Message::user("Ищу книгу о маяках."));
+    let req = build_impersonation_request(
+        &chat,
+        None,
+        "Ты — пользователь".into(),
+        "",
+        SamplingConfig::default(),
+        None,
+        crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru),
+    );
+    assert_eq!(req.messages.len(), 1);
+    assert_eq!(req.messages[0].role, ApiRole::Assistant);
+    assert_eq!(req.system.as_deref(), Some("Ты — пользователь"));
 }
 
 #[test]

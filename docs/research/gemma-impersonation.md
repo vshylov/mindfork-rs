@@ -1,8 +1,10 @@
 # Impersonation on Gemma's template — the swapped conversation must open with the assistant's silence
 
-> **Status:** proposed (2026-09-09); stage 0 is the measurement in §2.1
+> **Status:** implemented (2026-09-09) — every fork at its recommendation
+> (the user's decision, 2026-09-09); stage 0 is the measurement in §2.1
 > (five role shapes against Gemma 4 31B on the LAN stack and Gemma 3 4B
-> on the CPU build, then three impersonation shapes on both). The defect
+> on the CPU build, then three impersonation shapes on both), stage 1's
+> live run is in §6.1. The defect
 > the one-shot samples track found in passing
 > ([oneshot-samples.md](oneshot-samples.md) §7): impersonation swaps the
 > roles of the history, so a chat that opens with the user's message
@@ -234,7 +236,23 @@ smoke's impersonation ratio moves by a rounding.
 
 ### 6.1 Runs
 
-Stage 1.
+`impersonation_prefill_e2e_live` with the natural seed — four long exchanges
+the user opens, the assistant opener the previous track had to add now
+gone — and `prompt_estimate_e2e_live` (F5a):
+
+| host | run | result |
+|---|---|---|
+| Gemma 4 31B (the LAN stack) | impersonation on the user-opened chat | a reply in 1.5 s, no note |
+| Gemma 3 4B (the CPU build) | the same | a reply in 69.8 s — 1246 tokens of prompt in 38.3 s, 32.5 tok/s — and the slow-prefill note; **no `400`** in the server's log |
+| Gemma 4 31B | `prompt_estimate_e2e_live` | the prose turns 0.79 / 0.78, the JSON turn 1.25, the title 0.62, the roll 0.62, impersonation over the JSON **1.60** |
+
+The estimate smoke's classifier had keyed impersonation on the JSON
+message in the list; after the roll the cut lands on that very message,
+and the fold moves it into the persona — the classifier reads the system
+too now. Unit: 2986 green, 153 ignored (2982 / 153 before: the user-opened
+chat's fold, the seed hint's place, adjacent turns merged in either role,
+the opening-only chat untouched; two tests rewritten to pin the fold in
+place of the leading assistant turn).
 
 ## 7. Not in this track
 
