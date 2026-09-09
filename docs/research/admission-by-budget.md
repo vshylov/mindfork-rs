@@ -559,6 +559,12 @@ Live, on the local CPU build — the arms of §3 driven through the app:
   estimator did not count the tool schemas — about 4270 tokens of a turn's
   request — so the ratio §4.3 keeps was their overhead in disguise, and a
   request without schemas (the roll) was priced nine times over.
+- **The ratio's population.** Found and fixed later
+  ([title-impersonation-usage.md](title-impersonation-usage.md) §2.1):
+  one ratio for every request let an over-counting prose request (a
+  title at 0.65) erase the correction an under-counting turn had recorded
+  (a tool result's JSON at 1.34); the budget now keeps one ratio per kind
+  of request.
 
 - **The external shape, typed** (F4b): a `pool` field on the external
   section for the split-server user F4a slows down; wait for that user.

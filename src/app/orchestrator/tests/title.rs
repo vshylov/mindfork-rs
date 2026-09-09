@@ -350,3 +350,44 @@ fn auto_rename_when_server_not_ready_errors_into_chat_list() {
         "a not-ready error during auto-titling must go into the chat list, got: {ev:?}"
     );
 }
+
+/// The title records its exact usage beside the estimate its reservation was
+/// priced from, under its own kind (docs/research/title-impersonation-usage.md
+/// §3.2): the budget's `Title` ratio moves, the turn's does not.
+#[tokio::test]
+async fn the_title_records_its_usage_under_its_own_kind() {
+    use crate::shared::api::contract::TokenUsage;
+    use crate::shared::session_budget::Shape;
+    let (_d, mut orch, _rx, chat_id) = bare_with_chat(vec![
+        Message::user("Как назвать этот чат?"),
+        Message::assistant("Разговор о названиях."),
+    ]);
+    orch.engines.backend = Some(Arc::new(MockBackend::scripted(vec![
+        ChatChunk::Text("Названия".into()),
+        ChatChunk::Usage(TokenUsage {
+            prompt_tokens: 50_000,
+            completion_tokens: 2,
+            reasoning_tokens: 0,
+            prefill: None,
+        }),
+        ChatChunk::Finished(FinishReason::Stop),
+    ])) as Arc<dyn EngineBackend>);
+    let budget = orch.session_budget();
+    assert_eq!(budget.density(Shape::Title), 1.0);
+
+    orch.handle_auto_rename(chat_id);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while budget.density(Shape::Title) == 1.0 && std::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert!(
+        budget.density(Shape::Title) > 1.0,
+        "50 000 exact over a small estimate: {}",
+        budget.density(Shape::Title)
+    );
+    assert_eq!(
+        budget.density(Shape::Turn),
+        1.0,
+        "the title's record is the title's"
+    );
+}

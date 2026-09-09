@@ -456,7 +456,12 @@ async fn summarize_text(
     // background task has no budget to take (`None`).
     let _permit = match ctx.sessions.as_deref() {
         Some(budget) => {
-            let need = budget.price(estimate, 0, Some(max_tokens as u64));
+            let need = budget.price(
+                crate::shared::session_budget::Shape::Summary,
+                estimate,
+                0,
+                Some(max_tokens as u64),
+            );
             // A silent loop's summary takes the silent lane: one of the
             // app's own requests at a time (silent-tasks-budget §4.2).
             let reservation = if ctx.silent_lane {

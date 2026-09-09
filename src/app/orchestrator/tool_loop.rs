@@ -332,7 +332,11 @@ fn record_round_usage(
 ) {
     if let Some(u) = usage {
         if let Some(budget) = ctx.sessions.as_deref() {
-            budget.record_usage(estimate, u.prompt_tokens as u64);
+            budget.record_usage(
+                crate::shared::session_budget::Shape::Loop,
+                estimate,
+                u.prompt_tokens as u64,
+            );
         }
         *last_exact = u.prompt_tokens as u64 + u.completion_tokens as u64;
         if let Some(p) = u.prefill
@@ -448,6 +452,7 @@ async fn lane_reservation<'a>(
         return Ok(None);
     };
     let need = budget.price(
+        crate::shared::session_budget::Shape::Loop,
         estimate,
         floor,
         request.sampling.max_tokens.map(|m| m as u64),

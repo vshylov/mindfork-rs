@@ -336,3 +336,46 @@ fn impersonation_system_resolves_through_the_profile_reference() {
     orch.config.impersonation_profiles[0].system_message = "   ".into();
     assert_eq!(orch.impersonation_system(Some(&profile), loc), default_text);
 }
+
+/// Impersonation on the shared engine records its exact usage beside the
+/// estimate its reservation was priced from, under its own kind
+/// (docs/research/title-impersonation-usage.md §3.2): the budget's
+/// `Impersonation` ratio moves, the turn's does not.
+#[tokio::test]
+async fn impersonation_records_its_usage_under_its_own_kind() {
+    use crate::shared::api::contract::TokenUsage;
+    use crate::shared::session_budget::Shape;
+    let (_d, mut orch, _rx, chat_id) = bare_with_chat(vec![
+        Message::user("Привет!"),
+        Message::assistant("Здравствуйте. Чем помочь?"),
+    ]);
+    orch.active_id = Some(chat_id);
+    orch.engines.backend = Some(Arc::new(MockBackend::scripted(vec![
+        ChatChunk::Text("Расскажи о себе.".into()),
+        ChatChunk::Usage(TokenUsage {
+            prompt_tokens: 50_000,
+            completion_tokens: 4,
+            reasoning_tokens: 0,
+            prefill: None,
+        }),
+        ChatChunk::Finished(FinishReason::Stop),
+    ])) as Arc<dyn EngineBackend>);
+    let budget = orch.session_budget();
+    assert_eq!(budget.density(Shape::Impersonation), 1.0);
+
+    orch.handle_impersonate(String::new());
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while budget.density(Shape::Impersonation) == 1.0 && std::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert!(
+        budget.density(Shape::Impersonation) > 1.0,
+        "50 000 exact over a small estimate: {}",
+        budget.density(Shape::Impersonation)
+    );
+    assert_eq!(
+        budget.density(Shape::Turn),
+        1.0,
+        "impersonation's record is impersonation's"
+    );
+}

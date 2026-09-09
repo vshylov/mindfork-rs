@@ -492,7 +492,12 @@ fn spawn_compact(
     } = plan;
     tokio::spawn(async move {
         let estimate = super::generation::estimate_prompt_tokens(&request);
-        let need = sessions.price(estimate, 0, request.sampling.max_tokens.map(|m| m as u64));
+        let need = sessions.price(
+            crate::shared::session_budget::Shape::Roll,
+            estimate,
+            0,
+            request.sampling.max_tokens.map(|m| m as u64),
+        );
         // Taken before the timeout starts: waiting behind an open stream is
         // not this roll's slowness. A wait cancelled (the app is quitting)
         // reports as the timeout would — nothing was summarized. A turn that
@@ -524,7 +529,11 @@ fn spawn_compact(
             if let Ok(Ok(c)) = &attempt
                 && let Some(u) = &c.usage
             {
-                sessions.record_usage(estimate, u.prompt_tokens as u64);
+                sessions.record_usage(
+                    crate::shared::session_budget::Shape::Roll,
+                    estimate,
+                    u.prompt_tokens as u64,
+                );
             }
             match attempt {
                 Ok(Ok(c)) if c.cancelled && lane.displaced() => {

@@ -1320,7 +1320,11 @@ async fn a_roll_records_its_usage_for_the_budget() {
         prefill: None,
     });
     let budget = orch.session_budget();
-    assert_eq!(budget.density(), 1.0, "nothing recorded yet");
+    assert_eq!(
+        budget.density(crate::shared::session_budget::Shape::Roll),
+        1.0,
+        "nothing recorded yet"
+    );
 
     orch.handle_compact();
     assert!(
@@ -1328,7 +1332,9 @@ async fn a_roll_records_its_usage_for_the_budget() {
         "the roll started"
     );
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    while budget.density() == 1.0 && std::time::Instant::now() < deadline {
+    while budget.density(crate::shared::session_budget::Shape::Roll) == 1.0
+        && std::time::Instant::now() < deadline
+    {
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
     let rolls = backend.rolls();
@@ -1337,8 +1343,13 @@ async fn a_roll_records_its_usage_for_the_budget() {
     assert!(estimate > 0);
     let expected = 100_000.0 / estimate as f64;
     assert!(
-        (budget.density() - expected).abs() < 1e-9,
+        (budget.density(crate::shared::session_budget::Shape::Roll) - expected).abs() < 1e-9,
         "exact over the roll's own estimate: {} against {expected}",
-        budget.density()
+        budget.density(crate::shared::session_budget::Shape::Roll)
+    );
+    assert_eq!(
+        budget.density(crate::shared::session_budget::Shape::Turn),
+        1.0,
+        "the roll's record is the roll's kind's (title-impersonation-usage §3.1)"
     );
 }

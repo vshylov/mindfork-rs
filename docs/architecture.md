@@ -633,8 +633,11 @@ src/
    │                       the tool schemas counted as the wire sends them,
    │                       `openai::tools_json`; roll-usage-calibration §3.1 —
    │                       + reply cap) that waits for room rather than overflowing
-   │                       the pool; `price`/`acquire`/`record_usage` (recorded by
-   │                       the turn's and the loops' rounds and by the roll), plus the
+   │                       the pool; `price`/`acquire`/`record_usage`, one ratio per
+   │                       `Shape` of request — the turn's rounds, a child run's, a
+   │                       loop's, the roll, the title, impersonation, the page
+   │                       summary — recorded by each kind for its own
+   │                       (title-impersonation-usage §3.1), plus the
    │                       **silent lane** (`acquire_silent`: one permit for the
    │                       app's own background requests over the same pool sum,
    │                       labelled so the tasks screen can say which task waits,

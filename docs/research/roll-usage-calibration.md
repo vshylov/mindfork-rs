@@ -265,7 +265,7 @@ Unit: 2969 green, 150 ignored (two tests and the smoke added).
 
 ## 7. Not in this track
 
-- **The title's and impersonation's usage** (F2b).
+- **The title's and impersonation's usage** (F2b) — done: [title-impersonation-usage.md](title-impersonation-usage.md), which gave the budget one ratio per kind of request first.
 - **A per-script density** — six bytes a token for Cyrillic prose; the
   floor at 1.0 makes the over-count a wait, not a failure.
 - **A figure on the settings screen** — beside the *Batch (-b)* field

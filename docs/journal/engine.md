@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (51)
+## Entries (52)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -63,6 +63,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the roll's timings — the session's coldest prompt, sampled (done)
 - Post-M9: the loops' timings — the silent tasks' cold prompts, sampled at the landing (done)
 - Post-M9: the roll's usage for the budget — and the estimate it would calibrate (done)
+- Post-M9: the title's and impersonation's usage for the budget — and the ratio they would erase (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -3307,3 +3308,73 @@ term in disguise: it corrects the requests that share the term and
 misprices every other. Check what the estimate counts before trusting
 what the ratio corrects — the check here was one print of the request's
 parts beside its exact count.
+
+### Post-M9: the title's and impersonation's usage for the budget — and the ratio they would erase (done)
+
+**What.** The item the roll-usage-calibration track recorded
+([docs/research/roll-usage-calibration.md](../research/roll-usage-calibration.md)
+§7, fork F2b). The design
+[docs/research/title-impersonation-usage.md](../research/title-impersonation-usage.md),
+every fork at its recommendation (the user's decision, 2026-09-09);
+stage 0 a measurement that turned the item on the budget's one rule for
+its ratio.
+
+**Why.** Since the estimate counts the tool schemas, a request's
+exact-to-estimate ratio is the tokenizer's density on that request's
+text — the turns 0.9, the prose requests (the roll, the title,
+impersonation) about 0.6 — and the budget keeps **one** ratio, written by
+the turn's rounds, the loops' rounds and the roll, floored at 1.0, the
+latest winning. The title and impersonation never recorded theirs; the
+question was whether they should.
+
+**Measured (stage 0, the LAN stack, Qwen3.6-27B).** The two: the title
+0.65, impersonation 0.59 — the app's most over-counting requests. And a
+turn the other way: a message carrying 25 KB of JSON — the shape of a
+tool result — estimated 11 058 tokens against 14 767 exact, **1.34**
+(JSON runs at about 2.4 bytes a token on this tokenizer). A turn of Rust
+code stayed at 0.91: at that size the schemas dominate. Under "the
+latest wins" the next silent request after the JSON turn — the roll at
+the landing, the title, an impersonation — records 0.6, stores 1.0, and
+the following turn's first round is priced a quarter under its size: the
+under-count R6 exists to prevent. The hazard is the rule's, not the
+item's — the roll and the loops record already — but the item as named
+adds the two requests that trip it most surely.
+
+**How.** `SessionBudget` keeps one ratio per **shape** —
+`Shape::{Turn, Run, Loop, Roll, Title, Impersonation, Summary}`, one
+atomic each — and `price`, `record_usage` and `density` take the shape;
+the rule inside a shape is the rule as it was. The turn's rounds record
+`Turn`, a child run's `Run` (`TurnLoop::shape` reads its depth), a
+loop's `Loop`, the roll `Roll`; the title's collect records `Title` at
+its usage chunk, impersonation's `run` records `Impersonation` there
+when it has a budget (the shared engine — a separate impersonation
+server has no pool and no budget), and the page summary inside a tool
+prices as `Summary` and records nothing, as before. A shape's first
+request prices at its raw estimate; nothing crosses shapes.
+
+**Live.** `prompt_estimate_e2e_live`, extended — two prose turns, a
+third carrying the catalogue, `/compact`, an impersonation: the prose
+turns 0.91 / 0.90, the JSON turn **1.32**, the title 0.64, the roll 0.60,
+impersonation over the JSON **1.61** — the ratio its own kind now keeps,
+and the one that would have priced the next turn under the old rule. The
+pair after it 2/2. Unit: 2972 green, 150 ignored. One test was rewritten
+with the rule it asserted: the parent's exact usage had been expected to
+price the children's reservations; now the parent's record is the
+parent's, the children still fit, and a child's own record is what makes
+its second round wait — both halves asserted. One unit run was lost to a
+fixture: a bare orchestrator's chat is not active until the test says
+so, and `handle_impersonate` on no active chat sends an error and
+returns.
+
+**Rejected**: one ratio, the latest wins (the hazard accepted; measured,
+a title at 0.65 after a turn at 1.34 prices the next turn a quarter
+under); one ratio that an over-count never overwrites (sticky for the
+session — a JSON chat's 1.34 pricing every later prose chat a third over
+until restart); two populations, with and without schemas (a loop's
+first round, schemas over a prose digest, would still erase the turn's);
+the silent lane's label as the key (the turn and the runs have none, and
+a map under a mutex on every price); the children on the turn's ratio
+(a persona's prompt and the turn's tools are a population of their
+own); not recording the two (their record is 1.0 on any measured text —
+closed by the population alone, but every request the server vouched
+for records).
