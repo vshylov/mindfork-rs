@@ -245,10 +245,8 @@ the shared-engine condition and a cut stream, the two live smokes).
   live run: the swapped conversation of a chat that opens with the
   user's message begins with an assistant turn, and the Gemma 3
   template refuses it (`Conversation roles must alternate`, a `400`
-  before any prefill) — the very shape
-  `compacted_impersonation_starts_with_assistant_and_ends_with_user`
-  pins. Impersonation cannot start such a chat on that template
-  family at all; its own defect, recorded here.
+  before any prefill). Done: [gemma-impersonation.md](gemma-impersonation.md)
+  — the opening folded into the persona, the list alternating.
 
 ## 8. Documentation touch list (AGENTS.md §4)
 

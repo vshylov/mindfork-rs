@@ -247,6 +247,7 @@ pub(super) fn build_impersonation_request(
         .iter()
         .filter_map(swap_role_message)
         .collect();
+    let messages = alternate_for_template(messages, &mut system, loc);
     let seed = seed.trim();
     if !seed.is_empty() {
         system.push_str("\n\n");
@@ -259,6 +260,44 @@ pub(super) fn build_impersonation_request(
         sampling,
         tools: Vec::new(),
     }
+}
+
+/// Reshapes the swapped history for a chat template that insists on strict
+/// alternation and delivers the system prompt only inside a leading user
+/// turn — Gemma 3's, which answered `400` on every chat the user opened
+/// (docs/research/gemma-impersonation.md §2.1): adjacent same-role turns are
+/// merged with a blank line, and a leading assistant turn that a user turn
+/// follows — the human's opening line — moves into the persona as one
+/// sentence (`prompt.impersonation.opening`), so the list opens with the
+/// assistant's first reply. Applied for every provider (fork F2): the system
+/// prompt is the one place all of them take as is, and where the natural
+/// shape was accepted the reply is the same for five tokens more. A lone
+/// assistant turn — a chat with only the user's opening — stays as it is
+/// (§3.3): both templates accept it, and the model continues it.
+pub(super) fn alternate_for_template(
+    messages: Vec<ApiMessage>,
+    system: &mut String,
+    loc: &crate::shared::i18n::Locale,
+) -> Vec<ApiMessage> {
+    let mut merged: Vec<ApiMessage> = Vec::with_capacity(messages.len());
+    for message in messages {
+        match merged.last_mut() {
+            Some(last) if last.role == message.role => {
+                last.content.push_str("\n\n");
+                last.content.push_str(&message.content);
+            }
+            _ => merged.push(message),
+        }
+    }
+    if merged.len() >= 2 && merged[0].role == crate::shared::api::contract::ApiRole::Assistant {
+        let opening = merged.remove(0);
+        system.push_str("\n\n");
+        system.push_str(&loc.tf(
+            "prompt.impersonation.opening",
+            &[("text", &opening.content)],
+        ));
+    }
+    merged
 }
 
 /// Swaps a message's role for impersonation (user↔assistant). System/Tool and

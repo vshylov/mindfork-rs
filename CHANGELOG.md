@@ -291,6 +291,14 @@ split by subsystem.
 
 ### Fixed
 
+- **Impersonation on Gemma 3.** `Ctrl+U` answered with an engine error on
+  every chat you had opened yourself: the request swaps the roles of the
+  conversation, so it began with an assistant turn, which Gemma 3's chat
+  template refuses ("roles must alternate"); two of your messages in a
+  row were refused the same way. The conversation sent now alternates on
+  every model — your opening line travels in the persona's instructions,
+  consecutive messages of one side are one turn — and where it already
+  worked the reply is the same.
 - **A page summary on a thinking model came back empty.** `fetch_url`'s
   summary let the model think, and a model that thinks by default spent
   the whole reply on thoughts and answered with nothing — the page's text

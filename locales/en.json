@@ -27,6 +27,7 @@
     "Continue this reply naturally and output ONLY the continuation,",
     "without repeating the part already written."
   ],
+  "prompt.impersonation.opening": "Your first message in this dialogue was:\n{text}",
   "prompt.consolidate.system": [
     "You are performing a quiet background consolidation of your knowledge base (notes). Below is an overview:",
     "similar pairs (possible duplicates), contradicts links, notes without links. Merge obvious",

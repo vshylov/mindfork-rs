@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (54)
+## Entries (55)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -66,6 +66,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the title's and impersonation's usage for the budget — and the ratio they would erase (done)
 - Post-M9: the page summary's usage — the one kind that under-counts, and a summary that came back empty (done)
 - Post-M9: the one-shot requests' samples — impersonation's prompt is the session's largest, and its own twice (done)
+- Post-M9: impersonation on Gemma's template — the swapped conversation must open with the assistant's silence (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -3499,3 +3500,54 @@ ignored (2978 / 151 before).
 (with the own-engine question), impersonation's limit against a slow
 host, a child run's sample, the first request of a kind, and
 impersonation on Gemma's template.
+
+### Post-M9: impersonation on Gemma's template — the swapped conversation must open with the assistant's silence (done)
+
+**What.** The defect the one-shot samples track found in passing
+([docs/research/oneshot-samples.md](../research/oneshot-samples.md) §7):
+impersonation swaps the roles of the history, so a chat the user opened
+— nearly every chat — became a conversation that opens with an assistant
+turn, and the Gemma 3 chat template refused it with a `400` before any
+prefill. The design
+[docs/research/gemma-impersonation.md](../research/gemma-impersonation.md),
+every fork at its recommendation (the user's decision, 2026-09-09).
+
+**Measured (stage 0).** Five role shapes through `/v1/chat/completions`
+on Gemma 4 31B (the LAN stack) and Gemma 3 4B (the CPU build): Gemma 4's
+template (no `raise_exception`, `assistant` rendered as `model` wherever
+it stands) takes every shape; Gemma 3's refuses a leading assistant turn
+and two same-role turns in a row (`Conversation roles must alternate`),
+and delivers the system prompt only inside a leading user turn — without
+one the persona never reaches the model: 4 tokens of prompt for a
+54-token system, and a reply about a ceramic mug. Then three
+impersonation shapes on a four-message user-opened chat: the natural one
+a `400` on Gemma 3; the human's opening folded into the persona, and an
+empty opening user turn, both the reply the natural shape gives on
+Gemma 4 (135 tokens against 130) and a good reply on Gemma 3 (127). The
+fold needs no provider branch — Anthropic rejects empty text — so it is
+the one taken.
+
+**How.** `alternate_for_template` in `impersonation.rs`, applied by
+`build_impersonation_request` after the user hint and before the seed's
+hint, for every provider (F2): adjacent same-role turns merge with a
+blank line (F3); a leading assistant turn that a user turn follows moves
+into the persona as one localized sentence, `prompt.impersonation.opening`
+(F1). A chat with only the user's opening stays a lone assistant turn —
+both templates accept it, the model continues it, and the fold with an
+empty user turn behind it made the 4B model answer as the assistant once
+(F4). Two tests that pinned the leading assistant turn now pin the fold;
+the compaction cut — always on a user message — folds the same way, the
+tail still ending on `user`.
+
+**Live** (F5a). The one-shot smoke's seed lost its assistant opener:
+Gemma 4 a reply in 1.5 s; Gemma 3 on the CPU build a reply in 69.8 s —
+1246 tokens in 38.3 s, 32.5 tok/s, the slow-prefill note — and no `400`
+in the server's log. `prompt_estimate_e2e_live` on Gemma 4: the prose
+turns 0.79 / 0.78, the JSON turn 1.25, the title and the roll 0.62,
+impersonation over the JSON 1.60 — its classifier reads the folded
+system too, since the roll's cut lands on the JSON message. Unit: 2986
+green, 153 ignored (2982 / 153 before).
+
+**Not in this track** (§7): the opening-only chat on Gemma 3 (the
+persona dropped with the lone turn), a dialogue's first line (a system
+with no turns, unmeasured), the clouds re-measured.

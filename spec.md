@@ -3485,14 +3485,26 @@ box. The request-building algorithm:
   `AppConfig.impersonation_profiles`); no reference, a dangling id (the persona was
   deleted), or an empty message → a shared default;
 - in the history, **user ↔ assistant roles are swapped**, and system/tool messages and
-  empty ones are dropped (there are no tools in this mode);
+  empty ones are dropped (there are no tools in this mode); the swapped list is then
+  made to **alternate and open with a user turn**: adjacent same-role turns merge with
+  a blank line, and a leading assistant turn that a user turn follows — the human's
+  opening line, since nearly every chat is the user's to open — moves into the persona
+  as one sentence (`prompt.impersonation.opening`). Gemma 3's chat template refuses a
+  conversation that opens with an assistant turn or repeats a role (`Conversation
+  roles must alternate`, a `400` before any prefill) and delivers the system prompt
+  only inside a leading user turn — without one the persona never reaches the model;
+  Gemma 4's, Qwen's and the three clouds accept the natural shape, and measured on
+  both Gemma templates the folded shape gives the same reply for five tokens more
+  ([docs/research/gemma-impersonation.md](docs/research/gemma-impersonation.md) §2.1, §3). A chat with only the user's opening stays a lone assistant
+  turn, which both templates accept and the model continues;
 - the history is the **compacted** one (§6.7): a folded prefix is replaced by the
   rolling summary block, so impersonation cannot hit the context ceiling a
   regular turn is already protected from. The block is built with the "no
   read-back tools" wording, since this mode carries none. Note the shape it
   produces: a cut always lands on a `User` message, which the swap turns into a
-  **leading assistant turn** (accepted by Anthropic, native Gemini and OpenAI
-  Responses — measured 2026-08-08); the tail still ends on `user`, which matters
+  leading assistant turn — accepted by Anthropic, native Gemini and OpenAI
+  Responses (measured 2026-08-08), refused by Gemma 3's template, and folded into
+  the persona by the rule above (2026-09-09); the tail still ends on `user`, which matters
   because a *trailing* assistant turn reads as a prefill and the model would
   continue it instead of writing the next message;
 - sampling comes from the "Impersonation" subsection (`AppConfig.impersonation_sampling`),
