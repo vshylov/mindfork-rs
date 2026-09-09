@@ -317,8 +317,9 @@ outcome's sample on both paths, the turn's and the loop's folds through a
 
 ## 7. Not in this track
 
-- **The one-shot requests' samples** — impersonation's (the whole
-  conversation, cold) and the title's: one question, F2b's other half.
+- **The one-shot requests' samples** — done:
+  [oneshot-samples.md](oneshot-samples.md), which measured impersonation's
+  prompt as the largest a session makes.
 - **A child run's sample** — its loop keeps its own; `run_child`'s
   `CallDone` carries none up, and a background run's landing offers none.
 - **The summary's limit against a slow host** — 90 s against an 85 s

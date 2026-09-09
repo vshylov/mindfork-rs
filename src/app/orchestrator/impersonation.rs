@@ -26,6 +26,19 @@ use super::Orchestrator;
 /// **isn't lost** (handed to the field as if the limit were reached) — see `spawn_impersonation`.
 const IMPERSONATION_TIMEOUT: Duration = Duration::from_secs(600);
 
+/// What the impersonation task leaves for the orchestrator's landing: the
+/// generation it was, how its stream ended, and the engine's timing of its
+/// prompt — the whole conversation with the roles swapped under its own
+/// system, processed cold, the largest prompt a session makes — kept only on
+/// the **shared** engine, the one server the slow-prefill rule knows
+/// (docs/research/oneshot-samples.md §3.1). `None` from a stream that ended
+/// before its usage chunk and from a separate impersonation server.
+pub(super) struct ImpDone {
+    pub(super) id: Uuid,
+    pub(super) reason: FinishReason,
+    pub(super) prefill: Option<crate::shared::api::contract::Prefill>,
+}
+
 impl Orchestrator {
     /// The impersonation system message for a chat's profile: the user persona from the
     /// impersonation profile the assistant profile points at (spec §11.8). No reference,
@@ -149,17 +162,27 @@ impl Orchestrator {
         }
     }
 
-    /// Completion of the background impersonation task: clears the state and emits the final result.
-    pub(super) fn handle_imp_done(&mut self, id: Uuid, reason: FinishReason) {
-        if self.imp_gen != Some(id) {
-            return;
-        }
-        self.imp_gen = None;
-        self.imp_cancel = None;
-        let _ = self.evt_tx.send(AppEvent::ImpersonationFinished {
-            generation_id: id,
+    /// Completion of the background impersonation task: clears the state and
+    /// emits the final result, then offers the engine's timing of the prompt
+    /// to the slow-prefill rule — after the request's own landing, the roll's
+    /// shape (docs/research/oneshot-samples.md §3.1). A superseded generation
+    /// lands nothing, but its prompt was processed on this server all the
+    /// same, so its sample is offered too.
+    pub(super) fn handle_imp_done(&mut self, done: ImpDone) {
+        let ImpDone {
+            id,
             reason,
-        });
+            prefill,
+        } = done;
+        if self.imp_gen == Some(id) {
+            self.imp_gen = None;
+            self.imp_cancel = None;
+            let _ = self.evt_tx.send(AppEvent::ImpersonationFinished {
+                generation_id: id,
+                reason,
+            });
+        }
+        self.note_slow_prefill(prefill);
     }
 }
 
@@ -255,19 +278,23 @@ pub(super) fn swap_role_message(message: &Message) -> Option<ApiMessage> {
 /// (`ImpersonationChunk`), and on completion/timeout/cancellation sends `(id, reason)` into
 /// `done_tx`. "Thoughts" and tool calls are ignored (only text goes into the input box).
 #[allow(clippy::too_many_arguments)]
-fn spawn_impersonation(
+pub(super) fn spawn_impersonation(
     backend: Arc<dyn EngineBackend>,
     request: ChatRequest,
     id: Uuid,
     cancel: CancellationToken,
     loc: &'static crate::shared::i18n::Locale,
     evt_tx: UnboundedSender<AppEvent>,
-    done_tx: UnboundedSender<(Uuid, FinishReason)>,
+    done_tx: UnboundedSender<ImpDone>,
     sessions: Option<Arc<crate::shared::session_budget::SessionBudget>>,
 ) {
     tokio::spawn(async move {
         let run = async {
             let mut reason = FinishReason::Stop;
+            // The engine's timing of the prompt, kept under the record's own
+            // condition — a budget, i.e. the shared engine (oneshot-samples
+            // §3.1, fork F3).
+            let mut prefill = None;
             let estimate = super::generation::estimate_prompt_tokens(&request);
             let _lane = match sessions.as_deref() {
                 Some(budget) => {
@@ -284,7 +311,7 @@ fn spawn_impersonation(
                         .await
                     {
                         Some(reservation) => Some(reservation),
-                        None => return Ok(FinishReason::Cancelled),
+                        None => return Ok((FinishReason::Cancelled, None)),
                     }
                 }
                 None => None,
@@ -322,6 +349,7 @@ fn spawn_impersonation(
                                 estimate,
                                 u.prompt_tokens as u64,
                             );
+                            prefill = u.prefill;
                         }
                     }
                     ChatChunk::Thoughts(_)
@@ -333,7 +361,9 @@ fn spawn_impersonation(
                     }
                 }
             }
-            Ok::<FinishReason, anyhow::Error>(reason)
+            Ok::<(FinishReason, Option<crate::shared::api::contract::Prefill>), anyhow::Error>((
+                reason, prefill,
+            ))
         };
         // Distinguish a user cancellation from a timeout: on cancellation (`Esc`) the stream inside
         // `run` catches `cancel.cancelled()` and itself returns `Finished(Cancelled)` — it
@@ -343,19 +373,23 @@ fn spawn_impersonation(
         // `Length` (the model was writing a valid reply, just slowly). The old
         // unconditional `if cancel.is_cancelled() { Cancelled }` collapsed both cases into
         // discarding — which is why a timeout-truncated reply used to disappear.
-        let reason = match tokio::time::timeout(IMPERSONATION_TIMEOUT, run).await {
-            Ok(Ok(r)) => r,
+        let (reason, prefill) = match tokio::time::timeout(IMPERSONATION_TIMEOUT, run).await {
+            Ok(Ok(landed)) => landed,
             Ok(Err(err)) => {
                 let _ = evt_tx.send(AppEvent::Error(
                     loc.tf("ui.err.impersonation_failed", &[("err", &err.to_string())]),
                 ));
-                FinishReason::Error
+                (FinishReason::Error, None)
             }
             Err(_) => {
                 cancel.cancel();
-                FinishReason::Length
+                (FinishReason::Length, None)
             }
         };
-        let _ = done_tx.send((id, reason));
+        let _ = done_tx.send(ImpDone {
+            id,
+            reason,
+            prefill,
+        });
     });
 }

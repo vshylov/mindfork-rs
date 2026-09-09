@@ -379,3 +379,152 @@ async fn impersonation_records_its_usage_under_its_own_kind() {
         "impersonation's record is impersonation's"
     );
 }
+
+/// Impersonation's prompt is the session's largest — the whole conversation,
+/// roles swapped, under its own system, processed cold — and on the shared
+/// engine its timing rides the task's landing to the slow-prefill rule
+/// (docs/research/oneshot-samples.md §3.1): `ImpersonationFinished` first,
+/// the note after it.
+#[tokio::test]
+async fn impersonations_landing_offers_its_sample_on_the_shared_engine() {
+    use crate::shared::api::contract::{Prefill, TokenUsage};
+    let (_d, mut orch, mut rx, chat_id) = bare_with_chat(vec![
+        Message::user("Привет!"),
+        Message::assistant("Здравствуйте. Чем помочь?"),
+    ]);
+    orch.active_id = Some(chat_id);
+    orch.config.engine.mode = crate::shared::config::ServerMode::External;
+    orch.engines.backend = Some(Arc::new(MockBackend::scripted(vec![
+        ChatChunk::Text("Расскажи о себе.".into()),
+        ChatChunk::Usage(TokenUsage {
+            prompt_tokens: 10_642,
+            completion_tokens: 4,
+            reasoning_tokens: 0,
+            prefill: Some(Prefill {
+                tokens: 10_642,
+                ms: 280_000,
+            }),
+        }),
+        ChatChunk::Finished(FinishReason::Stop),
+    ])) as Arc<dyn EngineBackend>);
+    let (done_tx, mut done_rx) = tokio::sync::mpsc::unbounded_channel();
+    orch.imp_done_tx = done_tx;
+    while rx.try_recv().is_ok() {}
+
+    orch.handle_impersonate(String::new());
+    let done = tokio::time::timeout(std::time::Duration::from_secs(5), done_rx.recv())
+        .await
+        .expect("the task landed")
+        .unwrap();
+    assert_eq!(
+        done.prefill.map(|p| p.tokens),
+        Some(10_642),
+        "the shared engine's sample rides the landing"
+    );
+    orch.handle_imp_done(done);
+    let events: Vec<AppEvent> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+    let finished = events
+        .iter()
+        .position(|e| matches!(e, AppEvent::ImpersonationFinished { .. }))
+        .expect("the landing");
+    let note = events
+        .iter()
+        .position(|e| matches!(e, AppEvent::Notice(t) if t.contains("-b 256 -ub 256")))
+        .expect("the note");
+    assert!(finished < note, "the landing first, the note after it");
+}
+
+/// The sample is kept under the record's own condition — a budget, which is
+/// the shared engine (fork F3): a separate impersonation server is another
+/// server, with its own batch and session, and the task keeps nothing there;
+/// and a stream that ended before its usage chunk carries nothing anywhere.
+#[tokio::test]
+async fn a_separate_server_or_a_cut_stream_lands_no_sample() {
+    use crate::shared::api::contract::{Prefill, TokenUsage};
+    let (_d, mut orch, _rx, _chat_id) = bare_with_chat(vec![]);
+    let request = || crate::shared::api::ChatRequest {
+        continue_final: false,
+        system: Some("persona".into()),
+        messages: vec![crate::shared::api::ApiMessage::user("hello")],
+        sampling: crate::entities::sampling::SamplingConfig::default(),
+        tools: Vec::new(),
+    };
+    let timed = || {
+        Arc::new(MockBackend::scripted(vec![
+            ChatChunk::Text("reply".into()),
+            ChatChunk::Usage(TokenUsage {
+                prompt_tokens: 400,
+                completion_tokens: 1,
+                reasoning_tokens: 0,
+                prefill: Some(Prefill {
+                    tokens: 400,
+                    ms: 10_000,
+                }),
+            }),
+            ChatChunk::Finished(FinishReason::Stop),
+        ])) as Arc<dyn EngineBackend>
+    };
+    let (evt_tx, _evt_rx) = tokio::sync::mpsc::unbounded_channel();
+
+    // A separate server: no budget, no sample.
+    let (done_tx, mut done_rx) = tokio::sync::mpsc::unbounded_channel();
+    super::super::impersonation::spawn_impersonation(
+        timed(),
+        request(),
+        Uuid::new_v4(),
+        tokio_util::sync::CancellationToken::new(),
+        orch.ui_locale(),
+        evt_tx.clone(),
+        done_tx,
+        None,
+    );
+    let done = tokio::time::timeout(std::time::Duration::from_secs(5), done_rx.recv())
+        .await
+        .expect("landed")
+        .unwrap();
+    assert_eq!(done.reason, FinishReason::Stop);
+    assert!(
+        done.prefill.is_none(),
+        "another server: no sample for this one's rule"
+    );
+
+    // The shared engine, a stream cut before its usage: nothing to carry.
+    let cut = Arc::new(MockBackend::scripted(vec![
+        ChatChunk::Text("reply".into()),
+        ChatChunk::Finished(FinishReason::Stop),
+    ])) as Arc<dyn EngineBackend>;
+    let (done_tx, mut done_rx) = tokio::sync::mpsc::unbounded_channel();
+    super::super::impersonation::spawn_impersonation(
+        cut,
+        request(),
+        Uuid::new_v4(),
+        tokio_util::sync::CancellationToken::new(),
+        orch.ui_locale(),
+        evt_tx.clone(),
+        done_tx,
+        Some(orch.session_budget()),
+    );
+    let done = tokio::time::timeout(std::time::Duration::from_secs(5), done_rx.recv())
+        .await
+        .expect("landed")
+        .unwrap();
+    assert!(done.prefill.is_none(), "no usage chunk, no sample");
+
+    // The shared engine with the chunk: the sample.
+    let (done_tx, mut done_rx) = tokio::sync::mpsc::unbounded_channel();
+    super::super::impersonation::spawn_impersonation(
+        timed(),
+        request(),
+        Uuid::new_v4(),
+        tokio_util::sync::CancellationToken::new(),
+        orch.ui_locale(),
+        evt_tx,
+        done_tx,
+        Some(orch.session_budget()),
+    );
+    let done = tokio::time::timeout(std::time::Duration::from_secs(5), done_rx.recv())
+        .await
+        .expect("landed")
+        .unwrap();
+    assert_eq!(done.prefill.map(|p| p.tokens), Some(400));
+}

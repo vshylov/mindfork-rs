@@ -21,8 +21,10 @@ split by subsystem.
   so a background request stopped or displaced during its prompt holds its
   slot for a whole batch — tens of seconds on a CPU. The app now reads the
   server's own timing of every prompt — the history compression's
-  request, the background reflection and consolidation runs and a page
-  summary a tool asked for included,
+  request, the background reflection and consolidation runs, a page
+  summary a tool asked for, the automatic title and, on the shared
+  engine, impersonation (whose prompt is the whole conversation, processed
+  afresh) included,
   the prompts a server that kept its cache still processes whole — and, once per server session, says in the feed how
   fast prompts are processed, how long such a hold would be, and the one
   change to make: the *Batch (-b)* setting for a managed

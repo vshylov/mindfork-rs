@@ -1379,14 +1379,16 @@ its own — or named by `api_key_env`, resolved through the same
   `TurnUsage.prefill` (a tool's own request's included — `ToolOutcome.prefill`,
   the page summary's, folded by `keep_tool_sample`; page-summary-usage §3.2),
   the roll's `collect_roll` its own on
-  `CompactResult.prefill`, a silent loop's `run_rounds` its own on an
+  `CompactResult.prefill`, the title's on `TitleResult.prefill` and
+  impersonation's on `ImpDone.prefill` — the shared engine's only, kept under
+  the record's own condition (oneshot-samples §3) — a silent loop's `run_rounds` its own on an
   out-parameter (the first round's, cold and whole, or a tool's —
   `run_tools` folds `ToolsReport.prefill` into it;
   docs/research/roll-timings.md §3, loop-timings.md §3) — every silent
   task landing as `BgDone { kind, outcome, prefill }` through
   `handle_bg_done`, which offers the sample once for every kind after the
-  task's own landing — and `note_slow_prefill`, from `handle_done` and
-  from that landing, turns it,
+  task's own landing — and `note_slow_prefill`, from `handle_done`, from
+  that landing, from `handle_title_result` and from `handle_imp_done`, turns it,
   through `launched_batch`/`prefill_hold` in `shared/api/managed.rs`, into one
   `Notice` per chat-server session (`EngineManager.prefill_noted`, cleared at
   `Ready`; docs/research/slow-prefill-detection.md §3) — | `Error{message,transient}` |

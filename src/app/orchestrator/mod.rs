@@ -175,7 +175,7 @@ pub async fn run(deps: OrchestratorDeps) {
     // Internal status channel for the embedding server (a background probe).
     let (embed_status_tx, mut embed_status_rx) = unbounded_channel::<ServerStatus>();
     // Internal "impersonation finished" channel (background task → loop).
-    let (imp_done_tx, mut imp_done_rx) = unbounded_channel::<(Uuid, FinishReason)>();
+    let (imp_done_tx, mut imp_done_rx) = unbounded_channel::<impersonation::ImpDone>();
     // A single outcome channel for "silent" background tasks (auto-reflection/
     // consolidation): the task sends `(kind, Ok/Err(reason))`, the loop handles
     // it in one branch via `handle_bg_done`.
@@ -359,8 +359,8 @@ pub async fn run(deps: OrchestratorDeps) {
                 }
             }
             done = imp_done_rx.recv() => {
-                if let Some((id, reason)) = done {
-                    orch.handle_imp_done(id, reason);
+                if let Some(done) = done {
+                    orch.handle_imp_done(done);
                 }
             }
             done = bg_done_rx.recv() => {
@@ -612,7 +612,7 @@ struct Orchestrator {
     imp_cancel: Option<tokio_util::sync::CancellationToken>,
     imp_gen: Option<Uuid>,
     /// "Impersonation finished" channel (background task → loop).
-    imp_done_tx: UnboundedSender<(Uuid, FinishReason)>,
+    imp_done_tx: UnboundedSender<impersonation::ImpDone>,
     storage: Arc<Storage>,
     /// The full configuration (the orchestrator is the sole writer of `settings.json`).
     config: AppConfig,

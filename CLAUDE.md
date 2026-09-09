@@ -171,8 +171,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-09, version 0.9.8)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2978 unit tests
-green, 151 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **2982 unit tests
+green, 153 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -183,6 +183,26 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 `tools/doc_index_check.py`. A new track adds a line; a line that has stopped
 being recent is dropped, not shortened.
 
+- **The one-shot requests' samples — impersonation's prompt is the
+  session's largest, and its own twice** — the item was "the title's and
+  impersonation's timings for the slow-prefill note"; measured,
+  impersonation's prompt is the largest a session makes — the whole
+  conversation, roles swapped under its own system, nothing of it in any
+  slot's cache: 10 642 tokens where the fresh chat's first turn had 4349,
+  and 4 the second time, the cache's — while the title's is 200 on an
+  ordinary opening, under the rule's floor, a thousand at most. Now the
+  impersonation task keeps the sample under the record's own condition
+  (a budget, i.e. the shared engine — the one server the rule knows) and
+  lands `ImpDone { id, reason, prefill }` for `handle_imp_done` to offer
+  after `ImpersonationFinished`; the title's rides `TitleResult.prefill`,
+  offered after its landing whatever the text. Measured after on the CPU
+  build, a seeded chat and no turn before the request: impersonation
+  1246 tokens at 36 tok/s, the title 1119 at 35 — the note from either;
+  the 4090 none. Found in passing: Gemma's template refuses the swapped
+  conversation of a chat that opens with the user (a `400` before any
+  prefill)
+  ([docs/research/oneshot-samples.md](docs/research/oneshot-samples.md),
+  spec §3.4, §11.2, §11.8, [docs/journal/engine.md](docs/journal/engine.md)).
 - **The page summary's usage — the one kind that under-counts, and a
   summary that came back empty** — the item was "let the page summary
   record its usage too", left unrecorded on a reading: a request of prose,
@@ -395,23 +415,6 @@ being recent is dropped, not shortened.
   and the roll as a timeout, since only `Quit` could reach those paths
   ([docs/research/stop-silent-task.md](docs/research/stop-silent-task.md),
   spec §11.10, [docs/journal/ui-screens.md](docs/journal/ui-screens.md)).
-- **The silent stream yields to the turn — preemption on the budget** —
-  an interactive stream (a turn's round, a run's, a dialogue's line) that
-  does not fit beside the app's own open request no longer waits for it:
-  a silent reservation carries a **child token** the holder streams on, an
-  interactive waiter that would then fit cancels it and is admitted ahead
-  of the task's retry, and the task makes the same request again inside
-  its own spawn — at most three times, then it holds — so the spawn-time
-  watermark and counters stay honest; impersonation and the in-loop
-  summary never yield; the loops' timeout runs over their streaming, not
-  their waits. Measured first on the CPU build: a one-word turn waited
-  45.9 s behind the roll where a cancelled stream's room is free in
-  0.79 s; after, the turn streams before the roll ends — but a cancel is
-  honoured between the server's batches, so the wait fell to the roll's
-  prefill batch (24 s on the CPU build, under two on the GPU), and the
-  roll pays its prefill twice
-  ([docs/research/silent-preemption.md](docs/research/silent-preemption.md),
-  spec §6.3, [docs/journal/engine.md](docs/journal/engine.md)).
 
 
 For what exists and how it works, read architecture.md and spec.md — they are
