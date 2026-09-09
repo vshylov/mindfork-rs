@@ -490,6 +490,7 @@ backend upstream adds or renames shows up without an app update.
 | `--backend <ID>` | which backend to install; there is no default — the sizes differ too much to choose for you |
 | `--build <TAG>` | pin a build, e.g. `--build b10883`. Without it, the newest one. llama.cpp publishes about a dozen builds a day, so pinning is how you keep a known-good one |
 | `--no-cudart` | skip the CUDA runtime (only if it is already installed on the machine) |
+| `--set-binary` | write the installed binary's path into the settings afterwards |
 | `--force` | download and unpack again over an existing install |
 
 Each install goes into its own directory — `data/llama/<backend>-<tag>/`, e.g.
@@ -503,9 +504,23 @@ reported explicitly — that means the driver or its runtime is missing and the
 server would silently run on the CPU.
 
 Then put the printed path into the settings (`Ctrl+P` → *Model/server* →
-*llama-server binary*), or into `MINDFORK_LLAMA_BIN`. **Keep the whole folder:**
-`llama-server` is a small launcher that loads its libraries from the files next
-to it, so moving the executable elsewhere breaks it.
+*llama-server binary*), or into `MINDFORK_LLAMA_BIN` — or let the command do it:
+
+```bash
+mindfork llama setup --backend vulkan --set-binary
+```
+
+`--set-binary` writes the path **after** a successful install, never on failure.
+It always sets the assistant's engine; the impersonation engine and the embedding
+server get the same path only if they had none of their own, because one install
+serves all three but a path you typed there is a deliberate choice (a different
+build for the embedder is a legitimate setup). It does **not** switch the engine
+mode: `managed` is already the default, so a config in another mode is one you
+switched on purpose — the command says so instead, and the path waits.
+
+**Keep the whole folder:** `llama-server` is a small launcher that loads its
+libraries from the files next to it, so moving the executable elsewhere breaks
+it.
 
 The downloads are not small (see the table), and `data/` is next to the binary in
 portable mode — in a development checkout that means `target/debug/data/`, which

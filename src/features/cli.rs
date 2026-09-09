@@ -68,6 +68,10 @@ pub enum CliCommand {
         /// turns it off for a host that already has it.
         cudart: bool,
         force: bool,
+        /// Write the installed binary's path into the managed engine settings
+        /// **after** a successful install. Long form only, like
+        /// `--enable-python`: it writes user data.
+        set_binary: bool,
     },
     /// List the llama.cpp builds already in `data/llama/` (`llama installed`).
     LlamaInstalled,
@@ -273,6 +277,7 @@ fn parse_llama_setup(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> 
     let mut build = None;
     let mut cudart = true;
     let mut force = false;
+    let mut set_binary = false;
     let mut i = 0;
     while i < toks.len() {
         let a = toks[i];
@@ -290,6 +295,11 @@ fn parse_llama_setup(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> 
         } else if a == "--no-cudart" {
             cudart = false;
             i += 1;
+        } else if a == "--set-binary" {
+            // Long form only, deliberately: like `--enable-python`, it writes
+            // to `settings.json`, so it should be spelled out at the call site.
+            set_binary = true;
+            i += 1;
         } else if a.starts_with('-') {
             return Err(unknown_option(loc, a));
         } else {
@@ -301,6 +311,7 @@ fn parse_llama_setup(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> 
         build,
         cudart,
         force,
+        set_binary,
     })
 }
 
@@ -589,12 +600,14 @@ pub fn render_help(topic: Option<HelpTopic>, loc: &Locale) -> String {
         ),
         Some(HelpTopic::LlamaSetup) => format!(
             "{d}\n\n{usage} mindfork llama setup --backend <ID> [OPTIONS]\n\n{options}\n\
-             {b:<24}{cb}\n{bu:<24}{cbu}\n{n:<24}{cn}\n{f:<24}{cf}\n{h:<24}{ch}",
+             {b:<24}{cb}\n{bu:<24}{cbu}\n{sb:<24}{csb}\n{n:<24}{cn}\n{f:<24}{cf}\n{h:<24}{ch}",
             d = loc.t("cli.help.cmd.llama.setup"),
             b = "  -b, --backend <ID>",
             cb = loc.t("cli.help.opt.llama.backend"),
             bu = "  --build <TAG>",
             cbu = loc.t("cli.help.opt.llama.build"),
+            sb = "  --set-binary",
+            csb = loc.t("cli.help.opt.llama.set_binary"),
             n = "  --no-cudart",
             cn = loc.t("cli.help.opt.llama.no_cudart"),
             f = "  -f, --force",
@@ -862,6 +875,7 @@ mod tests {
                 build: None,
                 cudart: true,
                 force: false,
+                set_binary: false,
             }
         );
         assert_eq!(
@@ -881,6 +895,7 @@ mod tests {
                 build: Some("b10883".to_string()),
                 cudart: false,
                 force: true,
+                set_binary: false,
             }
         );
         // No default backend (research §6 F3): an omitted `--backend` parses,
@@ -892,8 +907,22 @@ mod tests {
                 build: None,
                 cudart: true,
                 force: false,
+                set_binary: false,
             }
         );
+        // `--set-binary` is long form only, and off unless asked for: the
+        // default must never write user data (the `--enable-python` shape).
+        assert_eq!(
+            p(&["llama", "setup", "-b", "cpu", "--set-binary"]).unwrap(),
+            CliCommand::LlamaSetup {
+                backend: Some("cpu".to_string()),
+                build: None,
+                cudart: true,
+                force: false,
+                set_binary: true,
+            }
+        );
+        assert!(p(&["llama", "setup", "-b", "cpu", "-s"]).is_err());
         assert!(p(&["llama", "setup", "--backend"]).is_err());
         assert!(p(&["llama", "setup", "cpu"]).is_err()); // the backend is an option
         assert!(p(&["llama", "setup", "--cudart"]).is_err());

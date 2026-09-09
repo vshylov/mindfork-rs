@@ -3210,6 +3210,11 @@ Principles:
   `features/llama_setup.rs`; `setup` takes single-instance),
   `locales export <code> -o FILE`. Subcommands run without the TUI and exit
   the process.
+  - **The two CLI writers of user data share their precautions.**
+    `sandbox setup --enable-python` and `llama setup --set-binary` both go
+    through `open_config_for_cli_write` — `data_migration::run` (the ADR 0006
+    downgrade guard) and language seeding on a fresh `settings.json` — and both
+    are applied **past the `?`**, so a failed provisioning never writes.
   - **`llama setup` exits `2` when `--backend` is omitted**, after printing
     the list: the backends differ by a factor of thirty-five in download
     size, so there is no default to pick on the user's behalf

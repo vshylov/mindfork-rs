@@ -27,6 +27,7 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 
+use crate::shared::config::{AppConfig, ServerMode};
 use crate::shared::i18n::Locale;
 
 /// The releases endpoint of the upstream repository.
@@ -144,10 +145,10 @@ pub struct SetupOptions {
 
 /// What [`setup`] produced.
 ///
-/// Only `binary` has a consumer in stage 1 (the CLI's closing hint); the rest is
-/// what stage 2's `--set-binary` writes into the three managed configs and what
-/// the live smoke asserts on, so it is deliberate ahead-of-consumer API rather
-/// than a field nobody wanted (CLAUDE.md §Pitfalls).
+/// Only `binary` has a consumer outside tests (the CLI's closing hint and
+/// `--set-binary`); the rest is the command's full result, asserted on by the
+/// live smoke — deliberate API rather than fields nobody wanted
+/// (CLAUDE.md §Pitfalls).
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct Installed {
@@ -883,6 +884,80 @@ fn dir_size(dir: &Path) -> u64 {
         }
     }
     total
+}
+
+// -------- Pointing the settings at an install (`--set-binary`) --------
+
+/// Which managed configs a `--set-binary` actually wrote, so the CLI can say so.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct BinaryTargets {
+    /// The assistant's engine — always written.
+    pub assistant: bool,
+    /// The impersonation engine — only when it had no path.
+    pub impersonation: bool,
+    /// The embedding server — only when it had no path.
+    pub embed: bool,
+    /// Is the assistant's engine actually in managed mode? If not, the path is
+    /// stored and unused until the user switches, which is worth saying.
+    pub mode_is_managed: bool,
+}
+
+/// Writes `binary` into the managed configs of `config`.
+///
+/// One install serves all three managed servers — the embedder is the same
+/// `llama-server` with `--embeddings`, the impersonation engine a second one on
+/// another port — so all three are offered the path. But only the assistant's
+/// is overwritten: a path the user typed into the other two is a deliberate
+/// choice (a different build for the embedder is a legitimate setup), and this
+/// flag is a convenience, not an authority
+/// ([docs/research/llama-cpp-download.md](../../docs/research/llama-cpp-download.md) §6 F6).
+///
+/// The **mode is never changed** (§6 F7, as the code turned out to read it):
+/// `ServerMode::Managed` is already the default, so a config that is not in
+/// managed mode is one the user deliberately switched — to a cloud or to an
+/// external server — and silently switching it back would undo that. The
+/// caller reports the state instead.
+pub fn set_engine_binary(config: &mut AppConfig, binary: &Path) -> BinaryTargets {
+    let path = binary.display().to_string();
+    let vacant = |v: &Option<String>| v.as_ref().is_none_or(|s| s.trim().is_empty());
+
+    config.engine.managed.binary = Some(path.clone());
+    let impersonation = vacant(&config.impersonation_engine.managed.binary);
+    if impersonation {
+        config.impersonation_engine.managed.binary = Some(path.clone());
+    }
+    let embed = vacant(&config.embed.managed.binary);
+    if embed {
+        config.embed.managed.binary = Some(path);
+    }
+    BinaryTargets {
+        assistant: true,
+        impersonation,
+        embed,
+        mode_is_managed: config.engine.mode == ServerMode::Managed,
+    }
+}
+
+/// Renders what [`set_engine_binary`] did as printable lines.
+pub fn render_binary_targets(t: &BinaryTargets, binary: &Path, loc: &Locale) -> Vec<String> {
+    let mut lines = vec![loc.tf(
+        "llamacpp.setbinary.assistant",
+        &[("path", &binary.display().to_string())],
+    )];
+    let mut also: Vec<&str> = Vec::new();
+    if t.impersonation {
+        also.push(loc.t("llamacpp.setbinary.impersonation"));
+    }
+    if t.embed {
+        also.push(loc.t("llamacpp.setbinary.embed"));
+    }
+    if !also.is_empty() {
+        lines.push(loc.tf("llamacpp.setbinary.also", &[("what", &also.join(", "))]));
+    }
+    if !t.mode_is_managed {
+        lines.push(loc.t("llamacpp.setbinary.not_managed").to_string());
+    }
+    lines
 }
 
 // -------- Download --------
@@ -1701,6 +1776,93 @@ mod tests {
         let err = extract(&archive, "evil.zip", &dir.path().join("raw"), loc).unwrap_err();
         assert!(err.to_string().contains("escaped.txt"), "{err}");
         assert!(!dir.path().join("escaped.txt").exists());
+    }
+
+    // -------- Pointing the settings at an install --------
+
+    #[test]
+    fn set_binary_writes_the_assistant_and_fills_only_empty_siblings() {
+        let mut config = AppConfig::default();
+        config.embed.managed.binary = Some("C:/mine/llama-server.exe".to_string());
+        let path = Path::new("C:/data/llama/vulkan-b10883/llama-server.exe");
+
+        let t = set_engine_binary(&mut config, path);
+
+        assert!(t.assistant && t.impersonation);
+        assert!(!t.embed, "a path the user typed is never overwritten");
+        assert_eq!(
+            config.engine.managed.binary.as_deref(),
+            Some("C:/data/llama/vulkan-b10883/llama-server.exe")
+        );
+        assert_eq!(
+            config.impersonation_engine.managed.binary.as_deref(),
+            Some("C:/data/llama/vulkan-b10883/llama-server.exe")
+        );
+        assert_eq!(
+            config.embed.managed.binary.as_deref(),
+            Some("C:/mine/llama-server.exe")
+        );
+    }
+
+    /// An empty string is what an emptied settings field leaves behind, and it
+    /// is as absent as `None` — otherwise a user who cleared the field would
+    /// never get it filled.
+    #[test]
+    fn a_blank_sibling_counts_as_empty() {
+        let mut config = AppConfig::default();
+        config.impersonation_engine.managed.binary = Some("   ".to_string());
+        let t = set_engine_binary(&mut config, Path::new("/data/llama/cpu-b1/llama-server"));
+        assert!(t.impersonation && t.embed);
+    }
+
+    /// The assistant's own path **is** overwritten — that is what the flag is
+    /// for; a reinstall onto a newer build must move it.
+    #[test]
+    fn the_assistant_path_is_replaced_by_a_newer_install() {
+        let mut config = AppConfig::default();
+        config.engine.managed.binary = Some("/data/llama/cpu-b10871/llama-server".to_string());
+        set_engine_binary(
+            &mut config,
+            Path::new("/data/llama/cpu-b10883/llama-server"),
+        );
+        assert_eq!(
+            config.engine.managed.binary.as_deref(),
+            Some("/data/llama/cpu-b10883/llama-server")
+        );
+    }
+
+    /// The mode is never touched. `ServerMode::Managed` is already the default,
+    /// so a config in any other mode is one the user deliberately switched, and
+    /// switching it back would undo that — the state is reported instead.
+    #[test]
+    fn the_mode_is_reported_never_changed() {
+        let mut config = AppConfig::default();
+        assert!(set_engine_binary(&mut config, Path::new("/x/llama-server")).mode_is_managed);
+
+        config.engine.mode = ServerMode::Claude;
+        let t = set_engine_binary(&mut config, Path::new("/x/llama-server"));
+        assert!(!t.mode_is_managed);
+        assert_eq!(config.engine.mode, ServerMode::Claude);
+
+        let loc = locale(Lang::En);
+        let lines = render_binary_targets(&t, Path::new("/x/llama-server"), loc);
+        assert!(lines[0].contains("/x/llama-server"));
+        assert!(
+            lines
+                .iter()
+                .any(|l| l == loc.t("llamacpp.setbinary.not_managed")),
+            "{lines:?}"
+        );
+    }
+
+    #[test]
+    fn nothing_extra_is_reported_when_nothing_extra_was_written() {
+        let mut config = AppConfig::default();
+        config.impersonation_engine.managed.binary = Some("/a".to_string());
+        config.embed.managed.binary = Some("/b".to_string());
+        let t = set_engine_binary(&mut config, Path::new("/x/llama-server"));
+        let lines = render_binary_targets(&t, Path::new("/x/llama-server"), locale(Lang::En));
+        assert_eq!(lines.len(), 1, "{lines:?}");
     }
 
     // -------- Live (needs the network) --------

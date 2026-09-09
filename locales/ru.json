@@ -2276,6 +2276,13 @@
   "cli.help.opt.llama.build": "Какую сборку взять, например b10883 (по умолчанию — самую свежую).",
   "cli.help.opt.llama.no_cudart": "Не скачивать CUDA runtime (только если он уже установлен).",
   "cli.help.opt.llama.force": "Скачать и установить заново, даже если уже есть.",
+  "llamacpp.setbinary.assistant": "Бинарник движка записан в настройки: {path}",
+  "llamacpp.setbinary.impersonation": "олицетворение",
+  "llamacpp.setbinary.embed": "эмбеддинги",
+  "llamacpp.setbinary.also": "  также используется для: {what} (у них не было своего пути)",
+  "llamacpp.setbinary.not_managed": "  сейчас движок не в режиме managed, поэтому путь подождёт, пока вы не переключитесь на него в настройках",
+  "cli.ctx.set_binary": "запись бинарника движка в настройки",
+  "cli.help.opt.llama.set_binary": "После успешной установки записать путь к бинарнику в настройки.",
   "cli.import.lamellama_removed": "команда import-lamellama удалена: импорт LameLLaMA теперь выполняет внешний конвертер, создающий файл формата mindfork-import (см. docs/import-format.md); затем: mindfork import <файл>",
   "ui.lang.name": "Русский",
   "prompt.compact.system": [

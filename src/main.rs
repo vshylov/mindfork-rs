@@ -153,7 +153,8 @@ fn real_main(
             build,
             cudart,
             force,
-        } => run_llama_setup(paths, backend, build, cudart, force, loc),
+            set_binary,
+        } => run_llama_setup(paths, backend, build, cudart, force, set_binary, loc),
         CliCommand::LlamaInstalled => {
             run_llama_installed(paths, loc);
             Ok(ExitCode::SUCCESS)
@@ -680,6 +681,7 @@ fn run_llama_setup(
     build: Option<String>,
     cudart: bool,
     force: bool,
+    set_binary: bool,
     loc: &Locale,
 ) -> anyhow::Result<ExitCode> {
     let root = paths.llama_dir();
@@ -712,14 +714,66 @@ fn run_llama_setup(
         loc,
         |msg| println!("{msg}"),
     ))?;
-    println!(
-        "{}",
-        loc.tf(
-            "cli.llama.binary_hint",
-            &[("path", &installed.binary.display().to_string())],
-        )
-    );
+    // Past the `?`: a failed install must never leave a path behind pointing at
+    // something that is not there — the ordering `--enable-python` fixed for the
+    // same reason (ADR 0005 §5).
+    if set_binary {
+        for line in set_engine_binary(paths, &installed.binary, loc)? {
+            println!("{line}");
+        }
+    } else {
+        println!(
+            "{}",
+            loc.tf(
+                "cli.llama.binary_hint",
+                &[("path", &installed.binary.display().to_string())],
+            )
+        );
+    }
     Ok(ExitCode::SUCCESS)
+}
+
+/// Writes the installed binary's path into the managed engine settings
+/// (`llama setup --set-binary`). One of the two CLI paths that write **user**
+/// data, so it takes the same precautions as `--enable-python` — see
+/// [`open_config_for_cli_write`] — and reports what it wrote.
+fn set_engine_binary(paths: &Paths, binary: &Path, loc: &Locale) -> anyhow::Result<Vec<String>> {
+    let ctx = "cli.ctx.set_binary";
+    let (store, mut config) = open_config_for_cli_write(paths, loc, ctx)?;
+    let targets = features::llama_setup::set_engine_binary(&mut config, binary);
+    store
+        .save_config(&config)
+        .with_context(|| loc.t(ctx).to_string())?;
+    Ok(features::llama_setup::render_binary_targets(
+        &targets, binary, loc,
+    ))
+}
+
+/// Opens `settings.json` for a CLI write. The two precautions the TUI takes
+/// before touching user data, and the reason both CLI writers go through here:
+///
+///  * [`features::data_migration::run`] first — the ADR 0006 downgrade guard.
+///    Without it a `settings.json` from a newer version would be read leniently
+///    and rewritten, silently dropping the fields this build doesn't know about;
+///  * a config created from scratch here seeds `interface.language` from
+///    `defaults.json`, mirroring `run_tui`: the seeding is gated on the file's
+///    *absence*, so creating one without it would lose the language the
+///    installer just asked the user for.
+fn open_config_for_cli_write(
+    paths: &Paths,
+    loc: &Locale,
+    ctx_key: &str,
+) -> anyhow::Result<(JsonStore, AppConfig)> {
+    features::data_migration::run(paths, loc)?;
+    let store = JsonStore::new(paths.clone());
+    let fresh = !paths.settings_file().exists();
+    let mut config = store
+        .load_config()
+        .with_context(|| loc.t(ctx_key).to_string())?;
+    if fresh {
+        config.interface.language = paths.default_language();
+    }
+    Ok((store, config))
 }
 
 /// CLI: the llama.cpp builds already downloaded (`mindfork llama installed`).
@@ -743,17 +797,10 @@ fn run_llama_installed(paths: &Paths, loc: &Locale) {
 ///    *absence*, so creating one without it would lose the language the installer
 ///    just asked the user for.
 fn enable_python_tool(paths: &Paths, loc: &Locale) -> anyhow::Result<()> {
-    features::data_migration::run(paths, loc)?;
-    let store = JsonStore::new(paths.clone());
     let fresh = !paths.settings_file().exists();
-    let mut config = store
-        .load_config()
-        .with_context(|| loc.t("cli.ctx.enable_python").to_string())?;
+    let (store, mut config) = open_config_for_cli_write(paths, loc, "cli.ctx.enable_python")?;
     if config.tools.python_enabled && !fresh {
         return Ok(()); // already on — don't rewrite the user's file for nothing
-    }
-    if fresh {
-        config.interface.language = paths.default_language();
     }
     config.tools.python_enabled = true;
     store

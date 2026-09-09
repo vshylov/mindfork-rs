@@ -171,7 +171,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-10, version 0.9.8)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3010 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **3015 unit tests
 green, 155 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
@@ -199,9 +199,14 @@ being recent is dropped, not shortened.
   490 KB); one directory per install under `data/llama/<backend>-<tag>/`,
   resumable downloads, and the binary is run before the rename — the build
   number must equal the tag's, and `--list-devices` says whether the GPU
-  backend found anything. Measured after: b10883 cpu, cpu-b10871 beside
-  it, and vulkan reporting a real adapter; the downloaded build served the
-  app's live smoke set identically to a hand-built one
+  backend found anything. `--set-binary` then writes the path — the
+  assistant's engine always, impersonation and embeddings only where they
+  were empty, the mode never switched behind the user (the fork turned on
+  reading the code: `managed` is already the default). Measured after:
+  b10883 cpu, cpu-b10871 beside it, vulkan reporting a real adapter, and
+  the settings written on a config whose embedder path was left alone; the
+  downloaded build served the app's live smoke set identically to a
+  hand-built one
   ([docs/research/llama-cpp-download.md](docs/research/llama-cpp-download.md),
   spec §3.4, [docs/journal/engine.md](docs/journal/engine.md)).
 - **The dialogue's director on Gemma's template — the checkpoint's

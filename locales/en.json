@@ -1977,6 +1977,13 @@
   "cli.help.opt.llama.build": "Which build to take, e.g. b10883 (default: the newest one).",
   "cli.help.opt.llama.no_cudart": "Do not download the CUDA runtime (only if it is already installed).",
   "cli.help.opt.llama.force": "Re-download and reinstall, even if already present.",
+  "llamacpp.setbinary.assistant": "Engine binary set in the settings: {path}",
+  "llamacpp.setbinary.impersonation": "impersonation",
+  "llamacpp.setbinary.embed": "embeddings",
+  "llamacpp.setbinary.also": "  also used for: {what} (they had no path of their own)",
+  "llamacpp.setbinary.not_managed": "  the engine is not in managed mode right now, so the path waits until you switch to it in the settings",
+  "cli.ctx.set_binary": "writing the engine binary into the settings",
+  "cli.help.opt.llama.set_binary": "After a successful install, write the binary's path into the settings.",
   "cli.import.lamellama_removed": "the import-lamellama command has been removed: LameLLaMA import is now done by an external converter that emits a mindfork-import file (see docs/import-format.md); then run: mindfork import <file>",
   "ui.lang.name": "English",
   "prompt.compact.system": [

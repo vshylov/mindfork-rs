@@ -351,7 +351,7 @@ No binary yet? It can fetch one:
 
 ```bash
 mindfork llama backends                 # what llama.cpp publishes for your machine
-mindfork llama setup --backend vulkan   # download, verify and unpack it
+mindfork llama setup --backend vulkan --set-binary   # …and point the settings at it
 ```
 
 `backends` reads the llama.cpp releases and lists the builds for your OS and
@@ -359,7 +359,8 @@ architecture by the backend they were built with — `cpu`, `vulkan`, `cuda-13.3
 `rocm-10.0`, … — with their sizes; `setup` downloads one into
 `data/llama/<backend>-<tag>/`, checks it against the sha256 the release
 publishes, and then runs it to report the build number and the compute devices
-it found. `--build <tag>` pins a build; llama.cpp ships about a dozen a day.
+it found. `--set-binary` writes the path into the settings after a successful
+install; `--build <tag>` pins a build, and llama.cpp ships about a dozen a day.
 
 Then set the binary and the GGUF paths in settings (`Ctrl+P`), or via
 `MINDFORK_LLAMA_BIN` and `MINDFORK_MODEL` (plus optional `MINDFORK_NGL`,

@@ -30,6 +30,10 @@ split by subsystem.
   `mindfork llama installed` shows what is on disk, and several builds can
   live side by side. The list of backends is read out of the release, so
   one that upstream adds or renames appears without an app update.
+  `--set-binary` puts the path into the settings for you once the install
+  succeeds — the assistant's engine always, the impersonation engine and
+  the embedding server only if they had no path of their own; the engine
+  mode is never switched behind your back.
 
 - **A note when the server processes prompts slowly.** A local
   `llama-server` looks at its queue only between batches of prompt tokens,

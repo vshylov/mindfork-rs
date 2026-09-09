@@ -3644,6 +3644,21 @@ with no turns, unmeasured), the clouds re-measured.
   `"llama.dll"` is a real entry of the archives being unpacked (with
   `llama.exe` one fixture away). Renaming the namespace, not growing the
   scanner's whitelist — the answer the `compact.db` case already recorded.
+- **Stage 2 — `--set-binary`.** The path goes into the managed configs after
+  a successful install, past the `?`: `engine.managed.binary` always,
+  `impersonation_engine`'s and `embed`'s only when empty (one install serves all
+  three servers, but a path the user typed there is a deliberate choice — fork
+  F6). Fork **F7 turned on reading the code**: it had been recommended as "set
+  the mode to managed when it is still at its default", and `ServerMode::Managed`
+  *is* the default — so the rule reduces to a no-op for anyone who has not
+  switched, and for anyone who has, switching them back would undo a deliberate
+  act. The mode is therefore never touched and the state is reported instead.
+  The two CLI writers of user data (`--enable-python` and this one) now share
+  `open_config_for_cli_write`, so neither can drift from the ADR 0006 downgrade
+  guard and the fresh-file language seeding.
+  Live: on a config in `openai` mode with an embedder path already typed —
+  assistant overwritten, impersonation filled, **embed left alone**, mode
+  untouched and named in the output.
 - **What is not here**: GPU auto-detection (nothing in `src/` knows about CUDA,
   Vulkan or ROCm, and the choice is the user's anyway — fork F3: an omitted
   `--backend` prints the list and exits `2`), a settings-screen button, model
@@ -3667,9 +3682,9 @@ with no turns, unmeasured), the clouds re-measured.
   4B instruct model that does not tool-call, has no reasoning channel and no
   vision, not the binary). The downloaded Clang build ran the set in 31.8 s
   against the local MSVC build's 45.4 s.
-- **Tests**: 3010 green, 155 ignored (2987 / 153 before the track — 21 unit
-  tests over the derivation and the unpacking, 2 over the CLI surface). Two new
-  `#[ignore]` smokes:
+- **Tests**: 3015 green, 155 ignored (2987 / 153 before the track — 21 unit
+  tests over the derivation and the unpacking, 3 over the CLI surface, 5 over
+  the settings write). Two new `#[ignore]` smokes:
   `live_the_newest_build_still_names_a_cpu_backend` — one API request, the test
   that fails instead of a user when upstream renames something — and
   `live_install_cpu_into_a_tempdir`, the whole path end to end on the cheapest
