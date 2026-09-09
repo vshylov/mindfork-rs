@@ -16,6 +16,21 @@ split by subsystem.
 
 ### Added
 
+- **The engine, downloaded.** `mindfork llama backends` lists the
+  llama.cpp `llama-server` builds published for your OS and architecture —
+  `cpu`, `vulkan`, `cuda-13.3`, `rocm-10.0`, … — with their download sizes,
+  and `mindfork llama setup --backend <id>` fetches one into
+  `data/llama/<backend>-<tag>/`. Every file is checked against the sha256
+  the release publishes, an interrupted download resumes instead of
+  starting over, and a CUDA build brings the CUDA runtime with it (without
+  it the backend does not load and the server quietly runs on the CPU).
+  When it is unpacked the command runs the binary and reports the build
+  number and the compute devices it found, so a GPU backend with a missing
+  driver says so instead of pretending. `--build <tag>` pins a build,
+  `mindfork llama installed` shows what is on disk, and several builds can
+  live side by side. The list of backends is read out of the release, so
+  one that upstream adds or renames appears without an app update.
+
 - **A note when the server processes prompts slowly.** A local
   `llama-server` looks at its queue only between batches of prompt tokens,
   so a background request stopped or displaced during its prompt holds its

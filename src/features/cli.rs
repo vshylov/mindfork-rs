@@ -54,6 +54,23 @@ pub enum CliCommand {
         /// happens without the assets). Used by the Windows installer's checkbox.
         enable_python: bool,
     },
+    /// List the llama.cpp backends published for this platform
+    /// (`llama backends [--build <tag>]`).
+    LlamaBackends { build: Option<String> },
+    /// Download and unpack a llama.cpp backend (`llama setup --backend <id>`).
+    /// `backend: None` — the user did not choose one, and the command prints
+    /// the list instead of picking a download between 18 MB and 645 MB for them
+    /// (docs/research/llama-cpp-download.md §6 F3).
+    LlamaSetup {
+        backend: Option<String>,
+        build: Option<String>,
+        /// Fetch the CUDA runtime alongside a `cuda-*` backend; `--no-cudart`
+        /// turns it off for a host that already has it.
+        cudart: bool,
+        force: bool,
+    },
+    /// List the llama.cpp builds already in `data/llama/` (`llama installed`).
+    LlamaInstalled,
     /// Export a locale bundle (`locales export <code> --output <file>`).
     LocalesExport { code: String, output: PathBuf },
     /// Launch the interactive demo (`demo`): a throwaway data root and a
@@ -73,6 +90,10 @@ pub enum HelpTopic {
     Import,
     Sandbox,
     SandboxSetup,
+    Llama,
+    LlamaBackends,
+    LlamaSetup,
+    LlamaInstalled,
     Locales,
     LocalesExport,
     Demo,
@@ -97,6 +118,7 @@ pub fn parse(args: &[String], loc: &Locale) -> Result<CliCommand, String> {
         // generic "unknown command".
         "import-lamellama" => Err(err_line(loc, "cli.import.lamellama_removed", &[])),
         "sandbox" => parse_sandbox(rest, loc),
+        "llama" => parse_llama(rest, loc),
         "locales" => parse_locales(rest, loc),
         "demo" => parse_demo(rest, loc),
         other if other.starts_with('-') => Err(unknown_option(loc, other)),
@@ -208,6 +230,89 @@ fn parse_sandbox_setup(toks: &[&str], loc: &Locale) -> Result<CliCommand, String
         force,
         enable_python,
     })
+}
+
+fn parse_llama(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> {
+    let Some((&sub, rest)) = toks.split_first() else {
+        return Err(missing_subcommand(loc, "llama"));
+    };
+    match sub {
+        "-h" | "--help" => Ok(CliCommand::Help {
+            topic: Some(HelpTopic::Llama),
+        }),
+        "backends" => parse_llama_backends(rest, loc),
+        "setup" => parse_llama_setup(rest, loc),
+        "installed" => parse_llama_installed(rest, loc),
+        other if other.starts_with('-') => Err(unknown_option(loc, other)),
+        other => Err(unknown_subcommand(loc, other, "llama")),
+    }
+}
+
+fn parse_llama_backends(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> {
+    let mut build = None;
+    let mut i = 0;
+    while i < toks.len() {
+        let a = toks[i];
+        if a == "-h" || a == "--help" {
+            return Ok(CliCommand::Help {
+                topic: Some(HelpTopic::LlamaBackends),
+            });
+        } else if let Some(v) = opt_value(toks, &mut i, loc, &["--build"])? {
+            build = Some(v.to_string());
+        } else if a.starts_with('-') {
+            return Err(unknown_option(loc, a));
+        } else {
+            return Err(unexpected_arg(loc, a));
+        }
+    }
+    Ok(CliCommand::LlamaBackends { build })
+}
+
+fn parse_llama_setup(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> {
+    let mut backend = None;
+    let mut build = None;
+    let mut cudart = true;
+    let mut force = false;
+    let mut i = 0;
+    while i < toks.len() {
+        let a = toks[i];
+        if a == "-h" || a == "--help" {
+            return Ok(CliCommand::Help {
+                topic: Some(HelpTopic::LlamaSetup),
+            });
+        } else if let Some(v) = opt_value(toks, &mut i, loc, &["-b", "--backend"])? {
+            backend = Some(v.to_string());
+        } else if let Some(v) = opt_value(toks, &mut i, loc, &["--build"])? {
+            build = Some(v.to_string());
+        } else if a == "-f" || a == "--force" {
+            force = true;
+            i += 1;
+        } else if a == "--no-cudart" {
+            cudart = false;
+            i += 1;
+        } else if a.starts_with('-') {
+            return Err(unknown_option(loc, a));
+        } else {
+            return Err(unexpected_arg(loc, a));
+        }
+    }
+    Ok(CliCommand::LlamaSetup {
+        backend,
+        build,
+        cudart,
+        force,
+    })
+}
+
+fn parse_llama_installed(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> {
+    match toks.first() {
+        None => Ok(CliCommand::LlamaInstalled),
+        Some(&("-h" | "--help")) => Ok(CliCommand::Help {
+            topic: Some(HelpTopic::LlamaInstalled),
+        }),
+        Some(&a) if a.starts_with('-') => Err(unknown_option(loc, a)),
+        Some(&a) => Err(unexpected_arg(loc, a)),
+    }
 }
 
 fn parse_demo(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> {
@@ -394,7 +499,7 @@ pub fn render_help(topic: Option<HelpTopic>, loc: &Locale) -> String {
     match topic {
         None => format!(
             "{about}\n\n{usage} mindfork [COMMAND]\n\n{commands}\n\
-             {dm:<20}{cd}\n{b:<20}{cb}\n{r:<20}{cr}\n{im:<20}{ci}\n{sb:<20}{cs}\n{lc:<20}{cl}\n\n\
+             {dm:<20}{cd}\n{b:<20}{cb}\n{r:<20}{cr}\n{im:<20}{ci}\n{sb:<20}{cs}\n{ll:<20}{cll}\n{lc:<20}{cl}\n\n\
              {options}\n  -h, --help     {oh}\n  -V, --version  {ov}",
             about = loc.t("cli.help.about"),
             dm = "  demo",
@@ -407,6 +512,8 @@ pub fn render_help(topic: Option<HelpTopic>, loc: &Locale) -> String {
             ci = loc.t("cli.help.cmd.import"),
             sb = "  sandbox",
             cs = loc.t("cli.help.cmd.sandbox"),
+            ll = "  llama",
+            cll = loc.t("cli.help.cmd.llama"),
             lc = "  locales",
             cl = loc.t("cli.help.cmd.locales"),
             oh = loc.t("cli.help.opt.help"),
@@ -459,6 +566,45 @@ pub fn render_help(topic: Option<HelpTopic>, loc: &Locale) -> String {
             ce = loc.t("cli.help.opt.sandbox.enable_python"),
             h = "  -h, --help",
             ch = loc.t("cli.help.opt.help"),
+        ),
+        Some(HelpTopic::Llama) => format!(
+            "{d}\n\n{usage} mindfork llama <COMMAND>\n\n{commands}\n\
+             {b:<14}{cb}\n{s:<14}{cs}\n{i:<14}{ci}",
+            d = loc.t("cli.help.cmd.llama"),
+            b = "  backends",
+            cb = loc.t("cli.help.cmd.llama.backends"),
+            s = "  setup",
+            cs = loc.t("cli.help.cmd.llama.setup"),
+            i = "  installed",
+            ci = loc.t("cli.help.cmd.llama.installed"),
+        ),
+        Some(HelpTopic::LlamaBackends) => format!(
+            "{d}\n\n{usage} mindfork llama backends [OPTIONS]\n\n{options}\n\
+             {b:<24}{cb}\n{h:<24}{ch}",
+            d = loc.t("cli.help.cmd.llama.backends"),
+            b = "  --build <TAG>",
+            cb = loc.t("cli.help.opt.llama.build"),
+            h = "  -h, --help",
+            ch = loc.t("cli.help.opt.help"),
+        ),
+        Some(HelpTopic::LlamaSetup) => format!(
+            "{d}\n\n{usage} mindfork llama setup --backend <ID> [OPTIONS]\n\n{options}\n\
+             {b:<24}{cb}\n{bu:<24}{cbu}\n{n:<24}{cn}\n{f:<24}{cf}\n{h:<24}{ch}",
+            d = loc.t("cli.help.cmd.llama.setup"),
+            b = "  -b, --backend <ID>",
+            cb = loc.t("cli.help.opt.llama.backend"),
+            bu = "  --build <TAG>",
+            cbu = loc.t("cli.help.opt.llama.build"),
+            n = "  --no-cudart",
+            cn = loc.t("cli.help.opt.llama.no_cudart"),
+            f = "  -f, --force",
+            cf = loc.t("cli.help.opt.llama.force"),
+            h = "  -h, --help",
+            ch = loc.t("cli.help.opt.help"),
+        ),
+        Some(HelpTopic::LlamaInstalled) => format!(
+            "{d}\n\n{usage} mindfork llama installed",
+            d = loc.t("cli.help.cmd.llama.installed"),
         ),
         Some(HelpTopic::Demo) => format!(
             "{d}\n\n{usage} mindfork demo\n\n{n}",
@@ -678,6 +824,82 @@ mod tests {
     }
 
     #[test]
+    fn llama_backends_and_installed() {
+        assert_eq!(
+            p(&["llama", "backends"]).unwrap(),
+            CliCommand::LlamaBackends { build: None }
+        );
+        assert_eq!(
+            p(&["llama", "backends", "--build", "b10883"]).unwrap(),
+            CliCommand::LlamaBackends {
+                build: Some("b10883".to_string())
+            }
+        );
+        assert_eq!(
+            p(&["llama", "backends", "--build=b10883"]).unwrap(),
+            CliCommand::LlamaBackends {
+                build: Some("b10883".to_string())
+            }
+        );
+        assert_eq!(
+            p(&["llama", "installed"]).unwrap(),
+            CliCommand::LlamaInstalled
+        );
+        assert!(p(&["llama"]).is_err()); // no subcommand
+        assert!(p(&["llama", "remove"]).is_err()); // unknown subcommand
+        assert!(p(&["llama", "backends", "--build"]).is_err()); // no value
+        assert!(p(&["llama", "installed", "cpu"]).is_err()); // takes nothing
+    }
+
+    #[test]
+    fn llama_setup_flags() {
+        // The CUDA runtime rides along by default (research §6 F4): without it a
+        // `cuda-*` install silently runs on the CPU.
+        assert_eq!(
+            p(&["llama", "setup", "--backend", "vulkan"]).unwrap(),
+            CliCommand::LlamaSetup {
+                backend: Some("vulkan".to_string()),
+                build: None,
+                cudart: true,
+                force: false,
+            }
+        );
+        assert_eq!(
+            p(&[
+                "llama",
+                "setup",
+                "-b",
+                "cuda-12.4",
+                "--build",
+                "b10883",
+                "--no-cudart",
+                "--force",
+            ])
+            .unwrap(),
+            CliCommand::LlamaSetup {
+                backend: Some("cuda-12.4".to_string()),
+                build: Some("b10883".to_string()),
+                cudart: false,
+                force: true,
+            }
+        );
+        // No default backend (research §6 F3): an omitted `--backend` parses,
+        // and the command prints the list instead of choosing a download.
+        assert_eq!(
+            p(&["llama", "setup"]).unwrap(),
+            CliCommand::LlamaSetup {
+                backend: None,
+                build: None,
+                cudart: true,
+                force: false,
+            }
+        );
+        assert!(p(&["llama", "setup", "--backend"]).is_err());
+        assert!(p(&["llama", "setup", "cpu"]).is_err()); // the backend is an option
+        assert!(p(&["llama", "setup", "--cudart"]).is_err());
+    }
+
+    #[test]
     fn locales_export() {
         assert_eq!(
             p(&["locales", "export", "de", "-o", "de.json"]).unwrap(),
@@ -710,6 +932,30 @@ mod tests {
                 topic: Some(HelpTopic::LocalesExport)
             }
         );
+        assert_eq!(
+            p(&["llama", "--help"]).unwrap(),
+            CliCommand::Help {
+                topic: Some(HelpTopic::Llama)
+            }
+        );
+        assert_eq!(
+            p(&["llama", "setup", "-h"]).unwrap(),
+            CliCommand::Help {
+                topic: Some(HelpTopic::LlamaSetup)
+            }
+        );
+        assert_eq!(
+            p(&["llama", "backends", "-h"]).unwrap(),
+            CliCommand::Help {
+                topic: Some(HelpTopic::LlamaBackends)
+            }
+        );
+        assert_eq!(
+            p(&["llama", "installed", "--help"]).unwrap(),
+            CliCommand::Help {
+                topic: Some(HelpTopic::LlamaInstalled)
+            }
+        );
     }
 
     #[test]
@@ -733,6 +979,10 @@ mod tests {
             Some(HelpTopic::Import),
             Some(HelpTopic::Sandbox),
             Some(HelpTopic::SandboxSetup),
+            Some(HelpTopic::Llama),
+            Some(HelpTopic::LlamaBackends),
+            Some(HelpTopic::LlamaSetup),
+            Some(HelpTopic::LlamaInstalled),
             Some(HelpTopic::Locales),
             Some(HelpTopic::LocalesExport),
         ];
@@ -757,6 +1007,11 @@ mod tests {
         assert!(
             render_help(None, loc).contains("restore  "),
             "the command name ran into its description"
+        );
+        // llama setup: `-b, --backend <ID>` shares the column with `--build <TAG>`.
+        assert!(
+            render_help(Some(HelpTopic::LlamaSetup), loc).contains("--backend <ID>  "),
+            "the option name ran into its description"
         );
         // Locale export: `-o, --output <FILE>` is the longest option.
         assert!(

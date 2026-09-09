@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (55)
+## Entries (56)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -67,6 +67,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the page summary's usage — the one kind that under-counts, and a summary that came back empty (done)
 - Post-M9: the one-shot requests' samples — impersonation's prompt is the session's largest, and its own twice (done)
 - Post-M9: impersonation on Gemma's template — the swapped conversation must open with the assistant's silence (done)
+- Post-M9: the engine, downloaded — llama.cpp's backends named, fetched and pointed at (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -3551,3 +3552,125 @@ green, 153 ignored (2982 / 153 before).
 **Not in this track** (§7): the opening-only chat on Gemma 3 (the
 persona dropped with the lone turn), a dialogue's first line (a system
 with no turns, unmeasured), the clouds re-measured.
+
+### Post-M9: the engine, downloaded — llama.cpp's backends named, fetched and pointed at (done)
+
+- **Why**: install.md §3 named llama.cpp `llama-server` as the recommended
+  backend and then assumed it existed. A user picking **managed** mode was told
+  to type a path into *Model/server → llama-server binary* and left to find the
+  binary themselves — which means knowing that the newest *tagged* release is
+  not the newest build, that `bin-win-cuda-12.4-x64` is a server build while
+  `cudart-…-cuda-12.4-x64` is the runtime it will not start without, and which
+  of seven Windows archives to take. The app already downloads, verifies and
+  unpacks the other half of the local stack (`mindfork sandbox setup`, ADR
+  0005); this is the same shape for the engine. Research, with the release
+  surface measured on 2026-09-09:
+  [docs/research/llama-cpp-download.md](../research/llama-cpp-download.md);
+  every fork at its recommendation (the user's decision, 2026-09-09).
+- **The command** (`features/llama_setup.rs`, CLI in `features/cli.rs`,
+  dispatch in `main.rs`): `mindfork llama backends [--build <tag>]` /
+  `llama setup --backend <id> [--build <tag>] [--no-cudart] [--force]` /
+  `llama installed`. `setup` takes the single-instance guard, prints through the
+  `impl FnMut(&str)` callback `sandbox_setup` established (the only `println!`
+  is `main.rs`'s), and installs into `data/llama/<backend>-<tag>/`
+  (`Paths::llama_dir`).
+- **Derivation, not a table.** The sandbox's asset list is four pinned rows
+  edited by hand at a version bump. llama.cpp publishes ~13 nightlies a day
+  across 27 assets, and the *names have drifted twice in fourteen months*: the
+  Linux/macOS archives were `.zip` at `b6000` (2025-07) and are `.tar.gz` now,
+  and the AMD build went `win-hip-radeon-x64` → `win-rocm-10.0-x64` between
+  `b9000` and `b10883`. So the backends are read out of the release, by a parse
+  anchored on **both** ends — `llama-<tag>-bin-<os>[-<backend…>]-<arch>.<ext>`,
+  the OS and arch tokens matched exactly, the middle joined with `-`, an **empty
+  middle meaning `cpu`** (which is how the Linux CPU build spells itself:
+  `llama-b10883-bin-ubuntu-x64.tar.gz`). Everything that does not match is
+  skipped rather than interpreted, and that single rule drops `ui`,
+  `xcframework`, `android-*`, `ubuntu-s390x`, `310p-openEuler-x86`,
+  `910b-openEuler-x86-aclgraph` and `macos-arm64-kleidiai` without a special
+  case for any of them. The archive kind is read off the name too, so a return
+  to Linux zips costs nothing. All three real name sets are test fixtures.
+- **The API, not the releases page** (fork F1 — the sketch asked for the HTML).
+  Measured: `releases?per_page=1` is 63 KB of JSON against the index page's
+  490 KB, and — decisively — it carries `digest: "sha256:…"` per asset, which
+  the HTML does not. Without it the integrity promise SECURITY.md makes would
+  fall back to a hand-maintained pin table, i.e. exactly the thing the naming
+  drift says cannot be maintained. An asset the release publishes no digest for
+  is not installed. Cost: 60 requests an hour per address unauthenticated — one
+  per invocation, so only a shared address reaches it; the refusal says so in
+  words and `GITHUB_TOKEN` lifts it.
+- **`releases/latest` is not a build.** Every `bNNNNN` tag is a *prerelease*, so
+  `latest` returns the semver release (`v0.4.0`) whose one asset is a 7-byte
+  `nightly-tag.txt`. Resolution is therefore `releases?per_page=5`, taking the
+  newest entry that actually yields backends — five, so a semver release landing
+  on top costs a retry rather than a failure.
+- **CUDA arrives complete or not at all.** `ggml-cuda.dll` links
+  `cublas`/`cudart`, which upstream ships in a separate `cudart-…` archive
+  (paired by backend token and arch, and carrying no build tag in its name).
+  Without it nothing errors — the backend fails to load and the server runs on
+  the CPU. So it is fetched with the build by default, a `cuda-*` release
+  missing it is **refused**, and `--no-cudart` is the opt-out for a host that
+  already has the runtime.
+- **Proved after the fact, on the binary itself.** `llama-server --version`
+  (stderr) must report the tag's build number — that is also the only thing that
+  proves the ~50-file library set is complete — and it runs on the staged
+  directory *before* the rename, so a broken unpack never becomes an install
+  `llama installed` would list. Then `--list-devices` (stdout) is reported; on a
+  non-`cpu` backend an empty list is named out loud without failing the install,
+  since the files are correct and what is missing is on the host.
+- **Two gaps in the precedent deliberately not inherited.** `sandbox_setup`'s
+  client sets no timeout of any kind and its download truncates through
+  `File::create`. Here: `connect_timeout(10s)` + `read_timeout(60s)` (the gap
+  between chunks, not the transfer — 645 MB on a slow line is not an error), and
+  a `.part` file resumed with a `Range` request, the hasher seeded from what is
+  already on disk. A digest that still mismatches after a resume costs one retry
+  from zero; a mismatch on a fresh download is fatal.
+- **One rule for two layouts.** The Windows zip is flat; the Linux tarball wraps
+  everything in `llama-<tag>/`. Rather than a second pass over the stream, the
+  archive is unpacked and then collapsed — "one directory and nothing else"
+  means that directory is the payload. Zip-slip is guarded with
+  `enclosed_name()`; the zip path sets the mode explicitly on unix, which
+  matters only if upstream returns to Linux zips but is exactly the silent
+  breakage that would then follow.
+- **Where it lands.** `data/llama/<backend>-<tag>/` — self-describing, several
+  installs coexist (which is what makes a rollback one command), and removal is
+  one directory. It inherits `data/`'s properties for free: `features::backup`
+  works off an allow-list, so nothing there is packed into an archive or removed
+  by a restore. `Command::new(path)` needs no change — read out of the ELF of
+  `b10883`'s Linux `llama-server`, `DT_RUNPATH` is `$ORIGIN`, so the binary
+  finds its siblings without `LD_LIBRARY_PATH`.
+- **The bundle namespace is `llamacpp.`, not `llama.`** — lessons.md §7's
+  prefix-collision trap, and this feature is the likeliest place to hit it: the
+  gate reads any dotted literal under a bundle prefix as a key, and
+  `"llama.dll"` is a real entry of the archives being unpacked (with
+  `llama.exe` one fixture away). Renaming the namespace, not growing the
+  scanner's whitelist — the answer the `compact.db` case already recorded.
+- **What is not here**: GPU auto-detection (nothing in `src/` knows about CUDA,
+  Vulkan or ROCm, and the choice is the user's anyway — fork F3: an omitted
+  `--backend` prints the list and exits `2`), a settings-screen button, model
+  downloads, `llama remove`, HTML scraping.
+- **Live run (2026-09-10), Windows 11, `gemma-3-4b-it-q8_0` on the CPU.**
+  `llama backends` → build b10883, seven backends for windows/x86_64.
+  `llama setup --backend cpu` → 17 MB, unpacked, `build 10883` matching the tag.
+  `--backend cpu --build b10871` → installs beside it, reports `build 10871`.
+  `--backend vulkan` → `Vulkan0: Intel(R) Iris(R) Xe Graphics (16157 MiB,
+  15389 MiB free)`, i.e. the device probe reads a real adapter. `--force`
+  reinstalls and leaves no staging behind; a second `setup` reports
+  "already installed" and re-probes.
+  **Smoke — GO**: the downloaded binary launched through the app's own
+  supervisor (`managed_cpu_line_launches_with_the_measured_batch_live`) — line
+  `-ngl 0 -c 2048 -b 256 -ub 256 --jinja`, four unified slots over 2048 — and
+  then served the whole `openai::client::ignored_smoke` set. Against the
+  **hand-built** local `llama-server` (build 10807, MSVC) on the same model the
+  results are identical arm for arm: 5 passed, the same 4 failed
+  (`tool_call_is_emitted_and_parsed`, `control_tools_are_callable`,
+  `emits_thoughts_for_reasoning_model`, `tool_result_image_is_seen_live` — a
+  4B instruct model that does not tool-call, has no reasoning channel and no
+  vision, not the binary). The downloaded Clang build ran the set in 31.8 s
+  against the local MSVC build's 45.4 s.
+- **Tests**: 3010 green, 155 ignored (2987 / 153 before the track — 21 unit
+  tests over the derivation and the unpacking, 2 over the CLI surface). Two new
+  `#[ignore]` smokes:
+  `live_the_newest_build_still_names_a_cpu_backend` — one API request, the test
+  that fails instead of a user when upstream renames something — and
+  `live_install_cpu_into_a_tempdir`, the whole path end to end on the cheapest
+  asset.

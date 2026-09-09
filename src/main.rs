@@ -144,6 +144,20 @@ fn real_main(
             run_sandbox_setup(paths, force, enable_python, loc)?;
             Ok(ExitCode::SUCCESS)
         }
+        CliCommand::LlamaBackends { build } => {
+            run_llama_backends(paths, build.as_deref(), loc)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        CliCommand::LlamaSetup {
+            backend,
+            build,
+            cudart,
+            force,
+        } => run_llama_setup(paths, backend, build, cudart, force, loc),
+        CliCommand::LlamaInstalled => {
+            run_llama_installed(paths, loc);
+            Ok(ExitCode::SUCCESS)
+        }
         CliCommand::LocalesExport { code, output } => {
             run_locales_export(&code, &output, loc)?;
             Ok(ExitCode::SUCCESS)
@@ -636,6 +650,85 @@ fn run_sandbox_setup(
         println!("{}", loc.t("cli.sandbox.python_enabled"));
     }
     Ok(())
+}
+
+/// A tokio runtime for a CLI command whose work is async (the network).
+fn cli_runtime(loc: &Locale) -> anyhow::Result<tokio::runtime::Runtime> {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .with_context(|| loc.t("cli.ctx.build_runtime").to_string())
+}
+
+/// CLI: the llama.cpp backends published for this OS and architecture
+/// (`mindfork llama backends`). Read-only — no data is touched, so no guard.
+fn run_llama_backends(paths: &Paths, build: Option<&str>, loc: &Locale) -> anyhow::Result<()> {
+    let runtime = cli_runtime(loc)?;
+    let listing = runtime.block_on(features::llama_setup::list_backends(build, loc))?;
+    for line in features::llama_setup::render_backends(&listing, &paths.llama_dir(), loc) {
+        println!("{line}");
+    }
+    Ok(())
+}
+
+/// CLI: downloading a llama.cpp backend into `data/llama/`
+/// (`mindfork llama setup --backend <id>`). Needs its own tokio runtime
+/// (network async), as `sandbox setup` does.
+fn run_llama_setup(
+    paths: &Paths,
+    backend: Option<String>,
+    build: Option<String>,
+    cudart: bool,
+    force: bool,
+    loc: &Locale,
+) -> anyhow::Result<ExitCode> {
+    let root = paths.llama_dir();
+    let runtime = cli_runtime(loc)?;
+    // There is deliberately no default backend (docs/research/llama-cpp-download.md
+    // §6 F3): the choice costs between 18 MB and 645 MB, so an omitted
+    // `--backend` prints what is on offer and exits non-zero instead of
+    // deciding for the user.
+    let Some(backend) = backend else {
+        let listing =
+            runtime.block_on(features::llama_setup::list_backends(build.as_deref(), loc))?;
+        for line in features::llama_setup::render_backends(&listing, &root, loc) {
+            println!("{line}");
+        }
+        eprintln!("{}", loc.t("cli.llama.pick_backend"));
+        return Ok(ExitCode::from(2));
+    };
+    // Single-instance guard, for the reason `sandbox setup` takes one: a
+    // reinstall replaces files the running app may be about to launch, and on
+    // Windows a `llama-server` started from the same directory holds them open.
+    let _instance = acquire_cli_guard(loc, loc.t("cli.guard.action.llama"))?;
+    let installed = runtime.block_on(features::llama_setup::setup(
+        &root,
+        &features::llama_setup::SetupOptions {
+            backend,
+            build,
+            force,
+            cudart,
+        },
+        loc,
+        |msg| println!("{msg}"),
+    ))?;
+    println!(
+        "{}",
+        loc.tf(
+            "cli.llama.binary_hint",
+            &[("path", &installed.binary.display().to_string())],
+        )
+    );
+    Ok(ExitCode::SUCCESS)
+}
+
+/// CLI: the llama.cpp builds already downloaded (`mindfork llama installed`).
+fn run_llama_installed(paths: &Paths, loc: &Locale) {
+    let root = paths.llama_dir();
+    let found = features::llama_setup::installed(&root);
+    for line in features::llama_setup::render_installed(&found, &root, loc) {
+        println!("{line}");
+    }
 }
 
 /// Turns `tools.python_enabled` on in `settings.json` (`sandbox setup --enable-python`,

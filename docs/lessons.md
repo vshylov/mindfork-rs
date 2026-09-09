@@ -727,6 +727,30 @@ compression roll, without tools, nine times over. One print of a request's parts
 beside its exact count showed the term; the ratio's history alone never would.
 — *the roll's usage for the budget*.
 
+**When upstream owns the names, derive the list; do not enumerate it — and check
+the history before deciding how much shape you may assume.** A table of
+third-party assets looks like the safe choice and is only safe while the names
+hold still. Three llama.cpp releases sampled across fourteen months disagreed on
+all of it: the Linux and macOS archives were `.zip` in 2025 and are `.tar.gz`
+now, the AMD build went `win-hip-radeon-x64` → `win-rocm-10.0-x64`, the
+architecture is not always the last token (`…-x86-aclgraph`), the OS not always
+the first (`310p-openEuler-…`), and the Linux CPU build carries no backend token
+at all — an empty middle that a naive split reads as a backend named "". A fixed
+enum would have broken twice already; what survived all three sets was a parse
+anchored on **both** ends, skipping anything that does not match exactly rather
+than interpreting it. Sampling one release would have produced a parser tuned to
+a single afternoon.
+— *the engine, downloaded*.
+
+**Prefer the source that ships a digest, even when the other one is what was
+asked for.** The llama.cpp releases page carries every download link, so
+scraping it works; the API carries the same links plus `digest: "sha256:…"` per
+asset, in an eighth of the bytes. Without a published digest the integrity check
+falls back to a pin table maintained by hand — the very thing the naming drift
+above says cannot be maintained. Its one cost, 60 unauthenticated requests an
+hour per address, is one request per command invocation.
+— *the engine, downloaded*.
+
 ## 4. The recurring defect class: a message must close the door
 
 **Never let a message describe a situation without saying what is and is not possible
@@ -1191,9 +1215,13 @@ groundwork item*.
 **A bundle prefix can collide with ordinary strings in the code.** Introducing the
 prefix `compact.` made the gate read the scratch filename `"compact.db"` as a key; the
 fix was renaming the keys, not adding a scanner exception. A reserved secret name moved
-from a dotted to a hyphenated form for the same reason.
+from a dotted to a hyphenated form for the same reason. The risk is highest when the
+prefix **names a thing whose files the code handles**: `llama.` collided with
+`"llama.dll"`, a real entry of the archives that feature unpacks — and `llama.exe`
+sat one fixture away from the next collision — so the namespace became `llamacpp.`
+rather than the whitelist growing a third entry.
 — *history compression — stage 1*, *MCP servers — secrets for the `env` map and JSON
-import*.
+import*, *the engine, downloaded*.
 
 **Deleting the last user of a key is not enough** — the no-dead-key gate fails on an
 orphan, so remove the bundle entry in the same change.

@@ -364,6 +364,18 @@ impl Paths {
     pub fn sandbox_dir(&self) -> PathBuf {
         self.root.join("sandbox")
     }
+
+    /// Downloaded llama.cpp builds (`llama/`), one directory per install named
+    /// `<backend>-<tag>` (`cuda-12.4-b10883`). Populated by `mindfork llama
+    /// setup` — see [docs/research/llama-cpp-download.md](../../docs/research/llama-cpp-download.md)
+    /// §4.3 and spec §3.4.
+    ///
+    /// Like `sandbox/`, it holds re-downloadable assets rather than user data:
+    /// `features::backup` works off an allow-list, so this directory is neither
+    /// packed into an archive nor removed by a restore.
+    pub fn llama_dir(&self) -> PathBuf {
+        self.root.join("llama")
+    }
 }
 
 #[cfg(test)]
