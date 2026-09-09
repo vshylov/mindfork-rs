@@ -1817,7 +1817,13 @@ the record shape was left for it by the subagent track (research §3.14,
   then a localized appendix carrying `direction` (or a default "stop at a
   natural end"). The self-model injection stays top-turn-only (ADR 0010).
   Its conversation is persistent across checkpoints: script increments as
-  `user` turns, its verdicts as its own tool-call turns.
+  `user` turns, its verdicts as its own **text** turns — each call rendered
+  `name(arguments)`, no `tool` result — so the history alternates on a
+  template without a tool role: Gemma 3's rendered the `tool` result that
+  followed a tool-call turn as a second user turn in a row and refused the
+  pair with a `400` at the second checkpoint, where the clouds' wires merge
+  such pairs and Gemma 4's template takes any shape
+  ([docs/research/dialogue-director-history.md](docs/research/dialogue-director-history.md) §2.1, §3.1).
 - **The verdicts** (sent only inside checkpoint requests, thinking muted):
   `dialogue_continue`; `dialogue_stop { reason, summary? }`;
   `dialogue_note { to, text }` — a standing stage direction appended to the

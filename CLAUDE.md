@@ -171,7 +171,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-09, version 0.9.8)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2986 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **2987 unit tests
 green, 153 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
@@ -183,6 +183,24 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 `tools/doc_index_check.py`. A new track adds a line; a line that has stopped
 being recent is dropped, not shortened.
 
+- **The dialogue's director on Gemma's template — the checkpoint's
+  history must alternate too** — the question the Gemma impersonation
+  track left: does a scene's first line go out as a system prompt with
+  no turns? Measured on Gemma 4 31B and Gemma 3 4B, it does not — the
+  participants' views were built for the strict template (a user-side
+  prologue, same-role lines merged) — but the director's conversation
+  kept its verdicts as tool-call turns with a `tool` "noted" result,
+  which Gemma 3's template, having no tool role, renders as a second
+  user turn in a row and refuses: a `400` at the second checkpoint of
+  every scene longer than one exchange (the clouds' wires merge the
+  pair; the dialogue track's Gemma arm was Gemma 4). Now
+  `verdict_turn` renders the verdicts as the director's own text turn —
+  `name(arguments)` per call, no `tool` messages — the conversation
+  still persistent and append-only, accepted by both templates with the
+  same verdict. Measured after: two café scenes on Gemma 4 Completed at
+  5 lines, stopped by the director past the second checkpoint
+  ([docs/research/dialogue-director-history.md](docs/research/dialogue-director-history.md),
+  spec §9.13, [docs/journal/tools.md](docs/journal/tools.md)).
 - **Impersonation on Gemma's template — the swapped conversation must
   open with the assistant's silence** — the defect the one-shot samples
   track found: impersonation swaps the roles of the history, so a chat
@@ -396,20 +414,6 @@ being recent is dropped, not shortened.
   `Quit`'s `cancel_all_bg`, was a second verb for one act); the two notes
   that list the kinds now name `all` as the route for the whole set
   ([docs/research/tasks-stop-all.md](docs/research/tasks-stop-all.md),
-  spec §11.7, §11.10, [docs/journal/ui-screens.md](docs/journal/ui-screens.md)).
-- **`/tasks stop <kind>` — the typed route to stopping a silent task** —
-  `F6` on a task row of the tasks screen was the one action whose only
-  route was a function key on a screen, against spec §11.7's rule that
-  every action has a typed route. The reading that deferred the command
-  ("localized kind names and a parser") turned out light: the screen already
-  names the four tasks in both locales, `Arity::Subcommand` already carries
-  a token behind its word, and the chat screen already keeps the four
-  running flags for the status bar. Now `/tasks [stop <kind>]` on the
-  existing registry row — the words `reflection · notes · self · compact`,
-  bare `stop` mirroring `/subagents stop` — ends in the very
-  `StopBackgroundTask` the key sends; the note names the task with the
-  screen's words through `BackgroundKind::label_key`, the one function both
-  surfaces read ([docs/research/tasks-stop-command.md](docs/research/tasks-stop-command.md),
   spec §11.7, §11.10, [docs/journal/ui-screens.md](docs/journal/ui-screens.md)).
 
 

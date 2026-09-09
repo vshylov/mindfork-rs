@@ -291,6 +291,13 @@ split by subsystem.
 
 ### Fixed
 
+- **A directed dialogue on Gemma 3 failed at its second checkpoint.**
+  The director's memory of its earlier verdicts was kept as tool calls
+  with an acknowledgement, which Gemma 3's chat template renders as two
+  user turns in a row and refuses ("roles must alternate") — so every
+  scene longer than one exchange ended with an engine error. The
+  director now remembers its verdicts as its own words; on every other
+  model the verdicts are the same.
 - **Impersonation on Gemma 3.** `Ctrl+U` answered with an engine error on
   every chat you had opened yourself: the request swaps the roles of the
   conversation, so it began with an assistant turn, which Gemma 3's chat

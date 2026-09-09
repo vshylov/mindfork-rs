@@ -1,9 +1,11 @@
 # The dialogue's director on Gemma's template — the checkpoint's history must alternate too
 
-> **Status:** proposed (2026-09-09); stage 0 is the measurement in §2.1
+> **Status:** implemented (2026-09-09) — every fork at its recommendation
+> (the user's decision, 2026-09-09); stage 0 is the measurement in §2.1
 > (a participant's view and the director's first and second checkpoints
 > against Gemma 4 31B on the LAN stack and Gemma 3 4B on the CPU build,
-> then two repaired shapes of the second checkpoint on both). The
+> then two repaired shapes of the second checkpoint on both), stage 1's
+> live run is in §6.1. The
 > question the gemma-impersonation track left
 > ([gemma-impersonation.md](gemma-impersonation.md) §7): a scene's first
 > line — does it go out as a system prompt with no turns, and does
@@ -207,7 +209,16 @@ what it was.
 
 ### 6.1 Runs
 
-Stage 1.
+`dialogue_e2e_live` and `background_dialogue_e2e_live` on Gemma 4 31B (the
+LAN stack), the café scene, the default cadence and cap (F4a): both scenes
+**Completed** — stopped by the director — at 5 spoken lines (1296 and 1256
+tokens), so each passed its second checkpoint with the director's verdict
+as its own text turn in the history and its stop at the third; the parent
+turn's reply summarized the resolved mix-up. Gemma 3's acceptance of that
+shape is §2.1's measurement (a 4B model does not stage a scene from a turn
+reliably enough for a smoke). Unit: 2987 green, 153 ignored (2986 / 153
+before: `verdict_turn`'s rendering; the second checkpoint's history pinned
+at three turns and no `Tool` role).
 
 ## 7. Not in this track
 

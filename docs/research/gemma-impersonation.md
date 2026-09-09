@@ -259,9 +259,11 @@ place of the leading assistant turn).
 - **The opening-only chat on Gemma 3** — the lone assistant turn is
   accepted but the persona is dropped with it (§2.1); a shape with no
   right answer measured (iv), left as today's continuation.
-- **A dialogue's first line** — a scene's opening request may carry a
-  system and no turns; on Gemma 3 that drops the persona the same way.
-  Unmeasured; its own question ([ADR 0011](../decisions/0011-dialogue-directed-run.md)).
+- **A dialogue's first line** — measured and answered:
+  [dialogue-director-history.md](dialogue-director-history.md). The
+  participants' views were built for the strict template; what Gemma 3
+  refused was the director's tool-call history from its second
+  checkpoint, now its own text turns.
 - **The clouds re-measured** — the folded shape is the natural one plus
   a system sentence; the August measurement stands.
 

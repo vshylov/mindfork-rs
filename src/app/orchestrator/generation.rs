@@ -3623,8 +3623,11 @@ struct DialogueState {
     /// How much of the transcript the director has been shown.
     rendered: usize,
     /// The director's persistent conversation: script increments as `user`
-    /// turns, its verdicts as its own tool-call turns (research §3.2) — which
-    /// keeps its context append-only, the cache-friendly shape §5.1 measured.
+    /// turns, its verdicts as its own **text** turns — each call rendered
+    /// `name(arguments)`, no `tool` result — which keeps its context
+    /// append-only, the cache-friendly shape §5.1 of the dialogue research
+    /// measured, and alternating on a template without a tool role, which
+    /// Gemma 3's is (docs/research/dialogue-director-history.md §3.1).
     director_msgs: Vec<ApiMessage>,
     tokens: u64,
     reasoning: u32,
@@ -4242,19 +4245,15 @@ impl DialogueCtx<'_> {
             _ => {}
         }
         // The verdicts stay in the director's own conversation, so it
-        // remembers what it already directed (research §3.2).
-        st.director_msgs.push(
-            crate::shared::api::contract::ApiMessage::assistant_tool_calls(
-                out.text.clone(),
-                out.calls.clone(),
-            ),
-        );
-        for call in &out.calls {
-            st.director_msgs.push(ApiMessage::tool(
-                call.id.clone(),
-                loc.t("prompt.dialogue.noted"),
-            ));
-        }
+        // remembers what it already directed (research §3.2) — as its own
+        // text turn rather than a tool-call turn with a `tool` result: a
+        // template without a tool role renders that result as a second user
+        // turn in a row and Gemma 3's refuses the pair
+        // (docs/research/dialogue-director-history.md §3.1).
+        st.director_msgs
+            .push(ApiMessage::assistant(dialogue::verdict_turn(
+                &out.text, &out.calls,
+            )));
         let (verdicts, _unknown) = dialogue::parse_verdicts(&out.calls);
         for verdict in verdicts {
             match verdict {

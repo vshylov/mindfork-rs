@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (50)
+## Entries (51)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -62,6 +62,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: background dialogues — a directed scene that outlives its turn (done)
 - Post-M9: `ToolOutcome.wrote` — a memory writer reports its write (done)
 - Post-M9: `ToolOutcome.prefill` and the page summary's request — reasoning muted, usage recorded (done)
+- Post-M9: the dialogue's director on Gemma's template — the checkpoint's history must alternate too (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -3631,3 +3632,47 @@ attached path saying nothing. Tests pin the record, the sample on both
 paths (and `None` without a summary or without a usage chunk), and the
 muted request; the live smoke `summary_usage_e2e_live` runs the JSON
 page under a budget on the LAN stack and the CPU build.
+
+### Post-M9: the dialogue's director on Gemma's template — the checkpoint's history must alternate too (done)
+
+**What.** The question the gemma-impersonation track left
+([docs/research/gemma-impersonation.md](../research/gemma-impersonation.md)
+§7): does a directed dialogue's first line go out as a system prompt with
+no turns, which Gemma 3's template would drop the persona with? The
+design [docs/research/dialogue-director-history.md](../research/dialogue-director-history.md),
+every fork at its recommendation (the user's decision, 2026-09-09).
+
+**Measured (stage 0).** Through `/v1/chat/completions` on Gemma 4 31B and
+Gemma 3 4B: a participant's view — the user-side prologue and the merge
+`participant_view` does — is accepted by both; the director's first
+checkpoint too; the director's **second** checkpoint — `[user,
+assistant(tool_call), tool("Noted."), user]` — is a `400` on Gemma 3:
+its template has no tool role, `llama-server` renders the `tool` result
+as a user turn, and the pair of user turns is refused. The clouds never
+saw the pair (their wires merge adjacent same-role turns); the dialogue
+track's Gemma arm was Gemma 4, whose template takes any shape — 53/53
+checkpoints there. Two repaired shapes — the verdict as the director's
+own text turn, and a stateless full-script checkpoint — are accepted by
+both templates and answer with the same verdict. A side fact: Gemma 3 4B
+names the verdict as text and never calls; the app reads no call as
+*continue*.
+
+**How.** `verdict_turn(text, calls)` in `features/tools/dialogue.rs`:
+the model's text, then each call as `name(arguments)` on its own line,
+empty arguments left out; `dialogue_checkpoint` pushes it as one
+`assistant` turn and no `tool` messages (F1a, F2a). The conversation
+stays persistent and append-only — the notes it gave are in the turns,
+the cached prefix is the same prefix — and alternates on every
+template. `prompt.dialogue.noted` left both locales with its only use.
+The unit test that pinned the second checkpoint at four messages pins
+three, the verdict's text, and no `Tool` role in the director's history.
+
+**Live** (F4a). `dialogue_e2e_live` and `background_dialogue_e2e_live` on
+Gemma 4: both scenes Completed at 5 spoken lines (1296 and 1256 tokens),
+stopped by the director at the third checkpoint — the second passed with
+the text-turn history. Gemma 3's acceptance of the shape is the stage-0
+measurement. Unit: 2987 green, 153 ignored (2986 / 153 before).
+
+**Not in this track** (§7): a verdict answered in text on a model that
+cannot call tools; the first checkpoint's prompt size on Gemma 3 with
+the schemas; the opening-only impersonation.

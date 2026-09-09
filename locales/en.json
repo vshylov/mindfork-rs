@@ -604,7 +604,6 @@
   "prompt.dialogue.script_opening": "The script so far:",
   "prompt.dialogue.script_more": "The dialogue continued:",
   "prompt.dialogue.ask": "What do you do?",
-  "prompt.dialogue.noted": "Noted.",
   "tool.send_followup_message.desc": "Allows writing one more message right after the current one (as a separate reply). First finish the current message, then call this tool — after it you can write a second reply.",
   "tool.rewrite_current_message.desc": "Cancels the message you are writing right now (in the current turn) and lets you write it anew. It concerns ONLY your own current reply — not the user's message and not your past answers. Call it if you realize you started answering incorrectly: the draft already written will be discarded, and the next reply will replace it.",
   "control.permission.followup": "Okay. Write the next message — it will be shown as a separate reply.",

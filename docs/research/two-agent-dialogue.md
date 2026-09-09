@@ -224,7 +224,12 @@ editing (F3) trivially correct.
   decided for every nested run. The director's conversation is **persistent
   and append-only** across checkpoints: new dialogue lines arrive as `user`
   content (rendered `Name: text`), its own verdicts stay as its `assistant`
-  tool-call turns with a short `tool` result ("noted"). Persistence gives
+  turns — as **text** since 2026-09-09, each call rendered `name(arguments)`
+  with no `tool` result: the tool-call turn with a "noted" result this
+  design first kept was refused by Gemma 3's template, which has no tool
+  role and rendered the result as a second user turn in a row; the §5.1
+  arm that passed it was Gemma 4's
+  ([dialogue-director-history.md](dialogue-director-history.md)). Persistence gives
   the director memory of its own notes ("I already told A to wrap up") and
   keeps its context cache-friendly (§2.5).
 
