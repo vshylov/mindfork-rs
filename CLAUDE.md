@@ -169,10 +169,10 @@ Backend selection: `MINDFORK_ENGINE_URL` (external, any OpenAI server) OR
 rented instead of hosted — `python tools/e2e_hf.py run`, see
 `docs/history/remote-e2e-hf.md`.
 
-## Status (2026-09-09, version 0.9.8)
+## Status (2026-09-10, version 0.9.8)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2987 unit tests
-green, 153 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **3015 unit tests
+green, 155 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -183,6 +183,32 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 `tools/doc_index_check.py`. A new track adds a line; a line that has stopped
 being recent is dropped, not shortened.
 
+- **The engine, downloaded — llama.cpp's backends named, fetched and
+  pointed at** — install.md §3 named `llama-server` the recommended
+  backend and assumed it existed, leaving the user to know that the newest
+  *tagged* release is not the newest build and that a CUDA build without
+  its separate `cudart-` archive does not error, it loads no device and
+  runs on the CPU. Now `mindfork llama backends | setup --backend <id> |
+  installed`, on the shape of `sandbox setup` — except that a pinned table
+  is what this cannot be: upstream ships ~13 nightlies a day and the names
+  drifted twice in fourteen months (Linux `.zip` → `.tar.gz`,
+  `win-hip-radeon` → `win-rocm-10.0`), so the backends are derived by a
+  parse anchored on both ends, an empty middle meaning `cpu`, and anything
+  that does not match is skipped rather than guessed. The API, not the
+  releases page, because only it carries a per-asset sha256 (63 KB against
+  490 KB); one directory per install under `data/llama/<backend>-<tag>/`,
+  resumable downloads, and the binary is run before the rename — the build
+  number must equal the tag's, and `--list-devices` says whether the GPU
+  backend found anything. `--set-binary` then writes the path — the
+  assistant's engine always, impersonation and embeddings only where they
+  were empty, the mode never switched behind the user (the fork turned on
+  reading the code: `managed` is already the default). Measured after:
+  b10883 cpu, cpu-b10871 beside it, vulkan reporting a real adapter, and
+  the settings written on a config whose embedder path was left alone; the
+  downloaded build served the app's live smoke set identically to a
+  hand-built one
+  ([docs/research/llama-cpp-download.md](docs/research/llama-cpp-download.md),
+  spec §3.4, [docs/journal/engine.md](docs/journal/engine.md)).
 - **The dialogue's director on Gemma's template — the checkpoint's
   history must alternate too** — the question the Gemma impersonation
   track left: does a scene's first line go out as a system prompt with
@@ -388,42 +414,6 @@ being recent is dropped, not shortened.
   starts no tools into a window already given back
   ([docs/research/quit-refunds-window.md](docs/research/quit-refunds-window.md),
   spec §17.6, §11.10, [docs/journal/engine.md](docs/journal/engine.md)).
-- **A stop gives the window back — the silent task returns at the next
-  landing** — the stop track's fork F4b, taken on its premise's other
-  reading: a stop postpones. Reflection advances its watermark and stamp
-  at spawn and the two consolidations reset their counters there, so a
-  stopped task skipped the window it was about to read; now the spawn
-  records what it advanced on the task's slot (`BgSlot.window`), the loop
-  reports whether a round of its tools ran before the stop
-  (`RoundsEnd::Cancelled { rounds }` → `BgOutcome::Cancelled { consumed }`),
-  and the landing puts the window back only when it had not been acted on
-  — a read window written twice is the defect the spawn-time rule exists
-  to prevent — the watermark restored and saved, a counter added back;
-  the ordinary cadence then spawns the task again. The roll, `Quit` and
-  the preemption retry are untouched
-  ([docs/research/stop-refunds-window.md](docs/research/stop-refunds-window.md),
-  spec §17.6, §11.10, [docs/journal/engine.md](docs/journal/engine.md)).
-- **`/tasks stop all` — every running silent task, in one word** — the
-  fifth word the previous track recorded as cheap to add when asked for.
-  `all` is a modifier checked before the kind table, the chat screen
-  collects the running kinds as bare `stop` already did, one note names
-  them with the tasks screen's words, and one intent carries them —
-  `ChatIntent::StopBackgroundTasks { kinds }`, which the runtime fans out
-  into the very `StopBackgroundTask` command `F6` sends, once per kind, so
-  the orchestrator is untouched (the alternative, a new command onto
-  `Quit`'s `cancel_all_bg`, was a second verb for one act); the two notes
-  that list the kinds now name `all` as the route for the whole set
-  ([docs/research/tasks-stop-all.md](docs/research/tasks-stop-all.md),
-  spec §11.7, §11.10, [docs/journal/ui-screens.md](docs/journal/ui-screens.md)).
-
-
-For what exists and how it works, read architecture.md and spec.md — they are
-the source of truth for the current state. For how any of it came to be, and
-what was measured and rejected on the way, read the journal file for that area
-(the map above). For what is still open, read `docs/roadmap.md`.
-
-## Pitfalls
-
 - **The TUI "hangs" on a headless launch** (no TTY) — this is expected; clean
   exit via `Esc`/`Ctrl+Q` is covered by unit tests. Live verification needs a
   real terminal.

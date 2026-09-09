@@ -303,6 +303,20 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   [chat-content-search.md §9.1](research/chat-content-search.md).
 
 ## Engine and reliability
+- **The managed binary is not looked up next to the application.** spec §3.4
+  says the `llama-server` path "is looked up in `PATH` and next to the
+  application binary"; the launcher is `Command::new(&cfg.binary)` verbatim
+  (`shared/api/managed.rs`), so only the `PATH` half exists. With
+  `data/llama/<backend>-<tag>/` now a real place for it to be
+  ([llama-cpp-download.md](research/llama-cpp-download.md) §8), "next to the
+  application" has a meaning worth either implementing — an empty path
+  resolving to the newest install — or striking from the spec. Small, its own
+  PR either way.
+- **Managing downloaded engine builds.** `mindfork llama installed` shows what
+  is on disk and its size; nothing removes one. Several builds at 1.1 GB each
+  add up, and a prune that deletes the build you were about to roll back to is
+  a trap, so this wants an explicit `llama remove <id>` rather than a policy —
+  on demand ([llama-cpp-download.md](research/llama-cpp-download.md) §8).
 - **Provider bridges** — the "any OpenAI-compatible endpoint" pattern
   (external + LiteLLM/OpenRouter) is now documented in install.md §3.1, together
   with the key such a gateway needs

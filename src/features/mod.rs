@@ -23,6 +23,7 @@ pub mod image_fetch;
 pub mod image_prepare;
 pub mod impersonation_command;
 pub mod import;
+pub mod llama_setup;
 pub mod mcp_import;
 pub mod profile_command;
 pub mod profiles;

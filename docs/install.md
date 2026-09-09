@@ -298,6 +298,10 @@ vLLM, LM Studio, Ollama …). The recommended and verified backend is
 **llama.cpp `llama-server`** (prebuilt Windows/CUDA binaries). The whole chain
 (streaming, EOS stop, tool-calling, "thoughts") is verified on Gemma 4 E4B-it.
 
+> **No `llama-server` yet?** `mindfork llama backends` lists the builds
+> published for your machine and `mindfork llama setup --backend <id>` downloads
+> one — see [§3.1](#31-downloading-llamacpp-mindfork-llama).
+
 > Originally designed around `xinfer`, but it turned out too raw (incoherent
 > output on Gemma 4, builds poorly on Windows). The protocol is the standard
 > OpenAI-compatible one (`/v1/chat/completions` streamed over SSE, `/v1/embeddings`),
@@ -447,7 +451,87 @@ llama-server -m google_gemma-4-E4B-it-Q4_1.gguf \
 `--reasoning-format` flag (e.g. `auto`) for thinking models; otherwise mindfork
 falls back to parsing `<think>…</think>` from the text.
 
-### 3.1. Cloud providers and API keys
+### 3.1. Downloading llama.cpp (`mindfork llama`)
+
+If you have no `llama-server` yet, the app can fetch one. It reads the
+[llama.cpp releases](https://github.com/ggml-org/llama.cpp/releases), keeps the
+builds for **your** OS and architecture, and names the backends they were built
+with:
+
+```bash
+mindfork llama backends                       # what is on offer, and how big
+mindfork llama setup --backend vulkan         # download, verify and unpack it
+mindfork llama installed                      # what is already downloaded
+```
+
+```
+Build b10883 (2026-09-09), windows/x86_64:
+  cpu                   17 MB
+  cuda-12.4            615 MB  (+ CUDA runtime)
+  cuda-13.3            515 MB  (+ CUDA runtime)
+  openvino-2026.3.1     76 MB
+  rocm-10.0            232 MB
+  sycl                 114 MB
+  vulkan                30 MB
+```
+
+**Which backend.** `cpu` works anywhere and is the smallest. `vulkan` is the
+easy GPU choice — it runs on NVIDIA *and* AMD through the driver you already
+have, and costs 30 MB against CUDA's 600. `cuda-*` is the fastest on NVIDIA;
+pick the version your driver supports, and note that the CUDA runtime DLLs are
+downloaded with it (that is where most of the size goes). `rocm-*` is AMD's own
+stack, `sycl`/`openvino` are Intel's. The list is derived from the release, so a
+backend upstream adds or renames shows up without an app update.
+
+**Options.**
+
+| | |
+|---|---|
+| `--backend <ID>` | which backend to install; there is no default — the sizes differ too much to choose for you |
+| `--build <TAG>` | pin a build, e.g. `--build b10883`. Without it, the newest one. llama.cpp publishes about a dozen builds a day, so pinning is how you keep a known-good one |
+| `--no-cudart` | skip the CUDA runtime (only if it is already installed on the machine) |
+| `--set-binary` | write the installed binary's path into the settings afterwards |
+| `--force` | download and unpack again over an existing install |
+
+Each install goes into its own directory — `data/llama/<backend>-<tag>/`, e.g.
+`data/llama/vulkan-b10883/` — so several can coexist and rolling back to the
+previous one is a matter of pointing the setting at it. Every downloaded file is
+checked against the sha256 the release publishes, and an interrupted download is
+resumed rather than restarted. When the unpacking is done the command runs the
+binary it just wrote: it prints the build number (which must match the tag) and
+the compute devices the backend found. On a GPU backend an empty device list is
+reported explicitly — that means the driver or its runtime is missing and the
+server would silently run on the CPU.
+
+Then put the printed path into the settings (`Ctrl+P` → *Model/server* →
+*llama-server binary*), or into `MINDFORK_LLAMA_BIN` — or let the command do it:
+
+```bash
+mindfork llama setup --backend vulkan --set-binary
+```
+
+`--set-binary` writes the path **after** a successful install, never on failure.
+It always sets the assistant's engine; the impersonation engine and the embedding
+server get the same path only if they had none of their own, because one install
+serves all three but a path you typed there is a deliberate choice (a different
+build for the embedder is a legitimate setup). It does **not** switch the engine
+mode: `managed` is already the default, so a config in another mode is one you
+switched on purpose — the command says so instead, and the path waits.
+
+**Keep the whole folder:** `llama-server` is a small launcher that loads its
+libraries from the files next to it, so moving the executable elsewhere breaks
+it.
+
+The downloads are not small (see the table), and `data/` is next to the binary in
+portable mode — in a development checkout that means `target/debug/data/`, which
+`cargo clean` removes. Nothing under `data/llama/` is included in a backup or
+touched by a restore: it is re-downloadable, not user data.
+
+> Behind a shared address you can run into GitHub's unauthenticated API limit (60
+> requests an hour per address). The command says so in plain words; setting
+> `GITHUB_TOKEN` lifts it.
+
+### 3.2. Cloud providers and API keys
 
 Besides a local server, the engine can be a cloud: **OpenAI**, **Google Gemini**,
 **Claude** (Anthropic), or **Grok** (xAI). The mode is chosen in settings

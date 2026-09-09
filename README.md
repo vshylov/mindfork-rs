@@ -346,8 +346,23 @@ without it), while a single-model server ignores it. Leave it blank and the app
 asks the server what it is running, and shows that name next to the chat title
 and on every reply.
 
-**A managed server.** The app launches and supervises `llama-server` itself:
-set the binary and the GGUF paths in settings (`Ctrl+P`), or via
+**A managed server.** The app launches and supervises `llama-server` itself.
+No binary yet? It can fetch one:
+
+```bash
+mindfork llama backends                 # what llama.cpp publishes for your machine
+mindfork llama setup --backend vulkan --set-binary   # …and point the settings at it
+```
+
+`backends` reads the llama.cpp releases and lists the builds for your OS and
+architecture by the backend they were built with — `cpu`, `vulkan`, `cuda-13.3`,
+`rocm-10.0`, … — with their sizes; `setup` downloads one into
+`data/llama/<backend>-<tag>/`, checks it against the sha256 the release
+publishes, and then runs it to report the build number and the compute devices
+it found. `--set-binary` writes the path into the settings after a successful
+install; `--build <tag>` pins a build, and llama.cpp ships about a dozen a day.
+
+Then set the binary and the GGUF paths in settings (`Ctrl+P`), or via
 `MINDFORK_LLAMA_BIN` and `MINDFORK_MODEL` (plus optional `MINDFORK_NGL`,
 `MINDFORK_CTX`, `MINDFORK_PORT`). A missing model file is reported immediately
 instead of hanging on "connecting…". Settings also expose **FlashAttention**
@@ -369,6 +384,10 @@ a draft model, including `draft-mtp` for MTP models — a multiplier speed-up).
 - **Python sandbox**: `mindfork sandbox setup` provisions the isolated WASIX
   environment in one command (everything downloaded from a lock list with
   sha256 verification).
+- **The engine itself**: `mindfork llama backends` / `mindfork llama setup
+  --backend <id>` download a llama.cpp `llama-server` build for your machine,
+  verified against the release's own sha256 (see
+  [docs/install.md §3.1](docs/install.md)).
 
 The long version — modes, data paths, locales, import, live tests — is in
 **[docs/install.md](docs/install.md)**.

@@ -33,11 +33,14 @@ there are no backport branches.
 - **No telemetry.** The app makes network requests only to the endpoints you
   configure (inference server, embedder, TTS, MCP servers) — plus, when you
   explicitly enable the web tools (**off by default**), the search engines and
-  pages they fetch, and the one-time Python-sandbox setup downloads, every one
-  of which is verified against a pinned sha256: the lock list for what the app
-  downloads itself, and `PYTHON_PACKAGE_SHA256` for `python.webc`, which
-  `wasmer` fetches on our behalf and which is therefore checked as a finished
-  file.
+  pages they fetch, and the downloads you ask for by running `mindfork sandbox
+  setup` or `mindfork llama setup`, every one of which is verified against a
+  sha256 before it is unpacked. For the sandbox that digest is a pinned lock
+  list, plus `PYTHON_PACKAGE_SHA256` for `python.webc`, which `wasmer` fetches
+  on our behalf and which is therefore checked as a finished file. For the
+  engine it is the digest the llama.cpp release publishes for that exact asset,
+  read from the same release listing as the download URL; an asset the release
+  publishes no digest for is not installed.
 - **Secrets are stored encrypted and machine-bound**: cloud API keys and MCP
   server tokens entered in settings are encrypted with DPAPI on Windows and a
   `machine-id`-derived key on Linux, so a copied settings file does not carry

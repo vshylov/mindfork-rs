@@ -454,6 +454,10 @@ src/
 │  │                        discarding keys typed while a long command was running
 │  ├─ sandbox_setup.rs      Python sandbox provisioning (mindfork sandbox setup): wasmer +
 │  │                        python.webc + wheels from a lock list (sha256); cache warmup
+│  ├─ llama_setup.rs        llama.cpp downloader (mindfork llama backends|setup|installed):
+│  │                        the backends are DERIVED from the release's asset names, not
+│  │                        pinned; sha256 from the release, resumable download, one
+│  │                        directory per install under data/llama/ (spec §3.4)
 │  └─ import.rs             import from the neutral mindfork-import format
 │                           (docs/import-format.md): profiles + chats from external
 │                           converters, idempotent (UUIDv5 from keys)
@@ -3202,8 +3206,20 @@ Principles:
   `import-lamellama` was removed — it hints at the replacement),
   `backup [-o FILE] [-c 0..9]`/`restore <archive>` (backup/restore,
   `features/backup.rs`; take single-instance), `sandbox setup [--force]`,
+  `llama backends|setup|installed` (the llama.cpp downloader,
+  `features/llama_setup.rs`; `setup` takes single-instance),
   `locales export <code> -o FILE`. Subcommands run without the TUI and exit
   the process.
+  - **The two CLI writers of user data share their precautions.**
+    `sandbox setup --enable-python` and `llama setup --set-binary` both go
+    through `open_config_for_cli_write` — `data_migration::run` (the ADR 0006
+    downgrade guard) and language seeding on a fresh `settings.json` — and both
+    are applied **past the `?`**, so a failed provisioning never writes.
+  - **`llama setup` exits `2` when `--backend` is omitted**, after printing
+    the list: the backends differ by a factor of thirty-five in download
+    size, so there is no default to pick on the user's behalf
+    ([docs/research/llama-cpp-download.md](research/llama-cpp-download.md)
+    §6 F3). That is the same code a parse error exits with.
   - **A "peek" phase before argument parsing.** `Paths::resolve()` computes
     the root/language **without creating directories** (`--help`/
     `--version` never touch the disk); `ensure_dirs` creates directories
