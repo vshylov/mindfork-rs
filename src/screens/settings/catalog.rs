@@ -152,17 +152,18 @@ impl SettingsScreen {
         if t.web_provider == WebProvider::FreeOnly {
             return Vec::new();
         }
+        let name = SearchSlot::Tavily.display_name();
         vec![
             secret_row(
                 FieldId::TWebTavilyKey,
                 self.secret_field_present(FieldId::TWebTavilyKey),
-                loc.t("ui.settings.field.tavily_api_key"),
+                &api_key_label(Some(name), loc),
                 DESC_SEARCH_API_KEY,
                 loc,
             ),
             text_row(
                 FieldId::TWebTavilyKeyEnv,
-                loc.t("ui.settings.field.api_key_env_opt"),
+                &api_key_env_opt_label(name, loc),
                 &t.web_tavily_key_env,
             )
             .describe(loc.t("ui.settings.desc.search_api_key_env")),
@@ -289,7 +290,7 @@ impl SettingsScreen {
                     | ServerMode::Grok => rows.extend(grouped(
                         loc.t("ui.settings.group.provider"),
                         cloud_rows(
-                            x.cloud(),
+                            x.cloud().zip(x.mode.cloud_provider()),
                             FieldId::XModelName,
                             FieldId::XApiKey,
                             FieldId::XApiKeyEnv,
@@ -412,7 +413,7 @@ impl SettingsScreen {
                     | ImpersonationMode::Grok => rows.extend(grouped(
                         loc.t("ui.settings.group.provider"),
                         cloud_rows(
-                            x.cloud(),
+                            x.cloud().zip(x.mode.cloud_provider()),
                             FieldId::IxModelName,
                             FieldId::IxApiKey,
                             FieldId::IxApiKeyEnv,
@@ -490,6 +491,7 @@ impl SettingsScreen {
                     | ServerMode::Grok => {
                         let none = CloudSettings::default();
                         let c = e.cloud().unwrap_or(&none);
+                        let name = e.mode.cloud_provider().map(CloudProvider::display_name);
                         rows.extend(grouped(
                             loc.t("ui.settings.group.provider"),
                             vec![
@@ -502,11 +504,12 @@ impl SettingsScreen {
                                 api_key_row(
                                     FieldId::EApiKey,
                                     self.secret_field_present(FieldId::EApiKey),
+                                    name,
                                     loc,
                                 ),
                                 text_row(
                                     FieldId::EApiKeyEnv,
-                                    loc.t("ui.settings.field.api_key_env"),
+                                    &api_key_env_label(name, loc),
                                     &c.api_key_env,
                                 )
                                 .describe(loc.t(DESC_API_KEY_ENV)),
@@ -585,6 +588,7 @@ impl SettingsScreen {
                     _ => {
                         let none = TtsCloudSettings::default();
                         let c = t.cloud().unwrap_or(&none);
+                        let name = t.mode.cloud_provider().map(CloudProvider::display_name);
                         vec![
                             text_row(
                                 FieldId::TtsModelName,
@@ -613,11 +617,12 @@ impl SettingsScreen {
                             api_key_row(
                                 FieldId::TtsApiKey,
                                 self.secret_field_present(FieldId::TtsApiKey),
+                                name,
                                 loc,
                             ),
                             text_row(
                                 FieldId::TtsApiKeyEnv,
-                                loc.t("ui.settings.field.api_key_env"),
+                                &api_key_env_label(name, loc),
                                 &c.api_key_env,
                             )
                             .describe(loc.t(DESC_API_KEY_ENV)),
@@ -891,13 +896,13 @@ impl SettingsScreen {
                 secret_row(
                     FieldId::VideoApiKey,
                     self.secret_field_present(FieldId::VideoApiKey),
-                    loc.t("ui.settings.field.api_key"),
+                    &api_key_label(Some(CloudProvider::Gemini.display_name()), loc),
                     DESC_VIDEO_API_KEY,
                     loc,
                 ),
                 text_row(
                     FieldId::VideoApiKeyEnv,
-                    loc.t("ui.settings.field.api_key_env_opt"),
+                    &api_key_env_opt_label(CloudProvider::Gemini.display_name(), loc),
                     &self.config.video.api_key_env,
                 )
                 .describe(loc.t("ui.settings.desc.video_api_key_env")),

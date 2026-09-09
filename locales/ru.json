@@ -1397,7 +1397,7 @@
   ],
   "ui.settings.desc.api_key_unsupported": [
     "На этой системе сохранение ключей недоступно (нет идентификатора машины).",
-    "Используйте переменную окружения — поле «API-ключ (env)» ниже."
+    "Используйте переменную окружения — поле API-ключа (env) ниже."
   ],
   "ui.settings.desc.api_key_env": [
     "Имя переменной окружения с API-ключом (например OPENAI_API_KEY). Хранится",
@@ -1602,8 +1602,10 @@
   "ui.settings.value.key_unset": "не задан",
   "ui.settings.value.key_unsupported": "недоступно на этой системе",
   "ui.settings.field.api_key": "API-ключ",
+  "ui.settings.field.api_key_named": "API-ключ {name}",
   "ui.settings.field.backup_password": "Пароль резервных копий",
   "ui.settings.field.api_key_env": "API-ключ (env)",
+  "ui.settings.field.api_key_env_named": "API-ключ {name} (env)",
   "ui.settings.field.base_url": "Base URL (опц.)",
   "ui.settings.field.subsection": "Подсекция",
   "ui.settings.field.voice": "Голос",
@@ -1616,6 +1618,7 @@
   "ui.settings.field.mode": "Режим",
   "ui.settings.field.model_opt": "Модель (опц.)",
   "ui.settings.field.api_key_env_opt": "API-ключ (env, опц.)",
+  "ui.settings.field.api_key_env_opt_named": "API-ключ {name} (env, опц.)",
   "ui.settings.field.api_key_opt": "API-ключ (опц.)",
   "ui.settings.field.max_tool_rounds": "Лимит раундов инструментов",
   "ui.settings.field.confirm_dangerous": "Подтверждать опасные вызовы",
@@ -1631,7 +1634,6 @@
   "ui.settings.field.web_allow_private": "Разрешить локальные адреса",
   "ui.settings.field.web_provider": "Поисковый провайдер",
   "ui.settings.desc.web_provider": "Может ли web_search пользоваться поисковым провайдером, для которого у тебя есть ключ. Автоматически — сначала Tavily, если ключ задан, затем бесплатные поисковики. Только бесплатные — сохранённый ключ не используется вовсе. Бесплатные поисковики всегда остаются последним запасным вариантом, так что поиск работает и вовсе без ключа; но они жёстко режут автоматические запросы, и именно ключ делает длинную цепочку поисков надёжной.",
-  "ui.settings.field.tavily_api_key": "Ключ Tavily",
   "ui.settings.desc.search_api_key": "Ключ поискового провайдера, сохранённый на этом компьютере (зашифрован машинным ключом). На другом компьютере его нужно ввести заново. Бесплатный тариф Tavily — 1000 поисков в месяц, карта не нужна.",
   "ui.settings.desc.search_api_key_env": "Имя переменной окружения с ключом этого провайдера — запасной вариант, когда ключ не сохранён в настройках.",
   "ui.settings.choice.web_provider_auto": "автоматически",

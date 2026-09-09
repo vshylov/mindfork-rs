@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (65)
+## Entries (66)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -77,6 +77,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: stopping a silent task from the tasks screen (done)
 - Post-M9: `/tasks stop <kind>` — the typed route to stopping a silent task (done)
 - Post-M9: `/tasks stop all` — every running silent task, in one word (done)
+- Post-M9: an API-key row names whose key it is (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -3481,3 +3482,54 @@ the flags); one note per task (the feed is not a log); a key for "stop all"
 on the tasks screen (`F6` is per row, the footer names what works on the
 selected row); bare `stop` meaning everything (the `/subagents stop` mirror
 stands).
+
+### Post-M9: an API-key row names whose key it is (done)
+
+**What.** The two rows the user named — the web-search key's env row and the
+*Video* group's pair — read "API key (env, opt.)" and "API key", saying
+nothing about the account behind them; the same plain wording sits under
+every cloud mode of *Model/server*, *Impersonation*, *Memory → embeddings*
+and *Speech*. A stored key is shared across one provider's chat,
+impersonation, embeddings and speech (ADR 0008) and those four slots may be
+set to four different providers at once, so the row carrying the key was the
+one place that could not say which secret it addresses. No design doc — a
+labelling change; the scope (the two groups the user named **plus** the four
+cloud subsections, where the mode row above names the provider but the key
+row did not) was the user's decision, 2026-09-09.
+
+**How.** Three bundle keys with a `{name}` placeholder —
+`ui.settings.field.api_key_named` / `…_env_named` / `…_env_opt_named` ("{name}
+API key" in en, the name after the noun in ru) — rendered by `api_key_label` /
+`api_key_env_label` / `api_key_env_opt_label` in the settings helpers, so the
+three shapes of one label cannot drift apart. The name itself comes from the
+type that owns it: `CloudProvider::display_name` ("OpenAI", "Gemini",
+"Claude", "Grok" — deliberately not `key()`, whose spelling is persisted
+storage) and `SearchSlot::display_name` ("Tavily"), which `web.rs`'s
+`ApiBackend::name` now reads too, so the settings row and the "which backend
+answered" line say one word. `api_key_row` takes the name; `cloud_rows` takes
+the provider's settings **and** which provider that is as one argument,
+`Option<(&CloudSettings, CloudProvider)>` — both are read off the same mode
+(`x.cloud().zip(x.mode.cloud_provider())`), so they are `None` together, and
+the argument count stays under clippy's ceiling. The video row passes
+`CloudProvider::Gemini` (the slot has no mode of its own — spec §9.9), the
+search rows `SearchSlot::Tavily`. The `external` rows are untouched: behind a
+URL the user typed there is no provider to name, and `api_key_label(None)`
+falls back to the plain key that was already there.
+
+**Tests**: +1 — `screens/settings/tests.rs::api_key_rows_name_their_provider`
+(the four engine slots set to three different providers, plus the web-search
+and video pairs — each of the twelve labels naming its own; then `external`
+mode, whose label names none of the four), on the new `field_label` lookup beside
+`field_desc` — **2973 unit tests green, 150 `#[ignore]`**; the two
+`settings-tools-*-en` demo dumps and their PNG/SVG renders regenerated (the
+two web-search rows; the value column did not move).
+
+**Live**: not required — labels only, no engine/memory/tool path touched.
+
+**Rejected**: naming the `external` rows from the slot ("Chat server key" —
+the slot is not a provider, and the label would claim knowledge the app does
+not have); a bundle key per provider (four spellings of one label, twelve
+with the env variants, and a fifth provider would add three more); keeping
+`ui.settings.field.tavily_api_key` ("Tavily key") beside the generated
+"Tavily API key (env, opt.)" — two spellings of one provider's name, one
+line apart, is exactly the drift the template removes.

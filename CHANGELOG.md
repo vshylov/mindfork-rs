@@ -185,6 +185,15 @@ split by subsystem.
 
 ### Changed
 
+- **An API-key field says whose key it is.** Every row that holds a key now
+  names its provider — *OpenAI API key*, *Gemini API key (env)*, *Tavily API
+  key (env, opt.)* — in the cloud modes of *Model/server*, *Impersonation*,
+  *Memory → embeddings* and *Speech*, and in the *Web search* and *Video*
+  groups of *Tools*. One key serves everything that provider does, and the
+  four slots can be set to four different providers at once, so a row reading
+  just *API key* never said which one it was for. In *external* mode there is
+  no provider to name and the field is unchanged.
+
 - **A stopped background task no longer skips what it was about to read.**
   Stopping a reflection or a consolidation (`F6` on the tasks screen,
   `/tasks stop`) before it had done anything gives its window back: the

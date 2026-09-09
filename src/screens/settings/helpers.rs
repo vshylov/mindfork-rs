@@ -278,12 +278,14 @@ pub(super) fn managed_rows(
     rows
 }
 
-/// Cloud-provider fields (model/API key/API-key env/base URL). `cloud` —
-/// the active provider's settings (`None` is unlikely in cloud mode — then empty
-/// fields). `key_present` — whether the provider's key is stored on this machine
+/// Cloud-provider fields (model/API key/API-key env/base URL). `cloud` — the
+/// active provider's settings **and which provider that is**: both are read off
+/// the same mode, so they arrive as one argument and are `None` together (in a
+/// cloud mode `None` is unlikely — then empty fields and unnamed key rows).
+/// `key_present` — whether the provider's key is stored on this machine
 /// (the "API key" field's value is a status, not a secret).
 pub(super) fn cloud_rows(
-    cloud: Option<&CloudSettings>,
+    cloud: Option<(&CloudSettings, CloudProvider)>,
     model_name: FieldId,
     api_key: FieldId,
     api_key_env: FieldId,
@@ -292,17 +294,15 @@ pub(super) fn cloud_rows(
     loc: &'static Locale,
 ) -> Vec<FieldRow> {
     let none = CloudSettings::default();
+    let (cloud, provider) = cloud.unzip();
     let c = cloud.unwrap_or(&none);
+    let name = provider.map(CloudProvider::display_name);
     vec![
         text_row(model_name, loc.t("ui.settings.field.model"), &c.model_name)
             .describe(loc.t(DESC_MODEL_NAME)),
-        api_key_row(api_key, key_present, loc),
-        text_row(
-            api_key_env,
-            loc.t("ui.settings.field.api_key_env"),
-            &c.api_key_env,
-        )
-        .describe(loc.t(DESC_API_KEY_ENV)),
+        api_key_row(api_key, key_present, name, loc),
+        text_row(api_key_env, &api_key_env_label(name, loc), &c.api_key_env)
+            .describe(loc.t(DESC_API_KEY_ENV)),
         text_row(url, loc.t("ui.settings.field.base_url"), &c.url),
     ]
 }
@@ -324,18 +324,45 @@ pub(super) fn is_secret_field(id: FieldId) -> bool {
     )
 }
 
+/// The label of a row holding an API key, naming **whose** key it is when that
+/// is determined (spec §11.6). One stored key serves chat, impersonation,
+/// embeddings and speech of one provider (ADR 0008) and those slots may point at
+/// different providers at once, so a row that knows its provider says the name;
+/// `None` — an external server, whose URL is whatever the user typed, and the
+/// label stays plain.
+pub(super) fn api_key_label(name: Option<&str>, loc: &'static Locale) -> String {
+    match name {
+        Some(n) => loc.tf("ui.settings.field.api_key_named", &[("name", n)]),
+        None => loc.t("ui.settings.field.api_key").to_string(),
+    }
+}
+
+/// The same for the env-variable row under it ("<Provider> API key (env)").
+pub(super) fn api_key_env_label(name: Option<&str>, loc: &'static Locale) -> String {
+    match name {
+        Some(n) => loc.tf("ui.settings.field.api_key_env_named", &[("name", n)]),
+        None => loc.t("ui.settings.field.api_key_env").to_string(),
+    }
+}
+
+/// The optional env row ("<Provider> API key (env, opt.)") — for the slots whose
+/// provider is fixed by the feature itself (web search, video), so there is no
+/// unnamed case to fall back to.
+pub(super) fn api_key_env_opt_label(name: &str, loc: &'static Locale) -> String {
+    loc.tf("ui.settings.field.api_key_env_opt_named", &[("name", name)])
+}
+
 /// The "API key" field row: the value is a **status**, not a secret ("configured (this
 /// computer)" / "not set"; if the machine doesn't support encryption — "unavailable",
 /// the env path remains). Editing opens an empty masked editor: a stored
 /// key can't be shown, entering it = replacing it. See docs/research/api-key-storage.md.
-pub(super) fn api_key_row(id: FieldId, present: bool, loc: &'static Locale) -> FieldRow {
-    secret_row(
-        id,
-        present,
-        loc.t("ui.settings.field.api_key"),
-        DESC_API_KEY,
-        loc,
-    )
+pub(super) fn api_key_row(
+    id: FieldId,
+    present: bool,
+    name: Option<&str>,
+    loc: &'static Locale,
+) -> FieldRow {
+    secret_row(id, present, &api_key_label(name, loc), DESC_API_KEY, loc)
 }
 
 /// The same row for an **external** server's key — the storage and every behaviour
