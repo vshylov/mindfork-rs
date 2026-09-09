@@ -6465,3 +6465,138 @@ async fn loop_prefill_e2e_live() {
         (false, Some(text)) => panic!("a fast host was told: {text}"),
     }
 }
+
+/// An engine that forwards every request to the live one and keeps it beside
+/// the exact prompt size the server reported for it — the stage-0 probe of
+/// docs/research/roll-usage-calibration.md §2.1 as a test.
+/// What the probe keeps: each request beside its exact prompt size.
+type Seen = Arc<std::sync::Mutex<Vec<(crate::shared::api::ChatRequest, u32)>>>;
+
+struct EstimateProbe {
+    inner: Arc<dyn EngineBackend>,
+    seen: Seen,
+}
+
+#[async_trait::async_trait]
+impl EngineBackend for EstimateProbe {
+    async fn chat_stream(
+        &self,
+        req: crate::shared::api::ChatRequest,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> anyhow::Result<crate::shared::api::contract::ChatStream> {
+        use futures_util::StreamExt as _;
+        let mut inner = self.inner.chat_stream(req.clone(), cancel).await?;
+        let seen = self.seen.clone();
+        // Kept the moment the usage arrives: the consumer drops the stream at
+        // `Finished` without reading it to its end, so nothing after the loop
+        // would run.
+        let s = async_stream::stream! {
+            while let Some(chunk) = inner.next().await {
+                if let ChatChunk::Usage(u) = &chunk {
+                    seen.lock().unwrap().push((req.clone(), u.prompt_tokens));
+                }
+                yield chunk;
+            }
+        };
+        Ok(Box::pin(s))
+    }
+
+    async fn context_budget(&self) -> Option<u32> {
+        self.inner.context_budget().await
+    }
+}
+
+/// The prompt estimate against the server's exact count, on the requests the
+/// app itself builds (docs/research/roll-usage-calibration.md §6): three
+/// turns with the default tool set, then `/compact`. A turn's exact over its
+/// estimate within 0.75–1.25 — the schemas counted, the compact JSON a
+/// little denser than four bytes a token; the roll's at most 1.0 — prose
+/// over-counted, never under (R3).
+///
+/// `MINDFORK_ENGINE_URL=…/v1 cargo test prompt_estimate_e2e_live -- --ignored --nocapture`.
+#[tokio::test]
+#[ignore = "requires a running llama-server (MINDFORK_ENGINE_URL)"]
+async fn prompt_estimate_e2e_live() {
+    let Some(live) = live_backend() else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    let probe = Arc::new(EstimateProbe {
+        inner: live,
+        seen: Arc::new(std::sync::Mutex::new(Vec::new())),
+    });
+    let config = AppConfig {
+        compaction: crate::shared::config::CompactionSettings {
+            enabled: true,
+            summary_words: 150,
+            tail_tokens: 120,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let (_d, cmd_tx, mut evt_rx, handle) =
+        spawn_orch_cfg(Some(probe.clone() as Arc<dyn EngineBackend>), config);
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+    for text in [
+        "Расскажи в двух предложениях, зачем нужны индексы в базах данных.",
+        "В двух предложениях: чем отличается кэш от буфера?",
+        "В двух предложениях: что такое идемпотентность запроса?",
+    ] {
+        let (reply, _) = run_turn_capture(&cmd_tx, &mut evt_rx, text).await;
+        eprintln!("reply: {}", reply.chars().take(60).collect::<String>());
+        wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatList(_)))
+            .await
+            .unwrap();
+    }
+    cmd_tx.send(AppCommand::Compact).unwrap();
+    let landed = wait_for(&mut evt_rx, |e| {
+        matches!(e, AppEvent::Compacted { .. } | AppEvent::Error(_))
+    })
+    .await
+    .unwrap();
+    assert!(
+        matches!(landed, AppEvent::Compacted { .. }),
+        "the roll did not land: {landed:?}"
+    );
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    let roll_system = crate::features::compaction::summary_system_message(
+        crate::shared::i18n::locale(crate::shared::i18n::Lang::default()),
+        150,
+    );
+    let seen = probe.seen.lock().unwrap().clone();
+    let (mut turns, mut rolls) = (0, 0);
+    for (req, exact) in &seen {
+        let estimate = super::super::generation::estimate_prompt_tokens(req);
+        let ratio = *exact as f64 / estimate as f64;
+        let is_roll = req.system.as_deref() == Some(roll_system.as_str());
+        let kind = if !req.tools.is_empty() {
+            "turn"
+        } else if is_roll {
+            "roll"
+        } else {
+            "silent"
+        };
+        eprintln!(
+            "prompt estimate: {kind:<6} tools={:>2} estimate={estimate:>5} exact={exact:>5} exact/estimate={ratio:.2}",
+            req.tools.len()
+        );
+        if !req.tools.is_empty() {
+            turns += 1;
+            assert!(
+                (0.75..=1.25).contains(&ratio),
+                "a turn's estimate is off by more than a quarter: {ratio:.2}"
+            );
+        } else if is_roll {
+            rolls += 1;
+            assert!(ratio <= 1.0, "the roll under-counted: {ratio:.2}");
+        }
+    }
+    assert!(
+        turns >= 3 && rolls >= 1,
+        "{turns} turns, {rolls} rolls seen"
+    );
+}

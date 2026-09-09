@@ -1,8 +1,10 @@
 # The roll's usage for the budget — and the estimate it would calibrate
 
-> **Status:** proposed (2026-09-09) — stage 0 is the measurement in §2.1
+> **Status:** implemented (2026-09-09) — every fork at its recommendation
+> (the user's decision, 2026-09-09); stage 0 is the measurement in §2.1
 > (every calibration of one live session beside the request's parts, on
-> the GPU stack). The item the roll-timings track recorded
+> the GPU stack), stage 1's live run is in §6.1. The item the roll-timings
+> track recorded
 > ([roll-timings.md](roll-timings.md) §7, fork F1b's consumer): the
 > compaction roll prices its reservation from the budget's calibrated
 > estimate and never records its exact `usage`, as every loop's round
@@ -228,7 +230,38 @@ compression S2).
 
 ### 6.1 Runs
 
-*(filled in at stage 1.)*
+`prompt_estimate_e2e_live` on the GPU stack (Qwen3.6-27B) — three turns
+with the default tool set, then `/compact`, every request kept beside the
+exact count the server reported for it:
+
+| request | tools | estimate | exact | exact / estimate |
+|---|---:|---:|---:|---:|
+| turn 1 | 24 | 4791 | 4349 | 0.91 |
+| turn 2 | 24 | 4993 | 4455 | 0.89 |
+| turn 3 | 24 | 5226 | 4584 | 0.88 |
+| the title | 0 | 355 | 216 | 0.61 |
+| **the roll** | 0 | 815 | 484 | 0.59 |
+
+The turn's estimate lands 9–12 % over the exact — the band §5's F5 set
+(0.75–1.25) with room on both sides — and the two prose requests over-count
+by four tenths: Russian at six bytes a token against the estimator's four.
+No under-count. A fresh chat's first request is priced at 4791 where it
+was priced at 85. The LAN regression pair after it —
+`compaction_preserves_a_planted_fact_e2e_live` (the planted code answered
+after the roll), `roll_prefill_e2e_live` (2.8 s, no note) — 2/2.
+
+One unit test moved with the estimate:
+`a_childs_second_round_reserves_at_least_its_last_exact_size` had set its
+pool at 8000 on the reading that a child's stream reserves "about 2100" —
+the estimate without the schemas plus the cap; with the schemas counted a
+child reserves about 6600, so two raw streams no longer fit 8000. The pool
+is 16 000 now and the floored round reports 12 000 generated tokens: two
+raw fit, the floored one does not — the property the test is about, at
+the estimate's new size. One probe run was lost to the probe itself: the
+consumer drops a stream at `Finished` without reading it to its end, so a
+record made after the loop never ran; the probe records at the usage chunk.
+
+Unit: 2969 green, 150 ignored (two tests and the smoke added).
 
 ## 7. Not in this track
 

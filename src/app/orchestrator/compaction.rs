@@ -491,11 +491,8 @@ fn spawn_compact(
         cut: _,
     } = plan;
     tokio::spawn(async move {
-        let need = sessions.price(
-            super::generation::estimate_prompt_tokens(&request),
-            0,
-            request.sampling.max_tokens.map(|m| m as u64),
-        );
+        let estimate = super::generation::estimate_prompt_tokens(&request);
+        let need = sessions.price(estimate, 0, request.sampling.max_tokens.map(|m| m as u64));
         // Taken before the timeout starts: waiting behind an open stream is
         // not this roll's slowness. A wait cancelled (the app is quitting)
         // reports as the timeout would — nothing was summarized. A turn that
@@ -519,7 +516,17 @@ fn spawn_compact(
                 return;
             };
             let collect = collect_roll(&backend, request.clone(), lane.stream_token());
-            match tokio::time::timeout(COMPACT_TIMEOUT, collect).await {
+            let attempt = tokio::time::timeout(COMPACT_TIMEOUT, collect).await;
+            // The exact size next to the estimate the reservation was priced
+            // from — the loops' line, `record_round_usage`
+            // (docs/research/roll-usage-calibration.md §3.2). An attempt that
+            // ended short has no usage and records nothing.
+            if let Ok(Ok(c)) = &attempt
+                && let Some(u) = &c.usage
+            {
+                sessions.record_usage(estimate, u.prompt_tokens as u64);
+            }
+            match attempt {
                 Ok(Ok(c)) if c.cancelled && lane.displaced() => {
                     yields += 1;
                     tracing::info!(
@@ -541,7 +548,10 @@ fn spawn_compact(
                             "the summary hit the token ceiling and was cut; raise the ceiling or lower the word limit"
                         );
                     }
-                    break (Ok(salvage_title_source(c.text, c.thoughts)), c.prefill);
+                    break (
+                        Ok(salvage_title_source(c.text, c.thoughts)),
+                        c.usage.and_then(|u| u.prefill),
+                    );
                 }
                 Ok(Err(err)) => {
                     break (
@@ -582,10 +592,12 @@ pub(super) struct Collected {
     pub(super) truncated: bool,
     /// Ended by the token — the app's own, or the lane's displacement.
     pub(super) cancelled: bool,
-    /// The engine's own clock over the prompt, when the stream reached its
-    /// usage chunk (docs/research/roll-timings.md §3.1). That chunk is the
+    /// The stream's usage chunk, when the stream reached it: the exact
+    /// prompt size the budget's calibration records
+    /// (docs/research/roll-usage-calibration.md §3.2) and the engine's own
+    /// clock over the prompt (roll-timings §3.1). That chunk is the
     /// stream's last, so a stream that ended short leaves this `None`.
-    pub(super) prefill: Option<crate::shared::api::contract::Prefill>,
+    pub(super) usage: Option<crate::shared::api::contract::TokenUsage>,
 }
 
 /// One attempt at the roll's stream, read to its end or to where it broke
@@ -628,7 +640,7 @@ pub(super) async fn collect_roll(
             ChatChunk::Error { message, .. } => failure = Some(message),
             // The client hands the usage over before `Finished` — it reads on
             // past `finish_reason` for exactly this chunk.
-            ChatChunk::Usage(u) => c.prefill = u.prefill,
+            ChatChunk::Usage(u) => c.usage = Some(u),
             ChatChunk::ThoughtsSignature(_) | ChatChunk::ToolCall(_) => {}
         }
     }

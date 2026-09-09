@@ -4850,16 +4850,26 @@ fn relay_text(visible: String, text: &mut String, sink: &RoundSink<'_>, id: Uuid
 }
 
 /// Client-side estimate of the prompt's token count (the whole conversation) for
-/// the live indicator before the server's exact `usage.prompt_tokens` arrives.
-/// Accounts for the system message, message texts, and tool-call arguments in
-/// the history.
+/// the live indicator before the server's exact `usage.prompt_tokens` arrives,
+/// and for the session budget's reservations (admission-by-budget §4.2).
+/// Accounts for the system message, message texts, tool-call arguments in
+/// the history, and the tool schemas as the wire sends them — the largest
+/// part of a turn's prompt (measured: 24 schemas, 18 116 bytes, about 4270
+/// tokens against 85 for the rest of a fresh chat's request —
+/// docs/research/roll-usage-calibration.md §2.1), counted as one part at
+/// the text's bytes-per-token; the budget's calibration absorbs the
+/// difference.
 pub(super) fn estimate_prompt_tokens(req: &ChatRequest) -> u64 {
-    let mut parts: Vec<&str> = Vec::with_capacity(req.messages.len());
+    let tools = (!req.tools.is_empty()).then(|| crate::shared::api::openai::tools_json(&req.tools));
+    let mut parts: Vec<&str> = Vec::with_capacity(req.messages.len() + 1);
     for m in &req.messages {
         parts.push(m.content.as_str());
         for tc in &m.tool_calls {
             parts.push(tc.arguments.as_str());
         }
+    }
+    if let Some(t) = &tools {
+        parts.push(t.as_str());
     }
     estimate_prompt(req.system.as_deref(), parts)
 }

@@ -554,6 +554,12 @@ Live, on the local CPU build — the arms of §3 driven through the app:
 
 ## 8. Not in this track (recorded so they are not re-derived)
 
+- **The estimate's missing term.** Found and fixed later
+  ([roll-usage-calibration.md](roll-usage-calibration.md) §2.1): the
+  estimator did not count the tool schemas — about 4270 tokens of a turn's
+  request — so the ratio §4.3 keeps was their overhead in disguise, and a
+  request without schemas (the roll) was priced nine times over.
+
 - **The external shape, typed** (F4b): a `pool` field on the external
   section for the split-server user F4a slows down; wait for that user.
 - **A waiting label** (F6b) on the chip and the transcript row.

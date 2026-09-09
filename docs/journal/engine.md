@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (50)
+## Entries (51)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -62,6 +62,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a slow prefill, detected on the fly — the batch a cancel waits for, told to the user (done)
 - Post-M9: the roll's timings — the session's coldest prompt, sampled (done)
 - Post-M9: the loops' timings — the silent tasks' cold prompts, sampled at the landing (done)
+- Post-M9: the roll's usage for the budget — and the estimate it would calibrate (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -3239,3 +3240,70 @@ landing — "never spawned" and "never landed" are otherwise one silence
 replacement, never by `git checkout --` of a file that carries the
 stage's uncommitted work (lessons §1): the checkout restored HEAD and
 took the stage's patch with the print.
+
+### Post-M9: the roll's usage for the budget — and the estimate it would calibrate (done)
+
+**What.** The item the roll-timings track recorded
+([docs/research/roll-timings.md](../research/roll-timings.md) §7). The
+design [docs/research/roll-usage-calibration.md](../research/roll-usage-calibration.md),
+every fork at its recommendation (the user's decision, 2026-09-09); stage
+0 a measurement that turned the item on its precondition.
+
+**Why.** The session budget prices every stream's reservation from the
+app's prompt estimate scaled by the latest exact-to-estimate ratio a
+round has recorded — "the tokenizer's density on this conversation's
+text" (admission-by-budget §4.3), floored at 1.0. The roll priced with it
+and never recorded; the question was whether it should.
+
+**Measured (stage 0, the LAN stack, Qwen3.6-27B).** Every calibration of
+one live session beside the request's parts, a scratch print reversed by
+its own script: a fresh chat's first request estimated **85** tokens
+against **4358** exact — 24 tool schemas, 18 116 bytes of JSON, about 4270
+tokens the estimator never counted (`estimate_prompt_tokens` summed the
+system message, the message texts and the tool-call arguments, not
+`ChatRequest.tools`). Three readings. The first request of an app session
+is priced at a fiftieth of its size, with no ratio yet to correct it. The
+ratio is the overhead in disguise — 51 falling to 6 across the
+conversation as the messages grew under a constant 4270 — and works only
+because consecutive turns carry the same schemas. A request without
+schemas is priced by a ratio about schemas: the roll estimated 1106,
+measured 710, and reserved `1106 × 6.03 + 2048 = 8722`; had it recorded
+its own ratio (0.64, floored to 1.0) the next turn would have been priced
+905 against 5204 exact — the under-count R6 exists to prevent. With the
+schemas counted at four bytes a token the turn's estimate lands 6–12 %
+over the exact, and the roll's price falls to 3109.
+
+**How.** `wire::tools_json` renders the tool block exactly as the request
+builder puts it on the wire — one `wire_tools` behind both — and
+`estimate_prompt_tokens` feeds it to `estimate_prompt` as one more part
+at the text's four bytes a token; no constant of its own, the calibration
+absorbs the 7 % the compact JSON runs denser. `Collected` carries the
+usage chunk whole (`usage`, the prefill read off it where it was), and
+`spawn_compact` records `(estimate, prompt_tokens)` on the budget when an
+attempt reaches its usage — the loops' line, where the reservation was
+priced. The title and impersonation are left alone (the one's ratio is
+noise at its size, the other's is the turn's own text, already recorded).
+
+**Live.** `prompt_estimate_e2e_live` — a probe engine that keeps every
+request beside the exact count the server reports, three turns and a
+roll on the GPU stack: the turns 0.91 / 0.89 / 0.88 exact over estimate,
+the title 0.61, the roll 0.59; no under-count. The pair after it 2/2.
+Unit: 2969 green, 150 ignored. One test moved with the estimate — the
+child-reservation test had set its pool on "about 2100" per child, the
+estimate without the schemas; at the new size two raw streams need a
+16 000 pool and the floored round reports 12 000 to stay out. One probe
+run was lost to the probe: the consumer drops a stream at `Finished`
+without reading it to its end, so a record after the loop never ran —
+it records at the usage chunk.
+
+**Rejected**: leaving the estimator and keeping the roll out (the first
+request stays a fiftieth under, the roll nine times over); `/tokenize`
+(a round trip per request, no cloud); recording from the title and
+impersonation; a bytes-per-token constant for JSON; at-the-landing
+recording (no estimate there); no live gate.
+
+**The lesson (§3).** A ratio that "calibrates" one shape can be a missing
+term in disguise: it corrects the requests that share the term and
+misprices every other. Check what the estimate counts before trusting
+what the ratio corrects — the check here was one print of the request's
+parts beside its exact count.

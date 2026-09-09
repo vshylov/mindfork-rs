@@ -716,6 +716,17 @@ waits 300 ms. A latency measured across such a gap measures the placement,
 not the mechanism.
 — *the silent stream yields to the turn*.
 
+**A ratio that "calibrates" one shape can be a missing term in disguise — check
+what the estimate counts before trusting what the ratio corrects.** The session
+budget scaled every prompt estimate by the latest exact-to-estimate ratio a round
+had recorded, read as the tokenizer's density; it was the tool schemas' overhead,
+which the estimator never counted (85 estimated against 4358 exact on a fresh
+chat), and it fell from 51 to 6 across one conversation. The ratio corrected the
+requests that carried the same schemas and mispriced every other — the
+compression roll, without tools, nine times over. One print of a request's parts
+beside its exact count showed the term; the ratio's history alone never would.
+— *the roll's usage for the budget*.
+
 ## 4. The recurring defect class: a message must close the door
 
 **Never let a message describe a situation without saying what is and is not possible

@@ -208,6 +208,31 @@ pub struct WireFunction {
     pub parameters: serde_json::Value,
 }
 
+/// The tool block as the wire sends it: every schema wrapped as
+/// `{type: "function", function: {name, description, parameters}}`.
+fn wire_tools(tools: &[crate::shared::api::contract::ToolSchema]) -> Vec<WireTool> {
+    tools
+        .iter()
+        .map(|t| WireTool {
+            kind: "function",
+            function: WireFunction {
+                name: t.name.clone(),
+                description: t.description.clone(),
+                parameters: t.parameters.clone(),
+            },
+        })
+        .collect()
+}
+
+/// The tool block's compact JSON, byte for byte what [`wire_tools`] puts on
+/// the wire — for the prompt estimate, which counts the schemas at the
+/// text's bytes-per-token (docs/research/roll-usage-calibration.md §3.1):
+/// they are the largest part of a turn's prompt, and the estimate had not
+/// counted them.
+pub fn tools_json(tools: &[crate::shared::api::contract::ToolSchema]) -> String {
+    serde_json::to_string(&wire_tools(tools)).unwrap_or_default()
+}
+
 /// A tool call in a history assistant message.
 #[derive(Debug, Serialize)]
 pub struct WireToolCall {
@@ -274,19 +299,7 @@ pub fn build_chat_request(
     let tools = if req.tools.is_empty() {
         None
     } else {
-        Some(
-            req.tools
-                .iter()
-                .map(|t| WireTool {
-                    kind: "function",
-                    function: WireFunction {
-                        name: t.name.clone(),
-                        description: t.description.clone(),
-                        parameters: t.parameters.clone(),
-                    },
-                })
-                .collect(),
-        )
+        Some(wire_tools(&req.tools))
     };
     let tool_choice = tools.as_ref().map(|_| "auto");
 

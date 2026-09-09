@@ -209,7 +209,7 @@ Unit: 2962 green, 148 ignored (four tests and the smoke added).
 ## 7. Not in this track
 
 - **The loops' samples** (F2b) — done: [loop-timings.md](loop-timings.md).
-- **The roll's usage for the budget's calibration** (F1b's consumer).
+- **The roll's usage for the budget's calibration** (F1b's consumer) — done: [roll-usage-calibration.md](roll-usage-calibration.md), which found the estimate's missing term first.
 - **A figure on the settings screen** — beside the *Batch (-b)* field
   ([slow-prefill-detection.md](slow-prefill-detection.md) §7).
 
