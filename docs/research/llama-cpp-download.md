@@ -1,10 +1,12 @@
 # The engine, downloaded — llama.cpp's backends named, fetched and pointed at
 
-> **Status:** research (2026-09-09), pre-decision. Every number in §3 was
-> measured against `github.com/ggml-org/llama.cpp` on 2026-09-09 (newest build
-> `b10883`, published that morning); §3.3's drift rows come from `b9000`
-> (2026-05-02) and `b6000` (2025-07-27). The forks in §6 await the user's
-> choice; nothing here is implemented.
+> **Status:** researched and decided (2026-09-09), not yet implemented. Every
+> number in §3 was measured against `github.com/ggml-org/llama.cpp` on
+> 2026-09-09 (newest build `b10883`, published that morning); §3.3's drift rows
+> come from `b9000` (2026-05-02) and `b6000` (2025-07-27). **Every fork in §6
+> is at its recommendation** — F1, F2, F8 and F9 put to the user and chosen
+> explicitly (the user's decision, 2026-09-09), F3–F7 stated with their
+> recommendations in the same exchange and not contested.
 >
 > The gap: [install.md](../install.md) §3 names llama.cpp `llama-server` as the
 > recommended backend and then assumes it exists — the one step between
@@ -542,6 +544,12 @@ resolves (`main.rs:31-55`).
 
 ## 6. Forks
 
+> **Resolved 2026-09-09.** Every fork below is adopted **at its
+> recommendation**. F1, F2, F8 and F9 — the four where the recommendation
+> extended or contradicted the sketch — were put to the user and chosen
+> explicitly; F3–F7 were stated with their recommendations in the same
+> exchange and not contested.
+
 - **F1 — the source of the list: GitHub API JSON, or the releases HTML.**
   The sketch asked for the HTML page. Measured (§3.6), the API is 8× smaller,
   documented, and the only route that carries a **sha256 per asset**, which R3
@@ -550,14 +558,14 @@ resolves (`main.rs:31-55`).
   → **Recommendation: the API**, with the rate-limit error spelled out in
   words and an `Authorization` header when `GITHUB_TOKEN` is set. HTML
   scraping stays in §8 as the fallback to build only if the limit is ever hit
-  in practice.
+  in practice. *(Chosen by the user, 2026-09-09.)*
 - **F2 — which build, by default.** (a) the newest `bNNNNN`; (b) the tag named
   by `nightly-tag.txt` inside the newest semver release — upstream's own
   blessed nightly, five days behind at the time of writing; (c) a tag pinned
   in our source, bumped by hand like wasmer's.
   → **Recommendation: (a) newest, with `--build` to pin.** (b) is tempting
   and undocumented — the file's contract is upstream's business and could
-  change without notice; (c) contradicts R1.
+  change without notice; (c) contradicts R1. *(Chosen by the user, 2026-09-09.)*
 - **F3 — `setup` with no `--backend`.** (a) print the list, exit `2`; (b)
   default to `cpu`; (c) guess from the hardware.
   → **Recommendation: (a).** (b) hides a decision that costs between 18 MB and
@@ -585,14 +593,14 @@ resolves (`main.rs:31-55`).
 - **F8 — the noun.** `mindfork llama …` or `mindfork engine …`.
   → **Recommendation: `llama`.** "Engine" is the app's abstraction over four
   providers; this command is about one of them, and `sandbox` set the
-  precedent of naming the thing being provisioned.
+  precedent of naming the thing being provisioned. *(Chosen by the user, 2026-09-09.)*
 - **F9 — stages.** (a) one PR: discovery, `backends`, `setup`, `installed`,
   `--set-binary`; (b) two — everything but `--set-binary` first, the settings
   write second.
   → **Recommendation: (b) as two stages on one branch** if the user prefers
   (AGENTS.md §2's "one PR = one stage" has bent before for a small additive
   stage 2); the settings write is ~60 lines and one extracted helper, and
-  splitting it into its own PR buys little.
+  splitting it into its own PR buys little. *(Chosen by the user, 2026-09-09: two stages, one branch.)*
 
 ## 7. Tests and the live run
 
