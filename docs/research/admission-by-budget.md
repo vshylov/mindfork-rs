@@ -565,6 +565,12 @@ Live, on the local CPU build — the arms of §3 driven through the app:
   title at 0.65) erase the correction an under-counting turn had recorded
   (a tool result's JSON at 1.34); the budget now keeps one ratio per kind
   of request.
+- **The summary's kind.** Found and fixed later
+  ([page-summary-usage.md](page-summary-usage.md) §2.1): the one kind
+  that never recorded was the one that under-counts as a rule — a page's
+  text at 1.04–1.28 on four pages of five; it records now, and its
+  stream's timing reaches the slow-prefill note through the tool's
+  outcome.
 
 - **The external shape, typed** (F4b): a `pool` field on the external
   section for the split-server user F4a slows down; wait for that user.

@@ -438,6 +438,15 @@ pub struct ToolOutcome {
     /// task had acted on the window its spawn advanced
     /// (docs/research/acted-by-effect.md §3.1); the turn's loop ignores it.
     pub wrote: bool,
+    /// **The engine's timing of a request this call made on its own** — the
+    /// page summary's stream inside `fetch_url`, the one such request today:
+    /// `llama-server`'s `timings` off its `Usage` chunk, `None` from every
+    /// other provider and from a stream that ended short. A stream of the
+    /// turn by spec §9.3.1, so the loop that called the tool folds it into
+    /// the largest prefill sample it keeps for the slow-prefill note — the
+    /// turn's into its usage, a silent loop's onto its landing
+    /// (docs/research/page-summary-usage.md §3.2).
+    pub prefill: Option<crate::shared::api::contract::Prefill>,
 }
 
 /// An image a tool returned: base64 payload plus the MIME type it declared.
@@ -455,6 +464,7 @@ impl ToolOutcome {
             effects: Vec::new(),
             images: Vec::new(),
             wrote: false,
+            prefill: None,
         }
     }
 
@@ -465,6 +475,7 @@ impl ToolOutcome {
             effects,
             images: Vec::new(),
             wrote: false,
+            prefill: None,
         }
     }
 
@@ -484,6 +495,13 @@ impl ToolOutcome {
     /// existed changed nothing.
     pub fn wrote_if(mut self, wrote: bool) -> Self {
         self.wrote = wrote;
+        self
+    }
+
+    /// Attaches the engine's timing of a request the call made on its own
+    /// (builder-style; `None` leaves the outcome as it was).
+    pub fn with_prefill(mut self, prefill: Option<crate::shared::api::contract::Prefill>) -> Self {
+        self.prefill = prefill;
         self
     }
 }

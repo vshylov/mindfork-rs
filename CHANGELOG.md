@@ -21,7 +21,8 @@ split by subsystem.
   so a background request stopped or displaced during its prompt holds its
   slot for a whole batch — tens of seconds on a CPU. The app now reads the
   server's own timing of every prompt — the history compression's
-  request and the background reflection and consolidation runs included,
+  request, the background reflection and consolidation runs and a page
+  summary a tool asked for included,
   the prompts a server that kept its cache still processes whole — and, once per server session, says in the feed how
   fast prompts are processed, how long such a hold would be, and the one
   change to make: the *Batch (-b)* setting for a managed
@@ -288,6 +289,19 @@ split by subsystem.
 
 ### Fixed
 
+- **A page summary on a thinking model came back empty.** `fetch_url`'s
+  summary let the model think, and a model that thinks by default spent
+  the whole reply on thoughts and answered with nothing — the page's text
+  came back under "summary unavailable", or an attached page with no
+  summary at all. The summary now runs with thinking off, like the
+  automatic title and the history compression.
+- **A page summary's reservation is corrected like every other request's.**
+  A page's text — an API's JSON, a source file, an English article —
+  counts more tokens than the app's estimate says, and the summary's
+  request was the one kind that never reported its exact count, so its
+  share of a shared context was reserved a quarter under on such pages.
+  It reports now, and the server's timing of its prompt counts for the
+  slow-prompt note like a turn's.
 - **A background request no longer resets the correction a turn taught
   the budget.** The size the app reserves for a request beside others on
   a shared context is corrected by the last exact count the server gave —

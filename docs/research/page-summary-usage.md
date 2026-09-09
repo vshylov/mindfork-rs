@@ -1,8 +1,9 @@
 # The page summary's usage — the one kind that under-counts, and a summary that came back empty
 
-> **Status:** proposed (2026-09-09); stage 0 is the measurement in §2.1
+> **Status:** implemented (2026-09-09) — every fork at its recommendation
+> (the user's decision, 2026-09-09); stage 0 is the measurement in §2.1
 > (five pages' ratios, the summary's cold prompt, and the reply's shape on
-> a thinking model, on the GPU stack). The item the
+> a thinking model, on the GPU stack), stage 1's live run is in §6.1. The item the
 > title-impersonation-usage track recorded
 > ([title-impersonation-usage.md](title-impersonation-usage.md) §7): the
 > page summary inside `fetch_url` prices its reservation under its own
@@ -292,7 +293,27 @@ session is untouched.
 
 ### 6.1 Runs
 
-Stage 1.
+`summary_usage_e2e_live`, the JSON page (6814 bytes; estimate 1816 with
+the instruction), `fetch_url` invoked directly under a budget of four
+sessions over 16 384:
+
+| host | time | exact | exact / estimate | prefill | the summary |
+|---|---:|---:|---:|---|---|
+| the LAN stack (Qwen3.6-27B, 4090) | 8.7 s | 2286 | **1.29** | 2286 tokens, 1203 ms — 1900 tok/s | seventeen lines, the star count among them |
+| the CPU build (gemma-3-4b, `-ngl 0`) | 86.2 s | 2735 | **1.51** | 2735 tokens, 76 139 ms — 36 tok/s | four sentences |
+
+Both a real summary — reasoning muted, the "summary unavailable" fallback
+with the JSON behind it on neither — both above 1.0 in the `Summary` slot
+with `Turn` at 1.0, both with the sample on the outcome. The two exact
+counts differ because the tokenizers do (Gemma's is denser on JSON). The
+CPU build ended **4 s inside** the summary's 90 s limit, as §4 counted:
+76 s of prefill at 36 tok/s and a ten-second reply — a page a few hundred
+tokens larger would not have (§7). Its sample is the note's on such a
+host — 2735 tokens at 36 tok/s, a 57 s hold at the external default batch
+— had the fetch gone through a turn; the fold is the unit tests'. Unit:
+2978 green, 151 ignored (2973 / 150 before: `keep_larger`, the record, the
+outcome's sample on both paths, the turn's and the loop's folds through a
+`SampledTool`, the live smoke).
 
 ## 7. Not in this track
 

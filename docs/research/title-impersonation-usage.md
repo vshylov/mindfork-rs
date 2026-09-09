@@ -254,8 +254,9 @@ Unit: 2972 green, 150 ignored (three tests added, one rewritten).
   exact count could do better, at a round trip per request.
 - **A per-script density** — six bytes a token for Cyrillic prose, 2.4
   for JSON; the shapes carry it implicitly, per population.
-- **The page summary's usage** (`Summary`) — its stream reads no usage
-  today; a request of prose, over-counted, priced at 1.0.
+- **The page summary's usage** (`Summary`) — done:
+  [page-summary-usage.md](page-summary-usage.md), which measured the
+  reading here wrong: a page's text under-counts on four pages of five.
 
 ## 8. Documentation touch list (AGENTS.md §4)
 

@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (49)
+## Entries (50)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -61,6 +61,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: sub-agents in the background — the stop key, the unread mark, and Gemma (stage 2, done)
 - Post-M9: background dialogues — a directed scene that outlives its turn (done)
 - Post-M9: `ToolOutcome.wrote` — a memory writer reports its write (done)
+- Post-M9: `ToolOutcome.prefill` and the page summary's request — reasoning muted, usage recorded (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -3606,3 +3607,27 @@ ignores the field. `Tool::concurrent()` was not reused: it is a read-only
 claim for concurrency, and `note_recall` (a cache write inside a read) and
 `note_neighbors` are unmarked. Tests pin each writer's success path to
 `true` and its refusal to `false`, and the reader to `false`.
+
+### Post-M9: `ToolOutcome.prefill` and the page summary's request — reasoning muted, usage recorded (done)
+
+**What.** A second fact on the tool contract beside `wrote`:
+`ToolOutcome.prefill: Option<Prefill>` — *the engine's timing of a request
+this call made on its own* — `None` from the constructors, set
+builder-style (`.with_prefill(sample)`) by the one producer, `fetch_url`'s
+page summary, on both of its paths (a page under the attachment budget
+and one over it, whatever the text made of the summary). The consumers
+are the two loops that call tools: the turn folds it into the largest
+prefill sample it keeps for the slow-prefill note, the silent loop onto
+its landing ([docs/research/page-summary-usage.md](../research/page-summary-usage.md)
+§3.2; the engine journal has the track). Two more changes to the
+summary's request in the same track: it records its exact count under
+the budget's `Summary` kind at its `Usage` chunk — measured, a page's
+text is the one kind of request that under-counts as a rule, 1.04–1.28
+on four pages of five — and it mutes reasoning (`reasoning_budget = 0`,
+the title's shape), since a thinking model spent the whole reply cap on
+thoughts and answered with nothing on every page tried, the inline path
+then handing over the raw text under "summary unavailable" and the
+attached path saying nothing. Tests pin the record, the sample on both
+paths (and `None` without a summary or without a usage chunk), and the
+muted request; the live smoke `summary_usage_e2e_live` runs the JSON
+page under a budget on the LAN stack and the CPU build.

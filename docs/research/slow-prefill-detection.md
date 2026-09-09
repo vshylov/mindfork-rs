@@ -251,6 +251,10 @@ seed, `MINDFORK_EXPECT_SLOW_PREFILL` saying which host it is):
 - **A figure on the settings screen** — the measured throughput beside
   the *Batch (-b)* field, once the field's hint has a place for a number.
 - **Setting the batch for the user** (F4b).
+- **A tool's own request's sample** — done:
+  [page-summary-usage.md](page-summary-usage.md) §3.2: the page
+  summary's timing rides `ToolOutcome.prefill` into the turn's and the
+  loop's largest sample.
 
 ## 8. Documentation touch list (AGENTS.md §4)
 
