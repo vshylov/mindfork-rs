@@ -85,14 +85,45 @@ pub struct SessionBudget {
     /// Woken (all waiters) whenever a reservation is released, and whenever a
     /// displacing waiter stops being one.
     room: Notify,
-    /// The estimator's correction (research §4.3): the latest ratio of an exact
-    /// `usage.prompt_tokens` to the estimate of the same request, as `f64`
-    /// bits; `0` — none recorded yet, read as `1.0`.
-    density: AtomicU64,
+    /// The estimator's correction (research §4.3), one per [`Shape`]: the
+    /// latest ratio of an exact `usage.prompt_tokens` to the estimate of the
+    /// same request of that kind, as `f64` bits; `0` — none recorded yet,
+    /// read as `1.0`.
+    density: [AtomicU64; Shape::COUNT],
     /// Interactive waiters that displaced a silent stream and are not
     /// admitted yet (silent-preemption §4.2): while one is pending, the
     /// silent lane takes no room.
     displacing: AtomicUsize,
+}
+
+/// The kind of request a reservation is for — the population its
+/// exact-to-estimate ratio is kept with (docs/research/title-impersonation-usage.md
+/// §3.1). Measured, the populations differ by a third: a turn carrying a
+/// tool result runs at 1.34, the title and impersonation at 0.6, and under
+/// one ratio the second erased the first's correction. Each kind prices
+/// with the latest ratio of its own kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Shape {
+    /// The turn's own rounds.
+    Turn,
+    /// A child run's rounds — a sub-agent's or a dialogue's, a persona's
+    /// prompt and the turn's tools.
+    Run,
+    /// A silent loop's rounds — reflection, the consolidations.
+    Loop,
+    /// The compaction roll.
+    Roll,
+    /// The automatic title.
+    Title,
+    /// Impersonation on the shared engine.
+    Impersonation,
+    /// The page summary inside a tool — priced, never recorded.
+    Summary,
+}
+
+impl Shape {
+    /// How many kinds there are — the ratio array's size.
+    pub const COUNT: usize = 7;
 }
 
 /// A stream's place in the budget: one permit and its token reservation,
@@ -167,7 +198,17 @@ impl std::fmt::Debug for SessionBudget {
             .field("sessions", &self.permits.available_permits())
             .field("pool", &self.pool)
             .field("in_flight", &*self.open())
-            .field("density", &self.density())
+            .field(
+                "density",
+                &self
+                    .density
+                    .iter()
+                    .map(|d| match d.load(Ordering::Relaxed) {
+                        0 => 1.0,
+                        bits => f64::from_bits(bits).max(1.0),
+                    })
+                    .collect::<Vec<_>>(),
+            )
             .field("displacing", &self.displacing.load(Ordering::SeqCst))
             .finish()
     }
@@ -184,7 +225,7 @@ impl SessionBudget {
             pool: pool.filter(|&n| n > 0),
             in_flight: Mutex::new(0),
             room: Notify::new(),
-            density: AtomicU64::new(0),
+            density: std::array::from_fn(|_| AtomicU64::new(0)),
             displacing: AtomicUsize::new(0),
         }
     }
@@ -232,27 +273,29 @@ impl SessionBudget {
         self.silent().as_ref().map(|s| s.label)
     }
 
-    /// The estimator's correction factor: the latest exact-to-estimate ratio
-    /// recorded, floored at `1.0` (an estimate that over-counts costs a wait
-    /// that could have run; one that under-counts costs the failure the type
-    /// exists to prevent — research R6). `1.0` until a round has reported.
-    pub fn density(&self) -> f64 {
-        let bits = self.density.load(Ordering::Relaxed);
+    /// The estimator's correction factor for requests of `shape`: the latest
+    /// exact-to-estimate ratio recorded for that kind, floored at `1.0` (an
+    /// estimate that over-counts costs a wait that could have run; one that
+    /// under-counts costs the failure the type exists to prevent — research
+    /// R6). `1.0` until a request of the kind has reported.
+    pub fn density(&self, shape: Shape) -> f64 {
+        let bits = self.density[shape as usize].load(Ordering::Relaxed);
         if bits == 0 {
             return 1.0;
         }
         f64::from_bits(bits).max(1.0)
     }
 
-    /// Records a round's exact prompt size next to the estimate made for the
-    /// same request. Any loop of the turn may record; the latest wins — the
-    /// tokenizer's density on this conversation's kind of text.
-    pub fn record_usage(&self, estimate: u64, exact: u64) {
+    /// Records a request's exact prompt size next to the estimate made for
+    /// it, under its kind. Any request of the kind may record; the latest of
+    /// the kind wins — the tokenizer's density on that kind's text — and no
+    /// kind touches another's (title-impersonation-usage §3.1).
+    pub fn record_usage(&self, shape: Shape, estimate: u64, exact: u64) {
         if estimate == 0 || exact == 0 {
             return;
         }
         let ratio = (exact as f64 / estimate as f64).max(1.0);
-        self.density.store(ratio.to_bits(), Ordering::Relaxed);
+        self.density[shape as usize].store(ratio.to_bits(), Ordering::Relaxed);
     }
 
     /// What a stream reserves (research §4.2): the calibrated `estimate` of its
@@ -261,8 +304,8 @@ impl SessionBudget {
     /// round), plus `reply_cap`. With no cap the reservation is the whole
     /// pool: the stream is admitted alone. Meaningless (and unused) without a
     /// pool.
-    pub fn price(&self, estimate: u64, floor: u64, reply_cap: Option<u64>) -> u64 {
-        let prompt = ((estimate as f64 * self.density()).round() as u64).max(floor);
+    pub fn price(&self, shape: Shape, estimate: u64, floor: u64, reply_cap: Option<u64>) -> u64 {
+        let prompt = ((estimate as f64 * self.density(shape)).round() as u64).max(floor);
         match (self.pool, reply_cap) {
             (Some(pool), None) => pool,
             (_, cap) => prompt.saturating_add(cap.unwrap_or(0)),
@@ -666,24 +709,36 @@ mod tests {
     /// floor wins when larger, and no cap means the whole pool.
     #[test]
     fn pricing_calibrates_floors_and_reserves_the_pool_without_a_cap() {
+        let _ = Shape::COUNT;
         let budget = SessionBudget::new(2, Some(1000));
-        assert_eq!(budget.density(), 1.0);
-        assert_eq!(budget.price(100, 0, Some(50)), 150);
-        budget.record_usage(100, 220);
-        assert_eq!(budget.density(), 2.2);
-        assert_eq!(budget.price(100, 0, Some(50)), 270);
+        assert_eq!(budget.density(Shape::Turn), 1.0);
+        assert_eq!(budget.price(Shape::Turn, 100, 0, Some(50)), 150);
+        budget.record_usage(Shape::Turn, 100, 220);
+        assert_eq!(budget.density(Shape::Turn), 2.2);
+        assert_eq!(budget.price(Shape::Turn, 100, 0, Some(50)), 270);
         // An estimate that over-counted: the ratio is floored, never trusted
         // to shrink a reservation.
-        budget.record_usage(100, 80);
-        assert_eq!(budget.density(), 1.0);
-        assert_eq!(budget.price(100, 300, Some(50)), 350, "the floor wins");
-        assert_eq!(budget.price(100, 0, None), 1000, "no cap: the pool");
+        budget.record_usage(Shape::Turn, 100, 80);
+        assert_eq!(budget.density(Shape::Turn), 1.0);
+        assert_eq!(
+            budget.price(Shape::Turn, 100, 300, Some(50)),
+            350,
+            "the floor wins"
+        );
+        assert_eq!(
+            budget.price(Shape::Turn, 100, 0, None),
+            1000,
+            "no cap: the pool"
+        );
         // A zero on either side records nothing.
-        budget.record_usage(0, 500);
-        budget.record_usage(500, 0);
-        assert_eq!(budget.density(), 1.0);
+        budget.record_usage(Shape::Turn, 0, 500);
+        budget.record_usage(Shape::Turn, 500, 0);
+        assert_eq!(budget.density(Shape::Turn), 1.0);
         // No pool: the reply half is what it is; the figure is unused anyway.
-        assert_eq!(SessionBudget::new(1, None).price(100, 0, None), 100);
+        assert_eq!(
+            SessionBudget::new(1, None).price(Shape::Turn, 100, 0, None),
+            100
+        );
     }
 
     /// A yielding silent stream is displaced by an interactive waiter that
@@ -871,5 +926,22 @@ mod tests {
         cancel.cancel();
         assert!(token.is_cancelled(), "the child follows its parent");
         assert!(!roll.displaced());
+    }
+
+    /// Each kind of request prices with the latest ratio of its own kind
+    /// (title-impersonation-usage §3.1): a turn's 1.34 — a tool result's
+    /// JSON, measured — survives a title's 0.65, which the floor stores as
+    /// 1.0 in the title's own slot.
+    #[test]
+    fn a_kinds_ratio_is_its_own() {
+        let budget = SessionBudget::new(2, Some(100_000));
+        budget.record_usage(Shape::Turn, 11_058, 14_767);
+        budget.record_usage(Shape::Title, 294, 192);
+        assert!((budget.density(Shape::Turn) - 1.3354).abs() < 1e-3);
+        assert_eq!(budget.density(Shape::Title), 1.0, "over-counted: floored");
+        assert_eq!(budget.density(Shape::Roll), 1.0, "nothing recorded");
+        assert_eq!(budget.price(Shape::Turn, 1000, 0, Some(0)), 1335);
+        assert_eq!(budget.price(Shape::Title, 1000, 0, Some(0)), 1000);
+        assert_eq!(budget.price(Shape::Impersonation, 1000, 0, Some(0)), 1000);
     }
 }

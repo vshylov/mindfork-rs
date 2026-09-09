@@ -268,10 +268,12 @@ fn spawn_impersonation(
     tokio::spawn(async move {
         let run = async {
             let mut reason = FinishReason::Stop;
+            let estimate = super::generation::estimate_prompt_tokens(&request);
             let _lane = match sessions.as_deref() {
                 Some(budget) => {
                     let need = budget.price(
-                        super::generation::estimate_prompt_tokens(&request),
+                        crate::shared::session_budget::Shape::Impersonation,
+                        estimate,
                         0,
                         request.sampling.max_tokens.map(|m| m as u64),
                     );
@@ -309,10 +311,22 @@ fn spawn_impersonation(
                     ChatChunk::Error { message, .. } => {
                         tracing::warn!(error = %message, "engine error while impersonating");
                     }
+                    // The exact size next to the estimate the reservation was
+                    // priced from, under impersonation's own kind
+                    // (docs/research/title-impersonation-usage.md §3.2); a
+                    // separate impersonation server has no budget to record into.
+                    ChatChunk::Usage(u) => {
+                        if let Some(budget) = sessions.as_deref() {
+                            budget.record_usage(
+                                crate::shared::session_budget::Shape::Impersonation,
+                                estimate,
+                                u.prompt_tokens as u64,
+                            );
+                        }
+                    }
                     ChatChunk::Thoughts(_)
                     | ChatChunk::ThoughtsSignature(_)
-                    | ChatChunk::ToolCall(_)
-                    | ChatChunk::Usage(_) => {}
+                    | ChatChunk::ToolCall(_) => {}
                     ChatChunk::Finished(r) => {
                         reason = r;
                         break;

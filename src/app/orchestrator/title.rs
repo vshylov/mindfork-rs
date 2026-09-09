@@ -241,8 +241,10 @@ fn spawn_title(
         // The silent lane of the app's budget, held for the stream
         // (docs/research/silent-tasks-budget.md §4.2): a title is a request
         // like any other, and it waits its turn beside the loops' rounds.
+        let estimate = super::generation::estimate_prompt_tokens(&request);
         let need = sessions.price(
-            super::generation::estimate_prompt_tokens(&request),
+            crate::shared::session_budget::Shape::Title,
+            estimate,
             0,
             request.sampling.max_tokens.map(|m| m as u64),
         );
@@ -291,9 +293,18 @@ fn spawn_title(
                         ChatChunk::Error { message, .. } => {
                             tracing::warn!(error = %message, "engine error while generating a title");
                         }
-                        ChatChunk::ThoughtsSignature(_)
-                        | ChatChunk::ToolCall(_)
-                        | ChatChunk::Usage(_) => {}
+                        // The exact size next to the estimate the reservation
+                        // was priced from — the loops' line, under the title's
+                        // own kind (docs/research/title-impersonation-usage.md
+                        // §3.2); a stream cut short never reaches this chunk.
+                        ChatChunk::Usage(u) => {
+                            sessions.record_usage(
+                                crate::shared::session_budget::Shape::Title,
+                                estimate,
+                                u.prompt_tokens as u64,
+                            );
+                        }
+                        ChatChunk::ThoughtsSignature(_) | ChatChunk::ToolCall(_) => {}
                     }
                 }
                 Ok::<(String, String, bool), anyhow::Error>((text, thoughts, cancelled))

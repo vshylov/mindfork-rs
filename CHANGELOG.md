@@ -279,6 +279,15 @@ split by subsystem.
 
 ### Fixed
 
+- **A background request no longer resets the correction a turn taught
+  the budget.** The size the app reserves for a request beside others on
+  a shared context is corrected by the last exact count the server gave —
+  and one correction served every kind of request, so a short background
+  request over prose (a chat's title, a compression roll) could reset the
+  correction a turn carrying a large tool result had just recorded, and
+  the next turn was reserved a quarter under its size. Each kind of
+  request now keeps its own correction; the automatic title and
+  impersonation report theirs too.
 - **The conversation's token estimate counts the tool schemas.** The `~`
   figure shown before the server's exact count, and the size the app
   reserves for a request beside others on a shared context, had counted

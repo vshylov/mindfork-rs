@@ -549,15 +549,36 @@ async fn siblings_that_do_not_fit_the_pool_take_turns() {
     );
 }
 
-/// The parent's first round reports an exact prompt size far above its
-/// estimate; that ratio scales every later reservation of the turn
-/// (research §4.3), so two children that would fit a pool of 12000 on the
-/// raw estimate take turns — and, with no usage reported, run together.
+/// A call to a tool nobody registered: the round is a tool round (a second
+/// request follows it) and nothing runs in between.
+fn call_unknown() -> Script {
+    Script {
+        chunks: vec![
+            ChatChunk::ToolCall(ToolCallDelta {
+                thought_signature: None,
+                index: 0,
+                id: Some("k1".into()),
+                name: Some("no_such_tool".into()),
+                arguments: "{}".into(),
+            }),
+            ChatChunk::Finished(FinishReason::ToolCalls),
+        ],
+        hang: false,
+    }
+}
+
+/// A child run's rounds are their own population for the budget's ratio
+/// (docs/research/title-impersonation-usage.md §3.1, fork F4): the parent's
+/// first round reporting an exact prompt far above its estimate scales the
+/// parent's later reservations and not the children's — two children that
+/// fit a pool of 12000 on the raw estimate still run together — while a
+/// child's own round reporting the same scales the children's: Critic's
+/// second round, priced by it, waits for Fan's stream to end.
 #[tokio::test]
-async fn the_parents_exact_usage_calibrates_the_childrens_reservations() {
-    let siblings = |calibrated: bool| {
+async fn a_childs_ratio_is_the_childrens_not_the_parents() {
+    let siblings = |parent_sized: bool| {
         let first = two_calls(("c1", CRITIC), ("c2", FAN));
-        let first = if calibrated {
+        let first = if parent_sized {
             sized(first, 1_000_000, 1)
         } else {
             first
@@ -578,12 +599,39 @@ async fn the_parents_exact_usage_calibrates_the_childrens_reservations() {
     let (_d, _e, _id) = run_turn_on(raw.clone(), c.clone()).await;
     assert_eq!(raw.max_in_flight(), 2, "on the raw estimate both fit");
 
-    let calibrated = siblings(true);
-    let (dir, _events, chat_id) = run_turn_on(calibrated.clone(), c).await;
+    let parent = siblings(true);
+    let (_d, _e, _id) = run_turn_on(parent.clone(), c.clone()).await;
     assert_eq!(
-        calibrated.max_in_flight(),
-        1,
-        "the parent's usage said the estimator under-counts: one at a time"
+        parent.max_in_flight(),
+        2,
+        "the parent's usage is the parent's kind's: the children still fit"
+    );
+
+    // A child's own round reports the under-count: Critic's second request
+    // is priced by the children's ratio — far above the pool — and waits
+    // for Fan's long reply, arriving with no stream open.
+    let child = KeyedRecorder::new(
+        vec![
+            (
+                "",
+                vec![
+                    two_calls(("c1", CRITIC), ("c2", FAN)),
+                    text("both views in"),
+                ],
+            ),
+            (
+                "be harsh",
+                vec![sized(call_unknown(), 1_000_000, 1), text("harsh view")],
+            ),
+            ("be kind", vec![long_text(12)]),
+        ],
+        40,
+    );
+    let (dir, _events, chat_id) = run_turn_on(child.clone(), c).await;
+    assert_eq!(
+        child.open_at_arrival("be harsh").get(1),
+        Some(&0),
+        "Critic's second round, priced by the children's own ratio, waited for Fan"
     );
     let runs = landed_runs(&load(dir.path(), chat_id));
     assert!(
@@ -599,19 +647,6 @@ async fn the_parents_exact_usage_calibrates_the_childrens_reservations() {
 /// no stream open — where the raw estimate would have fit next to it.
 #[tokio::test]
 async fn a_childs_second_round_reserves_at_least_its_last_exact_size() {
-    let call_unknown = || Script {
-        chunks: vec![
-            ChatChunk::ToolCall(ToolCallDelta {
-                thought_signature: None,
-                index: 0,
-                id: Some("k1".into()),
-                name: Some("no_such_tool".into()),
-                arguments: "{}".into(),
-            }),
-            ChatChunk::Finished(FinishReason::ToolCalls),
-        ],
-        hang: false,
-    };
     let recorder = |floored: bool| {
         // An exact prompt *below* the estimate keeps the density at 1.0, so
         // only the floor can make the difference here.

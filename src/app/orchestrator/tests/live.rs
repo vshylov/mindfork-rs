@@ -6507,11 +6507,14 @@ impl EngineBackend for EstimateProbe {
 }
 
 /// The prompt estimate against the server's exact count, on the requests the
-/// app itself builds (docs/research/roll-usage-calibration.md §6): three
-/// turns with the default tool set, then `/compact`. A turn's exact over its
-/// estimate within 0.75–1.25 — the schemas counted, the compact JSON a
-/// little denser than four bytes a token; the roll's at most 1.0 — prose
-/// over-counted, never under (R3).
+/// app itself builds (docs/research/roll-usage-calibration.md §6,
+/// title-impersonation-usage.md §6): two prose turns, a third carrying 25 KB
+/// of JSON — the shape of a tool result — then `/compact` and an
+/// impersonation. A prose turn's exact over its estimate within 0.75–1.25 —
+/// the schemas counted, the compact JSON a little denser than four bytes a
+/// token; a request carrying the JSON above 1.0 — the under-count the
+/// per-kind ratio exists to keep out of the other kinds' reach; the roll's
+/// and the title's at most 1.0 — prose over-counted, never under.
 ///
 /// `MINDFORK_ENGINE_URL=…/v1 cargo test prompt_estimate_e2e_live -- --ignored --nocapture`.
 #[tokio::test]
@@ -6539,10 +6542,29 @@ async fn prompt_estimate_e2e_live() {
     wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
         .await
         .unwrap();
+    // A catalogue as a tool result would carry it: JSON runs at about 2.4
+    // bytes a token on this tokenizer, against the estimate's four.
+    let blob = serde_json::to_string(
+        &(0..220)
+            .map(|i| {
+                serde_json::json!({
+                    "id": i,
+                    "sku": format!("A{i:04}-{:03}", i * 7 % 1000),
+                    "price": (i as f64) * 1.25 + 0.99,
+                    "tags": ["alpha", "beta", "gamma"],
+                    "stock": {"warehouse": i % 5, "count": i * 3},
+                })
+            })
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
+    let json_turn = format!(
+        "Here is a catalogue as JSON; answer in one sentence how many items it has:\n{blob}"
+    );
     for text in [
         "Расскажи в двух предложениях, зачем нужны индексы в базах данных.",
         "В двух предложениях: чем отличается кэш от буфера?",
-        "В двух предложениях: что такое идемпотентность запроса?",
+        json_turn.as_str(),
     ] {
         let (reply, _) = run_turn_capture(&cmd_tx, &mut evt_rx, text).await;
         eprintln!("reply: {}", reply.chars().take(60).collect::<String>());
@@ -6560,6 +6582,23 @@ async fn prompt_estimate_e2e_live() {
         matches!(landed, AppEvent::Compacted { .. }),
         "the roll did not land: {landed:?}"
     );
+    cmd_tx
+        .send(AppCommand::Impersonate {
+            seed: String::new(),
+        })
+        .unwrap();
+    let ended = wait_for(&mut evt_rx, |e| {
+        matches!(
+            e,
+            AppEvent::ImpersonationFinished { .. } | AppEvent::Error(_)
+        )
+    })
+    .await
+    .unwrap();
+    assert!(
+        matches!(ended, AppEvent::ImpersonationFinished { .. }),
+        "impersonation did not finish: {ended:?}"
+    );
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
 
@@ -6568,35 +6607,57 @@ async fn prompt_estimate_e2e_live() {
         150,
     );
     let seen = probe.seen.lock().unwrap().clone();
-    let (mut turns, mut rolls) = (0, 0);
+    let (mut turns, mut rolls, mut dense, mut impersonations) = (0, 0, 0, 0);
     for (req, exact) in &seen {
         let estimate = super::super::generation::estimate_prompt_tokens(req);
         let ratio = *exact as f64 / estimate as f64;
         let is_roll = req.system.as_deref() == Some(roll_system.as_str());
-        let kind = if !req.tools.is_empty() {
-            "turn"
-        } else if is_roll {
-            "roll"
-        } else {
-            "silent"
+        // The JSON message in the history: the turn that carried it, and
+        // impersonation, which sends the whole conversation.
+        let carries_json = req
+            .messages
+            .iter()
+            .any(|m| m.content.contains("catalogue as JSON"));
+        let kind = match (req.tools.is_empty(), is_roll, carries_json) {
+            (false, _, _) => "turn",
+            (true, true, _) => "roll",
+            (true, false, true) => "impersonation",
+            (true, false, false) => "title",
         };
         eprintln!(
-            "prompt estimate: {kind:<6} tools={:>2} estimate={estimate:>5} exact={exact:>5} exact/estimate={ratio:.2}",
-            req.tools.len()
+            "prompt estimate: {kind:<13} tools={:>2} json={} estimate={estimate:>5} exact={exact:>5} exact/estimate={ratio:.2}",
+            req.tools.len(),
+            u8::from(carries_json)
         );
-        if !req.tools.is_empty() {
-            turns += 1;
-            assert!(
-                (0.75..=1.25).contains(&ratio),
-                "a turn's estimate is off by more than a quarter: {ratio:.2}"
-            );
-        } else if is_roll {
-            rolls += 1;
-            assert!(ratio <= 1.0, "the roll under-counted: {ratio:.2}");
+        match kind {
+            "turn" if carries_json => {
+                turns += 1;
+                dense += 1;
+                assert!(ratio > 1.0, "the JSON turn did not under-count: {ratio:.2}");
+            }
+            "turn" => {
+                turns += 1;
+                assert!(
+                    (0.75..=1.25).contains(&ratio),
+                    "a prose turn's estimate is off by more than a quarter: {ratio:.2}"
+                );
+            }
+            "impersonation" => {
+                impersonations += 1;
+                assert!(
+                    ratio > 1.0,
+                    "impersonation over the JSON did not under-count: {ratio:.2}"
+                );
+            }
+            "roll" => {
+                rolls += 1;
+                assert!(ratio <= 1.0, "the roll under-counted: {ratio:.2}");
+            }
+            _ => assert!(ratio <= 1.0, "the title under-counted: {ratio:.2}"),
         }
     }
     assert!(
-        turns >= 3 && rolls >= 1,
-        "{turns} turns, {rolls} rolls seen"
+        turns >= 3 && dense >= 1 && rolls >= 1 && impersonations >= 1,
+        "{turns} turns ({dense} dense), {rolls} rolls, {impersonations} impersonations seen"
     );
 }

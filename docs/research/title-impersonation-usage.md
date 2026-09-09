@@ -1,8 +1,10 @@
 # The title's and impersonation's usage for the budget — and the ratio they would erase
 
-> **Status:** proposed (2026-09-09) — stage 0 is the measurement in §2.1
+> **Status:** implemented (2026-09-09) — every fork at its recommendation
+> (the user's decision, 2026-09-09); stage 0 is the measurement in §2.1
 > (the two requests' ratios, and a turn whose ratio runs above 1.0, on the
-> GPU stack). The item the roll-usage-calibration track recorded
+> GPU stack), stage 1's live run is in §6.1. The item the
+> roll-usage-calibration track recorded
 > ([roll-usage-calibration.md](roll-usage-calibration.md) §7, fork F2b):
 > the automatic title and impersonation price their reservations from
 > the budget's calibrated estimate and never record their exact `usage`.
@@ -211,7 +213,40 @@ session nothing changes: every shape's ratio is 1.0 either way.
 
 ### 6.1 Runs
 
-*(filled in at stage 1.)*
+`prompt_estimate_e2e_live` on the GPU stack (Qwen3.6-27B) — two prose
+turns, a third carrying the 25 KB catalogue, `/compact`, an impersonation
+— every request kept beside the exact count the server reported for it:
+
+| request | tools | carries the JSON | estimate | exact | exact / estimate |
+|---|---:|:---:|---:|---:|---:|
+| turn 1 | 24 | — | 4791 | 4349 | 0.91 |
+| turn 2 | 24 | — | 4966 | 4448 | 0.90 |
+| **turn 3** | 24 | yes | 11 267 | 14 886 | **1.32** |
+| the title | 0 | — | 328 | 209 | 0.64 |
+| the roll | 0 | — | 762 | 457 | 0.60 |
+| **impersonation** | 0 | yes | 6630 | 10 643 | **1.61** |
+
+The prose turns in the band, the JSON turn under-counting by a third,
+the title and the roll over-counting by four tenths — and impersonation,
+which sends the whole conversation with no schemas to dilute the JSON,
+under-counting by six tenths: the ratio its own kind now keeps, and the
+one that would have priced the next turn under the rule as it stood.
+The LAN regression pair after it —
+`compaction_preserves_a_planted_fact_e2e_live` (the planted code
+answered), `roll_prefill_e2e_live` (2.5 s, no note) — 2/2.
+
+One test was rewritten with the rule it asserted:
+`the_parents_exact_usage_calibrates_the_childrens_reservations` had the
+parent's first round report an exact size far above its estimate and
+expected the two children to take turns; under one ratio per kind the
+parent's record is the parent's, the children still fit (F4), and a
+child's own round reporting the same is what makes its second round
+wait — `a_childs_ratio_is_the_childrens_not_the_parents` asserts both
+halves. One unit run was lost to a fixture: a bare orchestrator's chat is
+not active until the test says so, and `handle_impersonate` on no active
+chat sends an error and returns.
+
+Unit: 2972 green, 150 ignored (three tests added, one rewritten).
 
 ## 7. Not in this track
 

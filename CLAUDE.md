@@ -171,7 +171,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-08, version 0.9.8)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2969 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **2972 unit tests
 green, 150 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
@@ -183,6 +183,21 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 `tools/doc_index_check.py`. A new track adds a line; a line that has stopped
 being recent is dropped, not shortened.
 
+- **The title's and impersonation's usage for the budget — and the
+  ratio they would erase** — the item was "let the two record their usage
+  too"; measured, they are the app's most over-counting requests (0.65,
+  0.59) and a turn carrying 25 KB of a tool result's JSON under-counts by
+  a third (1.34) — so under the budget's one rule, *the latest wins,
+  floored at 1.0*, the next title or roll after such a turn stored 1.0
+  and the following turn was priced a quarter under. Now `SessionBudget`
+  keeps one ratio per kind of request (`Shape::{Turn, Run, Loop, Roll,
+  Title, Impersonation, Summary}`), `price`/`record_usage`/`density`
+  take the kind, and a turn's correction is erased by nothing but a turn;
+  the title and impersonation record theirs at their usage chunk, a
+  child run's rounds are their own kind. Measured after: impersonation
+  over the JSON at 1.61 in its own slot, the prose turns at 0.9
+  ([docs/research/title-impersonation-usage.md](docs/research/title-impersonation-usage.md),
+  spec §6.3, [docs/journal/engine.md](docs/journal/engine.md)).
 - **The roll's usage for the budget — and the estimate it would
   calibrate** — the item was "let the roll record its usage as the loops
   do"; measured first, it turned on its precondition: the prompt estimate
@@ -394,21 +409,6 @@ being recent is dropped, not shortened.
   the loops; the tasks screen's third state is *waiting*
   ([docs/research/silent-tasks-budget.md](docs/research/silent-tasks-budget.md),
   spec §6.3, [docs/journal/engine.md](docs/journal/engine.md)).
-- **The tasks screen — everything the app is doing, on one surface** —
-  `F7`/`/tasks`: every sub-agent and dialogue run of every chat, running
-  first with its **position** (round · tool, line, director) and elapsed
-  time, then landed with its outcome (50, the rest counted), then the four
-  silent tasks as running/idle; `Enter` opens the transcript, `P` the
-  parent, `F6` stops a running background run through the command
-  `/subagents stop` sends, `Esc` from a chat opened there returns to the
-  list. A projection and nothing else: `AppEvent::TaskList` built off the
-  seats, the turn's children and `Chat::children()`, sent on request and
-  unasked on every change — which is why the screen opens on the key and
-  an event may only refresh it; the position reaches the orchestrator as a
-  new `TurnProgress::ChildProgress` step stored on the run's mirror; the
-  bar's count and the running rows share one predicate
-  ([docs/research/tasks-screen.md](docs/research/tasks-screen.md), spec
-  §11.10, [docs/journal/ui-screens.md](docs/journal/ui-screens.md)).
 
 
 For what exists and how it works, read architecture.md and spec.md — they are

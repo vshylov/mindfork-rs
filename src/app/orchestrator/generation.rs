@@ -1860,6 +1860,18 @@ fn stream_step(event: &AppEvent) -> Option<StreamStep> {
 }
 
 impl TurnLoop<'_> {
+    /// The kind of request this loop's rounds are, for the budget's ratio
+    /// (docs/research/title-impersonation-usage.md §3.1): the turn's own,
+    /// or a child run's — a persona's prompt and the turn's tools, a
+    /// population of its own.
+    fn shape(&self) -> crate::shared::session_budget::Shape {
+        if self.depth == 0 {
+            crate::shared::session_budget::Shape::Turn
+        } else {
+            crate::shared::session_budget::Shape::Run
+        }
+    }
+
     /// Is the tool in the turn's effectively allowed set (profile ∩ global
     /// switches)?
     fn allowed_has(&self, name: &str) -> bool {
@@ -1946,6 +1958,7 @@ impl TurnLoop<'_> {
         let estimate = estimate_prompt_tokens(&self.request);
         let floor = self.last_usage.map_or(0, TurnUsage::next_prompt_estimate);
         let need = self.shared.sessions.price(
+            self.shape(),
             estimate,
             floor,
             self.request.sampling.max_tokens.map(|m| m as u64),
@@ -1985,7 +1998,7 @@ impl TurnLoop<'_> {
             // turn (admission-by-budget §4.3).
             self.shared
                 .sessions
-                .record_usage(estimate, prompt_tokens as u64);
+                .record_usage(self.shape(), estimate, prompt_tokens as u64);
             // The turn keeps its largest prefill sample: a session's first
             // round processes the prompt cold, later rounds ride the cache
             // (docs/research/slow-prefill-detection.md §3.1).
@@ -4464,6 +4477,7 @@ impl DialogueCtx<'_> {
         // Each context is its own conversation, so there is no last-round
         // floor to raise the estimate with — the request is priced as it is.
         let need = self.shared.sessions.price(
+            crate::shared::session_budget::Shape::Run,
             estimate_prompt_tokens(&request),
             0,
             request.sampling.max_tokens.map(|m| m as u64),
