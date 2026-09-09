@@ -327,7 +327,7 @@ pub fn version_build_number(text: &str) -> Option<u64> {
     let at = text.find("build ")? + "build ".len();
     let digits: String = text[at..]
         .chars()
-        .take_while(|c| c.is_ascii_digit())
+        .take_while(char::is_ascii_digit)
         .collect();
     digits.parse::<u64>().ok()
 }
@@ -811,7 +811,7 @@ pub fn installed(root: &Path) -> Vec<Install> {
         if !path.is_dir() {
             continue;
         }
-        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+        let Some(name) = path.file_name().and_then(std::ffi::OsStr::to_str) else {
             continue;
         };
         // `.tmp-…` is an install in progress, not an install.
@@ -1688,7 +1688,10 @@ mod tests {
             for (name, body) in entries {
                 let mut header = tar::Header::new_gnu();
                 header.set_size(body.len() as u64);
-                header.set_mode(0o755);
+                // 0o750, not the archives' own 0o755: a world-executable bit in
+                // a fixture is a SonarQube `rust:S2612` finding, and what this
+                // fixture exercises is that the mode survives, not which one.
+                header.set_mode(0o750);
                 header.set_cksum();
                 tar.append_data(&mut header, name, *body).unwrap();
             }
