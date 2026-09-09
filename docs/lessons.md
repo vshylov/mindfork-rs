@@ -1552,6 +1552,21 @@ enablement also fixes what the warm-prefix phase needs: the tool schemas are par
 of the prefix, so they must be in the cache the second phase counts on.
 — *the loops' timings*.
 
+**A live smoke that fails against a change you just made has not yet named the
+culprit — rerun it against a known-good control before believing it did.** The
+llama.cpp downloader's first end-to-end run put the freshly downloaded
+`llama-server` through the app's whole `openai::client::ignored_smoke` set: five
+passed and four failed, which reads as a defect in what was just built. Running
+the identical set against the **hand-built** local `llama-server` on the same
+model failed the same four, arm for arm — a 4B instruct model that does not
+tool-call, has no reasoning channel and no vision. The control run cost one
+command and moved the finding from "the download is broken" to "the model is
+small", which is the difference between a day of debugging and a line in the
+journal. Whenever a live gate has more than one variable — a new binary, a new
+server, a new provider, a borrowed model — hold every one but the one under test
+fixed, and record both arms in the entry, not just the interesting one.
+— *the engine, downloaded*.
+
 ## 10. CI and infrastructure
 
 **A failed `needs` dependency skips the dependent job regardless of its `if`.** A
