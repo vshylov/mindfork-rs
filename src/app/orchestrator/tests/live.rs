@@ -6661,3 +6661,189 @@ async fn prompt_estimate_e2e_live() {
         "{turns} turns ({dense} dense), {rolls} rolls, {impersonations} impersonations seen"
     );
 }
+
+/// A chat seeded on disk for the one-shot smokes: an assistant opener and
+/// four long exchanges, about a thousand tokens swapped or digested — above the rule's floor, and
+/// inside a minute of prefill on the CPU build. Seeded rather than made by
+/// turns: a turn's first round on a fresh root processes its schemas cold
+/// and would claim the session's one note before the request under test
+/// (docs/research/oneshot-samples.md §4). Returns the chat's id; the
+/// database is opened once so the bootstrap says nothing about it.
+fn seed_long_chat(root: &std::path::Path) -> Uuid {
+    let json = crate::shared::storage::JsonStore::new(Paths::with_root(root));
+    let profile = Profile::new("Keeper", "You are a concise assistant.");
+    json.upsert_profile(&profile).unwrap();
+    let mut chat = Chat::from_profile(&profile, "the keeper's evening");
+    // An assistant opener first: impersonation swaps the roles, and Gemma's
+    // template refuses a conversation that then begins with an assistant
+    // turn ("roles must alternate user/assistant", a 400 before any
+    // prefill) — a limit of impersonation on that template family, not of
+    // this smoke (docs/research/oneshot-samples.md §7).
+    chat.push_message(Message::assistant(String::from("How was the evening?")));
+    for part in 0..4u32 {
+        let seed: String = (part * 8..part * 8 + 8)
+            .map(|i| {
+                format!(
+                    "Paragraph {i}: the keeper climbs the stairs, lights the lamp, writes the log, \
+                     notes the tide, and looks out over the dark water for a while.\n"
+                )
+            })
+            .collect();
+        chat.push_message(Message::user(format!("{seed}\nAcknowledge in one word.")));
+        chat.push_message(Message::assistant(String::from("Noted.")));
+    }
+    let chat_id = chat.id;
+    json.save_chat(&chat).unwrap();
+    drop(Storage::open(Paths::with_root(root)).unwrap());
+    chat_id
+}
+
+/// The orchestrator on a seeded root with the chat active and every startup
+/// event drained: what the one-shot smokes start from.
+async fn spawn_on_seeded_chat(
+    root: &std::path::Path,
+    backend: Arc<dyn EngineBackend>,
+    chat_id: Uuid,
+) -> (
+    UnboundedSender<AppCommand>,
+    UnboundedReceiver<AppEvent>,
+    tokio::task::JoinHandle<()>,
+) {
+    let mut config = AppConfig::default();
+    config.engine.mode = crate::shared::config::ServerMode::External;
+    let (cmd_tx, mut evt_rx, handle) = spawn_orch_at(root, Some(backend), config);
+    let activated = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+    if !matches!(activated, AppEvent::ChatActivated { id, .. } if id == chat_id) {
+        cmd_tx.send(AppCommand::SwitchChat(chat_id)).unwrap();
+        wait_for(
+            &mut evt_rx,
+            |e| matches!(e, AppEvent::ChatActivated { id, .. } if *id == chat_id),
+        )
+        .await
+        .unwrap();
+    }
+    (cmd_tx, evt_rx, handle)
+}
+
+/// The note within a few seconds of the landing, or none.
+async fn note_after_landing(evt_rx: &mut UnboundedReceiver<AppEvent>) -> Option<String> {
+    tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        wait_for(evt_rx, |e| matches!(e, AppEvent::Notice(_))),
+    )
+    .await
+    .ok()
+    .flatten()
+    .and_then(|e| match e {
+        AppEvent::Notice(t) => Some(t),
+        _ => None,
+    })
+}
+
+/// Whether the host was told, against what the host is
+/// (`MINDFORK_EXPECT_SLOW_PREFILL=1` on a slow one).
+fn assert_note(expect_note: bool, note: Option<String>, what: &str) {
+    match (expect_note, note) {
+        (true, Some(text)) => assert!(text.contains("-b 256 -ub 256"), "{text}"),
+        (true, None) => panic!("a slow host was expected to be told by its {what}"),
+        (false, None) => {}
+        (false, Some(text)) => panic!("a fast host was told: {text}"),
+    }
+}
+
+/// Impersonation's sample end to end (docs/research/oneshot-samples.md §6,
+/// fork F4a): a seeded chat, `Ctrl+U` with no turn before it, and the note
+/// within a few seconds of `ImpersonationFinished` on a slow host — none on
+/// a fast one. The prompt is the whole conversation swapped under its own
+/// system, processed cold: about a thousand tokens here.
+///
+/// `MINDFORK_ENGINE_URL=…/v1 [MINDFORK_EXPECT_SLOW_PREFILL=1] cargo test impersonation_prefill_e2e_live -- --ignored --nocapture`.
+#[tokio::test]
+#[ignore = "requires a running llama-server (MINDFORK_ENGINE_URL)"]
+async fn impersonation_prefill_e2e_live() {
+    let Some(backend) = live_backend() else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    let expect_note = std::env::var("MINDFORK_EXPECT_SLOW_PREFILL").is_ok();
+    let dir = tempfile::tempdir().unwrap();
+    let chat_id = seed_long_chat(dir.path());
+    let (cmd_tx, mut evt_rx, handle) = spawn_on_seeded_chat(dir.path(), backend, chat_id).await;
+
+    let started = std::time::Instant::now();
+    cmd_tx
+        .send(AppCommand::Impersonate {
+            seed: String::new(),
+        })
+        .unwrap();
+    let ended = wait_for(&mut evt_rx, |e| {
+        matches!(
+            e,
+            AppEvent::ImpersonationFinished { .. } | AppEvent::Error(_)
+        )
+    })
+    .await
+    .unwrap();
+    assert!(
+        matches!(ended, AppEvent::ImpersonationFinished { .. }),
+        "impersonation did not finish: {ended:?}"
+    );
+    let took = started.elapsed();
+    let note = note_after_landing(&mut evt_rx).await;
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    eprintln!(
+        "impersonation prefill: the request took {:.1} s; note = {}",
+        took.as_secs_f64(),
+        note.as_deref().unwrap_or("none")
+    );
+    assert_note(expect_note, note, "impersonation");
+}
+
+/// The title's sample end to end (docs/research/oneshot-samples.md §6, fork
+/// F4a): a seeded chat, a requested title with no turn before it — the
+/// digest capped at 4000 characters, about a thousand tokens under the
+/// title's own system, processed cold — and the note within a few seconds
+/// of the rename on a slow host, none on a fast one.
+///
+/// `MINDFORK_ENGINE_URL=…/v1 [MINDFORK_EXPECT_SLOW_PREFILL=1] cargo test title_prefill_e2e_live -- --ignored --nocapture`.
+#[tokio::test]
+#[ignore = "requires a running llama-server (MINDFORK_ENGINE_URL)"]
+async fn title_prefill_e2e_live() {
+    let Some(backend) = live_backend() else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    let expect_note = std::env::var("MINDFORK_EXPECT_SLOW_PREFILL").is_ok();
+    let dir = tempfile::tempdir().unwrap();
+    let chat_id = seed_long_chat(dir.path());
+    let (cmd_tx, mut evt_rx, handle) = spawn_on_seeded_chat(dir.path(), backend, chat_id).await;
+
+    let started = std::time::Instant::now();
+    cmd_tx.send(AppCommand::AutoRenameChat(chat_id)).unwrap();
+    let landed = wait_for(&mut evt_rx, |e| {
+        matches!(
+            e,
+            AppEvent::ChatRenamed { .. } | AppEvent::ChatListError(_) | AppEvent::Error(_)
+        )
+    })
+    .await
+    .unwrap();
+    let AppEvent::ChatRenamed { title, .. } = landed else {
+        panic!("the title did not land: {landed:?}");
+    };
+    let took = started.elapsed();
+    let note = note_after_landing(&mut evt_rx).await;
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    eprintln!(
+        "title prefill: the request took {:.1} s, the title {title:?}; note = {}",
+        took.as_secs_f64(),
+        note.as_deref().unwrap_or("none")
+    );
+    assert_note(expect_note, note, "title");
+}

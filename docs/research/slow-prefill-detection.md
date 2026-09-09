@@ -255,6 +255,10 @@ seed, `MINDFORK_EXPECT_SLOW_PREFILL` saying which host it is):
   [page-summary-usage.md](page-summary-usage.md) §3.2: the page
   summary's timing rides `ToolOutcome.prefill` into the turn's and the
   loop's largest sample.
+- **The one-shot requests' samples** — done:
+  [oneshot-samples.md](oneshot-samples.md): the title's on
+  `TitleResult.prefill`, impersonation's on the shared engine on
+  `ImpDone.prefill`, each offered after its own landing.
 
 ## 8. Documentation touch list (AGENTS.md §4)
 

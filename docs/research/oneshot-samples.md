@@ -1,8 +1,9 @@
 # The one-shot requests' samples — impersonation's prompt is the session's largest, and its own twice
 
-> **Status:** proposed (2026-09-09); stage 0 is the measurement in §2.1
+> **Status:** implemented (2026-09-09) — every fork at its recommendation
+> (the user's decision, 2026-09-09); stage 0 is the measurement in §2.1
 > (every request of one session with the engine's timing of its prompt,
-> on the GPU stack). The item the page-summary-usage track recorded
+> on the GPU stack), stage 1's live run is in §6.1. The item the page-summary-usage track recorded
 > ([page-summary-usage.md](page-summary-usage.md) §7, fork F2b's other
 > half): the two one-shot requests whose streams still drop their `Usage`
 > chunk's timing — the automatic title's and impersonation's — where the
@@ -210,7 +211,25 @@ say it; the figure is the same, since one server has one throughput.
 
 ### 6.1 Runs
 
-Stage 1.
+`impersonation_prefill_e2e_live` and `title_prefill_e2e_live` (F4a): a chat
+seeded on disk — an assistant opener and four long exchanges — the request
+with no turn before it, the note read within 3 s of the landing:
+
+| host | request | time | the engine's timing | note |
+|---|---|---:|---|---|
+| the LAN stack (Qwen3.6-27B, 4090) | impersonation | 8.2 s | a second or less | none |
+| the LAN stack | the title | 1.2 s | a second or less | none |
+| the CPU build (gemma-3-4b, `-ngl 0`) | impersonation | 66.7 s | 1246 tokens in 34.3 s — 36 tok/s | **36 tok/s, a 56 s hold at the default batch** |
+| the CPU build | the title | 32.2 s | 1119 tokens in 31.7 s — 35 tok/s | **35 tok/s, a 58 s hold** |
+
+On the CPU build each request's landing is the note — from `ImpersonationFinished`
+and from `ChatRenamed` alike, one per server session — with the figures the
+server's own log shows for the prompt; the 4090 says nothing, as the rule
+wants. Found on the way: the CPU arm's first run answered `400` before any
+prefill — Gemma's template refuses the swapped conversation of a chat that
+opens with the user's message (§7); the seed gained an assistant opener.
+Unit: 2982 green, 153 ignored (2978 / 151 before: the two landings' offers,
+the shared-engine condition and a cut stream, the two live smokes).
 
 ## 7. Not in this track
 
@@ -222,6 +241,14 @@ Stage 1.
   loop's and the summary's limits' sibling.
 - **A child run's sample**, **the first request of a kind**
   ([page-summary-usage.md](page-summary-usage.md) §7).
+- **Impersonation on Gemma's template** — found by the CPU arm of the
+  live run: the swapped conversation of a chat that opens with the
+  user's message begins with an assistant turn, and the Gemma 3
+  template refuses it (`Conversation roles must alternate`, a `400`
+  before any prefill) — the very shape
+  `compacted_impersonation_starts_with_assistant_and_ends_with_user`
+  pins. Impersonation cannot start such a chat on that template
+  family at all; its own defect, recorded here.
 
 ## 8. Documentation touch list (AGENTS.md §4)
 

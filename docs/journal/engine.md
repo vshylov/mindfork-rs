@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (53)
+## Entries (54)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -65,6 +65,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the roll's usage for the budget — and the estimate it would calibrate (done)
 - Post-M9: the title's and impersonation's usage for the budget — and the ratio they would erase (done)
 - Post-M9: the page summary's usage — the one kind that under-counts, and a summary that came back empty (done)
+- Post-M9: the one-shot requests' samples — impersonation's prompt is the session's largest, and its own twice (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -3441,3 +3442,60 @@ green, 151 ignored (2973 / 150 before).
 run's sample, the summary's limit against a slow host (4 s to spare here;
 the loop's limit's sibling), the first request of a kind, and
 `reasoning_tokens` reading 0 on a stream of thoughts.
+
+### Post-M9: the one-shot requests' samples — impersonation's prompt is the session's largest, and its own twice (done)
+
+**What.** The item the page-summary-usage track recorded
+([docs/research/page-summary-usage.md](../research/page-summary-usage.md)
+§7): the automatic title and impersonation still dropped their `Usage`
+chunk's timing where every other cold prompt the app makes offers its
+sample to the slow-prefill note. The design
+[docs/research/oneshot-samples.md](../research/oneshot-samples.md), every
+fork at its recommendation (the user's decision, 2026-09-09).
+
+**Measured (stage 0, the LAN stack, Qwen3.6-27B).** Every request of the
+estimate smoke's session with the engine's timing, and a second
+impersonation right after the first: the fresh chat's first turn 4349
+tokens cold (its schemas), the second turn 94 warm, the JSON turn 10 428,
+the title 200 (under the rule's 256-token floor), the roll 434,
+**impersonation 10 642** — the whole conversation with the roles swapped
+under its own system, nothing of it in any slot's cache, the largest
+prompt of the session — and the second impersonation **4**: the swapped
+prefix stayed in a slot. On the CPU build's 38 tok/s that impersonation
+is 280 s, inside its 600 s limit: every first `Ctrl+U` on a long chat
+pays the whole conversation's prefill, the very figure the note exists to
+tell. The title's digest is capped at 4000 characters — a thousand tokens
+at most — so its sample clears the floor only on a long opening.
+
+**How.** `spawn_impersonation` keeps the chunk's `prefill` under the
+record's own condition — a budget, which is exactly the shared engine,
+the one server whose batch the rule names and whose session the claim
+counts (fork F3) — and lands `ImpDone { id, reason, prefill }`;
+`handle_imp_done` emits `ImpersonationFinished` and then offers the
+sample, the roll's shape; a superseded generation lands nothing but its
+prompt was processed on this server, so its sample is offered too. A
+separate impersonation server has a batch and a session of its own the
+rule does not know: `None` there (F1). The title's rides
+`TitleResult.prefill`, the largest across its attempts
+(`Prefill::keep_larger`; a displaced attempt's usage never arrives), and
+`handle_title_result` offers it after `apply_title_result` whatever the
+text made of it — an error result's prompt was processed all the same
+(F2).
+
+**Live** (F4a, two seeded smokes — no turn before the request, since a
+turn's cold schemas would claim the session's one note first). The 4090:
+impersonation 8.2 s, the title 1.2 s, no note. The CPU build:
+impersonation 66.7 s — 1246 tokens in 34.3 s, 36 tok/s — the note (a
+56 s hold at the default batch) after `ImpersonationFinished`; the title
+32.2 s — 1119 tokens in 31.7 s, 35 tok/s — the note after `ChatRenamed`.
+The CPU arm's first run answered `400` before any prefill: Gemma's
+template refuses the swapped conversation of a chat that opens with the
+user's message (`Conversation roles must alternate`) — the seed gained an
+assistant opener, and the defect is recorded in the design's §7 as
+impersonation's own on that template family. Unit: 2982 green, 153
+ignored (2978 / 151 before).
+
+**Not in this track** (§7): a rule of the impersonation server's own
+(with the own-engine question), impersonation's limit against a slow
+host, a child run's sample, the first request of a kind, and
+impersonation on Gemma's template.

@@ -46,6 +46,11 @@ pub(super) struct TitleResult {
     /// The model's raw reply text (or an error message to show in the UI).
     pub(super) text: Result<String, String>,
     pub(super) origin: TitleOrigin,
+    /// The engine's timing of the title's prompt — its own system over the
+    /// digest, processed cold every time — the largest across the title's
+    /// attempts; `None` from a stream that ended before its usage
+    /// (docs/research/oneshot-samples.md §3.2).
+    pub(super) prefill: Option<crate::shared::api::contract::Prefill>,
 }
 
 impl Orchestrator {
@@ -171,9 +176,20 @@ impl Orchestrator {
         );
     }
 
+    /// The landing of a title task: the result applied or reported
+    /// ([`Self::apply_title_result`]), then the engine's timing of the
+    /// title's prompt offered to the slow-prefill rule — after the landing,
+    /// whatever the text made of it: an error result's prompt was processed
+    /// all the same (docs/research/oneshot-samples.md §3.2).
+    pub(super) fn handle_title_result(&mut self, res: TitleResult) {
+        let prefill = res.prefill;
+        self.apply_title_result(res);
+        self.note_slow_prefill(prefill);
+    }
+
     /// Applies the result of background auto-title generation: cleans up/normalizes
     /// the title and renames the chat (or reports the failure per its origin).
-    pub(super) fn handle_title_result(&mut self, res: TitleResult) {
+    fn apply_title_result(&mut self, res: TitleResult) {
         let raw = match res.text {
             Ok(raw) => raw,
             Err(msg) => {
@@ -252,6 +268,9 @@ fn spawn_title(
         // (docs/research/silent-preemption.md §4.4): the same request is made
         // again, up to `SILENT_YIELDS_MAX` times; then the stream holds.
         let mut yields: u32 = 0;
+        // The engine's timing of the prompt, the largest across the attempts
+        // (a displaced one's usage never arrives; oneshot-samples §3.2).
+        let mut prefill = None;
         let text = loop {
             let Some(lane) = sessions
                 .acquire_silent(need, &cancel, "title", yields < SILENT_YIELDS_MAX)
@@ -266,6 +285,7 @@ fn spawn_title(
                 let mut text = String::new();
                 let mut thoughts = String::new();
                 let mut cancelled = false;
+                let mut sample = None;
                 while let Some(chunk) = stream.next().await {
                     match chunk {
                         ChatChunk::Text(t) => text.push_str(&t),
@@ -303,14 +323,16 @@ fn spawn_title(
                                 estimate,
                                 u.prompt_tokens as u64,
                             );
+                            sample = u.prefill;
                         }
                         ChatChunk::ThoughtsSignature(_) | ChatChunk::ToolCall(_) => {}
                     }
                 }
-                Ok::<(String, String, bool), anyhow::Error>((text, thoughts, cancelled))
+                Ok::<Collected, anyhow::Error>((text, thoughts, cancelled, sample))
             };
             match tokio::time::timeout(TITLE_TIMEOUT, collect).await {
-                Ok(Ok((_, _, true))) if lane.displaced() => {
+                Ok(Ok((_, _, true, sample))) if lane.displaced() => {
+                    crate::shared::api::contract::Prefill::keep_larger(&mut prefill, sample);
                     yields += 1;
                     tracing::info!(
                         chat = %chat_id,
@@ -319,8 +341,11 @@ fn spawn_title(
                     );
                 }
                 // The app is quitting: nobody reads a title now.
-                Ok(Ok((_, _, true))) => return,
-                Ok(Ok((text, thoughts, false))) => break Ok(salvage_title_source(text, thoughts)),
+                Ok(Ok((_, _, true, _))) => return,
+                Ok(Ok((text, thoughts, false, sample))) => {
+                    crate::shared::api::contract::Prefill::keep_larger(&mut prefill, sample);
+                    break Ok(salvage_title_source(text, thoughts));
+                }
                 Ok(Err(err)) => {
                     break Err(loc.tf("ui.err.title_gen_failed", &[("err", &err.to_string())]));
                 }
@@ -334,6 +359,7 @@ fn spawn_title(
             chat_id,
             text,
             origin,
+            prefill,
         });
     });
 }
@@ -341,6 +367,15 @@ fn spawn_title(
 /// Picks the raw title source: the model's main reply, and if it's empty
 /// (the model didn't "finish thinking" within the budget) — the last substantive
 /// line of the reasoning. `clean_generated_title` does the final normalization.
+/// One attempt's stream: the text, the thoughts, whether it was cancelled,
+/// and the engine's timing of its prompt.
+type Collected = (
+    String,
+    String,
+    bool,
+    Option<crate::shared::api::contract::Prefill>,
+);
+
 pub(super) fn salvage_title_source(text: String, thoughts: String) -> String {
     if !text.trim().is_empty() {
         return text;

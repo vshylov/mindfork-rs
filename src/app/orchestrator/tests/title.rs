@@ -58,6 +58,7 @@ fn title_result(chat_id: Uuid, text: Result<&str, &str>, origin: TitleOrigin) ->
         chat_id,
         text: text.map(str::to_string).map_err(str::to_string),
         origin,
+        prefill: None,
     }
 }
 
@@ -390,4 +391,66 @@ async fn the_title_records_its_usage_under_its_own_kind() {
         1.0,
         "the title's record is the title's"
     );
+}
+
+/// The title's stream is a cold prompt on the chat server — its own system
+/// over the digest, processed whole — and its timing is offered to the
+/// slow-prefill rule after the title's own landing
+/// (docs/research/oneshot-samples.md §3.2): the rename first, the note after
+/// it; the second sample on the same server says nothing.
+#[test]
+fn the_titles_landing_offers_its_sample() {
+    let (_d, mut orch, mut rx, chat_id) =
+        bare_with_chat(vec![crate::entities::message::Message::user("Привет!")]);
+    orch.config.engine.mode = crate::shared::config::ServerMode::External;
+    while rx.try_recv().is_ok() {}
+    let cold = Some(crate::shared::api::contract::Prefill {
+        tokens: 1000,
+        ms: 26_000,
+    });
+    let mut res = title_result(chat_id, Ok("«Имя»"), TitleOrigin::Requested);
+    res.prefill = cold;
+    orch.handle_title_result(res);
+    let events: Vec<AppEvent> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+    let renamed = events
+        .iter()
+        .position(|e| matches!(e, AppEvent::ChatRenamed { .. }))
+        .expect("the rename landed");
+    let note = events
+        .iter()
+        .position(|e| matches!(e, AppEvent::Notice(t) if t.contains("-b 256 -ub 256")))
+        .expect("the note");
+    assert!(renamed < note, "the landing first, the note after it");
+
+    let mut again = title_result(chat_id, Ok("«Ещё имя»"), TitleOrigin::Requested);
+    again.prefill = cold;
+    orch.handle_title_result(again);
+    let notes = std::iter::from_fn(|| rx.try_recv().ok())
+        .filter(|e| matches!(e, AppEvent::Notice(_)))
+        .count();
+    assert_eq!(notes, 0, "one note per server session");
+}
+
+/// An error result's prompt was processed all the same: the landing reports
+/// the failure, then offers the sample (§3.2).
+#[test]
+fn a_failed_titles_prompt_was_processed_all_the_same() {
+    let (_d, mut orch, mut rx, chat_id) =
+        bare_with_chat(vec![crate::entities::message::Message::user("Привет!")]);
+    orch.config.engine.mode = crate::shared::config::ServerMode::External;
+    while rx.try_recv().is_ok() {}
+    let mut res = title_result(chat_id, Err("boom"), TitleOrigin::Auto);
+    res.prefill = Some(crate::shared::api::contract::Prefill {
+        tokens: 1000,
+        ms: 26_000,
+    });
+    orch.handle_title_result(res);
+    let notes: Vec<String> = std::iter::from_fn(|| rx.try_recv().ok())
+        .filter_map(|e| match e {
+            AppEvent::Notice(t) => Some(t),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(notes[0].contains("-b 256 -ub 256"), "{}", notes[0]);
 }
