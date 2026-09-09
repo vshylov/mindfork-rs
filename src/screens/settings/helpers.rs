@@ -185,7 +185,8 @@ pub(super) fn managed_rows(
     let mut rows = grouped(
         loc.t("ui.settings.group.server"),
         vec![
-            text_row(ids.binary, loc.t("ui.settings.field.binary"), &m.binary),
+            text_row(ids.binary, loc.t("ui.settings.field.binary"), &m.binary)
+                .describe(loc.t("ui.settings.desc.binary")),
             row(ids.host, "Host", FieldKind::Text(m.host.clone())),
             num_field(ids.port, loc.t("ui.settings.field.port"), m.port),
         ],

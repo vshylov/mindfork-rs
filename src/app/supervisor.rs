@@ -6,6 +6,7 @@
 //! Lives in `app`: it's composition glue that knows both about `shared/config`
 //! (settings) and about `shared/api` (the engine/process launch) — both lower in FSD.
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -21,6 +22,7 @@ use crate::shared::config::{
     ManagedSettings, ServerMode,
 };
 use crate::shared::i18n::Locale;
+use crate::shared::paths::Paths;
 use crate::shared::server::ServerStatus;
 
 /// A generous readiness timeout for the managed server: loading the model can take
@@ -118,9 +120,57 @@ pub trait ServerSupervisor: Send + Sync {
     ) -> ChatSetup;
 }
 
+/// Where the supervisor looks for a `llama-server` the settings do not name
+/// outright (spec §3.4): the builds `mindfork llama setup` unpacked under
+/// `data/llama/`, and the application's own directory.
+///
+/// Empty by `Default` — which is what the tests use, and which reduces the
+/// resolution to "an explicit path or nothing", the behaviour they were written
+/// against.
+#[derive(Debug, Clone, Default)]
+pub struct BinaryLookup {
+    /// `Paths::llama_dir()` — the downloaded builds.
+    pub llama_dir: Option<PathBuf>,
+    /// `Paths::exe_dir()` — beside the application binary.
+    pub exe_dir: Option<PathBuf>,
+}
+
+impl BinaryLookup {
+    /// The two directories a real installation has.
+    pub fn from_paths(paths: &Paths) -> Self {
+        Self {
+            llama_dir: Some(paths.llama_dir()),
+            exe_dir: paths.exe_dir().map(Path::to_path_buf),
+        }
+    }
+
+    /// The launchable path for a configured setting, or `None` — see
+    /// [`crate::features::llama_setup::resolve_binary`].
+    fn resolve(&self, configured: Option<&str>) -> Option<PathBuf> {
+        crate::features::llama_setup::resolve_binary(
+            configured,
+            self.exe_dir.as_deref(),
+            self.llama_dir.as_deref(),
+        )
+    }
+}
+
 /// The production supervisor: external — by URL (any OpenAI server), managed —
 /// a child `llama-server` process (llama.cpp).
-pub struct LlamaSupervisor;
+#[derive(Default)]
+pub struct LlamaSupervisor {
+    lookup: BinaryLookup,
+}
+
+impl LlamaSupervisor {
+    /// The supervisor a real run gets: it can find a downloaded build, or one
+    /// unpacked beside the application, when the settings name neither.
+    pub fn new(paths: &Paths) -> Self {
+        Self {
+            lookup: BinaryLookup::from_paths(paths),
+        }
+    }
+}
 
 impl ServerSupervisor for LlamaSupervisor {
     fn apply_chat(
@@ -142,7 +192,8 @@ impl ServerSupervisor for LlamaSupervisor {
                 loc,
             ),
             ServerMode::Managed => {
-                managed_chat_setup(managed_config(&settings.managed), cancel, status_tx, loc)
+                let cfg = managed_config(&settings.managed, &self.lookup);
+                managed_chat_setup(cfg, cancel, status_tx, loc)
             }
             ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude | ServerMode::Grok => {
                 let cloud = settings.cloud().expect("cloud mode");
@@ -179,7 +230,8 @@ impl ServerSupervisor for LlamaSupervisor {
                 loc,
             ),
             ImpersonationMode::Managed => {
-                managed_chat_setup(managed_config(&settings.managed), cancel, status_tx, loc)
+                let cfg = managed_config(&settings.managed, &self.lookup);
+                managed_chat_setup(cfg, cancel, status_tx, loc)
             }
             ImpersonationMode::OpenAi
             | ImpersonationMode::Gemini
@@ -239,11 +291,14 @@ impl ServerSupervisor for LlamaSupervisor {
                 }
                 _ => unavailable_embed(),
             },
-            ServerMode::Managed => match settings.managed.binary.as_deref() {
-                Some(bin) if !bin.is_empty() => {
+            // The embedder is the same `llama-server` with `--embeddings`, so it
+            // resolves its binary the same way the chat server does — one
+            // downloaded build serves both.
+            ServerMode::Managed => match self.lookup.resolve(settings.managed.binary.as_deref()) {
+                Some(bin) => {
                     let m = &settings.managed;
                     let cfg = ManagedConfig {
-                        binary: bin.into(),
+                        binary: bin,
                         model_path: m.model_path.clone(),
                         // An embedding model has no image encoder — the projector is
                         // a chat-server setting only.
@@ -432,9 +487,15 @@ fn managed_chat_setup(
 
 /// Builds a [`ManagedConfig`] (`llama-server`) from the engine's managed subsection
 /// (shared by the assistant's chat server and the impersonation server).
-fn managed_config(s: &ManagedSettings) -> ManagedConfig {
+///
+/// The binary goes through [`BinaryLookup`]: an explicit path is used as
+/// written, a bare name may be found beside the application, and an empty
+/// setting resolves to the build installed last under `data/llama/`. Nothing
+/// found leaves the path empty, which `managed_chat_setup` reads as
+/// `NotConfigured` exactly as before.
+fn managed_config(s: &ManagedSettings, lookup: &BinaryLookup) -> ManagedConfig {
     ManagedConfig {
-        binary: s.binary.clone().unwrap_or_default().into(),
+        binary: lookup.resolve(s.binary.as_deref()).unwrap_or_default(),
         model_path: s.model_path.clone(),
         mmproj: s.mmproj.clone(),
         gpu_layers: s.gpu_layers,
@@ -965,6 +1026,133 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
     use tokio::sync::mpsc::unbounded_channel;
 
+    /// The production path end to end: a managed section with **no** binary at
+    /// all, a real `data/llama/` with a build `mindfork llama setup` put there,
+    /// and a real model — the app must launch that build and reach `Ready`.
+    /// Unit tests settle the resolution rule; only this settles that what the
+    /// rule points at is something `ServerHandle::launch` can actually run.
+    ///
+    ///     MINDFORK_LLAMA_DIR=…/data/llama MINDFORK_MODEL=…/small.gguf \
+    ///       cargo test empty_binary_launches -- --ignored --nocapture
+    #[tokio::test]
+    #[ignore = "requires a downloaded build (MINDFORK_LLAMA_DIR) and a model (MINDFORK_MODEL)"]
+    async fn empty_binary_launches_the_downloaded_build_live() {
+        let (Ok(llama_dir), Ok(model)) = (
+            std::env::var("MINDFORK_LLAMA_DIR"),
+            std::env::var("MINDFORK_MODEL"),
+        ) else {
+            eprintln!("skip: MINDFORK_LLAMA_DIR / MINDFORK_MODEL not set");
+            return;
+        };
+        let settings = EngineSettings {
+            mode: ServerMode::Managed,
+            managed: ManagedSettings {
+                binary: None, // the whole point: nothing configured
+                model_path: Some(model),
+                gpu_layers: 0,
+                context_size: 2048,
+                port: 18126,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let supervisor = LlamaSupervisor {
+            lookup: BinaryLookup {
+                llama_dir: Some(llama_dir.clone().into()),
+                exe_dir: None,
+            },
+        };
+        eprintln!(
+            "resolved: {:?}",
+            supervisor
+                .lookup
+                .resolve(None)
+                .expect("a build to resolve to")
+        );
+
+        let (tx, mut rx) = unbounded_channel();
+        let setup = supervisor.apply_chat(&settings, None, CancellationToken::new(), tx, ru());
+        assert_eq!(
+            setup.status,
+            ServerStatus::Connecting,
+            "an empty field with a build on disk must not read as NotConfigured"
+        );
+        let _handle = setup.handle.expect("a child process");
+        let status = tokio::time::timeout(Duration::from_secs(600), rx.recv())
+            .await
+            .expect("the probe should report within the readiness timeout")
+            .expect("the probe channel should not close");
+        assert_eq!(status, ServerStatus::Ready, "the resolved build must run");
+    }
+
+    /// A downloaded build under `data/llama/` is what an empty binary field
+    /// resolves to (spec §3.4). Without a lookup — the shape every other test
+    /// in this module is written against — an empty field is still nothing.
+    #[test]
+    fn an_empty_binary_resolves_to_a_downloaded_build() {
+        let data = tempfile::tempdir().unwrap();
+        let install = data.path().join("vulkan-b10883");
+        std::fs::create_dir_all(&install).unwrap();
+        let binary = install.join(crate::features::llama_setup::server_binary_name());
+        std::fs::write(&binary, b"x").unwrap();
+        let lookup = BinaryLookup {
+            llama_dir: Some(data.path().to_path_buf()),
+            exe_dir: None,
+        };
+
+        let cfg = managed_config(&ManagedSettings::default(), &lookup);
+        assert_eq!(cfg.binary, binary);
+
+        let bare = managed_config(&ManagedSettings::default(), &BinaryLookup::default());
+        assert!(
+            bare.binary.as_os_str().is_empty(),
+            "no lookup, no path — `managed_chat_setup` reads that as NotConfigured"
+        );
+    }
+
+    /// The embedder is the same binary with `--embeddings`, so one downloaded
+    /// build serves it too — an empty `embed.managed.binary` must stop being
+    /// `NotConfigured` once there is something to find.
+    #[test]
+    fn the_embedder_resolves_its_binary_the_same_way() {
+        let data = tempfile::tempdir().unwrap();
+        let install = data.path().join("cpu-b10883");
+        std::fs::create_dir_all(&install).unwrap();
+        std::fs::write(
+            install.join(crate::features::llama_setup::server_binary_name()),
+            b"x",
+        )
+        .unwrap();
+        let settings = EmbedSettings {
+            mode: ServerMode::Managed,
+            ..Default::default()
+        };
+
+        let (tx, _rx) = unbounded_channel();
+        let without = LlamaSupervisor::default().apply_embed(
+            &settings,
+            None,
+            CancellationToken::new(),
+            tx,
+            ru(),
+        );
+        assert_eq!(without.status, ServerStatus::NotConfigured);
+
+        let (tx, _rx) = unbounded_channel();
+        let with = LlamaSupervisor {
+            lookup: BinaryLookup {
+                llama_dir: Some(data.path().to_path_buf()),
+                exe_dir: None,
+            },
+        }
+        .apply_embed(&settings, None, CancellationToken::new(), tx, ru());
+        assert_ne!(
+            with.status,
+            ServerStatus::NotConfigured,
+            "a build was found, so this is a launch attempt, not a missing setting"
+        );
+    }
+
     /// The reference (Russian) locale for displayed unavailability reasons:
     /// assertions on Russian substrings are pinned byte-for-byte.
     fn ru() -> &'static Locale {
@@ -1012,7 +1200,7 @@ mod tests {
     /// a probe that can't deliver its status just fails the send.
     fn embed_setup(s: &EmbedSettings) -> EmbedSetup {
         let (tx, _rx) = unbounded_channel();
-        LlamaSupervisor.apply_embed(s, None, CancellationToken::new(), tx, ru())
+        LlamaSupervisor::default().apply_embed(s, None, CancellationToken::new(), tx, ru())
     }
 
     fn embed_external(url: &str) -> EmbedSettings {
@@ -1040,7 +1228,7 @@ mod tests {
     #[tokio::test]
     async fn external_with_url_yields_backend_connecting() {
         let (tx, _rx) = unbounded_channel();
-        let setup = LlamaSupervisor.apply_chat(
+        let setup = LlamaSupervisor::default().apply_chat(
             &external(Some("http://127.0.0.1:9/v1")),
             None,
             CancellationToken::new(),
@@ -1102,8 +1290,13 @@ mod tests {
         let mut settings = external(Some(&url));
         settings.external.api_key_env = api_key_env.map(String::from);
         let (tx, _rx) = unbounded_channel();
-        let setup =
-            LlamaSupervisor.apply_chat(&settings, stored, CancellationToken::new(), tx, ru());
+        let setup = LlamaSupervisor::default().apply_chat(
+            &settings,
+            stored,
+            CancellationToken::new(),
+            tx,
+            ru(),
+        );
         assert!(setup.backend.is_some(), "external mode yields a backend");
         header(seen).await
     }
@@ -1209,7 +1402,13 @@ mod tests {
         let mut settings = external(Some(&url));
         settings.external.model_name = model_name.map(String::from);
         let (tx, _rx) = unbounded_channel();
-        let setup = LlamaSupervisor.apply_chat(&settings, None, CancellationToken::new(), tx, ru());
+        let setup = LlamaSupervisor::default().apply_chat(
+            &settings,
+            None,
+            CancellationToken::new(),
+            tx,
+            ru(),
+        );
         let backend = setup.backend.expect("external mode yields a backend");
         // The stream is never polled — the request is sent before it exists, and
         // that request is the whole subject of the test.
@@ -1261,7 +1460,7 @@ mod tests {
     async fn external_embeddings_send_the_stored_key() {
         let (url, seen) = auth_probe_stub();
         let (tx, _rx) = unbounded_channel();
-        let setup = LlamaSupervisor.apply_embed(
+        let setup = LlamaSupervisor::default().apply_embed(
             &embed_external(&url),
             Some("sk-embed"),
             CancellationToken::new(),
@@ -1303,8 +1502,13 @@ mod tests {
     #[tokio::test]
     async fn external_without_url_is_not_configured() {
         let (tx, _rx) = unbounded_channel();
-        let setup =
-            LlamaSupervisor.apply_chat(&external(None), None, CancellationToken::new(), tx, ru());
+        let setup = LlamaSupervisor::default().apply_chat(
+            &external(None),
+            None,
+            CancellationToken::new(),
+            tx,
+            ru(),
+        );
         assert!(setup.backend.is_none());
         assert_eq!(setup.status, ServerStatus::NotConfigured);
     }
@@ -1316,7 +1520,8 @@ mod tests {
             mode: ServerMode::Managed,
             ..Default::default()
         };
-        let setup = LlamaSupervisor.apply_chat(&s, None, CancellationToken::new(), tx, ru());
+        let setup =
+            LlamaSupervisor::default().apply_chat(&s, None, CancellationToken::new(), tx, ru());
         assert_eq!(setup.status, ServerStatus::NotConfigured);
     }
 
@@ -1331,7 +1536,8 @@ mod tests {
             },
             ..Default::default()
         };
-        let setup = LlamaSupervisor.apply_chat(&s, None, CancellationToken::new(), tx, ru());
+        let setup =
+            LlamaSupervisor::default().apply_chat(&s, None, CancellationToken::new(), tx, ru());
         assert!(setup.backend.is_none());
         assert!(matches!(setup.status, ServerStatus::Disconnected(_)));
     }
@@ -1351,7 +1557,8 @@ mod tests {
             },
             ..Default::default()
         };
-        let setup = LlamaSupervisor.apply_chat(&s, None, CancellationToken::new(), tx, ru());
+        let setup =
+            LlamaSupervisor::default().apply_chat(&s, None, CancellationToken::new(), tx, ru());
         assert!(setup.backend.is_none());
         match setup.status {
             ServerStatus::Disconnected(msg) => assert!(msg.contains("файл модели"), "{msg}"),
@@ -1373,7 +1580,9 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            managed_config(&managed).mmproj.as_deref(),
+            managed_config(&managed, &BinaryLookup::default())
+                .mmproj
+                .as_deref(),
             Some(MISSING),
             "the setting must reach the launch config"
         );
@@ -1384,7 +1593,8 @@ mod tests {
             managed,
             ..Default::default()
         };
-        let setup = LlamaSupervisor.apply_chat(&s, None, CancellationToken::new(), tx, ru());
+        let setup =
+            LlamaSupervisor::default().apply_chat(&s, None, CancellationToken::new(), tx, ru());
         assert!(setup.backend.is_none());
         match setup.status {
             ServerStatus::Disconnected(msg) => {
@@ -1463,8 +1673,13 @@ mod tests {
 
         let turn = |stored: Option<&str>| {
             let (tx, _rx) = unbounded_channel();
-            let setup =
-                LlamaSupervisor.apply_chat(&settings, stored, CancellationToken::new(), tx, ru());
+            let setup = LlamaSupervisor::default().apply_chat(
+                &settings,
+                stored,
+                CancellationToken::new(),
+                tx,
+                ru(),
+            );
             let backend = setup.backend.expect("external mode yields a backend");
             async move {
                 let req = crate::shared::api::ChatRequest {
@@ -1532,8 +1747,13 @@ mod tests {
             },
             ..Default::default()
         };
-        let setup =
-            LlamaSupervisor.apply_chat(&s, Some("sk-stored"), CancellationToken::new(), tx, ru());
+        let setup = LlamaSupervisor::default().apply_chat(
+            &s,
+            Some("sk-stored"),
+            CancellationToken::new(),
+            tx,
+            ru(),
+        );
         assert_eq!(setup.status, ServerStatus::Ready);
         assert!(setup.backend.is_some());
     }
@@ -1549,7 +1769,7 @@ mod tests {
             },
             ..Default::default()
         };
-        match LlamaSupervisor
+        match LlamaSupervisor::default()
             .apply_chat(&s, None, CancellationToken::new(), tx, ru())
             .status
         {
@@ -1570,7 +1790,7 @@ mod tests {
             },
             ..Default::default()
         };
-        match LlamaSupervisor
+        match LlamaSupervisor::default()
             .apply_chat(&s, None, CancellationToken::new(), tx, ru())
             .status
         {
@@ -1595,7 +1815,8 @@ mod tests {
             },
             ..Default::default()
         };
-        let setup = LlamaSupervisor.apply_chat(&s, None, CancellationToken::new(), tx, ru());
+        let setup =
+            LlamaSupervisor::default().apply_chat(&s, None, CancellationToken::new(), tx, ru());
         assert!(setup.backend.is_some());
         assert!(setup.handle.is_none(), "the cloud has no child process");
         assert_eq!(setup.status, ServerStatus::Ready);
@@ -1615,7 +1836,8 @@ mod tests {
             },
             ..Default::default()
         };
-        let setup = LlamaSupervisor.apply_chat(&s, None, CancellationToken::new(), tx, ru());
+        let setup =
+            LlamaSupervisor::default().apply_chat(&s, None, CancellationToken::new(), tx, ru());
         assert!(setup.backend.is_some());
         assert!(setup.handle.is_none());
         assert_eq!(setup.status, ServerStatus::Ready);
@@ -1636,7 +1858,8 @@ mod tests {
             },
             ..Default::default()
         };
-        let setup = LlamaSupervisor.apply_chat(&s, None, CancellationToken::new(), tx, ru());
+        let setup =
+            LlamaSupervisor::default().apply_chat(&s, None, CancellationToken::new(), tx, ru());
         assert!(setup.backend.is_some());
         assert!(setup.handle.is_none());
         assert_eq!(setup.status, ServerStatus::Ready);
@@ -1773,7 +1996,7 @@ mod tests {
     async fn monitor_notices_a_server_going_down_and_coming_back() {
         let (url, switch) = spawn_stub_server(true).await;
         let (tx, mut rx) = unbounded_channel();
-        LlamaSupervisor.apply_embed(
+        LlamaSupervisor::default().apply_embed(
             &embed_external(&url),
             None,
             CancellationToken::new(),
@@ -1807,7 +2030,7 @@ mod tests {
     async fn monitor_stays_quiet_while_the_server_is_steady() {
         let (url, _switch) = spawn_stub_server(true).await;
         let (tx, mut rx) = unbounded_channel();
-        LlamaSupervisor.apply_embed(
+        LlamaSupervisor::default().apply_embed(
             &embed_external(&url),
             None,
             CancellationToken::new(),
@@ -1838,7 +2061,7 @@ mod tests {
     async fn embed_probe_reports_ready_when_server_answers() {
         let (url, _switch) = spawn_stub_server(true).await;
         let (tx, mut rx) = unbounded_channel();
-        let setup = LlamaSupervisor.apply_embed(
+        let setup = LlamaSupervisor::default().apply_embed(
             &embed_external(&url),
             None,
             CancellationToken::new(),
@@ -1857,7 +2080,7 @@ mod tests {
     async fn embed_probe_reports_disconnected_when_server_is_silent() {
         let (url, _switch) = spawn_stub_server(false).await;
         let (tx, mut rx) = unbounded_channel();
-        let setup = LlamaSupervisor.apply_embed(
+        let setup = LlamaSupervisor::default().apply_embed(
             &embed_external(&url),
             None,
             CancellationToken::new(),
@@ -1878,7 +2101,7 @@ mod tests {
         let (tx, mut rx) = unbounded_channel();
         let cancel = CancellationToken::new();
         cancel.cancel(); // already stale before the background task starts
-        let setup = LlamaSupervisor.apply_embed(
+        let setup = LlamaSupervisor::default().apply_embed(
             &embed_external("http://127.0.0.1:9/v1"),
             None,
             cancel,
@@ -1923,7 +2146,8 @@ mod tests {
             },
             ..Default::default()
         };
-        let setup = LlamaSupervisor.apply_embed(&s, None, CancellationToken::new(), tx, ru());
+        let setup =
+            LlamaSupervisor::default().apply_embed(&s, None, CancellationToken::new(), tx, ru());
         assert_eq!(setup.status, ServerStatus::Ready);
         assert!(setup.handle.is_none(), "the cloud has no child process");
         tokio::time::sleep(Duration::from_secs(60)).await;
@@ -1987,7 +2211,8 @@ mod tests {
             ..Default::default()
         };
         let (tx, mut rx) = unbounded_channel();
-        let setup = LlamaSupervisor.apply_embed(&s, None, CancellationToken::new(), tx, ru());
+        let setup =
+            LlamaSupervisor::default().apply_embed(&s, None, CancellationToken::new(), tx, ru());
         let _handle = setup.handle.expect("a managed server owns its child");
         assert_eq!(rx.recv().await, Some(ServerStatus::Ready), "model loaded");
 
@@ -2026,7 +2251,7 @@ mod tests {
             return;
         };
         let (tx, mut rx) = unbounded_channel();
-        LlamaSupervisor.apply_embed(
+        LlamaSupervisor::default().apply_embed(
             &embed_external(&url),
             None,
             CancellationToken::new(),
@@ -2055,7 +2280,7 @@ mod tests {
             return;
         };
         let (tx, mut rx) = unbounded_channel();
-        let setup = LlamaSupervisor.apply_embed(
+        let setup = LlamaSupervisor::default().apply_embed(
             &embed_external(&url),
             None,
             CancellationToken::new(),

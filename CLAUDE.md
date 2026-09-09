@@ -171,8 +171,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-10, version 0.9.8)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3015 unit tests
-green, 155 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **3024 unit tests
+green, 156 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -206,7 +206,13 @@ being recent is dropped, not shortened.
   b10883 cpu, cpu-b10871 beside it, vulkan reporting a real adapter, and
   the settings written on a config whose embedder path was left alone; the
   downloaded build served the app's live smoke set identically to a
-  hand-built one
+  hand-built one. A follow-up closed the half of spec §3.4 that had never
+  been implemented: the binary field is now **resolved**, not taken
+  literally — a typed path as written, a bare name beside the application
+  then `PATH`, and an **empty** field meaning the build installed last
+  under `data/llama/` (not the newest tag, which would move a user off the
+  GPU because a CPU build shipped later), so a download or an archive
+  unpacked beside `mindfork` needs nothing typed
   ([docs/research/llama-cpp-download.md](docs/research/llama-cpp-download.md),
   spec §3.4, [docs/journal/engine.md](docs/journal/engine.md)).
 - **The dialogue's director on Gemma's template — the checkpoint's

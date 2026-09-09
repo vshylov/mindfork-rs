@@ -886,6 +886,87 @@ fn dir_size(dir: &Path) -> u64 {
     total
 }
 
+// -------- Finding a binary the settings do not name outright (spec §3.4) --------
+
+/// The install under `root` created **last**, when its server binary is there.
+///
+/// "Last installed" and not "newest build": ordering by tag would silently move
+/// a user from `vulkan-b10871` to `cpu-b10883` — from the GPU to the CPU —
+/// because the CPU build happened to be published later. What the user ran
+/// `llama setup` for most recently is what they meant; anything else is what
+/// `--set-binary` is for. Creation time, falling back to modification time on a
+/// filesystem that does not record it.
+pub fn newest_install(root: &Path) -> Option<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return None;
+    };
+    let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
+    for entry in entries.flatten() {
+        let dir = entry.path();
+        let Some(name) = dir.file_name().and_then(std::ffi::OsStr::to_str) else {
+            continue;
+        };
+        // `.tmp-…` is an install in progress, not an install.
+        if name.starts_with('.') || split_install_name(name).is_none() {
+            continue;
+        }
+        let binary = dir.join(server_binary_name());
+        if !binary.is_file() {
+            continue; // an interrupted install is not a candidate
+        }
+        let Ok(meta) = entry.metadata() else { continue };
+        let Ok(when) = meta.created().or_else(|_| meta.modified()) else {
+            continue;
+        };
+        if best.as_ref().is_none_or(|(best_when, _)| when > *best_when) {
+            best = Some((when, binary));
+        }
+    }
+    best.map(|(_, binary)| binary)
+}
+
+/// Resolves the configured `llama-server` path into something launchable, or
+/// `None` when there is nothing to launch (spec §3.4).
+///
+/// | `configured` | what happens |
+/// |---|---|
+/// | a path with a directory part | used exactly as written — never second-guessed |
+/// | a bare name (`llama-server`) | next to the application if it is there, otherwise handed to the OS, i.e. `PATH` |
+/// | empty or absent | the build installed last under `data/llama/`, else one sitting next to the application, else nothing |
+///
+/// The bare name checks the application's directory **before** `PATH` because
+/// that is the only order that costs a `stat` instead of a `PATH` walk of our
+/// own — and because a binary shipped beside the app is more specific than
+/// whatever the machine happens to have. It also makes the two platforms agree:
+/// Windows' `CreateProcess` already searches the calling image's directory,
+/// Unix's `execvp` does not.
+pub fn resolve_binary(
+    configured: Option<&str>,
+    exe_dir: Option<&Path>,
+    llama_dir: Option<&Path>,
+) -> Option<PathBuf> {
+    let beside = |dir: Option<&Path>, name: &str| -> Option<PathBuf> {
+        let candidate = dir?.join(name);
+        candidate.is_file().then_some(candidate)
+    };
+
+    match configured.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(path) => {
+            if Path::new(path)
+                .parent()
+                .is_some_and(|p| !p.as_os_str().is_empty())
+            {
+                return Some(PathBuf::from(path)); // an explicit path, as given
+            }
+            // A bare name: beside the application, else let the OS find it.
+            Some(beside(exe_dir, path).unwrap_or_else(|| PathBuf::from(path)))
+        }
+        None => llama_dir
+            .and_then(newest_install)
+            .or_else(|| beside(exe_dir, server_binary_name())),
+    }
+}
+
 // -------- Pointing the settings at an install (`--set-binary`) --------
 
 /// Which managed configs a `--set-binary` actually wrote, so the CLI can say so.
@@ -1779,6 +1860,135 @@ mod tests {
         let err = extract(&archive, "evil.zip", &dir.path().join("raw"), loc).unwrap_err();
         assert!(err.to_string().contains("escaped.txt"), "{err}");
         assert!(!dir.path().join("escaped.txt").exists());
+    }
+
+    // -------- Finding a binary the settings do not name --------
+
+    /// Creates `<root>/<backend>-<tag>/<server binary>`; `binary` false leaves
+    /// the directory there without one (an interrupted install).
+    fn install_dir(root: &Path, name: &str, binary: bool) -> PathBuf {
+        let dir = root.join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        if binary {
+            std::fs::write(dir.join(server_binary_name()), b"x").unwrap();
+        }
+        dir
+    }
+
+    /// A path the user typed is used exactly as written — including one that
+    /// does not exist, which the launch preflight reports by name. Second-
+    /// guessing it here would turn a typo into a silent launch of something
+    /// else.
+    #[test]
+    fn an_explicit_path_is_never_second_guessed() {
+        let dir = tempfile::tempdir().unwrap();
+        install_dir(dir.path(), "cpu-b10883", true);
+        let typed = dir.path().join("nowhere").join("llama-server");
+        assert_eq!(
+            resolve_binary(Some(&typed.display().to_string()), None, Some(dir.path())),
+            Some(typed)
+        );
+    }
+
+    /// A bare name is what spec §3.4 promises to look for beside the
+    /// application; only if it is not there does it go to the OS, i.e. `PATH`.
+    #[test]
+    fn a_bare_name_prefers_the_application_directory_then_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let beside = dir.path().join("llama-server");
+        std::fs::write(&beside, b"x").unwrap();
+        assert_eq!(
+            resolve_binary(Some("llama-server"), Some(dir.path()), None),
+            Some(beside)
+        );
+
+        let empty = tempfile::tempdir().unwrap();
+        assert_eq!(
+            resolve_binary(Some("llama-server"), Some(empty.path()), None),
+            Some(PathBuf::from("llama-server")),
+            "nothing beside the app: hand the name to the OS, as before"
+        );
+    }
+
+    #[test]
+    fn an_empty_setting_finds_a_downloaded_build() {
+        let dir = tempfile::tempdir().unwrap();
+        let install = install_dir(dir.path(), "vulkan-b10883", true);
+        for configured in [None, Some(""), Some("   ")] {
+            assert_eq!(
+                resolve_binary(configured, None, Some(dir.path())),
+                Some(install.join(server_binary_name())),
+                "{configured:?}"
+            );
+        }
+    }
+
+    /// "Installed last", not "newest tag": ordering by build number would move
+    /// a user from `vulkan-b10871` to `cpu-b10883` — off the GPU — because the
+    /// CPU build happened to be published later.
+    #[test]
+    fn the_build_installed_last_wins_over_the_newer_tag() {
+        let dir = tempfile::tempdir().unwrap();
+        install_dir(dir.path(), "cpu-b10883", true);
+        // The filesystem's timestamps are what "last" is read from, so the two
+        // installs have to be distinguishable in time.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let wanted = install_dir(dir.path(), "vulkan-b10871", true);
+        assert_eq!(
+            resolve_binary(None, None, Some(dir.path())),
+            Some(wanted.join(server_binary_name()))
+        );
+    }
+
+    #[test]
+    fn an_interrupted_install_and_a_staging_directory_are_not_candidates() {
+        let dir = tempfile::tempdir().unwrap();
+        let good = install_dir(dir.path(), "cpu-b10871", true);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        install_dir(dir.path(), "vulkan-b10883", false); // no binary in it
+        install_dir(dir.path(), ".tmp-rocm-10.0-b10883", true); // still downloading
+        // A dotless name on purpose: `notes.txt` would collide with the
+        // `notes.` bundle prefix and the i18n gate would read it as a missing
+        // key (lessons.md §7 — the same trap `llama.` hit).
+        std::fs::write(dir.path().join("stray-file"), b"x").unwrap(); // not a directory
+        assert_eq!(
+            resolve_binary(None, None, Some(dir.path())),
+            Some(good.join(server_binary_name()))
+        );
+    }
+
+    /// The archive shape: `llama-server` unpacked beside `mindfork` itself, with
+    /// nothing downloaded and nothing typed.
+    #[test]
+    fn an_empty_setting_falls_back_to_the_application_directory() {
+        let app = tempfile::tempdir().unwrap();
+        let data = tempfile::tempdir().unwrap();
+        assert_eq!(
+            resolve_binary(None, Some(app.path()), Some(data.path())),
+            None,
+            "nothing anywhere is still nothing"
+        );
+        let beside = app.path().join(server_binary_name());
+        std::fs::write(&beside, b"x").unwrap();
+        assert_eq!(
+            resolve_binary(None, Some(app.path()), Some(data.path())),
+            Some(beside.clone())
+        );
+        // A downloaded build is the more specific answer and wins.
+        let install = install_dir(data.path(), "cpu-b10883", true);
+        assert_eq!(
+            resolve_binary(None, Some(app.path()), Some(data.path())),
+            Some(install.join(server_binary_name()))
+        );
+    }
+
+    #[test]
+    fn without_directories_to_search_nothing_changes() {
+        assert_eq!(resolve_binary(None, None, None), None);
+        assert_eq!(
+            resolve_binary(Some("llama-server"), None, None),
+            Some(PathBuf::from("llama-server")),
+        );
     }
 
     // -------- Pointing the settings at an install --------

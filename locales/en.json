@@ -1430,6 +1430,7 @@
   "ui.tool.label.update_self_model": "update self-model",
   "ui.tool.label.update_user_model": "update interlocutor",
   "ui.settings.field.binary": "llama-server binary",
+  "ui.settings.desc.binary": ["Path to the llama-server executable. Leave it empty and the app takes the build", "`mindfork llama setup` installed last (data/llama/), or one sitting next to the", "application; a bare name is looked for beside the application and then in PATH.", "Keep the whole folder: the binary loads its libraries from the files next to it."],
   "ui.settings.field.port": "Port",
   "ui.settings.field.gguf": "GGUF model (-m)",
   "ui.settings.field.context": "Context (-c)",
