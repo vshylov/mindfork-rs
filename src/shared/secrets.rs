@@ -112,6 +112,15 @@ impl SearchSlot {
             Self::Tavily => "tavily",
         }
     }
+
+    /// The provider's name as the UI spells it: the settings row that holds this
+    /// key and the tool's "which backend answered" line say the same word, from
+    /// here (spec §9.3.1, §11.6).
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Self::Tavily => "Tavily",
+        }
+    }
 }
 
 /// Which secret a storage slot holds. One typed key instead of raw strings: the

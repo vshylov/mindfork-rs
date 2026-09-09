@@ -3039,7 +3039,16 @@ beside a local `llama-server` for embeddings), so one shared key would send a
 gateway's token to localhost. In external mode the key is also **optional** — a local
 server needs none, and then no authorization is sent at all. Either way the adjacent
 "API key (env)" field remains a fallback (an environment variable name; used if no key
-is entered). Keys never appear in the `Settings` snapshot — only "configured" flags
+is entered).
+
+**The row says whose key it is** wherever the provider is determined: a cloud row
+carries the provider's name ("OpenAI API key", "Gemini API key (env)"), and so do the
+two slots whose provider the feature fixes — the web-search key (Tavily, §9.3.1)
+and the video one (the shared Gemini key, §9.9). Without it a row cannot say
+which secret it addresses: one key is shared across a provider's chat, impersonation,
+embeddings and speech, and those four slots may point at four different providers at
+once. An `external` row keeps the plain label — behind a URL the user typed there is
+no provider to name. Keys never appear in the `Settings` snapshot — only "configured" flags
 (`secrets_present`). If the machine doesn't support encryption (Linux with no
 `machine-id`), the field shows "unavailable on this system" and the env path
 remains. See `shared::secrets`, docs/research/api-key-storage.md,

@@ -58,6 +58,19 @@ fn field_desc(s: &SettingsScreen, id: FieldId) -> Option<String> {
     found
 }
 
+/// A field's label by id, over the same enumeration as [`field_desc`] — the
+/// labels of the key rows are built per mode, so a lookup that walks every
+/// section/subsection sees each slot's row without navigating to it.
+fn field_label(s: &SettingsScreen, id: FieldId) -> Option<String> {
+    let mut found = None;
+    s.visit_field_sets(&mut |_, _, _, _, fields| {
+        if found.is_none() {
+            found = fields.into_iter().find(|r| r.id == id).map(|r| r.label);
+        }
+    });
+    found
+}
+
 /// Focuses the fields and steps down to field `id` (robust to groups/order).
 /// Assumes focus is in the menu (as right after [`goto_section`]).
 fn goto_field(s: &mut SettingsScreen, id: FieldId) {
@@ -3614,6 +3627,55 @@ fn api_key_field_targets_provider_of_its_slot() {
         Some(SecretKey::Provider(CloudProvider::Gemini))
     );
     assert_eq!(s.secret_field_key(FieldId::XUrl), None);
+}
+
+/// ...and the row **says** which key that is wherever the provider is determined
+/// (spec §11.6): the four engine slots take the name from their mode, web search
+/// and video from the feature itself (Tavily; the shared Gemini key, spec §9.9).
+/// One stored key serves chat, impersonation, embeddings and speech of a provider
+/// (ADR 0008) and the slots may point at four different providers at once, so a
+/// row reading just "API key" cannot say which secret it addresses — the case
+/// this test pins is exactly that: the four slots set to three providers, and
+/// every key row naming the one it belongs to.
+#[test]
+fn api_key_rows_name_their_provider() {
+    let mut s = screen();
+    s.config.engine.mode = ServerMode::OpenAi;
+    s.config.impersonation_engine.mode = ImpersonationMode::Claude;
+    s.config.embed.mode = ServerMode::Gemini;
+    s.config.tts.mode = crate::shared::config::TtsMode::OpenAi;
+    s.config.tools.web_provider = WebProvider::Auto;
+    for (field, name) in [
+        (FieldId::XApiKey, "OpenAI"),
+        (FieldId::XApiKeyEnv, "OpenAI"),
+        (FieldId::IxApiKey, "Claude"),
+        (FieldId::IxApiKeyEnv, "Claude"),
+        (FieldId::EApiKey, "Gemini"),
+        (FieldId::EApiKeyEnv, "Gemini"),
+        (FieldId::TtsApiKey, "OpenAI"),
+        (FieldId::TtsApiKeyEnv, "OpenAI"),
+        (FieldId::TWebTavilyKey, "Tavily"),
+        (FieldId::TWebTavilyKeyEnv, "Tavily"),
+        (FieldId::VideoApiKey, "Gemini"),
+        (FieldId::VideoApiKeyEnv, "Gemini"),
+    ] {
+        let label = field_label(&s, field).unwrap_or_else(|| panic!("no row for {field:?}"));
+        assert!(
+            label.contains(name),
+            "{field:?} must name its provider: {label:?} doesn't contain {name:?}"
+        );
+    }
+
+    // An external server has no provider to name — its URL is whatever the user
+    // typed — so the label stays plain instead of inheriting a cloud slot's name.
+    s.config.engine.mode = ServerMode::External;
+    for field in [FieldId::XApiKey, FieldId::XApiKeyEnv] {
+        let label = field_label(&s, field).unwrap_or_else(|| panic!("no row for {field:?}"));
+        let named = CloudProvider::ALL
+            .iter()
+            .find(|p| label.contains(p.display_name()));
+        assert!(named.is_none(), "{field:?} in external mode: {label:?}");
+    }
 }
 
 /// In `external` mode every slot shows the key row too — the barrier ADR 0008 removed

@@ -110,6 +110,21 @@ impl CloudProvider {
             CloudProvider::Grok => "grok",
         }
     }
+
+    /// The provider's name as the UI spells it — a brand, the same word in every
+    /// locale. Settings rows that hold a key say **whose** key it is (spec
+    /// §11.6): one key serves chat, impersonation, embeddings and speech of one
+    /// provider (ADR 0008), and those four slots may point at four different
+    /// providers at once. Not [`key`](Self::key) — that spelling is persisted
+    /// storage and must not be prettified.
+    pub fn display_name(self) -> &'static str {
+        match self {
+            CloudProvider::OpenAi => "OpenAI",
+            CloudProvider::Gemini => "Gemini",
+            CloudProvider::Claude => "Claude",
+            CloudProvider::Grok => "Grok",
+        }
+    }
 }
 
 impl ServerMode {

@@ -188,12 +188,10 @@ pub struct ApiBackend {
 }
 
 impl ApiBackend {
-    /// The name for logs, errors and the "which backend answered" line.
+    /// The name for logs, errors and the "which backend answered" line — the
+    /// slot's own spelling, shared with the settings row for its key.
     fn name(&self) -> &'static str {
-        use crate::shared::secrets::SearchSlot::*;
-        match self.slot {
-            Tavily => "Tavily",
-        }
+        self.slot.display_name()
     }
 
     /// The cooldown key. A keyed provider is its own family: its rate limit is

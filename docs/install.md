@@ -459,8 +459,9 @@ Neither Anthropic nor xAI offers embeddings, so under a `claude`/`grok` engine
 RAG needs a separate embedder (a local `llama-server --embeddings`, OpenAI, or
 Gemini) — set it in the same section's "Embeddings" tab.
 
-**The key is entered right in settings** — the "API key" field under the model
-name: `Enter` opens a blank input (characters hidden as `•`), `Enter` saves, `Del`
+**The key is entered right in settings** — the API-key field under the model
+name, labelled with the provider it belongs to ("OpenAI API key", "Gemini API
+key", …): `Enter` opens a blank input (characters hidden as `•`), `Enter` saves, `Del`
 removes it. The key is stored in `settings.json` **encrypted and bound to this
 computer** (Windows — the system DPAPI; Linux — a key derived from
 `/etc/machine-id`), so:
@@ -477,7 +478,7 @@ running under your own user account on the same computer (this is how browser
 password managers work too).
 
 **Alternative — an environment variable** (for CI, scripts, and systems without
-`machine-id`): the "API key (env)" field stores the **name** of the variable, e.g.
+`machine-id`): the "… API key (env)" field stores the **name** of the variable, e.g.
 `OPENAI_API_KEY`, and the key itself is read from the environment. A key entered in
 settings takes priority; the env one is used if no key was entered.
 
@@ -815,8 +816,8 @@ group of the "Tools" section (`Ctrl+P`):
 | Model | the Gemini model that watches (`gemini-3.5-flash` by default) |
 | Input resolution | how finely frames are sampled — **measured to change nothing on Gemini 3.x**; on 2.5 it is `low` ≈ 100 vs `medium` ≈ 295 tokens per second of video |
 | Max video length | refuse anything longer (default 30 min; `0` — no ceiling) |
-| API key | the Gemini key, stored on this computer (encrypted with a machine key, ADR 0008) |
-| API key (env) | env-variable name — a fallback when no key is stored in settings |
+| Gemini API key | the Gemini key, stored on this computer (encrypted with a machine key, ADR 0008) |
+| Gemini API key (env, opt.) | env-variable name — a fallback when no key is stored in settings |
 
 **The key is the shared Gemini one** (ADR 0008): if it is already entered for
 chat or embeddings, nothing else is needed — and if it is not, enter it right
