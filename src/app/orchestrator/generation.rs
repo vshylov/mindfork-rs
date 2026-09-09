@@ -2002,13 +2002,8 @@ impl TurnLoop<'_> {
             // The turn keeps its largest prefill sample: a session's first
             // round processes the prompt cold, later rounds ride the cache
             // (docs/research/slow-prefill-detection.md §3.1).
-            let prefill = [
-                out.prefill,
-                self.last_usage.as_ref().and_then(|u| u.prefill),
-            ]
-            .into_iter()
-            .flatten()
-            .max_by_key(|p| p.tokens);
+            let mut prefill = self.last_usage.as_ref().and_then(|u| u.prefill);
+            crate::shared::api::contract::Prefill::keep_larger(&mut prefill, out.prefill);
             self.last_usage = Some(TurnUsage {
                 prompt_tokens,
                 completion_tokens: out.tokens,
@@ -2300,6 +2295,7 @@ impl TurnLoop<'_> {
         if !group.is_empty() {
             for (i, done) in self.run_group(group).await {
                 self.effects.extend(done.effects);
+                self.keep_tool_sample(done.prefill);
                 // The card closes as its run lands, whatever the order.
                 self.announce_result(&calls[i], &done.result.text, 0);
                 announced[i] = true;
@@ -2418,6 +2414,7 @@ impl TurnLoop<'_> {
         }
         for (j, done) in self.run_segment(span).await {
             self.effects.extend(done.effects);
+            self.keep_tool_sample(done.prefill);
             results[at + j] = Some(done.result);
             announced[at + j] = true;
         }
@@ -2482,6 +2479,18 @@ impl TurnLoop<'_> {
         done
     }
 
+    /// A tool's own request as part of the turn's largest prefill sample
+    /// (docs/research/page-summary-usage.md §3.2): the page summary's stream
+    /// is a stream of the turn (spec §9.3.1), so its timing competes with the
+    /// rounds' for the one note. Folded into the round that carried it — a
+    /// round always precedes its tools — and dropped where no round reported
+    /// a usage, since a provider without one sends no timing either.
+    fn keep_tool_sample(&mut self, sample: Option<crate::shared::api::contract::Prefill>) {
+        if let Some(usage) = &mut self.last_usage {
+            crate::shared::api::contract::Prefill::keep_larger(&mut usage.prefill, sample);
+        }
+    }
+
     /// One member of a segment: the invocation under the same `select!` with
     /// the turn's cancellation token the sequential path uses, the outcome
     /// mapped the same way, and the card closed as the result lands. The card
@@ -2494,32 +2503,36 @@ impl TurnLoop<'_> {
             _ = self.cancel.cancelled() => None,
             res = self.shared.registry.invoke(&call.name, &self.ctx, args) => Some(res),
         };
-        let (result, effects): (CallResult, Vec<ChatEffect>) = match invoked {
-            None => (
-                self.ctx.loc.t("loop.tool_cancelled").to_string().into(),
-                Vec::new(),
-            ),
-            Some(Ok(outcome)) => (
-                CallResult {
+        let done = match invoked {
+            None => CallDone {
+                result: self.ctx.loc.t("loop.tool_cancelled").to_string().into(),
+                effects: Vec::new(),
+                prefill: None,
+            },
+            Some(Ok(outcome)) => CallDone {
+                result: CallResult {
                     text: outcome.result,
                     images: outcome.images,
                     subagent: None,
                 },
-                outcome.effects,
-            ),
-            Some(Err(err)) => (
-                self.ctx
+                effects: outcome.effects,
+                prefill: outcome.prefill,
+            },
+            Some(Err(err)) => CallDone {
+                result: self
+                    .ctx
                     .loc
                     .tf(
                         "loop.tool_error",
                         &[("name", &call.name), ("err", &err.to_string())],
                     )
                     .into(),
-                Vec::new(),
-            ),
+                effects: Vec::new(),
+                prefill: None,
+            },
         };
-        self.announce_result(call, &result.text, result.images.len());
-        (j, CallDone { result, effects })
+        self.announce_result(call, &done.result.text, done.result.images.len());
+        (j, done)
     }
 
     /// Phase two: the group's children as futures inside this task, at most
@@ -2718,6 +2731,7 @@ impl TurnLoop<'_> {
                 None => self.ctx.loc.t("loop.tool_cancelled").to_string().into(),
                 Some(Ok(outcome)) => {
                     self.effects.extend(outcome.effects);
+                    self.keep_tool_sample(outcome.prefill);
                     CallResult {
                         text: outcome.result,
                         images: outcome.images,
@@ -3034,6 +3048,9 @@ pub(super) struct ChildSpec {
 struct CallDone {
     result: CallResult,
     effects: Vec<ChatEffect>,
+    /// The engine's timing of a request the call made on its own — a page
+    /// summary's — for the turn's largest sample (page-summary-usage §3.2).
+    prefill: Option<crate::shared::api::contract::Prefill>,
 }
 
 /// A background run about to start (docs/research/background-subagents.md
@@ -3337,7 +3354,11 @@ pub(super) fn spawn_background_run(
         let (result, effects) = match spec {
             RunSpec::Subagent(spec) => {
                 let loc = spec.ctx.loc;
-                let CallDone { result, effects } = run_child(&shared, loc, *spec).await;
+                // A background run's landing offers no sample: the child's
+                // stays with its loop (page-summary-usage §7).
+                let CallDone {
+                    result, effects, ..
+                } = run_child(&shared, loc, *spec).await;
                 (result, effects)
             }
             // The scene runs through the very same driver the turn's own
@@ -3558,6 +3579,8 @@ async fn run_child(
             subagent: Some(Box::new(run)),
         },
         effects,
+        // The child's own sample stays with its loop (page-summary-usage §7).
+        prefill: None,
     }
 }
 

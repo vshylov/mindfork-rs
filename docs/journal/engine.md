@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (52)
+## Entries (53)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -64,6 +64,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the loops' timings — the silent tasks' cold prompts, sampled at the landing (done)
 - Post-M9: the roll's usage for the budget — and the estimate it would calibrate (done)
 - Post-M9: the title's and impersonation's usage for the budget — and the ratio they would erase (done)
+- Post-M9: the page summary's usage — the one kind that under-counts, and a summary that came back empty (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -3378,3 +3379,65 @@ a map under a mutex on every price); the children on the turn's ratio
 own); not recording the two (their record is 1.0 on any measured text —
 closed by the population alone, but every request the server vouched
 for records).
+
+### Post-M9: the page summary's usage — the one kind that under-counts, and a summary that came back empty (done)
+
+**What.** The item the title-impersonation-usage track recorded
+([docs/research/title-impersonation-usage.md](../research/title-impersonation-usage.md)
+§7): the page summary inside `fetch_url` prices its reservation under
+`Shape::Summary` and never records its exact `usage`. The design
+[docs/research/page-summary-usage.md](../research/page-summary-usage.md),
+every fork at its recommendation (the user's decision, 2026-09-09); stage
+0 a measurement that turned the item's reading over and found two more
+things beside it.
+
+**Measured (stage 0, the LAN stack, Qwen3.6-27B).** Five pages through
+`fetch_url` under a budget, a scratch probe at the `Usage` chunk: a
+documentation page 1.04, Cyrillic prose 0.76, an English article with its
+citation marks 1.16, an API's JSON 1.28, a Rust source 1.17. The reading
+that left the kind unrecorded — "a request of prose, over-counted" —
+holds for one page in five: the summary's text is a *page*, and the
+summary is the one kind whose ratio runs above 1.0 as a rule (the turn's
+does only with a tool result's JSON in it). Priced at 1.0, a JSON page's
+summary reserved 28 % under its size — under a shared pool the
+under-count the budget calls the failure. Beside it: on the thinking
+model the summary came back **empty** on both pages tried — the whole
+768-token cap spent on thoughts, `finish = Length`, no text — where every
+other one-shot request (the title, the roll, impersonation, the director)
+mutes reasoning up front; muted, the same pages summarized in 587 and 161
+tokens. And the summary's prompt is cold and large — 3236 tokens for a
+12 000-character head, above any silent task's first round — and its
+`Usage` chunk was dropped, so the slow-prefill note never saw it; a page
+fetched again minutes later rode a slot's prefix cache (4–6 tokens
+processed).
+
+**How.** `summarize_text` records `Shape::Summary` at the `Usage` chunk
+beside the estimate its reservation was priced from, keeps the chunk's
+`prefill`, and returns both (`Summarized { text, prefill }`); its sampling
+carries `reasoning_budget: Some(0)`, the title's shape. `ToolOutcome.prefill`
+is the `wrote` shape — a fact the tool reports for the loop that called
+it, `with_prefill` set by the two callers, `None` from the constructors —
+and the loops fold it: the turn's `keep_tool_sample` (a `CallDone.prefill`
+out of a concurrent segment or the parallel group, the sequential path
+inline) into `last_usage.prefill` through `Prefill::keep_larger`, the one
+rule the turn's rounds and the loop's `record_round_usage` now share; the
+silent loop's `run_tools` into `ToolsReport { wrote, prefill }` — the
+round's two reports in one struct, clippy's argument bar — which
+`run_rounds` folds into its out-parameter *before* the timeout check, so a
+round the clock cut short still lands what its finished calls said. A
+background run's landing and `run_child`'s `CallDone` carry none (§7).
+
+**Live.** `summary_usage_e2e_live` (fork F4a: `fetch_url` invoked directly
+under a budget of four over 16 384, the JSON page): the LAN stack 8.7 s,
+exact 2286 against 1816, **1.29** in the `Summary` slot, the sample 2286
+tokens in 1203 ms, a seventeen-line summary; the CPU build 86.2 s, 2735
+against 1816 (Gemma's tokenizer, **1.51**), the sample 2735 tokens in
+76 139 ms — 36 tok/s, the note's figure — a four-sentence summary, **4 s
+inside** the summary's 90 s limit, as the design counted. Unit: 2978
+green, 151 ignored (2973 / 150 before).
+
+**Not in this track** (§7): the one-shot requests' own samples
+(impersonation's — the whole conversation, cold — and the title's), a child
+run's sample, the summary's limit against a slow host (4 s to spare here;
+the loop's limit's sibling), the first request of a kind, and
+`reasoning_tokens` reading 0 on a stream of thoughts.

@@ -641,3 +641,38 @@ mod subagent;
 mod tasks;
 mod title;
 mod tts;
+
+/// A tool that made a request of its own and reports the engine's timing of
+/// it — the page summary's shape (docs/research/page-summary-usage.md §3.2)
+/// without the page: the turn and the silent loop fold what it reports into
+/// the sample they keep for the slow-prefill note.
+struct SampledTool {
+    id: &'static str,
+    sample: Option<crate::shared::api::contract::Prefill>,
+}
+
+#[async_trait::async_trait]
+impl crate::features::tools::Tool for SampledTool {
+    fn id(&self) -> crate::entities::profile::ToolId {
+        self.id.into()
+    }
+    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
+        "sampled".into()
+    }
+    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
+        serde_json::json!({"type": "object", "properties": {}})
+    }
+    async fn invoke(
+        &self,
+        _ctx: &crate::features::tools::ToolContext,
+        _args: serde_json::Value,
+    ) -> anyhow::Result<crate::features::tools::ToolOutcome> {
+        Ok(crate::features::tools::ToolOutcome::text("sampled").with_prefill(self.sample))
+    }
+    fn group(&self) -> crate::features::tools::meta::ToolGroup {
+        crate::features::tools::meta::ToolGroup::Files
+    }
+    fn ui_label(&self) -> &'static str {
+        "sampled"
+    }
+}

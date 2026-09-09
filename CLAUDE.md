@@ -171,8 +171,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-09, version 0.9.8)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **2973 unit tests
-green, 150 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **2978 unit tests
+green, 151 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -183,6 +183,24 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 `tools/doc_index_check.py`. A new track adds a line; a line that has stopped
 being recent is dropped, not shortened.
 
+- **The page summary's usage — the one kind that under-counts, and a
+  summary that came back empty** — the item was "let the page summary
+  record its usage too", left unrecorded on a reading: a request of prose,
+  over-counted. Measured, a page's text ran above the estimate on four
+  pages of five (a docs page 1.04, an English article 1.16, a Rust source
+  1.17, an API's JSON 1.28) — the one kind that under-counts as a rule —
+  and on the thinking gate model the summary came back empty on every
+  page, the whole 768-token cap spent on thoughts. Now the summary records
+  under `Shape::Summary` at its `Usage` chunk, mutes reasoning as the
+  title does (`reasoning_budget = 0`), and hands the engine's timing of
+  its prompt — the coldest the turn makes, 3236 tokens for a
+  12 000-character head — back on `ToolOutcome.prefill`, which the turn's
+  loop (`keep_tool_sample`) and the silent loop (`ToolsReport`) fold into
+  the largest sample they keep for the slow-prefill note. Measured after:
+  the JSON page at 1.29 in its own slot on the 4090, 1.51 on the CPU build
+  (36 tok/s, 4 s inside the summary's 90 s limit), a real summary on both
+  ([docs/research/page-summary-usage.md](docs/research/page-summary-usage.md),
+  spec §6.3, §9.3.1, [docs/journal/engine.md](docs/journal/engine.md)).
 - **The title's and impersonation's usage for the budget — and the
   ratio they would erase** — the item was "let the two record their usage
   too"; measured, they are the app's most over-counting requests (0.65,
@@ -393,21 +411,6 @@ being recent is dropped, not shortened.
   prefill batch (24 s on the CPU build, under two on the GPU), and the
   roll pays its prefill twice
   ([docs/research/silent-preemption.md](docs/research/silent-preemption.md),
-  spec §6.3, [docs/journal/engine.md](docs/journal/engine.md)).
-- **The silent tasks under the app-wide budget — the budget's silent lane** —
-  the app's own requests (the automatic title, reflection, the two
-  consolidations, the compaction roll, impersonation on the shared engine,
-  a summary inside a silent loop) stream on a **second permit** of the one
-  `SessionBudget`, over the same pool sum: one at a time among themselves,
-  never overfilling the pool beside a turn or a run, a turn that does not
-  fit beside an open silent round waiting for that one round. The pool is
-  known at one session too: a `llama-server` launched without `-np` runs
-  four unified slots, and the roll — sized by the conversation, fired when
-  it is largest — landed on them beside the turn; measured before designing
-  on the CPU build (both ended, "Context size has been exceeded"), then the
-  same arms green after the lane. `handle_done` asks for the roll ahead of
-  the loops; the tasks screen's third state is *waiting*
-  ([docs/research/silent-tasks-budget.md](docs/research/silent-tasks-budget.md),
   spec §6.3, [docs/journal/engine.md](docs/journal/engine.md)).
 
 

@@ -637,7 +637,8 @@ src/
    │                       `Shape` of request — the turn's rounds, a child run's, a
    │                       loop's, the roll, the title, impersonation, the page
    │                       summary — recorded by each kind for its own
-   │                       (title-impersonation-usage §3.1), plus the
+   │                       (title-impersonation-usage §3.1, the summary's since
+   │                       page-summary-usage §3.1), plus the
    │                       **silent lane** (`acquire_silent`: one permit for the
    │                       app's own background requests over the same pool sum,
    │                       labelled so the tasks screen can say which task waits,
@@ -1375,9 +1376,12 @@ its own — or named by `api_key_env`, resolved through the same
   `ToolCall(ToolCallDelta)` | `Usage(TokenUsage)` — carrying `prefill: Option<Prefill>`,
   llama.cpp's `timings` (`prompt_n` net of the prefix cache, `prompt_ms`),
   `None` from the other clients; the turn loop keeps its largest sample on
-  `TurnUsage.prefill`, the roll's `collect_roll` its own on
+  `TurnUsage.prefill` (a tool's own request's included — `ToolOutcome.prefill`,
+  the page summary's, folded by `keep_tool_sample`; page-summary-usage §3.2),
+  the roll's `collect_roll` its own on
   `CompactResult.prefill`, a silent loop's `run_rounds` its own on an
-  out-parameter (the first round's, cold and whole;
+  out-parameter (the first round's, cold and whole, or a tool's —
+  `run_tools` folds `ToolsReport.prefill` into it;
   docs/research/roll-timings.md §3, loop-timings.md §3) — every silent
   task landing as `BgDone { kind, outcome, prefill }` through
   `handle_bg_done`, which offers the sample once for every kind after the
@@ -1839,7 +1843,7 @@ The tool contract: a read-only snapshot + returned effects (no locks on
 flowchart TB
     REG["ToolRegistry<br/>schemas_for = profile ∩ registry · invoke(name,args,ctx)"]
     CTX["ToolContext (snapshot at the start of the turn)<br/>profile_id, chat_id, system_message,<br/>effective_sampling, last_user_message_at,<br/>storage: Arc&lt;Storage&gt;, engine, embedder, self_model_params"]
-    OUT["ToolOutcome { result: String, effects: Vec&lt;ChatEffect&gt;, wrote: bool }"]
+    OUT["ToolOutcome { result: String, effects: Vec&lt;ChatEffect&gt;, wrote: bool, prefill: Option&lt;Prefill&gt; }"]
     EFF["ChatEffect: SetSystemMessage | SetSamplingOverride | AddAttachment"]
 
     REG --> CTX
@@ -1887,7 +1891,11 @@ ADR 0012; docs/research/admission-by-budget.md §4.5). A background task's
 context carries the same budget with **`silent_lane: true`**, so a summary a
 silent loop asks for takes the lane the loop's own rounds stream on
 (silent-tasks-budget.md §4.2) — and holds it: one tool call inside a
-round is not displaced (silent-preemption.md §4.3). FSD is kept: the type lives in `shared`, not
+round is not displaced (silent-preemption.md §4.3). The summary's stream
+records its exact count under the budget's `Summary` kind at its `Usage`
+chunk and hands the engine's timing of its prompt back on
+`ToolOutcome.prefill`, with reasoning muted as the title's is
+(docs/research/page-summary-usage.md §3). FSD is kept: the type lives in `shared`, not
 in `app`.
 
 **`OrchestratorDeps.extra_tools`** — tools registered on top of the standard
@@ -2522,7 +2530,9 @@ streaming and tools (`stream_round`, `run_tools`), not over its waits
 on the task's own token, or a wait cancelled, is `RoundsEnd::Cancelled {
 wrote }` — whether any call of the task changed the profile's stored
 memory by then, the tools' own reports (`ToolOutcome.wrote`) ORed per
-round by `run_tools`, an `Err` counting as a write — →
+round by `run_tools` into `ToolsReport` (beside the round's largest
+`ToolOutcome.prefill`, page-summary-usage §3.2), an `Err` counting as a
+write — →
 `BgOutcome::Cancelled { consumed: wrote }` (docs/research/stop-silent-task.md
 §3.3; the flag decides whether the landing gives the task's window back,
 docs/research/stop-refunds-window.md §3.2, docs/research/acted-by-effect.md

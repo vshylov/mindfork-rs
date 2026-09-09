@@ -24,6 +24,7 @@ use tokio_util::sync::CancellationToken;
 use crate::entities::attachment::{Attachment, decide_mode, inline_tokens_excluding};
 use crate::entities::profile::ToolId;
 use crate::entities::sampling::SamplingConfig;
+use crate::shared::api::contract::Prefill;
 use crate::shared::api::{ApiMessage, ChatChunk, ChatRequest};
 use crate::shared::net::{self, AddressPolicy, GuardedClient};
 
@@ -307,9 +308,7 @@ impl Tool for FetchUrl {
         // branch is exactly the other side of it.
         let est = crate::shared::tokens::estimate_text(&page.text) as usize;
         if est <= ctx.attachment_cfg.max_file_tokens {
-            return Ok(ToolOutcome::text(
-                self.inline_result(ctx, url, focus, summarize, &page).await,
-            ));
+            return Ok(self.inline_result(ctx, url, focus, summarize, &page).await);
         }
         Ok(self.attached_result(ctx, url, focus, summarize, page).await)
     }
@@ -325,31 +324,36 @@ impl FetchUrl {
         focus: Option<&str>,
         summarize: bool,
         page: &PageText,
-    ) -> String {
-        let mut out = if summarize {
-            match summarize_text(ctx, url, focus, &page.text).await {
-                Ok(s) if !s.trim().is_empty() => s,
-                // Summarization failed/came back empty → return the extracted text
-                // (graceful degradation: the model still gets the page's content).
-                _ => format!(
-                    "{}\n{}",
-                    ctx.loc
-                        .tf("tool.fetch_url.result.content_no_summary", &[("url", url)]),
-                    page.text
-                ),
-            }
+    ) -> ToolOutcome {
+        let summary = if summarize {
+            summarize_text(ctx, url, focus, &page.text).await.ok()
         } else {
-            format!(
+            None
+        };
+        // The engine's timing of the summary's prompt rides the outcome
+        // whatever the text made of it (page-summary-usage §3.2).
+        let prefill = summary.as_ref().and_then(|s| s.prefill);
+        let mut out = match (summarize, summary) {
+            (true, Some(s)) if !s.text.trim().is_empty() => s.text,
+            // Summarization failed/came back empty → return the extracted text
+            // (graceful degradation: the model still gets the page's content).
+            (true, _) => format!(
+                "{}\n{}",
+                ctx.loc
+                    .tf("tool.fetch_url.result.content_no_summary", &[("url", url)]),
+                page.text
+            ),
+            (false, _) => format!(
                 "{}\n{}",
                 ctx.loc.tf("tool.fetch_url.result.content", &[("url", url)]),
                 page.text
-            )
+            ),
         };
         if page.truncated {
             out.push('\n');
             out.push_str(ctx.loc.t("tool.fetch_url.result.truncated"));
         }
-        out
+        ToolOutcome::text(out).with_prefill(prefill)
     }
 
     /// The page is over the attachment budget: attach it whole (spec §9.7) and
@@ -382,16 +386,18 @@ impl FetchUrl {
         let pages = attachment.page_count(ctx.attachment_cfg.page_tokens);
 
         let mut out = String::new();
+        let mut prefill = None;
         if summarize {
             // The head only: the summarizer is a single-turn subagent with its
             // own context. The result says the whole page is attached, so a
             // partial summary is a starting point rather than the only access.
             let head = truncate_chars(&page.text, SUMMARY_INPUT_CHARS);
-            if let Ok(s) = summarize_text(ctx, url, focus, &head).await
-                && !s.trim().is_empty()
-            {
-                out.push_str(s.trim());
-                out.push('\n');
+            if let Ok(s) = summarize_text(ctx, url, focus, &head).await {
+                prefill = s.prefill;
+                if !s.text.trim().is_empty() {
+                    out.push_str(s.text.trim());
+                    out.push('\n');
+                }
             }
         }
         out.push_str(&ctx.loc.tf(
@@ -403,7 +409,16 @@ impl FetchUrl {
             out.push_str(ctx.loc.t("tool.fetch_url.result.truncated"));
         }
         ToolOutcome::with_effects(out, vec![ChatEffect::AddAttachment(Box::new(attachment))])
+            .with_prefill(prefill)
     }
+}
+
+/// What a summary's stream left: the text, and the engine's timing of the
+/// prompt (`None` from every provider but llama.cpp, and from a stream that
+/// ended before its usage chunk).
+struct Summarized {
+    text: String,
+    prefill: Option<Prefill>,
 }
 
 /// Summarizes the page text via an independent single-turn request to the model
@@ -413,7 +428,7 @@ async fn summarize_text(
     url: &str,
     focus: Option<&str>,
     text: &str,
-) -> Result<String> {
+) -> Result<Summarized> {
     let system = ctx.loc.t("tool.fetch_url.summarize.system").to_string();
     let task = match focus {
         Some(f) => ctx.loc.tf(
@@ -434,8 +449,14 @@ async fn summarize_text(
     // (no earlier round of its own to floor it) plus its reply cap
     // (docs/research/admission-by-budget.md §4.2).
     let estimate = crate::shared::tokens::estimate_prompt(Some(&system), [task.as_str()]);
+    // Reasoning muted the way the title's and the roll's is (`title.rs`): a
+    // one-shot retelling of a page, whose reply cap a thinking model spent
+    // whole on thoughts and answered with nothing — both pages tried on the
+    // gate model, `finish = Length` (docs/research/page-summary-usage.md
+    // §2.1, fork F3).
     let sampling = SamplingConfig {
         max_tokens: Some(max_tokens),
+        reasoning_budget: Some(0),
         ..ctx.effective_sampling.clone()
     };
     let request = ChatRequest {
@@ -485,6 +506,7 @@ async fn summarize_text(
     let collect = async {
         let mut stream = engine.chat_stream(request, cancel.clone()).await?;
         let mut out = String::new();
+        let mut prefill = None;
         while let Some(chunk) = stream.next().await {
             match chunk {
                 ChatChunk::Text(t) => out.push_str(&t),
@@ -502,13 +524,28 @@ async fn summarize_text(
                 ChatChunk::Error { message, .. } => {
                     tracing::warn!(error = %message, "engine error while summarizing a page");
                 }
+                // The server's exact count beside the estimate the reservation
+                // was priced from, under the summary's own kind — a page's
+                // text under-counts on four pages of five, the one kind that
+                // does as a rule (docs/research/page-summary-usage.md §3.1) —
+                // and the engine's timing of the prompt for the outcome (§3.2).
+                // Taken here: the collect breaks at `Finished`.
+                ChatChunk::Usage(u) => {
+                    if let Some(budget) = ctx.sessions.as_deref() {
+                        budget.record_usage(
+                            crate::shared::session_budget::Shape::Summary,
+                            estimate,
+                            u.prompt_tokens as u64,
+                        );
+                    }
+                    prefill = u.prefill;
+                }
                 ChatChunk::Thoughts(_)
                 | ChatChunk::ThoughtsSignature(_)
-                | ChatChunk::ToolCall(_)
-                | ChatChunk::Usage(_) => {}
+                | ChatChunk::ToolCall(_) => {}
             }
         }
-        Ok::<String, anyhow::Error>(out)
+        Ok::<Summarized, anyhow::Error>(Summarized { text: out, prefill })
     };
 
     match tokio::time::timeout(SUMMARY_TIMEOUT, collect).await {
@@ -697,7 +734,7 @@ mod tests {
         let inline = FetchUrl::default()
             .inline_result(&ctx, "https://example.com", None, false, &small)
             .await;
-        assert!(inline.contains(marker), "got: {inline}");
+        assert!(inline.result.contains(marker), "got: {}", inline.result);
     }
 
     /// A page within the budget keeps the previous behaviour: the text itself,
@@ -713,7 +750,11 @@ mod tests {
         let out = FetchUrl::default()
             .inline_result(&ctx, "https://example.com", None, false, &page)
             .await;
-        assert!(out.contains("Небольшая страница целиком."), "got: {out}");
+        assert!(
+            out.result.contains("Небольшая страница целиком."),
+            "got: {}",
+            out.result
+        );
     }
 
     #[test]
@@ -845,13 +886,19 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(summary, "краткое содержание");
+        assert_eq!(summary.text, "краткое содержание");
+        assert!(summary.prefill.is_none(), "no usage chunk, no timing");
 
         let req = backend.last.lock().unwrap().take().unwrap();
         assert!(req.system.is_some());
         assert_eq!(req.messages.len(), 1);
         assert!(req.tools.is_empty(), "no tools (a nesting ban)");
         assert!(req.sampling.max_tokens.unwrap() <= SUMMARY_MAX_TOKENS);
+        assert_eq!(
+            req.sampling.reasoning_budget,
+            Some(0),
+            "reasoning muted, the title's shape (page-summary-usage §3.3)"
+        );
         // focus made it into the task.
         let msg = format!("{:?}", req.messages[0]);
         assert!(msg.contains("какова цена"), "focus in the task: {msg}");
@@ -911,8 +958,8 @@ mod tests {
             summarize_text(&ctx, "https://b.example", None, "text b"),
         );
         assert_eq!(
-            (a.unwrap(), b.unwrap()),
-            ("summary".into(), "summary".into())
+            (a.unwrap().text, b.unwrap().text),
+            ("summary".to_string(), "summary".to_string())
         );
         assert_eq!(
             counting
@@ -939,6 +986,96 @@ mod tests {
             2,
             "no budget: nothing holds the second summary back"
         );
+    }
+
+    /// An engine whose one stream ends with the server's usage: an exact
+    /// count far above any estimate of the short texts here, and the
+    /// engine's timing of the prompt — the shape of a `llama-server` stream.
+    struct UsageBackend;
+
+    const EXACT: u32 = 50_000;
+
+    #[async_trait::async_trait]
+    impl EngineBackend for UsageBackend {
+        async fn chat_stream(
+            &self,
+            _req: ChatRequest,
+            _cancel: CancellationToken,
+        ) -> Result<ChatStream> {
+            let s = async_stream::stream! {
+                yield ChatChunk::Text("summary".into());
+                yield ChatChunk::Usage(crate::shared::api::contract::TokenUsage {
+                    prompt_tokens: EXACT,
+                    completion_tokens: 1,
+                    reasoning_tokens: 0,
+                    prefill: Some(Prefill {
+                        tokens: EXACT,
+                        ms: 1000,
+                    }),
+                });
+                yield ChatChunk::Finished(FinishReason::Stop);
+            };
+            Ok(Box::pin(s))
+        }
+    }
+
+    /// The summary records its exact count under its own kind
+    /// (docs/research/page-summary-usage.md §3.1): the ratio the next
+    /// summary prices with, and no other kind's — the turn's stays at 1.0.
+    #[tokio::test]
+    async fn summary_records_its_usage_under_its_own_kind() {
+        use crate::shared::session_budget::{SessionBudget, Shape};
+        let (_d, mut ctx) = ctx_with_engine(Arc::new(UsageBackend));
+        let budget = Arc::new(SessionBudget::new(2, Some(100_000)));
+        ctx.sessions = Some(budget.clone());
+        let s = summarize_text(&ctx, "https://a.example", None, "text a")
+            .await
+            .unwrap();
+        assert_eq!(s.text, "summary");
+        assert!(budget.density(Shape::Summary) > 1.0, "{budget:?}");
+        assert_eq!(budget.density(Shape::Turn), 1.0, "no other kind touched");
+        assert_eq!(budget.in_flight(), 0, "the reservation came back");
+    }
+
+    /// The engine's timing of the summary's prompt rides the outcome on both
+    /// paths (§3.2) — a page under the attachment budget and one over it —
+    /// and only where a summary was made: `summarize=false` asks nothing of
+    /// the engine, and an engine that sends no usage leaves `None`.
+    #[tokio::test]
+    async fn the_outcome_carries_the_summarys_sample() {
+        let (_d, ctx) = ctx_with_engine(Arc::new(UsageBackend));
+        let small = PageText {
+            text: "A small page.".into(),
+            truncated: false,
+            title: None,
+        };
+        let inline = FetchUrl::default()
+            .inline_result(&ctx, "https://example.com", None, true, &small)
+            .await;
+        assert_eq!(inline.prefill.map(|p| p.tokens), Some(EXACT));
+        assert!(inline.result.contains("summary"), "{}", inline.result);
+        let attached = FetchUrl::default()
+            .attached_result(&ctx, "https://example.com", None, true, big_page(None))
+            .await;
+        assert_eq!(attached.prefill.map(|p| p.tokens), Some(EXACT));
+        assert_eq!(attached.effects.len(), 1, "the page attached as before");
+
+        let plain = FetchUrl::default()
+            .inline_result(&ctx, "https://example.com", None, false, &small)
+            .await;
+        assert!(
+            plain.prefill.is_none(),
+            "no summary asked, nothing to report"
+        );
+
+        let (_d, ctx) = ctx_with_engine(Arc::new(CapturingBackend {
+            last: Mutex::new(None),
+            reply: "summary".into(),
+        }));
+        let no_usage = FetchUrl::default()
+            .inline_result(&ctx, "https://example.com", None, true, &small)
+            .await;
+        assert!(no_usage.prefill.is_none(), "a stream without a usage chunk");
     }
 
     /// Under a shared KV pool the summary reserves its prompt plus its reply
@@ -1119,6 +1256,58 @@ mod tests {
                 out.result
             );
         }
+    }
+
+    /// The summary's usage on a live engine (docs/research/page-summary-usage.md
+    /// §6, fork F4a): a JSON page — the text measured to under-count most
+    /// (1.28) — fetched under a budget of four sessions over the LAN stack's
+    /// pool. The result carries a summary (reasoning muted: not the "summary
+    /// unavailable" fallback with the JSON behind it), the budget's `Summary`
+    /// ratio is above 1.0, and the outcome carries the engine's timing of the
+    /// prompt.
+    ///
+    /// `MINDFORK_ENGINE_URL=…/v1 cargo test summary_usage_e2e_live -- --ignored --nocapture`.
+    #[tokio::test]
+    #[ignore = "requires a running llama-server (MINDFORK_ENGINE_URL) and network access"]
+    async fn summary_usage_e2e_live() {
+        use crate::shared::session_budget::{SessionBudget, Shape};
+        let Some(client) =
+            crate::shared::api::live_client("MINDFORK_ENGINE_URL", "MINDFORK_ENGINE_KEY")
+        else {
+            eprintln!("skip: MINDFORK_ENGINE_URL not set");
+            return;
+        };
+        let (_d, mut ctx) = ctx_with_engine(Arc::new(client));
+        let budget = Arc::new(SessionBudget::new(4, Some(16_384)));
+        ctx.sessions = Some(budget.clone());
+        let url = "https://api.github.com/repos/rust-lang/rust";
+        let started = std::time::Instant::now();
+        let out = FetchUrl::default()
+            .invoke(&ctx, serde_json::json!({"url": url}))
+            .await
+            .unwrap();
+        eprintln!(
+            "summary_usage_e2e_live: {:.1} s, ratio {:.2}, sample {:?}\n{}",
+            started.elapsed().as_secs_f64(),
+            budget.density(Shape::Summary),
+            out.prefill,
+            out.result
+        );
+        assert!(
+            !out.result.contains("\"node_id\""),
+            "the JSON itself came back, not a summary: {}",
+            out.result
+        );
+        assert!(!out.result.trim().is_empty());
+        assert!(
+            budget.density(Shape::Summary) > 1.0,
+            "a JSON page under-counts: {budget:?}"
+        );
+        assert_eq!(budget.density(Shape::Turn), 1.0, "no other kind touched");
+        assert!(
+            out.prefill.is_some(),
+            "the engine's timing rides the outcome"
+        );
     }
 
     /// A real network smoke (manual: `cargo test -- --ignored`).

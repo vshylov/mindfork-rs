@@ -295,23 +295,27 @@ async fn run_rounds(
             text.clone(),
             calls.clone(),
         ));
-        let mut round_wrote = false;
-        if !run_tools(
+        let mut report = ToolsReport::default();
+        let in_time = run_tools(
             registry,
             ctx,
             allowed,
             request,
             &calls,
             &mut left,
-            &mut round_wrote,
+            &mut report,
         )
-        .await
-        {
+        .await;
+        // A request a tool made on its own — a page summary's — is a stream
+        // of this task like its rounds (page-summary-usage §3.2): the larger
+        // sample lands, from a round the clock cut short as well.
+        crate::shared::api::contract::Prefill::keep_larger(prefill, report.prefill);
+        if !in_time {
             return Ok(RoundsEnd::TimedOut);
         }
         // The round's tools have reported: a write is kept for good, a round
         // of reads leaves the task where it was (acted-by-effect §3.2).
-        wrote = acted.leave_tools(wrote, round_wrote);
+        wrote = acted.leave_tools(wrote, report.wrote);
     }
     Ok(RoundsEnd::Done)
 }
@@ -339,11 +343,7 @@ fn record_round_usage(
             );
         }
         *last_exact = u.prompt_tokens as u64 + u.completion_tokens as u64;
-        if let Some(p) = u.prefill
-            && prefill.is_none_or(|kept| p.tokens > kept.tokens)
-        {
-            *prefill = Some(p);
-        }
+        crate::shared::api::contract::Prefill::keep_larger(prefill, u.prefill);
     }
 }
 
@@ -402,8 +402,19 @@ async fn stream_round(
     Ok(Streamed::Round(out))
 }
 
+/// What a round's tools reported, accumulated over the round: whether any
+/// call changed the profile's stored memory (`ToolOutcome::wrote`,
+/// acted-by-effect §3.1), and the largest timing of a request a call made on
+/// its own (`ToolOutcome::prefill`, page-summary-usage §3.2).
+#[derive(Default)]
+struct ToolsReport {
+    wrote: bool,
+    prefill: Option<crate::shared::api::contract::Prefill>,
+}
+
 /// The round's calls in the model's order, under what is `left` of the
-/// task's clock; `false` when the clock ran out.
+/// task's clock; `false` when the clock ran out — `report` then holds what
+/// the calls that finished said.
 async fn run_tools(
     registry: &Arc<ToolRegistry>,
     ctx: &ToolContext,
@@ -411,15 +422,17 @@ async fn run_tools(
     request: &mut ChatRequest,
     calls: &[ApiToolCall],
     left: &mut Duration,
-    wrote: &mut bool,
+    report: &mut ToolsReport,
 ) -> bool {
     let started = Instant::now();
     let tools = async {
         for call in calls {
             let args: serde_json::Value =
                 serde_json::from_str(&call.arguments).unwrap_or_else(|_| serde_json::json!({}));
-            let (result, call_wrote) = invoke_allowed(registry, ctx, allowed, call, args).await;
-            *wrote |= call_wrote;
+            let (result, call_wrote, sample) =
+                invoke_allowed(registry, ctx, allowed, call, args).await;
+            report.wrote |= call_wrote;
+            crate::shared::api::contract::Prefill::keep_larger(&mut report.prefill, sample);
             request.messages.push(ApiMessage::tool(&call.id, &result));
         }
     };
@@ -515,12 +528,13 @@ async fn invoke_allowed(
     allowed: &[ToolId],
     call: &ApiToolCall,
     args: serde_json::Value,
-) -> (String, bool) {
+) -> (String, bool, Option<crate::shared::api::contract::Prefill>) {
     let allowed_has = |name: &str| allowed.iter().any(|t| t == name);
     if allowed_has(&call.name) {
         match registry.invoke(&call.name, ctx, args).await {
-            // The tool's own report of whether it changed stored memory.
-            Ok(o) => (o.result, o.wrote),
+            // The tool's own reports: whether it changed stored memory, and
+            // the engine's timing of a request it made on its own.
+            Ok(o) => (o.result, o.wrote, o.prefill),
             // A tool that failed may have written before it failed, and the
             // loop cannot know how far it got: counted as a write
             // (docs/research/acted-by-effect.md fork F3).
@@ -530,6 +544,7 @@ async fn invoke_allowed(
                     &[("name", &call.name), ("err", &e.to_string())],
                 ),
                 true,
+                None,
             ),
         }
     } else {
@@ -537,6 +552,7 @@ async fn invoke_allowed(
         (
             ctx.loc.tf("loop.tool_not_allowed", &[("name", &call.name)]),
             false,
+            None,
         )
     }
 }

@@ -242,6 +242,8 @@ Unit: 2967 green, 149 ignored (five tests and the smoke added).
   ([slow-prefill-detection.md](slow-prefill-detection.md) §7).
 - **A loop's limit against a slow host** — a reflection that cannot end
   its first stream inside 120 s on a CPU build is its own question.
+- **A tool's own request inside a round** — the page summary's sample,
+  done: [page-summary-usage.md](page-summary-usage.md) §3.2.
 
 ## 8. Documentation touch list (AGENTS.md §4)
 

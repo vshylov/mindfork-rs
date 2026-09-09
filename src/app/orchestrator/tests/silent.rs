@@ -1781,6 +1781,47 @@ async fn a_stream_that_ended_short_carries_no_sample() {
     assert!(prefill.is_none(), "the usage chunk never came");
 }
 
+/// A tool's own request is a stream of the task like its rounds
+/// (docs/research/page-summary-usage.md §3.2): the timing a tool reports on
+/// its outcome folds into the loop's largest sample and lands with it — the
+/// page summary inside a reflection, without the page. The loop's rounds
+/// carry warm samples; the tool's is the cold one, and the larger lands.
+#[tokio::test]
+async fn a_tools_own_request_is_the_loops_sample_too() {
+    let (_d, mut orch, chat_id) = orch_ready_for_reflection();
+    orch.extra_tools.push(Arc::new(super::SampledTool {
+        id: "sampled",
+        sample: Some(Prefill {
+            tokens: 3236,
+            ms: 1615,
+        }),
+    }));
+    orch.rebuild_registry();
+    let mut first = call("sampled");
+    first.chunks.insert(1, timed(40, 20));
+    let backend = KeyedRecorder::new(
+        vec![("sampled loop", vec![first, timed_text("done", 45, 20)])],
+        10,
+    );
+    let (_stop, mut done_rx, _acted) = spawn_loop_allowing(
+        &mut orch,
+        backend,
+        chat_id,
+        "sampled loop",
+        std::time::Duration::from_secs(5),
+        vec!["sampled".into()],
+    );
+    let BgDone {
+        outcome, prefill, ..
+    } = landing(&mut done_rx).await;
+    assert_eq!(outcome, BgOutcome::Done);
+    assert_eq!(
+        prefill.map(|p| p.tokens),
+        Some(3236),
+        "the tool's cold sample over the rounds' warm ones"
+    );
+}
+
 /// Every silent task lands in `handle_bg_done`, and the rule is asked there
 /// once (§3.3): a failed loop's sample on an external server is the note all
 /// the same (R3), after the task's own landing; the next task's sample says

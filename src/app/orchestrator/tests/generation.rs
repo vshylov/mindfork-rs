@@ -1585,6 +1585,86 @@ mod slow_prefill {
         );
     }
 
+    /// A tool's own request is a stream of the turn (spec §9.3.1): the
+    /// timing it reports on its outcome folds into the turn's largest sample
+    /// and reaches the note like a round's — the page summary's path without
+    /// the page (docs/research/page-summary-usage.md §3.2). The engine's own
+    /// rounds carry a warm sample under the floor; the tool's is the cold one.
+    #[tokio::test]
+    async fn a_tools_own_request_is_the_turns_sample_too() {
+        use crate::app::orchestrator::tests::subagent::{Script, ScriptRecorder};
+        let warm = ChatChunk::Usage(TokenUsage {
+            prompt_tokens: 40,
+            completion_tokens: 1,
+            reasoning_tokens: 0,
+            prefill: Some(Prefill { tokens: 40, ms: 20 }),
+        });
+        let call = Script {
+            chunks: vec![
+                ChatChunk::ToolCall(crate::shared::api::contract::ToolCallDelta {
+                    thought_signature: None,
+                    index: 0,
+                    id: Some("s1".into()),
+                    name: Some("sampled".into()),
+                    arguments: "{}".into(),
+                }),
+                warm.clone(),
+                ChatChunk::Finished(FinishReason::ToolCalls),
+            ],
+            hang: false,
+        };
+        let reply = Script {
+            chunks: vec![
+                ChatChunk::Text("done".into()),
+                warm,
+                ChatChunk::Finished(FinishReason::Stop),
+            ],
+            hang: false,
+        };
+        let backend = ScriptRecorder::new(vec![call, reply]);
+        let mut config = no_auto_cfg();
+        config.engine.mode = ServerMode::External;
+        let tool = Arc::new(crate::app::orchestrator::tests::SampledTool {
+            id: "sampled",
+            sample: Some(SLOW),
+        });
+        let (_d, cmd_tx, mut evt_rx, handle) =
+            spawn_orch_tools(Some(backend as Arc<dyn EngineBackend>), config, vec![tool]);
+        // The startup emits the profile list and the active chat in whichever
+        // order; both are needed before the tool can be enabled and the
+        // message sent.
+        let (mut pid, mut chat) = (None, None);
+        while pid.is_none() || chat.is_none() {
+            match tokio::time::timeout(std::time::Duration::from_secs(5), evt_rx.recv())
+                .await
+                .expect("startup events")
+            {
+                Some(AppEvent::ProfileList(v)) if !v.is_empty() => pid = Some(v[0].id),
+                Some(AppEvent::ChatActivated { id, .. }) => chat = Some(id),
+                Some(_) => {}
+                None => panic!("the orchestrator went away during startup"),
+            }
+        }
+        cmd_tx
+            .send(AppCommand::UpdateProfile {
+                id: pid.unwrap(),
+                edit: Box::new(ProfileEdit {
+                    enabled_tools: Some(vec!["sampled".into()]),
+                    ..Default::default()
+                }),
+            })
+            .unwrap();
+        cmd_tx.send(AppCommand::SendMessage("go".into())).unwrap();
+        let note = wait_for(
+            &mut evt_rx,
+            |e| matches!(e, AppEvent::Notice(t) if t.contains("-b 256 -ub 256")),
+        )
+        .await;
+        assert!(note.is_some(), "the tool's cold sample reached the note");
+        cmd_tx.send(AppCommand::Quit).unwrap();
+        handle.await.unwrap();
+    }
+
     /// The whole path: the engine's `timings` on the stream's usage chunk
     /// travel through the round, the turn and the landing to the note
     /// (§3.1) — and the second turn on the same server says nothing.

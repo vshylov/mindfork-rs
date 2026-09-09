@@ -291,6 +291,19 @@ impl Prefill {
         (self.tokens > 0 && self.ms > 0)
             .then(|| f64::from(self.tokens) * 1000.0 / f64::from(self.ms))
     }
+
+    /// Keeps the larger of two samples by tokens processed — the one rule
+    /// every holder of "the largest prefill sample" applies: a turn's rounds
+    /// and its tools' own requests, a silent loop's rounds and tools
+    /// (docs/research/page-summary-usage.md §3.2). `None` changes nothing;
+    /// a tie keeps what was there.
+    pub fn keep_larger(kept: &mut Option<Prefill>, sample: Option<Prefill>) {
+        if let Some(p) = sample
+            && kept.is_none_or(|k| p.tokens > k.tokens)
+        {
+            *kept = Some(p);
+        }
+    }
 }
 
 /// A tool-call delta from the stream (accumulated by `index`). See spec §6.3.
@@ -755,5 +768,30 @@ mod tests {
     #[test]
     fn thinking_accumulator_without_input_gives_no_blocks() {
         assert!(ThinkingAccumulator::default().finish().is_empty());
+    }
+
+    #[test]
+    fn keep_larger_keeps_the_larger_by_tokens_and_ignores_none() {
+        let mut kept = None;
+        super::Prefill::keep_larger(&mut kept, None);
+        assert!(kept.is_none());
+        super::Prefill::keep_larger(&mut kept, Some(super::Prefill { tokens: 40, ms: 20 }));
+        assert_eq!(kept.map(|p| p.tokens), Some(40));
+        super::Prefill::keep_larger(
+            &mut kept,
+            Some(super::Prefill {
+                tokens: 3236,
+                ms: 1615,
+            }),
+        );
+        assert_eq!(kept.map(|p| p.tokens), Some(3236));
+        super::Prefill::keep_larger(&mut kept, Some(super::Prefill { tokens: 45, ms: 20 }));
+        assert_eq!(
+            kept.map(|p| p.tokens),
+            Some(3236),
+            "a smaller sample changes nothing"
+        );
+        super::Prefill::keep_larger(&mut kept, None);
+        assert_eq!(kept.map(|p| p.ms), Some(1615), "nor does none");
     }
 }
