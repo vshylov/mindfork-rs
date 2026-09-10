@@ -160,6 +160,27 @@ fn link_spans(chars: &[char]) -> Vec<(usize, usize)> {
     spans
 }
 
+/// The end of the letter run that begins at `start` — the character index one
+/// past the word, i.e. its `Word::end`.
+///
+/// The run grows over letters, the combining marks they carry ([`is_mark`]) and
+/// a connector with a letter behind it ([`is_connector`]); `chars[start]` is
+/// assumed to be a letter, which is what [`words`] checks before calling. Split
+/// out of `words` so neither is a nest of branches (Sonar `rust:S3776`).
+fn word_end(chars: &[char], start: usize) -> usize {
+    let mut i = start + 1;
+    loop {
+        // A word *starts* at a letter, so a mark here always has one behind it.
+        if i < chars.len() && (chars[i].is_alphabetic() || is_mark(chars[i])) {
+            i += 1;
+        } else if i + 1 < chars.len() && is_connector(chars[i]) && chars[i + 1].is_alphabetic() {
+            i += 2;
+        } else {
+            return i;
+        }
+    }
+}
+
 /// Splits a string into words (letter runs with internal connectors and the
 /// combining marks their letters carry), skipping URLs and email addresses.
 pub fn words(line: &str) -> Vec<Word> {
@@ -178,19 +199,7 @@ pub fn words(line: &str) -> Vec<Word> {
             continue;
         }
         let start = i;
-        i += 1;
-        loop {
-            // A word still *starts* at a letter (the guard above), so a mark
-            // here always has one behind it.
-            if i < chars.len() && (chars[i].is_alphabetic() || is_mark(chars[i])) {
-                i += 1;
-            } else if i + 1 < chars.len() && is_connector(chars[i]) && chars[i + 1].is_alphabetic()
-            {
-                i += 2;
-            } else {
-                break;
-            }
-        }
+        i = word_end(&chars, start);
         out.push(Word {
             start,
             end: i,

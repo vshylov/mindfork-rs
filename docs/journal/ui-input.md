@@ -1563,7 +1563,11 @@ own keytab, recorded above.
   and only it — makes a mark in-word (a word still *starts* at a letter, so an
   orphaned mark begins nothing); `segment::strip_marks` returns the word without
   its marks, or `None` when it has none, so an ordinary word allocates nothing;
-  `check_word` looks the word up **as typed first**, then stripped.
+  `check_word` looks the word up **as typed first**, then stripped. The run loop
+  moved out into `segment::word_end` beside `words`: the added `||` took `words`
+  to a cognitive complexity of 16 against the 15 allowed (Sonar `rust:S3776` on
+  the PR — the gate itself passed), and "find the end of this run" and "walk the
+  line" read better apart anyway.
 - **Why the fallback is safe, and why the order.** The three bundled `.dic`
   files hold **zero** combining marks (counted), so a stripped lookup can only
   accept what the marked one rejected — never the reverse. Their accented
