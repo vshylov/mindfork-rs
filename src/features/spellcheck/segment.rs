@@ -6,6 +6,12 @@
 //! only INSIDE a word (`don't`, `well-known` — one token; a trailing hyphen on a
 //! word is dropped). Indices are by character (matching the `InputBox` model).
 //!
+//! **A combining mark belongs to the letter before it** ([`is_mark`]): a
+//! Russian word carrying a stress sign is one word, not the two halves the mark
+//! would otherwise split it into. `char::is_alphabetic` is false for every one
+//! of those marks, so without the rule a letter run ends at the stress — see
+//! [`strip_marks`] for the other half of the answer.
+//!
 //! **URLs and email addresses are skipped whole**: an address isn't prose, and
 //! its host and path fragments (`github`, `mindfork`, `rs`, `blob`, …) would
 //! otherwise be underlined word by word — noise on exactly the text a user
@@ -22,6 +28,33 @@ pub struct Word {
 /// Is the character an in-word connector (counted between letters)?
 fn is_connector(c: char) -> bool {
     matches!(c, '\'' | '\u{2019}' | '-' | '\u{2010}')
+}
+
+/// Is the character a combining mark a letter carries?
+///
+/// The Combining Diacritical Marks block, and only it: the Russian stress sign
+/// `U+0301` (and `U+0300` for a secondary one), the decomposed halves of `ё` and
+/// `й` (`U+0308`, `U+0306`), and the Latin diacritics of a decomposed `café`.
+/// Unicode calls them `Mn`; `char` exposes no general category, so the block
+/// range is the whole test — one comparison on a path that runs over every word
+/// of every line. See spec §11.5.
+fn is_mark(c: char) -> bool {
+    matches!(c, '\u{0300}'..='\u{036F}')
+}
+
+/// The word without its combining marks — `None` when it carries none, so an
+/// ordinary word allocates nothing.
+///
+/// This is what makes a stress mark not a spelling: the three bundled `.dic`
+/// files hold **zero** combining marks (measured — docs/research/
+/// spellcheck-stress-marks.md §2.2), so a lookup on the stripped form can only
+/// accept what the marked one rejected, never the reverse. Precomposed letters
+/// are single characters and are left alone — `en_GB`'s `café` (`U+00E9`) keeps
+/// answering for itself.
+pub fn strip_marks(word: &str) -> Option<String> {
+    word.chars()
+        .any(is_mark)
+        .then(|| word.chars().filter(|c| !is_mark(*c)).collect())
 }
 
 /// Does a whitespace-delimited token look like a URL or an email address?
@@ -127,8 +160,29 @@ fn link_spans(chars: &[char]) -> Vec<(usize, usize)> {
     spans
 }
 
-/// Splits a string into words (letter runs with internal connectors), skipping
-/// URLs and email addresses.
+/// The end of the letter run that begins at `start` — the character index one
+/// past the word, i.e. its `Word::end`.
+///
+/// The run grows over letters, the combining marks they carry ([`is_mark`]) and
+/// a connector with a letter behind it ([`is_connector`]); `chars[start]` is
+/// assumed to be a letter, which is what [`words`] checks before calling. Split
+/// out of `words` so neither is a nest of branches (Sonar `rust:S3776`).
+fn word_end(chars: &[char], start: usize) -> usize {
+    let mut i = start + 1;
+    loop {
+        // A word *starts* at a letter, so a mark here always has one behind it.
+        if i < chars.len() && (chars[i].is_alphabetic() || is_mark(chars[i])) {
+            i += 1;
+        } else if i + 1 < chars.len() && is_connector(chars[i]) && chars[i + 1].is_alphabetic() {
+            i += 2;
+        } else {
+            return i;
+        }
+    }
+}
+
+/// Splits a string into words (letter runs with internal connectors and the
+/// combining marks their letters carry), skipping URLs and email addresses.
 pub fn words(line: &str) -> Vec<Word> {
     let chars: Vec<char> = line.chars().collect();
     let links = link_spans(&chars);
@@ -145,17 +199,7 @@ pub fn words(line: &str) -> Vec<Word> {
             continue;
         }
         let start = i;
-        i += 1;
-        loop {
-            if i < chars.len() && chars[i].is_alphabetic() {
-                i += 1;
-            } else if i + 1 < chars.len() && is_connector(chars[i]) && chars[i + 1].is_alphabetic()
-            {
-                i += 2;
-            } else {
-                break;
-            }
-        }
+        i = word_end(&chars, start);
         out.push(Word {
             start,
             end: i,
@@ -201,6 +245,46 @@ mod tests {
         assert_eq!(w.len(), 2);
         assert_eq!((w[0].start, w[0].end), (0, 2));
         assert_eq!((w[1].start, w[1].end), (3, 4));
+    }
+
+    #[test]
+    fn a_combining_mark_stays_inside_its_word() {
+        // `U+0301` is how Russian marks stress, and `char::is_alphabetic` is
+        // false for it — the word used to end there (spec §11.5).
+        assert_eq!(texts("И\u{301}стинно так"), ["И\u{301}стинно", "так"]);
+        assert_eq!(texts("по-мо\u{301}ему"), ["по-мо\u{301}ему"]);
+        // A trailing mark belongs to the letter before it, punctuation doesn't.
+        assert_eq!(texts("хорошо\u{301}!"), ["хорошо\u{301}"]);
+        // A decomposed `ё` and a decomposed `café` are the same shape.
+        assert_eq!(texts("е\u{308}жик"), ["е\u{308}жик"]);
+        assert_eq!(texts("cafe\u{301}"), ["cafe\u{301}"]);
+    }
+
+    #[test]
+    fn a_marked_word_range_covers_its_mark() {
+        // Eight characters, the mark at index 1 — the range has to span it, or
+        // the underline would start mid-cluster.
+        let w = words("И\u{301}стинно");
+        assert_eq!(w.len(), 1);
+        assert_eq!((w[0].start, w[0].end), (0, 8));
+    }
+
+    #[test]
+    fn an_orphaned_mark_starts_no_word() {
+        // A word begins at a letter; a mark left on its own (deleting the letter
+        // it sat on can leave one) is skipped like any other non-letter.
+        assert_eq!(texts("да \u{301} нет"), ["да", "нет"]);
+        assert!(words("\u{301}").is_empty());
+    }
+
+    #[test]
+    fn strip_marks_leaves_an_unmarked_word_alone() {
+        assert_eq!(strip_marks("И\u{301}стинно").as_deref(), Some("Истинно"));
+        assert_eq!(strip_marks("е\u{308}жик").as_deref(), Some("ежик"));
+        // Nothing to strip — no allocation, and the caller keeps its own string.
+        assert_eq!(strip_marks("Истинно"), None);
+        // A precomposed letter is one character, not a letter plus a mark.
+        assert_eq!(strip_marks("café"), None);
     }
 
     #[test]

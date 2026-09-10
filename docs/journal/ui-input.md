@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (29)
+## Entries (30)
 
 - Post-M9: fast multiline clipboard paste (done)
 - Post-M9: `↑/↓` navigation by visual row of a wrapped line (done)
@@ -41,6 +41,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the draft flush lags the intent — a spent command resurfaces in the box (done)
 - Post-M9: the restored message and the draft are separated by a blank line (done)
 - Post-M9: the line-break hint names the chord the terminal can deliver (done)
+- Post-M9: a stress mark is part of the word (done)
 
 ### Post-M9: fast multiline clipboard paste (done)
 - **Symptom**: a large clipboard paste lagged in Windows Terminal, and a line break
@@ -1534,3 +1535,101 @@ directions were run: the app driven on a real pty that stays **silent** to
 the same binary on a pty that **answers** `\E[?1u\E[?62;c` draws
 `Shift+Enter newline`. Plus the pty probe of crossterm's parser and Konsole's
 own keytab, recorded above.
+
+### Post-M9: a stress mark is part of the word (done)
+
+<!-- cyrillic-ok:start — the entry is about checking Russian spelling: every
+     Cyrillic run below is a word put through the dictionary or a segmenter's
+     output. The prose is English. -->
+
+- **Symptom** (reported with a screenshot, branch `fix/spellcheck-stress-marks`):
+  `И́стинно так` typed into the input box, and `стинно` underlined while `И` is
+  not. **Cause — one predicate.** `segment::words` grows a word while
+  `chars[i].is_alphabetic()`, and `U+0301 COMBINING ACUTE ACCENT` — the sign
+  every Russian source uses for stress, what `Alt+0769` types and what a paste
+  from Wikipedia/Wiktionary carries — is category `Mn`, for which
+  `char::is_alphabetic` is **false**. The word was cut in two at its stress and
+  the halves looked up separately.
+- **The check was wrong in both directions**, measured against the shipped
+  `ru_RU`/`en_US` pair before touching anything:
+  `чуде́сный ве́чер` → words `чуде` `сный` `ве` `чер`, three underlines under
+  correct text; `О́зеро Байка́л` → a lone underline under `л`; and the quiet
+  half — `за́мок` passed as `за` + `мок`, `хорошо́` as `хорошо` + nothing, so an
+  error **disappeared** whenever both halves happened to be words. On
+  `харашо́ напи́сано` the one genuine typo was underlined among two false ones.
+  Not "noisy on stressed text": off for it.
+- **Two predicates and a fallback**, no new dependency and no setting.
+  `segment::is_mark` — the Combining Diacritical Marks block `U+0300–U+036F`
+  and only it — makes a mark in-word (a word still *starts* at a letter, so an
+  orphaned mark begins nothing); `segment::strip_marks` returns the word without
+  its marks, or `None` when it has none, so an ordinary word allocates nothing;
+  `check_word` looks the word up **as typed first**, then stripped. The run loop
+  moved out into `segment::word_end` beside `words`: the added `||` took `words`
+  to a cognitive complexity of 16 against the 15 allowed (Sonar `rust:S3776` on
+  the PR — the gate itself passed), and "find the end of this run" and "walk the
+  line" read better apart anyway.
+- **Why the fallback is safe, and why the order.** The three bundled `.dic`
+  files hold **zero** combining marks (counted), so a stripped lookup can only
+  accept what the marked one rejected — never the reverse. Their accented
+  entries are *precomposed*: `en_GB`'s `café` is `U+00E9`, one character, which
+  `strip_marks` does not touch — and the as-typed-first order is what keeps that
+  entry answering for its own word instead of `en_US`'s `cafe`. The mark is
+  ignored, not the spelling under it: `харашо́` → `харашо` → still flagged, as
+  the whole word, once.
+- **`е`/`ё` needed nothing, and that is a measurement, not an assumption.** The
+  `ru_RU` list carries 7347 stems spelled with `ё`; each one's `ё`→`е` spelling
+  was put through the dictionary and **0 of 7347** were rejected. Meanwhile the
+  reverse is *not* ignored — `афёра`, `опёка`, `гренадёр` are correctly flagged.
+  So the data already does the one thing that helps and still catches the
+  hypercorrections; a `ё`→`е` fallback of our own would only have broken the
+  second half (user's decision, 2026-09-11, fork F5). One `ё` case *was* broken
+  and this fixes it for free: `ё` typed decomposed (`е` + `U+0308`, as pasted
+  from a macOS-authored source) was cut in two exactly like a stress, and the
+  strip lands it on the `е` spelling, which by the count above is always
+  accepted.
+- **The rest of the input box already agreed.** `wrap::prev_boundary`/
+  `next_boundary` move by grapheme cluster and `width_at` gives a mark 0
+  columns, so `←`/`Backspace` already treated `И́` as one unit and the cursor
+  already could not sit between a letter and its mark. The segmenter was the
+  only layer that disagreed — nothing in rendering, wrapping or the popup's
+  `replace_range` needed a line: a range that grew by a zero-width character
+  still underlines and still replaces the right text.
+- **Suggestions and the personal dictionary** follow from the same fact that no
+  entry carries a mark: `suggest` asks about the unmarked word (a marked
+  spelling has nothing to match against) and the replacement lands unstressed;
+  `add_to_personal` stores the unmarked form, so adding `И́стинно` covers
+  `Исти́нно` and every other placement, and the file stays a word list a person
+  can edit (forks F3/F4).
+- **Deliberately not done**: the spacing acute as a stress sign (measured:
+  `мо´локо` splits today, `моˊлоко` with `U+02CA` stays whole and is rejected —
+  both are rare conventions, and `´` is a quote elsewhere); precomposed Cyrillic
+  grave (`всѐ` `U+0450`, `ѝли` `U+045D` — single characters the strip cannot
+  reach); a Latin vowel inside a Cyrillic word (`мóлоко` — a homoglyph
+  question); validating **where** the stress falls (`мол́око` is as correct as
+  `мо́локо` — that needs an accentuated dictionary); and `ё`-restoration.
+
+**Tests** (+11): `segment` — a marked word stays whole (`И́стинно так`,
+`по-мо́ему`, a trailing `хорошо́`, a decomposed `ё` and a decomposed `café`), its
+range covers the mark, an orphaned mark starts no word, `strip_marks` returns
+`None` when there is nothing to strip and leaves a precomposed `café` alone;
+`check` — the mark neither fails a word nor rescues a typo, a stressed word is
+underlined whole or not at all, suggestions equal those for the unmarked word, a
+personal word is stored stripped and every other placement is then correct;
+`dict` — the same against the **shipped** `ru_RU`, beside
+`the_bundled_dictionaries_load_and_answer` and for its reason (the rule rests on
+a property of the data, so a dictionary swapped for a different upstream must
+not be able to take it away quietly); `input_box` — a misspelling range keeps
+the mark inside its underlined span, never orphaning it into one of its own;
+`screens/chat` — the reported line typed into the chat input draws no underline
+while `харашо́` still does. **3043 unit tests green, 156 `#[ignore]`**, clippy
+`-D warnings`/fmt clean.
+
+**A live model run is not required** (AGENTS.md §3) — spellcheck touches no
+engine, no memory and no tool. The evidence is the measurement above, taken
+against the real dictionaries with `spellbook` 0.4.2, plus the screen-level test
+that reproduces the reported line end to end.
+
+Design and every measurement:
+[docs/research/spellcheck-stress-marks.md](../research/spellcheck-stress-marks.md).
+
+<!-- cyrillic-ok:end -->

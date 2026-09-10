@@ -2095,6 +2095,24 @@ mod tests {
     }
 
     #[test]
+    fn a_misspelling_range_keeps_a_combining_mark_in_its_span() {
+        // A stressed word is flagged whole (spec §11.5), so the mark carries the
+        // same style as the letter it sits on and never lands in a span of its
+        // own — a terminal draws an orphaned combining mark on a dotted circle.
+        use ratatui::style::Modifier;
+        let chars: Vec<char> = "исти\u{301}но".chars().collect();
+        let line = styled_line(&chars, Some(&[(0, 7)]), None, None, &Palette::default());
+        assert_eq!(line.spans.len(), 1);
+        assert_eq!(line.spans[0].content, "исти\u{301}но");
+        assert!(
+            line.spans[0]
+                .style
+                .add_modifier
+                .contains(Modifier::UNDERLINED)
+        );
+    }
+
+    #[test]
     fn content_rows_matches_render_text_width() {
         // `content_rows(area_width)` must count wrapping against the SAME text
         // width as `render` (minus the border 2 and the prompt column

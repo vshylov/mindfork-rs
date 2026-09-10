@@ -342,6 +342,35 @@ mod tests {
         }
     }
 
+    /// A stress mark is part of the word, not a word boundary (spec §11.5) —
+    /// checked against the **shipped** `ru_RU` for the same reason as the test
+    /// above: the rule rests on a property of the data (no bundled `.dic` holds
+    /// a combining mark), so a dictionary swapped for a different upstream must
+    /// not be able to take it away quietly.
+    #[test]
+    fn the_bundled_russian_reads_a_stressed_word() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("dictionaries");
+        let checker = load(
+            &dir,
+            None,
+            &dir.join("does-not-exist.txt"),
+            true,
+            &["ru_RU".to_string()],
+        );
+        for word in [
+            "И\u{301}стинно",
+            "мо\u{301}локо",
+            "по-мо\u{301}ему",
+            "хорошо\u{301}",
+        ] {
+            assert!(checker.check_word(word), "{word:?} should be a word");
+        }
+        // The mark is ignored; the spelling under it still is not.
+        for word in ["харашо\u{301}", "исти\u{301}ный"] {
+            assert!(!checker.check_word(word), "{word:?} should not be a word");
+        }
+    }
+
     #[test]
     fn personal_roundtrip() {
         let dir = tempfile::tempdir().unwrap();

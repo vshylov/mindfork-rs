@@ -169,9 +169,9 @@ Backend selection: `MINDFORK_ENGINE_URL` (external, any OpenAI server) OR
 rented instead of hosted — `python tools/e2e_hf.py run`, see
 `docs/history/remote-e2e-hf.md`.
 
-## Status (2026-09-10, version 0.9.8)
+## Status (2026-09-11, version 0.9.8)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3032 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **3043 unit tests
 green, 156 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
@@ -183,6 +183,29 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 `tools/doc_index_check.py`. A new track adds a line; a line that has stopped
 being recent is dropped, not shortened.
 
+<!-- cyrillic-ok:start -->
+- **Spellcheck reads a stress mark as part of the word** — reported from
+  the input box: `И́стинно так` typed, `стинно` underlined. One predicate:
+  the segmenter grows a word while `is_alphabetic`, and `U+0301` — the
+  sign every Russian source uses, what `Alt+0769` types and what a paste
+  carries — is `Mn`, so a word ended at its stress and the halves were
+  judged apart. Measured first, that is wrong in **both** directions:
+  `чуде́сный ве́чер` drew three underlines under correct text, while
+  `за́мок` passed as `за` + `мок` — not noisy on stressed text, off for
+  it. Now `U+0300–U+036F` counts as in-word and a word that fails as
+  typed is looked up once more stripped; safe because the three bundled
+  `.dic` files hold **zero** combining marks, so the second lookup can
+  only accept what the first rejected, and as-typed-first keeps `en_GB`'s
+  precomposed `café` answering for itself. The mark is ignored, never the
+  spelling under it (`харашо́` still flagged, whole, once); suggestions
+  come from the unmarked word, and "add to dictionary" stores it unmarked
+  so one add covers every placement. `е`/`ё` needed nothing, and that is
+  a count, not a guess: **0 of 7347** `ё` stems in `ru_RU` lack an
+  accepted `е` spelling, while `афёра` and `опёка` are still flagged — a
+  fallback of our own would only have broken the second half
+  ([docs/research/spellcheck-stress-marks.md](docs/research/spellcheck-stress-marks.md),
+  spec §11.5, [docs/journal/ui-input.md](docs/journal/ui-input.md)).
+<!-- cyrillic-ok:end -->
 - **The engine, downloaded — llama.cpp's backends named, fetched and
   pointed at** — install.md §3 named `llama-server` the recommended
   backend and assumed it existed, leaving the user to know that the newest
@@ -394,33 +417,6 @@ being recent is dropped, not shortened.
   the flush; a token check before the stream keeps a cancelled loop from
   asking the engine once more where it has no session budget
   ([docs/research/quit-waits-for-the-landing.md](docs/research/quit-waits-for-the-landing.md),
-  spec §17.6, §11.10, [docs/journal/engine.md](docs/journal/engine.md)).
-- **"Acted on" by effect — a silent task's window is consumed by a write,
-  not by a round** — the refund rule's criterion had been "a round of the
-  task's tools was about to run", coarse for a reflection whose first
-  round only reads its self-model and is stopped seconds after it starts.
-  Now the fact is the writer's own: `ToolOutcome.wrote`, set on the
-  success path of each of the nine memory writers (a refusal reports
-  nothing, an `Err` counts as a write), ORed per round by the loop and
-  reported at the landing as `Cancelled { wrote }`; because it arrives
-  after the tools, the slot's flag became a three-valued state
-  (`Acting::{Idle, InTools, Wrote}`) and a quit refunds `Idle` only.
-  `Tool::concurrent()` could not be the criterion: `note_recall` is
-  unmarked for a cache write, `note_neighbors` unmarked at all
-  ([docs/research/acted-by-effect.md](docs/research/acted-by-effect.md),
-  spec §9.2, §17.6, [docs/journal/engine.md](docs/journal/engine.md)).
-- **A quit gives the window back too — the fact the loop keeps in the
-  open** — the refund track's fork F6b: a quit cancelled every silent
-  task and returned, nothing landed, and the spawn-time advance stayed, so
-  a restart mid-reflection skipped the window. The missing piece was a
-  fact, not a decision: "a round of my tools is about to run" was read
-  only from the outcome. Now the loop stores it on a flag the spawn tail
-  keeps beside the window (`Refund { window, acted }`, `SilentLoop.acted`)
-  at the very line it counts a round, and `quit_bg` cancels every token
-  and then gives back every window whose flag is unset, before the exit
-  flush; a token check right after the store means a cancelled loop
-  starts no tools into a window already given back
-  ([docs/research/quit-refunds-window.md](docs/research/quit-refunds-window.md),
   spec §17.6, §11.10, [docs/journal/engine.md](docs/journal/engine.md)).
 - **The TUI "hangs" on a headless launch** (no TTY) — this is expected; clean
   exit via `Esc`/`Ctrl+Q` is covered by unit tests. Live verification needs a
