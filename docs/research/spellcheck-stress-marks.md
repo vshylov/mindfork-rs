@@ -5,8 +5,11 @@
      output, or a measurement's input. Transliterating them would describe a
      different experiment. The prose itself is English. -->
 
-> **Status:** proposal (2026-09-10) — the forks in §5 await the user's
-> decision. Reported from the input box: `И́стинно так` is typed, and
+> **Status:** implemented (2026-09-11) — the user's decisions of
+> 2026-09-11: every fork as recommended (F1a mark set, F2a the fallback,
+> F3a the personal dictionary, F4a suggestions, F5a nothing for `е`/`ё`,
+> F6a one PR); the run in §6.1. Reported from the input box:
+> `И́стинно так` is typed, and
 > `стинно` is underlined while `И` is not. The cause is one predicate:
 > the segmenter's `is_alphabetic`, which a combining mark is not — so
 > `U+0301` ends the word it belongs to. The second half of the question,
@@ -297,8 +300,36 @@ returns `None` before allocating.
   renders as one underlined span (no orphaned mark, no panic).
 - **Live: not required** — spellcheck touches no engine, no memory and no
   tool; this is a pure input-box/feature change (AGENTS.md §3). The
-  screenshot in the report is the acceptance check: the same line typed
-  into a real terminal, with no underline.
+  acceptance check is a screen-level test instead: the reported line typed
+  into the chat input, checked against the shipped `ru_RU`, drawing no
+  underline.
+
+### 6.1 The run (2026-09-11)
+
+As decided, every fork as recommended. `segment::is_mark`
+(`U+0300–U+036F`) makes a mark in-word, `segment::strip_marks` returns the
+unmarked word or `None`, `check_word` looks a word up as typed and then
+stripped, and `suggest`/`add_to_personal` work on the stripped form.
+Nothing above the feature needed a line: the underline is composed per
+character, the cursor already moved by grapheme cluster, and the popup
+already replaced a whole range.
+
+**+11 tests, 3043 unit tests green, 156 `#[ignore]`**, `cargo fmt --check`
+and `cargo clippy --all-targets -- -D warnings` clean, and the four
+repository gates (`cyrillic_scan`, `link_check`, `doc_index_check`,
+`list_scroll_check`) pass. The new ones: four in `segment` (a marked word
+stays whole, its range covers the mark, an orphaned mark starts no word,
+`strip_marks` leaves an unmarked word alone), four in `check` (the mark
+neither fails a word nor rescues a typo; underlined whole or not at all;
+suggestions equal the unmarked word's; a personal word stored stripped),
+one in `dict` against the **shipped** `ru_RU`, one in `input_box` (the
+mark stays inside its underlined span), and one in `screens/chat` — the
+reported line typed into the chat input, no underline, while `харашо́`
+still draws one.
+
+No live model run (see above). The measurements this design rests on were
+taken against the real dictionaries with `spellbook` 0.4.2 and are quoted
+in §1 and §2.
 
 ## 7. Not in this track
 

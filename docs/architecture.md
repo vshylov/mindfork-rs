@@ -3079,7 +3079,10 @@ Decisions recorded in ADRs:
 - **Spellcheck** (`features/spellcheck`): Hunspell (`spellbook`) + our own
   segmenter + a personal dictionary; a word is correct if accepted by at
   least one active dictionary; dictionaries are loaded in the background per
-  interface settings.
+  interface settings. The segmenter counts a combining mark (`U+0300–U+036F`,
+  `segment::is_mark`) as in-word — a word carrying a stress sign is one word —
+  and `check_word` falls back to `segment::strip_marks` when the word as typed
+  fails, so a stress sign is not a spelling (spec §11.5).
 - **Layout independence** (`shared/keys.rs::hotkey_char`): a Ctrl character is
   normalized to a "physical" Latin key, so shortcuts work under a non-Latin
   layout too. Tiers, first hit wins: (1) **Windows** — resolution through the

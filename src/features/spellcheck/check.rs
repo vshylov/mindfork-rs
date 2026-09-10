@@ -41,11 +41,21 @@ impl SpellChecker {
     }
 
     /// Is the word correct (in the personal dictionary or any of the active ones)?
+    ///
+    /// Looked up **as typed** first, and only then without its combining marks
+    /// ([`segment::strip_marks`]): a stress sign is not a spelling, and no
+    /// dictionary entry carries a mark to lose, so the second lookup can only
+    /// accept what the first rejected. The order is what keeps a *precomposed*
+    /// diacritic answering for itself — `en_GB` holds `café` as `U+00E9`, and it
+    /// is that entry that should accept it, not `en_US`'s `cafe`. See spec §11.5.
     pub fn check_word(&self, word: &str) -> bool {
-        if self.personal.contains(word) {
-            return true;
-        }
-        self.dicts.iter().any(|d| d.check(word))
+        self.known(word) || segment::strip_marks(word).is_some_and(|plain| self.known(&plain))
+    }
+
+    /// One lookup of the word exactly as given: the personal dictionary, then
+    /// the active ones.
+    fn known(&self, word: &str) -> bool {
+        self.personal.contains(word) || self.dicts.iter().any(|d| d.check(word))
     }
 
     /// Ranges (by character index) of misspelled words in the string. Empty if
@@ -73,7 +83,14 @@ impl SpellChecker {
     }
 
     /// Correction suggestions (a union across all dictionaries, no duplicates).
+    ///
+    /// Asked about the word **without its combining marks**: no entry carries
+    /// one, so a marked spelling has nothing to match against. The replacement
+    /// therefore lands unmarked — someone correcting a misspelling is not asking
+    /// to keep the stress they put on it. See spec §11.5.
     pub fn suggest(&self, word: &str) -> Vec<String> {
+        let plain = segment::strip_marks(word);
+        let word = plain.as_deref().unwrap_or(word);
         let mut out = Vec::new();
         for dict in &self.dicts {
             let mut local = Vec::new();
@@ -92,7 +109,14 @@ impl SpellChecker {
     }
 
     /// Adds a word to the personal dictionary (in memory + appended to the file).
+    ///
+    /// Stored **without its combining marks**, so one add covers every placement
+    /// of the stress in that word — [`check_word`](Self::check_word)'s fallback
+    /// is what finds it again — and the file stays a plain word list a person
+    /// can edit. See spec §11.5.
     pub fn add_to_personal(&mut self, word: &str) -> std::io::Result<()> {
+        let plain = segment::strip_marks(word);
+        let word = plain.as_deref().unwrap_or(word);
         if !self.personal.insert(word.to_string()) {
             return Ok(()); // already present
         }
@@ -108,7 +132,7 @@ mod tests {
     use super::*;
 
     const AFF: &str = "SET UTF-8\n";
-    const DIC: &str = "3\nhello\nworld\ncolour\n";
+    const DIC: &str = "4\nhello\nworld\ncolour\nистинно\n";
 
     fn checker() -> SpellChecker {
         let dict = Dictionary::new(AFF, DIC).unwrap();
@@ -173,5 +197,46 @@ mod tests {
         let c = checker();
         let s = c.suggest("helo");
         assert!(s.iter().any(|w| w == "hello"));
+    }
+
+    #[test]
+    fn a_stress_mark_neither_fails_a_word_nor_rescues_a_typo() {
+        let c = checker();
+        // Wherever the stress is put, the word is the same word (spec §11.5).
+        assert!(c.check_word("и\u{301}стинно"));
+        assert!(c.check_word("исти\u{301}нно"));
+        assert!(c.check_word("hello\u{301}"));
+        // The mark is ignored, not the spelling under it.
+        assert!(!c.check_word("исти\u{301}но"));
+        assert!(!c.check_word("helo\u{301}"));
+    }
+
+    #[test]
+    fn a_stressed_word_is_underlined_whole_or_not_at_all() {
+        let c = checker();
+        assert!(c.misspellings("и\u{301}стинно").is_empty());
+        // One wrong word, one range — and it spans the mark, so the underline
+        // can't start mid-cluster.
+        assert_eq!(c.misspellings("исти\u{301}но"), vec![(0, 7)]);
+        // The popup offers the whole word too, not the half after the stress.
+        let w = c.misspelled_word_at("исти\u{301}но", 2).unwrap();
+        assert_eq!(w.text, "исти\u{301}но");
+    }
+
+    #[test]
+    fn suggestions_come_from_the_unmarked_word() {
+        let c = checker();
+        assert_eq!(c.suggest("hel\u{301}o"), c.suggest("helo"));
+        assert!(c.suggest("hel\u{301}o").iter().any(|w| w == "hello"));
+    }
+
+    #[test]
+    fn a_personal_word_is_stored_without_its_marks() {
+        let mut c = checker();
+        c.add_to_personal("мойте\u{301}рмин").unwrap();
+        assert!(c.personal.contains("мойтермин"));
+        // …so every other placement of the stress is correct as well.
+        assert!(c.check_word("мо\u{301}йтермин"));
+        assert!(c.check_word("мойтермин"));
     }
 }

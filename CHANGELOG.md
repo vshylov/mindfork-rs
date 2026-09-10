@@ -329,6 +329,19 @@ split by subsystem.
 
 ### Fixed
 
+- **Spellcheck no longer stumbles over a stress mark.** A word carrying
+  one — `Alt+0769`, or text pasted from Wikipedia, a dictionary or a
+  grammar reference — was cut in two at the mark and each half judged
+  on its own, so correct text was underlined (up to three underlines on
+  a two-word phrase) and, when both halves happened to be words, a real
+  error vanished instead. A mark now belongs to the letter it sits on,
+  and a word that fails as typed is checked once more without its
+  marks: stressed text is left alone, a genuine typo is still
+  underlined — as the whole word, once — and the suggestions popup
+  offers corrections for the word rather than for its tail. "Add to
+  dictionary" stores the word without the mark, so one add covers every
+  placement of the stress. The same fix covers a `ё` that arrives
+  written as `е` plus a separate diaeresis.
 - **A directed dialogue on Gemma 3 failed at its second checkpoint.**
   The director's memory of its earlier verdicts was kept as tool calls
   with an acknowledgement, which Gemma 3's chat template renders as two

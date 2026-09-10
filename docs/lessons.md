@@ -1012,6 +1012,14 @@ leaves an orphaned selector and phantom glyphs.
 — *emoji paste from clipboard (cluster width + clipboard recovery)*, *InputBox
 refinements (clusters/spellcheck/navigation)*.
 
+**`char::is_alphabetic` is false for a combining mark**, so any hand-rolled
+letter-run scanner cuts a marked word in two — and the halves are then judged
+separately, which goes wrong in *both* directions: correct text flagged, and a
+real error hidden when both halves happen to be words. Whatever the scanner is
+for, decide explicitly what a mark does in it; Rust exposes no general category,
+so the test is the block range `U+0300–U+036F`.
+— *a stress mark is part of the word*.
+
 **New chrome glyphs must be WGL4 and one column wide.** Compatibility mode substitutes
 only what is outside WGL4, and a two-column glyph in a status line shifts the hotkey
 grid. Emoji in message *content* are data and are never substituted.

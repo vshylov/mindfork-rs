@@ -2250,6 +2250,37 @@ fn command_input_is_not_spellchecked() {
     );
 }
 
+/// The reported symptom, end to end (docs/research/spellcheck-stress-marks.md):
+/// a stressed line typed into the chat input draws no underline. Read against
+/// the **shipped** `ru_RU` rather than a fixture — the point is what the user
+/// sees, and the debounce is lifted so the recheck runs on the spot.
+#[test]
+fn a_stressed_russian_line_is_not_underlined() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("dictionaries");
+    let checker = crate::features::spellcheck::dict::load(
+        &dir,
+        None,
+        &dir.join("does-not-exist.txt"),
+        true,
+        &["ru_RU".to_string()],
+    );
+    let mut s = ChatScreen::new();
+    s.set_spellchecker(checker);
+    type_str(&mut s, "И\u{301}стинно так");
+    s.last_edit = None;
+    assert!(s.maybe_recheck_spelling());
+    assert!(
+        s.input.misspelled_is_empty(),
+        "a stressed word is not an error"
+    );
+    // …and the check is still on: a typo under a stress is still a typo.
+    s.input.clear();
+    type_str(&mut s, "харашо\u{301}");
+    s.last_edit = None;
+    assert!(s.maybe_recheck_spelling());
+    assert!(!s.input.misspelled_is_empty(), "the typo is still flagged");
+}
+
 #[test]
 fn rag_remove_command_intercepted_on_enter() {
     let mut s = ChatScreen::new();
