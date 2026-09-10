@@ -388,7 +388,8 @@ a draft model, including `draft-mtp` for MTP models — a multiplier speed-up).
   sha256 verification).
 - **The engine itself**: `mindfork llama backends` / `mindfork llama setup
   --backend <id>` download a llama.cpp `llama-server` build for your machine,
-  verified against the release's own sha256 (see
+  verified against the release's own sha256; `mindfork llama installed` and
+  `mindfork llama remove <id>` manage what is on disk (see
   [docs/install.md §3.1](docs/install.md)).
 
 The long version — modes, data paths, locales, import, live tests — is in

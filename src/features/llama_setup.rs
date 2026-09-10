@@ -1041,6 +1041,138 @@ pub fn render_binary_targets(t: &BinaryTargets, binary: &Path, loc: &Locale) -> 
     lines
 }
 
+// -------- Removing an install (`llama remove`) --------
+
+/// A managed setting whose binary lives inside an install about to be removed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BinaryUse {
+    /// `engine.managed.binary` — the assistant's server.
+    Assistant,
+    /// `impersonation_engine.managed.binary`.
+    Impersonation,
+    /// `embed.managed.binary`.
+    Embed,
+}
+
+impl BinaryUse {
+    /// The bundle key naming this setting in a message.
+    fn key(self) -> &'static str {
+        match self {
+            BinaryUse::Assistant => "llamacpp.setbinary.assistant_name",
+            BinaryUse::Impersonation => "llamacpp.setbinary.impersonation",
+            BinaryUse::Embed => "llamacpp.setbinary.embed",
+        }
+    }
+}
+
+/// The install named by `id`, or `None`.
+///
+/// `id` is a directory name (`cuda-12.4-b10883`) — what `llama installed`
+/// prints. A bare backend (`vulkan`) is accepted too, but **only while it is
+/// unambiguous**: with two builds of the same backend on disk it names neither,
+/// and guessing between them is how the wrong gigabyte gets deleted.
+pub fn find_install(root: &Path, id: &str) -> Option<Install> {
+    let all = installed(root);
+    if let Some(exact) = all
+        .iter()
+        .find(|i| i.dir.file_name().and_then(std::ffi::OsStr::to_str) == Some(id))
+    {
+        return Some(exact.clone());
+    }
+    let mut by_backend = all.iter().filter(|i| i.backend == id);
+    let only = by_backend.next()?;
+    by_backend.next().is_none().then(|| only.clone())
+}
+
+/// Which managed settings point at a binary inside `dir`.
+///
+/// Removing a build the settings name breaks the engine, so the caller reports
+/// this before deleting anything rather than letting the next launch discover
+/// it.
+pub fn binary_uses(config: &AppConfig, dir: &Path) -> Vec<BinaryUse> {
+    [
+        (BinaryUse::Assistant, &config.engine.managed.binary),
+        (
+            BinaryUse::Impersonation,
+            &config.impersonation_engine.managed.binary,
+        ),
+        (BinaryUse::Embed, &config.embed.managed.binary),
+    ]
+    .into_iter()
+    .filter(|(_, configured)| points_inside(configured.as_deref(), dir))
+    .map(|(use_, _)| use_)
+    .collect()
+}
+
+/// Is `configured` a path inside `dir`? Compared as written first — that is the
+/// shape `--set-binary` stores — and then through `canonicalize`, which settles
+/// a path the user typed with different separators or a symlinked data root.
+fn points_inside(configured: Option<&str>, dir: &Path) -> bool {
+    let Some(configured) = configured.map(str::trim).filter(|s| !s.is_empty()) else {
+        return false;
+    };
+    let configured = Path::new(configured);
+    if configured.starts_with(dir) {
+        return true;
+    }
+    match (
+        std::fs::canonicalize(configured),
+        std::fs::canonicalize(dir),
+    ) {
+        (Ok(binary), Ok(dir)) => binary.starts_with(dir),
+        _ => false,
+    }
+}
+
+/// Deletes an install's directory, whole.
+pub fn remove_install(dir: &Path, loc: &Locale) -> Result<()> {
+    std::fs::remove_dir_all(dir).with_context(|| {
+        loc.tf(
+            "llamacpp.setup.remove_dir",
+            &[("path", &dir.display().to_string())],
+        )
+    })
+}
+
+/// Renders what a removal did, and what an empty binary setting resolves to
+/// afterwards — the field's meaning changes when the build it pointed at is the
+/// one that just went away.
+pub fn render_removed(
+    install: &Install,
+    root: &Path,
+    exe_dir: Option<&Path>,
+    loc: &Locale,
+) -> Vec<String> {
+    let mut lines = vec![loc.tf(
+        "llamacpp.remove.done",
+        &[
+            ("path", &install.dir.display().to_string()),
+            ("size", &mib(install.bytes).to_string()),
+        ],
+    )];
+    match resolve_binary(None, exe_dir, Some(root)) {
+        Some(next) => lines.push(loc.tf(
+            "llamacpp.remove.now_resolves",
+            &[("path", &next.display().to_string())],
+        )),
+        None => lines.push(loc.t("llamacpp.remove.nothing_left").to_string()),
+    }
+    lines
+}
+
+/// The message a removal refused because the settings point at it: which
+/// settings, and the two ways forward.
+pub fn render_in_use(uses: &[BinaryUse], install: &Install, loc: &Locale) -> String {
+    let names: Vec<&str> = uses.iter().map(|u| loc.t(u.key())).collect();
+    loc.tf(
+        "llamacpp.remove.in_use",
+        &[
+            ("id", &install_name(&install.backend, &install.tag)),
+            ("what", &names.join(", ")),
+        ],
+    )
+}
+
 // -------- Download --------
 
 /// Downloads `asset` to `dest` and verifies it against the release's own
@@ -2076,6 +2208,128 @@ mod tests {
         let t = set_engine_binary(&mut config, Path::new("/x/llama-server"));
         let lines = render_binary_targets(&t, Path::new("/x/llama-server"), locale(Lang::En));
         assert_eq!(lines.len(), 1, "{lines:?}");
+    }
+
+    // -------- Removing an install --------
+
+    #[test]
+    fn an_install_is_found_by_its_full_name() {
+        let dir = tempfile::tempdir().unwrap();
+        install_dir(dir.path(), "cuda-12.4-b10883", true);
+        let found = find_install(dir.path(), "cuda-12.4-b10883").unwrap();
+        assert_eq!(found.backend, "cuda-12.4");
+        assert_eq!(found.tag, "b10883");
+        assert!(find_install(dir.path(), "cuda-12.4-b10871").is_none());
+        assert!(find_install(dir.path(), "nope").is_none());
+    }
+
+    /// A bare backend is a convenience, and only while it is unambiguous: two
+    /// builds of the same backend name neither, because guessing between them
+    /// is how the wrong gigabyte gets deleted.
+    #[test]
+    fn a_bare_backend_resolves_only_while_it_is_unambiguous() {
+        let dir = tempfile::tempdir().unwrap();
+        install_dir(dir.path(), "vulkan-b10883", true);
+        assert_eq!(
+            find_install(dir.path(), "vulkan").map(|i| i.tag),
+            Some("b10883".to_string())
+        );
+        install_dir(dir.path(), "vulkan-b10871", true);
+        assert!(find_install(dir.path(), "vulkan").is_none());
+        // …and the full name still works for either of them.
+        assert!(find_install(dir.path(), "vulkan-b10871").is_some());
+    }
+
+    #[test]
+    fn the_settings_pointing_into_a_build_are_named() {
+        let dir = tempfile::tempdir().unwrap();
+        let install = install_dir(dir.path(), "cpu-b10883", true);
+        let other = install_dir(dir.path(), "vulkan-b10883", true);
+        let binary = install.join(server_binary_name());
+
+        let mut config = AppConfig::default();
+        assert!(binary_uses(&config, &install).is_empty(), "nothing set");
+
+        config.engine.managed.binary = Some(binary.display().to_string());
+        config.embed.managed.binary = Some(other.join(server_binary_name()).display().to_string());
+        assert_eq!(binary_uses(&config, &install), [BinaryUse::Assistant]);
+        assert_eq!(binary_uses(&config, &other), [BinaryUse::Embed]);
+
+        config.impersonation_engine.managed.binary = Some(binary.display().to_string());
+        assert_eq!(
+            binary_uses(&config, &install),
+            [BinaryUse::Assistant, BinaryUse::Impersonation]
+        );
+    }
+
+    #[test]
+    fn a_path_outside_the_build_is_not_a_use() {
+        let dir = tempfile::tempdir().unwrap();
+        let install = install_dir(dir.path(), "cpu-b10883", true);
+        for configured in [
+            None,
+            Some(""),
+            Some("  "),
+            Some("C:/elsewhere/llama-server"),
+        ] {
+            assert!(!points_inside(configured, &install), "{configured:?}");
+        }
+        // A sibling whose name merely starts the same way is not inside it.
+        let sibling = dir.path().join("cpu-b10883-old").join("llama-server");
+        assert!(!points_inside(
+            Some(&sibling.display().to_string()),
+            &install
+        ));
+    }
+
+    #[test]
+    fn removing_a_build_frees_it_and_leaves_the_others() {
+        let loc = locale(Lang::En);
+        let dir = tempfile::tempdir().unwrap();
+        let doomed = install_dir(dir.path(), "cpu-b10871", true);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let kept = install_dir(dir.path(), "vulkan-b10883", true);
+
+        let install = find_install(dir.path(), "cpu-b10871").unwrap();
+        remove_install(&install.dir, loc).unwrap();
+        assert!(!doomed.exists() && kept.exists());
+        assert_eq!(installed(dir.path()).len(), 1);
+
+        let lines = render_removed(&install, dir.path(), None, loc);
+        assert!(lines[0].contains("cpu-b10871"), "{lines:?}");
+        assert!(
+            lines[1].contains("vulkan-b10883"),
+            "the empty field's new answer is reported: {lines:?}"
+        );
+    }
+
+    /// Removing the last build leaves an empty setting with nothing to resolve
+    /// to, which is exactly the thing the closing line has to say out loud.
+    #[test]
+    fn removing_the_last_build_says_there_is_nothing_left() {
+        let loc = locale(Lang::En);
+        let dir = tempfile::tempdir().unwrap();
+        install_dir(dir.path(), "cpu-b10883", true);
+        let install = find_install(dir.path(), "cpu-b10883").unwrap();
+        remove_install(&install.dir, loc).unwrap();
+        let lines = render_removed(&install, dir.path(), None, loc);
+        assert_eq!(lines[1], loc.t("llamacpp.remove.nothing_left"));
+    }
+
+    #[test]
+    fn the_refusal_names_the_build_and_every_setting_that_points_at_it() {
+        let loc = locale(Lang::En);
+        let dir = tempfile::tempdir().unwrap();
+        install_dir(dir.path(), "cuda-12.4-b10883", true);
+        let install = find_install(dir.path(), "cuda-12.4-b10883").unwrap();
+        let msg = render_in_use(&[BinaryUse::Assistant, BinaryUse::Embed], &install, loc);
+        assert!(msg.contains("cuda-12.4-b10883"), "{msg}");
+        assert!(
+            msg.contains(loc.t("llamacpp.setbinary.assistant_name")),
+            "{msg}"
+        );
+        assert!(msg.contains(loc.t("llamacpp.setbinary.embed")), "{msg}");
+        assert!(msg.contains("--force"), "the way out is named: {msg}");
     }
 
     // -------- Live (needs the network) --------

@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (57)
+## Entries (58)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -69,6 +69,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: impersonation on Gemma's template — the swapped conversation must open with the assistant's silence (done)
 - Post-M9: the engine, downloaded — llama.cpp's backends named, fetched and pointed at (done)
 - Post-M9: the engine binary is found, not just typed — an empty field resolves (done)
+- Post-M9: `llama remove` — a build comes off disk, and says what that changed (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -3747,3 +3748,39 @@ with no turns, unmeasured), the clouds re-measured.
   under the `notes.` prefix. Renamed to a dotless `stray-file` (lessons.md §7).
 - **Tests**: 3024 green, 156 ignored (3015 / 155 before) — 8 over the resolution
   rule, 2 over the supervisor wiring, 1 new `#[ignore]` smoke.
+
+### Post-M9: `llama remove` — a build comes off disk, and says what that changed (done)
+
+- **Why**: the last open item of the downloader track. `llama installed` showed
+  what was on disk and its size, and nothing took one back off; a CUDA install
+  is 1.1 GB and several accumulate as soon as anyone compares backends.
+- **Identifying the build.** The directory name `llama installed` prints
+  (`cuda-12.4-b10883`), or a bare backend (`vulkan`) **while it is
+  unambiguous** — with two builds of one backend it names neither and the
+  refusal says so in its own sentence, separate from "no such build". Guessing
+  between two builds of the same backend is how the wrong gigabyte gets deleted.
+- **The settings are read, never written.** A build any of the three managed
+  fields points at is **refused** unless `--force`, naming which fields and the
+  three ways forward (set another build with `--set-binary`, clear the field, or
+  force). Removing it silently would leave them aiming at nothing and the
+  failure would surface at some later launch instead of here. The comparison is
+  `starts_with` on the path as stored — the shape `--set-binary` writes — and
+  then through `canonicalize`, which settles a hand-typed path or a symlinked
+  data root; a sibling whose name merely shares a prefix is not inside it.
+- **What the closing line says.** The removal reports the megabytes freed and
+  then **what an empty binary field resolves to now** — that answer changes when
+  the build it was resolving to is the one that just went away, and "nothing
+  left" is exactly the state worth naming out loud.
+- **No `--all`, no prune.** The build worth deleting and the build the user was
+  about to fall back to are indistinguishable from here; that was the whole
+  reason the roadmap item asked for an explicit id rather than a policy. The
+  single-instance guard is taken as `setup` takes it — on Windows a running
+  server holds the very files this deletes.
+- **Live run (2026-09-10)**, on the dev root holding `cpu-b10871`, `cpu-b10883`
+  and `vulkan-b10883`: an unknown id listed what exists; `cpu` alone was refused
+  as ambiguous and named both; with the settings pointed at `cpu-b10871` by
+  `--set-binary`, the removal refused and named *the assistant* and
+  *impersonation*, exiting `1`; `--force` deleted it, reported 44 MB freed and
+  that an empty field now resolves to `vulkan-b10883`. **Smoke — GO.**
+- **Tests**: 3032 green, 156 ignored (3024 / 156 before) — 6 over finding,
+  the use check and the removal, 1 over the CLI surface.
