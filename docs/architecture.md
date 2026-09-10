@@ -454,7 +454,8 @@ src/
 │  │                        discarding keys typed while a long command was running
 │  ├─ sandbox_setup.rs      Python sandbox provisioning (mindfork sandbox setup): wasmer +
 │  │                        python.webc + wheels from a lock list (sha256); cache warmup
-│  ├─ llama_setup.rs        llama.cpp downloader (mindfork llama backends|setup|installed)
+│  ├─ llama_setup.rs        llama.cpp downloader (mindfork llama backends|setup|installed
+│  │                        |remove)
 │  │                        + resolve_binary: what an empty/bare binary setting means
 │  │                        (data/llama/'s last install, beside the app, PATH — spec §3.4);
 │  │                        the backends are DERIVED from the release's asset names, not
@@ -3212,6 +3213,9 @@ Principles:
   `features/llama_setup.rs`; `setup` takes single-instance),
   `locales export <code> -o FILE`. Subcommands run without the TUI and exit
   the process.
+  - **`llama remove` reads `settings.json` and never writes it**: a build a
+    managed field points at is refused unless `--force`, so a delete cannot
+    quietly leave three fields aiming at nothing.
   - **The two CLI writers of user data share their precautions.**
     `sandbox setup --enable-python` and `llama setup --set-binary` both go
     through `open_config_for_cli_write` — `data_migration::run` (the ADR 0006

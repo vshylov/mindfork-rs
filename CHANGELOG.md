@@ -16,6 +16,15 @@ split by subsystem.
 
 ### Added
 
+- **`mindfork llama remove <id>`** deletes a downloaded engine build from
+  `data/llama/` — by the name `mindfork llama installed` prints, or by a
+  bare backend name while only one build of it is installed. If the
+  settings point at that build the command refuses and says which fields
+  do, so it cannot quietly leave them aiming at nothing; `--force` deletes
+  anyway. It then reports how much was freed and what an empty
+  *llama-server binary* field resolves to now. There is deliberately no
+  `--all` and no automatic prune.
+
 - **The engine binary is found, not just typed.** The *llama-server binary*
   field may now be left empty: the app takes the build `mindfork llama
   setup` installed last, or a `llama-server` sitting next to the

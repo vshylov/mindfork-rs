@@ -75,6 +75,9 @@ pub enum CliCommand {
     },
     /// List the llama.cpp builds already in `data/llama/` (`llama installed`).
     LlamaInstalled,
+    /// Delete a downloaded build (`llama remove <id>`). `force` — delete even
+    /// though a managed setting points at it.
+    LlamaRemove { id: String, force: bool },
     /// Export a locale bundle (`locales export <code> --output <file>`).
     LocalesExport { code: String, output: PathBuf },
     /// Launch the interactive demo (`demo`): a throwaway data root and a
@@ -98,6 +101,7 @@ pub enum HelpTopic {
     LlamaBackends,
     LlamaSetup,
     LlamaInstalled,
+    LlamaRemove,
     Locales,
     LocalesExport,
     Demo,
@@ -247,6 +251,7 @@ fn parse_llama(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> {
         "backends" => parse_llama_backends(rest, loc),
         "setup" => parse_llama_setup(rest, loc),
         "installed" => parse_llama_installed(rest, loc),
+        "remove" => parse_llama_remove(rest, loc),
         other if other.starts_with('-') => Err(unknown_option(loc, other)),
         other => Err(unknown_subcommand(loc, other, "llama")),
     }
@@ -324,6 +329,28 @@ fn parse_llama_installed(toks: &[&str], loc: &Locale) -> Result<CliCommand, Stri
         Some(&a) if a.starts_with('-') => Err(unknown_option(loc, a)),
         Some(&a) => Err(unexpected_arg(loc, a)),
     }
+}
+
+fn parse_llama_remove(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> {
+    let mut id: Option<String> = None;
+    let mut force = false;
+    for &a in toks {
+        match a {
+            "-h" | "--help" => {
+                return Ok(CliCommand::Help {
+                    topic: Some(HelpTopic::LlamaRemove),
+                });
+            }
+            "-f" | "--force" => force = true,
+            _ if a.starts_with('-') => return Err(unknown_option(loc, a)),
+            _ if id.is_none() => id = Some(a.to_string()),
+            _ => return Err(unexpected_arg(loc, a)),
+        }
+    }
+    // The build to delete is never defaulted: this frees up to a gigabyte and
+    // there is no undo.
+    let id = id.ok_or_else(|| missing_arg(loc, "<id>"))?;
+    Ok(CliCommand::LlamaRemove { id, force })
 }
 
 fn parse_demo(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> {
@@ -580,7 +607,7 @@ pub fn render_help(topic: Option<HelpTopic>, loc: &Locale) -> String {
         ),
         Some(HelpTopic::Llama) => format!(
             "{d}\n\n{usage} mindfork llama <COMMAND>\n\n{commands}\n\
-             {b:<14}{cb}\n{s:<14}{cs}\n{i:<14}{ci}",
+             {b:<14}{cb}\n{s:<14}{cs}\n{i:<14}{ci}\n{r:<14}{cr}",
             d = loc.t("cli.help.cmd.llama"),
             b = "  backends",
             cb = loc.t("cli.help.cmd.llama.backends"),
@@ -588,6 +615,8 @@ pub fn render_help(topic: Option<HelpTopic>, loc: &Locale) -> String {
             cs = loc.t("cli.help.cmd.llama.setup"),
             i = "  installed",
             ci = loc.t("cli.help.cmd.llama.installed"),
+            r = "  remove",
+            cr = loc.t("cli.help.cmd.llama.remove"),
         ),
         Some(HelpTopic::LlamaBackends) => format!(
             "{d}\n\n{usage} mindfork llama backends [OPTIONS]\n\n{options}\n\
@@ -618,6 +647,17 @@ pub fn render_help(topic: Option<HelpTopic>, loc: &Locale) -> String {
         Some(HelpTopic::LlamaInstalled) => format!(
             "{d}\n\n{usage} mindfork llama installed",
             d = loc.t("cli.help.cmd.llama.installed"),
+        ),
+        Some(HelpTopic::LlamaRemove) => format!(
+            "{d}\n\n{usage} mindfork llama remove <ID> [OPTIONS]\n\n\
+             {arguments}\n{a:<20}{ca}\n\n{options}\n{f:<20}{cf}\n{h:<20}{ch}",
+            d = loc.t("cli.help.cmd.llama.remove"),
+            a = "  <ID>",
+            ca = loc.t("cli.help.arg.llama.id"),
+            f = "  -f, --force",
+            cf = loc.t("cli.help.opt.llama.remove_force"),
+            h = "  -h, --help",
+            ch = loc.t("cli.help.opt.help"),
         ),
         Some(HelpTopic::Demo) => format!(
             "{d}\n\n{usage} mindfork demo\n\n{n}",
@@ -929,6 +969,28 @@ mod tests {
     }
 
     #[test]
+    fn llama_remove_takes_an_id_and_never_defaults_it() {
+        assert_eq!(
+            p(&["llama", "remove", "cuda-12.4-b10883"]).unwrap(),
+            CliCommand::LlamaRemove {
+                id: "cuda-12.4-b10883".to_string(),
+                force: false,
+            }
+        );
+        assert_eq!(
+            p(&["llama", "remove", "vulkan-b10883", "--force"]).unwrap(),
+            CliCommand::LlamaRemove {
+                id: "vulkan-b10883".to_string(),
+                force: true,
+            }
+        );
+        // Deleting up to a gigabyte with no undo is never implicit.
+        assert!(p(&["llama", "remove"]).is_err());
+        assert!(p(&["llama", "remove", "a", "b"]).is_err());
+        assert!(p(&["llama", "remove", "--all"]).is_err());
+    }
+
+    #[test]
     fn locales_export() {
         assert_eq!(
             p(&["locales", "export", "de", "-o", "de.json"]).unwrap(),
@@ -985,6 +1047,12 @@ mod tests {
                 topic: Some(HelpTopic::LlamaInstalled)
             }
         );
+        assert_eq!(
+            p(&["llama", "remove", "-h"]).unwrap(),
+            CliCommand::Help {
+                topic: Some(HelpTopic::LlamaRemove)
+            }
+        );
     }
 
     #[test]
@@ -1012,6 +1080,7 @@ mod tests {
             Some(HelpTopic::LlamaBackends),
             Some(HelpTopic::LlamaSetup),
             Some(HelpTopic::LlamaInstalled),
+            Some(HelpTopic::LlamaRemove),
             Some(HelpTopic::Locales),
             Some(HelpTopic::LocalesExport),
         ];

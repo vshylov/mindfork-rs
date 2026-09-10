@@ -159,6 +159,10 @@ fn real_main(
             run_llama_installed(paths, loc);
             Ok(ExitCode::SUCCESS)
         }
+        CliCommand::LlamaRemove { id, force } => {
+            run_llama_remove(paths, &id, force, loc)?;
+            Ok(ExitCode::SUCCESS)
+        }
         CliCommand::LocalesExport { code, output } => {
             run_locales_export(&code, &output, loc)?;
             Ok(ExitCode::SUCCESS)
@@ -731,6 +735,91 @@ fn run_llama_setup(
         );
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// CLI: deleting a downloaded build (`mindfork llama remove <id>`).
+///
+/// Reads `settings.json` but never writes it: a build the settings point at is
+/// **refused** unless `--force`, because removing it silently leaves three
+/// fields aiming at nothing and the failure would surface a launch later. The
+/// closing line says what an empty binary field resolves to now — the meaning
+/// of that field changes when the build it was resolving to is the one that
+/// just went away.
+fn run_llama_remove(paths: &Paths, id: &str, force: bool, loc: &Locale) -> anyhow::Result<()> {
+    use crate::features::llama_setup as llama;
+
+    let root = paths.llama_dir();
+    // The same guard `llama setup` takes: on Windows a running server holds the
+    // very files this deletes.
+    let _instance = acquire_cli_guard(loc, loc.t("cli.guard.action.llama_remove"))?;
+
+    let all = llama::installed(&root);
+    let Some(install) = llama::find_install(&root, id) else {
+        let names: Vec<String> = all
+            .iter()
+            .map(|i| llama::install_name(&i.backend, &i.tag))
+            .collect();
+        if names.is_empty() {
+            bail!(
+                "{}",
+                loc.tf(
+                    "llamacpp.remove.none",
+                    &[("path", &root.display().to_string())]
+                )
+            );
+        }
+        // A bare backend that names two builds is a different mistake from a
+        // name that matches nothing, and gets its own sentence.
+        let ambiguous: Vec<String> = all
+            .iter()
+            .filter(|i| i.backend == id)
+            .map(|i| llama::install_name(&i.backend, &i.tag))
+            .collect();
+        if ambiguous.len() > 1 {
+            bail!(
+                "{}",
+                loc.tf(
+                    "llamacpp.remove.ambiguous",
+                    &[("id", id), ("list", &ambiguous.join(", "))],
+                )
+            );
+        }
+        bail!(
+            "{}",
+            loc.tf(
+                "llamacpp.remove.unknown",
+                &[
+                    ("id", id),
+                    ("path", &root.display().to_string()),
+                    ("list", &names.join(", ")),
+                ],
+            )
+        );
+    };
+
+    let config = JsonStore::new(paths.clone())
+        .load_config()
+        .unwrap_or_default();
+    let uses = llama::binary_uses(&config, &install.dir);
+    if !uses.is_empty() && !force {
+        bail!("{}", llama::render_in_use(&uses, &install, loc));
+    }
+
+    println!(
+        "{}",
+        loc.tf(
+            "llamacpp.remove.removing",
+            &[
+                ("path", &install.dir.display().to_string()),
+                ("size", &(install.bytes >> 20).to_string()),
+            ],
+        )
+    );
+    llama::remove_install(&install.dir, loc)?;
+    for line in llama::render_removed(&install, &root, paths.exe_dir(), loc) {
+        println!("{line}");
+    }
+    Ok(())
 }
 
 /// Writes the installed binary's path into the managed engine settings

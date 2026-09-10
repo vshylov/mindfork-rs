@@ -468,6 +468,7 @@ with:
 mindfork llama backends                       # what is on offer, and how big
 mindfork llama setup --backend vulkan         # download, verify and unpack it
 mindfork llama installed                      # what is already downloaded
+mindfork llama remove vulkan-b10883           # delete one you no longer need
 ```
 
 ```
@@ -535,6 +536,17 @@ The downloads are not small (see the table), and `data/` is next to the binary i
 portable mode — in a development checkout that means `target/debug/data/`, which
 `cargo clean` removes. Nothing under `data/llama/` is included in a backup or
 touched by a restore: it is re-downloadable, not user data.
+
+**Deleting one.** Builds are not small and several add up, so
+`mindfork llama remove <id>` takes them back off disk — `<id>` being the name
+`llama installed` prints (`vulkan-b10883`), or a bare backend (`vulkan`) while
+only one build of it is installed. There is no `--all` and no automatic prune:
+the build worth deleting and the build you were about to fall back to look the
+same from here. If the settings point at what you are deleting, the command
+**refuses** and names which of the three fields do, so that you set another
+build first; `--force` deletes anyway. The closing line says what an empty
+binary field resolves to now, since that answer changes when the build it was
+resolving to is the one that just went away.
 
 > Behind a shared address you can run into GitHub's unauthenticated API limit (60
 > requests an hour per address). The command says so in plain words; setting

@@ -171,7 +171,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-10, version 0.9.8)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3024 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **3032 unit tests
 green, 156 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
@@ -212,7 +212,9 @@ being recent is dropped, not shortened.
   then `PATH`, and an **empty** field meaning the build installed last
   under `data/llama/` (not the newest tag, which would move a user off the
   GPU because a CPU build shipped later), so a download or an archive
-  unpacked beside `mindfork` needs nothing typed
+  unpacked beside `mindfork` needs nothing typed; and `llama remove <id>`
+  takes one back off disk, refusing while a managed field points at it
+  and reporting what an empty field resolves to afterwards
   ([docs/research/llama-cpp-download.md](docs/research/llama-cpp-download.md),
   spec §3.4, [docs/journal/engine.md](docs/journal/engine.md)).
 - **The dialogue's director on Gemma's template — the checkpoint's
