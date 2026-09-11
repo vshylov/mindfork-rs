@@ -879,6 +879,7 @@ fn with_tool_confirm() -> (ChatScreen, Uuid) {
         TOOL_CALL_ID.into(),
         "python_exec".into(),
         r#"{"code":"print(1)"}"#.into(),
+        None,
     );
     (s, id)
 }
@@ -1005,6 +1006,7 @@ fn tool_confirm_popup_shows_the_call_as_code_with_the_three_options() {
         TOOL_CALL_ID.into(),
         "python_exec".into(),
         r#"{"code": "print(1)\nprint(2)"}"#.into(),
+        None,
     );
     let mut term = Terminal::new(TestBackend::new(90, 20)).unwrap();
     term.draw(|f| s.render(f)).unwrap();
@@ -1044,6 +1046,65 @@ fn tool_confirm_popup_shows_the_call_as_code_with_the_three_options() {
     ] {
         assert!(text.contains(option), "missing the \"{option}\" option");
     }
+}
+
+/// The popup states what a `python_exec` call would hand the sandbox, and whether that
+/// sandbox has the network (docs/sandbox-file-exchange.md §12 T6). The compact view of the
+/// arguments drops arrays outright — which this test also pins — so `files`, the argument
+/// that decides what leaves the chat, would otherwise not be shown at all.
+#[test]
+fn the_confirm_popup_names_the_files_going_in_and_the_network() {
+    use crate::features::chat_inputs::{ConfirmFile, ConfirmInputs};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    let mut s = ChatScreen::new();
+    let id = gen_id();
+    s.begin_generation(id, None);
+    s.request_tool_confirm(
+        id,
+        TOOL_CALL_ID.into(),
+        "python_exec".into(),
+        // `r##"…"##`: the handle `"#9"` carries the sequence that would close a
+        // single-hash raw string early.
+        r##"{"code": "print(1)", "files": ["sales.xlsx", "#9"]}"##.into(),
+        Some(ConfirmInputs {
+            files: vec![
+                ConfirmFile {
+                    handle: "sales.xlsx".into(),
+                    resolved: Some(("sales.xlsx".into(), 18_432)),
+                },
+                ConfirmFile {
+                    handle: "#9".into(),
+                    resolved: None,
+                },
+            ],
+            net: false,
+        }),
+    );
+    let mut term = Terminal::new(TestBackend::new(90, 20)).unwrap();
+    term.draw(|f| s.render(f)).unwrap();
+    let buf = term.backend().buffer();
+    let mut text = String::new();
+    for y in buf.area.top()..buf.area.bottom() {
+        for x in buf.area.left()..buf.area.right() {
+            text.push_str(buf[(x, y)].symbol());
+        }
+        text.push('\n');
+    }
+
+    // The file that is going in, with the size the copy will cost.
+    assert!(text.contains("sales.xlsx"), "{text}");
+    assert!(text.contains("18.0 KB"), "{text}");
+    // A handle that reaches nothing is named as such, not shown as a file.
+    assert!(text.contains("#9"), "{text}");
+    // The other half of the decision.
+    assert!(text.contains("сеть"), "{text}");
+    // The premise: the argument itself never reaches the popup's own rendering.
+    assert!(
+        !text.contains("\"files\""),
+        "the compact view shows no arrays: {text}"
+    );
 }
 
 #[test]
@@ -1906,6 +1967,7 @@ fn attachment_chip_shows_count_and_standing_cost() {
             est_tokens: 1200,
             prompt_tokens: 1200,
             mode: AttachMode::Inline,
+            has_original: false,
         },
         // A by-reference file contributes only its excerpt, so it must not be
         // counted at full weight in the standing cost.
@@ -1917,6 +1979,7 @@ fn attachment_chip_shows_count_and_standing_cost() {
             // Only the excerpt is actually re-sent every turn.
             prompt_tokens: 300,
             mode: AttachMode::ByReference,
+            has_original: false,
         },
     ]);
     let hint = s.attachments_hint().expect("a chip with attachments");
@@ -1937,6 +2000,7 @@ fn file_list_note_numbers_items_for_removal() {
     let mut s = ChatScreen::new();
     s.set_file_progress(FileProgress::Listed {
         stored: Vec::new(),
+        images: Vec::new(),
         dir: String::new(),
         items: vec![AttachmentInfo {
             name: "notes.md".into(),
@@ -1945,6 +2009,7 @@ fn file_list_note_numbers_items_for_removal() {
             est_tokens: 400,
             prompt_tokens: 400,
             mode: AttachMode::Inline,
+            has_original: false,
         }],
     });
     let note = s
@@ -1995,9 +2060,11 @@ fn a_shared_file_name_is_told_apart_by_its_source() {
         est_tokens: 4,
         prompt_tokens: 4,
         mode: AttachMode::Inline,
+        has_original: false,
     };
     let list = note(FileProgress::Listed {
         stored: Vec::new(),
+        images: Vec::new(),
         dir: String::new(),
         items: vec![
             info("notes.md", "D:\\a\\notes.md"),

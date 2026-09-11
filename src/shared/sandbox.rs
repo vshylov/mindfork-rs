@@ -160,6 +160,82 @@ impl OutputLimits {
     };
 }
 
+/// One file staged into the guest's `/w/in` (docs/sandbox-file-exchange.md §12 T12): the
+/// name it gets there and where its bytes come from. `shared` knows nothing about chats —
+/// which file this is, and what the guest calls it, are the tool's decisions.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SandboxInput {
+    /// The name in `/w/in`: one plain path component, sanitized by the caller and
+    /// re-checked here ([`is_one_component`]).
+    pub name: String,
+    pub source: InputSource,
+}
+
+/// Where a staged file's bytes come from.
+#[derive(Debug, Clone, PartialEq)]
+pub enum InputSource {
+    /// Bytes the caller holds — an attachment's text, a decoded image.
+    Bytes(Vec<u8>),
+    /// A file on the host: copied, never read into memory and never linked.
+    Path(PathBuf),
+}
+
+impl SandboxInput {
+    /// A staged file whose bytes the caller holds.
+    pub fn bytes(name: impl Into<String>, bytes: Vec<u8>) -> Self {
+        Self {
+            name: name.into(),
+            source: InputSource::Bytes(bytes),
+        }
+    }
+
+    /// A staged copy of a file on the host.
+    pub fn path(name: impl Into<String>, path: impl Into<PathBuf>) -> Self {
+        Self {
+            name: name.into(),
+            source: InputSource::Path(path.into()),
+        }
+    }
+}
+
+/// What one call runs: the code, the files staged into `/w/in`, and the two limits a
+/// launch takes. One argument instead of four, changed once (§12 T1). The **collection**
+/// limits are not here: nothing would ever set them per call, and the tool's description
+/// is built from the same [`OutputLimits::DEFAULT`], so a field would be a second source
+/// of truth for a value that has one.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SandboxJob<'a> {
+    pub code: &'a str,
+    pub inputs: &'a [SandboxInput],
+    pub net: bool,
+    pub timeout: Duration,
+}
+
+impl<'a> SandboxJob<'a> {
+    /// A job that stages nothing — provisioning's own runs, and every call naming no file.
+    pub fn new(code: &'a str, net: bool, timeout: Duration) -> Self {
+        Self {
+            code,
+            inputs: &[],
+            net,
+            timeout,
+        }
+    }
+
+    /// The same job with files copied into `/w/in`.
+    pub fn with_inputs(mut self, inputs: &'a [SandboxInput]) -> Self {
+        self.inputs = inputs;
+        self
+    }
+}
+
+/// Whether a staged file's name is one plain component. The tool sanitizes every name
+/// before it gets here; this is the guard `shared` can make without knowing what named it,
+/// so a bug upstream cannot write outside the job directory.
+fn is_one_component(name: &str) -> bool {
+    !name.is_empty() && name != "." && name != ".." && !name.contains(['/', '\\', ':', '\0'])
+}
+
 /// The sandbox's readiness to launch (cheap, without starting a process).
 #[derive(Debug, Clone, PartialEq)]
 pub enum SandboxAvailability {
@@ -179,19 +255,13 @@ pub trait SandboxRunner: Send + Sync {
     /// provisioning's warmup — the interface language).
     fn availability(&self, loc: &Locale) -> SandboxAvailability;
 
-    /// Runs `code` (Python) in the sandbox with network access `net` and a
-    /// `timeout`. On timeout the process is killed and `timed_out = true` is
-    /// returned. An error occurs only at the process-launch level (not on a
-    /// nonzero guest exit code). `loc` — the language of the error text
-    /// (embedded by the caller: `python_exec` — the profile's language,
-    /// warmup — the interface language).
-    async fn run(
-        &self,
-        code: &str,
-        net: bool,
-        timeout: Duration,
-        loc: &Locale,
-    ) -> Result<SandboxOutput>;
+    /// Runs a [`SandboxJob`]: its Python code, with the files it stages copied into the
+    /// guest's `/w/in`, its network access and its timeout. On timeout the process is
+    /// killed and `timed_out = true` is returned. An error occurs only at the
+    /// process-launch level — a nonzero guest exit code is not one — or when a staged
+    /// file cannot be written. `loc` — the language of the error text (embedded by the
+    /// caller: `python_exec` — the profile's language, warmup — the interface language).
+    async fn run(&self, job: SandboxJob<'_>, loc: &Locale) -> Result<SandboxOutput>;
 }
 
 /// Where a launch takes the guest's `site-packages` from.
@@ -345,13 +415,7 @@ impl SandboxRunner for WasmerSandbox {
         }
     }
 
-    async fn run(
-        &self,
-        code: &str,
-        net: bool,
-        timeout: Duration,
-        loc: &Locale,
-    ) -> Result<SandboxOutput> {
+    async fn run(&self, spec: SandboxJob<'_>, loc: &Locale) -> Result<SandboxOutput> {
         // The "one task" gate: a concurrent launch is rejected right away (before spawning).
         let _permit = self
             .gate
@@ -367,7 +431,7 @@ impl SandboxRunner for WasmerSandbox {
         // The task script in a unique temp directory (auto-cleanup via Drop).
         let job = JobDir::create().with_context(|| loc.t("sandbox.err.job_dir").to_string())?;
         let script = job.path.join("job.py");
-        tokio::fs::write(&script, build_wrapper(code))
+        tokio::fs::write(&script, build_wrapper(spec.code))
             .await
             .with_context(|| loc.t("sandbox.err.write_script").to_string())?;
         // Where the code leaves what it wants kept (docs/sandbox-file-exchange.md §4):
@@ -376,6 +440,28 @@ impl SandboxRunner for WasmerSandbox {
         tokio::fs::create_dir(&out_dir)
             .await
             .with_context(|| loc.t("sandbox.err.job_dir").to_string())?;
+        // What the call may read (§12 T11–T12). Always created, so code that looks into
+        // `/w/in` finds a folder rather than an error, and the copies are the guest's own:
+        // `wasmer` 7.2.0 has no read-only volume, so the guest may overwrite one, and
+        // nothing follows — the chat's copies are untouched and only `out/` is collected.
+        let in_dir = job.path.join("in");
+        tokio::fs::create_dir(&in_dir)
+            .await
+            .with_context(|| loc.t("sandbox.err.job_dir").to_string())?;
+        for input in spec.inputs {
+            if !is_one_component(&input.name) {
+                anyhow::bail!(
+                    "{}",
+                    loc.tf("sandbox.err.input_name", &[("name", &input.name)])
+                );
+            }
+            let to = in_dir.join(&input.name);
+            match &input.source {
+                InputSource::Bytes(bytes) => tokio::fs::write(&to, bytes).await.map(|()| 0),
+                InputSource::Path(from) => tokio::fs::copy(from, &to).await,
+            }
+            .with_context(|| loc.tf("sandbox.err.stage_input", &[("name", &input.name)]))?;
+        }
 
         // Mount the working directory — and a `site-packages` directory only for
         // provisioning's warmup, since the image carries its own; PYTHONPATH for the guest.
@@ -391,7 +477,7 @@ impl SandboxRunner for WasmerSandbox {
             envs.push(("PYTHONPATH", GUEST_SITE.into()));
         }
         let script_guest = format!("{GUEST_WORK}/job.py");
-        let args = build_args(&plan.program, &mounts, &envs, net, &script_guest);
+        let args = build_args(&plan.program, &mounts, &envs, spec.net, &script_guest);
 
         let mut cmd = tokio::process::Command::new(&wasmer);
         cmd.args(&args)
@@ -420,7 +506,7 @@ impl SandboxRunner for WasmerSandbox {
             apply_memory_limit(&child, mb);
         }
 
-        match tokio::time::timeout(timeout, child.wait_with_output()).await {
+        match tokio::time::timeout(spec.timeout, child.wait_with_output()).await {
             Ok(Ok(out)) => {
                 // Whatever the exit code: a script that saved its chart and then failed
                 // still made the chart (F4). The guest has exited, so nothing races the
@@ -782,6 +868,11 @@ mod collect_tests {
     }
 }
 
+/// What one call staged into `/w/in`: each file's guest name and the bytes that reached
+/// it, in the order the call named them.
+#[cfg(test)]
+pub type StagedFiles = Vec<(String, Vec<u8>)>;
+
 /// A sandbox mock for `python_exec` tool tests.
 #[cfg(test)]
 pub struct MockSandbox {
@@ -789,6 +880,9 @@ pub struct MockSandbox {
     output: SandboxOutput,
     /// Records of `run` calls: (code, the network flag).
     pub calls: std::sync::Mutex<Vec<(String, bool)>>,
+    /// What each call staged into `/w/in`: the guest's name and the bytes that reached it
+    /// — a [`InputSource::Path`] read back, as the guest would read it.
+    pub staged: std::sync::Mutex<Vec<StagedFiles>>,
 }
 
 #[cfg(test)]
@@ -799,6 +893,7 @@ impl MockSandbox {
             availability: SandboxAvailability::Ready,
             output,
             calls: std::sync::Mutex::new(Vec::new()),
+            staged: std::sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -808,6 +903,7 @@ impl MockSandbox {
             availability: SandboxAvailability::Missing(reason.into()),
             output: SandboxOutput::default(),
             calls: std::sync::Mutex::new(Vec::new()),
+            staged: std::sync::Mutex::new(Vec::new()),
         }
     }
 }
@@ -819,14 +915,23 @@ impl SandboxRunner for MockSandbox {
         self.availability.clone()
     }
 
-    async fn run(
-        &self,
-        code: &str,
-        net: bool,
-        _timeout: Duration,
-        _loc: &Locale,
-    ) -> Result<SandboxOutput> {
-        self.calls.lock().unwrap().push((code.to_string(), net));
+    async fn run(&self, job: SandboxJob<'_>, _loc: &Locale) -> Result<SandboxOutput> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push((job.code.to_string(), job.net));
+        self.staged.lock().unwrap().push(
+            job.inputs
+                .iter()
+                .map(|input| {
+                    let bytes = match &input.source {
+                        InputSource::Bytes(bytes) => bytes.clone(),
+                        InputSource::Path(from) => std::fs::read(from).unwrap_or_default(),
+                    };
+                    (input.name.clone(), bytes)
+                })
+                .collect(),
+        );
         Ok(self.output.clone())
     }
 }
@@ -963,7 +1068,10 @@ mod tests {
         let _held = sb.gate.try_acquire().unwrap();
         // The second launch is rejected instantly (before resolve_wasmer/spawning a process).
         let err = sb
-            .run("print(1)", false, Duration::from_secs(5), ru())
+            .run(
+                SandboxJob::new("print(1)", false, Duration::from_secs(5)),
+                ru(),
+            )
             .await
             .unwrap_err();
         assert!(err.to_string().contains("занята"), "got: {err}");
@@ -976,7 +1084,10 @@ mod tests {
         let sb = WasmerSandbox::new(Some(dir.path().to_path_buf()));
         let _held = sb.gate.try_acquire().unwrap();
         let en = sb
-            .run("print(1)", false, Duration::from_secs(5), locale(Lang::En))
+            .run(
+                SandboxJob::new("print(1)", false, Duration::from_secs(5)),
+                locale(Lang::En),
+            )
             .await
             .unwrap_err()
             .to_string();
@@ -994,12 +1105,18 @@ mod tests {
             return; // the environment sets a binary — this test is about a missing binary
         }
         let e1 = sb
-            .run("print(1)", false, Duration::from_secs(5), ru())
+            .run(
+                SandboxJob::new("print(1)", false, Duration::from_secs(5)),
+                ru(),
+            )
             .await
             .unwrap_err();
         assert!(e1.to_string().contains("wasmer"), "got: {e1}");
         let e2 = sb
-            .run("print(1)", false, Duration::from_secs(5), ru())
+            .run(
+                SandboxJob::new("print(1)", false, Duration::from_secs(5)),
+                ru(),
+            )
             .await
             .unwrap_err();
         assert!(e2.to_string().contains("wasmer"), "got: {e2}");
@@ -1057,7 +1174,10 @@ mod tests {
         };
         assert!(why.contains("mindfork sandbox setup"), "{why}");
         let err = sb
-            .run("print(1)", false, Duration::from_secs(5), locale(Lang::En))
+            .run(
+                SandboxJob::new("print(1)", false, Duration::from_secs(5)),
+                locale(Lang::En),
+            )
             .await
             .unwrap_err();
         assert!(err.to_string().contains("mindfork sandbox setup"), "{err}");

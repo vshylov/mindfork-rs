@@ -59,8 +59,14 @@ build-artifact symptom, not a code one. Cost ~20 minutes of false debugging.
 **Never pipe a command whose exit code you are checking.** `cargo clippy … | tail`
 reports **`tail`'s** exit code, so a `&&` chain sails past a failing gate — that is how
 a commit landed with clippy red. Same shape with `./mindfork-rs restore … | tail`,
-where a refusal read as `exit=0`. **Recorded twice.**
-— *in-feed text search (`Ctrl+F`)*, *password-protected backups*.
+where a refusal read as `exit=0`. **Recorded three times**: the third was
+`cargo fmt && cargo clippy … | tail -5 && git add -A && git commit …` written by an agent
+with this very entry in its context — the lint failed, `tail` succeeded, and the commit
+landed red. Reading a gate's output is exactly when the pipe is tempting, so put the
+output in a file and let the **command's own** status drive the chain:
+`if cargo clippy … > log 2>&1; then commit; else read the log; fi`.
+— *in-feed text search (`Ctrl+F`)*, *password-protected backups*, *sandbox file exchange —
+stage 3*.
 
 **Re-apply and re-verify your own edits to any file a running agent owns.** An agent
 finished writing a file *after* the main session had edited it and silently reverted

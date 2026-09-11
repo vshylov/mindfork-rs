@@ -92,6 +92,195 @@ fn a_landing_in_a_chat_that_is_not_open_lists_without_a_note() {
     assert!(saved_notes(&drain(&mut rx)).is_empty());
 }
 
+/// The reply `/file list` sent, or nothing.
+fn listed(events: Vec<AppEvent>) -> Option<(Vec<String>, Vec<String>, Vec<String>)> {
+    events.into_iter().find_map(|e| match e {
+        AppEvent::FileProgress(FileProgress::Listed {
+            items,
+            stored,
+            images,
+            ..
+        }) => Some((
+            items.iter().map(|a| a.name.clone()).collect(),
+            stored.iter().map(|f| f.name.clone()).collect(),
+            images.iter().map(|i| i.name.clone()).collect(),
+        )),
+        _ => None,
+    })
+}
+
+/// One numbered list of the chat's three kinds (docs/sandbox-file-exchange.md §12 T2, T4):
+/// attachments, then the stored files no attachment links, then the images its messages
+/// carry — and a document that kept its original is **one** item, shown on its attachment's
+/// line rather than twice (§12 T9).
+#[test]
+fn file_list_numbers_attachments_stored_files_and_images_as_one_list() {
+    let (_dir, mut orch, mut rx) = bare_orch_rx();
+    let chat_id = open_chat(&mut orch);
+    let original = ChatFile::new("report.pdf", FileOrigin::Attached, b"%PDF-1.7\n");
+    let linked = Attachment::new(
+        "report.pdf",
+        "C:\\report.pdf",
+        "the extracted text".into(),
+        9,
+        AttachMode::ByReference,
+    )
+    .with_file(original.id);
+    let chat = orch.chats.iter_mut().find(|c| c.id == chat_id).unwrap();
+    chat.attachments.push(linked);
+    chat.files.push(original);
+    chat.files.push(listing("chart.png"));
+    let mut message = Message::user("look at this");
+    message
+        .images
+        .push(crate::entities::message_image::MessageImage::new(
+            "shot.png",
+            "C:\\shot.png",
+            "image/png",
+            10,
+            10,
+            "AAAA".into(),
+        ));
+    chat.messages.push(message);
+
+    orch.handle_file_list();
+    let (items, stored, images) = listed(drain(&mut rx)).expect("a /file list reply");
+    assert_eq!(items, ["report.pdf"]);
+    // Not `report.pdf` again: the original is the attachment's own half.
+    assert_eq!(stored, ["chart.png"]);
+    assert_eq!(images, ["shot.png"]);
+}
+
+/// An image belongs to the message that carries it, so `/file remove` refuses it — and
+/// names the command that *is* about images, rather than only saying no (lessons §4).
+#[test]
+fn removing_an_image_is_refused_with_the_way_out() {
+    let (_dir, mut orch, mut rx) = bare_orch_rx();
+    let chat_id = open_chat(&mut orch);
+    let chat = orch.chats.iter_mut().find(|c| c.id == chat_id).unwrap();
+    let mut message = Message::user("look");
+    message
+        .images
+        .push(crate::entities::message_image::MessageImage::new(
+            "shot.png",
+            "C:\\shot.png",
+            "image/png",
+            10,
+            10,
+            "AAAA".into(),
+        ));
+    chat.messages.push(message);
+
+    orch.handle_file_remove("shot.png".into());
+    let msg = failure(drain(&mut rx)).expect("a refusal");
+    assert!(msg.contains("shot.png"), "{msg}");
+    assert!(msg.contains("/image remove"), "{msg}");
+}
+
+/// Removing an attached document that kept its original takes both halves — the listing
+/// and our copy of the file — and never the user's own (§12 T9).
+#[test]
+fn removing_a_pair_deletes_our_copy_and_both_listings() {
+    let (_dir, mut orch, mut rx) = bare_orch_rx();
+    let chat_id = open_chat(&mut orch);
+    let dir = orch.stored_files_dir(chat_id);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("report.pdf"), b"%PDF-1.7\n").unwrap();
+    let original = ChatFile::new("report.pdf", FileOrigin::Attached, b"%PDF-1.7\n");
+    let linked = Attachment::new(
+        "report.pdf",
+        "C:\\report.pdf",
+        "the extracted text".into(),
+        9,
+        AttachMode::ByReference,
+    )
+    .with_file(original.id);
+    let chat = orch.chats.iter_mut().find(|c| c.id == chat_id).unwrap();
+    chat.attachments.push(linked);
+    chat.files.push(original);
+
+    orch.handle_file_remove("report.pdf".into());
+    let chat = orch.chats.iter().find(|c| c.id == chat_id).unwrap();
+    assert!(chat.attachments.is_empty(), "the attachment stayed");
+    assert!(chat.files.is_empty(), "the listing stayed");
+    assert!(!dir.join("report.pdf").exists(), "our copy stayed on disk");
+    let note = drain(&mut rx).into_iter().find_map(|e| match e {
+        AppEvent::FileProgress(FileProgress::RemovedPair { name }) => Some(name),
+        _ => None,
+    });
+    assert_eq!(note.as_deref(), Some("report.pdf"));
+}
+
+/// Fork F8a (§12 T9): `/file attach` on a binary keeps the file with the chat and makes no
+/// attachment of it — there is no text to attach. The note says so, and `/file list`
+/// numbers the file like any other stored one. This is the refusal D3 asked to lift.
+#[test]
+fn attaching_a_binary_keeps_the_file_and_makes_no_attachment() {
+    use crate::app::orchestrator::attachments::{AttachResult, ExtractedFile};
+    const WORKBOOK: &[u8] = b"PK\x03\x04not-really-a-workbook";
+    let (_dir, mut orch, mut rx) = bare_orch_rx();
+    let chat_id = open_chat(&mut orch);
+    orch.handle_attach_result(AttachResult {
+        chat_id,
+        outcome: Ok(ExtractedFile {
+            name: "sales.xlsx".into(),
+            source: "C:\\sales.xlsx".into(),
+            text: String::new(),
+            bytes: WORKBOOK.len(),
+            encoding: None,
+            original: Some(WORKBOOK.to_vec()),
+        }),
+    });
+    assert_eq!(files_of(&orch, chat_id), ["sales.xlsx"]);
+    let dir = orch.stored_files_dir(chat_id);
+    assert_eq!(std::fs::read(dir.join("sales.xlsx")).unwrap(), WORKBOOK);
+    assert!(
+        orch.chats
+            .iter()
+            .find(|c| c.id == chat_id)
+            .unwrap()
+            .attachments
+            .is_empty(),
+        "a binary carries no text, so nothing is attached as text"
+    );
+    let note = drain(&mut rx).into_iter().find_map(|e| match e {
+        AppEvent::FileProgress(FileProgress::StoredFile { name, .. }) => Some(name),
+        _ => None,
+    });
+    assert_eq!(note.as_deref(), Some("sales.xlsx"));
+}
+
+/// A document an extractor read becomes the attachment **and** keeps its original, the two
+/// linked as one item (§12 T9) — which is what lets `python_exec` open the file itself
+/// while the model reads the text.
+#[test]
+fn attaching_a_document_links_its_original_to_the_attachment() {
+    use crate::app::orchestrator::attachments::{AttachResult, ExtractedFile};
+    let (_dir, mut orch, _rx) = bare_orch_rx();
+    let chat_id = open_chat(&mut orch);
+    orch.handle_attach_result(AttachResult {
+        chat_id,
+        outcome: Ok(ExtractedFile {
+            name: "report.pdf".into(),
+            source: "C:\\report.pdf".into(),
+            text: "the extracted text".into(),
+            bytes: 9,
+            encoding: None,
+            original: Some(b"%PDF-1.7\n".to_vec()),
+        }),
+    });
+    let chat = orch.chats.iter().find(|c| c.id == chat_id).unwrap();
+    assert_eq!(chat.attachments.len(), 1);
+    let linked = chat.attachments[0].file_id.expect("the pair is linked");
+    assert!(
+        chat.files
+            .iter()
+            .any(|f| f.id == linked && f.name == "report.pdf"),
+        "the original is listed: {:?}",
+        chat.files
+    );
+}
+
 #[test]
 fn file_list_shows_stored_files_and_marks_one_missing_from_the_folder() {
     let (_dir, mut orch, mut rx) = bare_orch_rx();

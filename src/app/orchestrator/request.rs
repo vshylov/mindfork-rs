@@ -137,6 +137,11 @@ pub(super) struct PromptContext<'a> {
     /// block had to say whether the assistant can *change* the project and
     /// which commands it can run (see [`inject_workspace`]).
     pub offered_tools: &'a [crate::entities::profile::ToolId],
+    /// The chat's files as one numbered list, for the block that tells the model what
+    /// `python_exec` may copy into `/w/in` (docs/sandbox-file-exchange.md §12 T5). Empty
+    /// unless the turn offers that tool in its Wasmer mode — the **caller** decides, so
+    /// the block can never name a tool the turn does not have (docs/lessons.md §4).
+    pub files: &'a [crate::features::chat_inputs::ChatInput],
     /// Scaffold language (axis A): every injected block is read by the model.
     pub loc: &'a Locale,
 }
@@ -212,6 +217,9 @@ pub(super) fn build_request_in(
     };
     let system = inject_compaction(system, summary, cx.history_tools, cx.loc);
     let system = inject_attachments(system, env.attachments, cx.attachments, cx.indexed, cx.loc);
+    // After the attachments, whose handles it repeats and whose content it does not, and
+    // before the project: the same volatility order the other blocks follow (spec §6.6).
+    let system = inject_files(system, cx.files, cx.loc);
     ChatRequest {
         continue_final: false,
         system: inject_workspace(system, env.workspace, cx.offered_tools, cx.loc),
@@ -440,6 +448,48 @@ pub(super) fn inject_attachments(
         block.push_str(body);
         block.push('\n');
         block.push_str(&tail);
+    }
+    Some(match system {
+        Some(s) if !s.is_empty() => format!("{s}\n\n{block}"),
+        _ => block,
+    })
+}
+
+/// Appends the **chat files** block: what this turn's `python_exec` may copy into `/w/in`,
+/// numbered exactly as `/file list` numbers it for the user
+/// (docs/sandbox-file-exchange.md §12 T5).
+///
+/// Which items reach it is the caller's decision, not this function's: `build_request` is
+/// given a list **only** for a turn that offers `python_exec` in its Wasmer mode. So the
+/// block cannot name a tool the turn does not have — this project's most-repeated defect
+/// (docs/lessons.md §4) — and the converse holds too: a file the block does not name goes
+/// unused whatever the tool's schema says, which is why the handles live in the prompt
+/// rather than only in the argument's description.
+///
+/// Names, sizes and types only, never content: that is what makes it cheap enough to carry
+/// on every turn, and it changes only when the chat's set of files does (spec §6.6). The
+/// header marks it as a list of files rather than instructions, as the attachment block
+/// marks file content (spec §13.4).
+pub(super) fn inject_files(
+    system: Option<String>,
+    inputs: &[crate::features::chat_inputs::ChatInput],
+    loc: &Locale,
+) -> Option<String> {
+    if inputs.is_empty() {
+        return system;
+    }
+    let mut block = String::from(loc.t("prompt.files.header"));
+    for item in inputs {
+        block.push_str(&loc.tf(
+            "prompt.files.item",
+            &[
+                ("i", &item.handle.to_string()),
+                ("name", &item.name),
+                ("staged", &item.staged),
+                ("size", &format_bytes(item.bytes as usize)),
+                ("mime", &item.mime),
+            ],
+        ));
     }
     Some(match system {
         Some(s) if !s.is_empty() => format!("{s}\n\n{block}"),

@@ -615,6 +615,17 @@ impl Orchestrator {
             t == crate::features::tools::history::HISTORY_READ_ID
                 || t == crate::features::tools::history::HISTORY_SEARCH_ID
         });
+        // Can this turn hand the chat's files to the code? The tool offered, and in the
+        // mode that has a job directory to copy them into (docs/sandbox-file-exchange.md
+        // §12 T4/T5). One value, read twice: the images snapshot below is built only for
+        // such a turn, and so is the block that tells the model what it may name.
+        let stages_files = allowed
+            .iter()
+            .any(|t| t == crate::features::tools::PYTHON_EXEC_ID)
+            && matches!(
+                self.config.tools.python_mode,
+                crate::shared::config::PythonMode::Wasmer
+            );
         let profile_loc = crate::shared::i18n::locale(profile_lang);
         let schemas = self.registry.schemas_for(&allowed, profile_loc);
         // Copied out before the `chat_mut` borrow below (config can't be read
@@ -697,6 +708,28 @@ impl Orchestrator {
             let Some(chat) = self.chat_mut(active_id) else {
                 return;
             };
+            // What the code may be handed this turn (docs/sandbox-file-exchange.md §12
+            // T2/T4): the images the conversation carries, and the chat's files as the one
+            // numbered list the block shows, the tool resolves and the popup reports.
+            // Empty — and not even collected — for a turn that cannot stage anything.
+            let images: Vec<crate::entities::message_image::MessageImage> = if stages_files {
+                chat.messages
+                    .iter()
+                    .flat_map(|m| m.images.iter().cloned())
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let inputs = if stages_files {
+                crate::features::chat_inputs::items(
+                    &chat.attachments,
+                    &chat.files,
+                    &images.iter().collect::<Vec<_>>(),
+                    &files_dir,
+                )
+            } else {
+                Vec::new()
+            };
             request = build_request(
                 chat,
                 sampling.clone(),
@@ -705,6 +738,7 @@ impl Orchestrator {
                     attachments: &attach_cfg,
                     compaction: &compact_cfg,
                     indexed: &indexed,
+                    files: &inputs,
                     history_tools,
                     // A project can be attached while the profile has some or
                     // all of the tools switched off; the block describes what
@@ -753,6 +787,12 @@ impl Orchestrator {
                 // The chat's stored files, which a call versions its names against
                 // (docs/sandbox-file-exchange.md §11 S5).
                 files: std::sync::Arc::from(chat.files.clone()),
+                // The images the conversation carries, which a call can stage into
+                // `/w/in` (§12 T4). Cloned only for a turn that can actually use them —
+                // otherwise a chat's pixels would be copied into every context that has
+                // no way to reach them.
+                images: std::sync::Arc::from(images),
+                stages_files,
                 lang: profile_lang,
                 cancel: cancel.clone(),
                 model_name: model_name.clone(),
@@ -1295,6 +1335,10 @@ struct ConfirmGate<'a> {
     /// Agent-scaffold language: the refusal text is read by the **model**
     /// (axis A), unlike the popup, which the user reads.
     loc: &'static crate::shared::i18n::Locale,
+    /// The turn's snapshot, for the one question the popup cannot answer from the
+    /// arguments alone: which of the chat's files a `python_exec` call would copy into the
+    /// sandbox (docs/sandbox-file-exchange.md §12 T6).
+    ctx: &'a ToolContext,
 }
 
 /// Asks the user before a dangerous tool call, if the feature is on.
@@ -1331,11 +1375,30 @@ async fn confirm_call(
     if !needs_ask {
         return None;
     }
+    // What this call would hand the sandbox, resolved with the list the call itself
+    // resolves against (§12 T6): the popup's compact view of the arguments drops arrays,
+    // so `files` — the argument that decides what leaves the chat — is invisible without
+    // this, and a set resolved twice could disagree with what goes in.
+    let inputs = (call.name == crate::features::tools::PYTHON_EXEC_ID).then(|| {
+        let named = serde_json::from_str::<serde_json::Value>(&call.arguments)
+            .as_ref()
+            .map(crate::features::chat_inputs::named_files)
+            .unwrap_or_default();
+        let dir = gate.ctx.files_dir.clone().unwrap_or_default();
+        let items = crate::features::chat_inputs::items(
+            &gate.ctx.attachments,
+            &gate.ctx.files,
+            &gate.ctx.images.iter().collect::<Vec<_>>(),
+            &dir,
+        );
+        crate::features::chat_inputs::for_confirm(&items, &named, gate.ctx.python_net)
+    });
     let _ = gate.evt_tx.send(AppEvent::ToolConfirmRequest {
         generation_id: gate.id,
         call_id: call.id.clone(),
         name: call.name.clone(),
         arguments: call.arguments.clone(),
+        inputs,
     });
     let decision = tokio::select! {
         _ = gate.cancel.cancelled() => None,
@@ -2726,6 +2789,7 @@ impl TurnLoop<'_> {
                 cancel: &self.cancel,
                 id: self.shared.id,
                 loc: self.ctx.loc,
+                ctx: &self.ctx,
             },
             call,
             &self.shared.confirm,
@@ -3019,6 +3083,24 @@ impl TurnLoop<'_> {
                 .attachment_indexed_ids(ctx.chat_id)
                 .unwrap_or_default()
         };
+        // The chat's files as the child sees them (§12 T13): its context is the parent's,
+        // so the list is the same one — and the block is built for a child that actually
+        // offers the tool, which the parent's turn may have withheld.
+        let child_files_dir = ctx.files_dir.clone().unwrap_or_default();
+        let inputs = if ctx.stages_files
+            && allowed
+                .iter()
+                .any(|t| t == crate::features::tools::PYTHON_EXEC_ID)
+        {
+            crate::features::chat_inputs::items(
+                &ctx.attachments,
+                &ctx.files,
+                &ctx.images.iter().collect::<Vec<_>>(),
+                &child_files_dir,
+            )
+        } else {
+            Vec::new()
+        };
         let user = Message::user(parsed.message.clone());
         let request = build_request_in(
             &parsed.system_message,
@@ -3036,6 +3118,7 @@ impl TurnLoop<'_> {
                 // sub-agent does not go through: its compaction is `None` above.
                 compaction: &crate::shared::config::CompactionSettings::default(),
                 indexed: &indexed,
+                files: &inputs,
                 history_tools: false,
                 offered_tools: &allowed,
                 loc,

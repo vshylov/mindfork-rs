@@ -125,6 +125,11 @@ pub struct ToolContext {
     /// server and its text results keep working, which is the point of the switch
     /// being separate from enabling the server.
     pub mcp_images: bool,
+    /// Whether a `python_exec` call in this turn can reach the network
+    /// (`config.tools.python_net_enabled`). The tool applies it; the confirmation popup
+    /// **states** it, because network access and the files going in are the two halves of
+    /// what the user is consenting to (docs/sandbox-file-exchange.md §12 T6).
+    pub python_net: bool,
     /// Where this chat's change journal lives (`data/workspace/<chat-id>/`,
     /// spec §9.12). `None` — no project, or a background turn; the editing tools
     /// then refuse rather than change a file they cannot record the original of.
@@ -139,6 +144,17 @@ pub struct ToolContext {
     /// mirrored from `AddChatFile` every round, so a turn's second call versions its
     /// names against the first's (§11 S5).
     pub files: std::sync::Arc<[crate::entities::chat_file::ChatFile]>,
+    /// The images the chat's messages carry, prepared as the model was shown them — what
+    /// `python_exec` stages into `/w/in` when a call names one (§12 T4). Built **only**
+    /// when the turn offers the tool in Wasmer mode: with it off, which is the default, a
+    /// chat's images are not copied into a context with no use for them. Empty otherwise.
+    pub images: std::sync::Arc<[crate::entities::message_image::MessageImage]>,
+    /// Whether this turn can hand the chat's files to the code: `python_exec` offered, in
+    /// the Wasmer mode that has a job directory to copy them into
+    /// (docs/sandbox-file-exchange.md §12 T5). Decided once per turn by the orchestrator
+    /// and carried here so a sub-agent's own request repeats the decision rather than
+    /// guessing it (§12 T13).
+    pub stages_files: bool,
     /// The code project attached to this chat (`/project attach`, spec §9.12),
     /// as of the start of the turn. `None` — no project, and then the `code_*`
     /// tools are not offered at all (see [`effective_tool_ids`]); they refuse
@@ -213,6 +229,9 @@ pub struct ToolParams {
     /// Whether an MCP tool's image blocks may reach the model
     /// (`config.tools.mcp_images`). See [`ToolContext::mcp_images`].
     pub mcp_images: bool,
+    /// Whether the Python sandbox has the network this turn
+    /// (`config.tools.python_net_enabled`). See [`ToolContext::python_net`].
+    pub python_net: bool,
     /// Command-execution limits for the code workspace (`config.workspace`).
     /// See [`ToolContext::workspace_cfg`].
     pub workspace: crate::shared::config::WorkspaceSettings,
@@ -230,6 +249,7 @@ impl ToolParams {
             attachments: cfg.attachments,
             history_page_tokens: cfg.compaction.page_tokens,
             mcp_images: cfg.tools.mcp_images,
+            python_net: cfg.tools.python_net_enabled,
             workspace: cfg.workspace,
             file_hint: crate::shared::text_decode::tld_hint(cfg.interface.language),
         }
@@ -264,6 +284,12 @@ pub struct TurnInfo {
     pub files_dir: Option<std::path::PathBuf>,
     /// The chat's stored files (a `Chat` snapshot). See [`ToolContext::files`].
     pub files: std::sync::Arc<[crate::entities::chat_file::ChatFile]>,
+    /// The images the chat's messages carry (a `Chat` snapshot, and only when the turn
+    /// offers `python_exec` in Wasmer mode). See [`ToolContext::images`].
+    pub images: std::sync::Arc<[crate::entities::message_image::MessageImage]>,
+    /// Whether this turn can stage the chat's files into the sandbox. See
+    /// [`ToolContext::stages_files`].
+    pub stages_files: bool,
     /// Language of the turn's agent scaffold (from `Profile.language`, axis A).
     pub lang: crate::shared::i18n::Lang,
     /// Cancellation token for the turn (a clone of the generation task's /
@@ -300,8 +326,11 @@ impl ToolContext {
             workspace_journal: turn.workspace_journal,
             files_dir: turn.files_dir,
             files: turn.files,
+            images: turn.images,
+            stages_files: turn.stages_files,
             workspace_cfg: params.workspace,
             mcp_images: params.mcp_images,
+            python_net: params.python_net,
             storage: deps.storage,
             engine: deps.engine,
             embedder: deps.embedder,
@@ -1046,6 +1075,7 @@ pub(crate) mod testkit {
             history_page_tokens: crate::shared::config::DEFAULT_COMPACTION_PAGE_TOKENS,
             attachments: crate::shared::config::AttachmentSettings::default(),
             mcp_images: true,
+            python_net: false,
             workspace: crate::shared::config::WorkspaceSettings::default(),
             file_hint: None,
         }
@@ -1069,6 +1099,8 @@ pub(crate) mod testkit {
             // No stored files and no folder by default; tests that store set both.
             files_dir: None,
             files: std::sync::Arc::from(Vec::new()),
+            images: std::sync::Arc::from(Vec::new()),
+            stages_files: false,
             lang: crate::shared::i18n::Lang::Ru,
             cancel: tokio_util::sync::CancellationToken::new(),
             // No engine name by default; tests that need one set `ctx.model_name`.

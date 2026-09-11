@@ -46,6 +46,13 @@ pub struct Attachment {
     /// Estimated token count of [`Self::text`].
     pub est_tokens: usize,
     pub mode: AttachMode,
+    /// The chat file holding the **original bytes**, when `/file attach` kept them beside
+    /// the extracted text — a pdf, a docx, an html page (fork F8a,
+    /// docs/sandbox-file-exchange.md §12 T9). `None` when the text *is* the file. The two
+    /// halves are one item wherever files are listed, named or removed. Additive — old
+    /// chats read without migration (ADR 0006 F12).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_id: Option<Uuid>,
 }
 
 impl Attachment {
@@ -68,7 +75,14 @@ impl Attachment {
             text,
             bytes,
             mode,
+            file_id: None,
         }
+    }
+
+    /// The same attachment with the chat file that holds its original bytes (F8a).
+    pub fn with_file(mut self, file_id: Uuid) -> Self {
+        self.file_id = Some(file_id);
+        self
     }
 
     /// A card for the UI (no text — the feed/status bar must not carry hundreds
@@ -82,6 +96,7 @@ impl Attachment {
             est_tokens: self.est_tokens,
             prompt_tokens: self.prompt_tokens(excerpt_tokens),
             mode: self.mode,
+            has_original: self.file_id.is_some(),
         }
     }
 
@@ -183,6 +198,10 @@ pub struct AttachmentInfo {
     /// What it costs per request (see [`Attachment::prompt_tokens`]).
     pub prompt_tokens: usize,
     pub mode: AttachMode,
+    /// Whether the chat also keeps this file's **original bytes** ([`Attachment::file_id`],
+    /// fork F8a): the listing says so, since that is the half `python_exec` reads and the
+    /// half a removal deletes from disk.
+    pub has_original: bool,
 }
 
 /// What a handle typed after `remove` — `#N`, a name or a path — reaches in a listed set

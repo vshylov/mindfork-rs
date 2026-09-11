@@ -435,6 +435,9 @@ pub(super) struct ToolConfirm {
     pub(super) call_id: String,
     pub(super) name: String,
     pub(super) arguments: String,
+    /// What a `python_exec` call would hand the sandbox, resolved by the orchestrator
+    /// (docs/sandbox-file-exchange.md §12 T6) — the compact argument view cannot show it.
+    pub(super) inputs: Option<crate::features::chat_inputs::ConfirmInputs>,
 }
 
 /// An item of the spellcheck suggestions popup.

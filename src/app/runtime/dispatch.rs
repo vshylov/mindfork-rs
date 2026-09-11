@@ -136,7 +136,8 @@ pub(super) fn apply_event(
             call_id,
             name,
             arguments,
-        } => screen.request_tool_confirm(generation_id, call_id, name, arguments),
+            inputs,
+        } => screen.request_tool_confirm(generation_id, call_id, name, arguments, inputs),
         AppEvent::ToolCallStarted {
             generation_id,
             call_id,

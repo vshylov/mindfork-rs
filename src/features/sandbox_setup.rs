@@ -261,7 +261,8 @@ const WARMUP_TIMEOUT: Duration = Duration::from_secs(600);
 async fn warmup(dir: &Path, loc: &Locale, progress: &mut impl FnMut(&str)) {
     progress(loc.t("sandbox.setup.warmup.start"));
     let sb = WasmerSandbox::for_provisioning(dir.to_path_buf());
-    match sb.run(WARMUP_SCRIPT, false, WARMUP_TIMEOUT, loc).await {
+    let job = crate::shared::sandbox::SandboxJob::new(WARMUP_SCRIPT, false, WARMUP_TIMEOUT);
+    match sb.run(job, loc).await {
         Ok(out) if out.exit_code == Some(0) => progress(loc.t("sandbox.setup.warmup.ok")),
         Ok(_) => progress(loc.t("sandbox.setup.warmup.partial")),
         Err(e) => progress(&loc.tf("sandbox.setup.warmup.skipped", &[("err", &e.to_string())])),
@@ -394,7 +395,8 @@ fn package_is_named(manifest: &str) -> bool {
 /// has to fail `setup`, not the first call in a chat.
 async fn verify_image(dir: &Path, loc: &Locale, progress: &mut impl FnMut(&str)) -> Result<()> {
     let sb = WasmerSandbox::new(Some(dir.to_path_buf()));
-    let out = sb.run(VERIFY_SCRIPT, false, WARMUP_TIMEOUT, loc).await?;
+    let job = crate::shared::sandbox::SandboxJob::new(VERIFY_SCRIPT, false, WARMUP_TIMEOUT);
+    let out = sb.run(job, loc).await?;
     if out.exit_code != Some(0) {
         bail!(
             "{}",

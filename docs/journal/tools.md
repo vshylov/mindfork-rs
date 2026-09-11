@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (57)
+## Entries (58)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -69,6 +69,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: Python sandbox — the starter set grows: sympy, lxml, openpyxl, matplotlib and more (done)
 - Post-M9: the sandbox's packages, packed read-only (done)
 - Post-M9: sandbox file exchange — stage 2, files out of the sandbox (done)
+- Post-M9: sandbox file exchange — stage 3, files into the sandbox (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -4159,3 +4160,91 @@ reply still summarised the chart, from the numbers the request gave it.
 **Not in this track.** Inputs — `/w/in`, `files`, a binary `/file attach` — are stage 3;
 `/file open` is stage 4; Local-mode parity stage 5. `workspace/` is still missing from the
 backup's directories (a separate task).
+
+### Post-M9: sandbox file exchange — stage 3, files into the sandbox (done)
+
+**What.** The other direction: a call names the chat's files in an optional `files`
+argument and each is copied into `/w/in` before the code runs, so a workbook the user
+attached reaches pandas and what one call saved a later one reads. The handles are **one
+numbered list** — the chat's attachments, then the stored files no attachment links, then
+the images its messages carry — and that same list is what `/file list` shows, what
+`/file remove` takes, what the pinned block states and what the confirmation popup
+resolves, so `#3` means one thing to the user and to the model. `/file attach` stops
+refusing what its text is not: a binary is kept with the chat (no attachment made), a
+pdf/docx/html keeps its original beside the extracted text, and the pair is one item
+everywhere. Track plan and every decision:
+[docs/sandbox-file-exchange.md](../sandbox-file-exchange.md) — the user's forks in §3 and
+§5, this stage's sub-decisions in §12. Branch `feat/sandbox-files-in`.
+
+**The survey found two things the plan rested on and that did not exist.** The
+confirmation popup presents a call's arguments in its compact view, which drops **arrays
+outright** (`present::scalar_str` returns `None` for one) — so `files`, the argument that
+decides what leaves the chat, would never have appeared there at all; F13(b)'s "resolved
+line" stopped being a nicety and became the only way the popup can say what goes in. And
+an image already **sent** has no handle: `/image list` numbers only what is staged for the
+*next* message, and no snapshot of a chat's images reached a tool. D3 had named images as
+inputs, so that was the user's call rather than ours — decided as T4: they join the one
+numbering, `/file list` grows an images tail, and the snapshot (base64 payload included) is
+built **only** for a turn that offers `python_exec` in its Wasmer mode, so a chat's pixels
+are not copied into every context that has no way to reach them.
+
+**How.**
+- `shared/sandbox.rs`: `SandboxRunner::run` takes a `SandboxJob` (code, inputs, net,
+  timeout) — the signature stage 2 deliberately left alone, changed once. An input is
+  bytes the caller holds or a path copied without being read into memory; `in/` is created
+  for every call, so code that looks there finds a folder rather than an error. The
+  collection limits stayed a constant: nothing would set them per call, and the
+  description is built from the same value.
+- `features/chat_inputs.rs` (new, pure): the one list, the resolution, the popup's
+  resolved view and the `files` parse. Each item's **guest name is decided with the list,
+  not while copying** — the model writes `/w/in/<name>` into code before any result exists
+  — sanitized and made unique across the whole list, with an attachment's text gaining
+  `.txt` exactly where the text is not the file.
+- `python.rs`: `stage` resolves before anything runs. An unknown handle, a name two items
+  share, or a listed file whose copy is gone **refuses the call with nothing staged and
+  nothing executed**, naming the valid handles — a script that asked for four files and
+  got three would answer confidently from three (lessons §4). A handle named twice is one
+  copy. The `files` argument exists in Wasmer mode only: Local has no job directory until
+  stage 5, and ADR 0005 §3 records the divergence rather than letting a model name files
+  that would never arrive.
+- `request.rs`: `inject_files` after the attachments — names, sizes, staged names, and the
+  two sentences that close the door (copies; `/w/out` is the way back). The caller passes
+  an empty list unless the turn offers the tool in Wasmer mode, so the block cannot name a
+  tool the turn does not have.
+- The popup: `ToolConfirmRequest` carries the resolved inputs and the sandbox's network
+  state, rendered by the screen in the interface language; `ToolContext.python_net` is
+  where that flag reaches it, beside `mcp_images`.
+- `/file attach`: the blocking read now reads the bytes **once** and ends in one of three
+  outcomes — plain text (attachment as before), an extractor's text (attachment plus the
+  original, linked by the additive `Attachment.file_id`), or bytes that decode as nothing
+  (kept, no attachment). Removing a pair deletes our copy first and both listings second;
+  re-attaching stores the new original, swaps the listing and drops the old copy last, so
+  no state exists in which neither is there.
+
+**Live — GO** (Gemma 4 31B q4_0 with its projector, llama.cpp b10807, one slot; the dev
+sandbox's packed image), both smokes written so the answer cannot arrive through another
+channel — §10's lesson from this same track. `sandbox_inputs_e2e_live`: turn 1 built an
+Excel workbook with openpyxl from numbers it was told not to print and saved it to
+`/w/out` (4.9 KB, stored as `sales.xlsx`); turn 2 named that workbook in `files`, read the
+copy in `/w/in` with pandas and printed **4706** — Σ(i²·7+13) over twelve months — and the
+reply carried that number. A workbook rather than a CSV on purpose: its bytes have to
+survive storing and staging unchanged or openpyxl cannot open them.
+`attached_binary_reaches_the_sandbox_live`: a generated 512×512 PNG attached from disk was
+**kept** rather than refused, and a call that named it opened the copy with pillow and
+printed `(512, 512)`, which the reply repeated. The nineteen `python::tests` sandbox smokes
+are green after the contract change.
+
+**Tests.** Unit: 3155 green, 167 ignored (3134 / 165 before). New: the item list and its
+staged names (three kinds, a pair as one item, an extractor's `.txt`, an image's prepared
+extension, a shared name versioned once, the fallback name); staging of each kind through
+`MockSandbox`, which now records what reached `/w/in`; the four refusals with nothing run;
+a handle named twice; `files` in the Wasmer schema only; the block's handles and staged
+names, and its absence on a turn that stages nothing; `/file list` across the three kinds
+with a pair as one item; an image handle refused by `/file remove` with the way out; a pair
+removed in both halves; a binary attach that stores and makes no attachment; a document
+attach that links the two; the popup's line with a resolved file, an unknown handle and the
+network state.
+
+**Two traps, both already in lessons.** A `cargo clippy … | tail` in a `&&` chain reported
+`tail`'s status and let a commit land with the lint red (lessons §1, now three times); and
+a Rust raw string `r#"…"#` cannot hold the handle `"#9"`, which closes it early.
