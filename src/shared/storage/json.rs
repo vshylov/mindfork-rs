@@ -62,6 +62,11 @@ impl JsonStore {
         self.paths.workspace_dir()
     }
 
+    /// Files stored with chats (`files/`). See [`Paths::files_dir`].
+    pub fn files_dir(&self) -> std::path::PathBuf {
+        self.paths.files_dir()
+    }
+
     // ---------- config ----------
 
     /// Loads the config; returns the default if the file is missing.

@@ -59,6 +59,10 @@ pub struct Console {
     pub stdout: String,
     pub stderr: String,
     pub exit: Option<i32>,
+    /// The `files:` section `python_exec` appends: what the call saved to the chat and
+    /// what it did not keep (docs/sandbox-file-exchange.md §11 S9). Verbatim — its lines
+    /// are the tool's own, already localized.
+    pub files: String,
 }
 
 /// Assembles a process result into the shape [`parse_console`] reads back —
@@ -450,8 +454,10 @@ fn fs_read_failure_prefixes() -> Vec<&'static str> {
 }
 
 /// Parses `python_exec`'s output (see `python::format_output_parts`) into stdout/
-/// stderr/exit-code sections. `None` — if the text doesn't look like this format (launch
-/// error messages, "(empty output, success)") → show it as flat text.
+/// stderr/exit-code sections, and the `files:` section a Wasmer run appends
+/// (docs/sandbox-file-exchange.md §11 S9) — a result of that section alone parses too.
+/// `None` — if the text doesn't look like this format (launch error messages, "(empty
+/// output, success)") → show it as flat text.
 fn parse_console(result: &str) -> Option<Console> {
     #[derive(PartialEq)]
     enum Sec {
@@ -459,6 +465,7 @@ fn parse_console(result: &str) -> Option<Console> {
         Command,
         Stdout,
         Stderr,
+        Files,
     }
     let exit_labels = exit_labels();
     let mut c = Console::default();
@@ -466,6 +473,7 @@ fn parse_console(result: &str) -> Option<Console> {
     let mut cmd: Vec<&str> = Vec::new();
     let mut out: Vec<&str> = Vec::new();
     let mut err: Vec<&str> = Vec::new();
+    let mut files: Vec<&str> = Vec::new();
     for line in result.lines() {
         if line == "command:" {
             sec = Sec::Command;
@@ -473,6 +481,8 @@ fn parse_console(result: &str) -> Option<Console> {
             sec = Sec::Stdout;
         } else if line == "stderr:" {
             sec = Sec::Stderr;
+        } else if line == "files:" {
+            sec = Sec::Files;
         } else if let Some(rest) = exit_labels.iter().find_map(|lbl| line.strip_prefix(lbl)) {
             c.exit = rest.trim().parse::<i32>().ok();
             sec = Sec::None;
@@ -481,18 +491,22 @@ fn parse_console(result: &str) -> Option<Console> {
                 Sec::Command => cmd.push(line),
                 Sec::Stdout => out.push(line),
                 Sec::Stderr => err.push(line),
+                Sec::Files => files.push(line),
+                // The separator after an exit code, when the `files:` section follows.
+                Sec::None if line.trim().is_empty() => {}
                 // A line outside a known section → this isn't our format.
                 Sec::None => return None,
             }
         }
     }
-    if cmd.is_empty() && out.is_empty() && err.is_empty() && c.exit.is_none() {
+    if cmd.is_empty() && out.is_empty() && err.is_empty() && files.is_empty() && c.exit.is_none() {
         return None;
     }
     // Sections are joined via join("\n\n") — strip the trailing empty separator lines.
     c.command = join_trim(&cmd);
     c.stdout = join_trim(&out);
     c.stderr = join_trim(&err);
+    c.files = join_trim(&files);
     Some(c)
 }
 
@@ -727,6 +741,7 @@ mod tests {
                 stdout: "hello\nworld".into(),
                 stderr: String::new(),
                 exit: None,
+                files: String::new(),
             })]
         );
     }
@@ -769,6 +784,25 @@ mod tests {
         let out = "stdout:\na\n\nb\n\nстрока";
         let c = parse_console(out).unwrap();
         assert_eq!(c.stdout, "a\n\nb\n\nстрока");
+    }
+
+    /// The section a Wasmer run appends is a block of its own, after an exit code too —
+    /// and a quoted head's lines cannot open a section, since each sits behind `  | `.
+    #[test]
+    fn python_console_keeps_the_files_section() {
+        let out = "stdout:\nok\n\nкод возврата: 3\n\nfiles:\nSaved to this chat's files, in /d:\n\
+                   - totals.csv — 9 B, text/csv\n  | stdout:\n- a.png — 1 B, image/png — shown";
+        let c = parse_console(out).unwrap();
+        assert_eq!(c.stdout, "ok");
+        assert_eq!(c.exit, Some(3));
+        assert_eq!(
+            c.files,
+            "Saved to this chat's files, in /d:\n- totals.csv — 9 B, text/csv\n  | stdout:\n\
+             - a.png — 1 B, image/png — shown"
+        );
+        let only = parse_console("files:\n- a.txt — 2 B, text/plain").unwrap();
+        assert_eq!(only.files, "- a.txt — 2 B, text/plain");
+        assert!(only.stdout.is_empty() && only.exit.is_none());
     }
 
     #[test]

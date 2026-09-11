@@ -194,7 +194,7 @@ pub enum AppCommand {
     /// Remove an attachment from the active chat by display name, path, or `#N`
     /// (the `/file remove <target>` command).
     FileRemove { target: String },
-    /// Show the active chat's attachments (the `/file list` command). The result
+    /// Show the active chat's attachments and stored files (the `/file list` command). The result
     /// is a `FileProgress::Listed` event.
     FileList,
     /// Attach a code project to the active chat (the `/project attach <dir>`

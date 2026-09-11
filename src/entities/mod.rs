@@ -2,6 +2,7 @@
 
 pub mod attachment;
 pub mod chat;
+pub mod chat_file;
 pub mod message;
 pub mod message_image;
 pub mod note;

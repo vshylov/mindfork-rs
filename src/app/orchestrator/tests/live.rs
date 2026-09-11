@@ -540,6 +540,124 @@ async fn image_attachment_e2e_live() {
     );
 }
 
+/// Sandbox file exchange, stage 2 (docs/sandbox-file-exchange.md §8): a chart the model's
+/// code saves to `/w/out` lands in the chat's folder, is listed in the chat — `/file list`
+/// finds its bytes on disk — and is shown to the model; with `tools.python_images` off the
+/// file still lands, no image is sent, and the result tells the model it has not seen it.
+/// Stage 1's scenario on production code, without the input file stage 3 adds: the numbers
+/// are in the request. Needs a vision model (`MINDFORK_ENGINE_URL` + `--mmproj`) and a
+/// provisioned `MINDFORK_SANDBOX_DIR`, which the temporary data root is pointed at
+/// (§11 S13). `#[ignore]`, manual against a live stack.
+#[tokio::test]
+#[ignore = "requires a vision model (MINDFORK_ENGINE_URL) and a provisioned sandbox (MINDFORK_SANDBOX_DIR)"]
+async fn sandbox_outputs_e2e_live() {
+    use crate::features::file_command::FileProgress;
+    const REQUEST: &str = "Plot these monthly sales as a bar chart and save it as a PNG: \
+        Jan 120, Feb 95, Mar 180, Apr 130, May 160. Then tell me in one sentence what the \
+        chart shows.";
+    if crate::shared::api::live_text_only() {
+        eprintln!("skip: MINDFORK_LIVE_TEXT_ONLY — this stack has no vision projector");
+        return;
+    }
+    let Some(sandbox) = std::env::var_os("MINDFORK_SANDBOX_DIR").map(std::path::PathBuf::from)
+    else {
+        eprintln!("skip: MINDFORK_SANDBOX_DIR not set");
+        return;
+    };
+    for images_on in [true, false] {
+        let mut cfg = no_auto_cfg();
+        cfg.tools.python_enabled = true;
+        cfg.tools.python_mode = crate::shared::config::PythonMode::Wasmer;
+        cfg.tools.python_net_enabled = false;
+        cfg.tools.python_images = images_on;
+        cfg.default_sampling.max_tokens = Some(4096);
+        let Some((dir, cmd_tx, mut evt_rx, handle)) = spawn_orch_live_sandbox(cfg, sandbox.clone())
+        else {
+            eprintln!("skip: MINDFORK_ENGINE_URL not set");
+            return;
+        };
+        let (_profile, chat) = narrow_profile_to(
+            &cmd_tx,
+            &mut evt_rx,
+            vec![crate::features::tools::PYTHON_EXEC_ID.into()],
+        )
+        .await;
+        cmd_tx
+            .send(AppCommand::SendMessage(REQUEST.into()))
+            .unwrap();
+        let mut reply = String::new();
+        let mut calls: Vec<(String, usize)> = Vec::new();
+        while let Some(ev) = evt_rx.recv().await {
+            match ev {
+                AppEvent::Chunk { text, .. } => reply.push_str(&text),
+                AppEvent::ToolCall {
+                    name,
+                    result,
+                    images,
+                    ..
+                } if name == crate::features::tools::PYTHON_EXEC_ID => calls.push((result, images)),
+                AppEvent::Finished { .. } => break,
+                _ => {}
+            }
+        }
+        for (result, images) in &calls {
+            eprintln!("[images {images_on}] result, {images} image(s) sent:\n{result}");
+        }
+        eprintln!("[images {images_on}] reply: {reply}");
+        cmd_tx.send(AppCommand::FileList).unwrap();
+        let listed = wait_for(&mut evt_rx, |e| {
+            matches!(e, AppEvent::FileProgress(FileProgress::Listed { .. }))
+        })
+        .await;
+        cmd_tx.send(AppCommand::Quit).unwrap();
+        handle.await.unwrap();
+
+        let Some(AppEvent::FileProgress(FileProgress::Listed { stored, .. })) = listed else {
+            panic!("no /file list reply");
+        };
+        let png = stored
+            .iter()
+            .find(|f| f.mime == "image/png")
+            .unwrap_or_else(|| panic!("no PNG listed: {stored:?}"));
+        assert!(!png.missing, "the listed PNG is not in the folder");
+        let on_disk = dir
+            .path()
+            .join("files")
+            .join(chat.to_string())
+            .join(&png.name);
+        assert!(
+            std::fs::read(&on_disk).is_ok_and(|b| b.starts_with(b"\x89PNG")),
+            "not a PNG: {}",
+            on_disk.display()
+        );
+        assert!(
+            calls.iter().any(|(r, _)| r.contains("files:")),
+            "no result carried the files section"
+        );
+        let sent: usize = calls.iter().map(|(_, n)| n).sum();
+        if images_on {
+            assert!(sent >= 1, "the chart must reach the model");
+        } else {
+            assert_eq!(sent, 0, "no image may be sent with the switch off");
+            let told: Vec<String> = crate::shared::i18n::Lang::ALL
+                .iter()
+                .map(|l| {
+                    crate::shared::i18n::locale(*l)
+                        .t("tool.python_exec.files.not_shown_off")
+                        .trim_start_matches(" — ")
+                        .to_string()
+                })
+                .collect();
+            assert!(
+                calls
+                    .iter()
+                    .any(|(r, _)| told.iter().any(|t| r.contains(t.as_str()))),
+                "the result must tell the model it has not seen the image"
+            );
+        }
+    }
+}
+
 /// i18n Tier 1 (docs/history/i18n.md, go/no-go): a profile with agent-scaffold language `En` —
 /// the auto-title of an English conversation is English, with NO Cyrillic. A fresh profile
 /// (its own texts, independent of the bootstrap profile's state), set it to En, create a

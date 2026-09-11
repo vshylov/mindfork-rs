@@ -1936,6 +1936,8 @@ fn file_list_note_numbers_items_for_removal() {
     use crate::features::file_command::FileProgress;
     let mut s = ChatScreen::new();
     s.set_file_progress(FileProgress::Listed {
+        stored: Vec::new(),
+        dir: String::new(),
         items: vec![AttachmentInfo {
             name: "notes.md".into(),
             source: "/tmp/notes.md".into(),
@@ -1995,6 +1997,8 @@ fn a_shared_file_name_is_told_apart_by_its_source() {
         mode: AttachMode::Inline,
     };
     let list = note(FileProgress::Listed {
+        stored: Vec::new(),
+        dir: String::new(),
         items: vec![
             info("notes.md", "D:\\a\\notes.md"),
             info("Notes.md", "D:\\b\\notes.md"),

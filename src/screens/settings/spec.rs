@@ -69,6 +69,7 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
         TWebAllowPrivate => toggle(|c| c.tools.web_allow_private = !c.tools.web_allow_private),
         TPython => toggle(|c| c.tools.python_enabled = !c.tools.python_enabled),
         TPythonNet => toggle(|c| c.tools.python_net_enabled = !c.tools.python_net_enabled),
+        TPythonImages => toggle(|c| c.tools.python_images = !c.tools.python_images),
         TFs => toggle(|c| c.tools.fs_enabled = !c.tools.fs_enabled),
         TConfirmDangerous => toggle(|c| c.tools.confirm_dangerous = !c.tools.confirm_dangerous),
         TSubBackground => toggle(|c| c.tools.subagent_background = !c.tools.subagent_background),

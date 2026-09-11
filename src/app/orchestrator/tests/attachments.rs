@@ -138,7 +138,7 @@ async fn a_file_over_the_budget_is_attached_by_reference_not_refused() {
     .await
     .unwrap();
     match ev {
-        AppEvent::FileProgress(FileProgress::Listed { items }) => {
+        AppEvent::FileProgress(FileProgress::Listed { items, .. }) => {
             assert_eq!(items.len(), 1);
             assert_eq!(items[0].name, "big.txt");
         }
@@ -176,7 +176,7 @@ async fn a_name_two_attachments_share_removes_nothing_and_names_both() {
     }
     let is_listed = |e: &AppEvent| matches!(e, AppEvent::FileProgress(FileProgress::Listed { .. }));
     let listed = |ev: Option<AppEvent>| match ev {
-        Some(AppEvent::FileProgress(FileProgress::Listed { items })) => items,
+        Some(AppEvent::FileProgress(FileProgress::Listed { items, .. })) => items,
         other => panic!("not a listing: {other:?}"),
     };
     let outcome = |e: &AppEvent| {
@@ -269,7 +269,7 @@ async fn reattaching_the_same_file_replaces_the_previous_snapshot() {
     .await
     .unwrap();
     match ev {
-        AppEvent::FileProgress(FileProgress::Listed { items }) => {
+        AppEvent::FileProgress(FileProgress::Listed { items, .. }) => {
             assert_eq!(items.len(), 1, "no duplicate entry for the same file");
         }
         _ => unreachable!(),
@@ -315,6 +315,8 @@ async fn attachment_read_sees_the_chat_files_through_the_turn_snapshot() {
             attachments: Arc::from(chat.attachments.clone()),
             workspace: chat.workspace.clone(),
             workspace_journal: None,
+            files_dir: None,
+            files: Arc::from(Vec::new()),
             history: None,
             other_chats: Arc::from(Vec::new()),
             lang: crate::shared::i18n::Lang::Ru,
@@ -521,6 +523,8 @@ fn turn_ctx(
             attachments: Arc::from(attachments),
             workspace: None,
             workspace_journal: None,
+            files_dir: None,
+            files: Arc::from(Vec::new()),
             history: None,
             other_chats: Arc::from(Vec::new()),
             lang: crate::shared::i18n::Lang::Ru,

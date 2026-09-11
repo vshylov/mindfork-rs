@@ -25,7 +25,8 @@ use crate::entities::attachment::{
     AttachMode, Attachment, AttachmentChunk, Resolved, decide_mode, inline_tokens_excluding,
     name_is_shared, prompt_tokens,
 };
-use crate::features::file_command::{FileProgress, resolve_target};
+use crate::entities::chat_file::ChatFile;
+use crate::features::file_command::{FileProgress, StoredInfo, resolve_target};
 use crate::features::tools::rag::ChunkParams;
 use crate::shared::api::{EmbedRole, Embedder};
 use crate::shared::i18n::Locale;
@@ -191,25 +192,34 @@ impl Orchestrator {
         }
     }
 
-    /// Removes an attachment by name/path/`#N` (`/file remove <target>`). A name several
-    /// attachments share removes nothing: the refusal lists each one's `#N` and source,
-    /// either of which reaches it alone (docs/research/remove-by-shared-name.md F1a).
+    /// Removes an attachment or a stored file by name/path/`#N` (`/file remove <target>`),
+    /// numbered as `/file list` shows them. A name several of them share removes nothing:
+    /// the refusal lists each one's `#N` and source, either of which reaches it alone
+    /// (docs/research/remove-by-shared-name.md F1a).
     pub(super) fn handle_file_remove(&mut self, target: String) {
         let Some(chat_id) = self.active_id else {
             self.fail_file(self.ui_locale().t("ui.err.file_no_active_chat"));
             return;
         };
         let loc = self.ui_locale();
-        let Some(chat) = self.chat_mut(chat_id) else {
+        let dir = self.stored_files_dir(chat_id);
+        let Some(chat) = self.chats.iter().find(|c| c.id == chat_id) else {
             return;
         };
-        let idx = match resolve_target(&chat.attachments, &target) {
+        let attached = chat.attachments.len();
+        let idx = match resolve_target(&chat.attachments, &chat.files, &target) {
             Resolved::One(idx) => idx,
             Resolved::Shared(hits) => {
-                let candidates = Self::candidate_lines(
-                    hits.iter()
-                        .map(|&i| (i, chat.attachments[i].source.as_str())),
-                );
+                // A stored file's source is where it lies — its name alone is what is shared.
+                let sources: Vec<(usize, String)> = hits
+                    .iter()
+                    .map(|&i| match i.checked_sub(attached) {
+                        None => (i, chat.attachments[i].source.clone()),
+                        Some(j) => (i, dir.join(&chat.files[j].name).display().to_string()),
+                    })
+                    .collect();
+                let candidates =
+                    Self::candidate_lines(sources.iter().map(|(i, s)| (*i, s.as_str())));
                 let msg = loc.tf(
                     "ui.err.file_name_shared",
                     &[("target", target.trim()), ("candidates", &candidates)],
@@ -222,6 +232,14 @@ impl Orchestrator {
                 self.fail_file(&msg);
                 return;
             }
+        };
+        if let Some(j) = idx.checked_sub(attached) {
+            let name = chat.files[j].name.clone();
+            self.remove_stored_file(chat_id, &dir, name);
+            return;
+        }
+        let Some(chat) = self.chat_mut(chat_id) else {
+            return;
         };
         // Removed by `#N` or path, a file whose name another one shares is named by its
         // source too — the name alone would not say which of them went (F2a).
@@ -249,7 +267,27 @@ impl Orchestrator {
             .collect()
     }
 
-    /// Lists the active chat's attachments (`/file list`).
+    /// Deletes our copy of a stored file, then drops its listing — the order in which a
+    /// failed delete keeps the listing, so the removal can be retried and nothing is lost
+    /// (docs/sandbox-file-exchange.md §11 S11, docs/lessons.md §8).
+    fn remove_stored_file(&mut self, chat_id: Uuid, dir: &std::path::Path, name: String) {
+        if let Err(err) = crate::features::chat_files::remove(dir, &name) {
+            let msg = self.ui_locale().tf(
+                "ui.err.file_delete_failed",
+                &[("name", &name), ("err", &err.to_string())],
+            );
+            self.fail_file(&msg);
+            return;
+        }
+        if let Some(chat) = self.chat_mut(chat_id) {
+            chat.files.retain(|f| f.name != name);
+        }
+        self.mark_dirty(chat_id);
+        self.emit_file_progress(FileProgress::RemovedStored { name });
+    }
+
+    /// Lists the active chat's attachments and stored files (`/file list`), numbered as
+    /// `/file remove` takes them.
     pub(super) fn handle_file_list(&mut self) {
         let Some(chat) = self
             .active_id
@@ -260,7 +298,87 @@ impl Orchestrator {
         };
         let excerpt = self.config.attachments.excerpt_tokens;
         let items = chat.attachments.iter().map(|a| a.info(excerpt)).collect();
-        self.emit_file_progress(FileProgress::Listed { items });
+        let dir = self.stored_files_dir(chat.id);
+        let stored = chat
+            .files
+            .iter()
+            .map(|f| StoredInfo {
+                name: f.name.clone(),
+                bytes: f.bytes,
+                mime: f.mime.clone(),
+                missing: !crate::features::chat_files::exists(&dir, &f.name),
+            })
+            .collect();
+        self.emit_file_progress(FileProgress::Listed {
+            items,
+            stored,
+            dir: dir.display().to_string(),
+        });
+    }
+
+    /// The folder of a chat's stored files (`data/files/<chat-id>/`).
+    pub(super) fn stored_files_dir(&self, chat_id: Uuid) -> std::path::PathBuf {
+        self.storage.json().files_dir().join(chat_id.to_string())
+    }
+
+    /// Lists the files a tool stored in a chat's folder (docs/sandbox-file-exchange.md
+    /// §11 S7) — a name already listed is skipped, so a landing is idempotent — and names
+    /// them in one feed note when the chat is the open one. The one path both a turn's
+    /// landing and a background run's take.
+    pub(super) fn list_stored_files(&mut self, chat_id: Uuid, files: Vec<ChatFile>) {
+        if files.is_empty() {
+            return;
+        }
+        let dir = self.stored_files_dir(chat_id);
+        let Some(chat) = self.chat_mut(chat_id) else {
+            return;
+        };
+        let names: Vec<String> = files
+            .into_iter()
+            .filter_map(|f| {
+                let name = f.name.clone();
+                chat.list_file(f).then_some(name)
+            })
+            .collect();
+        if names.is_empty() {
+            return;
+        }
+        self.mark_dirty(chat_id);
+        if self.active_id == Some(chat_id) {
+            self.emit_file_progress(FileProgress::Saved {
+                names,
+                dir: dir.display().to_string(),
+            });
+        }
+    }
+
+    /// Lists every file in a loaded chat's folder that the chat does not list
+    /// (docs/sandbox-file-exchange.md §11 S6): a call stored it and the chat was not saved
+    /// before the app stopped. Adopted, never deleted — the user may have seen it on the
+    /// call's card. Run at startup, when no run can be writing one.
+    pub(super) fn adopt_unlisted_files(&mut self) {
+        let root = self.storage.json().files_dir();
+        if !root.is_dir() {
+            return;
+        }
+        let mut adopted = Vec::new();
+        for chat in &mut self.chats {
+            let found =
+                crate::features::chat_files::unlisted(&root.join(chat.id.to_string()), &chat.files);
+            if found.is_empty() {
+                continue;
+            }
+            tracing::info!(
+                chat = %chat.id,
+                files = found.len(),
+                "stored files: adopted files the chat did not list"
+            );
+            chat.files.extend(found);
+            adopted.push(chat.id);
+        }
+        for id in adopted {
+            self.mark_dirty(id);
+        }
     }
 
     /// Sends the active chat's attachment cards to the UI (the status-bar chip).

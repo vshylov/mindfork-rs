@@ -1104,6 +1104,12 @@ pub struct ToolSettings {
     /// keeps the server and its text results, and the placeholder still says an image
     /// was returned.
     pub mcp_images: bool,
+    /// Show the model an image `python_exec` saved to `/w/out` — its own chart — after
+    /// the call (docs/sandbox-file-exchange.md F5, §11 S8). **On** by default: looking at
+    /// the chart is how a model checks what it drew. Off stops paying for the image
+    /// tokens; the files are still saved, and the result tells the model it has not seen
+    /// them. Separate from [`Self::mcp_images`], whose pixels come from third-party code.
+    pub python_images: bool,
 }
 
 impl Default for ToolSettings {
@@ -1132,6 +1138,7 @@ impl Default for ToolSettings {
             subagent_background_max: DEFAULT_SUBAGENT_BACKGROUND_MAX,
             confirm_dangerous: false,
             mcp_images: true,
+            python_images: true,
         }
     }
 }
@@ -1273,6 +1280,13 @@ pub const DEFAULT_IMAGE_MAX_BYTES: u64 = 10 * 1024 * 1024;
 /// comfortably above the ~256-token encoder budgets measured on the local stack,
 /// Gemini and xAI (docs/research/multimodal-images.md §2).
 pub const DEFAULT_IMAGE_DOWNSCALE_PX: u32 = 1568;
+/// How many images one tool result may show the model — an MCP server's (fork F2 of
+/// docs/research/mcp-tool-images.md) and the charts a `python_exec` call saved
+/// (docs/sandbox-file-exchange.md §11 S8). Every image a result carries rides **every**
+/// later turn of the conversation, so the ceiling bounds a standing cost, not one reply.
+/// Extras are dropped and **said out loud** in the result: a silent cap reads as "the
+/// tool returned four images" when it returned fifty.
+pub const MAX_TOOL_RESULT_IMAGES: usize = 4;
 
 /// Image-attachment settings (`/image attach`, spec §9.10).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

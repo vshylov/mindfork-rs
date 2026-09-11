@@ -16,16 +16,25 @@ use std::time::Duration;
 
 use anyhow::Result;
 
+use crate::entities::attachment::format_bytes;
+use crate::entities::chat_file::{ChatFile, is_text_like, sanitize_name, sniff_image};
 use crate::entities::profile::ToolId;
-use crate::shared::config::PythonMode;
-use crate::shared::sandbox::{SandboxAvailability, SandboxRunner};
+use crate::features::chat_files::{self, Stored};
+use crate::shared::config::{MAX_TOOL_RESULT_IMAGES, PythonMode};
+use crate::shared::i18n::Locale;
+use crate::shared::sandbox::{
+    OutputFile, OutputLimits, SandboxAvailability, SandboxOutput, SandboxRunner, SkipReason,
+    SkippedOutput,
+};
 
-use super::{Tool, ToolContext, ToolOutcome};
+use super::{ChatEffect, Tool, ToolContext, ToolImage, ToolOutcome};
 
 /// Execution timeout in local mode.
 const LOCAL_TIMEOUT: Duration = Duration::from_secs(10);
 /// Maximum size of captured output (characters) — protection against a flood.
 const MAX_OUTPUT_CHARS: usize = 8000;
+/// How much of a text-like output its entry quotes (docs/sandbox-file-exchange.md F5 (c)).
+const TEXT_HEAD_BYTES: usize = 1024;
 
 /// `python_exec` — executes the given Python code and returns stdout/stderr.
 pub struct PythonExec {
@@ -39,6 +48,10 @@ pub struct PythonExec {
     net: bool,
     /// Execution timeout in the sandbox (Wasmer).
     wasm_timeout: Duration,
+    /// Whether an image the code saved to `/w/out` is shown to the model
+    /// (`tools.python_images`, docs/sandbox-file-exchange.md §11 S8). The description reads
+    /// it too, so what the model is told and what it gets cannot disagree.
+    images: bool,
 }
 
 impl PythonExec {
@@ -55,7 +68,14 @@ impl PythonExec {
             sandbox,
             net,
             wasm_timeout,
+            images: true,
         }
+    }
+
+    /// Sets whether the images the code saves are shown to the model (builder-style).
+    pub fn with_images(mut self, images: bool) -> Self {
+        self.images = images;
+        self
     }
 
     /// The interpreter's name/path with a sensible platform default (Local).
@@ -114,34 +134,173 @@ impl PythonExec {
         }
     }
 
-    /// Wasmer sandbox mode. Returns an already-formatted result text in
-    /// the language `loc`.
-    async fn run_wasmer(&self, code: &str, loc: &crate::shared::i18n::Locale) -> String {
-        match self.sandbox.availability(loc) {
-            SandboxAvailability::Missing(why) => {
-                loc.tf("tool.python_exec.err.sandbox_missing", &[("why", &why)])
+    /// Wasmer sandbox mode: the console output, and what the code left in `/w/out` kept in
+    /// the chat's folder (docs/sandbox-file-exchange.md §11 S5–S9). The result is in the
+    /// profile's language (`ctx.loc`).
+    async fn run_wasmer(&self, code: &str, ctx: &ToolContext) -> ToolOutcome {
+        let loc = ctx.loc;
+        if let SandboxAvailability::Missing(why) = self.sandbox.availability(loc) {
+            return ToolOutcome::text(
+                loc.tf("tool.python_exec.err.sandbox_missing", &[("why", &why)]),
+            );
+        }
+        let out = match self
+            .sandbox
+            .run(code, self.net, self.wasm_timeout, loc)
+            .await
+        {
+            Ok(out) => out,
+            Err(e) => {
+                return ToolOutcome::text(
+                    loc.tf("tool.python_exec.err.sandbox", &[("e", &e.to_string())]),
+                );
             }
-            SandboxAvailability::Ready => {
-                match self
-                    .sandbox
-                    .run(code, self.net, self.wasm_timeout, loc)
-                    .await
-                {
-                    Ok(out) if out.timed_out => loc.tf(
-                        "tool.python_exec.err.timeout",
-                        &[("secs", &self.wasm_timeout.as_secs().to_string())],
-                    ),
-                    Ok(out) => format_output_parts(
-                        &out.stdout,
-                        &out.stderr,
-                        out.exit_code == Some(0),
-                        out.exit_code,
-                        loc,
-                    ),
-                    Err(e) => loc.tf("tool.python_exec.err.sandbox", &[("e", &e.to_string())]),
+        };
+        let kept = self.keep_outputs(ctx, &out);
+        let result = if out.timed_out {
+            let timeout = loc.tf(
+                "tool.python_exec.err.timeout",
+                &[("secs", &self.wasm_timeout.as_secs().to_string())],
+            );
+            match kept.section {
+                Some(section) => format!("{timeout}\n\n{section}"),
+                None => timeout,
+            }
+        } else {
+            let console = || {
+                format_output_parts(
+                    &out.stdout,
+                    &out.stderr,
+                    out.exit_code == Some(0),
+                    out.exit_code,
+                    loc,
+                )
+            };
+            // A run that printed nothing and saved files opens with what it saved: the
+            // "(empty output, success)" line would say nothing the section does not.
+            let quiet = out.stdout.trim().is_empty()
+                && out.stderr.trim().is_empty()
+                && out.exit_code == Some(0);
+            match kept.section {
+                Some(section) if quiet => section,
+                Some(section) => format!("{}\n\n{section}", console()),
+                None => console(),
+            }
+        };
+        ToolOutcome::with_effects(result, kept.effects).with_images(kept.images)
+    }
+
+    /// Stores what the call left in `/w/out` in the chat's folder and says what became of
+    /// each entry: the result's `files:` section (§11 S9), a listing effect per new file
+    /// (S7), and the images the model is shown (S8). Nothing when `/w/out` held nothing.
+    fn keep_outputs(&self, ctx: &ToolContext, out: &SandboxOutput) -> Kept {
+        let loc = ctx.loc;
+        let mut kept = Kept::default();
+        if out.files.is_empty() && out.skipped.is_empty() {
+            return kept;
+        }
+        let mut lines = Vec::new();
+        match &ctx.files_dir {
+            Some(dir) => {
+                if !out.files.is_empty() {
+                    lines.push(loc.tf(
+                        "tool.python_exec.files.saved_in",
+                        &[("dir", &dir.display().to_string())],
+                    ));
+                }
+                let mut listed = ctx.files.to_vec();
+                for file in &out.files {
+                    lines.extend(self.keep_one(loc, dir, &mut listed, file, &mut kept));
                 }
             }
+            None => lines.push(loc.t("tool.python_exec.files.no_folder").to_string()),
         }
+        lines.extend(out.skipped.iter().map(|s| skipped_line(loc, s)));
+        kept.section = Some(format!("files:\n{}", lines.join("\n")));
+        kept
+    }
+
+    /// Keeps one collected file under a sanitized, free name and returns its lines: the
+    /// entry, then the head of a text-like file. `listed` grows by what was stored, so a
+    /// second file of the same call versions against the first.
+    fn keep_one(
+        &self,
+        loc: &Locale,
+        dir: &std::path::Path,
+        listed: &mut Vec<ChatFile>,
+        file: &OutputFile,
+        kept: &mut Kept,
+    ) -> Vec<String> {
+        let Some(name) = sanitize_name(&file.name) else {
+            return vec![skipped_with(
+                loc,
+                &file.name,
+                loc.t("tool.python_exec.files.reason.bad_name"),
+            )];
+        };
+        let stored = match chat_files::store(dir, listed, &name, &file.bytes) {
+            Ok(Stored::New(stored)) => stored,
+            Ok(Stored::Unchanged(existing)) => {
+                return vec![loc.tf(
+                    "tool.python_exec.files.unchanged",
+                    &[("name", &file.name), ("stored", &existing.name)],
+                )];
+            }
+            Err(e) => {
+                let reason = loc.tf(
+                    "tool.python_exec.files.reason.write_failed",
+                    &[("err", &e.to_string())],
+                );
+                return vec![skipped_with(loc, &file.name, &reason)];
+            }
+        };
+        let size = format_bytes(file.bytes.len());
+        let mut entry = if stored.name == file.name {
+            loc.tf(
+                "tool.python_exec.files.item",
+                &[
+                    ("name", &stored.name),
+                    ("size", &size),
+                    ("mime", &stored.mime),
+                ],
+            )
+        } else {
+            loc.tf(
+                "tool.python_exec.files.renamed",
+                &[
+                    ("name", &file.name),
+                    ("stored", &stored.name),
+                    ("size", &size),
+                    ("mime", &stored.mime),
+                ],
+            )
+        };
+        if let Some(mime) = sniff_image(&file.bytes) {
+            if !self.images {
+                entry.push_str(loc.t("tool.python_exec.files.not_shown_off"));
+            } else if kept.images.len() >= MAX_TOOL_RESULT_IMAGES {
+                entry.push_str(&loc.tf(
+                    "tool.python_exec.files.not_shown_cap",
+                    &[("max", &MAX_TOOL_RESULT_IMAGES.to_string())],
+                ));
+            } else {
+                use base64::Engine as _;
+                kept.images.push(ToolImage {
+                    mime: mime.to_string(),
+                    data: base64::engine::general_purpose::STANDARD.encode(&file.bytes),
+                });
+                entry.push_str(loc.t("tool.python_exec.files.shown"));
+            }
+        } else if stored.mime == "image/svg+xml" {
+            entry.push_str(loc.t("tool.python_exec.files.svg"));
+        }
+        let mut lines = vec![entry];
+        if is_text_like(&stored.mime) {
+            lines.extend(text_head(&file.bytes, TEXT_HEAD_BYTES));
+        }
+        listed.push(stored.clone());
+        kept.effects.push(ChatEffect::AddChatFile(Box::new(stored)));
+        lines
     }
 }
 
@@ -173,7 +332,27 @@ impl Tool for PythonExec {
                 } else {
                     loc.t("tool.python_exec.net.off")
                 };
-                loc.tf("tool.python_exec.desc.wasmer", &[("net", net)])
+                // What `/w/out` does, with the caps and the images sentence built from the
+                // same values the run uses (docs/sandbox-file-exchange.md §11 S10).
+                let limits = OutputLimits::DEFAULT;
+                let images = if self.images {
+                    loc.t("tool.python_exec.desc.images_on")
+                } else {
+                    loc.t("tool.python_exec.desc.images_off")
+                };
+                let files = loc.tf(
+                    "tool.python_exec.desc.files",
+                    &[
+                        ("files", &limits.max_files.to_string()),
+                        ("file", &format_bytes(limits.max_file_bytes as usize)),
+                        ("total", &format_bytes(limits.max_total_bytes as usize)),
+                        ("images", images),
+                    ],
+                );
+                format!(
+                    "{} {files}",
+                    loc.tf("tool.python_exec.desc.wasmer", &[("net", net)])
+                )
             }
         }
     }
@@ -192,11 +371,10 @@ impl Tool for PythonExec {
             .ok_or_else(|| anyhow::anyhow!(ctx.loc.t("tool.python_exec.err.code_empty")))?
             .to_string();
 
-        let result = match self.mode {
-            PythonMode::Local => self.run_local(&code, ctx.loc).await,
-            PythonMode::Wasmer => self.run_wasmer(&code, ctx.loc).await,
-        };
-        Ok(ToolOutcome::text(result))
+        Ok(match self.mode {
+            PythonMode::Local => ToolOutcome::text(self.run_local(&code, ctx.loc).await),
+            PythonMode::Wasmer => self.run_wasmer(&code, ctx).await,
+        })
     }
 }
 
@@ -234,6 +412,83 @@ fn truncate(s: &str, max: usize, loc: &crate::shared::i18n::Locale) -> String {
         let cut: String = s.chars().take(max).collect();
         format!("{cut}\n{}", loc.t("python.truncated"))
     }
+}
+
+/// What keeping a call's outputs produced.
+#[derive(Default)]
+struct Kept {
+    /// The result's `files:` section; `None` when `/w/out` held nothing.
+    section: Option<String>,
+    effects: Vec<ChatEffect>,
+    images: Vec<ToolImage>,
+}
+
+/// The `not kept` entry of an output the sandbox did not collect, with its reason — a
+/// folder named as one, so the fix ("directly into /w/out") reads off the name.
+fn skipped_line(loc: &Locale, skipped: &SkippedOutput) -> String {
+    let limits = OutputLimits::DEFAULT;
+    let reason = match skipped.reason {
+        SkipReason::Directory => loc.t("tool.python_exec.files.reason.directory").to_string(),
+        SkipReason::NotAFile => loc
+            .t("tool.python_exec.files.reason.not_a_file")
+            .to_string(),
+        SkipReason::TooLarge => loc.tf(
+            "tool.python_exec.files.reason.too_large",
+            &[("max", &format_bytes(limits.max_file_bytes as usize))],
+        ),
+        SkipReason::TooMany => loc.tf(
+            "tool.python_exec.files.reason.too_many",
+            &[("max", &limits.max_files.to_string())],
+        ),
+        SkipReason::OverTotal => loc.tf(
+            "tool.python_exec.files.reason.over_total",
+            &[("max", &format_bytes(limits.max_total_bytes as usize))],
+        ),
+        SkipReason::Unreadable => loc
+            .t("tool.python_exec.files.reason.unreadable")
+            .to_string(),
+        SkipReason::TimedOut => loc.t("tool.python_exec.files.reason.timed_out").to_string(),
+    };
+    let name = if skipped.reason == SkipReason::Directory {
+        format!("{}/", skipped.name)
+    } else {
+        skipped.name.clone()
+    };
+    skipped_with(loc, &name, &reason)
+}
+
+/// One `not kept` entry.
+fn skipped_with(loc: &Locale, name: &str, reason: &str) -> String {
+    loc.tf(
+        "tool.python_exec.files.skipped",
+        &[("name", name), ("reason", reason)],
+    )
+}
+
+/// The first lines of a text-like output, quoted under its entry (F5 (c)): at most `max`
+/// bytes, whole lines when the file holds more, each behind `  | ` — never mistaken for a
+/// section label — and `  | …` when cut. Nothing for bytes holding a NUL: not text,
+/// whatever the extension says.
+fn text_head(bytes: &[u8], max: usize) -> Vec<String> {
+    let cut = bytes.len() > max;
+    let head = &bytes[..bytes.len().min(max)];
+    if head.contains(&0) {
+        return Vec::new();
+    }
+    let decoded = String::from_utf8_lossy(head);
+    let text: &str = match decoded.rfind('\n') {
+        Some(end) if cut => &decoded[..end],
+        _ => &decoded,
+    };
+    let mut lines: Vec<String> = text
+        .trim_end()
+        .lines()
+        .map(|l| format!("  | {l}"))
+        .collect();
+    if cut && !lines.is_empty() {
+        lines.push("  | …".to_string());
+    }
+    lines
 }
 
 #[cfg(test)]
@@ -326,6 +581,7 @@ mod tests {
             stderr: String::new(),
             exit_code: Some(0),
             timed_out: false,
+            ..Default::default()
         }));
         let tool = wasmer(sb.clone(), true);
         let out = tool
@@ -348,6 +604,7 @@ mod tests {
             stderr: String::new(),
             exit_code: None,
             timed_out: true,
+            ..Default::default()
         }));
         let out = wasmer(sb, false)
             .invoke(&ctx, serde_json::json!({"code": "while True: pass"}))
@@ -402,6 +659,244 @@ mod tests {
             let d = wasmer(sb.clone(), true).description(crate::shared::i18n::locale(*lang));
             assert!(d.contains("/tmp"), "{lang:?} does not name /tmp: {d}");
         }
+    }
+
+    const PNG: &[u8] = b"\x89PNG\r\n\x1a\nnot-really-pixels";
+
+    /// A context whose chat keeps its files in a temp folder, on an en profile (the
+    /// assertions read English).
+    fn ctx_with_folder() -> (tempfile::TempDir, tempfile::TempDir, ToolContext) {
+        let (dir, _storage, mut ctx) = ctx_with_storage_lang(Uuid::new_v4(), Lang::En);
+        let folder = tempfile::tempdir().unwrap();
+        ctx.files_dir = Some(folder.path().to_path_buf());
+        (dir, folder, ctx)
+    }
+
+    fn out_file(name: &str, bytes: &[u8]) -> OutputFile {
+        OutputFile {
+            name: name.into(),
+            bytes: bytes.to_vec(),
+        }
+    }
+
+    fn stored_names(out: &ToolOutcome) -> Vec<String> {
+        out.effects
+            .iter()
+            .filter_map(|e| match e {
+                ChatEffect::AddChatFile(f) => Some(f.name.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    async fn run_mock(tool: PythonExec, ctx: &ToolContext) -> ToolOutcome {
+        tool.invoke(ctx, serde_json::json!({"code": "print(1)"}))
+            .await
+            .unwrap()
+    }
+
+    fn saved(files: Vec<OutputFile>) -> Arc<MockSandbox> {
+        Arc::new(MockSandbox::ready(SandboxOutput {
+            exit_code: Some(0),
+            files,
+            ..Default::default()
+        }))
+    }
+
+    #[tokio::test]
+    async fn outputs_are_stored_listed_and_an_image_is_shown() {
+        let (_d, folder, ctx) = ctx_with_folder();
+        let sb = Arc::new(MockSandbox::ready(SandboxOutput {
+            stdout: "done\n".into(),
+            exit_code: Some(0),
+            files: vec![
+                out_file("chart.png", PNG),
+                out_file("totals.csv", b"month,total\n2024-01,7\n"),
+            ],
+            skipped: vec![SkippedOutput {
+                name: "charts".into(),
+                reason: SkipReason::Directory,
+            }],
+            ..Default::default()
+        }));
+        let out = run_mock(wasmer(sb, false), &ctx).await;
+        let r = &out.result;
+        assert!(r.starts_with("stdout:\ndone"), "{r}");
+        assert!(r.contains("\n\nfiles:\n"), "{r}");
+        assert!(r.contains(&folder.path().display().to_string()), "{r}");
+        assert!(r.contains("image/png — shown to you below"), "{r}");
+        assert!(r.contains("  | month,total\n  | 2024-01,7"), "{r}");
+        assert!(r.contains("- charts/ — not kept: a folder"), "{r}");
+        assert_eq!(stored_names(&out), ["chart.png", "totals.csv"]);
+        assert_eq!(out.images.len(), 1);
+        assert_eq!(out.images[0].mime, "image/png");
+        assert_eq!(std::fs::read(folder.path().join("chart.png")).unwrap(), PNG);
+    }
+
+    /// §10's finding, pinned: when an image is not shown the result says so in words, or
+    /// the model describes a chart it has not seen.
+    #[tokio::test]
+    async fn with_images_off_the_file_is_kept_and_the_model_is_told_it_has_not_seen_it() {
+        let (_d, folder, ctx) = ctx_with_folder();
+        let tool = wasmer(saved(vec![out_file("chart.png", PNG)]), false).with_images(false);
+        let out = run_mock(tool, &ctx).await;
+        assert!(out.images.is_empty());
+        assert!(
+            out.result.contains("you have not seen it"),
+            "{}",
+            out.result
+        );
+        assert_eq!(stored_names(&out), ["chart.png"]);
+        assert!(folder.path().join("chart.png").exists());
+    }
+
+    #[tokio::test]
+    async fn at_most_four_images_are_shown_and_the_one_past_the_cap_says_so() {
+        let (_d, _folder, ctx) = ctx_with_folder();
+        let files = (1u8..=5)
+            .map(|i| out_file(&format!("{i}.png"), &[PNG, &[i]].concat()))
+            .collect();
+        let out = run_mock(wasmer(saved(files), false), &ctx).await;
+        assert_eq!(out.images.len(), MAX_TOOL_RESULT_IMAGES);
+        assert_eq!(
+            out.result
+                .matches("at most 4 images are shown per call")
+                .count(),
+            1,
+            "{}",
+            out.result
+        );
+        assert_eq!(stored_names(&out).len(), 5);
+    }
+
+    #[tokio::test]
+    async fn a_run_that_printed_nothing_but_saved_a_file_opens_with_the_section() {
+        let (_d, _folder, ctx) = ctx_with_folder();
+        let out = run_mock(wasmer(saved(vec![out_file("a.txt", b"hi")]), false), &ctx).await;
+        assert!(out.result.starts_with("files:\n"), "{}", out.result);
+        assert!(!out.result.contains("empty output"), "{}", out.result);
+    }
+
+    #[tokio::test]
+    async fn a_taken_name_is_versioned_and_the_same_bytes_are_not_saved_or_shown_twice() {
+        let (_d, folder, mut ctx) = ctx_with_folder();
+        let older = ChatFile::new(
+            "chart.png",
+            crate::entities::chat_file::FileOrigin::Sandbox,
+            b"older",
+        );
+        std::fs::write(folder.path().join("chart.png"), b"older").unwrap();
+        ctx.files = Arc::from(vec![older.clone()]);
+        let sb = saved(vec![out_file("chart.png", PNG)]);
+        let out = run_mock(wasmer(sb.clone(), false), &ctx).await;
+        assert!(
+            out.result
+                .contains("- chart.png → saved as chart (2).png — "),
+            "{}",
+            out.result
+        );
+        let Some(ChatEffect::AddChatFile(stored)) = out.effects.first() else {
+            panic!("expected a listing: {:?}", out.effects);
+        };
+        // The turn's mirror, as the loop keeps it.
+        ctx.files = Arc::from(vec![older, (**stored).clone()]);
+        let again = run_mock(wasmer(sb, false), &ctx).await;
+        assert!(again.effects.is_empty(), "{:?}", again.effects);
+        assert!(again.images.is_empty());
+        assert!(again.result.contains("unchanged"), "{}", again.result);
+    }
+
+    #[tokio::test]
+    async fn a_timed_out_run_keeps_nothing_and_names_what_it_left() {
+        let (_d, _folder, ctx) = ctx_with_folder();
+        let sb = Arc::new(MockSandbox::ready(SandboxOutput {
+            timed_out: true,
+            skipped: vec![SkippedOutput {
+                name: "half.png".into(),
+                reason: SkipReason::TimedOut,
+            }],
+            ..Default::default()
+        }));
+        let out = run_mock(wasmer(sb, false), &ctx).await;
+        assert!(
+            out.result.contains("exceeded the time limit"),
+            "{}",
+            out.result
+        );
+        assert!(
+            out.result
+                .contains("- half.png — not kept: the call timed out"),
+            "{}",
+            out.result
+        );
+        assert!(out.effects.is_empty());
+    }
+
+    #[tokio::test]
+    async fn without_a_chat_folder_nothing_is_kept_and_the_result_says_so() {
+        let (_d, _s, ctx) = ctx_with_storage_lang(Uuid::new_v4(), Lang::En);
+        let out = run_mock(wasmer(saved(vec![out_file("a.png", PNG)]), false), &ctx).await;
+        assert!(
+            out.result.contains("Nothing saved to /w/out was kept"),
+            "{}",
+            out.result
+        );
+        assert!(out.effects.is_empty() && out.images.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_reserved_name_is_saved_renamed_and_an_svg_is_only_saved() {
+        let (_d, folder, ctx) = ctx_with_folder();
+        let files = vec![
+            out_file("CON.txt", b"x"),
+            out_file("drawing.svg", b"<svg/>"),
+        ];
+        let out = run_mock(wasmer(saved(files), false), &ctx).await;
+        assert!(
+            out.result.contains("- CON.txt → saved as _CON.txt"),
+            "{}",
+            out.result
+        );
+        assert!(
+            out.result.contains("an SVG is not shown to you"),
+            "{}",
+            out.result
+        );
+        assert!(out.images.is_empty());
+        assert!(folder.path().join("_CON.txt").exists());
+    }
+
+    #[test]
+    fn the_description_names_the_output_folder_its_caps_and_whether_images_are_shown() {
+        let sb: Arc<dyn SandboxRunner> = Arc::new(MockSandbox::missing("x"));
+        for lang in Lang::ALL {
+            let loc = crate::shared::i18n::locale(*lang);
+            let on = wasmer(sb.clone(), false).description(loc);
+            let off = wasmer(sb.clone(), false)
+                .with_images(false)
+                .description(loc);
+            for d in [&on, &off] {
+                assert!(d.contains("/w/out"), "{lang:?}: {d}");
+                assert!(d.contains("matplotlib"), "{lang:?}: {d}");
+                assert!(
+                    d.contains("25.0 MB") && d.contains("50.0 MB"),
+                    "{lang:?}: {d}"
+                );
+            }
+            assert!(on.contains("savefig('/w/out/"), "{lang:?}: {on}");
+            assert!(!off.contains("savefig('/w/out/"), "{lang:?}: {off}");
+        }
+    }
+
+    #[test]
+    fn a_text_head_quotes_whole_lines_and_marks_a_cut() {
+        assert_eq!(text_head(b"a,b\r\n1,2\n", 1024), ["  | a,b", "  | 1,2"]);
+        let long = "row\n".repeat(400);
+        assert_eq!(
+            text_head(long.as_bytes(), 10),
+            ["  | row", "  | row", "  | …"]
+        );
+        assert!(text_head(b"PK\x03\x04\0\0", 1024).is_empty());
     }
 
     /// Real execution in the sandbox (manual): requires an installed `wasmer`
@@ -723,6 +1218,80 @@ print('pillow', png.getvalue()[:4] == b'\x89PNG')
             second.contains("clean") && !second.contains("INJECTED"),
             "got: {second}"
         );
+    }
+
+    /// Outputs from a real sandbox (docs/sandbox-file-exchange.md §8, stage 2): a
+    /// matplotlib chart and a CSV saved to `/w/out` are kept and the chart is shown,
+    /// although the script then exits with 3; a folder in `/w/out` is named, not walked;
+    /// and the violations are attempted — a link to the job script and a file written
+    /// beside `/w/out` must not come back. Under wasmer 7.2.0 a guest link never reaches
+    /// the host directory at all (measured: `os.symlink` succeeds and the guest reads
+    /// through it, while the host `out/` stays empty); where one does, it must be named as
+    /// not kept, never read.
+    #[tokio::test]
+    #[ignore = "requires a provisioned sandbox (MINDFORK_SANDBOX_DIR)"]
+    async fn outputs_are_kept_from_a_real_sandbox() {
+        let Some(tool) = provisioned(false, 120) else {
+            return;
+        };
+        let (_d, folder, ctx) = ctx_with_folder();
+        let code = "import os\n\
+                    import matplotlib.pyplot as plt\n\
+                    plt.bar(['a', 'b'], [3, 5])\n\
+                    plt.savefig('/w/out/chart.png')\n\
+                    open('/w/out/totals.csv', 'w').write('k,v\\na,3\\nb,5\\n')\n\
+                    os.makedirs('/w/out/nested', exist_ok=True)\n\
+                    open('/w/out/nested/inner.txt', 'w').write('x')\n\
+                    open('/w/beside.txt', 'w').write('not collected')\n\
+                    try:\n\
+                    \x20   os.symlink('/w/job.py', '/w/out/link.py')\n\
+                    \x20   print('link made')\n\
+                    except OSError as e:\n\
+                    \x20   print('no link', e)\n\
+                    raise SystemExit(3)";
+        let out = tool
+            .invoke(&ctx, serde_json::json!({ "code": code }))
+            .await
+            .unwrap();
+        let r = &out.result;
+        eprintln!("{r}");
+        assert_eq!(stored_names(&out), ["chart.png", "totals.csv"], "{r}");
+        assert_eq!(out.images.len(), 1, "{r}");
+        assert!(r.contains("exit code: 3"), "{r}");
+        assert!(r.contains("- nested/ — not kept"), "{r}");
+        assert!(!r.contains("beside.txt"), "{r}");
+        // Whether or not the guest's link reached the host, nothing it names is kept.
+        let reached = r.contains("- link.py");
+        eprintln!("the guest's link reached the host directory: {reached}");
+        if reached {
+            assert!(r.contains("- link.py — not kept"), "{r}");
+        }
+        assert!(!folder.path().join("link.py").exists());
+        let chart = std::fs::read(folder.path().join("chart.png")).unwrap();
+        assert!(chart.starts_with(b"\x89PNG"), "not a PNG");
+    }
+
+    /// A timed-out call keeps none of its outputs — they may be half-written — and says
+    /// which ones it left.
+    #[tokio::test]
+    #[ignore = "requires a provisioned sandbox (MINDFORK_SANDBOX_DIR)"]
+    async fn a_timed_out_call_keeps_none_of_its_outputs() {
+        let Some(tool) = provisioned(false, 8) else {
+            return;
+        };
+        let (_d, folder, ctx) = ctx_with_folder();
+        let code = "open('/w/out/early.txt', 'w').write('x')\nwhile True: pass";
+        let out = tool
+            .invoke(&ctx, serde_json::json!({ "code": code }))
+            .await
+            .unwrap();
+        let r = &out.result;
+        assert!(out.effects.is_empty(), "{r}");
+        assert!(
+            r.contains("- early.txt — not kept: the call timed out"),
+            "{r}"
+        );
+        assert!(!folder.path().join("early.txt").exists());
     }
 
     /// requests over HTTPS with network access enabled.

@@ -229,6 +229,7 @@ impl Orchestrator {
         let kind = run.kind;
         let label = run.name.clone().unwrap_or_else(|| run.title.clone());
         let mut attached = Vec::new();
+        let mut stored = Vec::new();
         let mut live = false;
         let mut landed = false;
         if let Some(chat) = self.chat_mut(chat_id) {
@@ -238,8 +239,12 @@ impl Orchestrator {
                 landed = true;
             }
             for effect in effects {
-                if let ChatEffect::AddAttachment(a) = effect {
-                    attached.push(*a);
+                match effect {
+                    ChatEffect::AddAttachment(a) => attached.push(*a),
+                    ChatEffect::AddChatFile(f) => stored.push(*f),
+                    // Identity effects went to the run itself; only the environment's
+                    // reach the chat (spec §9.3.2).
+                    ChatEffect::SetSystemMessage(_) | ChatEffect::SetSamplingOverride(_) => {}
                 }
             }
         }
@@ -252,6 +257,7 @@ impl Orchestrator {
         for a in attached {
             self.insert_attachment(chat_id, a, None);
         }
+        self.list_stored_files(chat_id, stored);
         self.emit_chat_list();
         // Titled at landing like a turn child (spec §9.3.2): the run's
         // question and reply arrive together here too.

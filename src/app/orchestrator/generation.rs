@@ -25,7 +25,7 @@ use crate::features::tools::{
 };
 use crate::shared::api::{
     ApiMessage, ApiToolCall, ChatChunk, ChatRequest, EngineBackend, FinishReason,
-    ThinkingAccumulator, ThinkingBlock, ThinkingRef, ToolCallAccumulator,
+    ThinkingAccumulator, ThinkingBlock, ThinkingRef, ToolCallAccumulator, VisionSupport,
 };
 use crate::shared::config::ServerMode;
 use crate::shared::session_budget::SessionBudget;
@@ -585,6 +585,9 @@ impl Orchestrator {
                 .workspace_dir()
                 .join(active_id.to_string())
         });
+        // Where `python_exec` keeps what the code saved (docs/sandbox-file-exchange.md
+        // §11 S5): every chat has one, created with its first file.
+        let files_dir = self.stored_files_dir(active_id);
         // The effective set = profile ∩ global switches (spec §9.4).
         let allowed = effective_tool_ids(
             &enabled,
@@ -746,6 +749,10 @@ impl Orchestrator {
                 other_chats: std::sync::Arc::from(other_chats),
                 workspace: workspace.clone(),
                 workspace_journal,
+                files_dir: Some(files_dir),
+                // The chat's stored files, which a call versions its names against
+                // (docs/sandbox-file-exchange.md §11 S5).
+                files: std::sync::Arc::from(chat.files.clone()),
                 lang: profile_lang,
                 cancel: cancel.clone(),
                 model_name: model_name.clone(),
@@ -956,9 +963,10 @@ impl Orchestrator {
             .filter(|run| run.final_reply().is_some())
             .map(|run| run.id)
             .collect();
-        // Attachments a tool produced this turn (spec §9.9) — applied below,
-        // outside the `chat` borrow.
-        let mut attached: Vec<crate::entities::attachment::Attachment> = Vec::new();
+        // Attachments a tool produced this turn (spec §9.9) and the files it stored
+        // (docs/sandbox-file-exchange.md §11 S7) — applied below, outside the `chat`
+        // borrow.
+        let mut landed = Landed::default();
         if let Some(chat) = self.chat_mut(res.chat_id) {
             // Discarded by the "rewrite" tool — into the deleted archive (manual
             // recovery by editing JSON), like Ctrl+E/Ctrl+R. See spec §9.3, §11.7.
@@ -971,16 +979,17 @@ impl Orchestrator {
                 chat.push_message(msg);
             }
             // Tool effects are applied by the orchestrator (the owner of Chat, §4.4.2).
-            attached = apply_effects(chat, res.effects);
+            landed = apply_effects(chat, res.effects);
             self.mark_dirty(res.chat_id);
             self.emit_chat_list();
         }
         // The same path `/file attach` takes — one place decides what attaching
         // entails (spec §9.7). A turn cancelled after the tool ran still gets
         // here: the transcript was already paid for.
-        for a in attached {
+        for a in landed.attached {
             self.insert_attachment(res.chat_id, a, None);
         }
+        self.list_stored_files(res.chat_id, landed.stored);
         // A background run that ended while this turn ran: its notification
         // goes after the turn's rows, and the assistant may be woken on it
         // (docs/research/background-subagents.md §4.4). Before the silent
@@ -1137,25 +1146,30 @@ fn land_continuation(chat: &mut crate::entities::chat::Chat, res: &mut GenResult
     }
 }
 
-/// Applies one turn's tool effects to `chat` and returns the attachments among
-/// them.
-///
-/// An attachment needs the whole orchestrator (index prune, background
-/// indexing, the feed note), which cannot be had while `chat` is borrowed — so
-/// it is collected here and applied by the caller once the borrow ends.
-fn apply_effects(
-    chat: &mut crate::entities::chat::Chat,
-    effects: Vec<ChatEffect>,
-) -> Vec<crate::entities::attachment::Attachment> {
-    let mut attached = Vec::new();
+/// The effects of a turn the caller applies once the `chat` borrow ends.
+#[derive(Default)]
+struct Landed {
+    /// An attachment needs the whole orchestrator (index prune, background indexing,
+    /// the feed note), which cannot be had while `chat` is borrowed.
+    attached: Vec<crate::entities::attachment::Attachment>,
+    /// A stored file's listing goes through the same path a background run's landing
+    /// takes ([`Orchestrator::list_stored_files`]), so the two cannot drift.
+    stored: Vec<crate::entities::chat_file::ChatFile>,
+}
+
+/// Applies one turn's tool effects to `chat`: identity in place, and what needs the
+/// orchestrator collected for the caller.
+fn apply_effects(chat: &mut crate::entities::chat::Chat, effects: Vec<ChatEffect>) -> Landed {
+    let mut landed = Landed::default();
     for effect in effects {
         match effect {
             ChatEffect::SetSystemMessage(s) => chat.system_message = s,
             ChatEffect::SetSamplingOverride(s) => chat.sampling_override = Some(*s),
-            ChatEffect::AddAttachment(a) => attached.push(*a),
+            ChatEffect::AddAttachment(a) => landed.attached.push(*a),
+            ChatEffect::AddChatFile(f) => landed.stored.push(*f),
         }
     }
-    attached
+    landed
 }
 
 /// Which limit ended a turn — the two are enforced together and the message has
@@ -2268,6 +2282,7 @@ impl TurnLoop<'_> {
         // nothing. The loop still never touches `Chat` — this is its own
         // snapshot.
         sync_attachments(&mut self.ctx, &self.effects);
+        sync_files(&mut self.ctx, &self.effects);
 
         // The turn was cancelled while tools were executing — what's
         // accumulated is already saved above, don't start the next round.
@@ -2613,15 +2628,35 @@ impl TurnLoop<'_> {
         tool_msgs: &mut Vec<Message>,
     ) {
         let CallResult {
-            text: result,
+            text: mut result,
             images,
             subagent,
         } = result;
         let is_control = control::is_control_tool(&call.name);
-        // Decoded and downscaled here, once, so the same prepared bytes go into the
-        // request and into the stored message — the object the model sees and the object
-        // the chat keeps must be one (spec §9.10).
-        let images = prepare_tool_images(images, self.shared.image_cfg).await;
+        // Nothing the model cannot take is sent, and nothing withheld goes unsaid
+        // (docs/sandbox-file-exchange.md §11 S8): a result that promised an image the
+        // model never receives gets a chart described that it has not seen (§10).
+        let offered = images.len();
+        let images = if offered > 0 && self.ctx.engine.vision().await == VisionSupport::Unsupported
+        {
+            let note = self
+                .ctx
+                .loc
+                .tf("loop.images_no_vision", &[("n", &offered.to_string())]);
+            push_note(&mut result, &note);
+            Vec::new()
+        } else {
+            // Decoded and downscaled here, once, so the same prepared bytes go into the
+            // request and into the stored message — the object the model sees and the
+            // object the chat keeps must be one (spec §9.10).
+            let prepared = prepare_tool_images(images, self.shared.image_cfg).await;
+            if prepared.len() < offered {
+                let dropped = (offered - prepared.len()).to_string();
+                let note = self.ctx.loc.tf("loop.images_dropped", &[("n", &dropped)]);
+                push_note(&mut result, &note);
+            }
+            prepared
+        };
         // A UI tool block — only for regular executed calls (the internal
         // followup/rewrite ones, and ones skipped during a rewrite, don't get one).
         if !is_control && !rewrite && !announced {
@@ -3535,7 +3570,7 @@ async fn run_child(
         match effect {
             ChatEffect::SetSystemMessage(s) => run.system_message = s,
             ChatEffect::SetSamplingOverride(s) => run.sampling_override = Some(*s),
-            a @ ChatEffect::AddAttachment(_) => effects.push(a),
+            a @ (ChatEffect::AddAttachment(_) | ChatEffect::AddChatFile(_)) => effects.push(a),
         }
     }
 
@@ -4552,9 +4587,9 @@ impl From<String> for CallResult {
 ///
 /// The same preparation a user's `/image attach` gets, for the same reasons (spec §9.10):
 /// third-party pixels must not cost more than the user's own, and a provider that takes
-/// only png/jpeg must not be handed a webp. An image that fails to decode is **dropped**
-/// rather than reported: the tool's own text already said what it returned, and a
-/// half-broken picture is not something the model can act on.
+/// only png/jpeg must not be handed a webp. An image that fails to decode, or is over
+/// `images.max_bytes`, is **dropped** — a half-broken picture is not something the model
+/// can act on — and the caller says how many were (docs/sandbox-file-exchange.md §11 S8).
 async fn prepare_tool_images(
     images: Vec<crate::features::tools::ToolImage>,
     cfg: crate::shared::config::ImageSettings,
@@ -4594,6 +4629,14 @@ async fn prepare_tool_images(
     .unwrap_or_default()
 }
 
+/// Appends a note to a tool's result, a blank line after what the tool said.
+fn push_note(result: &mut String, note: &str) {
+    if !result.is_empty() {
+        result.push_str("\n\n");
+    }
+    result.push_str(note);
+}
+
 /// The file extension matching a prepared image's MIME type.
 fn ext_of(mime: &str) -> &'static str {
     if mime == "image/jpeg" { "jpg" } else { "png" }
@@ -4626,6 +4669,33 @@ pub(super) fn sync_attachments(ctx: &mut ToolContext, effects: &[ChatEffect]) {
         list.push(a.clone());
     }
     ctx.attachments = list.into();
+}
+
+/// Rebuilds the turn's stored-file snapshot from the `AddChatFile` effects so far, with
+/// the rule the landing applies (a name already listed stays as it is) — so the next
+/// round's `python_exec` versions its names against the files this turn already made
+/// (docs/sandbox-file-exchange.md §11 S5). A no-op in a round without such an effect.
+pub(super) fn sync_files(ctx: &mut ToolContext, effects: &[ChatEffect]) {
+    let added: Vec<&crate::entities::chat_file::ChatFile> = effects
+        .iter()
+        .filter_map(|e| match e {
+            ChatEffect::AddChatFile(f) => Some(f.as_ref()),
+            _ => None,
+        })
+        .collect();
+    if added.is_empty() {
+        return;
+    }
+    let mut list: Vec<crate::entities::chat_file::ChatFile> = ctx.files.to_vec();
+    for f in added {
+        if !list
+            .iter()
+            .any(|x| crate::entities::chat_file::same_name(&x.name, &f.name))
+        {
+            list.push(f.clone());
+        }
+    }
+    ctx.files = list.into();
 }
 
 /// The feed note for a failed turn.
