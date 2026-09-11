@@ -329,6 +329,20 @@ split by subsystem.
 
 ### Fixed
 
+- **Files in an older encoding are read — and edited — as they are.** A text
+  file saved in windows-1251, KOI8-R or cp866, or as Notepad's "Unicode",
+  reached the assistant with every Russian letter replaced by `�` — when it
+  read the file and in the project tools — could not be found by its words,
+  and was refused by `/file attach` and `/rag add`. Worse, an edit the
+  assistant made in an attached project **rewrote the whole file**: every
+  letter it did not touch became `�` on disk, while the changes screen showed
+  a single changed line. Files are now read in their own encoding (for a
+  short file the interface language helps guess it); the project tools and
+  the attach note say which encoding when it is not UTF-8; an edit is written
+  back in the file's own encoding, and refused with nothing written when that
+  encoding cannot hold the new text; and the changes screen no longer calls a
+  changed file unchanged. A file an earlier edit damaged stays on that chat's
+  changes screen, where `r` puts back the original.
 - **Pages in an older encoding are readable.** Reading a web page and web
   search took every page for UTF-8 whatever it declared, so a page in
   windows-1251, KOI8-R, Shift_JIS or GBK — common on older sites — came

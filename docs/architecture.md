@@ -600,17 +600,28 @@ src/
    │                       user types that one). See spec §9.3
    ├─ http_text.rs         a fetched page's body → text, for both readers of
    │                       model-chosen pages (fetch_url, web_search's result
-   │                       fetches). Content-Encoding undone first (gzip/deflate:
-   │                       the request advertises none, some servers compress
-   │                       anyway; inflated size bounded, an unknown coding an
-   │                       error), then the encoding by an order: BOM → the bytes
-   │                       when they read as UTF-8 (more characters decode than
-   │                       sequences break) → pure ASCII: what is declared → a
-   │                       declaration the bytes do not refute (Content-Type
-   │                       charset, <meta>/XML declaration up to <body>; a
-   │                       disagreement settled by the detector) → chardetng with
-   │                       the host's TLD. reqwest's text() is NOT used: built
+   │                       fetches): Content-Encoding undone (gzip/deflate — the
+   │                       request advertises none, some servers compress anyway;
+   │                       inflated size bounded, an unknown coding an error),
+   │                       then text_decode with the Content-Type and the host's
+   │                       TLD as the hint. reqwest's text() is NOT used: built
    │                       without `charset`, it is from_utf8_lossy. See spec §9.3.1
+   ├─ text_decode.rs       bytes → text by an order: BOM → the bytes when they read
+   │                       as UTF-8 (more characters decode than sequences break)
+   │                       → pure ASCII: what is declared → a declaration the bytes
+   │                       do not refute (Content-Type charset, <meta>/XML
+   │                       declaration up to <body>; a disagreement settled by
+   │                       whether the detector's guess reads like one) →
+   │                       chardetng with a TLD hint. Transport-free, and its
+   │                       local-file side serves fs_read, the code tools'
+   │                       TextFile, the changes screen, /file attach and /rag:
+   │                       decode_file (a NUL is binary unless the file is whole
+   │                       BOM'd UTF-16; <meta> read only for markup, by
+   │                       extension), encode (names the character an encoding
+   │                       cannot store; UTF-16 written by hand), round_trips (the
+   │                       check an edit is written back behind), tld_hint (the
+   │                       interface language → the detector's hint)
+   │                       (docs/research/local-file-encoding.md §3)
    ├─ ui.rs                small rendering helpers: dim_background, scrollbar,
    │                       ListScroll (a list's scroll offset kept between frames —
    │                       the ONLY place a ListState is built; see spec §11.2),

@@ -108,8 +108,9 @@ impl ChangeSet {
 /// Builds the change set for one chat: every journaled file, diffed against what
 /// is on disk now.
 ///
-/// Blocking file I/O — the caller runs it off the async runtime.
-pub fn build(journal_dir: &Path, root: &str) -> ChangeSet {
+/// Blocking file I/O — the caller runs it off the async runtime. `hint` is the encoding
+/// detector's, the interface language's TLD — what the tools that wrote the files had.
+pub fn build(journal_dir: &Path, root: &str, hint: Option<&str>) -> ChangeSet {
     let journal = Journal::new(journal_dir.to_path_buf());
     // The journal is the chat's, `root` is the chat's *current* workspace, and
     // `/project attach` moves the second. It clears the journal when it does —
@@ -128,7 +129,7 @@ pub fn build(journal_dir: &Path, root: &str) -> ChangeSet {
         .into_iter()
         .map(|entry| {
             let baseline = journal.baseline_of(&entry.path).unwrap_or_default();
-            diff_file(root, &entry.path, entry.existed, &baseline)
+            diff_file(root, &entry.path, entry.existed, &baseline, hint)
         })
         .collect();
     ChangeSet {
@@ -158,7 +159,14 @@ fn resolve(root: &str, rel: &str) -> Option<PathBuf> {
 }
 
 /// One file's row: its state, its counts and its rendered diff.
-fn diff_file(root: &str, rel: &str, existed: bool, baseline: &[u8]) -> FileChange {
+fn diff_file(
+    root: &str,
+    rel: &str,
+    existed: bool,
+    baseline: &[u8],
+    hint: Option<&str>,
+) -> FileChange {
+    use crate::shared::text_decode;
     let row = |state: FileState, lines: Vec<DiffLine>| FileChange {
         path: rel.to_string(),
         state,
@@ -173,15 +181,37 @@ fn diff_file(root: &str, rel: &str, existed: bool, baseline: &[u8]) -> FileChang
         return row(FileState::Gone, Vec::new());
     };
     let too_large = current.len() as u64 > MAX_DIFF_BYTES || baseline.len() as u64 > MAX_DIFF_BYTES;
-    let binary = current.contains(&0) || baseline.contains(&0);
-    if too_large || binary {
+    // Text by the rule the tools read with — a NUL is binary unless the file is whole
+    // UTF-16 — and both sides in the current file's encoding, so a byte change reads as a
+    // text change (docs/research/local-file-encoding.md §3).
+    let markup = text_decode::is_markup_path(&path);
+    let current_file = (!too_large)
+        .then(|| text_decode::decode_file(&current, markup, hint))
+        .flatten()
+        .filter(|_| text_decode::decode_file(baseline, markup, hint).is_some());
+    let Some(current_file) = current_file else {
         return row(FileState::NotShown, Vec::new());
-    }
+    };
     // Normalized to `\n` on both sides, for the reason the editing tools
     // normalize: a CRLF checkout would otherwise show every line as changed.
-    let before = String::from_utf8_lossy(baseline).replace("\r\n", "\n");
-    let after = String::from_utf8_lossy(&current).replace("\r\n", "\n");
+    let before = current_file
+        .encoding
+        .decode_with_bom_removal(baseline)
+        .0
+        .replace("\r\n", "\n");
+    let after = current_file.text.replace("\r\n", "\n");
     if before == after {
+        if !same_file(baseline, &current, current_file.encoding) {
+            // A byte the encoding cannot read decodes to U+FFFD on both sides, whatever it
+            // was: equal text over different bytes is a change this screen cannot draw, and
+            // calling it unchanged is how the screen once hid a rewritten file (research §1).
+            let state = if existed {
+                FileState::Modified
+            } else {
+                FileState::Created
+            };
+            return row(state, Vec::new());
+        }
         let state = if existed {
             FileState::Unchanged
         } else {
@@ -204,6 +234,17 @@ fn diff_file(root: &str, rel: &str, existed: bool, baseline: &[u8]) -> FileChang
         removed,
         lines,
     }
+}
+
+/// Whether two versions whose texts read alike are the same file: byte for byte, or both
+/// read without loss in `encoding` — so that equal text is equal content, line endings
+/// aside (spec §9.12: line endings alone are not a change).
+fn same_file(baseline: &[u8], current: &[u8], encoding: &'static encoding_rs::Encoding) -> bool {
+    use crate::shared::text_decode;
+    let bom = text_decode::bom_of(encoding);
+    let lossless =
+        |bytes: &[u8]| text_decode::round_trips(bytes.strip_prefix(bom).unwrap_or(bytes), encoding);
+    baseline == current || (lossless(baseline) && lossless(current))
 }
 
 /// Renders a unified diff into lines the screen can colour, plus the counts.
@@ -348,8 +389,54 @@ mod tests {
         }
 
         fn build(&self) -> ChangeSet {
-            build(&self.journal_dir, &self.root())
+            build(&self.journal_dir, &self.root(), None)
         }
+    }
+
+    /// Journals `before` and leaves `after` on disk, as raw bytes — what
+    /// [`Fixture::touched`], which takes text, cannot write.
+    fn touched_bytes(f: &Fixture, rel: &str, before: &[u8], after: &[u8]) {
+        let path = f.root.join(rel);
+        std::fs::write(&path, before).unwrap();
+        f.journal().record(&f.root(), rel, Some(before)).unwrap();
+        std::fs::write(&path, after).unwrap();
+    }
+
+    /// A windows-1251 file's diff reads in its own encoding: one line changed, and the
+    /// line around it Russian rather than replacement characters.
+    #[test]
+    fn a_legacy_file_is_diffed_in_its_own_encoding() {
+        let f = Fixture::new();
+        let cp1251 = |t: &str| encoding_rs::WINDOWS_1251.encode(t).0.into_owned();
+        let text = "// Скидка растёт с каждым десятым заказом покупателя.\nlet x = 10;\n";
+        touched_bytes(&f, "a.rs", &cp1251(text), &cp1251(&text.replace("10", "5")));
+        let set = build(&f.journal_dir, &f.root(), Some("ru"));
+        let file = &set.files[0];
+        assert_eq!(
+            (file.state, file.added, file.removed),
+            (FileState::Modified, 1, 1)
+        );
+        assert!(
+            file.lines.iter().any(|l| l.text.contains("Скидка растёт")),
+            "{:?}",
+            file.lines
+        );
+    }
+
+    /// Equal text over different bytes is a change: an invalid byte reads as `U+FFFD`
+    /// whatever it was, which is how a whole rewritten file once showed as one line
+    /// (docs/research/local-file-encoding.md §1).
+    #[test]
+    fn a_byte_change_the_text_cannot_show_is_still_a_change() {
+        let f = Fixture::new();
+        let text = "// Скидка ".as_bytes();
+        touched_bytes(
+            &f,
+            "a.rs",
+            &[text, &[0xFF], b"\n"].concat(),
+            &[text, &[0xFE], b"\n"].concat(),
+        );
+        assert_eq!(f.build().files[0].state, FileState::Modified);
     }
 
     #[test]
@@ -520,7 +607,7 @@ mod tests {
         std::fs::write(b.join("Cargo.toml"), "name = \"b\"\n").unwrap();
 
         assert!(
-            build(&journal_dir, &b_root).is_empty(),
+            build(&journal_dir, &b_root, None).is_empty(),
             "project A's rows must not be listed against project B's root"
         );
         assert!(

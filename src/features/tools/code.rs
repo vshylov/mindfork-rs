@@ -230,50 +230,65 @@ fn display_rel(path: &Path, root: &Path) -> String {
         .replace('\\', "/")
 }
 
-/// The EOL/BOM shape of a file, so an edit can hand it back unchanged.
+/// The EOL/BOM/encoding shape of a file, so an edit can hand it back unchanged.
 ///
-/// Stage 1 only reads, but the normalization belongs here rather than in the
-/// future editor: reading and matching have to agree on one text. A model emits
-/// `\n`, a Windows checkout is CRLF, and a fragment quoted back from a read must
-/// match the file it came from.
+/// Reading and matching have to agree on one text: a model emits `\n`, a Windows
+/// checkout is CRLF, and a fragment quoted back from a read must match the file it came
+/// from. The encoding is part of the same shape — a windows-1251 source read as UTF-8
+/// came back from an ASCII edit with every letter replaced by `EF BF BD`
+/// (docs/research/local-file-encoding.md §1) — so a file is read in its own encoding and
+/// written back in it (fork F3b).
 pub(crate) struct TextFile {
     /// Content with `\n` endings and no BOM — what reading and matching use.
     pub text: String,
     pub crlf: bool,
     pub bom: bool,
+    /// What the file was read in, and what an edit writes back.
+    pub encoding: &'static encoding_rs::Encoding,
 }
 
 impl TextFile {
-    pub fn load(bytes: &[u8]) -> Option<Self> {
-        if bytes.contains(&0) {
-            return None; // binary
-        }
-        let (bom, rest) = match bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]) {
-            Some(rest) => (true, rest),
-            None => (false, bytes),
-        };
-        let raw = String::from_utf8_lossy(rest).into_owned();
-        let crlf = raw.contains("\r\n");
+    /// `None` for a binary file (`text_decode::decode_file`). `markup` says whether the
+    /// file may declare its own encoding; `hint` is the user's language as a TLD.
+    pub fn load(bytes: &[u8], markup: bool, hint: Option<&str>) -> Option<Self> {
+        let file = crate::shared::text_decode::decode_file(bytes, markup, hint)?;
+        let crlf = file.text.contains("\r\n");
         Some(Self {
-            text: raw.replace("\r\n", "\n"),
+            text: file.text.replace("\r\n", "\n"),
             crlf,
-            bom,
+            bom: file.bom,
+            encoding: file.encoding,
         })
     }
 
-    /// Restores the file's original shape for writing back.
-    pub fn encode(&self, text: &str) -> Vec<u8> {
+    /// Whether `bytes` — the file this was loaded from — come back byte for byte through
+    /// its encoding. An edit is written only then: whatever it does not touch returns
+    /// exactly (research §2.4), and a lossy read, which would write its `U+FFFD`s, is
+    /// refused rather than written.
+    pub fn round_trips(&self, bytes: &[u8]) -> bool {
+        let body = if self.bom {
+            &bytes[crate::shared::text_decode::bom_of(self.encoding).len()..]
+        } else {
+            bytes
+        };
+        crate::shared::text_decode::round_trips(body, self.encoding)
+    }
+
+    /// Restores the file's shape — line endings, BOM and encoding — for writing back, or
+    /// names the first character of `text` the encoding cannot store.
+    pub fn encode(&self, text: &str) -> Result<Vec<u8>, char> {
         let body = if self.crlf {
             text.replace('\n', "\r\n")
         } else {
             text.to_string()
         };
-        let mut out = Vec::new();
-        if self.bom {
-            out.extend_from_slice(&[0xEF, 0xBB, 0xBF]);
-        }
-        out.extend_from_slice(body.as_bytes());
-        out
+        let mut out = if self.bom {
+            crate::shared::text_decode::bom_of(self.encoding).to_vec()
+        } else {
+            Vec::new()
+        };
+        out.extend(crate::shared::text_decode::encode(&body, self.encoding)?);
+        Ok(out)
     }
 }
 
@@ -292,7 +307,11 @@ fn arg_usize(args: &serde_json::Value, key: &str) -> Option<usize> {
 }
 
 /// Reads a file as text, mapping the two "cannot" cases to model-readable errors.
-async fn read_text(path: &Path, loc: &crate::shared::i18n::Locale) -> Result<TextFile> {
+async fn read_text(
+    path: &Path,
+    loc: &crate::shared::i18n::Locale,
+    hint: Option<&str>,
+) -> Result<TextFile> {
     let meta = tokio::fs::metadata(path)
         .await
         .map_err(|e| anyhow::anyhow!(format!("{}: {e}", path.display())))?;
@@ -305,7 +324,12 @@ async fn read_text(path: &Path, loc: &crate::shared::i18n::Locale) -> Result<Tex
     let bytes = tokio::fs::read(path)
         .await
         .map_err(|e| anyhow::anyhow!(format!("{}: {e}", path.display())))?;
-    TextFile::load(&bytes).ok_or_else(|| anyhow::anyhow!(loc.t("tool.code.err.binary").to_string()))
+    TextFile::load(
+        &bytes,
+        crate::shared::text_decode::is_markup_path(path),
+        hint,
+    )
+    .ok_or_else(|| anyhow::anyhow!(loc.t("tool.code.err.binary").to_string()))
 }
 
 /// Renders `lines[from..to]` with 1-based numbers in the read format.
@@ -618,7 +642,7 @@ async fn read(ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome>
     let raw = arg_str(&args, "path")
         .ok_or_else(|| anyhow::anyhow!(ctx.loc.t("tool.code.err.path_required").to_string()))?;
     let path = resolve(&root, &raw, ctx.loc)?;
-    let file = read_text(&path, ctx.loc).await?;
+    let file = read_text(&path, ctx.loc, ctx.file_hint).await?;
     let lines: Vec<&str> = file.text.lines().collect();
     let total = lines.len();
     let offset = arg_usize(&args, "offset").unwrap_or(1).max(1);
@@ -638,15 +662,36 @@ async fn read(ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome>
     if clipped {
         body = body.chars().take(MAX_READ_CHARS).collect();
     }
-    let mut out = ctx.loc.tf(
-        "tool.code.read.header",
-        &[
-            ("path", &display_rel(&path, &root)),
-            ("from", &(start + 1).to_string()),
-            ("to", &end.to_string()),
-            ("total", &total.to_string()),
-        ],
+    let (rel, from, to, all) = (
+        display_rel(&path, &root),
+        (start + 1).to_string(),
+        end.to_string(),
+        total.to_string(),
     );
+    // A file not in UTF-8 says so: an edit would be written in that encoding, and a guess
+    // on a short file is something the user should be able to see (fork F4b).
+    let mut out = if file.encoding == encoding_rs::UTF_8 {
+        ctx.loc.tf(
+            "tool.code.read.header",
+            &[
+                ("path", &rel),
+                ("from", &from),
+                ("to", &to),
+                ("total", &all),
+            ],
+        )
+    } else {
+        ctx.loc.tf(
+            "tool.code.read.header_encoding",
+            &[
+                ("path", &rel),
+                ("encoding", file.encoding.name()),
+                ("from", &from),
+                ("to", &to),
+                ("total", &all),
+            ],
+        )
+    };
     out.push('\n');
     out.push_str(&body);
     if end < total || clipped {
@@ -672,7 +717,7 @@ fn glob_override(root: &Path, glob: &str) -> Result<ignore::overrides::Override,
 
 /// One walker entry as searchable text, or `None` when it is not something
 /// `code_grep` reads: not a regular file, too large, unreadable, or binary.
-fn searchable(entry: &ignore::DirEntry) -> Option<TextFile> {
+fn searchable(entry: &ignore::DirEntry, hint: Option<&str>) -> Option<TextFile> {
     if !entry.file_type().is_some_and(|t| t.is_file()) {
         return None;
     }
@@ -681,7 +726,11 @@ fn searchable(entry: &ignore::DirEntry) -> Option<TextFile> {
         return None;
     }
     let bytes = std::fs::read(path).ok()?;
-    TextFile::load(&bytes)
+    TextFile::load(
+        &bytes,
+        crate::shared::text_decode::is_markup_path(path),
+        hint,
+    )
 }
 
 /// One hit's text, capped at [`MAX_GREP_LINE`] **characters** — a minified file
@@ -719,12 +768,13 @@ fn search_files(
     overrides: Option<ignore::overrides::Override>,
     re: &regex::Regex,
     root: &Path,
+    hint: Option<&str>,
 ) -> (Vec<String>, bool, usize) {
     let mut hits: Vec<String> = Vec::new();
     let mut truncated = false;
     let mut files = 0usize;
     for entry in walker(dir, None, overrides).flatten() {
-        let Some(file) = searchable(&entry) else {
+        let Some(file) = searchable(&entry, hint) else {
             continue;
         };
         files += 1;
@@ -782,9 +832,11 @@ async fn grep(ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome>
     };
 
     let root_for_walk = root.clone();
-    let (hits, truncated, files) =
-        tokio::task::spawn_blocking(move || search_files(&dir, overrides, &re, &root_for_walk))
-            .await?;
+    let hint = ctx.file_hint;
+    let (hits, truncated, files) = tokio::task::spawn_blocking(move || {
+        search_files(&dir, overrides, &re, &root_for_walk, hint)
+    })
+    .await?;
 
     if hits.is_empty() {
         // "Nothing matched" and "there was nothing to match against" call for
@@ -858,6 +910,25 @@ async fn journal_before_write(
     Ok(())
 }
 
+/// The refusal of a write whose text holds a character the file's encoding cannot store.
+/// Nothing is written, and the answer names the character and the way forward — a
+/// message that only says "no" costs the model its next round (docs/lessons.md §4).
+fn unmappable(
+    ctx: &ToolContext,
+    rel: &str,
+    encoding: &'static encoding_rs::Encoding,
+    c: char,
+) -> ToolOutcome {
+    ToolOutcome::text(ctx.loc.tf(
+        "tool.code.edit.unmappable",
+        &[
+            ("path", rel),
+            ("encoding", encoding.name()),
+            ("char", &c.to_string()),
+        ],
+    ))
+}
+
 /// `code_edit` — exact-substring replacement. The contract stage 0 measured.
 async fn edit(ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
     let root = workspace_root(ctx)?;
@@ -879,7 +950,8 @@ async fn edit(ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome>
     let bytes = tokio::fs::read(&path)
         .await
         .map_err(|e| anyhow::anyhow!(format!("{}: {e}", path.display())))?;
-    let file = TextFile::load(&bytes)
+    let markup = crate::shared::text_decode::is_markup_path(&path);
+    let file = TextFile::load(&bytes, markup, ctx.file_hint)
         .ok_or_else(|| anyhow::anyhow!(ctx.loc.t("tool.code.err.binary").to_string()))?;
     // The model writes `\n`; the file may be CRLF. Match on the normalized
     // text and give the file's own shape back on write.
@@ -903,13 +975,26 @@ async fn edit(ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome>
         )));
     }
 
-    journal_before_write(ctx, &root, &path, Some(&bytes)).await?;
+    // Written back in the file's own encoding, and only when what the edit does not touch
+    // returns byte for byte (docs/research/local-file-encoding.md F3b, §2.4). Both
+    // refusals come before the journal and before any write.
+    if !file.round_trips(&bytes) {
+        return Ok(ToolOutcome::text(ctx.loc.tf(
+            "tool.code.edit.not_round_trip",
+            &[("path", &rel), ("encoding", file.encoding.name())],
+        )));
+    }
     let updated = if replace_all {
         file.text.replace(&old_n, &new_n)
     } else {
         file.text.replacen(&old_n, &new_n, 1)
     };
-    tokio::fs::write(&path, file.encode(&updated))
+    let encoded = match file.encode(&updated) {
+        Ok(encoded) => encoded,
+        Err(c) => return Ok(unmappable(ctx, &rel, file.encoding, c)),
+    };
+    journal_before_write(ctx, &root, &path, Some(&bytes)).await?;
+    tokio::fs::write(&path, encoded)
         .await
         .map_err(|e| anyhow::anyhow!(format!("{}: {e}", path.display())))?;
 
@@ -942,12 +1027,29 @@ async fn write(ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome
         .ok_or_else(|| anyhow::anyhow!(ctx.loc.t("tool.code.err.write_args").to_string()))?;
 
     let existing = tokio::fs::read(&path).await.ok();
-    // An existing file keeps its own line endings and BOM: replacing a CRLF
-    // file with `\n` text would make one edit look like a whole-file rewrite
-    // in the diff, and in the user's own version control afterwards.
-    let shaped = match existing.as_deref().and_then(TextFile::load) {
-        Some(file) => file.encode(&content.replace("\r\n", "\n")),
-        None => content.replace("\r\n", "\n").into_bytes(),
+    let content_n = content.replace("\r\n", "\n");
+    let rel = display_rel(&path, &root);
+    // An existing file keeps its own line endings, BOM and encoding: replacing a CRLF
+    // file with `\n` text would make one edit look like a whole-file rewrite in the diff
+    // and in the user's own version control, and a windows-1251 file rewritten in UTF-8
+    // stops reading right in whatever reads it (fork F3b). A file whose read was lossy —
+    // invalid UTF-8 — has no encoding to keep and is written in UTF-8, in its shape.
+    let markup = crate::shared::text_decode::is_markup_path(&path);
+    let loaded = existing
+        .as_deref()
+        .and_then(|b| TextFile::load(b, markup, ctx.file_hint).map(|f| (f.round_trips(b), f)));
+    let shaped = match loaded {
+        Some((true, file)) => match file.encode(&content_n) {
+            Ok(encoded) => encoded,
+            Err(c) => return Ok(unmappable(ctx, &rel, file.encoding, c)),
+        },
+        Some((false, file)) => TextFile {
+            encoding: encoding_rs::UTF_8,
+            ..file
+        }
+        .encode(&content_n)
+        .unwrap_or_else(|_| content_n.clone().into_bytes()),
+        None => content_n.into_bytes(),
     };
     journal_before_write(ctx, &root, &path, existing.as_deref()).await?;
     if let Some(parent) = path.parent() {
@@ -958,7 +1060,6 @@ async fn write(ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome
     tokio::fs::write(&path, &shaped)
         .await
         .map_err(|e| anyhow::anyhow!(format!("{}: {e}", path.display())))?;
-    let rel = display_rel(&path, &root);
     let key = if existing.is_some() {
         "tool.code.write.replaced"
     } else {
@@ -1543,10 +1644,10 @@ mod tests {
     fn crlf_and_bom_are_normalized_for_reading_and_restored_for_writing() {
         let mut bytes = vec![0xEF, 0xBB, 0xBF];
         bytes.extend_from_slice(b"let x = 1;\r\nlet y = 2;\r\n");
-        let file = TextFile::load(&bytes).unwrap();
+        let file = TextFile::load(&bytes, false, None).unwrap();
         assert_eq!(file.text, "let x = 1;\nlet y = 2;\n");
         assert!(file.crlf && file.bom);
-        assert_eq!(file.encode(&file.text), bytes);
+        assert_eq!(file.encode(&file.text), Ok(bytes));
     }
 
     /// Like [`fixture`], with a journal directory, which the editing tools
@@ -1644,6 +1745,119 @@ mod tests {
             .unwrap();
         let mut want = vec![0xEF, 0xBB, 0xBF];
         want.extend_from_slice(b"let x = 1;\r\nlet y = 3;\r\n");
+        assert_eq!(std::fs::read(&path).unwrap(), want);
+    }
+
+    // cyrillic-ok:start — the fixture is a Russian source file: its comments are the
+    // text under test, and a string's continuation line reads to the scanner as a comment.
+    /// A Rust source whose only Cyrillic is its comments, as a Windows editor saved it
+    /// (docs/research/local-file-encoding.md §2.1).
+    const LEGACY_SOURCE: &str = "// Расчёт скидки для постоянного покупателя.\r\n\
+        fn discount(orders: u32) -> u32 {\r\n    // Скидка растёт с каждым десятым заказом.\r\n\
+        \x20   orders / 10\r\n}\r\n";
+    // cyrillic-ok:end
+
+    fn cp1251(text: &str) -> Vec<u8> {
+        encoding_rs::WINDOWS_1251.encode(text).0.into_owned()
+    }
+
+    /// An editable project holding `discount.rs` as exactly `bytes`, with the hint a
+    /// Russian interface gives the detector.
+    fn legacy_project(bytes: &[u8]) -> (Fixture, tempfile::TempDir, std::path::PathBuf) {
+        let (mut f, journal) = editable(&[]);
+        f.ctx.file_hint = Some("ru");
+        let path = f.dir.path().join("discount.rs");
+        std::fs::write(&path, bytes).unwrap();
+        (f, journal, path)
+    }
+
+    /// `code_edit` on `discount.rs`, its answer as text.
+    async fn edit_discount(f: &Fixture, new: &str) -> String {
+        CodeTool::Edit
+            .invoke(
+                &f.ctx,
+                serde_json::json!({"path": "discount.rs", "old_string": "orders / 10", "new_string": new}),
+            )
+            .await
+            .unwrap()
+            .result
+    }
+
+    /// The defect this closes (research §1): an ASCII edit in a windows-1251 source came
+    /// back with `EF BF BD` for every letter, while reading showed `U+FFFD` and search
+    /// found nothing. Through the tools, the file now reads, is found by its words, and
+    /// keeps every byte the edit does not touch.
+    #[tokio::test]
+    async fn a_legacy_file_is_read_searched_and_edited_in_its_own_encoding() {
+        let (f, _j, path) = legacy_project(&cp1251(LEGACY_SOURCE));
+        let read = CodeTool::Read
+            .invoke(&f.ctx, serde_json::json!({"path": "discount.rs"}))
+            .await
+            .unwrap()
+            .result;
+        assert!(
+            read.contains("windows-1251") && read.contains("Скидка растёт"),
+            "{read}"
+        );
+        let grep = CodeTool::Grep
+            .invoke(&f.ctx, serde_json::json!({"pattern": "Скидка"}))
+            .await
+            .unwrap()
+            .result;
+        assert!(grep.contains("discount.rs:3:"), "{grep}");
+        edit_discount(&f, "orders / 5").await;
+        let want = cp1251(&LEGACY_SOURCE.replace("orders / 10", "orders / 5"));
+        assert_eq!(std::fs::read(&path).unwrap(), want);
+    }
+
+    /// Both refusals write nothing and journal nothing: a character the file's encoding
+    /// cannot store, and a file read with loss — an edit would write its `U+FFFD`s.
+    #[tokio::test]
+    async fn an_edit_the_file_s_encoding_cannot_carry_writes_nothing() {
+        let legacy = cp1251(LEGACY_SOURCE);
+        let (f, journal, path) = legacy_project(&legacy);
+        let out = edit_discount(&f, "orders / 10 // 🙂").await;
+        assert!(out.contains('🙂') && out.contains("windows-1251"), "{out}");
+        assert_eq!(std::fs::read(&path).unwrap(), legacy);
+
+        let lossy = [LEGACY_SOURCE.as_bytes(), &[0xFF]].concat();
+        std::fs::write(&path, &lossy).unwrap();
+        let out = edit_discount(&f, "orders / 5").await;
+        assert!(out.contains("UTF-8"), "{out}");
+        assert_eq!(std::fs::read(&path).unwrap(), lossy);
+        assert!(
+            !journal.path().join("chat").exists(),
+            "a refused edit must not be journaled"
+        );
+    }
+
+    /// Notepad's "Unicode" used to be "not a text file"; it reads, and an edit comes back
+    /// in UTF-16 with its BOM.
+    #[tokio::test]
+    async fn a_utf16_file_is_text_and_an_edit_comes_back_in_utf16() {
+        let utf16 = |text: &str| -> Vec<u8> {
+            [0xFF, 0xFE]
+                .into_iter()
+                .chain(text.encode_utf16().flat_map(u16::to_le_bytes))
+                .collect()
+        };
+        let (f, _j, path) = legacy_project(&utf16(LEGACY_SOURCE));
+        edit_discount(&f, "orders / 5").await;
+        let want = utf16(&LEGACY_SOURCE.replace("orders / 10", "orders / 5"));
+        assert_eq!(std::fs::read(&path).unwrap(), want);
+    }
+
+    #[tokio::test]
+    async fn write_keeps_an_existing_file_s_encoding() {
+        let (f, _j, path) = legacy_project(&cp1251(LEGACY_SOURCE));
+        CodeTool::Write
+            .invoke(
+                &f.ctx,
+                serde_json::json!({"path": "discount.rs", "content": "// Скидки больше нет.\nfn discount() -> u32 { 0 }\n"}),
+            )
+            .await
+            .unwrap();
+        let want = cp1251("// Скидки больше нет.\r\nfn discount() -> u32 { 0 }\r\n");
         assert_eq!(std::fs::read(&path).unwrap(), want);
     }
 

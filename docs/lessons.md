@@ -764,6 +764,18 @@ above says cannot be maintained. Its one cost, 60 unauthenticated requests an
 hour per address, is one request per command invocation.
 — *the engine, downloaded*.
 
+**An equality over a lossy view is not an equality — compare the bytes, or show the view
+loses nothing first.** The changes screen decided *changed* against *left as it was* by
+comparing two `String::from_utf8_lossy` renderings of a file. When an edit rewrote every
+Cyrillic letter of a windows-1251 source as `EF BF BD`, both sides read as the same run of
+`U+FFFD`, and the one surface built to show what the assistant did reported a single
+changed line over a file damaged on every line that held a letter. The shape waits
+wherever text is normalized before it is compared — lossy decoding, case folding,
+whitespace or line-ending normalization, a hash of a rendering. Where the normalization is
+the point (line endings deliberately are not a change), prove the view drops nothing else
+before trusting it, and where that cannot be shown, fall back to the bytes.
+— *local files are read in their own encoding*.
+
 ## 4. The recurring defect class: a message must close the door
 
 **Never let a message describe a situation without saying what is and is not possible

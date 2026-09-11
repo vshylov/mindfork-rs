@@ -239,8 +239,9 @@ impl Orchestrator {
             return;
         };
         let tx = self.evt_tx.clone();
+        let hint = crate::shared::text_decode::tld_hint(self.config.interface.language);
         tokio::task::spawn_blocking(move || {
-            let set = crate::features::workspace_diff::build(&dir, &root);
+            let set = crate::features::workspace_diff::build(&dir, &root, hint);
             let _ = tx.send(AppEvent::WorkspaceChanges(Box::new(set)));
         });
     }
@@ -257,13 +258,14 @@ impl Orchestrator {
             return;
         };
         let tx = self.evt_tx.clone();
+        let hint = crate::shared::text_decode::tld_hint(self.config.interface.language);
         tokio::task::spawn_blocking(move || {
             if let Err(err) = crate::features::workspace_diff::revert(&dir, &root, &path) {
                 let _ = tx.send(AppEvent::ProjectProgress(ProjectProgress::Failed(
                     err.to_string(),
                 )));
             }
-            let set = crate::features::workspace_diff::build(&dir, &root);
+            let set = crate::features::workspace_diff::build(&dir, &root, hint);
             let _ = tx.send(AppEvent::WorkspaceChanges(Box::new(set)));
         });
     }

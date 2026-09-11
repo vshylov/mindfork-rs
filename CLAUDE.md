@@ -171,8 +171,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-11, version 0.9.8)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3050 unit tests
-green, 158 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **3065 unit tests
+green, 159 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -184,6 +184,17 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **Local files are read in their own encoding, and edits written back in it**
+  — every path that read a user's file assumed UTF-8, and `code_edit` wrote the
+  lossy text back: an ASCII edit in a windows-1251 source left `EF BF BD` for
+  every letter while the changes screen showed one line. Now
+  `text_decode::decode_file` serves `fs_read`, the code tools' `TextFile`,
+  `/file attach`, `/rag` and the changes screen (a BOM'd UTF-16 file is text;
+  the interface language hints the detector), and an edit is written in the
+  file's own encoding behind a round-trip check, refused with nothing written
+  when a byte would not come back
+  ([docs/research/local-file-encoding.md](docs/research/local-file-encoding.md),
+  spec §9.7, §9.12, [docs/journal/tools.md](docs/journal/tools.md)).
 - **A fetched page is read in its own encoding** — reported from a chat: a
   windows-1251 article became an attachment of `U+FFFD`, because `reqwest`
   runs without its default features and `Response::text()` is then
@@ -404,18 +415,6 @@ being recent is dropped, not shortened.
   the note; the 4090, no note
   ([docs/research/slow-prefill-detection.md](docs/research/slow-prefill-detection.md),
   spec §3.4, [docs/journal/engine.md](docs/journal/engine.md)).
-- **The quit's settle hears the roll, and its cap is a setting** — the
-  roll takes a silent slot but lands on `compact_rx`, so the settle of
-  the previous track waited its whole cap during an automatic roll and
-  dropped a roll that had just finished; now `settle_silent_tasks`
-  selects over both channels — a cancelled roll clears its slot at once,
-  a finished one is applied through `handle_compact_result` for the flush
-  — and the cap is the user's: `tools.quit_settle_secs`, a *Tools* row
-  beside the other time limits (the user's decision), **no cap by
-  default** so a task caught mid-tool finishes (each task is bounded by
-  its own run time limit), a number in seconds, `0` deciding at once by
-  state ([docs/research/quit-settle-roll-and-cap.md](docs/research/quit-settle-roll-and-cap.md),
-  spec §6.7, §17.6, [docs/journal/engine.md](docs/journal/engine.md)).
 - **The TUI "hangs" on a headless launch** (no TTY) — this is expected; clean
   exit via `Esc`/`Ctrl+Q` is covered by unit tests. Live verification needs a
   real terminal.

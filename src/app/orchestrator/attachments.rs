@@ -54,6 +54,8 @@ pub(super) struct ExtractedFile {
     pub(super) source: String,
     pub(super) text: String,
     pub(super) bytes: usize,
+    /// The encoding the file was read in, when it was not UTF-8 (the feed note names it).
+    pub(super) encoding: Option<&'static encoding_rs::Encoding>,
 }
 
 impl Orchestrator {
@@ -70,9 +72,10 @@ impl Orchestrator {
             return;
         };
         let loc = self.ui_locale();
+        let hint = crate::shared::text_decode::tld_hint(self.config.interface.language);
         let tx = self.attach_tx.clone();
         tokio::task::spawn_blocking(move || {
-            let outcome = extract_file(std::path::Path::new(&path), loc);
+            let outcome = extract_file(std::path::Path::new(&path), loc, hint);
             let _ = tx.send(AttachResult { chat_id, outcome });
         });
     }
@@ -100,8 +103,9 @@ impl Orchestrator {
         // Over the per-file budget, or over what's left of the chat's total →
         // by reference. Attaching never fails on size (docs/file-attachments.md §4.2).
         let mode = decide_mode(est, used, &cfg);
+        let read_as = file.encoding.map(encoding_rs::Encoding::name);
         let attachment = Attachment::new(file.name, file.source, file.text, file.bytes, mode);
-        self.insert_attachment(res.chat_id, attachment);
+        self.insert_attachment(res.chat_id, attachment, read_as);
     }
 
     /// Puts an **already-built** attachment into a chat and does everything that
@@ -114,7 +118,15 @@ impl Orchestrator {
     /// mode is **not** re-decided here: the tool already told the model what it
     /// did, and the object described and the object stored have to be the same
     /// one — down to the `id`, which is the key the index is written under.
-    pub(super) fn insert_attachment(&mut self, chat_id: Uuid, attachment: Attachment) {
+    ///
+    /// `read_as` names the encoding a file was read in when that was not UTF-8, for the
+    /// feed note (docs/research/local-file-encoding.md F4b); `None` for a tool's own.
+    pub(super) fn insert_attachment(
+        &mut self,
+        chat_id: Uuid,
+        attachment: Attachment,
+        read_as: Option<&'static str>,
+    ) {
         let cfg = self.config.attachments;
         let Some(chat) = self.chat_mut(chat_id) else {
             return; // the chat is gone (deleted while the tool was running)
@@ -145,6 +157,7 @@ impl Orchestrator {
         self.emit_file_progress(FileProgress::Attached {
             info,
             total_tokens: total,
+            read_as,
         });
         self.emit_attachments();
         if let Some(task) = index {
@@ -418,6 +431,7 @@ fn spawn_attachment_index(task: AttachIndexTask) {
 fn extract_file(
     path: &std::path::Path,
     loc: &'static crate::shared::i18n::Locale,
+    hint: Option<&str>,
 ) -> Result<ExtractedFile, String> {
     let meta = std::fs::metadata(path)
         .map_err(|e| loc.tf("ui.err.file_unavailable", &[("err", &e.to_string())]))?;
@@ -439,11 +453,11 @@ fn extract_file(
             ],
         ));
     }
-    // Undecodable content (a binary) fails here with a clear message — the
-    // honest boundary of "text files" (fork F8).
-    let text = super::rag::read_source_text(path)
+    // A file is read in its own encoding (docs/research/local-file-encoding.md F1a); a
+    // binary fails here with a clear message — the honest boundary of "text files".
+    let read = super::rag::read_source_text(path, hint)
         .map_err(|e| loc.tf("ui.err.file_unreadable", &[("err", &e.to_string())]))?;
-    if text.trim().is_empty() {
+    if read.text.trim().is_empty() {
         return Err(loc.t("ui.err.file_empty").to_string());
     }
     let name = path
@@ -453,8 +467,9 @@ fn extract_file(
     Ok(ExtractedFile {
         name,
         source: crate::features::rag_ingest::canonical_source(path),
-        text,
+        text: read.text,
         bytes: meta.len() as usize,
+        encoding: read.encoding,
     })
 }
 
@@ -471,12 +486,28 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("notes.md");
         std::fs::write(&path, "# Заголовок\n\nтекст заметки").unwrap();
-        let file = extract_file(&path, ru()).unwrap();
+        let file = extract_file(&path, ru(), None).unwrap();
         assert_eq!(file.name, "notes.md");
         assert!(file.text.contains("текст заметки"));
         assert_eq!(file.bytes, std::fs::metadata(&path).unwrap().len() as usize);
         // The source key is canonical (matches how RAG stores sources).
         assert!(file.source.ends_with("notes.md"));
+    }
+
+    /// The file `/file attach` refused as not valid UTF-8 (local-file-encoding.md §1) is
+    /// read in its own encoding, and the encoding travels on for the feed note.
+    #[test]
+    fn a_legacy_encoded_file_is_attached_in_its_own_encoding() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("report.txt");
+        let prose = "Выручка за март составила сто двадцать тысяч, за апрель немного больше.";
+        std::fs::write(&path, encoding_rs::WINDOWS_1251.encode(prose).0).unwrap();
+        let file = extract_file(&path, ru(), Some("ru")).unwrap();
+        assert_eq!(file.text, prose);
+        assert_eq!(
+            file.encoding.map(encoding_rs::Encoding::name),
+            Some("windows-1251")
+        );
     }
 
     #[test]
@@ -486,7 +517,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("main.rs");
         std::fs::write(&path, "fn main() { println!(\"hi\"); }").unwrap();
-        let file = extract_file(&path, ru()).unwrap();
+        let file = extract_file(&path, ru(), None).unwrap();
         assert!(file.text.contains("fn main()"));
     }
 
@@ -494,21 +525,22 @@ mod tests {
     fn binary_and_missing_and_empty_files_are_refused() {
         let dir = tempfile::tempdir().unwrap();
 
-        // Invalid UTF-8 → a clear refusal, not a panic or mojibake.
+        // Binary content → a clear refusal, not a panic or mojibake — even one opening
+        // `FF FE`, which is not a whole UTF-16 file.
         let bin = dir.path().join("blob.bin");
         std::fs::write(&bin, [0xff, 0xfe, 0x00, 0x01, 0x80]).unwrap();
-        assert!(extract_file(&bin, ru()).is_err());
+        assert!(extract_file(&bin, ru(), None).is_err());
 
         // A missing path.
-        assert!(extract_file(&dir.path().join("nope.txt"), ru()).is_err());
+        assert!(extract_file(&dir.path().join("nope.txt"), ru(), None).is_err());
 
         // A directory is not a file.
-        assert!(extract_file(dir.path(), ru()).is_err());
+        assert!(extract_file(dir.path(), ru(), None).is_err());
 
         // Whitespace-only content carries nothing for the model.
         let empty = dir.path().join("empty.txt");
         std::fs::write(&empty, "   \n\t ").unwrap();
-        assert!(extract_file(&empty, ru()).is_err());
+        assert!(extract_file(&empty, ru(), None).is_err());
     }
 
     #[test]
@@ -517,7 +549,7 @@ mod tests {
         let missing = dir.path().join("nope.txt");
         for &lang in crate::shared::i18n::Lang::ALL {
             let loc = crate::shared::i18n::locale(lang);
-            let err = extract_file(&missing, loc).unwrap_err();
+            let err = extract_file(&missing, loc, None).unwrap_err();
             assert!(!err.contains('{') && !err.contains('}'), "{lang:?}: {err}");
             if lang == crate::shared::i18n::Lang::En {
                 assert!(

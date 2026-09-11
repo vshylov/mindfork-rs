@@ -250,7 +250,7 @@ impl Orchestrator {
         }
         self.mark_dirty(chat_id);
         for a in attached {
-            self.insert_attachment(chat_id, a);
+            self.insert_attachment(chat_id, a, None);
         }
         self.emit_chat_list();
         // Titled at landing like a turn child (spec §9.3.2): the run's

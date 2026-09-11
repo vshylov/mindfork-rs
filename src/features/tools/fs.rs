@@ -171,8 +171,26 @@ impl Tool for FsRead {
                 )));
             }
         };
-        // Read as UTF-8 (replacing invalid bytes) — nothing to read binary files with.
-        let text = String::from_utf8_lossy(&bytes);
+        // In its own encoding, like every reader of a user's file
+        // (docs/research/local-file-encoding.md F1a): a binary file is refused rather than
+        // handed over as noise, and a file not in UTF-8 says what it was read as (F4b).
+        let markup = crate::shared::text_decode::is_markup_path(&path);
+        let Some(file) = crate::shared::text_decode::decode_file(&bytes, markup, ctx.file_hint)
+        else {
+            return Ok(ToolOutcome::text(ctx.loc.tf(
+                "tool.fs_read.result.binary",
+                &[("path", &path.display().to_string())],
+            )));
+        };
+        let text = if file.encoding == encoding_rs::UTF_8 {
+            file.text
+        } else {
+            let note = ctx.loc.tf(
+                "tool.fs_read.decoded_as",
+                &[("encoding", file.encoding.name())],
+            );
+            format!("{note}\n{}", file.text)
+        };
         Ok(ToolOutcome::text(truncate_chars(
             &text,
             MAX_READ_CHARS,
@@ -405,6 +423,34 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(out.result, "привет");
+    }
+
+    /// A windows-1251 note came back with `U+FFFD` for every letter, and a binary as noise
+    /// (docs/research/local-file-encoding.md §1): the note reads in its own encoding and
+    /// says which, the binary is refused.
+    #[tokio::test]
+    async fn read_decodes_a_legacy_file_and_refuses_a_binary() {
+        let (_d, _s, mut ctx) = ctx_with_storage(Uuid::new_v4());
+        ctx.file_hint = Some("ru");
+        let dir = tempfile::tempdir().unwrap();
+        let tool = FsRead::new(None);
+        let note = dir.path().join("report.txt");
+        let prose = "Выручка за март составила сто двадцать тысяч, за апрель немного больше.";
+        std::fs::write(&note, encoding_rs::WINDOWS_1251.encode(prose).0).unwrap();
+        let out = tool
+            .invoke(&ctx, serde_json::json!({"path": note.to_string_lossy()}))
+            .await
+            .unwrap()
+            .result;
+        assert!(out.contains(prose) && out.contains("windows-1251"), "{out}");
+        let blob = dir.path().join("blob.bin");
+        std::fs::write(&blob, [0x50, 0x4B, 0x03, 0x04, 0x00, 0x00]).unwrap();
+        let out = tool
+            .invoke(&ctx, serde_json::json!({"path": blob.to_string_lossy()}))
+            .await
+            .unwrap()
+            .result;
+        assert!(!out.contains('\0') && out.contains("blob.bin"), "{out}");
     }
 
     #[tokio::test]

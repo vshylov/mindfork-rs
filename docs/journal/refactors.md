@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (19)
+## Entries (20)
 
 - Post-M9: the generation state machine split out of the orchestrator (`GenState`) (done)
 - Post-M9: the orchestrator god object split by feature (done)
@@ -31,6 +31,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: SOLID refactor — stage 3, steps 3.2/3.3: a field-value access table (`field_spec`) (done)
 - Post-M9: the child-loop seam — `TurnShared`, `RequestEnv`, `sanitize_title` in `shared` (done)
 - Post-M9: the dialogue driver off `TurnLoop` — an explicit `DialogueCtx` (done)
+- Post-M9: the decoding order out of `http_text` — `shared::text_decode` (done)
 
 ### Post-M9: the generation state machine split out of the orchestrator (`GenState`) (done)
 - **The generation state was moved** out of `app/orchestrator.rs` into a separate
@@ -664,3 +665,30 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   names), `cargo fmt`/`clippy` clean, and `dialogue_e2e_live` re-run against
   the LAN stack — see the PR. A refactor whose diff is +118/−60 in one file
   and whose test suite is untouched is the shape this was aimed at.
+
+### Post-M9: the decoding order out of `http_text` — `shared::text_decode` (done)
+
+- **Why.** The order that decides a fetched page's encoding
+  ([docs/research/page-charset.md](../research/page-charset.md) §3) is a function of
+  bytes and of what was declared about them, and its next caller reads files, not
+  responses: the local-files research
+  ([docs/research/local-file-encoding.md](../research/local-file-encoding.md), the
+  user's decision F5b of 2026-09-11) found `code_edit` rewriting a windows-1251 file
+  with `EF BF BD` for every letter and every other reading path decoding lossily or
+  refusing. A module named for HTTP that decodes files on disk would mislead whoever
+  looks for it next, and AGENTS §2 keeps a mechanical move out of the PR that changes
+  behaviour — so the move lands first, on its own.
+- **What moved.** `EncodingSource`, `decode`, `Utf8Evidence`, `reads_alike`, `detect`
+  and the declaration readers — `header_charset`, `document_charset` with the XML
+  declaration, the `<meta>` prescan and its attribute walker — went to
+  `src/shared/text_decode.rs` unchanged, with their tests: the 28-row decision table
+  and the GBK premise. `http_text` keeps what is the transport's: `read`, the
+  content-coding undo, the header reader, the host's TLD label, the test kit, and the
+  tests of those plus the live corpus, which now imports from `text_decode`. Five
+  items became `pub(crate)` for `read` and that corpus; no signature changed.
+- **One test input changed**: the TLD test encoded the moved table's Russian prose and
+  now encodes a sentence of its own — its point is the label's form, which the prose
+  never touched.
+- **The gate**: 3050 unit green and 158 ignored, the numbers `main` has, two of the
+  tests under a new module path; `cargo fmt`/`clippy` clean. No live run: no behaviour
+  moved with the code.

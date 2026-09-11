@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (52)
+## Entries (53)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -64,6 +64,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: `ToolOutcome.prefill` and the page summary's request — reasoning muted, usage recorded (done)
 - Post-M9: the dialogue's director on Gemma's template — the checkpoint's history must alternate too (done)
 - Post-M9: a fetched page is read in its own encoding (done)
+- Post-M9: local files are read in their own encoding (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -3741,6 +3742,71 @@ no `U+FFFD`. `live_charset_corpus`: fourteen pages, every decision in agreement 
 the evidence, `163.com` unpacked from gzip. Not done, recorded in research §5: a
 lone wrong legacy declaration, undeclared ISO-2022-JP, the `<h1>` naming the
 archive's banner rather than the article, and local files.
+
+### Post-M9: local files are read in their own encoding (done)
+
+**What.** The follow-up the page-charset entry left: every path that read a user's file
+assumed UTF-8. Research, inventory and forks:
+[docs/research/local-file-encoding.md](../research/local-file-encoding.md) — the user's
+decisions of 2026-09-11, every fork as recommended (F1a every reading path, F2c the
+interface language as the hint, F3b edits written back in the file's own encoding, F4b
+the encoding named, F5b the order moved to `shared::text_decode` first in a refactor PR
+of its own, F6a reading and writing in one PR). Branch `fix/local-file-encoding`.
+
+**Measured first** (research §1–§2). Twelve paths turn a user's file into text; driven
+through the tools' own code with files in windows-1251, KOI8-R, IBM866, UTF-16LE and
+UTF-8 with and without a BOM, `fs_read` and `code_read` showed `U+FFFD`, `code_grep`
+could not find a word, `/file attach` and `/rag add` refused, UTF-16 was "not a text
+file" — and `code_edit` rewrote a windows-1251 source with `EF BF BD` for all 68 letters
+of its comments while the changes screen showed `+1 −1`. The page decoder read all 24
+fixtures right; short text needed a language hint (21 of 32 short Russian strings
+without, 27 with `ru`), and the OS locale would have been the wrong hint on this very
+machine (`en-US`, code page 1252). Every wrong guess on 113 short samples still
+round-tripped byte for byte — the property F3b rests on. IBM866 turned out the majority
+rule's worst case: two single words taken for UTF-8.
+
+**How.** `text_decode::decode_file` (the order with no transport; a NUL is binary unless
+the file is whole BOM'd UTF-16; `<meta>` only for markup), `encode` (the first character
+an encoding cannot store; UTF-16 by hand, since `encoding_rs` has no encoder for it),
+`round_trips`, `bom_of`, `tld_hint`. `TextFile` carries the encoding: `code_read` names
+one that is not UTF-8, `code_grep` searches decoded text, and `code_edit`/`code_write`
+write back in it behind the round-trip check, refusing — nothing written, nothing
+journaled — a character the encoding lacks or a lossy read. `fs_read` refuses a binary
+and notes a non-UTF-8 encoding; `/file attach`, `/rag add` and `/rag rebuild` read through
+`read_source_text(path, hint)`, and the attach note names the encoding. The changes
+screen decodes both sides in the current file's encoding and, over equal texts, says
+*unchanged* only when both read losslessly or the bytes are equal. The hint rides
+`ToolParams::from_config` into `ToolContext.file_hint`; the orchestrator's attach, RAG
+and changes paths take it from `config.interface.language`.
+
+**Found on the way.** The screen that exists to show what the assistant changed was the
+one that hid the damage, by comparing two lossy renderings — lessons §3, *an equality over
+a lossy view is not an equality*. And `FileText` carries no decision step: clippy's
+dead-code check found it read by tests alone.
+
+**Tests.** The decision helpers (a whole UTF-16 file against a blob opening `FF FE`, a
+`<meta>` read only in markup, the character an encoding lacks, lossless round trips, the
+hint's labels); each reading path through its real entry point — `CodeTool::{Read, Grep,
+Edit, Write}`, `FsRead`, `read_text`, `extract_file`, `workspace_diff::build` — with
+windows-1251 and UTF-16 fixtures; both edit refusals writing and journaling nothing; the
+byte-exact edit that used to corrupt; the hint taken from the interface language.
+**Mutation-tested** — twelve mutations, each killed by the test written for it: the
+round-trip check, the refusal of a character the encoding lacks, the byte comparison on
+the changes screen, the UTF-16 branch, the NUL rule, the hint taken from the interface
+language, the baseline decoded in the current file's encoding, `code_write` keeping the
+encoding, `fs_read` and `code_read` naming it, the attachment carrying it, and `<meta>`
+read only in markup. Pinned by no unit test: the hint reaching `/file attach`, `/rag`
+and the changes screen from the orchestrator — every fixture there is long enough to
+decode right without it. Unit: 3065 green, 159 ignored (3050 / 158 before).
+
+**Live — GO** (`code_edit_legacy_encoding_e2e_live`; the LAN stack was down, so a local
+CPU build of llama.cpp served Gemma 4 12B QAT Q4_0 at `-c 16384 --jinja`). The model
+listed the project and read `src/discount.rs` — the header said `windows-1251`, the
+comments came back as Russian — then made one `code_edit` changing both the divisor and
+the comment about it. On disk the file is windows-1251: no `EF BF BD`, the untouched
+first line byte for byte the same, and the new Russian word the model wrote stored in
+windows-1251. The old path would have written `U+FFFD` over every letter of both
+comments.
 
 **Not in this track** (§7): a verdict answered in text on a model that
 cannot call tools; the first checkpoint's prompt size on Gemma 3 with

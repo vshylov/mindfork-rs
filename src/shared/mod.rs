@@ -28,6 +28,7 @@ pub mod session_budget;
 #[cfg(test)]
 pub mod shot;
 pub mod storage;
+pub mod text_decode;
 pub mod theme;
 pub mod title;
 pub mod tokens;

@@ -33,6 +33,9 @@ pub enum FileProgress {
     Attached {
         info: AttachmentInfo,
         total_tokens: usize,
+        /// The encoding the file was read in, when it was not UTF-8 — the note names it
+        /// (docs/research/local-file-encoding.md F4b).
+        read_as: Option<&'static str>,
     },
     /// An attachment was removed.
     Removed { name: String },

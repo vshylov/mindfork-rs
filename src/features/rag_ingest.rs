@@ -160,14 +160,21 @@ fn strip_verbatim(s: String) -> String {
     }
 }
 
-/// Reads a text file into a string, dropping a leading UTF-8 BOM. A non-UTF-8 or
-/// unreadable file → an error (the caller skips such a file).
-pub fn read_text(path: &Path) -> std::io::Result<String> {
-    let mut content = std::fs::read_to_string(path)?;
-    if content.starts_with('\u{feff}') {
-        content.remove(0);
-    }
-    Ok(content)
+/// Reads a text file in its own encoding (docs/research/local-file-encoding.md F1a) — a
+/// BOM, UTF-8, or the detector hinted by `hint`, the user's language as a TLD — with the
+/// BOM dropped. A binary or unreadable file → an error (the caller skips such a file, or
+/// refuses it).
+pub fn read_text(
+    path: &Path,
+    hint: Option<&str>,
+) -> std::io::Result<crate::shared::text_decode::FileText> {
+    let bytes = std::fs::read(path)?;
+    crate::shared::text_decode::decode_file(&bytes, is_html(path), hint).ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "the file holds binary data, not text",
+        )
+    })
 }
 
 #[cfg(test)]
@@ -281,7 +288,27 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("bom.txt");
         write(&file, "\u{feff}содержимое");
-        assert_eq!(read_text(&file).unwrap(), "содержимое");
+        assert_eq!(read_text(&file, None).unwrap().text, "содержимое");
+    }
+
+    /// A Notepad "ANSI" file on Russian Windows used to be refused as not valid UTF-8, by
+    /// `/file attach` and `/rag add` alike (docs/research/local-file-encoding.md §1).
+    #[test]
+    fn read_text_reads_a_file_in_its_own_encoding() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("report.txt");
+        let prose = "Выручка за март составила сто двадцать тысяч, за апрель немного больше.";
+        fs::write(&file, encoding_rs::WINDOWS_1251.encode(prose).0).unwrap();
+        let read = read_text(&file, Some("ru")).unwrap();
+        assert_eq!(
+            (read.text.as_str(), read.encoding.name()),
+            (prose, "windows-1251")
+        );
+        fs::write(&file, [0x00, 0x01, 0x02]).unwrap();
+        assert!(
+            read_text(&file, None).is_err(),
+            "a binary file is still refused"
+        );
     }
 
     #[test]
