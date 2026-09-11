@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (56)
+## Entries (57)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -68,6 +68,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a fetched page's attachment is named after the page (done)
 - Post-M9: Python sandbox — the starter set grows: sympy, lxml, openpyxl, matplotlib and more (done)
 - Post-M9: the sandbox's packages, packed read-only (done)
+- Post-M9: sandbox file exchange — stage 2, files out of the sandbox (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -4048,3 +4049,113 @@ one, requests with the network, both memory caps, the timeout.
 **Not in this track.** Deleting `site-packages` after packing — it is the pack's input and
 the wheels' idempotency check, ~210 MB kept on disk; a network allowlist; the website's
 article, whose "read-only package library" is now true.
+
+### Post-M9: sandbox file exchange — stage 2, files out of the sandbox (done)
+
+**What.** `python_exec` in its Wasmer mode was text in, text out: whatever the code
+wrote died with the call, so the matplotlib the starter set added could draw a chart
+nobody would ever see. Now the job directory holds an empty `out/` beside the script;
+once the process exits, the regular files directly in `/w/out` are collected, stored in
+the chat's folder `data/files/<chat-id>/`, listed in `Chat.files`, and a PNG or JPEG
+among them goes back to the model. Track plan and every decision:
+[docs/sandbox-file-exchange.md](../sandbox-file-exchange.md) — the user's forks in §3
+and §5, the stage-1 probe in §10, this stage's sub-decisions in §11. Branch
+`feat/sandbox-files-out`, stacked on the plan's `docs/sandbox-file-exchange`.
+
+**Measured first** (stage 1, §10). On Qwen 3.6 27B and Gemma 4 31B, each with its vision
+projector: a PNG was stored and the input file named unaided in all 30 runs. The drafted
+"the model sees the chart" criterion measured nothing — the model printed the answer and
+the title is its own code — so the probe set a plotting-area colour no code or output
+names: 4/5 and 5/5 with the image, 0/5 blind on both. Blind, both families described a
+chart they had not seen, which is why every image withheld now says so in words.
+
+**How.**
+- `shared/sandbox.rs`: `SandboxOutput` gains `files` and `skipped`; the run keeps its
+  signature (inputs change it in stage 3). `collect_outputs` walks `out/` in name order by
+  `symlink_metadata`, reads a file at most one byte past its cap (10 files, 25 MB each,
+  50 MB a call), names a folder, a link and anything past a cap as skipped, and runs
+  whatever the exit code; after a timeout nothing is read and what `out/` held is named.
+- `entities/chat_file.rs`: `ChatFile` (name, origin, MIME, size, SHA-256) and the pure
+  rules — `sanitize_name` (last component on both separators, Windows-refused and control
+  characters, device names, trailing dots, 120 characters), `versioned`, `same_name`
+  (case-insensitive), `sniff_image` by bytes, `mime_for`.
+- `features/chat_files.rs`: `store` versions against the listing and the disk, writes with
+  `create_new` and syncs; the same bytes under a listed name of the family are
+  `Unchanged`. `unlisted` finds what a folder holds that a chat does not list; `remove`
+  refuses a name that is not one plain component.
+- `python.rs`: the `files:` section after the console — the folder, then one entry per
+  output (renamed, unchanged, shown, not shown and why, the head of a text file) — one
+  `ChatEffect::AddChatFile` per new file, images behind `tools.python_images` and the
+  shared `MAX_TOOL_RESULT_IMAGES`, now in `shared/config.rs`. The description names
+  matplotlib and says what `/w/out` does, the caps and the images sentence built from the
+  values the run uses.
+- The orchestrator: a turn's landing and a background run's both go through
+  `list_stored_files` (idempotent by name, one feed note when the chat is the open one); a
+  sub-agent routes the effect to the parent; `sync_files` mirrors the turn's snapshot.
+  `record_call` withholds a result's images from an engine that reports no vision and says
+  so, and says how many `prepare_tool_images` dropped — both were silent, for MCP too.
+- `/file list` numbers stored files after the attachments and marks one missing from the
+  folder; `/file remove` deletes our copy first and drops the listing second. `files/`
+  joins the backup's directories; the card draws the `files:` section under the console;
+  a test-only `Paths::with_sandbox_dir` lets a live smoke run the real registry over a
+  temporary data root.
+
+**Decided without the user**, recorded in §11 for review:
+- **S6 — adopt, never sweep.** F10's text said opening a chat sweeps files it does not
+  list. Chat saves are debounced, so a crash after a call wrote its chart and before the
+  save leaves a file the user may already have seen on the card, and a background run's
+  files are on disk before it lands. At startup no run is in flight: an unlisted file is
+  listed as `Recovered`, and nothing is deleted — the user's "nothing may be lost".
+- **S3 — one name.** F1's separate `stored` field is gone: the disk name is the handle,
+  so two versions never share a name `/file remove` would have to refuse.
+
+**A link in the guest never reaches the host** (measured 2026-09-12, wasmer 7.2.0 on
+Windows). The smoke's first version assumed a guest `os.symlink` into `/w/out` would show
+up on the host and be named as skipped; it printed "link made" and then nothing. Run
+directly against a mounted directory, `os.symlink` and `os.link` both succeed in the guest
+— it lists both and reads the target through the symlink — while the host directory stays
+empty: guest links live in wasmer's own filesystem layer. The host-side `symlink_metadata`
+check is defence in depth, for another host or version, and the smoke now asserts the
+property — nothing a link names is kept — rather than the mechanism.
+
+**Found on the way.** `parse_console` refused a result with anything after an exit code,
+so a failed run that saved files would have lost its card to flat text — caught by the unit
+test written for the section. And `prepare_tool_images` had dropped an oversize or
+undecodable MCP image without a word.
+
+**Tests.** Unit: `entities::chat_file` (the sanitizer's table — both separators, a Windows
+path read on any host, device names in any case, trailing dots, the cap counted in
+characters — versioning, images sniffed by bytes, the listing's round trip);
+`features::chat_files` (a file on disk never overwritten, a listed name versioned
+case-insensitively, nothing written for the same bytes, a name that is not one component
+refused; unlisted files found, nothing deleted); `shared::sandbox::collect_tests` (name
+order, a folder named, the three caps in one directory, a timed-out call's names, a link);
+`tools::python` (stored, listed and shown; images off; the cap; a quiet run; versioned and
+unchanged; a timeout; no folder; a device name and an SVG; the description in both locales;
+the text head); `present` (the section after an exit code, and alone); `file_command`, the
+`/file list` note, the backup's `files/`; and `orchestrator::tests::files` — a landing once,
+the open chat's note, list and remove, a copy that cannot be deleted staying listed, a name
+the two lists share, adoption and the bootstrap's call, the mirror, and four turns through
+a scripted engine: no vision, a seeing model, an undecodable image, the same chart in two
+rounds. **Mutation-tested**, each line broken and put back by a script: the vision gate,
+the dropped-image note, the mirror's call site, the bootstrap's adoption, the order of
+remove's two writes and the images switch were all caught by their tests; collection
+following links survived here only because Windows refused the test its symlink — the unix
+variant runs in CI. Unit: 3134 green, 165 ignored (3080 / 162 before).
+
+**Live — GO** (Gemma 4 31B q4_0 with its projector, llama.cpp b10807, one slot; the dev
+sandbox's packed image). The nineteen `python::tests` smokes green, among them
+`outputs_are_kept_from_a_real_sandbox` — a matplotlib chart and a CSV kept although the
+script then exited with 3, the folder named, the file written beside `/w/out` not
+collected, the guest's link never on the host — and
+`a_timed_out_call_keeps_none_of_its_outputs`. Through the orchestrator,
+`sandbox_outputs_e2e_live`: the model saved `sales_chart.png`, `/file list` found it in the
+folder, and one image went back; with `python_images` off the same file landed, none went
+back, and the result told the model in the profile's Russian that it had not seen it — its
+reply still summarised the chart, from the numbers the request gave it.
+`image_attachment_e2e_live`, `file_attachment_e2e_live` and
+`tool_result_image_is_seen_live` green beside it.
+
+**Not in this track.** Inputs — `/w/in`, `files`, a binary `/file attach` — are stage 3;
+`/file open` is stage 4; Local-mode parity stage 5. `workspace/` is still missing from the
+backup's directories (a separate task).

@@ -80,6 +80,13 @@ cache is warmed on setup (`warmup`), so the first real call is warm.
   from before — is refused, never mounted, with the command that packs it; the
   one writable mount left is provisioning's own warmup, which fills the bytecode
   the image is packed with.
+  **Amended (2026-09-11, sandbox file exchange):** "no host directories" now reads
+  "one host directory per call". The job directory, created for the call and dropped
+  with it, holds the script and an empty `out/`, whose regular files are collected
+  after the process exits — never through a link, within per-call caps — and stored
+  with the chat by the tool ([docs/sandbox-file-exchange.md](../sandbox-file-exchange.md)).
+  Inputs, as copies, arrive with that track's stage 3; until then the schema is still
+  `{ code }`.
 - **Network**: `--net` is not passed until the user enables
   `python_net_enabled` (a toggle, **on** by default — for requests; but
   enabling the tool itself is a separate opt-in). Without the flag there are
