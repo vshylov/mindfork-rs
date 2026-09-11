@@ -456,7 +456,8 @@ src/
 │  ├─ terminal_input.rs     CLI terminal input: the hidden backup-password prompt, and
 │  │                        discarding keys typed while a long command was running
 │  ├─ sandbox_setup.rs      Python sandbox provisioning (mindfork sandbox setup): wasmer +
-│  │                        python.webc + wheels from a lock list (sha256); cache warmup
+│  │                        python.webc + wheels from a lock list (sha256); cache warmup;
+│  │                        packs CPython + site-packages into packed-sandbox.webc
 │  ├─ llama_setup.rs        llama.cpp downloader (mindfork llama backends|setup|installed
 │  │                        |remove)
 │  │                        + resolve_binary: what an empty/bare binary setting means
@@ -698,7 +699,8 @@ src/
    │                       `gemini` client (generateContent + AUDIO), `playback` (rodio
    │                       queue, lazy device open). See spec §11.9
    ├─ sandbox.rs           SandboxRunner (behind a trait) + WasmerSandbox: `wasmer`
-   │                       sidecar for `python_exec` in sandbox mode (WASIX isolation, §8)
+   │                       sidecar for `python_exec` in sandbox mode (WASIX isolation, §8);
+   │                       runs only the packed image, refuses an unpacked site-packages
    ├─ secrets.rs           machine-bound secret storage: cloud API keys + the backup
    │                       password (ApiKeyEntry — one record
    │                       per machine, put_key/stored_key/is_ours): DPAPI (Windows) and

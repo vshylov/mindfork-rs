@@ -171,8 +171,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-11, version 0.9.8)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3074 unit tests
-green, 161 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **3080 unit tests
+green, 162 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -184,6 +184,14 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **The sandbox's packages, packed read-only** — `site-packages` was mounted with a
+  plain `--volume` (wasmer has no read-only one), and a `sitecustomize.py` one call
+  wrote there ran in the next, in every chat. `sandbox setup` now packs CPython and
+  the packages into one self-contained image and starts it once; the runtime runs
+  nothing else, and an install from before is refused with the command that packs
+  it. One package, because a dependency on `python/python` resolves through the
+  registry and a fresh cache cannot start offline (ADR 0005 §5 amended, spec §13.2,
+  [docs/journal/tools.md](docs/journal/tools.md)).
 - **The sandbox's starter set grows, and `site-packages` turned out writable** —
   twenty wheels from a check of today's WASIX index: sympy (mpmath held below 1.4),
   networkx, tabulate, lxml (in the index now), openpyxl, pypdf, pyyaml, regex,
@@ -395,22 +403,6 @@ being recent is dropped, not shortened.
   the turn's estimate a tenth over the exact, the roll's price 3109 for
   8722 ([docs/research/roll-usage-calibration.md](docs/research/roll-usage-calibration.md),
   spec §6.3, §11.1, [docs/journal/engine.md](docs/journal/engine.md)).
-- **The loops' timings — the silent tasks' cold prompts, sampled at the
-  landing** — the note's sample came from the turn or the roll, and the
-  warm server's ordinary day has neither: a conversation under the
-  compaction threshold, every turn processing tens of tokens. The three
-  silent loops send their own prefix — instructions, tool schemas, a
-  digest — so their first round is processed cold and whole, the largest
-  prompt a session makes (measured: a reflection's first round 2798
-  tokens against the roll's 1466); its usage was read for the budget and
-  dropped. Now `run_rounds` keeps the loop's largest sample on an
-  out-parameter, every silent task lands as `BgDone { kind, outcome,
-  prefill }`, and `handle_bg_done` offers the sample once for every kind
-  after the task's own landing — the roll's own offer folded in. Measured
-  in two phases on the CPU build: the warm turn 52 tokens, under the
-  floor; the reflection's first round the note
-  ([docs/research/loop-timings.md](docs/research/loop-timings.md),
-  spec §3.4, §17.6, [docs/journal/engine.md](docs/journal/engine.md)).
 - **The TUI "hangs" on a headless launch** (no TTY) — this is expected; clean
   exit via `Esc`/`Ctrl+Q` is covered by unit tests. Live verification needs a
   real terminal.

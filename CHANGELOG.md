@@ -313,6 +313,14 @@ split by subsystem.
 
 ### Security
 
+- **The Python sandbox's packages can no longer be changed from inside it.** The
+  sandbox mounted its package directory writable, so code run in one call could
+  leave a file there that then ran inside every later call, in every chat.
+  `mindfork sandbox setup` now packs Python and its packages into one image the
+  code cannot alter. **An existing sandbox stops running code until you run
+  `mindfork sandbox setup` again**: it packs what is already downloaded, in
+  seconds, and the tool names that command when it refuses.
+
 - **The web tools are now off until you turn them on.** `web_search`,
   `fetch_url` and `youtube_watch` used to be enabled in a fresh installation.
   Everything else mindfork connects to is an address you chose — your model

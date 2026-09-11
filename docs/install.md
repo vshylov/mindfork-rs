@@ -759,7 +759,9 @@ The `python_exec` tool works in two modes ("Tools" setting → "Python"):
 For the sandbox mode, set it up once (downloads `wasmer` ~206 MB, `python.webc`
 and the packages into `data/sandbox/`). Measured on disk after setup: the unpacked
 `wasmer` ~730 MB, `python.webc` 43 MB, the packages ~210 MB with their compiled
-bytecode, and the compilation cache ~420 MB — about 1.4 GB. Running it again on an
+bytecode, the sandbox image that packs Python and the packages together (~260 MB;
+code in the sandbox runs from it and cannot change it), and the compilation cache
+~420 MB — about 1.7 GB. Running it again on an
 installed sandbox fetches only what is missing, which is how packages a newer
 release adds arrive:
 

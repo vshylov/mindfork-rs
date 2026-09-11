@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (55)
+## Entries (56)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -67,6 +67,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: local files are read in their own encoding (done)
 - Post-M9: a fetched page's attachment is named after the page (done)
 - Post-M9: Python sandbox — the starter set grows: sympy, lxml, openpyxl, matplotlib and more (done)
+- Post-M9: the sandbox's packages, packed read-only (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -3973,3 +3974,77 @@ localized output.
 2026-09-11 go with that track's design doc; the read-only `site-packages` fix above; scipy,
 polars and PyTorch, still not in the index; the website's sandbox article, which names the
 old set.
+
+### Post-M9: the sandbox's packages, packed read-only (done)
+
+**What.** The defect the starter-set entry found: `site-packages` was mounted into the
+guest with a plain `--volume`, `wasmer` 7.2.0 has no read-only volume, and a
+`sitecustomize.py` one call wrote there ran inside the next — in every chat, with the
+network on by default. ADR 0005 §5, spec §13.2 and the research doc had said read-only
+since July. Branch `fix/sandbox-readonly-site-packages`, stacked on `feat/sandbox-packages`.
+A defect fix, so no design doc; the one choice the user had not made is recorded below.
+
+**Measured first.**
+- **A second package over `python.webc` is not offline.** The probe the starter-set entry
+  recorded — `site-packages` in a package of its own depending on `python/python`, run with
+  `--include-webc python.webc` — failed against a dead proxy on a fresh cache: "Unable to
+  find python/python@=3.13.5 in the registry". Its earlier offline pass had ridden an online
+  resolution cached in the same compilation cache (lessons §3).
+- **One self-contained package is.** `wasmer package unpack --format package` restores
+  `python.webc` as a directory whose manifest has two volumes, one module, one command and no
+  dependencies; with `"/sp" = "../site-packages"` added to its `[fs]`, `wasmer package build`
+  makes a 257 MB image in about 2 s. Against a dead proxy on a fresh cache it ran — 9.4 s
+  cold, 4.2 s warm — a `sitecustomize.py` written to `/sp` did not survive to the next call,
+  and nothing reached the host directory.
+- **The warmup's cache carries over.** Imports through the image on a cache the warmup had
+  filled through the directory were warm at once (3.3 s for the heavy set against the
+  directory's own 3.7 s), so the warmup stays on the directory, where its bytecode can be
+  written, and the image is packed after it.
+
+**How.**
+- `WasmerSandbox` carries a `SiteSource`: `new` is the image, `for_provisioning` the
+  directory — writable, and used only by the warmup's own script. `plan()` decides a launch:
+  the image wherever it exists (it carries CPython, so `MINDFORK_SANDBOX_PYTHON` has nothing
+  to add); a `site-packages` directory without one is `None`; neither is plain CPython.
+  `availability` turns `None` into `sandbox.err.needs_repack`, which names
+  `mindfork sandbox setup` and says nothing is downloaded again, and `run` refuses the same
+  way before anything is spawned.
+- `sandbox setup` gained `pack_image` after the warmup — unpack, extend the manifest
+  (`with_site_packages`: the volume in `[fs]`, a `name`/`version` only where `[package]` has
+  none, `None` for a manifest without `[fs]` rather than a guess), build to
+  `packed-sandbox.webc.partial` and rename it over the image, drop the staging directory —
+  and `verify_image`, which starts the image once and imports numpy, pandas, lxml and
+  matplotlib. An image that does not start fails `setup`: the runtime has nothing else to
+  run.
+- The image's name has a hyphen: `sandbox.webc` would read to the i18n scanner as a key
+  under the `sandbox.` prefix (lessons §7).
+
+**Decided without the user**, recorded for review: an install from before the image is
+refused — not mounted, and not repacked on the fly. Mounting keeps the defect; packing
+inside a tool call would spend its 30 s timeout on what `setup` does in 13 s. The refusal
+closes the door (lessons §4): what is wrong, the one command, and that it downloads nothing.
+
+**Tests.** `the_packed_image_runs_and_nothing_is_mounted`,
+`unpacked_site_packages_is_refused_with_the_way_out` (through `availability` and through
+`run`), `provisioning_mounts_the_directory`, `without_packages_plain_python_runs`;
+`the_image_manifest_adds_site_packages_and_a_name`, on the manifest the pinned
+`python.webc` unpacks to, verbatim, and
+`the_image_manifest_keeps_a_name_and_refuses_a_manifest_without_fs`. Live smoke
+`site_packages_writes_do_not_survive_a_call`: the first call writes `/sp/sitecustomize.py`,
+the host file is checked and removed before anything is asserted, the second call must not
+print the injection. **Mutation-tested** — `WasmerSandbox::new` back on the directory:
+the smoke failed on "the write reached the host's site-packages" (and left nothing behind),
+`the_packed_image_runs_and_nothing_is_mounted` failed; the no-image branch mounting
+instead of refusing: `unpacked_site_packages_is_refused_with_the_way_out` failed. Unit: 3080
+green, 162 ignored (3074 / 161 before).
+
+**Live — GO.** On the dev sandbox as the starter-set track left it — the directory, no
+image — `numpy_in_sandbox` failed with the tool's answer: the sandbox is unavailable, run
+`mindfork sandbox setup` again. `mindfork sandbox setup` then skipped all 34 wheels, warmed
+up, packed the image (256.6 MB) and started it, 12.8 s in all, leaving no staging directory
+or partial file. All seventeen `python::tests` smokes green against the image — the new
+one, requests with the network, both memory caps, the timeout.
+
+**Not in this track.** Deleting `site-packages` after packing — it is the pack's input and
+the wheels' idempotency check, ~210 MB kept on disk; a network allowlist; the website's
+article, whose "read-only package library" is now true.

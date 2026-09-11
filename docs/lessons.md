@@ -785,6 +785,24 @@ the point (line endings deliberately are not a change), prove the view drops not
 before trusting it, and where that cannot be shown, fall back to the bytes.
 — *local files are read in their own encoding*.
 
+**A security property in a decision record is a claim until a test tries to break it.**
+ADR 0005, the spec and the research doc all said the sandbox's `site-packages` was
+mounted read-only; the code passed a plain `--volume`, and `wasmer` has no read-only form
+at all. One call wrote `/sp/sitecustomize.py` and the next, clean call ran it — code the
+model ran once, persisted into every later call in every chat. Nothing had ever written
+there from inside, because every smoke tested what the sandbox *can* do. For each
+isolation property keep one test that attempts the violation and asserts it failed,
+across the boundary that matters: here the next call, and the file on the host.
+— *Python sandbox — the starter set grows*, *the sandbox's packages, packed read-only*.
+
+**A cache can turn an offline test into an online one.** The packed `site-packages` ran
+against a dead proxy in 0.6 s and was written down as working offline; it worked because
+the call before it, online and in the same compilation cache, had resolved its
+`python/python` dependency. On a fresh cache the same command failed — "Unable to find
+python/python@=3.13.5 in the registry". An offline claim needs a cold cache that no
+online run has touched, the same shape as a negative needing both ends of its channel.
+— *Python sandbox — the starter set grows*, *the sandbox's packages, packed read-only*.
+
 ## 4. The recurring defect class: a message must close the door
 
 **Never let a message describe a situation without saying what is and is not possible

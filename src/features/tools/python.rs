@@ -693,6 +693,38 @@ print('pillow', png.getvalue()[:4] == b'\x89PNG')
         assert!(out.contains("png True True"), "got: {out}");
     }
 
+    /// What the guest writes to `site-packages` does not reach the next call — the
+    /// defect this guards: mounted as a host directory, a `sitecustomize.py` one call
+    /// wrote there ran inside the next. The host file is removed before asserting, so a
+    /// regression cannot leave it behind to run inside every smoke after this one.
+    #[tokio::test]
+    #[ignore = "requires a provisioned sandbox (MINDFORK_SANDBOX_DIR)"]
+    async fn site_packages_writes_do_not_survive_a_call() {
+        let Some(dir) = sandbox_dir_from_env() else {
+            return;
+        };
+        let inject =
+            "open('/sp/sitecustomize.py', 'w').write('print(\"INJECTED\")')\nprint('wrote')";
+        let first = run_provisioned(inject).await.unwrap();
+        let host = std::path::Path::new(&dir)
+            .join("site-packages")
+            .join("sitecustomize.py");
+        let reached_host = host.exists();
+        if reached_host {
+            let _ = std::fs::remove_file(&host);
+        }
+        let second = run_provisioned("print('clean')").await.unwrap();
+        assert!(
+            first.contains("wrote"),
+            "the write itself must succeed: {first}"
+        );
+        assert!(!reached_host, "the write reached the host's site-packages");
+        assert!(
+            second.contains("clean") && !second.contains("INJECTED"),
+            "got: {second}"
+        );
+    }
+
     /// requests over HTTPS with network access enabled.
     #[tokio::test]
     #[ignore = "requires a provisioned sandbox + network (MINDFORK_SANDBOX_DIR)"]
