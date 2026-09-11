@@ -16,6 +16,14 @@ split by subsystem.
 
 ### Added
 
+- **More packages in the Python sandbox.** `mindfork sandbox setup` now also
+  installs sympy (symbolic maths), networkx (graphs), lxml, pyyaml, regex,
+  feedparser, openpyxl and pypdf (reading Excel and PDF files), tabulate
+  (Markdown tables from pandas), pillow and matplotlib — about 28 MB more to
+  download. An existing sandbox gets them by running `mindfork sandbox setup`
+  again, which fetches only what is missing. matplotlib is installed and draws
+  correctly, but a chart cannot leave the sandbox yet.
+
 - **`mindfork llama remove <id>`** deletes a downloaded engine build from
   `data/llama/` — by the name `mindfork llama installed` prints, or by a
   bare backend name while only one build of it is installed. If the

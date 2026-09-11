@@ -206,7 +206,8 @@ build the moment they drift from what the app actually renders
   API key (the one provider that takes video) — and works whatever your chat
   engine is, including a local model.
 - **Python** (`python_exec`) — in an isolated **Wasmer/WASIX sandbox**: no
-  host file access, network behind a toggle, numpy / pandas / requests
+  host file access, network behind a toggle, numpy / pandas / sympy /
+  networkx / requests / lxml / openpyxl / pypdf / matplotlib and more
   preinstalled, no Python needed on the host (`mindfork sandbox setup` — one
   command). A local-interpreter mode exists for those who want it.
 - **Files** — `fs_read` / `fs_write` / `fs_list`, optionally jailed to one

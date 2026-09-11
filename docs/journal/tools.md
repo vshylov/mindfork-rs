@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (54)
+## Entries (55)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -66,6 +66,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a fetched page is read in its own encoding (done)
 - Post-M9: local files are read in their own encoding (done)
 - Post-M9: a fetched page's attachment is named after the page (done)
+- Post-M9: Python sandbox — the starter set grows: sympy, lxml, openpyxl, matplotlib and more (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -3874,3 +3875,101 @@ reference.
 **Not in this track** (research §5, §7): a bare-titled page under a banner `<h1>` with no
 `og:title`; a site-first title with no `og:title`; `/file remove <name>` acting on the
 first match.
+
+### Post-M9: Python sandbox — the starter set grows: sympy, lxml, openpyxl, matplotlib and more (done)
+
+**What.** The user asked which packages the sandbox holds and which would widen what the
+assistant can do; after a review against today's WASIX index they chose the whole first
+tier — sympy (with mpmath), tabulate, lxml, openpyxl, pypdf, pyyaml, regex, networkx —
+plus feedparser, pillow and matplotlib (2026-09-11). Twenty wheels with their
+dependencies; branch `feat/sandbox-packages`. A mechanical lock-list change by ADR 0005
+§4, so no design doc — but matplotlib did not work as installed, and one finding reached
+past the track.
+
+**Measured first.** Every wheel downloaded, hash-verified and unpacked into a scratch copy
+of the dev `site-packages`, then exercised in the real sandbox (wasmer 7.2.0,
+`python/python@=3.13.5`) on a fresh compilation cache.
+- **The index moved.** The beautifulsoup4 entry left `lxml` out as "not in the index";
+  it is there now (`cp313-wasix_wasm32`), as are pyyaml, regex, pillow, matplotlib,
+  contourpy and kiwisolver — 63 projects, scipy still absent.
+- **Two pins the latest releases would have broken.** sympy 1.14.0 requires
+  `mpmath<1.4` and the latest is 1.4.1, so mpmath stays at 1.3.0; feedparser 6.0.14 no
+  longer depends on the sdist-only `sgmllib3k` but on `feedparser-sgmllib`, which ships
+  a wheel.
+- **Everything but matplotlib worked as installed**: sympy solving and integrating,
+  `DataFrame.to_markdown()`, lxml's XPath and bs4's `lxml` parser, `pd.read_excel` over
+  openpyxl, pypdf, pyyaml with libyaml, `\p{Cyrillic}` in regex, networkx, feedparser,
+  pillow's PNG/JPEG/WebP/TIFF (its build has no FreeType).
+- **matplotlib failed twice.** At import: the guest has no `HOME`, and matplotlib raises
+  "Could not determine home directory". With `MPLCONFIGDIR` set it imported, then
+  trapped the moment a chart had text — `wasm-c-api trap: null function or function
+  signature mismatch`. Bisected: every native module imports, a figure without text
+  saves, SVG with text saves, and `FT2Font.set_text` traps under
+  `LoadFlags.FORCE_AUTOHINT` only — `DEFAULT`, `NO_AUTOHINT` and `NO_HINTING` render.
+  matplotlib's own default `text.hinting` is `force_autohint`, so every raster chart with
+  a label reached FreeType's autohinter, which this build cannot call; `default` renders
+  the same chart, a Cyrillic title and legend included (looked at, not only asserted).
+  One bisect run "failed" every mode because the probe script was named `bisect.py` and
+  shadowed the standard library's `bisect` — an instrument fault, caught by reading the
+  traceback rather than the verdict.
+- **The cost is bytecode, not native code.** Cold, the new packages took ~17 s to import
+  (sympy 6.6 s, networkx 3.2 s, openpyxl 2.0 s) and 3.9 s warm.
+
+**How.**
+- The lock list is one string, `WHEEL_LOCK` — a row per wheel, `<dir> <sha256> <url>`,
+  `#` comments — parsed by `wheels()`. Thirty-four struct literals of one shape is what
+  the duplication gate reads as sliding self-duplication (lessons §2). A script checked
+  the fourteen existing rows against `HEAD` byte for byte and the twenty new rows'
+  hashes and `dir` names against the verified wheels.
+- A second WASIX shim in `build_wrapper`, beside `setsockopt`: `MPLCONFIGDIR=/tmp/matplotlib`
+  and a `matplotlibrc` there with `backend: Agg` and `text.hinting: default`. An
+  environment variable and one file — matplotlib is not imported unless the code does.
+- The warmup runs `compileall` over `site-packages` (test directories skipped), imports
+  every native wheel and draws one figure with text. Measured on a fresh cache: 40 s,
+  28.6 s of it `compileall`; the bytecode adds 47 MB. Its time limit went from 300 s to
+  600 s for slower machines. Precompiled bytecode is also what a read-only
+  `site-packages` needs, since nothing could be written back at import (below).
+- The tool description names the packages and drops "etc." — **except matplotlib**,
+  whose chart has no way out of the sandbox yet: the model is not told about something
+  whose result it cannot deliver (lessons §4, "only advertise what exists"). The settings
+  hint no longer says "numpy, requests"; install.md's "~300 MB on disk" was stale and is
+  now measured.
+
+**Found on the way — `site-packages` is writable from the guest.** ADR 0005 §5 and spec
+§13.2 say read-only; `build_args` mounts it with a plain `--volume`, and wasmer 7.2.0 has
+no read-only form (`HOST:GUEST:ro` is rejected as a path, and neither the 7.2.0 nor the
+`main` source defines one). Proven: one call wrote `/sp/sitecustomize.py`, and the next,
+clean call ran it — code the model ran once, under a prompt injection from a fetched page
+say, would run inside every later call in every chat. A fix was probed: `site-packages`
+packed into a `.webc` (a `wasmer.toml` with an `[fs]` volume and `python/python` as its
+dependency) and run over `python.webc` with `--include-webc`. Writes land in an in-memory
+layer — the injected file did not survive, the package's hash was unchanged — and the
+starter set imported in 3.2 s. A clean call also ran against a dead proxy, which proved less
+than it seemed: an earlier online call in the same cache had resolved the `python/python`
+dependency, and on a fresh cache the same run fails offline with "Unable to find
+python/python@=3.13.5 in the registry" (measured after) — `--include-webc` does not spare
+the registry query. The fix is its own PR, and has to work offline first.
+
+**Tests.** `every_lock_row_parses` (each non-comment row splits into three fields —
+`wheels()` skips one that does not — with an https wheel URL, a lowercase 64-hex sha256
+and a directory no other row claims), `lockfile_covers_the_starter_set`,
+`wrapper_prepares_matplotlib_for_wasix`; live smokes `starter_set_packages_work_in_sandbox`
+(one computed result per package, not a version) and `matplotlib_renders_text_in_sandbox`.
+**Mutation-tested** — three mutations, each killed by the tests that claim it: a lock row
+with its sha256 dropped (`every_lock_row_parses` — a row did not parse;
+`lockfile_covers_the_starter_set` — tabulate missing); `text.hinting` back to
+`force_autohint` (`wrapper_prepares_matplotlib_for_wasix`, and the live smoke on the trap
+itself); `MPLCONFIGDIR` renamed (the live smoke on "Could not determine home directory").
+Unit: 3074 green, 161 ignored (3072 / 159 before).
+
+**Live — GO.** `mindfork sandbox setup` over the provisioned dev sandbox skipped the
+fourteen installed wheels, fetched and unpacked the twenty new ones and warmed up, 25 s in
+all; `site-packages` went from 73 to 212 MB and the compilation cache from 358 to 421 MB.
+All sixteen `python::tests` smokes green against it — the two new ones, numpy, pandas,
+bs4, requests with and without network, the timeout, both memory-cap smokes, the
+localized output.
+
+**Not in this track.** Files in and out of the sandbox — the user's decisions of
+2026-09-11 go with that track's design doc; the read-only `site-packages` fix above; scipy,
+polars and PyTorch, still not in the index; the website's sandbox article, which names the
+old set.

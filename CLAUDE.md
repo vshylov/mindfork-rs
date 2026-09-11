@@ -171,8 +171,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-11, version 0.9.8)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3072 unit tests
-green, 159 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **3074 unit tests
+green, 161 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -184,6 +184,15 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **The sandbox's starter set grows, and `site-packages` turned out writable** —
+  twenty wheels from a check of today's WASIX index: sympy (mpmath held below 1.4),
+  networkx, tabulate, lxml (in the index now), openpyxl, pypdf, pyyaml, regex,
+  feedparser (now on `feedparser-sgmllib`), pillow, matplotlib; the lock list became
+  one parsed string. matplotlib needed a wrapper shim — the guest has no `HOME`, and
+  its default `force_autohint` traps FreeType here — and the warmup `compileall`s
+  the bytecode, most of a cold call. Found on the way: one call can write
+  `/sp/sitecustomize.py` that the next call runs; its fix is a PR of its own
+  (spec §13.2, [docs/journal/tools.md](docs/journal/tools.md)).
 - **`/file remove` and `/image remove` refuse a name two items share** — with
   `a/notes.md` and `b/notes.md` attached, `/file remove notes.md` removed the first
   and said only "notes.md", and `/file list` showed two identical lines (measured
@@ -402,21 +411,6 @@ being recent is dropped, not shortened.
   floor; the reflection's first round the note
   ([docs/research/loop-timings.md](docs/research/loop-timings.md),
   spec §3.4, §17.6, [docs/journal/engine.md](docs/journal/engine.md)).
-- **The roll's timings — the session's coldest prompt, sampled** — the
-  slow-prefill note read the turn's rounds only, and a server that kept
-  running gives no turn sample: the chat's prefix stays in a slot's cache
-  and every turn processes tens of tokens, under the rule's floor
-  (measured on the LAN stack: 31 against 1430 cold). The compaction roll
-  sends a different prefix — the summarizer's system, a digest that never
-  repeats — so it is processed cold (1466 tokens), the largest prompt a
-  session makes and the very stream a turn displaces; its usage was
-  matched and dropped. Now `collect_roll` keeps the `Usage` chunk's
-  figure, `CompactResult.prefill` carries it, and `handle_compact_result`
-  offers it to the one rule after the roll's own landing. Measured: the
-  CPU build's roll as the session's first request — 37 tok/s, the note;
-  the 4090, none
-  ([docs/research/roll-timings.md](docs/research/roll-timings.md),
-  spec §3.4, §6.7, [docs/journal/engine.md](docs/journal/engine.md)).
 - **The TUI "hangs" on a headless launch** (no TTY) — this is expected; clean
   exit via `Esc`/`Ctrl+Q` is covered by unit tests. Live verification needs a
   real terminal.

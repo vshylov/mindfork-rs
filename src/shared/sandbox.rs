@@ -59,6 +59,32 @@ def _mf_patch_socket():
 _mf_patch_socket()
 ";
 
+/// A shim mixed in ahead of the user's code so matplotlib works under WASIX. Two
+/// failures, both measured before a single line of a plot could run
+/// (docs/journal/tools.md, "the starter set grows"):
+/// - the guest has no `HOME`, so `import matplotlib` raises "Could not determine home
+///   directory" — `MPLCONFIGDIR` gives it a config and cache directory, in `/tmp`,
+///   which dies with the call (the font list is rebuilt per call, within the second
+///   `import matplotlib.pyplot` takes);
+/// - FreeType's autohinter traps in the wasix build ("null function or function
+///   signature mismatch"), and matplotlib's own default `text.hinting` forces it for
+///   every raster text; `default` hinting renders the chart instead.
+///
+/// Only an environment variable and a file in `/tmp` — matplotlib itself is not
+/// imported here, so code that never plots pays nothing for it.
+const MATPLOTLIB_SHIM: &str = "\
+def _mf_prepare_matplotlib():
+    import os
+    d = os.environ.setdefault('MPLCONFIGDIR', '/tmp/matplotlib')
+    try:
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, 'matplotlibrc'), 'w') as f:
+            f.write('backend: Agg\\ntext.hinting: default\\n')
+    except OSError:
+        pass
+_mf_prepare_matplotlib()
+";
+
 /// The raw result of running code in the sandbox (formatting is the tool's
 /// job, so it matches the local mode).
 #[derive(Debug, Clone, PartialEq)]
@@ -343,9 +369,10 @@ fn apply_memory_limit(_child: &tokio::process::Child, _mb: u64) {
     tracing::debug!("sandbox: memory limit is supported only on Windows — skipping");
 }
 
-/// Wraps the user's code with the `setsockopt` shim (pure, testable).
+/// Wraps the user's code with the WASIX compatibility shims — `setsockopt` and
+/// matplotlib (pure, testable).
 pub fn build_wrapper(code: &str) -> String {
-    format!("{SETSOCKOPT_SHIM}\n{code}")
+    format!("{SETSOCKOPT_SHIM}{MATPLOTLIB_SHIM}\n{code}")
 }
 
 /// Builds the `wasmer` command-line arguments (pure, testable). Shape:
@@ -471,6 +498,19 @@ mod tests {
         assert!(w.contains("setsockopt"));
         // The user's code comes after the shim.
         assert!(w.trim_end().ends_with("print(1)"));
+    }
+
+    /// Both halves of the matplotlib shim are in the wrapper, ahead of the user's code.
+    #[test]
+    fn wrapper_prepares_matplotlib_for_wasix() {
+        let w = build_wrapper("print(1)");
+        assert!(w.contains("MPLCONFIGDIR"), "{w}");
+        // A `\n` inside the Python string literal, not a real line break.
+        assert!(w.contains(r"text.hinting: default\n"), "{w}");
+        let shim = w
+            .find("_mf_prepare_matplotlib()")
+            .expect("the shim is called");
+        assert!(shim < w.find("print(1)").unwrap(), "{w}");
     }
 
     #[test]
