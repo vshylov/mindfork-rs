@@ -3943,8 +3943,12 @@ clean call ran it — code the model ran once, under a prompt injection from a f
 say, would run inside every later call in every chat. A fix was probed: `site-packages`
 packed into a `.webc` (a `wasmer.toml` with an `[fs]` volume and `python/python` as its
 dependency) and run over `python.webc` with `--include-webc`. Writes land in an in-memory
-layer — the injected file did not survive, the package's hash was unchanged — it runs
-offline against a dead proxy, and the starter set imported in 3.2 s. It is its own PR.
+layer — the injected file did not survive, the package's hash was unchanged — and the
+starter set imported in 3.2 s. A clean call also ran against a dead proxy, which proved less
+than it seemed: an earlier online call in the same cache had resolved the `python/python`
+dependency, and on a fresh cache the same run fails offline with "Unable to find
+python/python@=3.13.5 in the registry" (measured after) — `--include-webc` does not spare
+the registry query. The fix is its own PR, and has to work offline first.
 
 **Tests.** `every_lock_row_parses` (each non-comment row splits into three fields —
 `wheels()` skips one that does not — with an https wheel URL, a lowercase 64-hex sha256
