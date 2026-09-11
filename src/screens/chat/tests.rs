@@ -1901,6 +1901,7 @@ fn attachment_chip_shows_count_and_standing_cost() {
     s.set_attachments(vec![
         AttachmentInfo {
             name: "a.md".into(),
+            source: "/tmp/a.md".into(),
             bytes: 4096,
             est_tokens: 1200,
             prompt_tokens: 1200,
@@ -1910,6 +1911,7 @@ fn attachment_chip_shows_count_and_standing_cost() {
         // counted at full weight in the standing cost.
         AttachmentInfo {
             name: "big.log".into(),
+            source: "/tmp/big.log".into(),
             bytes: 900_000,
             est_tokens: 200_000,
             // Only the excerpt is actually re-sent every turn.
@@ -1936,6 +1938,7 @@ fn file_list_note_numbers_items_for_removal() {
     s.set_file_progress(FileProgress::Listed {
         items: vec![AttachmentInfo {
             name: "notes.md".into(),
+            source: "/tmp/notes.md".into(),
             bytes: 2048,
             est_tokens: 400,
             prompt_tokens: 400,
@@ -1961,12 +1964,93 @@ fn image_info(
 ) -> crate::entities::message_image::ImageInfo {
     crate::entities::message_image::ImageInfo {
         name: name.into(),
+        source: format!("D:\\pics\\{name}"),
         mime: "image/png".into(),
         width: 800,
         height: 600,
         bytes,
         est_tokens,
     }
+}
+
+/// docs/research/remove-by-shared-name.md F2a: the two lines of a shared name carry the
+/// source `/file remove` accepts, a unique name's line is as it was, and a removal note
+/// names the source only when it was given one.
+#[test]
+fn a_shared_file_name_is_told_apart_by_its_source() {
+    use crate::entities::attachment::{AttachMode, AttachmentInfo};
+    use crate::features::file_command::FileProgress;
+    let note = |progress: FileProgress| {
+        let mut s = ChatScreen::new();
+        s.set_file_progress(progress);
+        let note = s.feed.iter().find(|m| m.role == FeedRole::Note);
+        note.expect("a note in the feed").text.clone()
+    };
+    let info = |name: &str, source: &str| AttachmentInfo {
+        name: name.into(),
+        source: source.into(),
+        bytes: 13,
+        est_tokens: 4,
+        prompt_tokens: 4,
+        mode: AttachMode::Inline,
+    };
+    let list = note(FileProgress::Listed {
+        items: vec![
+            info("notes.md", "D:\\a\\notes.md"),
+            info("Notes.md", "D:\\b\\notes.md"),
+            info("todo.txt", "D:\\a\\todo.txt"),
+        ],
+    });
+    assert!(
+        list.contains("D:\\a\\notes.md") && list.contains("D:\\b\\notes.md"),
+        "{list}"
+    );
+    assert!(!list.contains("D:\\a\\todo.txt"), "{list}");
+
+    let removed = note(FileProgress::Removed {
+        name: "notes.md".into(),
+        source: Some("D:\\b\\notes.md".into()),
+    });
+    assert!(removed.contains("D:\\b\\notes.md"), "{removed}");
+    let removed = note(FileProgress::Removed {
+        name: "todo.txt".into(),
+        source: None,
+    });
+    assert!(!removed.contains("D:\\"), "{removed}");
+}
+
+#[test]
+fn a_shared_image_name_is_told_apart_by_its_source() {
+    use crate::features::image_command::ImageProgress;
+    let note = |progress: ImageProgress| {
+        let mut s = ChatScreen::new();
+        s.set_image_progress(progress);
+        let note = s.feed.iter().find(|m| m.role == FeedRole::Note);
+        note.expect("a note in the feed").text.clone()
+    };
+    let mut first = image_info("chart.png", 120_000, 1200);
+    first.source = "D:\\a\\chart.png".into();
+    let mut second = image_info("chart.png", 4096, 400);
+    second.source = "D:\\b\\chart.png".into();
+    let list = note(ImageProgress::Listed {
+        items: vec![first, second, image_info("photo.jpg", 4096, 400)],
+    });
+    assert!(
+        list.contains("D:\\a\\chart.png") && list.contains("D:\\b\\chart.png"),
+        "{list}"
+    );
+    assert!(!list.contains("D:\\pics\\photo.jpg"), "{list}");
+
+    let removed = note(ImageProgress::Removed {
+        name: "chart.png".into(),
+        source: Some("D:\\b\\chart.png".into()),
+    });
+    assert!(removed.contains("D:\\b\\chart.png"), "{removed}");
+    let removed = note(ImageProgress::Removed {
+        name: "photo.jpg".into(),
+        source: None,
+    });
+    assert!(!removed.contains("D:\\"), "{removed}");
 }
 
 #[test]

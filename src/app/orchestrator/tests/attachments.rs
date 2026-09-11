@@ -156,6 +156,99 @@ async fn a_file_over_the_budget_is_attached_by_reference_not_refused() {
     .unwrap();
 }
 
+/// A name two attachments share (docs/research/remove-by-shared-name.md §3):
+/// `a/notes.md` and `b/notes.md` were listed alike, and `/file remove notes.md` took the
+/// first without saying which. Now the name removes nothing and the refusal names both
+/// by `#N` and path; `#2` removes exactly the second, and its note names the source.
+#[tokio::test]
+async fn a_name_two_attachments_share_removes_nothing_and_names_both() {
+    let backend = CapturingBackend::new();
+    let (dir, cmd_tx, mut evt_rx, _handle) = spawn_orch_cfg(Some(backend.clone()), no_auto_cfg());
+    for folder in ["a", "b"] {
+        std::fs::create_dir_all(dir.path().join(folder)).unwrap();
+        let path = write_file(
+            &dir,
+            &format!("{folder}/notes.md"),
+            &format!("marker-from-{folder}"),
+        );
+        cmd_tx.send(AppCommand::FileAttach { path }).unwrap();
+        wait_attached(&mut evt_rx).await;
+    }
+    let is_listed = |e: &AppEvent| matches!(e, AppEvent::FileProgress(FileProgress::Listed { .. }));
+    let listed = |ev: Option<AppEvent>| match ev {
+        Some(AppEvent::FileProgress(FileProgress::Listed { items })) => items,
+        other => panic!("not a listing: {other:?}"),
+    };
+    let outcome = |e: &AppEvent| {
+        matches!(
+            e,
+            AppEvent::FileProgress(FileProgress::Removed { .. } | FileProgress::Failed(_))
+        )
+    };
+    cmd_tx.send(AppCommand::FileList).unwrap();
+    let items = listed(wait_for(&mut evt_rx, is_listed).await);
+    let sources: Vec<String> = items.iter().map(|i| i.source.clone()).collect();
+    assert_eq!(sources.len(), 2);
+
+    cmd_tx
+        .send(AppCommand::FileRemove {
+            target: "notes.md".into(),
+        })
+        .unwrap();
+    match wait_for(&mut evt_rx, outcome).await {
+        Some(AppEvent::FileProgress(FileProgress::Failed(msg))) => {
+            assert!(msg.contains(&format!("#1 {}", sources[0])), "{msg}");
+            assert!(msg.contains(&format!("#2 {}", sources[1])), "{msg}");
+        }
+        other => panic!("a shared name removed something: {other:?}"),
+    }
+    cmd_tx.send(AppCommand::FileList).unwrap();
+    assert_eq!(
+        listed(wait_for(&mut evt_rx, is_listed).await).len(),
+        2,
+        "nothing was removed"
+    );
+
+    cmd_tx
+        .send(AppCommand::FileRemove {
+            target: "#2".into(),
+        })
+        .unwrap();
+    match wait_for(&mut evt_rx, outcome).await {
+        Some(AppEvent::FileProgress(FileProgress::Removed { name, source })) => {
+            assert_eq!(name, "notes.md");
+            assert_eq!(
+                source.as_deref(),
+                Some(sources[1].as_str()),
+                "the note says which one went"
+            );
+        }
+        other => panic!("#2 was not removed: {other:?}"),
+    }
+    cmd_tx.send(AppCommand::SendMessage("hi".into())).unwrap();
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
+        .await
+        .unwrap();
+    let system = backend.last_request().system.unwrap_or_default();
+    assert!(
+        system.contains("marker-from-a") && !system.contains("marker-from-b"),
+        "exactly the second file left the request: {system}"
+    );
+
+    // One `notes.md` is left: the name reaches it alone, and the note needs no source.
+    cmd_tx
+        .send(AppCommand::FileRemove {
+            target: "notes.md".into(),
+        })
+        .unwrap();
+    match wait_for(&mut evt_rx, outcome).await {
+        Some(AppEvent::FileProgress(FileProgress::Removed { source, .. })) => {
+            assert_eq!(source, None)
+        }
+        other => panic!("the last notes.md was not removed: {other:?}"),
+    }
+}
+
 #[tokio::test]
 async fn reattaching_the_same_file_replaces_the_previous_snapshot() {
     let (dir, cmd_tx, mut evt_rx, _handle) = spawn_orch(None);

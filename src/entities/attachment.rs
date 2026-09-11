@@ -77,6 +77,7 @@ impl Attachment {
     pub fn info(&self, excerpt_tokens: usize) -> AttachmentInfo {
         AttachmentInfo {
             name: self.name.clone(),
+            source: self.source.clone(),
             bytes: self.bytes,
             est_tokens: self.est_tokens,
             prompt_tokens: self.prompt_tokens(excerpt_tokens),
@@ -173,12 +174,69 @@ pub struct AttachmentHit {
 #[derive(Debug, Clone, PartialEq)]
 pub struct AttachmentInfo {
     pub name: String,
+    /// The canonical path, or a tool's source — shown on a `/file list` line whose name
+    /// another attachment shares, since that is what tells the two apart.
+    pub source: String,
     pub bytes: usize,
     /// Estimated tokens of the whole file.
     pub est_tokens: usize,
     /// What it costs per request (see [`Attachment::prompt_tokens`]).
     pub prompt_tokens: usize,
     pub mode: AttachMode,
+}
+
+/// What a handle typed after `remove` — `#N`, a name or a path — reaches in a listed set
+/// (`/file remove`, `/image remove`; docs/research/remove-by-shared-name.md).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Resolved {
+    /// One item: its position.
+    One(usize),
+    /// A name several items share: their positions, in listing order. A removal refuses
+    /// it rather than guess which one was meant (fork F1a).
+    Shared(Vec<usize>),
+    /// Nothing.
+    Nothing,
+}
+
+/// Resolves `#N` (1-based, as the listings number items), which is never ambiguous, or
+/// else every item `matches` accepts for the name or path typed.
+pub fn resolve_handle<T>(
+    items: &[T],
+    target: &str,
+    matches: impl Fn(&T, &str) -> bool,
+) -> Resolved {
+    let target = target.trim().trim_matches(|c| c == '"' || c == '\'').trim();
+    if let Some(digits) = target.strip_prefix('#')
+        && let Ok(n) = digits.trim().parse::<usize>()
+    {
+        return match n.checked_sub(1).filter(|&i| i < items.len()) {
+            Some(i) => Resolved::One(i),
+            None => Resolved::Nothing,
+        };
+    }
+    let hits: Vec<usize> = items
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| matches(*item, target))
+        .map(|(i, _)| i)
+        .collect();
+    match hits.len() {
+        0 => Resolved::Nothing,
+        1 => Resolved::One(hits[0]),
+        _ => Resolved::Shared(hits),
+    }
+}
+
+/// Whether the item at `i` has a name another item shares — where a listing shows the
+/// source and a removal note names it (fork F2a). Names compare as `matches` compares them.
+pub fn name_is_shared<T>(items: &[T], i: usize, name: impl Fn(&T) -> &str) -> bool {
+    let Some(own) = items.get(i).map(&name) else {
+        return false;
+    };
+    items
+        .iter()
+        .enumerate()
+        .any(|(j, item)| j != i && name(item).eq_ignore_ascii_case(own))
 }
 
 /// Splits text into pages of `page_tokens` (estimated) for `attachment_read`.
@@ -340,6 +398,50 @@ mod tests {
         assert!(a.matches("/tmp/Notes.md"));
         assert!(a.matches("  \"notes.md\"  "));
         assert!(!a.matches("other.md"));
+    }
+
+    /// docs/research/remove-by-shared-name.md: `#N` and a path each reach one item, a name
+    /// two items share reaches both, and nothing is picked for the caller.
+    #[test]
+    fn a_handle_resolves_to_one_item_to_every_holder_of_a_shared_name_or_to_nothing() {
+        let file = |dir: &str, name: &str| {
+            Attachment::new(
+                name,
+                format!("/tmp/{dir}/{name}"),
+                "x".into(),
+                1,
+                AttachMode::Inline,
+            )
+        };
+        let items = vec![
+            file("a", "notes.md"),
+            file("b", "Notes.md"),
+            file("a", "todo.txt"),
+        ];
+        let resolve = |target: &str| resolve_handle(&items, target, Attachment::matches);
+        assert_eq!(resolve("#2"), Resolved::One(1), "#N is never ambiguous");
+        assert_eq!(
+            resolve("\"#2\""),
+            Resolved::One(1),
+            "quoted, it is still #N"
+        );
+        assert_eq!(
+            resolve("/tmp/b/Notes.md"),
+            Resolved::One(1),
+            "nor is a path"
+        );
+        assert_eq!(resolve("todo.txt"), Resolved::One(2));
+        assert_eq!(resolve("NOTES.MD"), Resolved::Shared(vec![0, 1]));
+        assert_eq!(resolve(" \"notes.md\" "), Resolved::Shared(vec![0, 1]));
+        for nothing in ["#0", "#4", "#x", "other.md", ""] {
+            assert_eq!(resolve(nothing), Resolved::Nothing, "{nothing:?}");
+        }
+
+        let shared: Vec<bool> = (0..items.len())
+            .map(|i| name_is_shared(&items, i, |a| a.name.as_str()))
+            .collect();
+        assert_eq!(shared, [true, true, false]);
+        assert!(!name_is_shared(&items, 9, |a| a.name.as_str()));
     }
 
     #[test]

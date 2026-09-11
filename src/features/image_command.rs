@@ -43,8 +43,12 @@ pub enum ImageCommand {
 pub enum ImageProgress {
     /// An image was staged: its card + how many are now staged.
     Attached { info: ImageInfo, staged: usize },
-    /// An image was unstaged.
-    Removed { name: String },
+    /// An image was unstaged; `source` is set when another staged image had its name, so
+    /// the note can say which one went.
+    Removed {
+        name: String,
+        source: Option<String>,
+    },
     /// The staged list (`/image list`); empty — nothing staged.
     Listed { items: Vec<ImageInfo> },
     /// The image was staged, but the engine could not say whether it takes images.

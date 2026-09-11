@@ -483,3 +483,79 @@ async fn a_url_that_answers_with_an_error_status_reports_it() {
         "and the route that still works: {msg}"
     );
 }
+
+/// The image twin of the shared-name refusal (docs/research/remove-by-shared-name.md
+/// F3a): two `chart.png` from two folders, where `/image remove chart.png` unstaged the
+/// first without saying which. Now the name unstages neither; `#1` unstages the first,
+/// and its note names the source.
+#[tokio::test]
+async fn a_name_two_staged_images_share_unstages_neither() {
+    let (dir, cmd_tx, mut evt_rx, _handle) = spawn_orch(None);
+    for (folder, width) in [("a", 32), ("b", 64)] {
+        std::fs::create_dir_all(dir.path().join(folder)).unwrap();
+        let path = write_png(&dir, &format!("{folder}/chart.png"), width, 16);
+        cmd_tx.send(AppCommand::ImageAttach { path }).unwrap();
+        wait_staged(&mut evt_rx).await;
+    }
+    let sources: Vec<String> = staged_list(&cmd_tx, &mut evt_rx)
+        .await
+        .into_iter()
+        .map(|i| i.source)
+        .collect();
+    let outcome = |e: &AppEvent| {
+        matches!(
+            e,
+            AppEvent::ImageProgress(ImageProgress::Removed { .. } | ImageProgress::Failed(_))
+        )
+    };
+
+    cmd_tx
+        .send(AppCommand::ImageRemove {
+            target: "chart.png".into(),
+        })
+        .unwrap();
+    match wait_for(&mut evt_rx, outcome).await {
+        Some(AppEvent::ImageProgress(ImageProgress::Failed(msg))) => {
+            assert!(msg.contains(&format!("#1 {}", sources[0])), "{msg}");
+            assert!(msg.contains(&format!("#2 {}", sources[1])), "{msg}");
+        }
+        other => panic!("a shared name unstaged something: {other:?}"),
+    }
+    assert_eq!(
+        staged_list(&cmd_tx, &mut evt_rx).await.len(),
+        2,
+        "nothing was unstaged"
+    );
+
+    cmd_tx
+        .send(AppCommand::ImageRemove {
+            target: "#1".into(),
+        })
+        .unwrap();
+    match wait_for(&mut evt_rx, outcome).await {
+        Some(AppEvent::ImageProgress(ImageProgress::Removed { name, source })) => {
+            assert_eq!(name, "chart.png");
+            assert_eq!(source.as_deref(), Some(sources[0].as_str()));
+        }
+        other => panic!("#1 was not unstaged: {other:?}"),
+    }
+    let left = staged_list(&cmd_tx, &mut evt_rx).await;
+    assert_eq!(
+        (left.len(), left[0].width),
+        (1, 64),
+        "exactly the first went"
+    );
+
+    // One `chart.png` is left: the name reaches it alone, and the note needs no source.
+    cmd_tx
+        .send(AppCommand::ImageRemove {
+            target: "chart.png".into(),
+        })
+        .unwrap();
+    match wait_for(&mut evt_rx, outcome).await {
+        Some(AppEvent::ImageProgress(ImageProgress::Removed { source, .. })) => {
+            assert_eq!(source, None)
+        }
+        other => panic!("the last chart.png was not unstaged: {other:?}"),
+    }
+}

@@ -23,6 +23,7 @@ use base64::Engine as _;
 use uuid::Uuid;
 
 use crate::app::events::AppEvent;
+use crate::entities::attachment::{Resolved, name_is_shared};
 use crate::entities::message_image::{MessageImage, infos, resolve_target};
 use crate::features::image_command::ImageProgress;
 use crate::features::image_fetch::{self, FetchError, FetchedImage};
@@ -262,25 +263,43 @@ impl Orchestrator {
         self.emit_staged_images();
     }
 
-    /// Unstages an image by name/path/`#N` (`/image remove <target>`).
+    /// Unstages an image by name/path/`#N` (`/image remove <target>`). A name two staged
+    /// images share unstages neither, exactly as `/file remove` refuses one
+    /// (docs/research/remove-by-shared-name.md F3a).
     pub(super) fn handle_image_remove(&mut self, target: String) {
         let Some(chat_id) = self.active_id else {
             self.fail_image(self.ui_locale().t("ui.err.image_no_active_chat"));
             return;
         };
+        let loc = self.ui_locale();
         let staged = self.staged_images.entry(chat_id).or_default();
-        let Some(idx) = resolve_target(staged, target.trim().trim_matches(['"', '\''])) else {
-            // The message says what `remove` can and cannot reach: an image already sent
-            // is part of the conversation, and pretending otherwise sends the user
-            // hunting for a command that does not exist.
-            let msg = self
-                .ui_locale()
-                .tf("ui.err.image_not_staged", &[("target", target.trim())]);
-            self.fail_image(&msg);
-            return;
+        let idx = match resolve_target(staged, &target) {
+            Resolved::One(idx) => idx,
+            Resolved::Shared(hits) => {
+                let candidates =
+                    Self::candidate_lines(hits.iter().map(|&i| (i, staged[i].source.as_str())));
+                let msg = loc.tf(
+                    "ui.err.image_name_shared",
+                    &[("target", target.trim()), ("candidates", &candidates)],
+                );
+                self.fail_image(&msg);
+                return;
+            }
+            Resolved::Nothing => {
+                // The message says what `remove` can and cannot reach: an image already
+                // sent is part of the conversation, and pretending otherwise sends the
+                // user hunting for a command that does not exist.
+                let msg = loc.tf("ui.err.image_not_staged", &[("target", target.trim())]);
+                self.fail_image(&msg);
+                return;
+            }
         };
+        let shared = name_is_shared(staged, idx, |i| i.name.as_str());
         let removed = staged.remove(idx);
-        self.emit_image_progress(ImageProgress::Removed { name: removed.name });
+        self.emit_image_progress(ImageProgress::Removed {
+            name: removed.name,
+            source: shared.then_some(removed.source),
+        });
         self.emit_staged_images();
     }
 
