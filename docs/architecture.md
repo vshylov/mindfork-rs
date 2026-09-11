@@ -375,7 +375,10 @@ src/
 │  │  │                     over a shared::net::GuardedClient — the URL is the
 │  │  │                     model's, so local/private addresses are refused;
 │  │  │                     a page over the attachment budget is attached to the
-│  │  │                     chat instead of being cut — ChatEffect::AddAttachment;
+│  │  │                     chat instead of being cut — ChatEffect::AddAttachment,
+│  │  │                     named by what a second field confirms: og:title, an
+│  │  │                     <h1> the <title> begins with, the <title> without its
+│  │  │                     site segment (NameFields; spec §9.3.1);
 │  │  │                     a YouTube link is answered with metadata + a pointer
 │  │  │                     to youtube_watch instead of "no readable text")
 │  │  ├─ youtube.rs         youtube_watch: what a video says and shows. Free

@@ -567,6 +567,15 @@ every gate from "silently never fires" to "fires on everything".
 — *narrative as notes — Tier 2, step C*, *self-model consolidation — stage A2*,
 *embedding-model change — stage 3 (per-model similarity thresholds)*.
 
+**A rule taken from one example describes that example.** `fetch_url` named an attachment
+by its `<h1>` first because docs.vlang.io repeats one `<title>` on every page; the next
+report was the mirror image — sector.biz.ua repeats one banner `<h1>` — and swapping the
+order would have broken the first site to fix the second. What a site repeats is visible
+only across two of its pages: over 43 sites, the `<h1>`-first rule named every page of six
+after the site, and the rule that replaced it was chosen by counting collisions, not by
+the report.
+— *a fetched page's attachment is named after the page*.
+
 **Exercise decision logic against fabricated data before spending anything.** A
 sweeper's logic run against a fake listing caught a real bug: the fractional-second
 truncation in the timestamp parser also ate the timezone offset's digits, so **every**

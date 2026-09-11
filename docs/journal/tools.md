@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (53)
+## Entries (54)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -65,6 +65,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the dialogue's director on Gemma's template — the checkpoint's history must alternate too (done)
 - Post-M9: a fetched page is read in its own encoding (done)
 - Post-M9: local files are read in their own encoding (done)
+- Post-M9: a fetched page's attachment is named after the page (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -3675,6 +3676,10 @@ stopped by the director at the third checkpoint — the second passed with
 the text-turn history. Gemma 3's acceptance of the shape is the stage-0
 measurement. Unit: 2987 green, 153 ignored (2986 / 153 before).
 
+**Not in this track** (§7): a verdict answered in text on a model that
+cannot call tools; the first checkpoint's prompt size on Gemma 3 with
+the schemas; the opening-only impersonation.
+
 ### Post-M9: a fetched page is read in its own encoding (done)
 
 **What.** Reported from a chat: the assistant read a 2002 article on
@@ -3808,6 +3813,64 @@ first line byte for byte the same, and the new Russian word the model wrote stor
 windows-1251. The old path would have written `U+FFFD` over every letter of both
 comments.
 
-**Not in this track** (§7): a verdict answered in text on a model that
-cannot call tools; the first checkpoint's prompt size on Gemma 3 with
-the schemas; the opening-only impersonation.
+### Post-M9: a fetched page's attachment is named after the page (done)
+
+**What.** The follow-up the page-charset entry recorded as not done: with sector.biz.ua's
+article readable, its attachment was named after the archive — the banner every article
+of the site carries in its `<h1>` — because `page_name` took `<h1>` first, the order
+docs.vlang.io's repeated `<title>` had called for. Research, corpus and forks:
+[docs/research/page-attachment-name.md](../research/page-attachment-name.md) — the
+user's decisions of 2026-09-11, every fork as recommended (F1c the agreement rule, F2a
+everything before the title's last separator, F3a the name cleaned). Branch
+`fix/page-attachment-name`.
+
+**Measured first** (research §2–§3). 43 sites and 87 pages — documentation, reference,
+news, archives, blogs, forums; 11 of them in windows-1251 or KOI8-R — fetched with the
+tool's own headers and saved; a probe read the fields, and every candidate rule ran again
+inside the test binary on the saved bytes. The `<h1>`-first rule named every page of six
+sites after the site (sector.biz.ua, the Rust Book's mdBook banner, jvns.ca,
+simonwillison.net, astralcodexten.com, the Arch Linux forums); a repeated `<title>` was
+docs.vlang.io's alone; `og:title`, on 55 pages, repeated on none, but three of the six
+sites do not set it. Each simple reordering left three sites colliding; agreement between
+two fields left none. The probe and the app disagreed on one site, and the app is the one
+that counts: Discourse's `<h1>` sits inside `<noscript>`, which `scraper`'s `html5ever`
+reads as text.
+
+**The premise corrected.** The task said `attachment_read` resolves a name to its first
+match; since the fidelity track it reports an ambiguous name with each candidate's
+source, and the comments on `page_name` saying otherwise were stale. What was wrong was
+the name's meaning, not a silent misread.
+
+**How.** `NameFields::read` collects the `<title>`, every `<h1>`, `og:title` and
+`og:site_name`, whitespace collapsed and a heading's permalink mark (`¶`, a zero-width
+space) trimmed. `NameFields::name`, first match wins: `og:title` unless it is the site
+(`og:site_name`, or the title's last segment), without a site suffix it shares with the
+title; an `<h1>` the title begins with at a word's end, spelled as the title spells it;
+the title without its last segment (`split_last_segment` over ten spaced separators);
+the first `<h1>`; the title. `unique_name` is unchanged — the backstop for a page whose
+every field names its site.
+
+**Found on the way.** The two previous entries in this file (page charset, local files)
+had each been inserted above the closing *Not in this track* paragraph of the dialogue
+director's entry, leaving that paragraph under the wrong entry; it is back in its own.
+
+**Tests.** A table of fourteen fixtures through `body_to_text`, one per measured shape,
+each pinning the step that must name it; the title's split, one row per separator, with
+unspaced ones left alone; and through the tool, two windows-1251 articles under the
+archive's banner `<h1>`, served locally, attached as their articles — the second with no
+URL segment. On the saved corpus the implemented function gave the prototype's name on
+every page, and no site two pages under one name. **Mutation-tested** — eighteen
+mutations, every one killed: each step dropped, each site check, the suffix kept, only
+the first `<h1>` allowed to agree, the `<h1>`'s own spelling, a case-sensitive
+comparison, no word boundary, the first segment kept instead of everything before the
+last, the `<h1>`-first order restored, either permalink mark kept, two separators
+dropped, and `og:title` not read. Unit: 3067 green, 159 ignored (3065 / 159 before).
+
+**Live — GO** (network only; the name is not the model's). sector.biz.ua's article
+attached under the article's own title, not the archive's banner (12 657 characters);
+docs.vlang.io's memory-management page is still "Memory management", four pages by
+reference.
+
+**Not in this track** (research §5, §7): a bare-titled page under a banner `<h1>` with no
+`og:title`; a site-first title with no `og:title`; `/file remove <name>` acting on the
+first match.

@@ -133,7 +133,7 @@ pub(crate) struct PageText {
     pub text: String,
     /// The text hit [`MAX_EXTRACT_CHARS`] — this is not the whole page.
     pub truncated: bool,
-    /// The page's `<title>`, when it had one (the attachment's display name).
+    /// The page's name, when it states one ([`page_name`]) — the attachment's display name.
     pub title: Option<String>,
 }
 
@@ -173,28 +173,143 @@ fn body_to_text(content_type: &str, body: &str) -> Option<PageText> {
     })
 }
 
-/// The page's name for the attachment: **`<h1>` first**, `<title>` second.
-/// Measured on the site from the transcript — `docs.vlang.io` gives every page
-/// the same `<title>` ("V Documentation") while `<h1>` is the actual page
-/// ("Memory management" / "Concurrency"), so taking the title would name two
-/// different pages of one site identically, and `attachment_read` resolves a
-/// name to the **first** match — a silently wrong page.
+/// The page's name for the attachment: the name a second field confirms
+/// (docs/research/page-attachment-name.md §4). A page states its name in up to three
+/// places — `og:title`, an `<h1>`, the `<title>` — and its site's name in some of the
+/// same ones: `docs.vlang.io` gives every page one `<title>` ("V Documentation"),
+/// `sector.biz.ua` every article one `<h1>` (the archive's banner). Taking either field
+/// first names every page of one of them after the site — measured, six sites of 43
+/// under the `<h1>`-first rule this replaces.
 fn page_name(body: &str) -> Option<String> {
     let doc = scraper::Html::parse_document(body);
-    let pick = |q: &str| -> Option<String> {
-        let sel = scraper::Selector::parse(q).ok()?;
-        let raw = doc.select(&sel).next()?.text().collect::<String>();
-        let collapsed = raw.split_whitespace().collect::<Vec<_>>().join(" ");
-        let clipped: String = collapsed.chars().take(NAME_TITLE_CHARS).collect();
-        let t = clipped.trim().to_string();
-        (!t.is_empty()).then_some(t)
-    };
-    pick("h1").or_else(|| pick("title"))
+    let fields = NameFields::read(&doc);
+    let clipped: String = fields.name()?.chars().take(NAME_TITLE_CHARS).collect();
+    let name = clipped.trim();
+    (!name.is_empty()).then(|| name.to_string())
 }
 
-/// Keeps the display name unique within the chat: a site whose `<h1>` is as
-/// constant as its `<title>` would still collide, so a name already taken by a
-/// **different** page gets the URL's last segment appended. Deterministic (no
+/// What a page says about its own name, each field as [`clean_field`] leaves it.
+struct NameFields {
+    title: String,
+    h1s: Vec<String>,
+    og_title: Option<String>,
+    og_site_name: Option<String>,
+}
+
+impl NameFields {
+    fn read(doc: &scraper::Html) -> Self {
+        let texts = |selector: &str| -> Vec<String> {
+            scraper::Selector::parse(selector)
+                .map(|sel| {
+                    doc.select(&sel)
+                        .map(|e| clean_field(&e.text().collect::<String>()))
+                        .filter(|t| !t.is_empty())
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        let meta = |property: &str| -> Option<String> {
+            let sel = scraper::Selector::parse(&format!(r#"meta[property="{property}"]"#)).ok()?;
+            doc.select(&sel)
+                .find_map(|e| e.value().attr("content"))
+                .map(clean_field)
+                .filter(|c| !c.is_empty())
+        };
+        Self {
+            title: texts("title").into_iter().next().unwrap_or_default(),
+            h1s: texts("h1"),
+            og_title: meta("og:title"),
+            og_site_name: meta("og:site_name"),
+        }
+    }
+
+    /// First match wins:
+    /// 1. `og:title`, unless it is the site's own name — without a trailing segment it
+    ///    shares with the `<title>` ("Moon - Wikipedia" → "Moon");
+    /// 2. an `<h1>` the `<title>` begins with, as the `<title>` spells it — any `<h1>`, a
+    ///    blog's banner often being the first;
+    /// 3. the `<title>` without its last segment, which is where a title puts its site;
+    /// 4. the first `<h1>` — a `<title>` that is the site's name alone;
+    /// 5. the `<title>`.
+    fn name(&self) -> Option<&str> {
+        let title = self.title.as_str();
+        let site = split_last_segment(title).map(|(_, site)| site);
+        let is_site = |text: &str| {
+            site.is_some_and(|site| same_text(text, site))
+                || self
+                    .og_site_name
+                    .as_deref()
+                    .is_some_and(|name| same_text(text, name))
+        };
+        if let Some(og) = self.og_title.as_deref().filter(|og| !is_site(og)) {
+            return Some(match split_last_segment(og) {
+                Some((head, tail)) if site.is_some_and(|site| same_text(tail, site)) => head,
+                _ => og,
+            });
+        }
+        if let Some(head) = self.h1s.iter().find_map(|h1| title_begins_with(title, h1)) {
+            return Some(head);
+        }
+        split_last_segment(title)
+            .map(|(head, _)| head)
+            .or_else(|| self.h1s.first().map(String::as_str))
+            .or_else(|| (!title.is_empty()).then_some(title))
+    }
+}
+
+/// The spaced separators a `<title>` puts between a page and its site — every one the
+/// research corpus uses (§2).
+const TITLE_SEPARATORS: [&str; 10] = [
+    " | ", " — ", " – ", " - ", " -> ", " :: ", " · ", " » ", " / ", " : ",
+];
+
+/// `text` split at its last spaced separator: everything before it — a page's own name
+/// may hold a separator ("json — JSON encoder and decoder") — and the last segment.
+fn split_last_segment(text: &str) -> Option<(&str, &str)> {
+    let (at, len) = TITLE_SEPARATORS
+        .iter()
+        .filter_map(|sep| text.rfind(sep).map(|at| (at, sep.len())))
+        .max_by_key(|&(at, _)| at)?;
+    let head = text[..at].trim();
+    (!head.is_empty()).then(|| (head, text[at + len..].trim()))
+}
+
+/// The start of `title` that reads as `h1` ignoring case, spelled as `title` spells it —
+/// and only at a word's end, so an `<h1>` "Go" does not name "Google Search".
+fn title_begins_with<'a>(title: &'a str, h1: &str) -> Option<&'a str> {
+    let n = h1.chars().count();
+    let end = title
+        .char_indices()
+        .nth(n)
+        .map_or(title.len(), |(at, _)| at);
+    let head = &title[..end];
+    let word_ends = title[end..]
+        .chars()
+        .next()
+        .is_none_or(|c| !c.is_alphanumeric());
+    (n > 0 && word_ends && head.chars().count() == n && same_text(head, h1)).then_some(head)
+}
+
+fn same_text(a: &str, b: &str) -> bool {
+    a.to_lowercase() == b.to_lowercase()
+}
+
+/// Whitespace collapsed, and a heading's permalink mark trimmed from its ends — Sphinx's
+/// `¶`, the zero-width space VitePress anchors with — so a field compares as it reads.
+fn clean_field(raw: &str) -> String {
+    let collapsed = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    collapsed
+        .trim_matches(|c: char| {
+            c.is_whitespace()
+                || c == '¶'
+                || matches!(c, '\u{200b}'..='\u{200d}' | '\u{2060}' | '\u{feff}')
+        })
+        .to_string()
+}
+
+/// Keeps the display name unique within the chat: a page whose every field names
+/// its site would still collide (docs/research/page-attachment-name.md §5), so a
+/// name already taken by a **different** page gets the URL's last segment appended. Deterministic (no
 /// counters), so re-fetching the same page produces the same name and replaces
 /// its own attachment rather than piling up copies.
 fn unique_name(base: &str, url: &str, existing: &[Attachment]) -> String {
@@ -766,15 +881,12 @@ mod tests {
         );
     }
 
+    /// One fixture per shape the corpus measured (docs/research/page-attachment-name.md
+    /// §2), each pinning the step of the rule (§4) that has to name it.
     #[test]
-    fn the_attachment_is_named_by_h1_then_title() {
-        // Measured on the site from the transcript: `docs.vlang.io` gives
-        // **every** page the same `<title>` ("V Documentation") while `<h1>`
-        // names the page. Taking the title would give two pages of one site one
-        // name, and `attachment_read` resolves a name to the first match — a
-        // silently wrong page.
-        let page = |head: &str, body: &str| {
-            body_to_text(
+    fn the_attachment_is_named_by_what_a_second_field_confirms() {
+        let name = |head: &str, body: &str| {
+            let page = body_to_text(
                 "text/html",
                 &format!(
                     "<html><head>{head}</head><body>{body}\
@@ -782,17 +894,171 @@ mod tests {
                      </body></html>"
                 ),
             )
-            .unwrap()
+            .unwrap();
+            assert!(!page.truncated);
+            page.title
         };
-        let out = page(
-            "<title>V Documentation</title>",
-            "<h1>Memory management</h1>",
+        // (shape, <head>, <body>, the name)
+        let cases: &[(&str, &str, &str, &str)] = &[
+            (
+                "og:title, without the site suffix it shares with the title",
+                r#"<title>Moon - Wikipedia</title><meta property="og:title" content="Moon - Wikipedia">"#,
+                "<h1>Moon</h1>",
+                "Moon",
+            ),
+            (
+                "og:title over a blog's banner <h1>",
+                r#"<title>Any Nix package, live in your browser</title>
+                   <meta property="og:title" content="Any Nix package, live in your browser">"#,
+                "<h1>Simon Willison’s Weblog</h1>",
+                "Any Nix package, live in your browser",
+            ),
+            (
+                "an og:title that is the title's site segment is the site",
+                r#"<title>Pods | Kubernetes</title><meta property="og:title" content="Kubernetes">"#,
+                "<h1>Pods</h1>",
+                "Pods",
+            ),
+            (
+                "an og:title that is og:site_name is the site",
+                r#"<title>Pods | Kubernetes</title><meta property="og:title" content="Kubernetes Docs">
+                   <meta property="og:site_name" content="Kubernetes Docs">"#,
+                "<h1>Pods</h1>",
+                "Pods",
+            ),
+            (
+                "an <h1> the title begins with",
+                "<title>Array.prototype.map() - JavaScript | MDN</title>",
+                "<h1>Array.prototype.map()</h1>",
+                "Array.prototype.map()",
+            ),
+            (
+                "an <h1> agrees ignoring case and its permalink mark, and reads as the title spells it",
+                "<title>Getting Started - Guide | Vite</title>",
+                "<h1>Getting started <a class=\"header-anchor\" href=\"#getting-started\">\u{200b}</a></h1>",
+                "Getting Started",
+            ),
+            (
+                "the post's <h1> after a banner <h1>",
+                "<title>Learning a few things about running SQLite</title>",
+                "<h1>Julia Evans</h1><h1>Learning a few things about running SQLite</h1>",
+                "Learning a few things about running SQLite",
+            ),
+            (
+                "an <h1> that is only a word's start does not agree",
+                "<title>Google Search Central | Blog</title>",
+                "<h1>Go</h1>",
+                "Google Search Central",
+            ),
+            (
+                "the archive's banner <h1> over an article-first title (the reported page)",
+                "<title>Попьем чайку? Петр 'roxton' Семилетов | Архив журнала «Мой компьютер» №32/203 `2002</title>",
+                "<h1>АРХИВ СТАТЕЙ ЖУРНАЛА «МОЙ КОМПЬЮТЕР» ЗА 2002 ГОД</h1>",
+                "Попьем чайку? Петр 'roxton' Семилетов",
+            ),
+            (
+                "mdBook: the banner <h1> is the title's own suffix",
+                "<title>What is Ownership? - The Rust Programming Language</title>",
+                "<h1 class=\"menu-title\">The Rust Programming Language</h1>",
+                "What is Ownership?",
+            ),
+            (
+                "rustdoc: the <h1> carries a button's text",
+                "<title>serde - Rust</title>",
+                "<h1>Crate <span>serde</span><button>Copy item path</button></h1>",
+                "serde",
+            ),
+            (
+                "a page's own name keeps its separator",
+                "<title>The Qualcomm DSP Driver - Unexpectedly Excavating an Exploit - Project Zero</title>",
+                "",
+                "The Qualcomm DSP Driver - Unexpectedly Excavating an Exploit",
+            ),
+            (
+                "docs.vlang.io: a title that is the site alone, over the page's <h1>",
+                "<title>V Documentation</title>",
+                "<h1>Memory management<a href=\"#memory-management\">¶</a></h1>",
+                "Memory management",
+            ),
+            (
+                "no <h1> and no separator: the title, collapsed",
+                "<title>  Memory\n management  </title>",
+                "",
+                "Memory management",
+            ),
+        ];
+        for (shape, head, body, expected) in cases {
+            assert_eq!(name(head, body).as_deref(), Some(*expected), "{shape}");
+        }
+    }
+
+    #[test]
+    fn a_title_is_split_at_its_last_spaced_separator() {
+        for sep in [
+            " | ", " — ", " – ", " - ", " -> ", " :: ", " · ", " » ", " / ", " : ",
+        ] {
+            let head = format!("Page{sep}Section");
+            let title = format!("{head}{sep}Site");
+            assert_eq!(
+                split_last_segment(&title),
+                Some((head.as_str(), "Site")),
+                "{sep:?}"
+            );
+        }
+        // Unspaced, a separator belongs to a name: "PostgreSQL: Documentation", a path.
+        assert_eq!(
+            split_last_segment("PostgreSQL: Documentation: 18: SELECT"),
+            None
         );
-        assert_eq!(out.title.as_deref(), Some("Memory management"));
-        assert!(!out.truncated);
-        // No h1 → the title, collapsed and trimmed as before.
-        let out = page("<title>  Memory\n management  </title>", "");
-        assert_eq!(out.title.as_deref(), Some("Memory management"));
+        assert_eq!(split_last_segment("Lib.ru/Classics|poems-A-Z"), None);
+    }
+
+    /// The reported defect through the tool (docs/research/page-attachment-name.md §1):
+    /// two articles of one windows-1251 archive, each under the archive's banner `<h1>`,
+    /// attached as the banner and as the banner plus a file name. Each is named by its
+    /// article now, and the second needs no URL segment to differ.
+    #[tokio::test]
+    async fn two_articles_of_one_archive_are_named_by_their_articles() {
+        let archive_page = |article: &str| -> Vec<u8> {
+            let prose =
+                "Абзац статьи из архива журнала, достаточно длинный для порога. ".repeat(1500);
+            let html = format!(
+                "<html><head><meta http-equiv=\"Content-Type\" content=\"text/html; charset=windows-1251\">\
+                 <title>{article} | Архив журнала «Мой компьютер» №32/203 `2002</title></head>\
+                 <body><h1>АРХИВ СТАТЕЙ ЖУРНАЛА «МОЙ КОМПЬЮТЕР» ЗА 2002 ГОД</h1><p>{prose}</p></body></html>"
+            );
+            let body = encoding_rs::WINDOWS_1251.encode(&html).0;
+            let mut out = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\n\
+                 Connection: close\r\n\r\n",
+                body.len()
+            )
+            .into_bytes();
+            out.extend_from_slice(&body);
+            out
+        };
+        let articles = [
+            "Попьем чайку? Петр 'roxton' Семилетов",
+            "ВодВАRить на место. Геннадий Осипенко",
+        ];
+        let (base, _h) =
+            crate::features::image_fetch::stub::serve(articles.map(archive_page).to_vec());
+        let tool = FetchUrl::new(AddressPolicy::Unrestricted);
+        let (_d, mut ctx) = ctx_with_engine(Arc::new(MockBackend::scripted(vec![])));
+        let mut names = Vec::new();
+        for path in ["mycomp/mid203/aid5.html", "mycomp/mid199/aid2.html"] {
+            let url = format!("{base}/{path}");
+            let out = tool
+                .invoke(&ctx, serde_json::json!({"url": url, "summarize": false}))
+                .await
+                .unwrap();
+            let [ChatEffect::AddAttachment(att)] = out.effects.as_slice() else {
+                panic!("not attached: {}", out.result);
+            };
+            names.push(att.name.clone());
+            ctx.attachments = Arc::from(vec![(**att).clone()]);
+        }
+        assert_eq!(names, articles);
     }
 
     #[test]
@@ -1224,6 +1490,9 @@ mod tests {
             !text.contains('\u{FFFD}') && !name.contains('\u{FFFD}'),
             "replacement characters are back: {name:?}"
         );
+        // Named by the article, not by the banner `<h1>` every article of the archive
+        // repeats (docs/research/page-attachment-name.md §1).
+        assert_eq!(name, "Попьем чайку? Петр 'roxton' Семилетов");
     }
 
     /// A YouTube link used to be a dead end here — the watch page is a
@@ -1311,6 +1580,9 @@ mod tests {
                 "attached as {:?}, {pages} page(s), mode {:?}",
                 att.name, att.mode
             );
+            // Every page of the site shares one `<title>`; its `<h1>` is the page
+            // (docs/research/page-attachment-name.md §1).
+            assert_eq!(att.name, "Memory management");
             assert!(
                 out.result.contains("attachment_read"),
                 "the result must say how to reach the attached page: {}",

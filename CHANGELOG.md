@@ -329,6 +329,14 @@ split by subsystem.
 
 ### Fixed
 
+- **A web page attached to the chat is named after the page, not its site.**
+  A long page the assistant reads is attached under a name, and on some sites
+  that name was the site's own on every page: every article of an old magazine
+  archive carried the archive's banner, every chapter of the Rust Book "The
+  Rust Programming Language", every post of some blogs the blog's name — with
+  a second page from the site told apart only by a file name tacked on. The
+  name now comes from what the page says about itself in two places at once,
+  so each page is named by its own title.
 - **Files in an older encoding are read — and edited — as they are.** A text
   file saved in windows-1251, KOI8-R or cp866, or as Notepad's "Unicode",
   reached the assistant with every Russian letter replaced by `�` — when it
