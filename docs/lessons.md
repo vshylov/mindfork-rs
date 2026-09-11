@@ -1694,6 +1694,18 @@ argument — enabling it explicitly changes nothing. Expect a periodic lint back
 local gate could have caught, and do not read it as a regression.
 — *SonarQube follow-up — two new lint families, and eight complexity findings*.
 
+**An `async fn` takes `tokio::fs`, not `std::fs` — the fire-and-forget
+`let _ = std::fs::remove_dir_all(..)` included.** SonarQube's `rust:S7493` reads every
+`std::fs` call inside an `async fn` as a **bug** of HIGH reliability impact, and a bug —
+unlike the smells above — moves a *rating*: fourteen such lines from one merge dropped
+`main`'s new-code reliability to C and turned the gate red, with `cargo clippy -D warnings`
+green on all of them. The rule arrived with an analyzer update, backdated to the lines'
+blame dates (five in `sandbox_setup` from July). The swap is `tokio::fs::x(..).await`,
+one call at a time. What the rule does *not* see blocks just the same — `Path::is_file()`
+/ `exists()`, and a sync helper called from the async fn (unpacking an archive is the
+heavy part of both setup paths) — so treat a clean analysis as the floor, not the proof.
+— *SonarQube follow-up — blocking file calls in the two setup paths*.
+
 **On CI, distrust a single run.** Identical code produced Windows test phases of
 359 / 469 / 376 / 386 / 927 s; a controlled local measurement is the trustworthy one. The
 outlier was diagnosed by joining per-test CI timings against local ones — a 3.9x median

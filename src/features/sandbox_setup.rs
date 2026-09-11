@@ -208,7 +208,7 @@ pub async fn setup(
     loc: &Locale,
     mut progress: impl FnMut(&str),
 ) -> Result<()> {
-    std::fs::create_dir_all(dir).with_context(|| {
+    tokio::fs::create_dir_all(dir).await.with_context(|| {
         loc.tf(
             "sandbox.setup.mkdir",
             &[("path", &dir.display().to_string())],
@@ -294,10 +294,10 @@ async fn ensure_wasmer(
     let dist = dir.join("wasmer-dist");
     progress(loc.t("sandbox.setup.wasmer.extracting"));
     // A clean reinstall of the unpack directory (resilient to a previous interrupted one).
-    let _ = std::fs::remove_dir_all(&dist);
+    let _ = tokio::fs::remove_dir_all(&dist).await;
     extract_targz(&archive_path, &dist, loc)
         .with_context(|| loc.t("sandbox.setup.wasmer.extract_ctx").to_string())?;
-    let _ = std::fs::remove_file(&archive_path);
+    let _ = tokio::fs::remove_file(&archive_path).await;
 
     locate_wasmer(dir).ok_or_else(|| {
         anyhow::anyhow!(
@@ -341,7 +341,7 @@ async fn ensure_python_webc(
     progress(&loc.tf("sandbox.setup.webc.downloading", &[("pkg", PYTHON_PACKAGE)]));
     // wasmer's home/cache — under the sandbox directory (self-contained, not in ~/.wasmer).
     let home = dir.join("wasmer-home");
-    std::fs::create_dir_all(&home).ok();
+    tokio::fs::create_dir_all(&home).await.ok();
     let out = tokio::process::Command::new(wasmer)
         .arg("package")
         .arg("download")
@@ -384,7 +384,8 @@ async fn ensure_wheels(
     progress: &mut impl FnMut(&str),
 ) -> Result<()> {
     let site = dir.join("site-packages");
-    std::fs::create_dir_all(&site)
+    tokio::fs::create_dir_all(&site)
+        .await
         .with_context(|| loc.t("sandbox.setup.wheels.mksite").to_string())?;
     for w in WHEELS {
         if site.join(w.dir).exists() && !opts.force {
