@@ -6,7 +6,8 @@ once the track is done this file moves to `docs/history/`.
 **Status:** forks decided 2026-09-11 — every one as recommended except F10, which
 drops the per-chat quota (§9). **Stage 0** (a read-only `site-packages`) merged as
 #518. **Stage 1**, the MVP probe: GO on both families, Qwen 3.6 27B and Gemma 4 31B
-(§10). Next: stage 2, outputs.
+(§10). **Stage 2**, outputs: implemented on `feat/sandbox-files-out`, live GO on
+Gemma 4 31B (§11).
 
 The request: `python_exec` in its Wasmer mode is text in, text out — whatever the
 code writes dies with the call. The user wants (a) **files out** — what the code
@@ -402,7 +403,7 @@ true (AGENTS.md §4).
   store (naming, write, sweep), `AddChatFile` apply + mirror, the job contract and
   collection, images with `tools.python_images`, the shared cap and the vision gate
   (MCP included), result section and feed card with paths, the description,
-  `/file list`/`remove` over files, `files` in backups; sub-decisions in §11. Docs: spec
+  `/file list`/`remove` over files, `files` in backups; sub-decisions and implementation notes in §11. Docs: spec
   §9.7/§9.10/§13.2, architecture §7/§8, ADR 0005 §5 amended ("no host directories"
   → "one per-call job directory: copies in, collected out"), CHANGELOG, journal.
 - **Stage 3 — inputs** (`feat/sandbox-files-in`): `/w/in` staging, `files`, the
@@ -591,3 +592,17 @@ back against them (lessons §3).
 - **S13 — the live seam:** the orchestrator smoke points a temporary data root at a
   provisioned sandbox through a test-only `Paths` override, instead of the probe's
   environment read inside `build_registry`.
+
+**Implementation notes (2026-09-12)**, read back against S1–S13 — two things the
+decisions did not name:
+
+- **S7's note is for the open chat.** A landing in a chat that is not the open one
+  lists its files without a feed note: the call's card, or the run's transcript,
+  already shows them, and a note in another chat's feed would name files the user
+  cannot see there.
+- **A guest link never reaches the host** (measured under wasmer 7.2.0 on Windows).
+  `os.symlink` and `os.link` into `/w/out` succeed in the guest, which reads through
+  the symlink, while the host `out/` stays empty — the links live in wasmer's own
+  filesystem layer. S2's `symlink_metadata` check is defence in depth for another
+  host or version, and the smoke asserts the property (nothing a link names is kept)
+  rather than that mechanism.
