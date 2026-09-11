@@ -5,8 +5,8 @@ once the track is done this file moves to `docs/history/`.
 
 **Status:** forks decided 2026-09-11 — every one as recommended except F10, which
 drops the per-chat quota (§9). **Stage 0** (a read-only `site-packages`) merged as
-#518. **Stage 1**, the MVP probe: GO on Qwen 3.6 27B (§10); the Gemma 4 31B arm is
-still to run.
+#518. **Stage 1**, the MVP probe: GO on both families, Qwen 3.6 27B and Gemma 4 31B
+(§10). Next: stage 2, outputs.
 
 The request: `python_exec` in its Wasmer mode is text in, text out — whatever the
 code writes dies with the call. The user wants (a) **files out** — what the code
@@ -397,7 +397,7 @@ true (AGENTS.md §4).
   blind arm; (3) the call named `sales.csv` in `files` unaided. **Go at ≥3/5 on each
   criterion.** No-go on (3) alone → F7 becomes (c), rerun; on (2) with a seeing model
   → images to the model deferred, files still ship; on (1) → redesign the output
-  contract first. **Qwen 3.6 27B: GO (§10); Gemma 4 31B: to run.**
+  contract first. **GO on both families (§10).**
 - **Stage 2 — outputs** (`feat/sandbox-files-out`): `ChatFile`/`Chat.files`, the
   store (naming, write, sweep), `AddChatFile` apply + mirror, the job contract and
   collection, images with `tools.python_images`, the shared cap and the vision gate
@@ -454,13 +454,14 @@ PNG/JPEG outputs as tool images. `sandbox_files_probe_e2e_live` drives the scena
 through the real orchestrator and a live model; `MINDFORK_PROBE_NO_IMAGES` withholds
 the image — the blind control arm.
 
-**Setup.** Qwen 3.6 27B Q4_K_M with its vision projector (`/props` `vision: true`),
-llama.cpp b10807, `-np 4 -c 16384`; the packed sandbox of stage 0; `sales.csv`, two
-years of daily sales (10 976 bytes), attached **by reference**, so no number is in the
-prompt, with a different month lifted to the highest total each run; tools
-`python_exec`, `attachment_read`, `attachment_search`; network off; `max_tokens` 4096.
+**Setup.** Two families, each with its vision projector (`/props` `vision: true`), on
+llama.cpp b10807: Qwen 3.6 27B Q4_K_M at `-np 4 -c 16384`, Gemma 4 31B q4_0 at one slot
+of 16384. The packed sandbox of stage 0; `sales.csv`, two years of daily sales
+(10 976 bytes), attached **by reference**, so no number is in the prompt, with a
+different month lifted to the highest total each run; tools `python_exec`,
+`attachment_read`, `attachment_search`; network off; `max_tokens` 4096.
 
-**v1 — criterion (2) as drafted measured nothing.** Every batch stored its PNG and
+**v1 — criterion (2) as drafted measured nothing** (run on Qwen). Every batch stored its PNG and
 named `sales.csv` unaided, and the blind arm named the right month as often as the
 seeing one. The raw trials say why: every run's code computed and printed the peak
 month ("to answer accurately"), although the request asked it not to, so the answer
@@ -475,27 +476,38 @@ its output names the colour; a run whose code set a face colour or a style is fl
 
 | Batch (5 runs) | (1) PNG stored | (3) named `sales.csv` | (2, v1) month in the reply | (2, v2) plotting-area colour |
 |---|---|---|---|---|
-| v1, image shown | 5/5 | 5/5 | 5/5 | — |
-| v1, blind | 5/5 | 5/5 | 5/5 | — |
-| v2, image shown | 5/5 | 5/5 | 5/5 | **4/5**, the fifth flagged |
-| v2, blind | 5/5 | 5/5 | 5/5 | **0/5** |
+| Qwen v1, image shown | 5/5 | 5/5 | 5/5 | — |
+| Qwen v1, blind | 5/5 | 5/5 | 5/5 | — |
+| Qwen v2, image shown | 5/5 | 5/5 | 5/5 | **4/5**, the fifth flagged |
+| Qwen v2, blind | 5/5 | 5/5 | 5/5 | **0/5** |
+| Gemma v2, image shown | 5/5 | 5/5 | 5/5 | **5/5** |
+| Gemma v2, blind | 5/5 | 5/5 | 5/5 | **0/5** |
 
-- **The flagged run is the feature working.** Its first chart came out with hairline
+- **The flagged run is the feature working** (Qwen). Its first chart came out with hairline
   bars (a datetime x-axis at the default bar width) on the yellow background; the model
   looked, rewrote the chart with a real bar width and an explicit white background, and
   the second PNG was stored beside the first as `sales_by_month (2).png`. "White" was the
   right answer about the chart it ended with. Both PNGs were inspected by eye, as were
   the yellow ones of the other runs.
-- **Blind, the model does not say that it cannot see.** Three answered "white", one
-  "based on the code… white (default matplotlib setting)", one came back empty (the
-  stack's known Qwen flake). With v1's "Looking at the chart" this is a requirement for
-  stage 2: when an image is not shown — the switch off, a model without vision — the
-  result has to say so in words (lessons §4), or the model describes a chart it has not
-  seen.
-- **Naming the file was never the difficulty** with a by-reference file — 20 of 20 —
-  so F7(b) stands. A small file attached inline, whose numbers a model could paste into
-  its code instead, was not tried.
-- Time: 2.6 and 2.7 minutes for the v1 batches, 6.9 and 4.4 for v2's two turns a run.
+- **A failed script still made the chart, and the chart carried the answer** (Gemma).
+  One run's code raised `AttributeError` on the line building the peak month's label —
+  after `savefig`, before anything was printed. The PNG was collected all the same (F4:
+  any exit code but a timeout), and the model named 2024-11 from the image: the one run
+  of Gemma's ten in which the month never reached stdout. That chart and one other of
+  Gemma's were inspected by eye, both yellow.
+- **Blind, the model does not say that it cannot see.** Qwen: three answered "white",
+  one "based on the code… white (default matplotlib setting)", one came back empty (the
+  stack's known Qwen flake), and v1's replies said "Looking at the chart…". Gemma never
+  claimed to have looked, yet answered "white" five times of five, once as a deduction
+  from its code. So a requirement for stage 2: when an image is not shown — the switch
+  off, a model without vision — the result has to say so in words (lessons §4), or the
+  model describes a chart it has not seen.
+- **Naming the file was never the difficulty** with a by-reference file — 30 of 30
+  across both families — so F7(b) stands. A small file attached inline, whose numbers a
+  model could paste into its code instead, was not tried.
+- Time: Qwen 2.6 and 2.7 minutes for the v1 batches, 6.9 and 4.4 for v2's two turns a
+  run; Gemma 2.9 and 2.1 for v2.
 
-**Verdict for this family: GO** on (1), (2) and (3). **Gemma 4 31B**, the second family
-(§7), is still to run.
+**Verdict: GO on both families** on (1), (2) and (3) — the colour named from the image
+in 4/5 runs on Qwen (the fifth redrew its chart after looking) and 5/5 on Gemma, against
+0/5 blind on both. Stage 2 goes ahead with F7(b) and images shown to the model.

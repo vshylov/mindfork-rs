@@ -1635,7 +1635,7 @@ no image at all, scored 5/5 like the seeing one — while saying "looking at the
 drafted alternative, quoting the chart's title, fails the same way: the title is in the
 model's own code. What discriminated was a property the harness set and nothing printed —
 the plotting area's colour, through `matplotlibrc` — asked in a follow-up with no tools:
-4/5 with the image, 0/5 blind. Before trusting "the model saw it", name the other channel
+4/5 and 5/5 with the image on two model families, 0/5 blind on both. Before trusting "the model saw it", name the other channel
 the answer could have come through, and close it.
 — *sandbox file exchange — stage 1* ([sandbox-file-exchange.md](sandbox-file-exchange.md) §10).
 
