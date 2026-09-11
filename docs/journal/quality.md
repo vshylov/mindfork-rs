@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (23)
+## Entries (24)
 
 - Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - Post-M9: SonarQube Cloud analysis in CI (done)
@@ -35,6 +35,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: SonarQube follow-up — the budget's poison guard and the pool probe (done)
 - Post-M9: the pool probe's `park` arm records its sibling (done)
 - Post-M9: SonarQube follow-up — the round resolver's three arms (done)
+- Post-M9: SonarQube follow-up — blocking file calls in the two setup paths (done)
 
 ### Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - **28 relative links in the docs pointed at nothing**, and had for a while.
@@ -1322,3 +1323,53 @@ structure (AGENTS.md §3).
   green. **No live run required** (AGENTS.md §3): a mechanical refactor of a
   dispatch, no engine, memory or tool surface touched. No CHANGELOG entry —
   nothing the user sees changed (§4).
+
+### Post-M9: SonarQube follow-up — blocking file calls in the two setup paths (done)
+
+- **Twenty findings open on `main`, and its gate red.** `rust:S7493` ("async
+  functions should not contain synchronous file operations") on nineteen
+  `std::fs` calls — fourteen in `features/llama_setup.rs` (`setup`,
+  `fetch_verified`, `stream_to_part`), five in `features/sandbox_setup.rs`
+  (`setup`, `ensure_wasmer`, `ensure_python_webc`, `ensure_wheels`) — and one
+  `rust:S2629` on `features/tools/web.rs`, a `context(loc.t(..).to_string())`
+  where the rule wants the closure form. Branch `fix/sonar-async-fs`.
+- **A new rule family, backdated** — the lessons case "`cargo clippy -D
+  warnings` green is not Sonar-clean" again: every finding's creation date is
+  its line's blame date (2026-07-12/14 for `sandbox_setup`, 2026-08-06 for
+  `web.rs`, 2026-09-10 for the llama.cpp downloader merge), and the previous
+  follow-up on that same file (c06d26e, 2026-09-10) cleared three findings with
+  all fourteen lines already in place and saw none of these. The rules came with
+  an analyzer update, not with a change. What is new is the class: `S7493` is a
+  **bug** of HIGH reliability impact, and the fourteen inside the new-code
+  period dropped `main`'s new-code reliability rating to **C** against the
+  gate's A — a smell backlog sits in the gate, a bug backlog fails it.
+- **The swap, one call at a time**: `tokio::fs::{create_dir_all,
+  remove_dir_all, remove_file, rename, metadata}(..).await` in place of
+  `std::fs`, the error contexts and the fire-and-forget `let _ =` shape kept as
+  they were. `tokio::fs` runs the same syscall on the blocking pool, so what
+  changes is which thread waits, not what happens on disk; the `tokio::fs::File`
+  writes both modules already had were left alone (they `flush`, the rule's own
+  pitfall). `web.rs`: `Err(err).with_context(|| ..)` — the closure form the
+  file's other sites use; `err` being an error already, the formatting was never
+  wasted there, but the closure is what the rule matches and it reads no worse.
+- **Observed and left alone — what the rule does not see.** `Path::is_file()` /
+  `is_dir()` / `exists()` are `stat` calls and block just the same, and the heavy
+  work of both paths — `extract` / `merge_payload` unpacking a 17 MB zip,
+  `extract_targz`, `unpack_wheel` — is done by sync helpers the async fn calls,
+  which the rule does not descend into. Moving that into `spawn_blocking` is the
+  change that would matter to a runtime, and it would matter on one path only —
+  the python tool's auto-provisioning inside the app (`tools/python.rs`); the
+  CLI's runtime is its own and idle otherwise. A behaviour change, kept out of a
+  findings fix (AGENTS.md §2) and left to a follow-up if it is ever wanted.
+- **Live — GO** (AGENTS.md §3; the tool surface is touched):
+  `live_install_cpu_into_a_tempdir` — b10909 cpu, 17 MB, unpacked and proved
+  (`build 10909` against the tag) in 2.5 s, staging removed;
+  `live_the_registry_still_serves_the_pinned_python_build` — `python.webc`
+  downloaded into a tempdir and verified against its pinned digest, 4.1 s; and
+  `mindfork sandbox setup` on the working install — the present path through
+  `setup`, `ensure_wheels` and the warm-up, done. Not exercised:
+  `ensure_wasmer`'s two removals (a fresh wasmer install only) and the
+  downloader's resume-and-retry branch.
+- `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, `cargo test` —
+  **3072 green, 159 `#[ignore]`, counts unchanged**; the six repository gates
+  green. No CHANGELOG entry — nothing the user sees changed (§4).
