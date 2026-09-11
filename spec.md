@@ -736,7 +736,7 @@ Semantics and signatures — as in attempt #1 (section 9.3 of its specification)
 | `fetch_url` | `{ url, focus?, summarize? }` | Fetch a page (`reqwest` + **rich** extraction `web::extract_rich` — prose plus headings and code blocks) and summarize it via `ctx.engine` (a one-turn request, like `call_subagent`). `summarize=false` → the extracted text with no model involved. A page over the attachment budget arrives as a **chat attachment** rather than cut — see [9.3.1](#931-the-web-tool-our-own-implementation). Behind the `web_enabled` global switch (network access; **off** by default). |
 | `calculate` | `{ expression }` | Evaluates a math expression with our own recursive-descent evaluator (arithmetic, `^`, parens, `pi`/`e`/`tau` constants, `sqrt`/`sin`/`log`/`min`/`max`/… functions). No I/O, not gated. |
 | `current_time` | `{ format? }` | Current date/time (local zone + UTC via `chrono`); `format` — a `strftime` string. No I/O, not gated. |
-| `fs_read` / `fs_write` / `fs_list` | `{ path, … }` | Read/write/list local files. Behind the `fs_enabled` global switch (disabled by default, like Python); an optional `fs_root` sandbox confines access to a directory. |
+| `fs_read` / `fs_write` / `fs_list` | `{ path, … }` | Read/write/list local files. Behind the `fs_enabled` global switch (disabled by default, like Python); an optional `fs_root` sandbox confines access to a directory. A file is read in its own encoding (`shared::text_decode`, §9.12), a file not in UTF-8 says which, and a binary is refused. |
 | `get_sampling` | `{}` | Returns `ctx.effective_sampling` (JSON), restricted to the fields available in the current engine mode (`supported_sampling_fields`). |
 | `set_sampling` | a partial `SamplingConfig` | Returns `ChatEffect::SetSamplingOverride`; applied starting from the next turn. The schema and the applicable fields are restricted to those available in the current mode (a cloud provider would reject the rest); unsupported keys are dropped, with the model notified. If no parameter is available in the current mode, `get_sampling`/`set_sampling` aren't offered to the model at all. |
 | `get_system_message` | `{}` | Returns `ctx.system_message`. |
@@ -1164,9 +1164,12 @@ chip, `/file list`, `/file remove`.
   full, a by-reference one counts its excerpt (not its whole size, and not zero).
   The **budget**, separately, is measured against inline text only — that is what
   `max_total_tokens` governs.
-- **Formats**: any valid UTF-8 (source code, configs, logs) plus html/pdf/docx
-  through the same extractors RAG uses. Undecodable content is refused with a
-  clear message.
+- **Formats**: any text file (source code, configs, logs) in its own encoding —
+  UTF-8, UTF-16 with its BOM, or a legacy encoding found from the bytes with the
+  interface language as the detector's hint
+  ([docs/research/local-file-encoding.md](docs/research/local-file-encoding.md))
+  — plus html/pdf/docx through the same extractors RAG uses. A binary is refused
+  with a clear message, and the attach note names an encoding that is not UTF-8.
 - **Finding a place by meaning — `attachment_search(query)`.** A by-reference
   file is additionally indexed into a **chat-scoped** semantic index in the
   background (chunking, embedding and vec0 as in RAG). The two tools are
@@ -1619,7 +1622,9 @@ exist at all.
     `.gitignore` honoured, hidden entries and `.git/` skipped, depth 2 by
     default;
   - `code_read(path, offset?, limit?)` — the file with **line numbers** in the
-    form `   12→text`, a header stating the total, and a window over a long file;
+    form `   12→text`, a header stating the total, and a window over a long file.
+    The file is read in its own encoding and the header names one that is not
+    UTF-8 — the encoding an edit will be written in;
   - `code_grep(pattern, path?, glob?)` — a regular-expression search returning
     `path:line: text`, smart-case (a lowercase pattern matches any case), with
     `glob` narrowing the files;
@@ -1627,7 +1632,13 @@ exist at all.
     fragment. `old_string` must occur **exactly once**; a fragment that is
     missing, or occurs more than once without `replace_all`, changes nothing and
     the answer says which of the two it was. The result echoes the changed lines,
-    numbered, so a second read is not needed to verify;
+    numbered, so a second read is not needed to verify. The edit is written back
+    in the file's own shape — line endings, BOM **and encoding** — and only when
+    the unedited file comes back byte for byte through that encoding; a
+    character the encoding cannot store, or a file read with loss, is refused
+    with nothing written or journaled. A windows-1251 source read as UTF-8 once
+    came back from an ASCII edit with every letter replaced by `EF BF BD`
+    ([docs/research/local-file-encoding.md](docs/research/local-file-encoding.md) §1, F3b);
   - `code_write(path, content)` — creates a file (with any missing directories)
     or replaces one whole. Its description sends the model to `code_edit` for a
     change inside an existing file, since a whole-file write can silently drop
@@ -1769,6 +1780,9 @@ exist at all.
   - Line endings alone are not a change (matching is on `\n`-normalized text, as
     in the editing tools), and a path that would leave the root is neither
     diffed nor written — re-checked here because a manifest is a file on disk.
+    Both sides are read in the current file's encoding, and equal text over
+    different bytes — a byte the encoding cannot read decodes to `U+FFFD`
+    whatever it was — is a change, not *left exactly as it was*.
 - **UI**: a feed note per command. The attach note names the root and what the
   assistant can now do; `/project status` with nothing attached names the command
   that attaches something; setting a slot echoes the line, and clearing one that

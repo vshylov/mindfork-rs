@@ -4,7 +4,7 @@
      Cyrillic run below is a measurement's input or output. Transliterating them
      would describe a different experiment. The prose itself is English. -->
 
-> **Status:** decided (2026-09-11) — the user's decisions of 2026-09-11: every fork
+> **Status:** implemented (2026-09-11) — the user's decisions of 2026-09-11: every fork
 > as recommended — F1a every reading path, F2c the interface language as the hint,
 > F3b an edit written back in the file's own encoding behind the round-trip check,
 > F4b the encoding named to the model, F5b the order moved to `shared::text_decode`
@@ -239,3 +239,29 @@ needs no new order, only four callers and one thing a page never had: a way back
 - **`code_grep`'s answer when every file was skipped** still says no file matched the
   glob; with UTF-16 read as text that answer becomes rare, and the message itself is a
   separate lessons §4 fix.
+
+## 6. Tests and the live run
+
+- **The decision helpers** (`shared::text_decode`): a whole UTF-16 file is text and a
+  blob opening `FF FE` is not; a `<meta>` counts only in markup; `encode` names the
+  character an encoding lacks and writes UTF-16 by hand; only a lossless read round-trips;
+  every hint is a label `chardetng` accepts.
+- **Every reading path through its real entry point**, with windows-1251 and UTF-16
+  fixtures: `CodeTool::Read` names the encoding, `CodeTool::Grep` finds a Russian word,
+  `FsRead` decodes and refuses a binary, `rag_ingest::read_text` and `extract_file` read
+  what `/file attach` refused, and `workspace_diff::build` diffs a legacy file in its own
+  encoding.
+- **The defect itself**: an ASCII `code_edit` on a windows-1251 source leaves every
+  other byte as it was; the same edit on UTF-16 comes back in UTF-16; `code_write` keeps
+  an existing file's encoding.
+- **Both refusals** — a character the encoding lacks, a lossy read — write nothing and
+  journal nothing; a byte change that equal lossy text cannot show is still a change.
+- **The hint** is the interface language's, through `ToolParams::from_config`.
+- **Mutation-tested**: twelve mutations of the load-bearing lines, each killed by the
+  test written for it. What no unit test pins is the hint's way into the orchestrator's
+  attach, RAG and changes paths: their fixtures read right without it.
+- **Live — GO**: `code_edit_legacy_encoding_e2e_live` against a local CPU build of
+  llama.cpp serving Gemma 4 12B (the LAN stack was down). The model read the windows-1251
+  source with its encoding named in the header, changed the divisor and the comment about
+  it in one `code_edit`, and the file came back windows-1251 — no `EF BF BD`, the
+  untouched first line byte for byte, the new Russian word stored in windows-1251.

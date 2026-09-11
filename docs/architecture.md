@@ -612,8 +612,15 @@ src/
    │                       do not refute (Content-Type charset, <meta>/XML
    │                       declaration up to <body>; a disagreement settled by
    │                       whether the detector's guess reads like one) →
-   │                       chardetng with a TLD hint. Transport-free, so a local
-   │                       file's reader can call it too
+   │                       chardetng with a TLD hint. Transport-free, and its
+   │                       local-file side serves fs_read, the code tools'
+   │                       TextFile, the changes screen, /file attach and /rag:
+   │                       decode_file (a NUL is binary unless the file is whole
+   │                       BOM'd UTF-16; <meta> read only for markup, by
+   │                       extension), encode (names the character an encoding
+   │                       cannot store; UTF-16 written by hand), round_trips (the
+   │                       check an edit is written back behind), tld_hint (the
+   │                       interface language → the detector's hint)
    │                       (docs/research/local-file-encoding.md §3)
    ├─ ui.rs                small rendering helpers: dim_background, scrollbar,
    │                       ListScroll (a list's scroll offset kept between frames —
