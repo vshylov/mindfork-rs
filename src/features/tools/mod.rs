@@ -129,6 +129,16 @@ pub struct ToolContext {
     /// spec §9.12). `None` — no project, or a background turn; the editing tools
     /// then refuse rather than change a file they cannot record the original of.
     pub workspace_journal: Option<std::path::PathBuf>,
+    /// Where this chat's stored files live (`data/files/<chat-id>/`,
+    /// docs/sandbox-file-exchange.md §11 S5): `python_exec` writes what the code saved to
+    /// `/w/out` here. A sub-agent's or a background run's context is a clone of its
+    /// parent turn's, so their files land in the parent's folder. `None` — a background
+    /// task, which has no chat; the tool then keeps nothing and says so.
+    pub files_dir: Option<std::path::PathBuf>,
+    /// The chat's stored files as of this round — a turn snapshot like `attachments`,
+    /// mirrored from `AddChatFile` every round, so a turn's second call versions its
+    /// names against the first's (§11 S5).
+    pub files: std::sync::Arc<[crate::entities::chat_file::ChatFile]>,
     /// The code project attached to this chat (`/project attach`, spec §9.12),
     /// as of the start of the turn. `None` — no project, and then the `code_*`
     /// tools are not offered at all (see [`effective_tool_ids`]); they refuse
@@ -250,6 +260,10 @@ pub struct TurnInfo {
     /// This chat's change-journal directory. See
     /// [`ToolContext::workspace_journal`].
     pub workspace_journal: Option<std::path::PathBuf>,
+    /// This chat's stored-files folder. See [`ToolContext::files_dir`].
+    pub files_dir: Option<std::path::PathBuf>,
+    /// The chat's stored files (a `Chat` snapshot). See [`ToolContext::files`].
+    pub files: std::sync::Arc<[crate::entities::chat_file::ChatFile]>,
     /// Language of the turn's agent scaffold (from `Profile.language`, axis A).
     pub lang: crate::shared::i18n::Lang,
     /// Cancellation token for the turn (a clone of the generation task's /
@@ -284,6 +298,8 @@ impl ToolContext {
             other_chats: turn.other_chats,
             workspace: turn.workspace,
             workspace_journal: turn.workspace_journal,
+            files_dir: turn.files_dir,
+            files: turn.files,
             workspace_cfg: params.workspace,
             mcp_images: params.mcp_images,
             storage: deps.storage,
@@ -422,6 +438,12 @@ pub enum ChatEffect {
     /// `ToolContext` snapshot, so `attachment_read` finds it in the very next
     /// round rather than only in the next turn (docs/history/youtube-transcript.md §3 F1).
     AddAttachment(Box<crate::entities::attachment::Attachment>),
+    /// List a file `python_exec` stored in the chat's folder
+    /// (docs/sandbox-file-exchange.md §11 S7). The bytes are already on disk — the tool
+    /// wrote them where the listing points, as the code tools write their journal — so
+    /// the effect only adds the listing, and the orchestrator stays `Chat`'s sole owner.
+    /// The loop mirrors it into the turn's snapshot, as it does an attachment.
+    AddChatFile(Box<crate::entities::chat_file::ChatFile>),
 }
 
 /// Result of a tool call: text for the model + effects for the orchestrator.
@@ -434,10 +456,10 @@ pub struct ToolOutcome {
     /// handed them over; the orchestrator downscales, normalizes and caps them on the
     /// same path a user's `/image attach` takes.
     ///
-    /// The field sits on the contract rather than inside the MCP branch (fork F5) so a
-    /// future built-in tool with a picture to return needs no rework — but **only** the
-    /// MCP adapter fills it today, and nothing invents a consumer for a path with no
-    /// producer.
+    /// The field sits on the contract rather than inside the MCP branch (fork F5), so a
+    /// built-in tool with a picture to return needed no rework: the MCP adapter fills it,
+    /// and so does `python_exec` with the images its code saved
+    /// (docs/sandbox-file-exchange.md §11 S8).
     pub images: Vec<ToolImage>,
     /// **This call changed the profile's stored memory** — the self-model or
     /// a note. Set by a memory writer on the success path that returns after
@@ -751,6 +773,8 @@ pub struct ToolConfig {
     pub python_wasm_timeout: Duration,
     /// Hard sandbox memory limit (MB; `None` — no limit). Windows only.
     pub python_wasm_memory_mb: Option<u64>,
+    /// Show the model the images `python_exec` saved (`config.tools.python_images`).
+    pub python_images: bool,
     /// Sandbox directory (`data/sandbox/`) with the `wasmer` binary and assets
     /// (`None` — no directory, sandbox only via the env override).
     pub sandbox_dir: Option<PathBuf>,
@@ -792,6 +816,7 @@ impl Default for ToolConfig {
                 crate::shared::config::DEFAULT_PYTHON_WASM_TIMEOUT_SECS,
             ),
             python_wasm_memory_mb: None,
+            python_images: true,
             sandbox_dir: None,
             web_fetch_content: true,
             web_allow_private: false,
@@ -873,16 +898,19 @@ pub fn standard_registry(cfg: &ToolConfig) -> ToolRegistry {
                 c.max_minutes
             }),
     )));
-    reg.register(Arc::new(python::PythonExec::new(
-        cfg.python_mode,
-        cfg.python_path.clone(),
-        Arc::new(
-            WasmerSandbox::new(cfg.sandbox_dir.clone())
-                .with_memory_limit(cfg.python_wasm_memory_mb),
-        ),
-        cfg.python_net,
-        cfg.python_wasm_timeout,
-    )));
+    reg.register(Arc::new(
+        python::PythonExec::new(
+            cfg.python_mode,
+            cfg.python_path.clone(),
+            Arc::new(
+                WasmerSandbox::new(cfg.sandbox_dir.clone())
+                    .with_memory_limit(cfg.python_wasm_memory_mb),
+            ),
+            cfg.python_net,
+            cfg.python_wasm_timeout,
+        )
+        .with_images(cfg.python_images),
+    ));
     reg.register(Arc::new(calc::Calculate));
     reg.register(Arc::new(datetime::CurrentTime));
     reg.register(Arc::new(fs::FsRead::new(cfg.fs_root.clone())));
@@ -1038,6 +1066,9 @@ pub(crate) mod testkit {
             other_chats: std::sync::Arc::from(Vec::new()),
             workspace: None,
             workspace_journal: None,
+            // No stored files and no folder by default; tests that store set both.
+            files_dir: None,
+            files: std::sync::Arc::from(Vec::new()),
             lang: crate::shared::i18n::Lang::Ru,
             cancel: tokio_util::sync::CancellationToken::new(),
             // No engine name by default; tests that need one set `ctx.model_name`.

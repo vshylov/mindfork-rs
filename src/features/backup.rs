@@ -5,9 +5,10 @@
 //! are relative to the data root):
 //! - files `settings.json`, `profiles.json`, `data.db` (+ sidecar `-wal`/`-shm`,
 //!   if present — see the compaction note below), `personal_dictionary.txt`;
-//! - directories `chats/`, `dictionaries/`, and `locales/` (recursively — their
-//!   `*.bak` files are pulled in too; `locales/` — user overrides of the
-//!   scaffold/UI text);
+//! - directories `chats/`, `dictionaries/`, `locales/` and `files/` (recursively —
+//!   their `*.bak` files are pulled in too; `locales/` — user overrides of the
+//!   scaffold/UI text; `files/` — what the Python sandbox saved for each chat, which
+//!   cannot be recomputed, docs/sandbox-file-exchange.md F10);
 //! - all `*.bak` at the root (`settings.bak`, `profiles.bak`);
 //! - the file-tools "sandbox" directory (`config.tools.fs_root`) — **only if**
 //!   it lies inside the data root.
@@ -155,7 +156,7 @@ const TOP_FILES: &[&str] = &["settings.json", "profiles.json", "personal_diction
 const DB_FILES: &[&str] = &["data.db", "data.db-wal", "data.db-shm"];
 
 /// Directories included in the backup whole (recursively).
-const TOP_DIRS: &[&str] = &["chats", "dictionaries", "locales"];
+const TOP_DIRS: &[&str] = &["chats", "dictionaries", "locales", "files"];
 
 /// A packing entry: the source's absolute path + its name inside the archive (with `/`).
 struct Entry {
@@ -903,6 +904,8 @@ mod tests {
         fs::write(root.join("dictionaries").join("en.dic"), b"x").unwrap();
         fs::create_dir_all(root.join("locales")).unwrap();
         fs::write(root.join("locales").join("en.json"), b"{}").unwrap();
+        fs::create_dir_all(root.join("files").join("c1")).unwrap();
+        fs::write(root.join("files").join("c1").join("chart.png"), b"png").unwrap();
         // Must not end up in the backup:
         fs::create_dir_all(root.join("logs")).unwrap();
         fs::write(root.join("logs").join("mindfork.log"), b"log").unwrap();
@@ -981,6 +984,7 @@ mod tests {
             "chats/a.bak",
             "dictionaries/en.dic",
             "locales/en.json",
+            "files/c1/chart.png",
         ] {
             assert!(
                 names.contains(&expected.to_string()),

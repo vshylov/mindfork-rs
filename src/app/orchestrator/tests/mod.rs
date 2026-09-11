@@ -439,6 +439,21 @@ fn spawn_orch_live_no_embed(config: AppConfig) -> Option<OrchHandle> {
 }
 
 fn spawn_orch_live_with(config: AppConfig, with_embedder: bool) -> Option<OrchHandle> {
+    spawn_orch_live_paths(config, with_embedder, None)
+}
+
+/// Like [`spawn_orch_live_cfg`], with the sandbox at `sandbox` — a provisioned
+/// `MINDFORK_SANDBOX_DIR` — rather than the temporary data root's empty one
+/// (docs/sandbox-file-exchange.md §11 S13).
+fn spawn_orch_live_sandbox(config: AppConfig, sandbox: std::path::PathBuf) -> Option<OrchHandle> {
+    spawn_orch_live_paths(config, true, Some(sandbox))
+}
+
+fn spawn_orch_live_paths(
+    config: AppConfig,
+    with_embedder: bool,
+    sandbox: Option<std::path::PathBuf>,
+) -> Option<OrchHandle> {
     let backend = live_backend()?;
     let supervisor: Arc<dyn crate::app::supervisor::ServerSupervisor> = if with_embedder {
         Arc::new(MockSupervisor::with_backend_and_embedder(
@@ -449,7 +464,11 @@ fn spawn_orch_live_with(config: AppConfig, with_embedder: bool) -> Option<OrchHa
         Arc::new(MockSupervisor::with_backend_no_embedder(Some(backend)))
     };
     let dir = tempfile::tempdir().unwrap();
-    let storage = Arc::new(Storage::open(Paths::with_root(dir.path())).unwrap());
+    let mut paths = Paths::with_root(dir.path());
+    if let Some(sandbox) = sandbox {
+        paths = paths.with_sandbox_dir(sandbox);
+    }
+    let storage = Arc::new(Storage::open(paths).unwrap());
     let (cmd_tx, cmd_rx) = unbounded_channel();
     let (evt_tx, evt_rx) = unbounded_channel();
     let deps = OrchestratorDeps {
@@ -619,6 +638,7 @@ mod concurrent;
 mod confirm;
 mod demo;
 mod dialogue;
+mod files;
 mod generation;
 mod images;
 mod impersonation;

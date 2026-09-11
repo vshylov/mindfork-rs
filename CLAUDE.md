@@ -169,10 +169,10 @@ Backend selection: `MINDFORK_ENGINE_URL` (external, any OpenAI server) OR
 rented instead of hosted — `python tools/e2e_hf.py run`, see
 `docs/history/remote-e2e-hf.md`.
 
-## Status (2026-09-11, version 0.9.8)
+## Status (2026-09-12, version 0.9.8)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3080 unit tests
-green, 162 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **3134 unit tests
+green, 165 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -184,6 +184,17 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **Files out of the Python sandbox — a chart reaches the user and the model** —
+  `python_exec` gains `/w/out`: once the process exits (any exit code, never after a
+  timeout) its regular files are collected under caps, stored in `data/files/<chat-id>/`
+  and listed in `Chat.files`, and a PNG or JPEG goes back to the model behind
+  `tools.python_images`. Measured first on Qwen 3.6 27B and Gemma 4 31B: a plot colour
+  only the image carries was named 4/5 and 5/5 with it, 0/5 blind — and blind, both
+  described a chart they had not seen, so every withheld image is now said in the
+  result, MCP's too. `/file list`/`remove` reach stored files, backups pack them, and an
+  unlisted file is adopted at startup, never swept
+  ([docs/sandbox-file-exchange.md](docs/sandbox-file-exchange.md) §10–§11, spec §9.7,
+  §9.10, §13.2, [docs/journal/tools.md](docs/journal/tools.md)).
 - **The sandbox's packages, packed read-only** — `site-packages` was mounted with a
   plain `--volume` (wasmer has no read-only one), and a `sitecustomize.py` one call
   wrote there ran in the next, in every chat. `sandbox setup` now packs CPython and
@@ -387,22 +398,6 @@ being recent is dropped, not shortened.
   over the JSON at 1.61 in its own slot, the prose turns at 0.9
   ([docs/research/title-impersonation-usage.md](docs/research/title-impersonation-usage.md),
   spec §6.3, [docs/journal/engine.md](docs/journal/engine.md)).
-- **The roll's usage for the budget — and the estimate it would
-  calibrate** — the item was "let the roll record its usage as the loops
-  do"; measured first, it turned on its precondition: the prompt estimate
-  never counted the tool schemas (24 of them, 18 116 bytes, about 4270
-  tokens — a fresh chat's first request estimated 85 against 4358 exact),
-  so the ratio the budget "calibrates" with was that overhead in disguise
-  (51 falling to 6 across one conversation), the first request of a
-  session was priced at a fiftieth of its size, and a request without
-  schemas — the roll — nine times over; its own ratio recorded would have
-  priced the next turn six times under. Now `estimate_prompt_tokens`
-  counts the schemas as the wire sends them (`openai::tools_json`, one
-  rendering behind both), and the roll records its usage in its task
-  beside the estimate its reservation was priced from. Measured after:
-  the turn's estimate a tenth over the exact, the roll's price 3109 for
-  8722 ([docs/research/roll-usage-calibration.md](docs/research/roll-usage-calibration.md),
-  spec §6.3, §11.1, [docs/journal/engine.md](docs/journal/engine.md)).
 - **The TUI "hangs" on a headless launch** (no TTY) — this is expected; clean
   exit via `Esc`/`Ctrl+Q` is covered by unit tests. Live verification needs a
   real terminal.

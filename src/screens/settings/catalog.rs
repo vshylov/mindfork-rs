@@ -849,6 +849,16 @@ impl SettingsScreen {
                         )
                         .describe(loc.t("ui.settings.desc.python_net")),
                     );
+                    // Beside the network switch: both decide what a sandbox call costs
+                    // or reaches, and neither means anything in local mode.
+                    py.push(
+                        row(
+                            FieldId::TPythonImages,
+                            loc.t("ui.settings.field.python_images"),
+                            FieldKind::Toggle(t.python_images),
+                        )
+                        .describe(loc.t("ui.settings.desc.python_images")),
+                    );
                     py.push(
                         num_field(
                             FieldId::TPythonWasmTimeout,

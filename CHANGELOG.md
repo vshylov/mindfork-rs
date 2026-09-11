@@ -16,13 +16,23 @@ split by subsystem.
 
 ### Added
 
+- **Files out of the Python sandbox.** What the code saves directly into
+  `/w/out` — a matplotlib chart, a CSV, a workbook — is kept with the chat, in
+  `data/files/<chat-id>/`, and the call's card shows the folder and every file. A
+  PNG or JPEG is also shown to the model, so it can check the chart it drew;
+  *Show charts to the model* under Settings → Tools → Python turns that off. Up to
+  10 files and 50 MB a call; a file of a name already saved gets a numbered copy
+  rather than overwriting the first. `/file list` shows stored files after the
+  attachments, `/file remove` deletes them, and backups include them. A later call
+  cannot read them yet.
+
 - **More packages in the Python sandbox.** `mindfork sandbox setup` now also
   installs sympy (symbolic maths), networkx (graphs), lxml, pyyaml, regex,
   feedparser, openpyxl and pypdf (reading Excel and PDF files), tabulate
   (Markdown tables from pandas), pillow and matplotlib — about 28 MB more to
   download. An existing sandbox gets them by running `mindfork sandbox setup`
   again, which fetches only what is missing. matplotlib is installed and draws
-  correctly, but a chart cannot leave the sandbox yet.
+  correctly.
 
 - **`mindfork llama remove <id>`** deletes a downloaded engine build from
   `data/llama/` — by the name `mindfork llama installed` prints, or by a
@@ -345,6 +355,11 @@ split by subsystem.
 
 ### Fixed
 
+- **An image a tool returns but the model does not get is now said so.** An MCP
+  server's image that was too large or would not decode vanished without a word,
+  and a model without vision was sent a tool's images anyway; now neither is sent,
+  and the tool's result tells the model it has not seen them.
+
 - **`/file remove` and `/image remove` no longer guess between two items of
   one name.** With `notes.md` attached from two different folders,
   `/file remove notes.md` removed whichever came first and said only
@@ -541,6 +556,9 @@ split by subsystem.
   `mindfork sandbox setup --force`.
 
 ### Data
+
+- Chats gain an optional list of stored files, and the data folder a `files/`
+  directory beside `chats/`. Older chat files read unchanged, with no migration.
 
 - **Chat files: `CHAT_SCHEMA` 3 → 4.** A sub-agent run whose title the old
   100-character limit had cut gets the rest of it back, re-derived from the

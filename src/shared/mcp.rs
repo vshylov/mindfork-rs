@@ -85,14 +85,9 @@ pub struct McpImage {
     pub data: String,
 }
 
-/// How many image blocks one tool result may contribute (fork F2 of
-/// docs/research/mcp-tool-images.md).
-///
-/// An MCP server is third-party code, and every image it returns rides **every**
-/// subsequent turn of the conversation — so the ceiling bounds a standing cost, not one
-/// reply. Extras are dropped and **said out loud** in the result text: a silent cap reads
-/// as "the tool returned four images" when it returned fifty.
-pub const MAX_RESULT_IMAGES: usize = 4;
+/// How many image blocks one tool result may contribute: the one cap every producer of
+/// tool images reads, so it lives with the image limits.
+use crate::shared::config::MAX_TOOL_RESULT_IMAGES;
 
 /// The connection's shared writer: written to both by our own requests and by
 /// the reader task (replies to `ping`/`-32601`).
@@ -291,7 +286,7 @@ impl McpConnection {
                     block.get("mimeType").and_then(Value::as_str),
                 ) {
                     (Some(data), Some(mime)) if !data.is_empty() => {
-                        if images.len() < MAX_RESULT_IMAGES {
+                        if images.len() < MAX_TOOL_RESULT_IMAGES {
                             images.push(McpImage {
                                 mime: mime.to_string(),
                                 data: data.to_string(),
@@ -315,7 +310,7 @@ impl McpConnection {
                 &mut text,
                 &format!(
                     "[{dropped} more image(s) were returned but not included: at most \
-                     {MAX_RESULT_IMAGES} images per tool result]"
+                     {MAX_TOOL_RESULT_IMAGES} images per tool result]"
                 ),
             );
         }
@@ -1047,7 +1042,7 @@ mod tests {
                     "serverInfo": { "name": "fake", "version": "0.1" }
                 }})),
                 "tools/call" => {
-                    let blocks: Vec<_> = (0..MAX_RESULT_IMAGES + 3)
+                    let blocks: Vec<_> = (0..MAX_TOOL_RESULT_IMAGES + 3)
                         .map(|i| {
                             json!({ "type": "image", "data": format!("d{i}"),
                                          "mimeType": "image/png" })
@@ -1064,10 +1059,10 @@ mod tests {
             .call_tool("t", json!({}), Duration::from_secs(2), None)
             .await
             .unwrap();
-        assert_eq!(res.images.len(), MAX_RESULT_IMAGES);
+        assert_eq!(res.images.len(), MAX_TOOL_RESULT_IMAGES);
         // The ones kept are the first ones, in order.
         assert_eq!(res.images[0].data, "d0");
-        assert_eq!(res.images[MAX_RESULT_IMAGES - 1].data, "d3");
+        assert_eq!(res.images[MAX_TOOL_RESULT_IMAGES - 1].data, "d3");
         assert!(
             res.text.contains('3'),
             "the count of dropped ones: {}",

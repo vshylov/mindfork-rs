@@ -4,7 +4,7 @@
 
 use super::*;
 use crate::entities::attachment::format_bytes;
-use crate::features::file_command::{FileProgress, mode_label};
+use crate::features::file_command::{FileProgress, StoredInfo, mode_label};
 
 impl ChatScreen {
     /// Updates the active chat's attachment cards (`AppEvent::Attachments`) —
@@ -47,8 +47,19 @@ impl ChatScreen {
                 };
                 self.push_note(&msg);
             }
-            FileProgress::Listed { items } => {
-                let text = format_attachments(&items, self.loc);
+            FileProgress::RemovedStored { name } => {
+                let msg = self.loc.tf("ui.file.removed_stored", &[("name", &name)]);
+                self.push_note(&msg);
+            }
+            FileProgress::Saved { names, dir } => {
+                let msg = self.loc.tf(
+                    "ui.file.saved",
+                    &[("names", &names.join(", ")), ("dir", &dir)],
+                );
+                self.push_note(&msg);
+            }
+            FileProgress::Listed { items, stored, dir } => {
+                let text = format_file_list(&items, &stored, &dir, self.loc);
                 self.push_note(&text);
             }
             FileProgress::Indexing { name, done, total } => {
@@ -124,8 +135,53 @@ pub(super) fn format_tokens(tokens: usize) -> String {
     }
 }
 
-/// Formats the `/file list` reply: a header plus one line per attachment with
-/// its `#N` handle (the same handle `/file remove #N` accepts).
+/// Formats the `/file list` reply: the attachments, then the stored files numbered on
+/// from them — the same `#N` handles `/file remove` accepts
+/// (docs/sandbox-file-exchange.md §11 S11).
+pub(super) fn format_file_list(
+    items: &[AttachmentInfo],
+    stored: &[StoredInfo],
+    dir: &str,
+    loc: &'static Locale,
+) -> String {
+    if stored.is_empty() {
+        return format_attachments(items, loc);
+    }
+    let mut out = if items.is_empty() {
+        String::new()
+    } else {
+        format!("{}\n", format_attachments(items, loc))
+    };
+    let total: u64 = stored.iter().map(|f| f.bytes).sum();
+    out.push_str(&loc.tf(
+        "ui.file.stored_header",
+        &[
+            ("n", &stored.len().to_string()),
+            ("size", &format_bytes(total as usize)),
+            ("dir", dir),
+        ],
+    ));
+    for (i, file) in stored.iter().enumerate() {
+        let n = (items.len() + i + 1).to_string();
+        let size = format_bytes(file.bytes as usize);
+        out.push_str(&loc.tf(
+            "ui.file.stored_item",
+            &[
+                ("i", &n),
+                ("name", &file.name),
+                ("size", &size),
+                ("mime", &file.mime),
+            ],
+        ));
+        if file.missing {
+            out.push_str(loc.t("ui.file.stored_missing"));
+        }
+    }
+    out
+}
+
+/// Formats the attachments half of the `/file list` reply: a header plus one line per
+/// attachment with its `#N` handle (the same handle `/file remove #N` accepts).
 pub(super) fn format_attachments(items: &[AttachmentInfo], loc: &'static Locale) -> String {
     if items.is_empty() {
         return loc.t("ui.file.list_empty").to_string();
@@ -161,4 +217,55 @@ pub(super) fn format_attachments(items: &[AttachmentInfo], loc: &'static Locale)
         out.push_str(&loc.tf(key, &args));
     }
     out
+}
+
+#[cfg(test)]
+mod stored_list_tests {
+    use super::*;
+    use crate::entities::attachment::AttachMode;
+
+    #[test]
+    fn stored_files_are_numbered_on_from_the_attachments_and_a_missing_one_is_marked() {
+        let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::En);
+        let items = vec![AttachmentInfo {
+            name: "notes.md".into(),
+            source: "/tmp/notes.md".into(),
+            bytes: 10,
+            est_tokens: 3,
+            prompt_tokens: 3,
+            mode: AttachMode::Inline,
+        }];
+        let stored = vec![
+            StoredInfo {
+                name: "chart.png".into(),
+                bytes: 2048,
+                mime: "image/png".into(),
+                missing: false,
+            },
+            StoredInfo {
+                name: "gone.csv".into(),
+                bytes: 10,
+                mime: "text/csv".into(),
+                missing: true,
+            },
+        ];
+        let text = format_file_list(&items, &stored, "/data/files/c1", loc);
+        assert!(text.contains("#1 notes.md"), "{text}");
+        assert!(
+            text.contains("Stored files: 2, 2.0 KB — /data/files/c1"),
+            "{text}"
+        );
+        assert!(text.contains("#2 chart.png — 2.0 KB, image/png"), "{text}");
+        assert!(
+            text.contains("#3 gone.csv — 10 B, text/csv — missing from the folder"),
+            "{text}"
+        );
+        // Stored files alone: no attachments header, and not "nothing attached".
+        let alone = format_file_list(&[], &stored[..1], "/d", loc);
+        assert!(alone.starts_with("Stored files: 1"), "{alone}");
+        assert_eq!(
+            format_file_list(&[], &[], "/d", loc),
+            loc.t("ui.file.list_empty")
+        );
+    }
 }

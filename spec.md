@@ -1129,6 +1129,21 @@ too, by returning `ChatEffect::AddAttachment` (a video transcript, §9.9). It
 then travels the same path in every respect — budget, index, feed note, status
 chip, `/file list`, `/file remove`.
 
+A chat also keeps **stored files** — bytes, not text: what a `python_exec` call saved
+to `/w/out` (§13.2), kept in `data/files/<chat-id>/` and listed in `Chat.files`
+(`ChatFile`: name, MIME type, size, SHA-256, origin;
+[docs/sandbox-file-exchange.md](docs/sandbox-file-exchange.md)). They are never part of
+a request, so they cost no tokens and have no status chip. The name on disk is the
+handle: sanitized (only the last component, split on both separators; characters
+Windows refuses replaced; a device name prefixed; at most 120 characters) and versioned
+on a collision — `chart (2).png`, compared case-insensitively — while the same name
+with the same bytes is not stored twice. `/file list` numbers them after the
+attachments and marks one missing from the folder; `/file remove` deletes our copy
+first and drops the listing second, so a delete that fails leaves the file listed and
+retryable. A file in a chat's folder that the chat does not list — the output of a call
+whose chat was not saved before the app stopped — is adopted at startup, never
+deleted. Backups pack `files/`.
+
 - **Commands** (input box, like `/rag`/`/tts`): `/file attach <path>`,
   `/file remove <name|#N>`, `/file list`. As with RAG, the removal subcommand is
   only `remove` — never `delete` (it takes nothing off disk). A name several
@@ -1489,8 +1504,9 @@ append-only shape keeps the prefix cache intact across an image turn
   Gemini/xAI — the safe direction for a cost shown to the user. The
   auto-compaction trigger is unaffected: it reads the server's exact
   `usage.prompt_tokens`, which **includes** image tokens (measured).
-- **A tool can return an image too** (spec §9.6, an MCP screenshot tool is the
-  first producer; research: [docs/research/mcp-tool-images.md](docs/research/mcp-tool-images.md)).
+- **A tool can return an image too** (spec §9.6: an MCP screenshot tool was the
+  first producer, `python_exec` the second — an image its code saves to `/w/out`,
+  §13.2; research: [docs/research/mcp-tool-images.md](docs/research/mcp-tool-images.md)).
   It lands on the tool-result message and is delivered *inside* the tool result —
   measured, llama.cpp, Anthropic, OpenAI Responses and xAI all accept it there.
   **Gemini is the exception**: a multimodal `functionResponse` is a hard `400`
@@ -1499,11 +1515,19 @@ append-only shape keeps the prefix cache intact across an image turn
   choice is made **per provider, statically** — never by sending and catching the
   error, since a mid-turn retry after a hard failure is exactly what the retry
   decorator refuses (§6.8). Limits are the ones above plus a **cap of 4 images
-  per tool result**, and the extras are named in the result text rather than
-  dropped in silence. The switch `tools.mcp_images` (**on** by default, settings
-  → "Plugins") decides whether a server's pixels reach the model at all: the MCP
-  double opt-in already gates the *server*, but an image carries a hazard text
-  does not — see §13.4.
+  per tool result** (`MAX_TOOL_RESULT_IMAGES`, one constant for every producer),
+  and the extras are named in the result text rather than dropped in silence. So is
+  everything else withheld: on an engine that reports no vision the orchestrator
+  sends none of a result's images, and an image the preparation drops (over
+  `max_bytes`, undecodable) is counted — both said in the result, because a model
+  told an image is "shown below" that never arrives describes a picture it has not
+  seen (measured, docs/sandbox-file-exchange.md §10). The switch `tools.mcp_images`
+  (**on** by default, settings → "Plugins") decides whether a server's pixels reach
+  the model at all: the MCP double opt-in already gates the *server*, but an image
+  carries a hazard text does not — see §13.4. `tools.python_images` (**on** by
+  default, the Python group) is the sandbox's own switch, separate because its pixels
+  are the model's own chart rather than a third party's; off, the file is still
+  saved and the result says the model has not seen it.
 - **UI**: a feed note per command and a status-bar chip for what is staged
   (images are a standing cost once sent, so the pending one has to be visible).
   Rendering the pixels in the terminal is out of scope — see
@@ -3825,7 +3849,7 @@ not the runs.
 
 `python_exec` — **our own implementation** with two modes ([ADR 0005](docs/decisions/0005-python-sandbox-wasmer.md)); the `tools.python_enabled` master switch (**off** by default — a deliberate opt-in) gates the tool entirely regardless of mode:
 
-- **The Wasmer sandbox** (default) — code runs isolated in **WASIX** via a `wasmer` sidecar process (the binary sits next to the app, in `data/sandbox/`, installed by `mindfork sandbox setup`). The guest **can't see the host filesystem** (only a mounted tmp directory with the script; CPython and the packages run from one packed image, `packed-sandbox.webc`, whose `site-packages` volume takes a write in memory and drops it with the call — `wasmer` has no read-only mount, and a mounted directory let one call plant a `sitecustomize.py` that the next one ran; an install from before the image is refused with the command that packs it, ADR 0005 §5), **network access is a toggle** (`python_net_enabled`; without it there are physically no sockets). Packages are pre-installed from a pinned lock list (numpy, pandas, sympy, networkx, requests, beautifulsoup4, lxml, feedparser, pyyaml, regex, openpyxl, pypdf, tabulate, pillow, matplotlib); the tool description names every one of them except matplotlib, whose charts have no way out of the sandbox yet. Two WASIX shims run ahead of every script: `setsockopt` for the HTTP clients, and `MPLCONFIGDIR` + `text.hinting: default` for matplotlib (the guest has no `HOME`, and matplotlib's default autohinting traps in this FreeType build). Interruption is a **process kill** (Python runs in-process inside wasmer/V8); a **timeout** + a "one task at a time" gate. Doesn't require Python on the machine. Cross-platform (Windows/Linux/macOS). **Every call is a fresh sandbox** — the job directory is created per run and dropped afterwards, and the guest's `/tmp` dies with the process, so neither variables nor files survive between calls. The tool description says so explicitly: it is the model that pays for the assumption otherwise (measured — a 16 MB download written to `/tmp` in one call, gone by the next, then fetched again).
+- **The Wasmer sandbox** (default) — code runs isolated in **WASIX** via a `wasmer` sidecar process (the binary sits next to the app, in `data/sandbox/`, installed by `mindfork sandbox setup`). The guest **can't see the host filesystem** (only a mounted per-call job directory with the script and `out/`; CPython and the packages run from one packed image, `packed-sandbox.webc`, whose `site-packages` volume takes a write in memory and drops it with the call — `wasmer` has no read-only mount, and a mounted directory let one call plant a `sitecustomize.py` that the next one ran; an install from before the image is refused with the command that packs it, ADR 0005 §5), **network access is a toggle** (`python_net_enabled`; without it there are physically no sockets). Packages are pre-installed from a pinned lock list (numpy, pandas, sympy, networkx, requests, beautifulsoup4, lxml, feedparser, pyyaml, regex, openpyxl, pypdf, tabulate, pillow, matplotlib); the tool description names every one of them. Two WASIX shims run ahead of every script: `setsockopt` for the HTTP clients, and `MPLCONFIGDIR` + `text.hinting: default` for matplotlib (the guest has no `HOME`, and matplotlib's default autohinting traps in this FreeType build). Interruption is a **process kill** (Python runs in-process inside wasmer/V8); a **timeout** + a "one task at a time" gate. Doesn't require Python on the machine. Cross-platform (Windows/Linux/macOS). **Every call is a fresh sandbox** — the job directory is created per run and dropped afterwards, and the guest's `/tmp` dies with the process, so neither variables nor files survive between calls. The tool description says so explicitly: it is the model that pays for the assumption otherwise (measured — a 16 MB download written to `/tmp` in one call, gone by the next, then fetched again). **Its one way out is `/w/out`** ([docs/sandbox-file-exchange.md](docs/sandbox-file-exchange.md)): after the process exits — whatever the exit code, but not after a timeout, when a file may be half-written — the regular files directly in `out/` are collected in name order (10 files, 25 MB each, 50 MB per call; a link is never followed, and a folder, a link or anything past a cap is skipped and named in the result) and stored with the chat (§9.7). A PNG or JPEG among them is shown to the model when `tools.python_images` is on (§9.10). A later call still cannot read what an earlier one saved.
 - **The local interpreter** — running code in a **separate process** of the system Python (the path is in settings; a venv is recommended), capturing stdout/stderr, a **timeout**, output truncation. **No OS-level sandbox** (the code runs on the user's own machine) — hence the sandbox being the default mode.
 - **Sandbox resource limits:** a timeout (CPU) + wasm32 (~4 GB of address space) + a "one task" gate + an **optional hard RAM cap** (`tools.python_wasm_memory_mb`, off by default). The RAM cap is **Windows-only** (a Job Object; exceeding it kills the process, protecting the host from OOM; a minimum of ~1024 MB); not applied on Unix (rlimit is unreliable with V8). The tool's contract (`python_exec`, `{ code }`) doesn't depend on the mode/implementation.
 

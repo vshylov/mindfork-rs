@@ -436,6 +436,7 @@ fn build_registry(
         python_net: config.tools.python_net_enabled,
         python_wasm_timeout: Duration::from_secs(config.tools.python_wasm_timeout_secs),
         python_wasm_memory_mb: config.tools.python_wasm_memory_mb,
+        python_images: config.tools.python_images,
         sandbox_dir: Some(sandbox_dir),
         web_fetch_content: config.tools.web_fetch_content,
         web_allow_private: config.tools.web_allow_private,
@@ -769,6 +770,10 @@ impl Orchestrator {
             .into_iter()
             .filter(|c| !c.is_hidden)
             .collect();
+        // Files a call stored whose chat was not saved before the app stopped: listed,
+        // never deleted — and here, before any run can be writing one
+        // (docs/sandbox-file-exchange.md §11 S6).
+        self.adopt_unlisted_files();
         if self.chats.is_empty() {
             let chat = self.new_chat_value(None);
             self.storage.json().save_chat(&chat)?;
@@ -1534,6 +1539,10 @@ impl Orchestrator {
                 // the code tools stay unreachable from it.
                 workspace: None,
                 workspace_journal: None,
+                // No chat, so nowhere to keep a file — and `python_exec` is not offered
+                // to a background task.
+                files_dir: None,
+                files: std::sync::Arc::from(Vec::new()),
                 lang,
                 cancel,
                 // The same resolver the turn path reads (config first, then

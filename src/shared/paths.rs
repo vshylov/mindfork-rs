@@ -156,6 +156,10 @@ pub struct Paths {
     /// the binary (dictionaries, installers.md §4.2) when the data root isn't
     /// portable (`system`/`path`). `None` in tests (`with_root`).
     exe_dir: Option<PathBuf>,
+    /// A sandbox directory other than `<root>/sandbox`: a live test pointing a temporary
+    /// data root at a provisioned sandbox (docs/sandbox-file-exchange.md §11 S13). Only
+    /// [`Paths::with_sandbox_dir`], a test helper, sets it.
+    sandbox_override: Option<PathBuf>,
 }
 
 impl Paths {
@@ -249,6 +253,7 @@ impl Paths {
             root: root.into(),
             default_language: Lang::default(),
             exe_dir: None,
+            sandbox_override: None,
         }
     }
 
@@ -259,6 +264,16 @@ impl Paths {
     #[cfg(test)]
     pub fn with_default_language(mut self, lang: Lang) -> Self {
         self.default_language = lang;
+        self
+    }
+
+    /// Points the sandbox at `dir` rather than `<root>/sandbox` (tests only): a live smoke
+    /// runs the real registry over a temporary data root and a provisioned sandbox —
+    /// copying one is 250 MB, and reading an environment variable inside the registry
+    /// would be test plumbing in production code.
+    #[cfg(test)]
+    pub fn with_sandbox_dir(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.sandbox_override = Some(dir.into());
         self
     }
 
@@ -306,6 +321,13 @@ impl Paths {
     /// is the one thing this track stores that cannot be recomputed.
     pub fn workspace_dir(&self) -> PathBuf {
         self.root.join("workspace")
+    }
+
+    /// Files stored with chats (`files/<chat-id>/`): what `python_exec` saved to
+    /// `/w/out`, kept for the user (docs/sandbox-file-exchange.md, spec §9.7). User data
+    /// that cannot be recomputed, so `features::backup` packs it.
+    pub fn files_dir(&self) -> PathBuf {
+        self.root.join("files")
     }
 
     /// The disposable search cache (`cache.db`) — a full-text index over chat
@@ -370,7 +392,9 @@ impl Paths {
     /// `python.webc`, `site-packages/`. Populated by `mindfork sandbox setup`
     /// (Phase 2).
     pub fn sandbox_dir(&self) -> PathBuf {
-        self.root.join("sandbox")
+        self.sandbox_override
+            .clone()
+            .unwrap_or_else(|| self.root.join("sandbox"))
     }
 
     /// Downloaded llama.cpp builds (`llama/`), one directory per install named

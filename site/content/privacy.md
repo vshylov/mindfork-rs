@@ -56,6 +56,7 @@ copy, back up and delete.
 | Notes, the RAG knowledge base and their embedding vectors, the self-model, the record of which model ran when | `data.db` (SQLite) | **yes** |
 | The full-text search index | `cache.db` (SQLite) | **yes** — derived; delete it and it rebuilds |
 | Pre-images of every project file the assistant edited, for the `F4` diff and revert | `workspace/<chat-id>/` | your source code |
+| What the Python sandbox saved for a chat — charts, tables, workbooks | `files/<chat-id>/` | what the code made of your data |
 | Backups | `backups/`, or the location you choose | yes — see §7 |
 | Diagnostics | `logs/` | no — see §6 |
 | The Python sandbox runtime | `sandbox/` | no |

@@ -92,7 +92,7 @@ _mf_prepare_matplotlib()
 
 /// The raw result of running code in the sandbox (formatting is the tool's
 /// job, so it matches the local mode).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct SandboxOutput {
     pub stdout: String,
     pub stderr: String,
@@ -100,6 +100,64 @@ pub struct SandboxOutput {
     pub exit_code: Option<i32>,
     /// Execution was interrupted by a timeout (the process was killed).
     pub timed_out: bool,
+    /// The regular files the code left directly in `/w/out`, within
+    /// [`OutputLimits::DEFAULT`], in name order — collected after the process exited,
+    /// whatever its exit code; none after a timeout (docs/sandbox-file-exchange.md F4,
+    /// §11 S1–S2).
+    pub files: Vec<OutputFile>,
+    /// What `/w/out` held that was not collected, each with its reason.
+    pub skipped: Vec<SkippedOutput>,
+}
+
+/// A file collected from `/w/out`: the name the guest gave it — not sanitized, storing it
+/// is the caller's business — and its bytes.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OutputFile {
+    pub name: String,
+    pub bytes: Vec<u8>,
+}
+
+/// An entry of `/w/out` that was not collected.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SkippedOutput {
+    pub name: String,
+    pub reason: SkipReason,
+}
+
+/// Why an entry of `/w/out` was not collected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SkipReason {
+    /// A directory: only files directly in `/w/out` are collected.
+    Directory,
+    /// A link or a special file — never followed.
+    NotAFile,
+    /// Larger than [`OutputLimits::max_file_bytes`].
+    TooLarge,
+    /// Past [`OutputLimits::max_files`].
+    TooMany,
+    /// Would take the call past [`OutputLimits::max_total_bytes`].
+    OverTotal,
+    /// Could not be read.
+    Unreadable,
+    /// Left by a call that timed out — possibly half-written, so not read.
+    TimedOut,
+}
+
+/// How much one call may leave in `/w/out` (F4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OutputLimits {
+    pub max_files: usize,
+    pub max_file_bytes: u64,
+    pub max_total_bytes: u64,
+}
+
+impl OutputLimits {
+    /// 10 files, 25 MB each, 50 MB per call.
+    pub const DEFAULT: Self = Self {
+        max_files: 10,
+        max_file_bytes: 25 * 1024 * 1024,
+        max_total_bytes: 50 * 1024 * 1024,
+    };
 }
 
 /// The sandbox's readiness to launch (cheap, without starting a process).
@@ -312,6 +370,12 @@ impl SandboxRunner for WasmerSandbox {
         tokio::fs::write(&script, build_wrapper(code))
             .await
             .with_context(|| loc.t("sandbox.err.write_script").to_string())?;
+        // Where the code leaves what it wants kept (docs/sandbox-file-exchange.md §4):
+        // collected below once the process has exited, before the job directory drops.
+        let out_dir = job.path.join("out");
+        tokio::fs::create_dir(&out_dir)
+            .await
+            .with_context(|| loc.t("sandbox.err.job_dir").to_string())?;
 
         // Mount the working directory — and a `site-packages` directory only for
         // provisioning's warmup, since the image carries its own; PYTHONPATH for the guest.
@@ -357,18 +421,33 @@ impl SandboxRunner for WasmerSandbox {
         }
 
         match tokio::time::timeout(timeout, child.wait_with_output()).await {
-            Ok(Ok(out)) => Ok(SandboxOutput {
-                stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
-                stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
-                exit_code: out.status.code(),
-                timed_out: false,
-            }),
+            Ok(Ok(out)) => {
+                // Whatever the exit code: a script that saved its chart and then failed
+                // still made the chart (F4). The guest has exited, so nothing races the
+                // walk; up to a call's worth of bytes is read on the blocking pool, while
+                // `job` keeps the directory alive.
+                let collect_from = out_dir.clone();
+                let (files, skipped) = tokio::task::spawn_blocking(move || {
+                    collect_outputs(&collect_from, OutputLimits::DEFAULT)
+                })
+                .await
+                .unwrap_or_default();
+                Ok(SandboxOutput {
+                    stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+                    stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+                    exit_code: out.status.code(),
+                    timed_out: false,
+                    files,
+                    skipped,
+                })
+            }
             Ok(Err(e)) => Err(e).with_context(|| loc.t("sandbox.err.wait").to_string()),
             Err(_) => Ok(SandboxOutput {
-                stdout: String::new(),
-                stderr: String::new(),
-                exit_code: None,
                 timed_out: true,
+                // A killed call may have left a file half-written: nothing is read, and
+                // what `out/` held is named, so the model is not left guessing (F4).
+                skipped: timed_out_outputs(&out_dir),
+                ..SandboxOutput::default()
             }),
         }
     }
@@ -509,6 +588,200 @@ impl Drop for JobDir {
     }
 }
 
+/// Collects the regular files directly in `out` within `limits` (F4,
+/// docs/sandbox-file-exchange.md §11 S2), after the guest has exited. Entries are taken in
+/// name order, so which ones a cap keeps does not depend on the file system. An entry that
+/// is not a regular file by `symlink_metadata` is skipped, never followed. A file is read
+/// at most one byte past its cap, so a size the metadata understated cannot slip through;
+/// one that would take the call past the total is skipped, and later ones are still tried.
+fn collect_outputs(out: &Path, limits: OutputLimits) -> (Vec<OutputFile>, Vec<SkippedOutput>) {
+    let mut files: Vec<OutputFile> = Vec::new();
+    let mut skipped = Vec::new();
+    let mut total = 0u64;
+    for (name, path) in sorted_entries(out) {
+        let reason = match std::fs::symlink_metadata(&path) {
+            Err(_) => SkipReason::Unreadable,
+            Ok(meta) if meta.is_dir() => SkipReason::Directory,
+            Ok(meta) if !meta.is_file() => SkipReason::NotAFile,
+            Ok(_) if files.len() >= limits.max_files => SkipReason::TooMany,
+            Ok(meta) if meta.len() > limits.max_file_bytes => SkipReason::TooLarge,
+            Ok(_) => match read_capped(&path, limits.max_file_bytes) {
+                Err(_) => SkipReason::Unreadable,
+                Ok(None) => SkipReason::TooLarge,
+                Ok(Some(bytes)) if total + bytes.len() as u64 > limits.max_total_bytes => {
+                    SkipReason::OverTotal
+                }
+                Ok(Some(bytes)) => {
+                    total += bytes.len() as u64;
+                    files.push(OutputFile { name, bytes });
+                    continue;
+                }
+            },
+        };
+        skipped.push(SkippedOutput { name, reason });
+    }
+    (files, skipped)
+}
+
+/// The entries of `dir` as (name, path) in name order — the name lossy when it is not
+/// UTF-8. None when the directory cannot be read.
+fn sorted_entries(dir: &Path) -> Vec<(String, PathBuf)> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut entries: Vec<(String, PathBuf)> = entries
+        .filter_map(Result::ok)
+        .map(|e| (e.file_name().to_string_lossy().into_owned(), e.path()))
+        .collect();
+    entries.sort();
+    entries
+}
+
+/// Reads at most `cap` bytes of `path`; `None` when the file holds more.
+fn read_capped(path: &Path, cap: u64) -> std::io::Result<Option<Vec<u8>>> {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)?
+        .take(cap.saturating_add(1))
+        .read_to_end(&mut bytes)?;
+    Ok((bytes.len() as u64 <= cap).then_some(bytes))
+}
+
+/// What a timed-out call left in `out`: named, never read.
+fn timed_out_outputs(out: &Path) -> Vec<SkippedOutput> {
+    sorted_entries(out)
+        .into_iter()
+        .map(|(name, _)| SkippedOutput {
+            name,
+            reason: SkipReason::TimedOut,
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod collect_tests {
+    use super::*;
+
+    fn write(dir: &Path, name: &str, bytes: &[u8]) {
+        std::fs::write(dir.join(name), bytes).unwrap();
+    }
+
+    fn names(files: &[OutputFile]) -> Vec<&str> {
+        files.iter().map(|f| f.name.as_str()).collect()
+    }
+
+    #[test]
+    fn collects_regular_files_in_name_order() {
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), "b.txt", b"bb");
+        write(dir.path(), "a.png", b"aa");
+        let (files, skipped) = collect_outputs(dir.path(), OutputLimits::DEFAULT);
+        assert_eq!(names(&files), ["a.png", "b.txt"]);
+        assert_eq!(files[0].bytes, b"aa");
+        assert!(skipped.is_empty());
+    }
+
+    #[test]
+    fn a_directory_is_skipped_and_named_as_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let sub = dir.path().join("charts");
+        std::fs::create_dir(&sub).unwrap();
+        write(&sub, "inner.png", b"x");
+        let (files, skipped) = collect_outputs(dir.path(), OutputLimits::DEFAULT);
+        assert!(files.is_empty());
+        assert_eq!(
+            skipped,
+            [SkippedOutput {
+                name: "charts".into(),
+                reason: SkipReason::Directory
+            }]
+        );
+    }
+
+    /// The violation attempted, across the boundary that matters: a link in `/w/out` to a
+    /// file outside it must not bring that file's bytes back (docs/lessons.md §3).
+    #[cfg(unix)]
+    #[test]
+    fn a_link_is_never_followed() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        write(outside.path(), "secret.txt", b"host");
+        std::os::unix::fs::symlink(outside.path().join("secret.txt"), dir.path().join("l.txt"))
+            .unwrap();
+        let (files, skipped) = collect_outputs(dir.path(), OutputLimits::DEFAULT);
+        assert!(files.is_empty(), "a link's target was read");
+        assert_eq!(skipped[0].reason, SkipReason::NotAFile);
+    }
+
+    /// The same on Windows, where making a symlink takes a privilege or developer mode —
+    /// without one there is nothing to test, and the skip says so.
+    #[cfg(windows)]
+    #[test]
+    fn a_link_is_never_followed() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        write(outside.path(), "secret.txt", b"host");
+        let link = dir.path().join("l.txt");
+        if std::os::windows::fs::symlink_file(outside.path().join("secret.txt"), &link).is_err() {
+            eprintln!("skip: creating a symlink needs a privilege here");
+            return;
+        }
+        let (files, skipped) = collect_outputs(dir.path(), OutputLimits::DEFAULT);
+        assert!(files.is_empty(), "a link's target was read");
+        assert_eq!(skipped[0].reason, SkipReason::NotAFile);
+    }
+
+    #[test]
+    fn the_caps_skip_what_they_drop_and_name_it() {
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), "1.bin", b"12345678"); // 8: at the file cap, kept (8)
+        write(dir.path(), "2.bin", b"123456789"); // 9: over the file cap
+        write(dir.path(), "3.bin", b"1234567"); // 8 + 7 > 14: over the total
+        write(dir.path(), "4.bin", b"1234"); // still fits: kept (12)
+        write(dir.path(), "5.bin", b"1"); // kept (13), the third file
+        write(dir.path(), "6.bin", b"1"); // past three files
+        let limits = OutputLimits {
+            max_files: 3,
+            max_file_bytes: 8,
+            max_total_bytes: 14,
+        };
+        let (files, skipped) = collect_outputs(dir.path(), limits);
+        assert_eq!(names(&files), ["1.bin", "4.bin", "5.bin"]);
+        let reasons: Vec<(&str, SkipReason)> = skipped
+            .iter()
+            .map(|s| (s.name.as_str(), s.reason))
+            .collect();
+        assert_eq!(
+            reasons,
+            [
+                ("2.bin", SkipReason::TooLarge),
+                ("3.bin", SkipReason::OverTotal),
+                ("6.bin", SkipReason::TooMany),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_timed_out_call_names_what_it_left_and_reads_none_of_it() {
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), "half.png", b"\x89PNG");
+        assert_eq!(
+            timed_out_outputs(dir.path()),
+            [SkippedOutput {
+                name: "half.png".into(),
+                reason: SkipReason::TimedOut
+            }]
+        );
+    }
+
+    #[test]
+    fn a_missing_directory_collects_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let (files, skipped) = collect_outputs(&dir.path().join("absent"), OutputLimits::DEFAULT);
+        assert!(files.is_empty() && skipped.is_empty());
+    }
+}
+
 /// A sandbox mock for `python_exec` tool tests.
 #[cfg(test)]
 pub struct MockSandbox {
@@ -533,12 +806,7 @@ impl MockSandbox {
     pub fn missing(reason: &str) -> Self {
         Self {
             availability: SandboxAvailability::Missing(reason.into()),
-            output: SandboxOutput {
-                stdout: String::new(),
-                stderr: String::new(),
-                exit_code: None,
-                timed_out: false,
-            },
+            output: SandboxOutput::default(),
             calls: std::sync::Mutex::new(Vec::new()),
         }
     }

@@ -536,6 +536,9 @@ enum FieldId {
     TPythonMode,
     TPythonPath,
     TPythonNet,
+    /// Show the model the images `python_exec` saved (`tools.python_images`,
+    /// docs/sandbox-file-exchange.md §11 S8).
+    TPythonImages,
     TPythonWasmTimeout,
     TPythonWasmMemory,
     /// The Gemini model that watches a video (`youtube_watch`). See spec §9.3,

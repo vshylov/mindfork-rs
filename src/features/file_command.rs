@@ -43,8 +43,19 @@ pub enum FileProgress {
         name: String,
         source: Option<String>,
     },
-    /// The chat's attachment list (`/file list`); empty — nothing attached.
-    Listed { items: Vec<AttachmentInfo> },
+    /// A stored file's listing was dropped and our copy of it deleted
+    /// (docs/sandbox-file-exchange.md §11 S11).
+    RemovedStored { name: String },
+    /// Files a tool stored landed in the chat: their names and the folder they are in
+    /// (§11 S7).
+    Saved { names: Vec<String>, dir: String },
+    /// The chat's attachments and its stored files (`/file list`), numbered in that
+    /// order; both empty — nothing attached or stored. `dir` is the stored files' folder.
+    Listed {
+        items: Vec<AttachmentInfo>,
+        stored: Vec<StoredInfo>,
+        dir: String,
+    },
     /// Building the semantic index over a by-reference file is under way
     /// (a banner with a spinner; `done`/`total` are chunks).
     Indexing {
@@ -59,6 +70,16 @@ pub enum FileProgress {
     IndexSkipped { name: String, reason: String },
     /// The command failed (no such file, undecodable content, no active chat…).
     Failed(String),
+}
+
+/// A stored file as `/file list` shows it (docs/sandbox-file-exchange.md §11 S11).
+#[derive(Debug, Clone, PartialEq)]
+pub struct StoredInfo {
+    pub name: String,
+    pub bytes: u64,
+    pub mime: String,
+    /// The chat lists a file its folder no longer holds.
+    pub missing: bool,
 }
 
 /// Tries to parse an input string as a `/file` command.
@@ -118,16 +139,31 @@ fn argument(tokens: &[&str]) -> Option<String> {
     (!arg.is_empty()).then(|| arg.to_string())
 }
 
-/// Resolves a `/file remove` target in the chat's attachment list: `#N` (1-based, as
-/// shown by `/file list`), a name or a path. A name several attachments share resolves to
+/// Resolves a `/file remove` target among the chat's files as `/file list` numbers them —
+/// attachments first, then stored files (docs/sandbox-file-exchange.md §11 S11): `#N`
+/// (1-based), a name, or an attachment's path. A name several of them share resolves to
 /// all of them, which the orchestrator refuses rather than guess
 /// (docs/research/remove-by-shared-name.md). Pure — the orchestrator applies the result.
 pub fn resolve_target(
-    items: &[crate::entities::attachment::Attachment],
+    attachments: &[crate::entities::attachment::Attachment],
+    stored: &[crate::entities::chat_file::ChatFile],
     target: &str,
 ) -> crate::entities::attachment::Resolved {
     use crate::entities::attachment::{Attachment, resolve_handle};
-    resolve_handle(items, target, Attachment::matches)
+    use crate::entities::chat_file::ChatFile;
+    enum Item<'a> {
+        Attached(&'a Attachment),
+        Stored(&'a ChatFile),
+    }
+    let items: Vec<Item> = attachments
+        .iter()
+        .map(Item::Attached)
+        .chain(stored.iter().map(Item::Stored))
+        .collect();
+    resolve_handle(&items, target, |item, t| match item {
+        Item::Attached(a) => a.matches(t),
+        Item::Stored(f) => f.matches(t),
+    })
 }
 
 /// A short human label for the attachment's mode (localized).
@@ -230,16 +266,50 @@ mod tests {
             Attachment::new("a.txt", "/tmp/a.txt", "x".into(), 1, AttachMode::Inline),
             Attachment::new("b.md", "/tmp/b.md", "y".into(), 1, AttachMode::Inline),
         ];
-        assert_eq!(resolve_target(&items, "#1"), Resolved::One(0));
-        assert_eq!(resolve_target(&items, "#2"), Resolved::One(1));
-        assert_eq!(resolve_target(&items, "b.md"), Resolved::One(1));
-        assert_eq!(resolve_target(&items, "/tmp/a.txt"), Resolved::One(0));
+        assert_eq!(resolve_target(&items, &[], "#1"), Resolved::One(0));
+        assert_eq!(resolve_target(&items, &[], "#2"), Resolved::One(1));
+        assert_eq!(resolve_target(&items, &[], "b.md"), Resolved::One(1));
+        assert_eq!(resolve_target(&items, &[], "/tmp/a.txt"), Resolved::One(0));
         // Out of range / unknown → nothing (the caller reports it).
-        assert_eq!(resolve_target(&items, "#0"), Resolved::Nothing);
-        assert_eq!(resolve_target(&items, "#9"), Resolved::Nothing);
-        assert_eq!(resolve_target(&items, "missing.txt"), Resolved::Nothing);
+        assert_eq!(resolve_target(&items, &[], "#0"), Resolved::Nothing);
+        assert_eq!(resolve_target(&items, &[], "#9"), Resolved::Nothing);
+        assert_eq!(
+            resolve_target(&items, &[], "missing.txt"),
+            Resolved::Nothing
+        );
         // `#` followed by a non-number falls through to a name match.
-        assert_eq!(resolve_target(&items, "#nope"), Resolved::Nothing);
+        assert_eq!(resolve_target(&items, &[], "#nope"), Resolved::Nothing);
+    }
+
+    /// Stored files are numbered on from the attachments, as `/file list` shows them, and
+    /// a name an attachment and a stored file share reaches neither alone
+    /// (docs/sandbox-file-exchange.md §11 S11).
+    #[test]
+    fn stored_files_number_after_the_attachments() {
+        use crate::entities::attachment::Resolved;
+        use crate::entities::chat_file::{ChatFile, FileOrigin};
+        let attached = vec![Attachment::new(
+            "a.txt",
+            "/tmp/a.txt",
+            "x".into(),
+            1,
+            AttachMode::Inline,
+        )];
+        let stored = vec![
+            ChatFile::new("chart.png", FileOrigin::Sandbox, b"png"),
+            ChatFile::new("a.txt", FileOrigin::Sandbox, b"y"),
+        ];
+        assert_eq!(resolve_target(&attached, &stored, "#2"), Resolved::One(1));
+        assert_eq!(
+            resolve_target(&attached, &stored, "CHART.png"),
+            Resolved::One(1)
+        );
+        assert_eq!(resolve_target(&attached, &stored, "#3"), Resolved::One(2));
+        assert_eq!(
+            resolve_target(&attached, &stored, "a.txt"),
+            Resolved::Shared(vec![0, 2])
+        );
+        assert_eq!(resolve_target(&attached, &stored, "#4"), Resolved::Nothing);
     }
 
     /// Per-locale coverage (i18n gate discipline, docs/history/i18n-ui.md §3.5):

@@ -366,7 +366,9 @@ src/
 │  │  ├─ llm.rs             get_llm_name/get_llm_history — the language model's
 │  │  │                     name and the profile's history of model changes
 │  │  │                     (spec §9.14); the naming mirror of self_model.rs
-│  │  ├─ python.rs          python_exec (subprocess, timeout)
+│  │  ├─ python.rs          python_exec (Wasmer sandbox or local); what the code
+│  │  │                     saves to /w/out is stored with the chat
+│  │  │                     (docs/sandbox-file-exchange.md)
 │  │  ├─ web.rs             web_search (multi-provider DDG/Mojeek/Ecosia + anti-bot,
 │  │  │                     incl. a captcha served behind HTTP 200) + two
 │  │  │                     extractions: extract_readable (prose, for ranking)
@@ -419,6 +421,8 @@ src/
 │  │                        them. `find_refs` returns only addresses that resolve
 │  ├─ rename_chat.rs        auto-title (digest, cleanup, trigger predicates), renaming
 │  ├─ chat_export.rs        format_conversation (copy the conversation)
+│  ├─ chat_files.rs         a chat's stored files on disk (data/files/<chat-id>/): store
+│  │                        under a free name, find the unlisted, delete our copy
 │  ├─ rag_command.rs        /rag add|remove|list|rebuild parser
 │  ├─ compaction.rs        history compression, pure part: one renderer of a
 │  │                       message range (parameterized by the tool-result clip,
@@ -433,7 +437,8 @@ src/
 │  ├─ reindex_command.rs    /reindex parser (top-level, not a /rag subcommand: it
 │  │                        spans notes, attachments and every profile's base)
 │  ├─ file_command.rs       /file attach|remove|list parser + FileProgress
-│  │                        (chat attachments, spec §9.7, docs/file-attachments.md)
+│  │                        (chat attachments and stored files, spec §9.7,
+│  │                        docs/file-attachments.md)
 │  ├─ image_command.rs      /image attach|remove|list parser + ImageProgress
 │  │                        (images staged for the next message, spec §9.10)
 │  ├─ image_fetch.rs        downloads an image named by URL (`/image attach <url>`):
@@ -478,6 +483,8 @@ src/
 │  │                        resolves to all its holders, and is refused)
 │  ├─ chat.rs               Chat, ChatSummary, CharacterNames, Chat::from_profile, draft,
 │  │                        FeedView (per-chat collapse state of the feed's foldable blocks)
+│  ├─ chat_file.rs          ChatFile/FileOrigin — a file stored with a chat (bytes in
+│  │                        data/files/<chat-id>/); the name sanitizer and versioning
 │  ├─ message.rs            Message, MessageRole, ToolCallRecord, MessageMetadata
 │  ├─ message_image.rs      MessageImage/ImageInfo — an image carried BY A MESSAGE
 │  │                        (base64 payload in the chat file, patch-formula estimate);
@@ -700,7 +707,8 @@ src/
    │                       queue, lazy device open). See spec §11.9
    ├─ sandbox.rs           SandboxRunner (behind a trait) + WasmerSandbox: `wasmer`
    │                       sidecar for `python_exec` in sandbox mode (WASIX isolation, §8);
-   │                       runs only the packed image, refuses an unpacked site-packages
+   │                       runs only the packed image, refuses an unpacked site-packages;
+   │                       collects /w/out once the process exits (SandboxOutput.files)
    ├─ secrets.rs           machine-bound secret storage: cloud API keys + the backup
    │                       password (ApiKeyEntry — one record
    │                       per machine, put_key/stored_key/is_ours): DPAPI (Windows) and
@@ -1646,6 +1654,7 @@ flowchart LR
         SET["settings.json"]
         PRO["profiles.json"]
         CHATS["chats/{id}.json"]
+        FILES["files/{chat_id}/<br/>stored files' bytes, listed in the chat"]
     end
     subgraph DB["SQLite + sqlite-vec (db.rs)"]
         NOTES["notes (profile_id)"]
@@ -1969,7 +1978,7 @@ by `ToolGroup` (`Ord`).
 |----------------|-----------------------------------------------------------------|
 | Memory/knowledge  | `note_save` (embeds + a compatibility gate), `note_recall` (semantic search + spreading activation over the graph, falls back to substring match; **hides `@self` self-notes**), `note_revise` (in-place edit), `note_link`/`note_neighbors` (typed link graph), `note_supersede`/`note_merge` (supersession with a scar / merge with link transfer; **inherit tags**, including `@self`), `consolidate_notes` (a consolidation overview), `rag_add`, `rag_search`. Notes connectivity (accumulation → integration) + auto "sleep": see [docs/notes-connectivity.md](history/notes-connectivity.md). Self-model observations are ordinary notes tagged `@self` ([docs/narrative-as-notes.md](history/narrative-as-notes.md), §9) |
 | Introspection  | `get_sampling`, `set_sampling`, `get_system_message`, `set_system_message`, `get_last_user_message_time`; `get_llm_name`/`get_llm_history` (spec §9.14) — the **language model's** name (from the turn snapshot `ToolContext.model_name`/`engine_mode`, the same single `effective_model_name()` read the header and `MessageMetadata` use) and the profile's dated history of model changes (`data.db` `llm_history`, written by `handle_done` → `record_llm_history` when the pair name+mode differs from the newest record; a history with no records at all is seeded once at bootstrap from the chats' stored metadata — `orchestrator/llm_history.rs`). Named `llm_*` deliberately — the counterpart of the `self_model` family below, never a bare "model" |
-| External       | `web_search` (multi-provider + anti-bot), `fetch_url` (fetch+summarize; a YouTube link → metadata + a pointer to `youtube_watch`), `youtube_watch` (what a video says **and shows** — its own Gemini slot, degrades to free metadata; `transcript: true` lands the words as a chat attachment; spec §9.9), `python_exec` (subprocess) — gated by `web_enabled`/`python_enabled` |
+| External       | `web_search` (multi-provider + anti-bot), `fetch_url` (fetch+summarize; a YouTube link → metadata + a pointer to `youtube_watch`), `youtube_watch` (what a video says **and shows** — its own Gemini slot, degrades to free metadata; `transcript: true` lands the words as a chat attachment; spec §9.9), `python_exec` (the Wasmer sandbox or a local interpreter; what the code saves to `/w/out` is stored with the chat, spec §9.7) — gated by `web_enabled`/`python_enabled` |
 | Files          | `fs_read`, `fs_write`, `fs_list` — gated by `fs_enabled`, optional `fs_root` sandbox; `attachment_read` (one page of a file the user attached with `/file attach`) and `attachment_search` (by meaning, over the chat-scoped index) — **not gated and on by default**: unlike `fs_read` they *narrow* access to what the user explicitly attached, reading the stored snapshot/index rather than the disk. See spec §9.7 |
 | Utilities      | `calculate` (our own expression evaluator), `current_time` (chrono) — no I/O, not gated |
 | Files (project) | `code_list`, `code_read`, `code_grep`, `code_edit`, `code_write`, `code_build`, `code_run`, `code_test` — the code workspace attached to *this chat* with `/project attach` (spec §9.12). One `CodeTool` enum with one `impl Tool` dispatching to free functions, and `code::ALL` is what the registry loops, so a new member cannot be registered without joining the family's list. The editing pair and the three command tools are `danger()` (so §9.8's confirmation can park them); the editors journal a file's previous bytes before touching it; the whole family is exempt from `max_tool_rounds` and bounded instead by `workspace.max_rounds`. **No global gate**: the project's presence is the gate — and for a command tool, a line in its slot — so with none attached the schemas never reach the prompt and the request is byte-identical to what it was before the feature. The rule lives in `code::offered`, which `effective_tool_ids` consults. Stateless — the root, the command lines and the limits are per-turn snapshots (`ToolContext.workspace`, `ToolContext.workspace_cfg`), not registry parameters |

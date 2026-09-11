@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::entities::attachment::Attachment;
+use crate::entities::chat_file::ChatFile;
 use crate::entities::message::{Message, MessageRole};
 use crate::entities::profile::{CharacterNames, Profile};
 use crate::entities::sampling::SamplingConfig;
@@ -64,6 +65,13 @@ pub struct Chat {
     /// read without migration. See docs/file-attachments.md, spec §9.7.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<Attachment>,
+    /// Files stored with the chat — what `python_exec` saved to `/w/out` — whose bytes
+    /// live in `data/files/<chat-id>/`. Not part of any request: the chat lists them for
+    /// the user. Additive field — old chat files read without migration, and a chat with
+    /// no files writes no new key (ADR 0006 F12). See docs/sandbox-file-exchange.md,
+    /// spec §9.7.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<ChatFile>,
     /// Deleted exchanges (`Ctrl+E`/`Ctrl+R`). Stored in the chat file only for
     /// **manual** recovery (editing JSON) in rare cases where something important
     /// was deleted; not used by the UI and not restored automatically.
@@ -239,6 +247,7 @@ impl Chat {
             feed_view: FeedView::default(),
             children_expanded: false,
             attachments: Vec::new(),
+            files: Vec::new(),
             deleted: Vec::new(),
             compaction: None,
             reflected_upto: None,
@@ -254,6 +263,21 @@ impl Chat {
     pub fn push_message(&mut self, message: Message) {
         self.messages.push(message);
         self.modified_at = Utc::now();
+    }
+
+    /// Lists a stored file, unless the chat already lists one of that name — compared
+    /// case-insensitively, as the folder may be restored onto Windows. Returns whether it
+    /// was listed: a landing that repeats is a no-op (docs/sandbox-file-exchange.md §11 S7).
+    pub fn list_file(&mut self, file: ChatFile) -> bool {
+        if self
+            .files
+            .iter()
+            .any(|f| crate::entities::chat_file::same_name(&f.name, &file.name))
+        {
+            return false;
+        }
+        self.files.push(file);
+        true
     }
 
     /// Whether the chat holds no conversation content at all: no messages, no
@@ -905,6 +929,38 @@ mod tests {
         let chat = Chat::from_profile(&p, "t");
         let json = serde_json::to_string(&chat).unwrap();
         assert!(!json.contains("deleted"));
+    }
+
+    #[test]
+    fn files_are_additive_and_not_serialized_when_empty() {
+        use crate::entities::chat_file::{ChatFile, FileOrigin};
+        let p = Profile::new("X", "s");
+        let chat = Chat::from_profile(&p, "t");
+        let json = serde_json::to_string(&chat).unwrap();
+        assert!(!json.contains("\"files\""), "no files, no key: {json}");
+
+        // A chat file from before stored files reads without migration.
+        let old = r#"{
+            "id": "00000000-0000-0000-0000-000000000001",
+            "profile_id": "00000000-0000-0000-0000-000000000002",
+            "title": "old chat",
+            "created_at": "2026-01-01T00:00:00Z",
+            "modified_at": "2026-01-01T00:00:00Z",
+            "system_message": "s",
+            "messages": []
+        }"#;
+        let loaded: Chat = serde_json::from_str(old).unwrap();
+        assert!(loaded.files.is_empty());
+
+        let mut with = chat.clone();
+        with.files.push(ChatFile::new(
+            "chart.png",
+            FileOrigin::Sandbox,
+            b"\x89PNG\r\n\x1a\n",
+        ));
+        let json = serde_json::to_string(&with).unwrap();
+        let back: Chat = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.files, with.files);
     }
 
     #[test]

@@ -288,6 +288,7 @@ fn python_group_visibility_follows_mode() {
     assert!(ids.contains(&FieldId::TPythonMode));
     assert!(ids.contains(&FieldId::TPython));
     assert!(ids.contains(&FieldId::TPythonNet));
+    assert!(ids.contains(&FieldId::TPythonImages));
     assert!(ids.contains(&FieldId::TPythonWasmTimeout));
     assert!(ids.contains(&FieldId::TPythonWasmMemory));
     assert!(!ids.contains(&FieldId::TPythonPath));
