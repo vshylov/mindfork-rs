@@ -134,6 +134,21 @@ pub trait SandboxRunner: Send + Sync {
         timeout: Duration,
         loc: &Locale,
     ) -> Result<SandboxOutput>;
+
+    /// Spike (docs/sandbox-file-exchange.md, stage 1): runs `code` with `inputs`
+    /// copied into the guest's `/w/in`, and returns the regular files it left in
+    /// `/w/out`. The default ignores both — a runner with no job directory.
+    async fn run_job(
+        &self,
+        code: &str,
+        inputs: &[(String, Vec<u8>)],
+        net: bool,
+        timeout: Duration,
+        loc: &Locale,
+    ) -> Result<(SandboxOutput, Vec<(String, Vec<u8>)>)> {
+        let _ = inputs;
+        Ok((self.run(code, net, timeout, loc).await?, Vec::new()))
+    }
 }
 
 /// Where a launch takes the guest's `site-packages` from.
@@ -294,6 +309,17 @@ impl SandboxRunner for WasmerSandbox {
         timeout: Duration,
         loc: &Locale,
     ) -> Result<SandboxOutput> {
+        Ok(self.run_job(code, &[], net, timeout, loc).await?.0)
+    }
+
+    async fn run_job(
+        &self,
+        code: &str,
+        inputs: &[(String, Vec<u8>)],
+        net: bool,
+        timeout: Duration,
+        loc: &Locale,
+    ) -> Result<(SandboxOutput, Vec<(String, Vec<u8>)>)> {
         // The "one task" gate: a concurrent launch is rejected right away (before spawning).
         let _permit = self
             .gate
@@ -312,6 +338,17 @@ impl SandboxRunner for WasmerSandbox {
         tokio::fs::write(&script, build_wrapper(code))
             .await
             .with_context(|| loc.t("sandbox.err.write_script").to_string())?;
+
+        // Spike (docs/sandbox-file-exchange.md, stage 1): copies in, collection out.
+        let in_dir = job.path.join("in");
+        let out_dir = job.path.join("out");
+        tokio::fs::create_dir_all(&in_dir).await?;
+        tokio::fs::create_dir_all(&out_dir).await?;
+        for (name, bytes) in inputs {
+            if let Some(name) = base_name(name) {
+                tokio::fs::write(in_dir.join(name), bytes).await?;
+            }
+        }
 
         // Mount the working directory — and a `site-packages` directory only for
         // provisioning's warmup, since the image carries its own; PYTHONPATH for the guest.
@@ -357,21 +394,60 @@ impl SandboxRunner for WasmerSandbox {
         }
 
         match tokio::time::timeout(timeout, child.wait_with_output()).await {
-            Ok(Ok(out)) => Ok(SandboxOutput {
-                stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
-                stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
-                exit_code: out.status.code(),
-                timed_out: false,
-            }),
+            Ok(Ok(out)) => {
+                let files = collect_outputs(&out_dir).await;
+                Ok((
+                    SandboxOutput {
+                        stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+                        stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+                        exit_code: out.status.code(),
+                        timed_out: false,
+                    },
+                    files,
+                ))
+            }
             Ok(Err(e)) => Err(e).with_context(|| loc.t("sandbox.err.wait").to_string()),
-            Err(_) => Ok(SandboxOutput {
-                stdout: String::new(),
-                stderr: String::new(),
-                exit_code: None,
-                timed_out: true,
-            }),
+            Err(_) => Ok((
+                SandboxOutput {
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    exit_code: None,
+                    timed_out: true,
+                },
+                Vec::new(),
+            )),
         }
     }
+}
+
+/// Spike: the last component of a name, split on both separators; `None` for a name
+/// with nothing usable left.
+fn base_name(name: &str) -> Option<&str> {
+    let base = name.rsplit(['/', '\\']).next().unwrap_or(name);
+    (!base.is_empty() && base != "." && base != "..").then_some(base)
+}
+
+/// Spike (docs/sandbox-file-exchange.md F4): the regular files directly in `out`, never
+/// following a link, at most 10 of up to 25 MB each.
+async fn collect_outputs(out: &Path) -> Vec<(String, Vec<u8>)> {
+    const MAX_FILES: usize = 10;
+    const MAX_BYTES: u64 = 25 * 1024 * 1024;
+    let mut files = Vec::new();
+    let Ok(mut entries) = tokio::fs::read_dir(out).await else {
+        return files;
+    };
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let Ok(meta) = tokio::fs::symlink_metadata(entry.path()).await else {
+            continue;
+        };
+        if !meta.is_file() || meta.len() > MAX_BYTES || files.len() >= MAX_FILES {
+            continue;
+        }
+        if let Ok(bytes) = tokio::fs::read(entry.path()).await {
+            files.push((entry.file_name().to_string_lossy().into_owned(), bytes));
+        }
+    }
+    files
 }
 
 /// Looks for the `wasmer` binary in the sandbox directory (pure, testable). Order:

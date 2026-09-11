@@ -39,6 +39,9 @@ pub struct PythonExec {
     net: bool,
     /// Execution timeout in the sandbox (Wasmer).
     wasm_timeout: Duration,
+    /// Spike (docs/sandbox-file-exchange.md, stage 1): where collected outputs are
+    /// stored, one folder per chat (`<root>/<chat-id>/`). `None` — nothing stored.
+    files_root: Option<std::path::PathBuf>,
 }
 
 impl PythonExec {
@@ -55,7 +58,14 @@ impl PythonExec {
             sandbox,
             net,
             wasm_timeout,
+            files_root: None,
         }
+    }
+
+    /// Spike: sets where collected outputs are stored.
+    pub fn with_files_root(mut self, root: Option<std::path::PathBuf>) -> Self {
+        self.files_root = root;
+        self
     }
 
     /// The interpreter's name/path with a sensible platform default (Local).
@@ -114,35 +124,139 @@ impl PythonExec {
         }
     }
 
-    /// Wasmer sandbox mode. Returns an already-formatted result text in
-    /// the language `loc`.
-    async fn run_wasmer(&self, code: &str, loc: &crate::shared::i18n::Locale) -> String {
-        match self.sandbox.availability(loc) {
-            SandboxAvailability::Missing(why) => {
-                loc.tf("tool.python_exec.err.sandbox_missing", &[("why", &why)])
+    /// Wasmer sandbox mode. Spike (docs/sandbox-file-exchange.md, stage 1): `files`
+    /// names chat attachments copied into `/w/in`, and what the code leaves in `/w/out`
+    /// is stored in the chat's folder, PNG/JPEG images shown to the model.
+    async fn run_wasmer(&self, code: &str, files: &[String], ctx: &ToolContext) -> ToolOutcome {
+        let loc = ctx.loc;
+        if let SandboxAvailability::Missing(why) = self.sandbox.availability(loc) {
+            return ToolOutcome::text(
+                loc.tf("tool.python_exec.err.sandbox_missing", &[("why", &why)]),
+            );
+        }
+        let inputs = match stage_inputs(files, &ctx.attachments) {
+            Ok(inputs) => inputs,
+            Err(refusal) => return ToolOutcome::text(refusal),
+        };
+        match self
+            .sandbox
+            .run_job(code, &inputs, self.net, self.wasm_timeout, loc)
+            .await
+        {
+            Ok((out, _)) if out.timed_out => ToolOutcome::text(loc.tf(
+                "tool.python_exec.err.timeout",
+                &[("secs", &self.wasm_timeout.as_secs().to_string())],
+            )),
+            Ok((out, collected)) => {
+                let console = format_output_parts(
+                    &out.stdout,
+                    &out.stderr,
+                    out.exit_code == Some(0),
+                    out.exit_code,
+                    loc,
+                );
+                let (listing, images) = self.store_outputs(ctx.chat_id, collected);
+                ToolOutcome::text(format!("{console}{listing}")).with_images(images)
             }
-            SandboxAvailability::Ready => {
-                match self
-                    .sandbox
-                    .run(code, self.net, self.wasm_timeout, loc)
-                    .await
-                {
-                    Ok(out) if out.timed_out => loc.tf(
-                        "tool.python_exec.err.timeout",
-                        &[("secs", &self.wasm_timeout.as_secs().to_string())],
-                    ),
-                    Ok(out) => format_output_parts(
-                        &out.stdout,
-                        &out.stderr,
-                        out.exit_code == Some(0),
-                        out.exit_code,
-                        loc,
-                    ),
-                    Err(e) => loc.tf("tool.python_exec.err.sandbox", &[("e", &e.to_string())]),
-                }
+            Err(e) => ToolOutcome::text(
+                loc.tf("tool.python_exec.err.sandbox", &[("e", &e.to_string())]),
+            ),
+        }
+    }
+
+    /// Spike: writes collected outputs into `<files_root>/<chat-id>/` (a taken name gets
+    /// ` (2)`, ` (3)`…) and returns the result's listing and the images for the model —
+    /// withheld when `MINDFORK_PROBE_NO_IMAGES` is set, the probe's blind control arm.
+    fn store_outputs(
+        &self,
+        chat_id: uuid::Uuid,
+        collected: Vec<(String, Vec<u8>)>,
+    ) -> (String, Vec<super::ToolImage>) {
+        use base64::Engine as _;
+        if collected.is_empty() {
+            return (String::new(), Vec::new());
+        }
+        let blind = std::env::var_os("MINDFORK_PROBE_NO_IMAGES").is_some();
+        let folder = self.files_root.as_ref().map(|r| r.join(chat_id.to_string()));
+        let mut listing = String::from("\n\nFiles saved from /w/out for the user:");
+        let mut images = Vec::new();
+        for (name, bytes) in collected {
+            let saved = folder.as_ref().and_then(|dir| {
+                std::fs::create_dir_all(dir).ok()?;
+                let path = free_path(dir, &name);
+                std::fs::write(&path, &bytes).ok()?;
+                Some(path)
+            });
+            let ext = name.rsplit('.').next().unwrap_or_default().to_ascii_lowercase();
+            let mime = match ext.as_str() {
+                "png" => Some("image/png"),
+                "jpg" | "jpeg" => Some("image/jpeg"),
+                _ => None,
+            };
+            let shown = mime.is_some() && !blind;
+            listing.push_str(&format!(
+                "\n- {name} ({} bytes){}{}",
+                bytes.len(),
+                saved
+                    .map(|p| format!(", saved as {}", p.display()))
+                    .unwrap_or_default(),
+                if shown { " — shown to you below" } else { "" }
+            ));
+            if let Some(mime) = mime.filter(|_| !blind) {
+                images.push(super::ToolImage {
+                    mime: mime.into(),
+                    data: base64::engine::general_purpose::STANDARD.encode(&bytes),
+                });
+            }
+        }
+        (listing, images)
+    }
+}
+
+/// Spike: `dir/name`, or `dir/stem (N).ext` for the first `N` not taken.
+fn free_path(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
+    let first = dir.join(name);
+    if !first.exists() {
+        return first;
+    }
+    let (stem, ext) = match name.rsplit_once('.') {
+        Some((stem, ext)) if !stem.is_empty() => (stem, format!(".{ext}")),
+        _ => (name, String::new()),
+    };
+    (2..)
+        .map(|n| dir.join(format!("{stem} ({n}){ext}")))
+        .find(|p| !p.exists())
+        .unwrap_or(first)
+}
+
+/// Spike: resolves `files` against the chat's attachments (`#N` or a name) into inputs;
+/// an unknown or shared name refuses the call and lists the names that exist.
+fn stage_inputs(
+    files: &[String],
+    attachments: &[crate::entities::attachment::Attachment],
+) -> std::result::Result<Vec<(String, Vec<u8>)>, String> {
+    use crate::entities::attachment::{Resolved, resolve_handle};
+    let mut inputs = Vec::new();
+    for handle in files {
+        match resolve_handle(attachments, handle, |a, t| a.name == t) {
+            Resolved::One(i) => inputs.push((
+                attachments[i].name.clone(),
+                attachments[i].text.clone().into_bytes(),
+            )),
+            _ => {
+                let names: Vec<&str> = attachments.iter().map(|a| a.name.as_str()).collect();
+                let names = if names.is_empty() {
+                    "none".to_string()
+                } else {
+                    names.join(", ")
+                };
+                return Err(format!(
+                    "No attached file is named {handle:?}; nothing was run. Attached files: {names}."
+                ));
             }
         }
     }
+    Ok(inputs)
 }
 
 #[async_trait::async_trait]
@@ -180,7 +294,14 @@ impl Tool for PythonExec {
     fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
-            "properties": {"code": {"type": "string"}},
+            "properties": {
+                "code": {"type": "string"},
+                "files": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Names of files attached to the chat to copy, read-only, into /w/in"
+                }
+            },
             "required": ["code"]
         })
     }
@@ -191,12 +312,21 @@ impl Tool for PythonExec {
             .filter(|s| !s.trim().is_empty())
             .ok_or_else(|| anyhow::anyhow!(ctx.loc.t("tool.python_exec.err.code_empty")))?
             .to_string();
+        // Spike (docs/sandbox-file-exchange.md, stage 1): the chat files to stage.
+        let files: Vec<String> = args
+            .get("files")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|f| f.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
 
-        let result = match self.mode {
-            PythonMode::Local => self.run_local(&code, ctx.loc).await,
-            PythonMode::Wasmer => self.run_wasmer(&code, ctx.loc).await,
-        };
-        Ok(ToolOutcome::text(result))
+        Ok(match self.mode {
+            PythonMode::Local => ToolOutcome::text(self.run_local(&code, ctx.loc).await),
+            PythonMode::Wasmer => self.run_wasmer(&code, &files, ctx).await,
+        })
     }
 }
 

@@ -422,6 +422,184 @@ async fn file_attachment_e2e_live() {
     );
 }
 
+/// One probe run's outcome: the expected month, then (1) a PNG stored, (2) the reply
+/// names the month, (3) the call named `sales.csv` in `files`, how many images the
+/// calls showed, and whether a call's output printed the month itself.
+type ProbeRow = (String, bool, bool, bool, usize, bool);
+
+/// Sandbox file exchange, stage 1 go/no-go (docs/sandbox-file-exchange.md §7) — spike
+/// only. A by-reference `sales.csv` (two years of daily sales, one month lifted to the
+/// highest total, a different one each run) and a request for a chart; the model has to
+/// name the file in `files`, save a PNG to `/w/out`, and say which month is highest
+/// without printing the totals — from the chart it is shown. `MINDFORK_PROBE_NO_IMAGES=1`
+/// is the blind control arm (the tool withholds the image); `MINDFORK_PROBE_RUNS` sets
+/// the number of runs (5). Needs `MINDFORK_ENGINE_URL` and a provisioned
+/// `MINDFORK_SANDBOX_DIR`. Reports; asserts nothing.
+#[tokio::test]
+#[ignore = "stage-1 probe: a live vision model (MINDFORK_ENGINE_URL) and a sandbox (MINDFORK_SANDBOX_DIR)"]
+async fn sandbox_files_probe_e2e_live() {
+    const PEAKS: [(i32, u32); 5] = [(2024, 3), (2025, 10), (2024, 7), (2025, 1), (2024, 11)];
+    const REQUEST: &str = "sales.csv is attached: two years of daily sales. Make a bar chart \
+        of total sales per month and save it as a PNG. Please don't print the monthly \
+        totals — look at the chart and tell me which month (YYYY-MM) had the highest total.";
+    let Some(sandbox) = std::env::var_os("MINDFORK_SANDBOX_DIR").map(std::path::PathBuf::from)
+    else {
+        eprintln!("skip: MINDFORK_SANDBOX_DIR not set");
+        return;
+    };
+    let runs: usize = std::env::var("MINDFORK_PROBE_RUNS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(5);
+    let blind = std::env::var_os("MINDFORK_PROBE_NO_IMAGES").is_some();
+    let mut cfg = AppConfig::default();
+    cfg.tools.python_enabled = true;
+    cfg.tools.python_mode = crate::shared::config::PythonMode::Wasmer;
+    cfg.tools.python_net_enabled = false;
+    cfg.default_sampling.max_tokens = Some(4096);
+    cfg.interface.auto_title = crate::shared::config::AutoTitleMode::Off;
+    cfg.attachments = crate::shared::config::AttachmentSettings {
+        max_file_tokens: 100, // by reference: the numbers are not in the prompt
+        ..Default::default()
+    };
+    let Some((dir, cmd_tx, mut evt_rx, handle)) = spawn_orch_live_cfg(cfg) else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    narrow_profile_to(
+        &cmd_tx,
+        &mut evt_rx,
+        vec![
+            crate::features::tools::PYTHON_EXEC_ID.into(),
+            "attachment_read".into(),
+            "attachment_search".into(),
+        ],
+    )
+    .await;
+    let files_root = sandbox.parent().expect("the sandbox's data root").join("files");
+    let mut rows: Vec<ProbeRow> = Vec::new();
+    for run in 0..runs {
+        let (year, month) = PEAKS[run % PEAKS.len()];
+        let expected = format!("{year}-{month:02}");
+        cmd_tx
+            .send(AppCommand::NewChat { profile_id: None })
+            .unwrap();
+        let chat = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+            .await
+            .and_then(|e| match e {
+                AppEvent::ChatActivated { id, .. } => Some(id),
+                _ => None,
+            })
+            .expect("a new chat");
+        let csv = dir.path().join("sales.csv");
+        std::fs::write(&csv, daily_sales_csv(year, month)).unwrap();
+        cmd_tx
+            .send(AppCommand::FileAttach {
+                path: csv.to_string_lossy().into_owned(),
+            })
+            .unwrap();
+        let attached = wait_for(&mut evt_rx, |e| {
+            matches!(
+                e,
+                AppEvent::FileProgress(crate::app::events::FileProgress::Attached { .. })
+                    | AppEvent::FileProgress(crate::app::events::FileProgress::Failed(_))
+            )
+        })
+        .await
+        .unwrap();
+        eprintln!("run {run}: attach {attached:?}");
+        cmd_tx
+            .send(AppCommand::SendMessage(REQUEST.into()))
+            .unwrap();
+        let mut reply = String::new();
+        let mut calls: Vec<(String, String, String, usize)> = Vec::new();
+        while let Some(ev) = evt_rx.recv().await {
+            match ev {
+                AppEvent::Chunk { text, .. } => reply.push_str(&text),
+                AppEvent::ToolCall {
+                    name,
+                    arguments,
+                    result,
+                    images,
+                    ..
+                } => calls.push((name, arguments, result, images)),
+                AppEvent::Finished { .. } => break,
+                _ => {}
+            }
+        }
+        let pngs = std::fs::read_dir(files_root.join(chat.to_string()))
+            .map(|d| {
+                d.filter_map(Result::ok)
+                    .filter(|e| std::fs::read(e.path()).is_ok_and(|b| b.starts_with(b"\x89PNG")))
+                    .count()
+            })
+            .unwrap_or(0);
+        let py: Vec<_> = calls
+            .iter()
+            .filter(|c| c.0 == crate::features::tools::PYTHON_EXEC_ID)
+            .collect();
+        let named = py.iter().any(|c| {
+            serde_json::from_str::<serde_json::Value>(&c.1)
+                .ok()
+                .and_then(|v| v.get("files").cloned())
+                .is_some_and(|f| f.to_string().contains("sales.csv"))
+        });
+        let shown: usize = py.iter().map(|c| c.3).sum();
+        let printed = py.iter().any(|c| c.2.contains(&expected));
+        let right = reply.contains(&expected);
+        let names: Vec<&str> = calls.iter().map(|c| c.0.as_str()).collect();
+        eprintln!(
+            "run {run}: expected {expected} png={pngs} right={right} named={named} \
+             images={shown} printed={printed} calls=[{}]",
+            names.join(",")
+        );
+        eprintln!("run {run}: reply: {}", reply.chars().take(500).collect::<String>());
+        for c in &py {
+            eprintln!(
+                "run {run}: args: {}\nrun {run}: result: {}",
+                c.1.chars().take(1500).collect::<String>(),
+                c.2.chars().take(1200).collect::<String>()
+            );
+        }
+        rows.push((expected, pngs > 0, right, named, shown, printed));
+    }
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+    let count = |f: fn(&ProbeRow) -> bool| rows.iter().filter(|r| f(r)).count();
+    eprintln!(
+        "SUMMARY blind={blind} runs={runs}: (1) png {}  (2) right month {}  (3) named files {}  \
+         images shown in {}  printed the month in {}",
+        count(|r| r.1),
+        count(|r| r.2),
+        count(|r| r.3),
+        count(|r| r.4 > 0),
+        count(|r| r.5)
+    );
+}
+
+/// Two years of daily sales from 2024-01-01: a seasonal level with a deterministic
+/// wobble, and the month `(peak_year, peak_month)` lifted so its total is the highest.
+fn daily_sales_csv(peak_year: i32, peak_month: u32) -> String {
+    use chrono::Datelike;
+    let mut out = String::from("date,sales\n");
+    let mut day = chrono::NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+    let end = chrono::NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
+    let mut i: u64 = 0;
+    while day < end {
+        let wobble = (i * 7919 % 41) as f64;
+        let season = 20.0 * (f64::from(day.month()) * 0.52).sin();
+        let lift = if day.year() == peak_year && day.month() == peak_month {
+            60.0
+        } else {
+            0.0
+        };
+        out.push_str(&format!("{day},{:.0}\n", 200.0 + season + wobble + lift));
+        day = day.succ_opt().unwrap();
+        i += 1;
+    }
+    out
+}
+
 /// The image fixture both vision smokes use: a solid field of `field` with a large white
 /// square in the middle. Generated rather than photographed, so the assertion is objective
 /// and no pretrained knowledge can answer it — and parameterized by colour, so the two

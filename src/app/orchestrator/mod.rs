@@ -436,7 +436,13 @@ fn build_registry(
         python_net: config.tools.python_net_enabled,
         python_wasm_timeout: Duration::from_secs(config.tools.python_wasm_timeout_secs),
         python_wasm_memory_mb: config.tools.python_wasm_memory_mb,
-        sandbox_dir: Some(sandbox_dir),
+        // Spike (docs/sandbox-file-exchange.md, stage 1): a live probe points the
+        // registry at a provisioned sandbox outside its temporary data root.
+        sandbox_dir: Some(
+            std::env::var_os("MINDFORK_SANDBOX_DIR")
+                .map(std::path::PathBuf::from)
+                .unwrap_or(sandbox_dir),
+        ),
         web_fetch_content: config.tools.web_fetch_content,
         web_allow_private: config.tools.web_allow_private,
         web_provider: config.tools.web_provider,

@@ -882,6 +882,13 @@ pub fn standard_registry(cfg: &ToolConfig) -> ToolRegistry {
         ),
         cfg.python_net,
         cfg.python_wasm_timeout,
+    )
+    // Spike (docs/sandbox-file-exchange.md, stage 1): outputs beside the sandbox.
+    .with_files_root(
+        cfg.sandbox_dir
+            .as_deref()
+            .and_then(std::path::Path::parent)
+            .map(|p| p.join("files")),
     )));
     reg.register(Arc::new(calc::Calculate));
     reg.register(Arc::new(datetime::CurrentTime));
