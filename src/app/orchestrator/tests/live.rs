@@ -466,19 +466,18 @@ async fn sandbox_files_probe_e2e_live() {
         eprintln!("skip: MINDFORK_ENGINE_URL not set");
         return;
     };
-    narrow_profile_to(
-        &cmd_tx,
-        &mut evt_rx,
-        vec![
-            crate::features::tools::PYTHON_EXEC_ID.into(),
-            "attachment_read".into(),
-            "attachment_search".into(),
-        ],
-    )
-    .await;
+    let tools: Vec<crate::entities::profile::ToolId> = vec![
+        crate::features::tools::PYTHON_EXEC_ID.into(),
+        "attachment_read".into(),
+        "attachment_search".into(),
+    ];
+    let (profile, _) = narrow_profile_to(&cmd_tx, &mut evt_rx, tools.clone()).await;
+    let colour = std::env::var("MINDFORK_PROBE_FACECOLOR").unwrap_or_default();
     let files_root = sandbox.parent().expect("the sandbox's data root").join("files");
     let mut rows: Vec<ProbeRow> = Vec::new();
+    let mut follow_ups: Vec<(bool, bool)> = Vec::new();
     for run in 0..runs {
+        set_profile_tools(&cmd_tx, profile, tools.clone());
         let (year, month) = PEAKS[run % PEAKS.len()];
         let expected = format!("{year}-{month:02}");
         cmd_tx
@@ -561,19 +560,48 @@ async fn sandbox_files_probe_e2e_live() {
                 c.2.chars().take(1200).collect::<String>()
             );
         }
+        let overridden = py
+            .iter()
+            .any(|c| c.1.contains("facecolor") || c.1.contains("style.use"));
         rows.push((expected, pngs > 0, right, named, shown, printed));
+        // Probe v2 for (2): a follow-up with no tools, answerable only from the image the
+        // first turn showed — the colour the probe set, which no code or output names.
+        set_profile_tools(&cmd_tx, profile, Vec::new());
+        cmd_tx
+            .send(AppCommand::SendMessage(
+                "Without running any code: what colour is the background of the plotting \
+                 area in the chart you just made?"
+                    .into(),
+            ))
+            .unwrap();
+        let mut follow = String::new();
+        while let Some(ev) = evt_rx.recv().await {
+            match ev {
+                AppEvent::Chunk { text, .. } => follow.push_str(&text),
+                AppEvent::Finished { .. } => break,
+                _ => {}
+            }
+        }
+        let seen = !colour.is_empty() && follow.to_lowercase().contains(&colour.to_lowercase());
+        eprintln!(
+            "run {run}: follow-up ({colour}) seen={seen} overridden={overridden}: {}",
+            follow.chars().take(400).collect::<String>()
+        );
+        follow_ups.push((seen, overridden));
     }
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
     let count = |f: fn(&ProbeRow) -> bool| rows.iter().filter(|r| f(r)).count();
     eprintln!(
         "SUMMARY blind={blind} runs={runs}: (1) png {}  (2) right month {}  (3) named files {}  \
-         images shown in {}  printed the month in {}",
+         images shown in {}  printed the month in {}  (2 v2) colour seen {} (overridden {})",
         count(|r| r.1),
         count(|r| r.2),
         count(|r| r.3),
         count(|r| r.4 > 0),
-        count(|r| r.5)
+        count(|r| r.5),
+        follow_ups.iter().filter(|f| f.0).count(),
+        follow_ups.iter().filter(|f| f.1).count()
     );
 }
 

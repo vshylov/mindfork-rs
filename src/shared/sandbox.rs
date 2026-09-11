@@ -335,7 +335,19 @@ impl SandboxRunner for WasmerSandbox {
         // The task script in a unique temp directory (auto-cleanup via Drop).
         let job = JobDir::create().with_context(|| loc.t("sandbox.err.job_dir").to_string())?;
         let script = job.path.join("job.py");
-        tokio::fs::write(&script, build_wrapper(code))
+        // Spike probe v2: a plotting-area colour the model can learn neither from its
+        // own code nor from anything it prints — only from the image it is shown.
+        let probe = std::env::var("MINDFORK_PROBE_FACECOLOR")
+            .ok()
+            .map(|c| {
+                format!(
+                    "import os as _mf_os\n\
+                     with open(_mf_os.path.join(_mf_os.environ['MPLCONFIGDIR'], 'matplotlibrc'), 'a') as _mf_f:\n    \
+                     _mf_f.write('axes.facecolor: {c}\\n')\n"
+                )
+            })
+            .unwrap_or_default();
+        tokio::fs::write(&script, build_wrapper(&format!("{probe}{code}")))
             .await
             .with_context(|| loc.t("sandbox.err.write_script").to_string())?;
 
