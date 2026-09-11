@@ -62,6 +62,7 @@ impl Orchestrator {
             params: self.chunk_params(),
             cancel,
             loc: self.ui_locale(),
+            file_hint: crate::shared::text_decode::tld_hint(self.config.interface.language),
             evt_tx: self.evt_tx.clone(),
         });
     }
@@ -145,6 +146,7 @@ impl Orchestrator {
             params: self.chunk_params(),
             cancel,
             loc: self.ui_locale(),
+            file_hint: crate::shared::text_decode::tld_hint(self.config.interface.language),
             evt_tx: self.evt_tx.clone(),
         });
     }
@@ -179,6 +181,8 @@ struct RagIngest {
     cancel: CancellationToken,
     /// The interface language (axis B) — for progress/error messages visible to the user.
     loc: &'static Locale,
+    /// The encoding detector's hint for the files read — the interface language's TLD.
+    file_hint: Option<&'static str>,
     evt_tx: tokio::sync::mpsc::UnboundedSender<AppEvent>,
 }
 
@@ -197,6 +201,7 @@ fn spawn_rag_ingest(task: RagIngest) {
         params,
         cancel,
         loc,
+        file_hint,
         evt_tx,
     } = task;
 
@@ -265,7 +270,11 @@ fn spawn_rag_ingest(task: RagIngest) {
                     chunks_total: tot,
                 }));
             };
-            match index_file(&embedder, &storage, profile_id, file, params, loc, progress).await {
+            match index_file(
+                &embedder, &storage, profile_id, file, params, loc, file_hint, progress,
+            )
+            .await
+            {
                 Ok(n) => chunks_total += n,
                 Err(err) => {
                     errors += 1;
@@ -292,6 +301,8 @@ struct RagRebuild {
     cancel: CancellationToken,
     /// The interface language (axis B) — for progress/error messages visible to the user.
     loc: &'static Locale,
+    /// The encoding detector's hint for sources read from disk again.
+    file_hint: Option<&'static str>,
     evt_tx: tokio::sync::mpsc::UnboundedSender<AppEvent>,
 }
 
@@ -307,6 +318,7 @@ fn spawn_rag_rebuild(task: RagRebuild) {
         params,
         cancel,
         loc,
+        file_hint,
         evt_tx,
     } = task;
 
@@ -315,7 +327,8 @@ fn spawn_rag_rebuild(task: RagRebuild) {
             let _ = evt_tx.send(AppEvent::RagProgress(p));
         };
 
-        let Some((sources, missing)) = gather_rebuild_sources(&storage, profile_id, loc, &evt_tx)
+        let Some((sources, missing)) =
+            gather_rebuild_sources(&storage, profile_id, loc, file_hint, &evt_tx)
         else {
             return;
         };
@@ -379,11 +392,13 @@ fn spawn_rag_rebuild(task: RagRebuild) {
 /// Steps 1–2 of the rebuild: gathers the profile's sources and resolves each
 /// one's content. `None` — failed or nothing to rebuild, already reported via
 /// [`RagProgress`]. The second element is the number of unrecoverable sources
-/// (counted into the rebuild's errors).
+/// (counted into the rebuild's errors). `file_hint` is the encoding detector's for a
+/// source read from disk again.
 fn gather_rebuild_sources(
     storage: &Arc<Storage>,
     profile_id: Uuid,
     loc: &'static Locale,
+    file_hint: Option<&str>,
     evt_tx: &tokio::sync::mpsc::UnboundedSender<AppEvent>,
 ) -> Option<(Vec<(String, String)>, usize)> {
     let send = |p: RagProgress| {
@@ -426,7 +441,7 @@ fn gather_rebuild_sources(
         let path = std::path::Path::new(&info.source);
         if path.is_file()
             && crate::features::rag_ingest::is_supported(path)
-            && let Ok(content) = read_source_text(path)
+            && let Ok(content) = read_source_text(path, file_hint).map(|s| s.text)
         {
             sources.push((info.source.clone(), content));
         } else {
@@ -558,26 +573,54 @@ async fn prepare_rebuild(
 /// both need the same per-format extraction, and it lives in `app` because it
 /// reaches into `features/tools/web`, which `features` may not import sideways
 /// (FSD).
-pub(super) fn read_source_text(path: &std::path::Path) -> anyhow::Result<String> {
+pub(super) fn read_source_text(
+    path: &std::path::Path,
+    hint: Option<&str>,
+) -> anyhow::Result<SourceText> {
     use crate::features::{doc_extract, rag_ingest};
-    if rag_ingest::is_html(path) {
-        let raw = rag_ingest::read_text(path)?;
-        Ok(crate::features::tools::web::extract_readable(
-            &raw,
-            usize::MAX,
-        ))
-    } else if rag_ingest::is_pdf(path) {
-        doc_extract::extract_pdf(&std::fs::read(path)?)
-    } else if rag_ingest::is_docx(path) {
-        doc_extract::extract_docx(&std::fs::read(path)?)
+    if rag_ingest::is_pdf(path) {
+        return Ok(SourceText::extracted(doc_extract::extract_pdf(
+            &std::fs::read(path)?,
+        )?));
+    }
+    if rag_ingest::is_docx(path) {
+        return Ok(SourceText::extracted(doc_extract::extract_docx(
+            &std::fs::read(path)?,
+        )?));
+    }
+    let file = rag_ingest::read_text(path, hint)?;
+    let encoding = (file.encoding != encoding_rs::UTF_8).then_some(file.encoding);
+    let text = if rag_ingest::is_html(path) {
+        crate::features::tools::web::extract_readable(&file.text, usize::MAX)
     } else {
-        Ok(rag_ingest::read_text(path)?)
+        file.text
+    };
+    Ok(SourceText { text, encoding })
+}
+
+/// A source's text, and the encoding it was read in when that was not UTF-8 — what an
+/// attachment's feed note names (docs/research/local-file-encoding.md F4b).
+pub(super) struct SourceText {
+    pub(super) text: String,
+    pub(super) encoding: Option<&'static encoding_rs::Encoding>,
+}
+
+impl SourceText {
+    /// Text an extractor produced (PDF, DOCX): no encoding of the file's own to name.
+    fn extracted(text: String) -> Self {
+        Self {
+            text,
+            encoding: None,
+        }
     }
 }
 
 /// Indexes a single file: reads the text, chunks it, embeds it, and writes
 /// documents into storage (isolated by `profile_id`). Returns the number of
 /// chunks written.
+// One argument per thing a file's indexing varies by; `hint` joined the six when files
+// began to be read in their own encoding (docs/research/local-file-encoding.md F2c).
+#[allow(clippy::too_many_arguments)]
 async fn index_file(
     embedder: &Arc<dyn Embedder>,
     storage: &Arc<Storage>,
@@ -585,9 +628,10 @@ async fn index_file(
     path: &std::path::Path,
     params: ChunkParams,
     loc: &'static Locale,
+    hint: Option<&str>,
     progress: impl FnMut(usize, usize),
 ) -> anyhow::Result<usize> {
-    let content = read_source_text(path)?;
+    let content = read_source_text(path, hint)?.text;
     // Canonical source key + idempotency: re-adding the same file replaces its
     // previous chunks instead of duplicating them (see [`index_source`]).
     let source = crate::features::rag_ingest::canonical_source(path);
@@ -706,7 +750,7 @@ mod tests {
              </body></html>",
         )
         .unwrap();
-        let extracted = read_source_text(&html).unwrap();
+        let extracted = read_source_text(&html, None).unwrap().text;
         assert!(
             extracted.contains("Осмысленный абзац содержимого статьи"),
             "extracted text should contain the article paragraph: {extracted:?}"
@@ -728,7 +772,7 @@ mod tests {
         let txt = dir.path().join("note.txt");
         let body = "<p>это не HTML</p>\nобычный текст с угловыми скобками";
         std::fs::write(&txt, body).unwrap();
-        assert_eq!(read_source_text(&txt).unwrap(), body);
+        assert_eq!(read_source_text(&txt, None).unwrap().text, body);
     }
 
     #[test]
@@ -747,7 +791,7 @@ mod tests {
         zip.write_all(xml.as_bytes()).unwrap();
         std::fs::write(&docx, zip.finish().unwrap().into_inner()).unwrap();
         assert_eq!(
-            read_source_text(&docx).unwrap(),
+            read_source_text(&docx, None).unwrap().text,
             "Абзац из DOCX-документа",
             "DOCX should route through text extraction"
         );
@@ -756,7 +800,10 @@ mod tests {
         let pdf = dir.path().join("doc.pdf");
         std::fs::write(&pdf, include_bytes!("../../../tests/fixtures/hello.pdf")).unwrap();
         assert!(
-            read_source_text(&pdf).unwrap().contains("Hello World"),
+            read_source_text(&pdf, None)
+                .unwrap()
+                .text
+                .contains("Hello World"),
             "PDF should route through text extraction"
         );
     }

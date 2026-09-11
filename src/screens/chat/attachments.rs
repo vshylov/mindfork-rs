@@ -16,8 +16,12 @@ impl ChatScreen {
     /// Reports the outcome of a `/file` command as a note in the feed.
     pub fn set_file_progress(&mut self, progress: FileProgress) {
         match progress {
-            FileProgress::Attached { info, total_tokens } => {
-                let msg = self.loc.tf(
+            FileProgress::Attached {
+                info,
+                total_tokens,
+                read_as,
+            } => {
+                let mut msg = self.loc.tf(
                     "ui.file.attached",
                     &[
                         ("name", &info.name),
@@ -27,6 +31,10 @@ impl ChatScreen {
                         ("total", &format_tokens(total_tokens)),
                     ],
                 );
+                if let Some(encoding) = read_as {
+                    msg.push(' ');
+                    msg.push_str(&self.loc.tf("ui.file.read_as", &[("encoding", encoding)]));
+                }
                 self.push_note(&msg);
             }
             FileProgress::Removed { name } => {

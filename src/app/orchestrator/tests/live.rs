@@ -3675,8 +3675,8 @@ fn rustc_run(root: &std::path::Path) -> Result<String, String> {
 /// live server. The narrowing is the "remove the alternative" rule
 /// (docs/lessons.md §9): with `fs_write` in reach the model could rewrite a file
 /// wholesale and the contract under test would never run.
-async fn run_workspace_turn(
-    files: &[(&str, &str)],
+async fn run_workspace_turn<B: AsRef<[u8]>>(
+    files: &[(&str, B)],
     prompt: &str,
 ) -> Option<(tempfile::TempDir, String, Vec<(String, String, String)>)> {
     run_workspace_turn_with(files, &[], prompt).await
@@ -3689,8 +3689,8 @@ async fn run_workspace_turn(
 /// `/project build-cmd` sends, rather than by writing the field: the smoke is
 /// then measuring the route that ships, including the shell-syntax refusal that
 /// sits on it.
-async fn run_workspace_turn_with(
-    files: &[(&str, &str)],
+async fn run_workspace_turn_with<B: AsRef<[u8]>>(
+    files: &[(&str, B)],
     commands: &[(crate::entities::workspace::CommandSlot, &str)],
     prompt: &str,
 ) -> Option<(tempfile::TempDir, String, Vec<(String, String, String)>)> {
@@ -3808,6 +3808,68 @@ async fn code_edit_e2e_live() {
         ),
         Err(err) => panic!("does not compile after the edit:\n{err}"),
     }
+}
+
+/// Local files in their own encoding (docs/research/local-file-encoding.md): a
+/// windows-1251 source attached as a project, and an edit the assistant makes through
+/// `code_edit` — the path research §1 measured writing `EF BF BD` over every Russian
+/// letter of such a file's comments while the changes screen showed one line.
+///
+/// Ground truth is the bytes, and what is asserted is the outcome, not the model's
+/// wording: no `EF BF BD`, the untouched first line byte for byte, the file still reading
+/// as windows-1251 without loss, and the number changed. Whether the model also rewrote
+/// the comment about the number is printed, not asserted — that is a reasonable edit.
+///
+/// `#[ignore]`, manual: `MINDFORK_ENGINE_URL=…/v1 cargo test
+/// code_edit_legacy_encoding_e2e_live -- --ignored --nocapture --test-threads=1`.
+#[tokio::test]
+#[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
+async fn code_edit_legacy_encoding_e2e_live() {
+    use crate::features::tools::code::CODE_EDIT_ID;
+    const FIRST_LINE: &str = "// Расчёт скидки для постоянного покупателя.\r\n";
+    const REST: &str = "pub fn discount(orders: u32) -> u32 {\r\n\
+        \x20   // Скидка растёт с каждым десятым заказом.\r\n    orders / 10\r\n}\r\n";
+    let cp1251 = |t: &str| encoding_rs::WINDOWS_1251.encode(t).0.into_owned();
+    let files = [("src/discount.rs", cp1251(&format!("{FIRST_LINE}{REST}")))];
+    let prompt = "В файле src/discount.rs скидка растёт слишком медленно: пусть она растёт \
+        с каждым пятым заказом, а не с каждым десятым. Поменяй это в коде.";
+
+    let Some((ws, answer, calls)) = run_workspace_turn(&files, prompt).await else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    let after = std::fs::read(ws.path().join("src/discount.rs")).unwrap();
+    let (text, _) = encoding_rs::WINDOWS_1251.decode_without_bom_handling(&after);
+    eprintln!("answer: {answer}\n--- the file after the turn, read as windows-1251 ---\n{text}");
+    assert!(
+        calls.iter().any(|(n, _, _)| n == CODE_EDIT_ID),
+        "the model never called {CODE_EDIT_ID}"
+    );
+    let replacement = after
+        .windows(3)
+        .filter(|w| *w == [0xEF, 0xBF, 0xBD])
+        .count();
+    assert_eq!(replacement, 0, "EF BF BD was written into the file");
+    assert!(
+        after.starts_with(&cp1251(FIRST_LINE)),
+        "the untouched first line changed"
+    );
+    assert!(
+        crate::shared::text_decode::round_trips(&after, encoding_rs::WINDOWS_1251),
+        "the file no longer reads as windows-1251 without loss"
+    );
+    assert!(
+        text.contains("orders / 5"),
+        "the divisor did not change to 5"
+    );
+    eprintln!(
+        "the comment about the number was {}",
+        if text.contains("десятым") {
+            "left as it was"
+        } else {
+            "rewritten too"
+        }
+    );
 }
 
 /// Runs `cargo` in `dir` and returns its combined output, or an error.

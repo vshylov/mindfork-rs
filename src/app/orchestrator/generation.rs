@@ -979,7 +979,7 @@ impl Orchestrator {
         // entails (spec §9.7). A turn cancelled after the tool ran still gets
         // here: the transcript was already paid for.
         for a in attached {
-            self.insert_attachment(res.chat_id, a);
+            self.insert_attachment(res.chat_id, a, None);
         }
         // A background run that ended while this turn ran: its notification
         // goes after the turn's rows, and the assistant may be woken on it

@@ -19,7 +19,9 @@
 //! 5. nothing usable declared: the detector — `chardetng`, the one Firefox runs on
 //!    unlabelled pages — hinted by a top-level domain.
 
-use encoding_rs::{Encoding, REPLACEMENT, UTF_8, UTF_16BE, UTF_16LE, WINDOWS_1252, X_USER_DEFINED};
+use encoding_rs::{
+    EncoderResult, Encoding, REPLACEMENT, UTF_8, UTF_16BE, UTF_16LE, WINDOWS_1252, X_USER_DEFINED,
+};
 
 /// Which step of the order in the module docs chose the encoding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,10 +36,27 @@ pub enum EncodingSource {
     Detected,
 }
 
-/// The text of `bytes`, its encoding and the step that chose it (module docs).
+/// The text of `bytes`, its encoding and the step that chose it (module docs), for a
+/// body that arrived with a `Content-Type`.
 pub(crate) fn decode(
     bytes: &[u8],
     content_type: &str,
+    tld: Option<&str>,
+) -> (String, &'static Encoding, EncodingSource) {
+    decode_declared(
+        bytes,
+        header_charset(content_type),
+        is_markup(content_type),
+        tld,
+    )
+}
+
+/// The order itself: `header` is what a transport declared, `markup` whether the
+/// document may declare its own encoding.
+fn decode_declared(
+    bytes: &[u8],
+    header: Option<&'static Encoding>,
+    markup: bool,
     tld: Option<&str>,
 ) -> (String, &'static Encoding, EncodingSource) {
     if let Some((encoding, bom)) = Encoding::for_bom(bytes) {
@@ -47,10 +66,7 @@ pub(crate) fn decode(
     if utf8.decoded > utf8.broken {
         return finish(UTF_8, bytes, EncodingSource::Utf8Bytes);
     }
-    let header = header_charset(content_type);
-    let document = is_markup(content_type)
-        .then(|| document_charset(bytes))
-        .flatten();
+    let document = markup.then(|| document_charset(bytes)).flatten();
     if utf8.broken == 0 {
         // Pure ASCII: every ASCII-compatible encoding reads it alike, so a declaration
         // only matters for the seven-bit ones.
@@ -83,6 +99,151 @@ fn finish(
 ) -> (String, &'static Encoding, EncodingSource) {
     let (text, _) = encoding.decode_without_bom_handling(bytes);
     (text.into_owned(), encoding, source)
+}
+
+/// A local file's text in its own encoding (docs/research/local-file-encoding.md §3).
+#[derive(Debug)]
+pub struct FileText {
+    pub text: String,
+    pub encoding: &'static Encoding,
+    /// Whether the file opened with a byte-order mark — written back as it was.
+    pub bom: bool,
+}
+
+/// A local file's text: the order without a transport — nothing declared from outside,
+/// the document's own declaration only for markup — with `hint` the TLD of the user's
+/// language ([`tld_hint`]). `None` for a binary file: a NUL byte, unless a BOM announces
+/// UTF-16 and the rest decodes whole with no NUL character. That comes before anything
+/// else, so Notepad's "Unicode" is text and a blob that happens to open `FF FE` is not.
+pub fn decode_file(bytes: &[u8], markup: bool, hint: Option<&str>) -> Option<FileText> {
+    if let Some((encoding, bom)) = Encoding::for_bom(bytes)
+        && (encoding == UTF_16LE || encoding == UTF_16BE)
+    {
+        let text = encoding.decode_without_bom_handling_and_without_replacement(&bytes[bom..])?;
+        return (!text.contains('\0')).then(|| FileText {
+            text: text.into_owned(),
+            encoding,
+            bom: true,
+        });
+    }
+    if bytes.contains(&0) {
+        return None;
+    }
+    let (text, encoding, source) = decode_declared(bytes, None, markup, hint);
+    Some(FileText {
+        text,
+        encoding,
+        bom: source == EncodingSource::Bom,
+    })
+}
+
+/// Whether a file on disk is markup that may declare its own encoding — by extension, since
+/// a local file has no `Content-Type`, and a Markdown note *about* `<meta charset>` must not
+/// declare an encoding it does not use.
+pub fn is_markup_path(path: &std::path::Path) -> bool {
+    path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
+        ["html", "htm", "xhtml", "xml"]
+            .iter()
+            .any(|m| e.eq_ignore_ascii_case(m))
+    })
+}
+
+/// `text` in `encoding`, or the first character that encoding cannot store. `encoding_rs`
+/// has no UTF-16 encoder — it encodes those as UTF-8, as a browser's form submission does —
+/// so UTF-16 is written here.
+pub fn encode(text: &str, encoding: &'static Encoding) -> Result<Vec<u8>, char> {
+    if encoding == UTF_16LE {
+        return Ok(text.encode_utf16().flat_map(u16::to_le_bytes).collect());
+    }
+    if encoding == UTF_16BE {
+        return Ok(text.encode_utf16().flat_map(u16::to_be_bytes).collect());
+    }
+    let mut encoder = encoding.new_encoder();
+    let mut out = Vec::new();
+    let mut rest = text;
+    loop {
+        out.reserve(
+            encoder
+                .max_buffer_length_from_utf8_without_replacement(rest.len())
+                .unwrap_or(rest.len() * 4 + 16),
+        );
+        let (result, read) =
+            encoder.encode_from_utf8_to_vec_without_replacement(rest, &mut out, true);
+        rest = &rest[read..];
+        match result {
+            EncoderResult::InputEmpty => return Ok(out),
+            EncoderResult::Unmappable(c) => return Err(c),
+            EncoderResult::OutputFull => {}
+        }
+    }
+}
+
+/// Whether `bytes` — past any BOM — come back byte for byte through `encoding`: decoded
+/// without replacement, then encoded again. What makes writing an edit back in a file's
+/// own encoding safe, since whatever the edit does not touch returns exactly
+/// (local-file-encoding.md §2.4). A lossy read — invalid UTF-8 read as UTF-8 — fails it.
+pub fn round_trips(bytes: &[u8], encoding: &'static Encoding) -> bool {
+    encoding
+        .decode_without_bom_handling_and_without_replacement(bytes)
+        .and_then(|text| encode(&text, encoding).ok())
+        .is_some_and(|back| back == bytes)
+}
+
+/// The byte-order mark `encoding` writes, for a file that opened with one.
+pub fn bom_of(encoding: &'static Encoding) -> &'static [u8] {
+    if encoding == UTF_8 {
+        &[0xEF, 0xBB, 0xBF]
+    } else if encoding == UTF_16LE {
+        &[0xFF, 0xFE]
+    } else if encoding == UTF_16BE {
+        &[0xFE, 0xFF]
+    } else {
+        &[]
+    }
+}
+
+/// The TLD `chardetng` weighs for text in `lang`: a local file has no host, but it has a
+/// user, and the interface language is theirs (local-file-encoding.md §2.2 — the `ru` hint
+/// lifts short Russian files from 21 of 32 to 27; fork F2c). `None` for English and for a
+/// language the detector has no regional prior for. Every value is a lower-case label with
+/// no period, the only form `chardetng` does not panic on.
+pub fn tld_hint(lang: crate::shared::i18n::Lang) -> Option<&'static str> {
+    Some(match lang.code() {
+        "ru" => "ru",
+        "uk" => "ua",
+        "be" => "by",
+        "kk" => "kz",
+        "bg" => "bg",
+        "sr" => "rs",
+        "mk" => "mk",
+        "pl" => "pl",
+        "cs" => "cz",
+        "sk" => "sk",
+        "sl" => "si",
+        "hr" => "hr",
+        "hu" => "hu",
+        "ro" => "ro",
+        "de" => "de",
+        "fr" => "fr",
+        "es" => "es",
+        "it" => "it",
+        "pt" => "pt",
+        "nl" => "nl",
+        "el" => "gr",
+        "tr" => "tr",
+        "he" => "il",
+        "ar" => "sa",
+        "fa" => "ir",
+        "lt" => "lt",
+        "lv" => "lv",
+        "et" => "ee",
+        "ja" => "jp",
+        "zh" => "cn",
+        "ko" => "kr",
+        "th" => "th",
+        "vi" => "vn",
+        _ => return None,
+    })
 }
 
 /// Whether two encodings turn `bytes` into the same text. The detector names a family's
@@ -462,5 +623,83 @@ mod tests {
         let evidence = Utf8Evidence::of(&bytes);
         assert!(evidence.decoded > 0, "{evidence:?}");
         assert!(evidence.decoded <= evidence.broken, "{evidence:?}");
+    }
+
+    /// Notepad's "Unicode" is full of NUL bytes and is text; a blob is not, even one that
+    /// happens to open `FF FE` — the check runs before any decoding.
+    #[test]
+    fn a_file_is_text_unless_it_holds_a_nul_a_whole_utf16_file_excepted() {
+        let utf16: Vec<u8> = [0xFF, 0xFE]
+            .into_iter()
+            .chain("Выручка\r\n".encode_utf16().flat_map(u16::to_le_bytes))
+            .collect();
+        let file = decode_file(&utf16, false, None).expect("UTF-16 with its BOM is text");
+        assert_eq!(
+            (file.text.as_str(), file.encoding, file.bom),
+            ("Выручка\r\n", UTF_16LE, true)
+        );
+        assert!(decode_file(&[0xFF, 0xFE, 0x00, 0x01, 0x80], false, None).is_none());
+        assert!(decode_file(b"PK\x03\x04\x00\x00", false, None).is_none());
+        let bom8 = [&[0xEF, 0xBB, 0xBF][..], "текст".as_bytes()].concat();
+        let file = decode_file(&bom8, false, None).unwrap();
+        assert_eq!(
+            (file.text.as_str(), file.encoding, file.bom),
+            ("текст", UTF_8, true)
+        );
+    }
+
+    /// A local file has no `Content-Type`: its own `<meta>` counts only when it is markup.
+    #[test]
+    fn a_file_declares_its_encoding_only_when_it_is_markup() {
+        let body = format!("<meta charset=koi8-r>\n{RU}");
+        let bytes = encoding_rs::WINDOWS_1251.encode(&body).0;
+        let note = decode_file(&bytes, false, Some("ru")).unwrap();
+        assert_eq!(
+            note.encoding.name(),
+            "windows-1251",
+            "detected from the bytes"
+        );
+        let page = decode_file(&bytes, true, Some("ru")).unwrap();
+        assert_eq!(page.encoding.name(), "KOI8-R", "taken from its own <meta>");
+        assert!(is_markup_path(std::path::Path::new("a/Page.HTML")));
+        assert!(!is_markup_path(std::path::Path::new("notes.md")));
+    }
+
+    #[test]
+    fn writing_back_names_the_character_the_encoding_lacks() {
+        let cp1251 = encoding_rs::WINDOWS_1251.encode("Выручка").0.into_owned();
+        assert_eq!(encode("Выручка", encoding_rs::WINDOWS_1251), Ok(cp1251));
+        assert_eq!(encode("цена — 5", encoding_rs::KOI8_R), Err('—'));
+        assert_eq!(encode("итог 🙂", encoding_rs::WINDOWS_1251), Err('🙂'));
+        let le: Vec<u8> = "Ёж".encode_utf16().flat_map(u16::to_le_bytes).collect();
+        assert_eq!(encode("Ёж", UTF_16LE), Ok(le));
+        assert_eq!(bom_of(UTF_16LE), [0xFF, 0xFE]);
+        assert!(bom_of(encoding_rs::WINDOWS_1251).is_empty());
+    }
+
+    /// A lossy read cannot be written back: the invalid byte became `U+FFFD`, and that is
+    /// what would go to disk.
+    #[test]
+    fn only_a_lossless_read_round_trips() {
+        let cp1251 = encoding_rs::WINDOWS_1251.encode(RU).0;
+        assert!(round_trips(&cp1251, encoding_rs::WINDOWS_1251));
+        let stray = [RU.as_bytes(), &[0xFF]].concat();
+        assert!(!round_trips(&stray, UTF_8));
+        let utf16: Vec<u8> = RU.encode_utf16().flat_map(u16::to_le_bytes).collect();
+        assert!(round_trips(&utf16, UTF_16LE));
+    }
+
+    #[test]
+    fn the_language_hint_is_a_label_the_detector_accepts() {
+        use crate::shared::i18n::Lang;
+        assert_eq!(tld_hint(Lang::Ru), Some("ru"));
+        assert_eq!(tld_hint(Lang::En), None);
+        assert_eq!(tld_hint(Lang::from_code("uk")), Some("ua"));
+        assert_eq!(tld_hint(Lang::from_code("xx")), None);
+        let cp1251 = encoding_rs::WINDOWS_1251.encode(RU).0;
+        for code in ["ru", "uk", "el", "ja", "zh", "vi"] {
+            // `chardetng` panics on a label in any other form.
+            detect(&cp1251, tld_hint(Lang::from_code(code)));
+        }
     }
 }

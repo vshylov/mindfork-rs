@@ -87,6 +87,10 @@ pub struct ToolContext {
     /// scaffold, tool results) is localized through it. `&'static` — a built-in
     /// bundle.
     pub loc: &'static crate::shared::i18n::Locale,
+    /// The TLD that hints the encoding detector on the user's own files — the
+    /// interface language's (`text_decode::tld_hint`, docs/research/local-file-encoding.md
+    /// fork F2c): a file belongs to its user, not to a profile's prompt language.
+    pub file_hint: Option<&'static str>,
     /// Files attached to the chat (`/file attach`) — a turn snapshot, like
     /// `system_message`. `Arc` because [`ToolContext`] is `Clone` and an
     /// attachment's text can be hundreds of KB. Read by `attachment_read`; empty
@@ -202,6 +206,8 @@ pub struct ToolParams {
     /// Command-execution limits for the code workspace (`config.workspace`).
     /// See [`ToolContext::workspace_cfg`].
     pub workspace: crate::shared::config::WorkspaceSettings,
+    /// The encoding detector's hint for local files. See [`ToolContext::file_hint`].
+    pub file_hint: Option<&'static str>,
 }
 
 impl ToolParams {
@@ -215,6 +221,7 @@ impl ToolParams {
             history_page_tokens: cfg.compaction.page_tokens,
             mcp_images: cfg.tools.mcp_images,
             workspace: cfg.workspace,
+            file_hint: crate::shared::text_decode::tld_hint(cfg.interface.language),
         }
     }
 }
@@ -286,6 +293,7 @@ impl ToolContext {
             self_model_params: params.self_model_params,
             recall_includes_self: params.recall_includes_self,
             loc: crate::shared::i18n::locale(turn.lang),
+            file_hint: params.file_hint,
             cancel: turn.cancel,
             model_name: turn.model_name,
             engine_mode: turn.engine_mode,
@@ -1011,6 +1019,7 @@ pub(crate) mod testkit {
             attachments: crate::shared::config::AttachmentSettings::default(),
             mcp_images: true,
             workspace: crate::shared::config::WorkspaceSettings::default(),
+            file_hint: None,
         }
     }
 
@@ -1138,6 +1147,18 @@ pub(crate) mod testkit {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A tool reads a user's file with the interface language's hint, not the profile's
+    /// scaffold language: the file belongs to its user (docs/research/local-file-encoding.md
+    /// fork F2c).
+    #[test]
+    fn tool_params_take_the_file_hint_from_the_interface_language() {
+        let mut cfg = AppConfig::default();
+        cfg.interface.language = crate::shared::i18n::Lang::Ru;
+        assert_eq!(ToolParams::from_config(&cfg).file_hint, Some("ru"));
+        cfg.interface.language = crate::shared::i18n::Lang::En;
+        assert_eq!(ToolParams::from_config(&cfg).file_hint, None);
+    }
 
     /// The concurrent set is exactly the documented one
     /// (docs/research/concurrent-tools.md §2.3) — a tool cannot be marked by
