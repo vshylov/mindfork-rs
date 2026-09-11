@@ -192,7 +192,7 @@ being recent is dropped, not shortened.
   its default `force_autohint` traps FreeType here — and the warmup `compileall`s
   the bytecode, most of a cold call. Found on the way: one call can write
   `/sp/sitecustomize.py` that the next call runs; its fix is a PR of its own
-  (spec §9.3, [docs/journal/tools.md](docs/journal/tools.md)).
+  (spec §13.2, [docs/journal/tools.md](docs/journal/tools.md)).
 - **`/file remove` and `/image remove` refuse a name two items share** — with
   `a/notes.md` and `b/notes.md` attached, `/file remove notes.md` removed the first
   and said only "notes.md", and `/file list` showed two identical lines (measured

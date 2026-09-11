@@ -3936,7 +3936,7 @@ of the dev `site-packages`, then exercised in the real sandbox (wasmer 7.2.0,
   now measured.
 
 **Found on the way — `site-packages` is writable from the guest.** ADR 0005 §5 and spec
-§9.3 say read-only; `build_args` mounts it with a plain `--volume`, and wasmer 7.2.0 has
+§13.2 say read-only; `build_args` mounts it with a plain `--volume`, and wasmer 7.2.0 has
 no read-only form (`HOST:GUEST:ro` is rejected as a path, and neither the 7.2.0 nor the
 `main` source defines one). Proven: one call wrote `/sp/sitecustomize.py`, and the next,
 clean call ran it — code the model ran once, under a prompt injection from a fetched page
