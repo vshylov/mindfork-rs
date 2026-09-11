@@ -171,7 +171,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-11, version 0.9.8)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3065 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **3067 unit tests
 green, 159 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
@@ -184,6 +184,15 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **A fetched page's attachment is named after the page, not its site** —
+  `fetch_url` named an attachment `<h1>`-first, because docs.vlang.io repeats one
+  `<title>`; sector.biz.ua repeats one banner `<h1>`, so its articles were named after
+  the archive. Measured on 43 sites first: the `<h1>`-first rule named every page of six
+  after the site, and `og:title` first would still have left three. Now
+  `NameFields::name` takes what a second field confirms — `og:title`, an `<h1>` the
+  `<title>` begins with, the `<title>` without its site segment — with no collision on
+  the corpus ([docs/research/page-attachment-name.md](docs/research/page-attachment-name.md),
+  spec §9.3.1, [docs/journal/tools.md](docs/journal/tools.md)).
 - **Local files are read in their own encoding, and edits written back in it**
   — every path that read a user's file assumed UTF-8, and `code_edit` wrote the
   lossy text back: an ASCII edit in a windows-1251 source left `EF BF BD` for
@@ -399,22 +408,6 @@ being recent is dropped, not shortened.
   the 4090, none
   ([docs/research/roll-timings.md](docs/research/roll-timings.md),
   spec §3.4, §6.7, [docs/journal/engine.md](docs/journal/engine.md)).
-- **A slow prefill, detected on the fly — the batch a cancel waits for,
-  told to the user** — the batch track's automatic `-b 256` covers a
-  managed server with no GPU layers and nothing else; every other slow
-  prefill held its slot for seconds on a cancel and said nothing. The
-  signal was on the wire: `llama-server`'s stream ends with `timings` —
-  `prompt_n` over `prompt_ms`, net of the prefix cache — which the client
-  now carries as `TokenUsage.prefill`; the turn keeps its largest sample,
-  and at the landing a pure rule (`prefill_hold`: the hold `batch / tps`
-  above 5 s on a sample of 256+ tokens with the batch above 256, the batch
-  the launch line's or 2048 assumed for an external server) sends **one
-  feed note per server session** naming the throughput, the hold and the
-  change — the *Batch (-b)* field, or `-b 256 -ub 256` on the launch line.
-  Measured: the CPU build at the default batch, 38 tok/s and a 54 s hold,
-  the note; the 4090, no note
-  ([docs/research/slow-prefill-detection.md](docs/research/slow-prefill-detection.md),
-  spec §3.4, [docs/journal/engine.md](docs/journal/engine.md)).
 - **The TUI "hangs" on a headless launch** (no TTY) — this is expected; clean
   exit via `Esc`/`Ctrl+Q` is covered by unit tests. Live verification needs a
   real terminal.

@@ -214,4 +214,10 @@ probe's name on all 87 pages, and **no site has two pages under one name**.
   management"; and the corpus run again on the implemented function, with no
   collision.
 
+**Results** (2026-09-11). 3067 unit tests green, 159 ignored. On the saved corpus the
+implemented function gives the prototype's name on all 93 saved pages, and no site has
+two pages under one name. Eighteen mutations of the rule, every one killed. Live: the
+sector.biz.ua article attached as "Попьем чайку? Петр 'roxton' Семилетов", the
+docs.vlang.io page as "Memory management".
+
 <!-- cyrillic-ok:end -->
