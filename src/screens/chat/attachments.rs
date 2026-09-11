@@ -37,8 +37,14 @@ impl ChatScreen {
                 }
                 self.push_note(&msg);
             }
-            FileProgress::Removed { name } => {
-                let msg = self.loc.tf("ui.file.removed", &[("name", &name)]);
+            FileProgress::Removed { name, source } => {
+                let msg = match source {
+                    Some(source) => self.loc.tf(
+                        "ui.file.removed_source",
+                        &[("name", &name), ("source", &source)],
+                    ),
+                    None => self.loc.tf("ui.file.removed", &[("name", &name)]),
+                };
                 self.push_note(&msg);
             }
             FileProgress::Listed { items } => {
@@ -133,16 +139,26 @@ pub(super) fn format_attachments(items: &[AttachmentInfo], loc: &'static Locale)
         ],
     );
     for (i, a) in items.iter().enumerate() {
-        out.push_str(&loc.tf(
-            "ui.file.list_item",
-            &[
-                ("i", &(i + 1).to_string()),
-                ("name", &a.name),
-                ("size", &format_bytes(a.bytes)),
-                ("tokens", &format_tokens(a.est_tokens)),
-                ("mode", mode_label(a.mode, loc)),
-            ],
-        ));
+        let n = (i + 1).to_string();
+        let size = format_bytes(a.bytes);
+        let tokens = format_tokens(a.est_tokens);
+        let mut args = vec![
+            ("i", n.as_str()),
+            ("name", a.name.as_str()),
+            ("size", size.as_str()),
+            ("tokens", tokens.as_str()),
+            ("mode", mode_label(a.mode, loc)),
+        ];
+        // A name another attachment shares is told apart by its source — which is also
+        // what `/file remove` accepts (docs/research/remove-by-shared-name.md F2a).
+        let key =
+            if crate::entities::attachment::name_is_shared(items, i, |other| other.name.as_str()) {
+                args.push(("source", a.source.as_str()));
+                "ui.file.list_item_source"
+            } else {
+                "ui.file.list_item"
+            };
+        out.push_str(&loc.tf(key, &args));
     }
     out
 }

@@ -171,7 +171,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-11, version 0.9.8)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3067 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **3072 unit tests
 green, 159 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
@@ -184,6 +184,15 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **`/file remove` and `/image remove` refuse a name two items share** — with
+  `a/notes.md` and `b/notes.md` attached, `/file remove notes.md` removed the first
+  and said only "notes.md", and `/file list` showed two identical lines (measured
+  through the orchestrator; `/image remove` the same). Now one `resolve_handle`
+  serves both: `#N` and a path reach one item, a shared name removes nothing and lists
+  each holder's `#N` and path, and the listings and the removal note show the source
+  where a name is shared
+  ([docs/research/remove-by-shared-name.md](docs/research/remove-by-shared-name.md),
+  spec §9.7, §9.10, [docs/journal/rag.md](docs/journal/rag.md)).
 - **A fetched page's attachment is named after the page, not its site** —
   `fetch_url` named an attachment `<h1>`-first, because docs.vlang.io repeats one
   `<title>`; sector.biz.ua repeats one banner `<h1>`, so its articles were named after

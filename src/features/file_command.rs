@@ -37,8 +37,12 @@ pub enum FileProgress {
         /// (docs/research/local-file-encoding.md F4b).
         read_as: Option<&'static str>,
     },
-    /// An attachment was removed.
-    Removed { name: String },
+    /// An attachment was removed; `source` is set when another attachment had its name,
+    /// so the note can say which one went.
+    Removed {
+        name: String,
+        source: Option<String>,
+    },
     /// The chat's attachment list (`/file list`); empty — nothing attached.
     Listed { items: Vec<AttachmentInfo> },
     /// Building the semantic index over a by-reference file is under way
@@ -114,22 +118,16 @@ fn argument(tokens: &[&str]) -> Option<String> {
     (!arg.is_empty()).then(|| arg.to_string())
 }
 
-/// Resolves a `/file remove` target to a position in the chat's attachment list:
-/// `#N` (1-based, as shown by `/file list`) or a name/path match. Pure — the
-/// orchestrator applies the result.
+/// Resolves a `/file remove` target in the chat's attachment list: `#N` (1-based, as
+/// shown by `/file list`), a name or a path. A name several attachments share resolves to
+/// all of them, which the orchestrator refuses rather than guess
+/// (docs/research/remove-by-shared-name.md). Pure — the orchestrator applies the result.
 pub fn resolve_target(
     items: &[crate::entities::attachment::Attachment],
     target: &str,
-) -> Option<usize> {
-    let t = target.trim().trim_matches(|c| c == '"' || c == '\'').trim();
-    if let Some(digits) = t.strip_prefix('#')
-        && let Ok(n) = digits.trim().parse::<usize>()
-    {
-        // `then` (lazy), not `then_some`: the latter evaluates `n - 1` eagerly and
-        // underflows on `#0`.
-        return (n >= 1 && n <= items.len()).then(|| n - 1);
-    }
-    items.iter().position(|a| a.matches(t))
+) -> crate::entities::attachment::Resolved {
+    use crate::entities::attachment::{Attachment, resolve_handle};
+    resolve_handle(items, target, Attachment::matches)
 }
 
 /// A short human label for the attachment's mode (localized).
@@ -227,20 +225,21 @@ mod tests {
 
     #[test]
     fn resolve_target_by_index_name_and_path() {
+        use crate::entities::attachment::Resolved;
         let items = vec![
             Attachment::new("a.txt", "/tmp/a.txt", "x".into(), 1, AttachMode::Inline),
             Attachment::new("b.md", "/tmp/b.md", "y".into(), 1, AttachMode::Inline),
         ];
-        assert_eq!(resolve_target(&items, "#1"), Some(0));
-        assert_eq!(resolve_target(&items, "#2"), Some(1));
-        assert_eq!(resolve_target(&items, "b.md"), Some(1));
-        assert_eq!(resolve_target(&items, "/tmp/a.txt"), Some(0));
-        // Out of range / unknown → None (the caller reports it).
-        assert_eq!(resolve_target(&items, "#0"), None);
-        assert_eq!(resolve_target(&items, "#9"), None);
-        assert_eq!(resolve_target(&items, "missing.txt"), None);
+        assert_eq!(resolve_target(&items, "#1"), Resolved::One(0));
+        assert_eq!(resolve_target(&items, "#2"), Resolved::One(1));
+        assert_eq!(resolve_target(&items, "b.md"), Resolved::One(1));
+        assert_eq!(resolve_target(&items, "/tmp/a.txt"), Resolved::One(0));
+        // Out of range / unknown → nothing (the caller reports it).
+        assert_eq!(resolve_target(&items, "#0"), Resolved::Nothing);
+        assert_eq!(resolve_target(&items, "#9"), Resolved::Nothing);
+        assert_eq!(resolve_target(&items, "missing.txt"), Resolved::Nothing);
         // `#` followed by a non-number falls through to a name match.
-        assert_eq!(resolve_target(&items, "#nope"), None);
+        assert_eq!(resolve_target(&items, "#nope"), Resolved::Nothing);
     }
 
     /// Per-locale coverage (i18n gate discipline, docs/history/i18n-ui.md §3.5):

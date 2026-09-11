@@ -471,7 +471,10 @@ src/
 ├─ entities/                domain types (no I/O); serde-serializable
 │  ├─ attachment.rs         Attachment/AttachMode/AttachmentInfo — a file attached
 │  │                        to a chat (text snapshot, budget in estimated tokens);
-│  │                        AttachmentChunk/AttachmentHit — its semantic index
+│  │                        AttachmentChunk/AttachmentHit — its semantic index;
+│  │                        resolve_handle/Resolved — what `#N`/a name/a path
+│  │                        reaches for /file and /image remove (a shared name
+│  │                        resolves to all its holders, and is refused)
 │  ├─ chat.rs               Chat, ChatSummary, CharacterNames, Chat::from_profile, draft,
 │  │                        FeedView (per-chat collapse state of the feed's foldable blocks)
 │  ├─ message.rs            Message, MessageRole, ToolCallRecord, MessageMetadata

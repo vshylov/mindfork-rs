@@ -40,8 +40,14 @@ impl ChatScreen {
                 );
                 self.push_note(&msg);
             }
-            ImageProgress::Removed { name } => {
-                let msg = self.loc.tf("ui.image.removed", &[("name", &name)]);
+            ImageProgress::Removed { name, source } => {
+                let msg = match source {
+                    Some(source) => self.loc.tf(
+                        "ui.image.removed_source",
+                        &[("name", &name), ("source", &source)],
+                    ),
+                    None => self.loc.tf("ui.image.removed", &[("name", &name)]),
+                };
                 self.push_note(&msg);
             }
             ImageProgress::Listed { items } => {
@@ -95,17 +101,28 @@ pub(super) fn format_staged_images(items: &[ImageInfo], loc: &'static Locale) ->
         ],
     );
     for (i, image) in items.iter().enumerate() {
-        out.push_str(&loc.tf(
-            "ui.image.list_item",
-            &[
-                ("i", &(i + 1).to_string()),
-                ("name", &image.name),
-                ("size", &format_bytes(image.bytes)),
-                ("width", &image.width.to_string()),
-                ("height", &image.height.to_string()),
-                ("tokens", &format_tokens(image.est_tokens)),
-            ],
-        ));
+        let n = (i + 1).to_string();
+        let size = format_bytes(image.bytes);
+        let width = image.width.to_string();
+        let height = image.height.to_string();
+        let tokens = format_tokens(image.est_tokens);
+        let mut args = vec![
+            ("i", n.as_str()),
+            ("name", image.name.as_str()),
+            ("size", size.as_str()),
+            ("width", width.as_str()),
+            ("height", height.as_str()),
+            ("tokens", tokens.as_str()),
+        ];
+        // As in `/file list`: a shared name is told apart by the source `remove` accepts.
+        let key =
+            if crate::entities::attachment::name_is_shared(items, i, |other| other.name.as_str()) {
+                args.push(("source", image.source.as_str()));
+                "ui.image.list_item_source"
+            } else {
+                "ui.image.list_item"
+            };
+        out.push_str(&loc.tf(key, &args));
     }
     out
 }

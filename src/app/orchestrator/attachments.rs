@@ -22,7 +22,8 @@ use uuid::Uuid;
 
 use crate::app::events::AppEvent;
 use crate::entities::attachment::{
-    AttachMode, Attachment, AttachmentChunk, decide_mode, inline_tokens_excluding, prompt_tokens,
+    AttachMode, Attachment, AttachmentChunk, Resolved, decide_mode, inline_tokens_excluding,
+    name_is_shared, prompt_tokens,
 };
 use crate::features::file_command::{FileProgress, resolve_target};
 use crate::features::tools::rag::ChunkParams;
@@ -190,30 +191,62 @@ impl Orchestrator {
         }
     }
 
-    /// Removes an attachment by name/path/`#N` (`/file remove <target>`).
+    /// Removes an attachment by name/path/`#N` (`/file remove <target>`). A name several
+    /// attachments share removes nothing: the refusal lists each one's `#N` and source,
+    /// either of which reaches it alone (docs/research/remove-by-shared-name.md F1a).
     pub(super) fn handle_file_remove(&mut self, target: String) {
         let Some(chat_id) = self.active_id else {
             self.fail_file(self.ui_locale().t("ui.err.file_no_active_chat"));
             return;
         };
+        let loc = self.ui_locale();
         let Some(chat) = self.chat_mut(chat_id) else {
             return;
         };
-        let Some(idx) = resolve_target(&chat.attachments, &target) else {
-            let msg = self
-                .ui_locale()
-                .tf("ui.err.file_not_attached", &[("target", target.trim())]);
-            self.fail_file(&msg);
-            return;
+        let idx = match resolve_target(&chat.attachments, &target) {
+            Resolved::One(idx) => idx,
+            Resolved::Shared(hits) => {
+                let candidates = Self::candidate_lines(
+                    hits.iter()
+                        .map(|&i| (i, chat.attachments[i].source.as_str())),
+                );
+                let msg = loc.tf(
+                    "ui.err.file_name_shared",
+                    &[("target", target.trim()), ("candidates", &candidates)],
+                );
+                self.fail_file(&msg);
+                return;
+            }
+            Resolved::Nothing => {
+                let msg = loc.tf("ui.err.file_not_attached", &[("target", target.trim())]);
+                self.fail_file(&msg);
+                return;
+            }
         };
+        // Removed by `#N` or path, a file whose name another one shares is named by its
+        // source too — the name alone would not say which of them went (F2a).
+        let shared = name_is_shared(&chat.attachments, idx, |a| a.name.as_str());
         let removed = chat.attachments.remove(idx);
         let keep: Vec<Uuid> = chat.attachments.iter().map(|a| a.id).collect();
         self.mark_dirty(chat_id);
         // The removed file's index chunks go with it — otherwise the model could
         // still find fragments of a file the user took out of the conversation.
         self.prune_attachment_index(chat_id, &keep);
-        self.emit_file_progress(FileProgress::Removed { name: removed.name });
+        self.emit_file_progress(FileProgress::Removed {
+            name: removed.name,
+            source: shared.then_some(removed.source),
+        });
         self.emit_attachments();
+    }
+
+    /// A shared name's candidates, one line each, with the `#N` and the source that reach
+    /// each one alone — the refusal `/file remove` and `/image remove` both give.
+    pub(super) fn candidate_lines<'a>(
+        candidates: impl Iterator<Item = (usize, &'a str)>,
+    ) -> String {
+        candidates
+            .map(|(i, source)| format!("\n• #{} {source}", i + 1))
+            .collect()
     }
 
     /// Lists the active chat's attachments (`/file list`).

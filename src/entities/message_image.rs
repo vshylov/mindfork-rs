@@ -98,17 +98,12 @@ fn base64_decoded_len(b64: &str) -> usize {
     len / 4 * 3 - padding
 }
 
-/// Resolves `#N` (1-based) or a name/path against a staged list. Mirrors
-/// [`crate::features::file_command::resolve_target`] — the two commands must address
-/// their items the same way, since the user sees the same `#N` handles in both listings.
-pub fn resolve_target(items: &[MessageImage], target: &str) -> Option<usize> {
-    if let Some(rest) = target.strip_prefix('#')
-        && let Ok(n) = rest.trim().parse::<usize>()
-    {
-        // `then` rather than `then_some`: on `#0` the subtraction would underflow.
-        return (n >= 1 && n <= items.len()).then(|| n - 1);
-    }
-    items.iter().position(|i| i.matches(target))
+/// Resolves `#N` (1-based), a name or a path against a staged list — the one resolution
+/// [`crate::features::file_command::resolve_target`] uses too, since the user sees the
+/// same `#N` handles in both listings and a name two items share is refused in both
+/// (docs/research/remove-by-shared-name.md).
+pub fn resolve_target(items: &[MessageImage], target: &str) -> super::attachment::Resolved {
+    super::attachment::resolve_handle(items, target, MessageImage::matches)
 }
 
 /// A card for the UI: everything the feed and the status bar need, and **not** the
@@ -117,6 +112,9 @@ pub fn resolve_target(items: &[MessageImage], target: &str) -> Option<usize> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImageInfo {
     pub name: String,
+    /// Where it came from — a path or an address. The listing shows it on a line whose
+    /// name another staged image shares.
+    pub source: String,
     pub mime: String,
     pub width: u32,
     pub height: u32,
@@ -128,6 +126,7 @@ impl From<&MessageImage> for ImageInfo {
     fn from(image: &MessageImage) -> Self {
         Self {
             name: image.name.clone(),
+            source: image.source.clone(),
             mime: image.mime.clone(),
             width: image.width,
             height: image.height,
@@ -187,15 +186,19 @@ mod tests {
 
     #[test]
     fn resolve_target_by_index_name_and_path() {
+        use crate::entities::attachment::Resolved;
         let items = vec![image("a.png", 8, 8), image("b.png", 8, 8)];
-        assert_eq!(resolve_target(&items, "#1"), Some(0));
-        assert_eq!(resolve_target(&items, "#2"), Some(1));
-        assert_eq!(resolve_target(&items, "b.png"), Some(1));
-        assert_eq!(resolve_target(&items, "D:\\pics\\a.png"), Some(0));
+        assert_eq!(resolve_target(&items, "#1"), Resolved::One(0));
+        assert_eq!(resolve_target(&items, "#2"), Resolved::One(1));
+        assert_eq!(resolve_target(&items, "b.png"), Resolved::One(1));
+        // `MessageImage::matches` compares the name as given, so the quotes a name with
+        // spaces is typed in are the resolution's to strip — the orchestrator no longer does.
+        assert_eq!(resolve_target(&items, "\"b.png\""), Resolved::One(1));
+        assert_eq!(resolve_target(&items, "D:\\pics\\a.png"), Resolved::One(0));
         // Out of range and the underflow case.
-        assert_eq!(resolve_target(&items, "#0"), None);
-        assert_eq!(resolve_target(&items, "#3"), None);
-        assert_eq!(resolve_target(&items, "nope.png"), None);
+        assert_eq!(resolve_target(&items, "#0"), Resolved::Nothing);
+        assert_eq!(resolve_target(&items, "#3"), Resolved::Nothing);
+        assert_eq!(resolve_target(&items, "nope.png"), Resolved::Nothing);
     }
 
     #[test]
