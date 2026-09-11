@@ -402,7 +402,7 @@ true (AGENTS.md §4).
   store (naming, write, sweep), `AddChatFile` apply + mirror, the job contract and
   collection, images with `tools.python_images`, the shared cap and the vision gate
   (MCP included), result section and feed card with paths, the description,
-  `/file list`/`remove` over files, `files` in backups. Docs: spec
+  `/file list`/`remove` over files, `files` in backups; sub-decisions in §11. Docs: spec
   §9.7/§9.10/§13.2, architecture §7/§8, ADR 0005 §5 amended ("no host directories"
   → "one per-call job directory: copies in, collected out"), CHANGELOG, journal.
 - **Stage 3 — inputs** (`feat/sandbox-files-in`): `/w/in` staging, `files`, the
@@ -511,3 +511,83 @@ its output names the colour; a run whose code set a face colour or a style is fl
 **Verdict: GO on both families** on (1), (2) and (3) — the colour named from the image
 in 4/5 runs on Qwen (the fifth redrew its chart after looking) and 5/5 on Gemma, against
 0/5 blind on both. Stage 2 goes ahead with F7(b) and images shown to the model.
+
+## 11. Stage 2 — sub-decisions (2026-09-11)
+
+Taken from the code survey before implementing, and recorded so the stage can be read
+back against them (lessons §3).
+
+- **S1 — the job contract grows by its output only.** `SandboxRunner::run` keeps its
+  signature; `SandboxOutput` gains the collected `files` and the `skipped` outputs with a
+  reason each. Inputs, and with them the signature, change in stage 3 — changing it now
+  would mean changing it twice.
+- **S2 — collection order and caps.** The entries of `out/` are taken in name order, so
+  which ones a cap keeps does not depend on the file system. An entry that is not a
+  regular file by `symlink_metadata` is skipped — a directory said as one, with "write
+  files directly into /w/out". A file over 25 MB is skipped after reading at most
+  25 MB + 1 bytes. Past 10 files, and for a file that would take the call over 50 MB, the
+  output is skipped, and later ones are still tried against the total. After a timeout
+  nothing is read, and what `out/` held is named as not kept.
+- **S3 — one name.** `ChatFile.name` is the file's name in the chat's folder: sanitized,
+  versioned on a collision. It is the handle and the name on disk at once, so F1's
+  separate `stored` field is dropped — two versions sharing a display name would make
+  `/file remove chart.png` refuse every time.
+- **S4 — the sanitizer is pure and lives with the entity** (`entities/chat_file.rs`):
+  F4's rules; a device name is matched on the stem, case-insensitively (`con.txt` is
+  reserved on Windows too); the 120-character cap keeps an extension of up to 16
+  characters; a name that is not UTF-8 arrives lossy and stays so.
+- **S5 — the tool writes, and versions against the listing and the disk.** Bytes go to
+  `ToolContext.files_dir` (`data/files/<chat-id>/`; a sub-agent's or a background run's
+  context is a clone of its parent turn's, so their files land in the parent's folder;
+  `None` for silent tasks) with `create_new`, so an existing file is never overwritten. A
+  listed name with the same SHA-256 is a no-op, said as "unchanged"; a listed name with
+  other bytes, or a file already on disk, moves on to ` (2)`, ` (3)`… The context's
+  `files` snapshot is mirrored from `AddChatFile` every round, as attachments are, so a
+  turn's second call versions against its first.
+- **S6 — no sweep: unlisted files are adopted at startup** (replaces F10's "opening a chat
+  still sweeps files it does not list"). Chat saves are debounced: a crash after a call
+  wrote its chart and before the chat was saved leaves a file the user may already have
+  seen on the card, and a sweep would delete it — against "nothing may be lost". A
+  background run's files are on disk before the run lands, so a sweep on activation would
+  race it as well. At startup no run is in flight: every regular file in a loaded chat's
+  folder that the chat does not list is listed, origin `Recovered`. A listed file missing
+  from disk stays listed, and `/file list` marks it.
+- **S7 — landing.** `ChatEffect::AddChatFile` is applied by `apply_effects` (a name
+  already listed is skipped, so a landing is idempotent), routed to the parent from a
+  sub-agent as `AddAttachment` is, and handled by a background run's landing, whose
+  `if let` becomes a `match`. One feed note per landing names the files and the folder.
+  No status-bar chip: the attachment chip is a price, and a stored file costs no tokens.
+- **S8 — images.** An output whose bytes — not its extension — are PNG, JPEG, GIF, WebP or
+  BMP is returned to the model when `tools.python_images` is on (default on, in the Python
+  group, Wasmer only), at most `MAX_TOOL_RESULT_IMAGES` = 4 per call; the constant moves
+  from `shared/mcp.rs` to `shared/config.rs`, beside the image limits, and both producers
+  read it. The switch lives on the tool (the registry is rebuilt on any `tools` change),
+  so the description and the behaviour read one value. In `record_call` the orchestrator
+  drops a result's images when the engine reports `VisionSupport::Unsupported`, and says
+  so in the result; it says so too when `prepare_tool_images` drops one (over
+  `images.max_bytes`, undecodable) — both silent until now, for MCP as well. Every "not
+  shown" names its reason and that the model has not seen the image (§10).
+- **S9 — the result section.** After the console block, a `files:` section — the label
+  universal, like `stdout:`; its lines localized (axis A). Its first line names the chat's
+  folder by absolute path: where the call saved, so the model can tell the user and the
+  card can show it without the feed knowing the data root; the index keeps file names
+  only (F2). Then one line per output: name, size, MIME, shown or not and why, versioned
+  or unchanged; a text-like output (csv, tsv, json, md, txt, py, xml, html, yaml, log)
+  gets its head, up to 1 KB, indented. `parse_console` keeps the section as a block of its
+  own (a result of that section alone parses too), and the card draws it under the
+  console.
+- **S10 — the description** gains a paragraph built from the tool's config: write
+  directly into `/w/out`; the caps; the files are saved to the chat for the user, and a
+  later call cannot read them yet (stage 3 rewrites that clause); with the switch on, a
+  PNG or JPEG is shown after the call, and an SVG is only saved. Local's description stays
+  as it is until stage 5.
+- **S11 — `/file list` and `/file remove`.** One numbered list: attachments first, then
+  stored files, `#N` continuing; a name shared across the two refuses, as it does today.
+  Removing a stored file deletes our copy first and drops the listing second: a failed
+  delete keeps the listing and says why — retryable, with nothing lost (lessons §8, the
+  order of two writes).
+- **S12 — backups:** `files` joins `TOP_DIRS`, and a restore replaces it with the rest.
+  `workspace/` stays the separate fix (F10).
+- **S13 — the live seam:** the orchestrator smoke points a temporary data root at a
+  provisioned sandbox through a test-only `Paths` override, instead of the probe's
+  environment read inside `build_registry`.
