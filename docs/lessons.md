@@ -1627,6 +1627,18 @@ server, a new provider, a borrowed model — hold every one but the one under te
 fixed, and record both arms in the entry, not just the interesting one.
 — *the engine, downloaded*.
 
+**A vision criterion has to ask for something neither the code nor its output names —
+and a blind arm is what shows that it does.** The file-exchange probe had a model chart a
+CSV whose numbers were not in the prompt and name the highest month "from the chart,
+without printing the totals". Every run printed the peak anyway, and the blind arm, shown
+no image at all, scored 5/5 like the seeing one — while saying "looking at the chart". The
+drafted alternative, quoting the chart's title, fails the same way: the title is in the
+model's own code. What discriminated was a property the harness set and nothing printed —
+the plotting area's colour, through `matplotlibrc` — asked in a follow-up with no tools:
+4/5 and 5/5 with the image on two model families, 0/5 blind on both. Before trusting "the model saw it", name the other channel
+the answer could have come through, and close it.
+— *sandbox file exchange — stage 1* ([sandbox-file-exchange.md](sandbox-file-exchange.md) §10).
+
 ## 10. CI and infrastructure
 
 **A failed `needs` dependency skips the dependent job regardless of its `if`.** A
