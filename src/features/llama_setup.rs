@@ -541,7 +541,7 @@ pub async fn setup(
 ) -> Result<Installed> {
     let (os, arch) = (std::env::consts::OS, std::env::consts::ARCH);
     check_platform(os, arch, loc)?;
-    std::fs::create_dir_all(root).with_context(|| {
+    tokio::fs::create_dir_all(root).await.with_context(|| {
         loc.tf(
             "llamacpp.setup.mkdir",
             &[("path", &root.display().to_string())],
@@ -612,9 +612,9 @@ pub async fn setup(
     if opts.force {
         // A fresh download too: `--force` is the escape hatch from a bad asset,
         // so a kept `.part` would defeat it.
-        let _ = std::fs::remove_dir_all(&staging);
+        let _ = tokio::fs::remove_dir_all(&staging).await;
     }
-    std::fs::create_dir_all(&staging).with_context(|| {
+    tokio::fs::create_dir_all(&staging).await.with_context(|| {
         loc.tf(
             "llamacpp.setup.mkdir",
             &[("path", &staging.display().to_string())],
@@ -642,16 +642,16 @@ pub async fn setup(
     // The unpack target is rebuilt from scratch every run; the `.part` files
     // beside it are not, which is what makes a resumed download possible.
     let unpacked = staging.join("unpacked");
-    let _ = std::fs::remove_dir_all(&unpacked);
+    let _ = tokio::fs::remove_dir_all(&unpacked).await;
     for (i, asset) in wanted.iter().enumerate() {
         let archive = staging.join(&asset.name);
         fetch_verified(&client, asset, &archive, loc, &mut progress).await?;
         progress(&loc.tf("llamacpp.setup.extracting", &[("name", &asset.name)]));
         let raw = staging.join(format!("raw{i}"));
-        let _ = std::fs::remove_dir_all(&raw);
+        let _ = tokio::fs::remove_dir_all(&raw).await;
         extract(&archive, &asset.name, &raw, loc)?;
         merge_payload(&raw, &unpacked, loc)?;
-        let _ = std::fs::remove_dir_all(&raw);
+        let _ = tokio::fs::remove_dir_all(&raw).await;
     }
 
     let staged_binary = unpacked.join(server_binary_name());
@@ -686,20 +686,20 @@ pub async fn setup(
     }
 
     if dir.exists() {
-        std::fs::remove_dir_all(&dir).with_context(|| {
+        tokio::fs::remove_dir_all(&dir).await.with_context(|| {
             loc.tf(
                 "llamacpp.setup.remove_dir",
                 &[("path", &dir.display().to_string())],
             )
         })?;
     }
-    std::fs::rename(&unpacked, &dir).with_context(|| {
+    tokio::fs::rename(&unpacked, &dir).await.with_context(|| {
         loc.tf(
             "llamacpp.setup.rename",
             &[("path", &dir.display().to_string())],
         )
     })?;
-    let _ = std::fs::remove_dir_all(&staging);
+    let _ = tokio::fs::remove_dir_all(&staging).await;
 
     progress(&loc.tf(
         "llamacpp.setup.installed",
@@ -1198,7 +1198,7 @@ async fn fetch_verified(
         })?;
 
     if dest.is_file()
-        && std::fs::metadata(dest).map(|m| m.len()).ok() == Some(asset.size)
+        && tokio::fs::metadata(dest).await.map(|m| m.len()).ok() == Some(asset.size)
         && verify_file(dest, expected, &asset.name, loc).await.is_ok()
     {
         progress(&loc.tf("llamacpp.setup.asset_present", &[("name", &asset.name)]));
@@ -1213,11 +1213,11 @@ async fn fetch_verified(
             return Err(err);
         }
         progress(&loc.tf("llamacpp.setup.retry", &[("name", &asset.name)]));
-        let _ = std::fs::remove_file(&part);
+        let _ = tokio::fs::remove_file(&part).await;
         stream_to_part(client, asset, &part, false, expected, loc, progress).await?;
     }
-    let _ = std::fs::remove_file(dest);
-    std::fs::rename(&part, dest).with_context(|| {
+    let _ = tokio::fs::remove_file(dest).await;
+    tokio::fs::rename(&part, dest).await.with_context(|| {
         loc.tf(
             "llamacpp.setup.rename",
             &[("path", &dest.display().to_string())],
@@ -1239,7 +1239,10 @@ async fn stream_to_part(
     progress: &mut impl FnMut(&str),
 ) -> Result<()> {
     let have = if resume {
-        std::fs::metadata(part).map(|m| m.len()).unwrap_or(0)
+        tokio::fs::metadata(part)
+            .await
+            .map(|m| m.len())
+            .unwrap_or(0)
     } else {
         0
     };

@@ -1114,7 +1114,7 @@ fn no_results_outcome(
     // network errors. Return an error (not "no results"), so the
     // model retries the request later instead of reporting it found nothing.
     if let Some(err) = last_err {
-        return Err(err.context(loc.t("tool.web_search.err.all_unavailable").to_string()));
+        return Err(err).with_context(|| loc.t("tool.web_search.err.all_unavailable").to_string());
     }
     anyhow::bail!(loc.t("tool.web_search.err.throttled"));
 }
