@@ -6,8 +6,9 @@ once the track is done this file moves to `docs/history/`.
 **Status:** forks decided 2026-09-11 — every one as recommended except F10, which
 drops the per-chat quota (§9). **Stage 0** (a read-only `site-packages`) merged as
 #518. **Stage 1**, the MVP probe: GO on both families, Qwen 3.6 27B and Gemma 4 31B
-(§10). **Stage 2**, outputs: implemented on `feat/sandbox-files-out`, live GO on
-Gemma 4 31B (§11).
+(§10). **Stage 2**, outputs: merged as #520, live GO on Gemma 4 31B (§11).
+**Stage 3**, inputs: sub-decisions recorded (§12), implementation on
+`feat/sandbox-files-in`.
 
 The request: `python_exec` in its Wasmer mode is text in, text out — whatever the
 code writes dies with the call. The user wants (a) **files out** — what the code
@@ -408,7 +409,8 @@ true (AGENTS.md §4).
   → "one per-call job directory: copies in, collected out"), CHANGELOG, journal.
 - **Stage 3 — inputs** (`feat/sandbox-files-in`): `/w/in` staging, `files`, the
   system-block section, the popup line, binary `/file attach`, sub-agent and
-  background routing.
+  background routing; sub-decisions in §12. Docs: spec §9.7/§9.8/§13.2, architecture
+  §8, ADR 0005 §3 and §5 amended, CHANGELOG, journal.
 - **Stage 4 — opening** (`feat/file-open`): `/file open`, `/file folder`,
   `shared/os_open.rs`, the allowlist.
 - **Stage 5 — Local parity** (`feat/sandbox-files-local`).
@@ -606,3 +608,112 @@ decisions did not name:
   filesystem layer. S2's `symlink_metadata` check is defence in depth for another
   host or version, and the smoke asserts the property (nothing a link names is kept)
   rather than that mechanism.
+
+## 12. Stage 3 — sub-decisions (2026-09-12)
+
+Taken from the code survey before implementing, and recorded so the stage can be read
+back against them (lessons §3), as §11 was for stage 2. **T4 is the user's**, asked
+because the survey found a decision (D3) resting on something that does not exist.
+
+- **T1 — the job contract changes once.** `SandboxRunner::run` takes a `SandboxJob`
+  (`code`, `inputs`, `net`, `timeout`) instead of its four arguments — the change S1
+  deferred to this stage, made once. The collection limits stay `OutputLimits::DEFAULT`
+  rather than becoming a field of the job as §4 sketched: nothing would ever set them
+  differently, and the tool's description is built from the same constant, so a field
+  would be a second source of truth for a value that has one. `MockSandbox` records the
+  staged inputs beside the code, so a test can assert what went in; provisioning's warmup
+  and verify pass a job with none.
+- **T2 — one list of what a call can name.** Attachments, then stored files, then the
+  chat's images: one numbering — the one `/file list` already uses (§11 S11), extended by
+  the images — so `#N` means the same thing in `/file list`, in the system block and in
+  `files`. A pure `features::chat_inputs` builds that list once and its four consumers
+  read it: the block, the argument's resolver, the popup line and the staging itself.
+  They cannot disagree about what `#3` is, which is the property the popup exists for.
+  `/file remove` on an image handle refuses and says why — an image belongs to the
+  message that carries it, and `/image remove` is about images not yet sent.
+- **T3 — the guest name is decided with the list, not during staging.** The model writes
+  `/w/in/<name>` into its code *before* any result exists, so a name chosen while staging
+  could never reach it. Each item's staged name is therefore computed with the list and
+  shown in the block: sanitized (`sanitize_name`), and made unique across the whole list
+  case-insensitively with `versioned` — two `notes.md` from two folders are `notes.md` and
+  `notes (2).md`. An attachment is staged as its **extracted text**, so it gains `.txt`
+  exactly where the text is not the file — a name whose extension the extractors claim
+  (pdf, docx, html/htm) or no extension at all; `main.rs` and `notes.md` keep their names.
+  An image is staged under its prepared format's extension.
+- **T4 — the chat's images are in the list** (user's decision, 2026-09-12). D3 named them,
+  and the survey found they have no handle: `/image list` numbers only what is staged for
+  the *next* message, and no snapshot of a chat's images reaches a tool. They now join the
+  numbering above, `/file list` grows an images tail so the user sees what the model sees,
+  and what is staged is the **prepared** PNG/JPEG — the downscaled bytes the model was
+  shown, not the original, which comes in through F8 when the user attaches it. The
+  snapshot (`Arc<[MessageImage]>`, base64 payload included) is built **only when the turn
+  offers `python_exec` in Wasmer mode**: with the tool off, which is the default, a chat's
+  images are not copied into a context that has no use for them.
+- **T5 — the system block** (`inject_files`, after the attachments and before the
+  workspace, by the same volatility order): the numbering, each item's staged name, size
+  and type, and the two sentences that close the door — the copies are under `/w/in`, and
+  `/w/out` is the way anything comes back. It exists only while the chat has something
+  stageable **and** the turn offers `python_exec` in Wasmer mode: a block naming a tool the
+  turn does not have is this project's most-repeated defect (lessons §4), and the converse
+  is just as strong — a tool the block does not name goes unused.
+- **T6 — the popup says what is going in, because it cannot say it otherwise.** The
+  confirmation popup presents arguments in the compact view, which drops arrays outright
+  (`present::scalar_str` returns `None` for one), so `files: ["#3"]` would not appear at
+  all. F13(b) is therefore not a nicety: `ToolConfirmRequest` carries the **resolved**
+  inputs — each named item's staged name and size, each handle that resolves to nothing,
+  and the sandbox's network state — and the screen renders them in the interface language
+  (axis B), as it renders every other note. The orchestrator resolves them with T2's
+  function, the one the call itself uses.
+- **T7 — an unresolved handle runs nothing.** An unknown handle, a name two items share,
+  or a stored file the chat lists that its folder no longer holds: the call is refused
+  before the sandbox starts, the reason names the item, and the valid handles are listed.
+  Staging the rest would be worse than refusing — a script that asked for four files and
+  got three answers confidently from three (lessons §4).
+- **T8 — no cap of its own on what goes in.** Growth is already bounded per attach
+  (32 MB), per collected output (25 MB) and by the chat's own store; the copies live in the
+  job directory and die with it. A cap here would be the one place where naming your own
+  file fails, which is what F10 refused for the store. The popup line shows the sizes
+  before the copy is made, and the description says copies are per call.
+- **T9 — `/file attach` keeps the original (F8(a)), and the pair is one item.** The
+  blocking read now ends in one of three outcomes: plain text — an attachment, as today;
+  an extractor's text (pdf, docx, html) — an attachment **and** the original stored,
+  linked by a new additive `Attachment.file_id`; bytes that decode as nothing — stored
+  only, with no attachment, which is the refusal D3 asked to lift. A linked pair is one
+  item in `/file list`, in the numbering and in `files`, or the very name the user typed
+  would resolve to two items and be refused by our own shared-name rule. Removing it
+  deletes our copy first and drops both listings second (§11 S11's order). Re-attaching
+  replaces it: identical bytes are `Unchanged` and nothing moves; different bytes are
+  stored first, the listing swapped, our old copy deleted last — a failed delete leaves an
+  unlisted file, which startup adopts (§11 S6) rather than loses. A binary's feed note says
+  what can read it, and says so whether or not `python_exec` is currently on.
+- **T10 — the description, and Local until stage 5.** The Wasmer description gains `/w/in`
+  and replaces S10's clause "a later call cannot read what an earlier one saved" with the
+  route that now exists: name it in `files`. Local's schema stays `{ code }` until F11's
+  parity lands in stage 5 — a model in Local mode is never offered an argument its mode
+  cannot honour — and ADR 0005 §3's "the schema is mode-independent" is amended with that
+  divergence and the stage that ends it.
+- **T11 — copies, not a read-only mount.** `/w/in` sits inside the one job directory,
+  which `wasmer` 7.2.0 mounts writable because it has no read-only volume at all (§6.1).
+  The guest can overwrite a staged copy; nothing follows from that, since the chat's store
+  is untouched and only `/w/out` is collected. So the description says **copies**, not
+  "read-only": a promise the sandbox cannot enforce is the wrong promise to make, and the
+  true sentence is just as short.
+- **T12 — staging is host-side, and `shared` stays chat-blind.** An input is either bytes
+  or a path to copy: a stored file and an attached original are copied from the chat's
+  folder (`tokio::fs::copy`, no read into memory), while an attachment's text and an
+  image's base64 are decoded by the **tool** and handed over as bytes. `shared::sandbox`
+  writes what it is given into `in/` and knows nothing about chats, as it knows nothing
+  about them on the way out.
+- **T13 — sub-agents and background runs inherit the turn's list** (F12), because their
+  context is a clone of the parent's and their request is built from the parent's
+  environment: the same items, the same folder, the same block. A background run still
+  never asks for confirmation — the foreground contract, as decided.
+- **T14 — tests.** Unit: the item list and its staged names (both separators, a shared
+  name, an extractor's `.txt`, an image); an unknown handle lists the valid ones; a shared
+  name and a missing stored file refuse with nothing run; the popup's resolved inputs; the
+  block absent without `python_exec` and without Wasmer mode; binary attach stores and
+  lists, a pdf stores both linked, plain text stores nothing extra; removing a pair deletes
+  one copy; a sub-agent stages from the parent's list; `MockSandbox` sees the staged
+  inputs. Live: an xlsx attached from disk, read with pandas, totals matching; and turn 1
+  writing `out/clean.csv`, turn 2 naming it in `files` and using it — D4's persistence,
+  end to end.
