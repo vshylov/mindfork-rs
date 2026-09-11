@@ -329,6 +329,13 @@ split by subsystem.
 
 ### Fixed
 
+- **`/file remove` and `/image remove` no longer guess between two items of
+  one name.** With `notes.md` attached from two different folders,
+  `/file remove notes.md` removed whichever came first and said only
+  "notes.md", while `/file list` showed two identical lines. A shared name now
+  removes nothing and lists each item's number and path to choose from; the
+  listing shows the path wherever a name is shared, and the removal note says
+  which one went. `/image remove` behaves the same way.
 - **A web page attached to the chat is named after the page, not its site.**
   A long page the assistant reads is attached under a name, and on some sites
   that name was the site's own on every page: every article of an old magazine

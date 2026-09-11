@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (16)
+## Entries (17)
 
 - Post-M9: loading/removing files in RAG via `/rag add|remove` commands (done)
 - Post-M9: smart RAG chunking (overlap + markdown) + stitching on retrieval (done)
@@ -28,6 +28,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: embedding-model change — stage 3 (per-model similarity thresholds) (done)
 - Post-M9: per-model input prefixes for embeddings (done)
 - Post-M9: `/reindex` rebuilds an attachment index that is missing entirely (done)
+- Post-M9: `/file remove` and `/image remove` refuse a name two items share (done)
 
 ### Post-M9: loading/removing files in RAG via `/rag add|remove` commands (done)
 - **Commands in the input box**: `/rag add <path>` indexes a file or directory into the
@@ -1256,3 +1257,46 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   path and is unchanged; the backfill is chunking plus the same insert the
   attach path already smokes, over a mock embedder that is deterministic where a
   real one would only add noise.
+
+### Post-M9: `/file remove` and `/image remove` refuse a name two items share (done)
+
+**What.** The item the page-attachment-name track left: `/file remove <name>` acted on the
+first attachment of that name. Research and forks:
+[docs/research/remove-by-shared-name.md](../research/remove-by-shared-name.md) — the
+user's decisions of 2026-09-11, every fork as recommended (F1a a shared name refused with
+its candidates, F2a the source shown where a name is shared, F3a `/file` and `/image`
+together). Branch `fix/file-remove-ambiguous-name`.
+
+**Measured first**, through the orchestrator with `AppCommand`s. `a/notes.md` and
+`b/notes.md` attached: `/file list` answered with two identical lines, and
+`/file remove notes.md` answered "attachment removed — notes.md" while the next request
+carried `b`'s text and not `a`'s — the first went, unnamed. Two `chart.png` staged from two
+folders: `/image remove chart.png` unstaged the first, and `/image list` told them apart by
+size alone. `attachment_read` already reported an ambiguous name; `/rag remove` works by
+path, so it has no name to share.
+
+**How.** `entities::attachment::resolve_handle` — `#N`, else every item `matches` accepts —
+returns `Resolved::{One, Shared, Nothing}`, and both `resolve_target`s are that call over
+their own `matches`. The orchestrator refuses `Shared` with each holder's `#N` and source
+(`candidate_lines`, one per line); `name_is_shared` decides where `/file list` and
+`/image list` show the source (`AttachmentInfo`/`ImageInfo` carry it now) and whether the
+removal note names it — `FileProgress::Removed` and `ImageProgress::Removed` gained
+`source: Option<String>`.
+
+**Tests.** The resolution itself (`#N` and a path reach one, a shared name in either case
+and quoted reaches both, out of range and unknown reach nothing, and which names are
+shared); both commands end to end through the orchestrator — the shared name refused with
+both `#N` and paths, nothing removed, `#N` removing exactly that one with its source in the
+note, and the name reaching the last holder alone with none; the listings and the removal
+notes on the screen. **Mutation-tested** — seventeen mutations, every one killed: `#N`
+never read as a handle, a shared name resolving to its first holder or to nothing, an item
+counted as sharing its own name, names compared case-sensitively, each command taking the
+first holder, each removal note dropping the source (in the orchestrator and on the
+screen), the refusal dropping the `#N`, each listing never showing the source, and each
+card carrying none. One survived the first run — quotes around a handle left untrimmed,
+invisible to `/file` because `Attachment::matches` strips them itself — and showed the
+missing case: `MessageImage::matches` does not, and the orchestrator that used to strip
+them for `/image remove` no longer does, so a quoted `#N` and a quoted image name are
+pinned now. Not a live run: nothing here reaches the
+engine, memory or a tool — the commands are the orchestrator's own, and its tests drive
+them whole. Unit: 3072 green, 159 ignored (3067 / 159 before).

@@ -1131,7 +1131,12 @@ chip, `/file list`, `/file remove`.
 
 - **Commands** (input box, like `/rag`/`/tts`): `/file attach <path>`,
   `/file remove <name|#N>`, `/file list`. As with RAG, the removal subcommand is
-  only `remove` — never `delete` (it takes nothing off disk).
+  only `remove` — never `delete` (it takes nothing off disk). A name several
+  attachments share — two `notes.md` from two folders — **removes nothing**: the
+  refusal lists each one's `#N` and path, either of which reaches it alone, and
+  `/file list` shows the path on every line whose name another line shares, as the
+  removal note does for such a file
+  ([docs/research/remove-by-shared-name.md](docs/research/remove-by-shared-name.md)).
 - **Storage**: `Chat.attachments` — the **extracted text snapshot** plus the
   name, source path, size and estimated token count. The snapshot means the
   conversation stays coherent if the file later changes or disappears, building a
@@ -1374,7 +1379,9 @@ append-only shape keeps the prefix cache intact across an image turn
 - **Commands**: `/image attach <path|url>`, `/image paste`,
   `/image remove <name|#N>`, `/image list` — the same surface and the same `#N`
   addressing as `/file`, so what `/image list` numbers is what `remove` accepts.
-  As everywhere, the removal verb is only `remove`, never `delete`.
+  As everywhere, the removal verb is only `remove`, never `delete`. A name two
+  staged images share unstages neither, and both are told apart by their source
+  exactly as `/file` does it (§9.7).
 - **Attaching by address.** `attach` takes a web address as well as a path; the
   two are told apart by the scheme, since no path begins with `http://` or
   `https://`. The bytes are **always downloaded here** and never handed to the

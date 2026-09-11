@@ -78,3 +78,10 @@ either, because the listing does not say which `#N` is which file when their siz
 - The model's attachment block keeps naming both files `notes.md` (unless F1d);
   `attachment_read` already asks for the source when that matters.
 - `/rag remove` is by path; there is no name to share.
+
+**Results** (2026-09-11). 3072 unit tests green, 159 ignored. Both commands driven through
+the orchestrator: a shared name removes nothing and names both holders by `#N` and path,
+`#N` removes exactly its item with the source in the note. Seventeen mutations of the
+resolution, the refusal, the listings and the notes, every one killed — one only after a
+quoted handle was added, since `MessageImage::matches` does not strip quotes the way
+`Attachment::matches` does.
