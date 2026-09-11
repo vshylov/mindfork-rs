@@ -506,6 +506,9 @@ mod tests {
     const JA: &str = "古いウェブサイトはシフトJISで書かれていることが多く、ブラウザは宣言を見て文字を表示します。";
     const EN: &str =
         "An old page written in plain ASCII reads the same under every encoding it could declare.";
+    /// Latin prose whose only non-ASCII letter is the one fourmilab.ch carries (§2.3): too
+    /// little for the detector to tell windows-1252 from windows-1257 without the TLD.
+    const FR: &str = "Fourmilab is written in Neuchâtel, Switzerland, by the lake of Neuchâtel.";
 
     /// The decision table (research §3). Columns: case | prose | the bytes as |
     /// Content-Type | the document's head | TLD | chosen encoding | the step that chose.
@@ -527,6 +530,7 @@ mod tests {
         disagree, detector names the superset   | ru | koi8-r       | text/html; charset=windows-1251   | <meta charset=koi8-r>                                                      | ru | KOI8-R       | Document
         nothing declared, windows-1251          | ru | windows-1251 | text/html                         | -                                                                          | ua | windows-1251 | Detected
         nothing declared, koi8-r                | ru | koi8-r       | text/html                         | -                                                                          | ru | KOI8-U       | Detected
+        nothing declared, the tld decides       | fr | windows-1252 | text/html                         | -                                                                          | ch | windows-1252 | Detected
         replacement label counts as none        | ru | windows-1251 | text/html; charset=iso-2022-kr    | -                                                                          | ru | windows-1251 | Detected
         text/plain is not scanned for meta      | ru | windows-1251 | text/plain                        | <meta charset=koi8-r>                                                      | ru | windows-1251 | Detected
         migrated site keeps its old meta        | ru | utf-8        | text/html; charset=windows-1251   | <meta charset=windows-1251>                                                | -  | UTF-8        | Utf8Bytes
@@ -600,6 +604,7 @@ mod tests {
                 "ru" => RU,
                 "zh" => ZH,
                 "ja" => JA,
+                "fr" => FR,
                 _ => EN,
             };
             let bytes = encoded(shape, &document(dash(head).unwrap_or_default(), prose));
