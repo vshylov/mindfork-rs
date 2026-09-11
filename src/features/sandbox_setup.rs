@@ -1,10 +1,10 @@
 //! Provisioning of Python-sandbox assets (`mindfork sandbox setup`, Phase 2 —
 //! [docs/research/python-wasmer-sandbox.md](../../docs/research/python-wasmer-sandbox.md)).
 //! Downloads into `data/sandbox/`: the `wasmer` binary (a platform tar.gz from GitHub),
-//! `python.webc` (via `wasmer` itself), package wheels (numpy/pandas from the wasix index,
-//! the requests stack and beautifulsoup4 from PyPI) — all via a **lock list with exact URL + sha256** (resilient
-//! to "latest"). Provisioning is idempotent; the network layer is thin, the logic is
-//! pure/testable.
+//! `python.webc` (via `wasmer` itself), package wheels (the native ones — numpy, pandas,
+//! lxml, pillow, matplotlib, … — from the wasix index, pure Python from PyPI) — all via a
+//! **lock list with exact URL + sha256** ([`WHEEL_LOCK`], resilient to "latest").
+//! Provisioning is idempotent; the network layer is thin, the logic is pure/testable.
 //!
 //! `features` layer: no TUI (the CLI command prints progress to stdout). The binary's
 //! layout after unpacking matches what `shared::sandbox` looks for (the shared
@@ -104,94 +104,92 @@ const ARCHIVES: &[PlatformArchive] = &[
     },
 ];
 
-/// A Python-package wheel (`.whl` = zip). `dir` — the package's directory name in `site-packages`
-/// (for idempotency: a directory exists → the wheel is already unpacked).
+/// A Python-package wheel (`.whl` = zip): one row of [`WHEEL_LOCK`]. `dir` — the
+/// package's directory name in `site-packages` (for idempotency: a directory exists →
+/// the wheel is already unpacked).
 struct Wheel {
     dir: &'static str,
     url: &'static str,
     sha256: &'static str,
 }
 
-/// Lock list of wheels. **numpy**/**pandas** — native wasix wheels from
-/// `pythonindex.wasix.org`; their pure dependencies (dateutil/six/pytz/tzdata), the
-/// **requests stack** (requests/urllib3/certifi/idna/charset_normalizer) and
-/// **beautifulsoup4** (+ soupsieve/typing_extensions) — pure Python from PyPI
-/// (`py3-none-any`). Versions are pinned; sha256 — from the index/PyPI.
-const WHEELS: &[Wheel] = &[
-    Wheel {
-        dir: "numpy",
-        url: "https://pythonindex.wasix.org/packages/numpy-2.3.2-cp313-cp313-wasix_wasm32.whl",
-        sha256: "f2abcba47de3063e00fd960b17058bf14954fb3485e58153ba6925447d28af55",
-    },
-    // pandas (a native wasix wheel) + its pure dependencies.
-    Wheel {
-        dir: "pandas",
-        url: "https://pythonindex.wasix.org/packages/pandas-2.3.2-cp313-cp313-wasix_wasm32.whl",
-        sha256: "9b7d0e64cd3bebe36dedb4a2d888a0df6dbc50a53011c2d6e96d4dac95eadd67",
-    },
-    Wheel {
-        dir: "dateutil",
-        url: "https://files.pythonhosted.org/packages/ec/57/56b9bcc3c9c6a792fcbaf139543cee77261f3651ca9da0c93f5c1221264b/python_dateutil-2.9.0.post0-py2.py3-none-any.whl",
-        sha256: "a8b2bc7bffae282281c8140a97d3aa9c14da0b136dfe83f850eea9a5f7470427",
-    },
-    Wheel {
-        dir: "six.py",
-        url: "https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl",
-        sha256: "4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274",
-    },
-    Wheel {
-        dir: "pytz",
-        url: "https://files.pythonhosted.org/packages/ec/dd/96da98f892250475bdf2328112d7468abdd4acc7b902b6af23f4ed958ea0/pytz-2026.2-py2.py3-none-any.whl",
-        sha256: "04156e608bee23d3792fd45c94ae47fae1036688e75032eea2e3bf0323d1f126",
-    },
-    Wheel {
-        dir: "tzdata",
-        url: "https://files.pythonhosted.org/packages/e5/6d/b53b99a9f2766d095985947a5782f1702cabb129a34f7a802d7197af832f/tzdata-2026.3-py2.py3-none-any.whl",
-        sha256: "dc096730c87af6cab1b171c9d532be840741ff5d459015e7f6947bd7d7e54931",
-    },
-    Wheel {
-        dir: "requests",
-        url: "https://files.pythonhosted.org/packages/a0/f4/c67b0b3f1b9245e8d266f0f112c500d50e5b4e83cb6f3b71b6528104182a/requests-2.34.2-py3-none-any.whl",
-        sha256: "2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0",
-    },
-    Wheel {
-        dir: "urllib3",
-        url: "https://files.pythonhosted.org/packages/7f/3e/5db95bcf282c52709639744ca2a8b149baccf648e39c8cc87553df9eae0c/urllib3-2.7.0-py3-none-any.whl",
-        sha256: "9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897",
-    },
-    Wheel {
-        dir: "certifi",
-        url: "https://files.pythonhosted.org/packages/ef/2f/c5464532e965badff2f4c4c1a3a83f5697f0d7c407ed0cda44aaa99bb451/certifi-2026.6.17-py3-none-any.whl",
-        sha256: "2227dcbaafe0d2f59279d1762ddddc37783ed4354594f194ffc31d20f41fc3db",
-    },
-    Wheel {
-        dir: "idna",
-        url: "https://files.pythonhosted.org/packages/1e/5e/d4e9f1a599fb8e573b7b87160658329fbf28d19eac2718f51fc3def3aa5a/idna-3.18-py3-none-any.whl",
-        sha256: "7f952cbe720b688055e3f87de14f5c3e5fdaa8bc3928985c4077ca689de849a2",
-    },
-    Wheel {
-        dir: "charset_normalizer",
-        url: "https://files.pythonhosted.org/packages/98/2b/f97f1c193fb855c345d678f5077d6926034db0722df74c8f057020e05a25/charset_normalizer-3.4.9-py3-none-any.whl",
-        sha256: "68e5f26a1ad57ded6d1cfb85331d1c1a195314756471d97758c48498bb4dcdf5",
-    },
-    // beautifulsoup4 (HTML parsing, the natural companion to requests) + its dependencies.
-    // The package directory is `bs4`, not the distribution name.
-    Wheel {
-        dir: "bs4",
-        url: "https://files.pythonhosted.org/packages/88/c6/92fcd42f1ba33e1184263f25bfabf3d27c383410470f169e4b8163bf9c17/beautifulsoup4-4.15.0-py3-none-any.whl",
-        sha256: "d6f88de62e1d4e38ecb1077eb9724cd0eff29d2a08ca16a401e9b9e93f117cf9",
-    },
-    Wheel {
-        dir: "soupsieve",
-        url: "https://files.pythonhosted.org/packages/0f/2c/437fe806897c2d6cfdc3ee43a18da8bf8e568530a4ae9bac781541ca9896/soupsieve-2.9.1-py3-none-any.whl",
-        sha256: "4f4477399246b7a0c720a88ca2454b11cd6bb9ae4c9d170140786e916776c14c",
-    },
-    Wheel {
-        dir: "typing_extensions.py",
-        url: "https://files.pythonhosted.org/packages/49/d3/b8441a820a491ddfc024b0b0cf0393375b75ea13866d9c66727e54c2fc80/typing_extensions-4.16.0-py3-none-any.whl",
-        sha256: "481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8",
-    },
-];
+/// Lock list of wheels, one per row: `<dir> <sha256> <url>`; `#` starts a comment.
+///
+/// Native wheels (`cp313-wasix_wasm32`) come from `pythonindex.wasix.org`, pure ones
+/// (`py3-none-any`) from PyPI; versions are pinned and the sha256 is the index's or
+/// PyPI's own. `dir` is the name the wheel creates in `site-packages`, **not** the
+/// distribution name (`bs4`, `PIL`, `yaml`, `fontTools`, a single-module `six.py`) —
+/// taken from a listing of each wheel, because a wrong one never matches and every
+/// `setup` would download that wheel again.
+///
+/// One string rather than a slice of struct literals: rows of one shape are what the
+/// duplication gate reads as sliding self-duplication (docs/lessons.md §2), and the
+/// rows are data. [`wheels`] parses it; `every_lock_row_parses` pins that each row does.
+const WHEEL_LOCK: &str = r"
+# numpy and pandas (native), with pandas' pure dependencies
+numpy f2abcba47de3063e00fd960b17058bf14954fb3485e58153ba6925447d28af55 https://pythonindex.wasix.org/packages/numpy-2.3.2-cp313-cp313-wasix_wasm32.whl
+pandas 9b7d0e64cd3bebe36dedb4a2d888a0df6dbc50a53011c2d6e96d4dac95eadd67 https://pythonindex.wasix.org/packages/pandas-2.3.2-cp313-cp313-wasix_wasm32.whl
+dateutil a8b2bc7bffae282281c8140a97d3aa9c14da0b136dfe83f850eea9a5f7470427 https://files.pythonhosted.org/packages/ec/57/56b9bcc3c9c6a792fcbaf139543cee77261f3651ca9da0c93f5c1221264b/python_dateutil-2.9.0.post0-py2.py3-none-any.whl
+six.py 4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274 https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl
+pytz 04156e608bee23d3792fd45c94ae47fae1036688e75032eea2e3bf0323d1f126 https://files.pythonhosted.org/packages/ec/dd/96da98f892250475bdf2328112d7468abdd4acc7b902b6af23f4ed958ea0/pytz-2026.2-py2.py3-none-any.whl
+tzdata dc096730c87af6cab1b171c9d532be840741ff5d459015e7f6947bd7d7e54931 https://files.pythonhosted.org/packages/e5/6d/b53b99a9f2766d095985947a5782f1702cabb129a34f7a802d7197af832f/tzdata-2026.3-py2.py3-none-any.whl
+
+# requests and its stack
+requests 2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0 https://files.pythonhosted.org/packages/a0/f4/c67b0b3f1b9245e8d266f0f112c500d50e5b4e83cb6f3b71b6528104182a/requests-2.34.2-py3-none-any.whl
+urllib3 9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897 https://files.pythonhosted.org/packages/7f/3e/5db95bcf282c52709639744ca2a8b149baccf648e39c8cc87553df9eae0c/urllib3-2.7.0-py3-none-any.whl
+certifi 2227dcbaafe0d2f59279d1762ddddc37783ed4354594f194ffc31d20f41fc3db https://files.pythonhosted.org/packages/ef/2f/c5464532e965badff2f4c4c1a3a83f5697f0d7c407ed0cda44aaa99bb451/certifi-2026.6.17-py3-none-any.whl
+idna 7f952cbe720b688055e3f87de14f5c3e5fdaa8bc3928985c4077ca689de849a2 https://files.pythonhosted.org/packages/1e/5e/d4e9f1a599fb8e573b7b87160658329fbf28d19eac2718f51fc3def3aa5a/idna-3.18-py3-none-any.whl
+charset_normalizer 68e5f26a1ad57ded6d1cfb85331d1c1a195314756471d97758c48498bb4dcdf5 https://files.pythonhosted.org/packages/98/2b/f97f1c193fb855c345d678f5077d6926034db0722df74c8f057020e05a25/charset_normalizer-3.4.9-py3-none-any.whl
+
+# beautifulsoup4 (the package directory is bs4) with its dependencies, and lxml, its fast parser
+bs4 d6f88de62e1d4e38ecb1077eb9724cd0eff29d2a08ca16a401e9b9e93f117cf9 https://files.pythonhosted.org/packages/88/c6/92fcd42f1ba33e1184263f25bfabf3d27c383410470f169e4b8163bf9c17/beautifulsoup4-4.15.0-py3-none-any.whl
+soupsieve 4f4477399246b7a0c720a88ca2454b11cd6bb9ae4c9d170140786e916776c14c https://files.pythonhosted.org/packages/0f/2c/437fe806897c2d6cfdc3ee43a18da8bf8e568530a4ae9bac781541ca9896/soupsieve-2.9.1-py3-none-any.whl
+typing_extensions.py 481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8 https://files.pythonhosted.org/packages/49/d3/b8441a820a491ddfc024b0b0cf0393375b75ea13866d9c66727e54c2fc80/typing_extensions-4.16.0-py3-none-any.whl
+lxml e291262d4c8b3ff77b96192b1792217172a5b7ed9bc72d116681eb1cc1b3b0f2 https://pythonindex.wasix.org/packages/lxml-6.0.0-cp313-cp313-wasix_wasm32.whl
+
+# symbolic maths (mpmath stays below 1.4: sympy 1.14 requires it), graphs, text tables
+sympy e091cc3e99d2141a0ba2847328f5479b05d94a6635cb96148ccb3f34671bd8f5 https://files.pythonhosted.org/packages/a2/09/77d55d46fd61b4a135c444fc97158ef34a095e5681d0a6c10b75bf356191/sympy-1.14.0-py3-none-any.whl
+mpmath a0b2b9fe80bbcd81a6647ff13108738cfb482d481d826cc0e02f5b35e5c88d2c https://files.pythonhosted.org/packages/43/e3/7d92a15f894aa0c9c4b49b8ee9ac9850d6e63b03c9c32c0367a13ae62209/mpmath-1.3.0-py3-none-any.whl
+networkx d47fbf302e7d9cbbb9e2555a0d267983d2aa476bac30e90dfbe5669bd57f3762 https://files.pythonhosted.org/packages/9e/c9/b2622292ea83fbb4ec318f5b9ab867d0a28ab43c5717bb85b0a5f6b3b0a4/networkx-3.6.1-py3-none-any.whl
+tabulate f0b0622e567335c8fabaaa659f1b33bcb6ddfe2e496071b743aa113f8774f2d3 https://files.pythonhosted.org/packages/99/55/db07de81b5c630da5cbf5c7df646580ca26dfaefa593667fc6f2fe016d2e/tabulate-0.10.0-py3-none-any.whl
+
+# documents and data formats
+openpyxl 5282c12b107bffeef825f4617dc029afaf41d0ea60823bbb665ef3079dc79de2 https://files.pythonhosted.org/packages/c0/da/977ded879c29cbd04de313843e76868e6e13408a94ed6b987245dc7c8506/openpyxl-3.1.5-py2.py3-none-any.whl
+et_xmlfile 7a91720bc756843502c3b7504c77b8fe44217c85c537d85037f0f536151b2caa https://files.pythonhosted.org/packages/c1/8b/5fe2cc11fee489817272089c4203e679c63b570a5aaeb18d852ae3cbba6a/et_xmlfile-2.0.0-py3-none-any.whl
+pypdf ee93a2665670ecf57ee81d197a4ca548f3dc15f9cefc56e59b8140866aaa3de5 https://files.pythonhosted.org/packages/58/13/645df3995075112cb3cce15e8797c205f0f88fb50acc11012b84b071bc22/pypdf-6.18.1-py3-none-any.whl
+yaml 4f50fc46ee0b3cf07ec2fd1ac9c2673112f612d7620d3e6e9cbb4ee936f09613 https://pythonindex.wasix.org/packages/pyyaml-6.0.2-cp313-cp313-wasix_wasm32.whl
+regex e34127cee917b9e253a6491a9bf97933c0dd8cc7a780ae2f330b3a4155fa6942 https://pythonindex.wasix.org/packages/regex-2025.7.31-cp313-cp313-wasix_wasm32.whl
+feedparser e35e3f760151b0c3b22cac9684155cae186a233e16c49bcbc6c49e91e3131137 https://files.pythonhosted.org/packages/7f/61/f04912e63702e73fb2a378f9c0a1ad9eb17a334a11a6b3fe1daa593903c2/feedparser-6.0.14-py3-none-any.whl
+feedparser_sgmllib 2cab2d43b95a954f920f18aebce7a4dbbb3f539780b127e2aa114f579821e01d https://files.pythonhosted.org/packages/85/a0/79a31f898092e145bd66e2b338fb0656979acb2bbbcae8220940fbfcd820/feedparser_sgmllib-2.1.0-py3-none-any.whl
+
+# images and charts: pillow (the package directory is PIL), matplotlib with its dependencies
+PIL 01027bc1330d8e42ac00bb48f7529b4615b1fe7569ac224ac24454cbed15102d https://pythonindex.wasix.org/packages/pillow-11.3.0-cp313-cp313-wasix_wasm32.whl
+matplotlib fa226ffdbd88bbda1ef5f894f944d4abaffbfe66b134259331e7fed8e960e86f https://pythonindex.wasix.org/packages/matplotlib-3.10.6-cp313-cp313-wasix_wasm32.whl
+contourpy 25d7b4511bda7f6a70a3c0094d915a40be4794ca7cc05366bdd71351b45507db https://pythonindex.wasix.org/packages/contourpy-1.3.3-cp313-cp313-wasix_wasm32.whl
+kiwisolver 2c0a040c9d944a12eefb9a086c2037443f617085af0434516cfe254fb5220ec8 https://pythonindex.wasix.org/packages/kiwisolver-1.4.9-cp313-cp313-wasix_wasm32.whl
+cycler 85cef7cff222d8644161529808465972e51340599459b8ac3ccbac5a854e0d30 https://files.pythonhosted.org/packages/e7/05/c19819d5e3d95294a6f5947fb9b9629efb316b96de511b418c53d245aae6/cycler-0.12.1-py3-none-any.whl
+fontTools 3060b8c1fc2329fa20265b7c138614143ea7c1624e26c5c180c76aeb74deae6f https://files.pythonhosted.org/packages/e6/35/f894ceb867118c0261d0f69a9bd516b045a3754238f76c88a49513ac7a83/fonttools-4.65.0-py3-none-any.whl
+packaging d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c https://files.pythonhosted.org/packages/63/34/ba1c580383c9eada3711951fef0795c80b829a078d72188184bcab9dd527/packaging-26.3-py3-none-any.whl
+pyparsing 850ba148bd908d7e2411587e247a1e4f0327839c40e2e5e6d05a007ecc69911d https://files.pythonhosted.org/packages/10/bd/c038d7cc38edc1aa5bf91ab8068b63d4308c66c4c8bb3cbba7dfbc049f9c/pyparsing-3.3.2-py3-none-any.whl
+";
+
+/// The rows of [`WHEEL_LOCK`]. A row that does not split into exactly three fields
+/// is skipped rather than failing a user's `setup` — `every_lock_row_parses` is what
+/// keeps that from ever happening silently.
+fn wheels() -> impl Iterator<Item = Wheel> {
+    WHEEL_LOCK
+        .lines()
+        .map(str::trim)
+        .filter(|row| !row.is_empty() && !row.starts_with('#'))
+        .filter_map(|row| {
+            let mut fields = row.split_whitespace();
+            let (dir, sha256, url) = (fields.next()?, fields.next()?, fields.next()?);
+            fields
+                .next()
+                .is_none()
+                .then_some(Wheel { dir, url, sha256 })
+        })
+}
 
 /// Provisioning options.
 #[derive(Debug, Clone, Default)]
@@ -225,20 +223,40 @@ pub async fn setup(
     Ok(())
 }
 
-/// Warms the compilation cache: one run compiles `python.wasm` (+ the native `.so`
-/// for numpy/pandas) into `<dir>/cache`, so the **first real tool call** is
-/// warm — no multi-second compilation in front of the user (replaces the "first-run
-/// banner"). "Best effort": a warmup failure doesn't fail the install. Runs
+/// What [`warmup`] runs. It fills two different caches:
+/// - the **bytecode**: `compileall` writes `__pycache__` for the whole of
+///   `site-packages` (test directories skipped). Measured, that is most of a cold first
+///   call — sympy took 6.6 s to import cold and 0.6 s warm, the starter set ~17 s
+///   against 3.9 s;
+/// - the **compiled native modules** in `<dir>/cache`: importing each native wheel,
+///   and drawing one matplotlib figure with text (its Agg and FreeType modules), compiles
+///   each `.so` once.
+///
+/// Measured on a fresh cache: ~40 s in all, 28.6 s of it `compileall`. `PYTHONPATH` is
+/// where the runtime mounts `site-packages`, so the guest layout is not repeated here.
+const WARMUP_SCRIPT: &str = r"
+import compileall, io, os, re
+compileall.compile_dir(os.environ['PYTHONPATH'], quiet=2, workers=1, rx=re.compile(r'/tests?/'))
+import pandas, lxml.etree, lxml.html, yaml, regex, PIL.Image, kiwisolver, contourpy
+import matplotlib.pyplot as plt
+fig, ax = plt.subplots()
+ax.set_title('warmup')
+fig.savefig(io.BytesIO(), format='png')
+";
+
+/// The warmup's time limit: ~40 s measured on a desktop, and a slow machine gets
+/// several times that before the warmup is reported as partial.
+const WARMUP_TIMEOUT: Duration = Duration::from_secs(600);
+
+/// Warms the caches ([`WARMUP_SCRIPT`]) so the **first real tool call** is warm — no
+/// multi-second compilation in front of the user (replaces the "first-run banner").
+/// "Best effort": a warmup failure doesn't fail the install, and one cut short keeps
+/// what it compiled (the interpreter is cached first, the bytecode file by file). Runs
 /// through a real [`WasmerSandbox`], so the cache and paths match the runtime.
 async fn warmup(dir: &Path, loc: &Locale, progress: &mut impl FnMut(&str)) {
     progress(loc.t("sandbox.setup.warmup.start"));
     let sb = WasmerSandbox::new(Some(dir.to_path_buf()));
-    // `import pandas` pulls in both the interpreter and the native numpy/pandas modules (the
-    // heaviest compilation path); even if the import fails, the interpreter is already cached.
-    match sb
-        .run("import pandas", false, Duration::from_secs(300), loc)
-        .await
-    {
+    match sb.run(WARMUP_SCRIPT, false, WARMUP_TIMEOUT, loc).await {
         Ok(out) if out.exit_code == Some(0) => progress(loc.t("sandbox.setup.warmup.ok")),
         Ok(_) => progress(loc.t("sandbox.setup.warmup.partial")),
         Err(e) => progress(&loc.tf("sandbox.setup.warmup.skipped", &[("err", &e.to_string())])),
@@ -387,7 +405,7 @@ async fn ensure_wheels(
     tokio::fs::create_dir_all(&site)
         .await
         .with_context(|| loc.t("sandbox.setup.wheels.mksite").to_string())?;
-    for w in WHEELS {
+    for w in wheels() {
         if site.join(w.dir).exists() && !opts.force {
             progress(&loc.tf("sandbox.setup.wheels.present", &[("name", w.dir)]));
             continue;
@@ -660,28 +678,41 @@ mod tests {
     }
 
     #[test]
-    fn lockfile_wheels_cover_numpy_and_requests_stack() {
-        let dirs: Vec<&str> = WHEELS.iter().map(|w| w.dir).collect();
-        for expected in [
-            "numpy",
-            "pandas",
-            "dateutil",
-            "pytz",
-            "requests",
-            "urllib3",
-            "certifi",
-            "idna",
-            // beautifulsoup4 lands as `bs4`; soupsieve/typing_extensions are its dependencies.
-            "bs4",
-            "soupsieve",
-            "typing_extensions.py",
-        ] {
-            assert!(dirs.contains(&expected), "missing wheel {expected}");
+    fn lockfile_covers_the_starter_set() {
+        let dirs: Vec<&str> = wheels().map(|w| w.dir).collect();
+        // Package directories, not distribution names: beautifulsoup4 lands as `bs4`,
+        // pyyaml as `yaml`, pillow as `PIL`, fonttools as `fontTools`.
+        let expected = "numpy pandas dateutil pytz requests urllib3 certifi idna bs4 soupsieve \
+                        typing_extensions.py lxml sympy mpmath networkx tabulate openpyxl \
+                        et_xmlfile pypdf yaml regex feedparser feedparser_sgmllib PIL matplotlib \
+                        contourpy kiwisolver cycler fontTools packaging pyparsing";
+        for dir in expected.split_whitespace() {
+            assert!(dirs.contains(&dir), "missing wheel {dir}");
         }
-        // All URLs — https, all sha256 — 64 hex characters.
-        for w in WHEELS {
-            assert!(w.url.starts_with("https://"), "{}", w.url);
-            assert_eq!(w.sha256.len(), 64, "{}", w.dir);
+    }
+
+    /// Every non-comment row of the lock parses — [`wheels`] skips one that does not,
+    /// so without this a typo would silently drop a package — and names an https wheel
+    /// URL, a 64-character lowercase sha256 and a directory no other row claims.
+    #[test]
+    fn every_lock_row_parses() {
+        let rows = WHEEL_LOCK
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+            .count();
+        let parsed: Vec<Wheel> = wheels().collect();
+        assert_eq!(parsed.len(), rows, "a lock row did not parse");
+        let mut dirs = std::collections::HashSet::new();
+        for w in &parsed {
+            assert!(
+                w.url.starts_with("https://") && w.url.ends_with(".whl"),
+                "{}",
+                w.url
+            );
+            let hex = w.sha256.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f'));
+            assert!(w.sha256.len() == 64 && hex, "{}: {}", w.dir, w.sha256);
+            assert!(dirs.insert(w.dir), "{} is claimed twice", w.dir);
         }
     }
 

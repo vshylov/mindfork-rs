@@ -598,6 +598,101 @@ mod tests {
         assert!(out.result.contains("select 1"), "got: {}", out.result);
     }
 
+    /// Runs `code` in a provisioned sandbox without network and returns the tool's
+    /// text; `None` — the env isn't set, the smoke is skipped.
+    async fn run_provisioned(code: &str) -> Option<String> {
+        let tool = provisioned(false, 120)?;
+        let (_d, _s, ctx) = ctx_with_storage(Uuid::new_v4());
+        let out = tool
+            .invoke(&ctx, serde_json::json!({ "code": code }))
+            .await
+            .unwrap();
+        Some(out.result)
+    }
+
+    /// One use of every later addition to the starter set. Each line prints what the
+    /// package *computed*, not its version: a wheel that imports but cannot work (a
+    /// native module that traps) has to fail here, not in a user's chat.
+    const STARTER_SET_SCRIPT: &str = r#"
+import io, feedparser, mpmath, networkx, openpyxl, pypdf, regex, sympy, yaml
+import pandas as pd
+from bs4 import BeautifulSoup
+from lxml import etree
+from PIL import Image
+x = sympy.symbols('x')
+print('sympy', sympy.solve(x**2 - 4, x))
+mpmath.mp.dps = 30
+print('mpmath', str(mpmath.pi)[:12])
+print('networkx', networkx.shortest_path(networkx.path_graph(4), 0, 3))
+print('regex', regex.findall(r'\p{Cyrillic}+', 'abc Привет'))
+print('yaml', yaml.safe_load('a: [1, 2]'), yaml.__with_libyaml__)
+print('lxml', etree.fromstring('<a><b>7</b></a>').xpath('//b/text()'))
+print('bs4-lxml', BeautifulSoup('<p>x<b>y</p>', 'lxml').get_text())
+print(pd.DataFrame({'a': [1]}).to_markdown())
+feed = feedparser.parse('<rss version="2.0"><channel><title>T</title><item><title>i</title></item></channel></rss>')
+print('feedparser', feed.feed.title, len(feed.entries))
+book = openpyxl.Workbook()
+book.active.append(['q', 5])
+xlsx = io.BytesIO()
+book.save(xlsx)
+xlsx.seek(0)
+print('openpyxl', pd.read_excel(xlsx, header=None).iloc[0, 1])
+writer = pypdf.PdfWriter()
+writer.add_blank_page(width=100, height=100)
+pdf = io.BytesIO()
+writer.write(pdf)
+pdf.seek(0)
+print('pypdf', len(pypdf.PdfReader(pdf).pages))
+png = io.BytesIO()
+Image.new('RGB', (8, 8)).save(png, 'PNG')
+print('pillow', png.getvalue()[:4] == b'\x89PNG')
+"#;
+
+    #[tokio::test]
+    #[ignore = "requires a provisioned sandbox (MINDFORK_SANDBOX_DIR)"]
+    async fn starter_set_packages_work_in_sandbox() {
+        let Some(out) = run_provisioned(STARTER_SET_SCRIPT).await else {
+            return;
+        };
+        for marker in [
+            "sympy [-2, 2]",
+            "mpmath 3.1415926535",
+            "networkx [0, 1, 2, 3]",
+            "regex ['Привет']",
+            "yaml {'a': [1, 2]} True",
+            "lxml ['7']",
+            "bs4-lxml xy",
+            "|  0 |   1 |",
+            "feedparser T 1",
+            "openpyxl 5",
+            "pypdf 1",
+            "pillow True",
+        ] {
+            assert!(out.contains(marker), "missing {marker:?} in: {out}");
+        }
+    }
+
+    /// matplotlib draws a PNG with Cyrillic text in its title and legend — the path
+    /// the wrapper's matplotlib shim exists for: without it the import fails on the
+    /// missing `HOME`, and raster text traps in FreeType's autohinter.
+    #[tokio::test]
+    #[ignore = "requires a provisioned sandbox (MINDFORK_SANDBOX_DIR)"]
+    async fn matplotlib_renders_text_in_sandbox() {
+        let code = "import io\n\
+                    import matplotlib.pyplot as plt\n\
+                    fig, ax = plt.subplots()\n\
+                    ax.plot([1, 2, 3], [3, 1, 2], label='ряд')\n\
+                    ax.set_title('Проверка кириллицы')\n\
+                    ax.legend()\n\
+                    png = io.BytesIO()\n\
+                    fig.savefig(png, format='png')\n\
+                    print('png', png.getvalue()[:4] == b'\\x89PNG', len(png.getvalue()) > 1000)";
+        let Some(out) = run_provisioned(code).await else {
+            return;
+        };
+        assert!(out.contains("png True True"), "got: {out}");
+    }
+
     /// requests over HTTPS with network access enabled.
     #[tokio::test]
     #[ignore = "requires a provisioned sandbox + network (MINDFORK_SANDBOX_DIR)"]
