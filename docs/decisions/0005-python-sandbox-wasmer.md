@@ -65,8 +65,21 @@ cache is warmed on setup (`warmup`), so the first real call is warm.
 
 ### 5. Security posture
 
-- **FS**: the guest sees only the mounted tmp directory with the script + a
-  read-only `site-packages`; **no host directories** by default.
+- **FS**: the guest sees only the mounted tmp directory with the script + the
+  preinstalled packages; **no host directories** by default.
+  **Amended (2026-09-11):** the packages were never read-only. `site-packages`
+  was mounted with a plain `--volume`, `wasmer` 7.2.0 has no read-only volume,
+  and a `sitecustomize.py` one call wrote there ran inside the next — in every
+  chat. `sandbox setup` now packs CPython and `site-packages` into one
+  self-contained image (`packed-sandbox.webc`: the unpacked `python.webc` with
+  `site-packages` added as a volume), and what the guest writes to a package
+  volume lands in memory and dies with the call. One package rather than a
+  second one depending on `python/python`, because resolving a dependency
+  queries the registry even with `--include-webc`, and on a fresh cache offline
+  that run cannot start. A `site-packages` directory with no image — an install
+  from before — is refused, never mounted, with the command that packs it; the
+  one writable mount left is provisioning's own warmup, which fills the bytecode
+  the image is packed with.
 - **Network**: `--net` is not passed until the user enables
   `python_net_enabled` (a toggle, **on** by default — for requests; but
   enabling the tool itself is a separate opt-in). Without the flag there are

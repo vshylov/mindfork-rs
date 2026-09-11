@@ -293,7 +293,7 @@ the `UnavailableEmbedder` pattern.
 
 | Resource | Policy |
 |---|---|
-| Filesystem | only Python's webc-fs + RO `site-packages` + RW tmpfs `/tmp`. **Not a single host directory.** (The extension "mount `tools.fs_root`" is deliberately not in the first version.) |
+| Filesystem | only Python's webc-fs + RO `site-packages` + RW tmpfs `/tmp`. **Not a single host directory.** (The extension "mount `tools.fs_root`" is deliberately not in the first version.) **Correction (2026-09-11):** the RO `site-packages` was never delivered — `--volume` mounts writable, and `wasmer` 7.2.0 has no read-only form; the fix, `site-packages` packed with CPython into one image, is in [ADR 0005](../decisions/0005-python-sandbox-wasmer.md) §5 (amended). |
 | Network | `python_net_enabled=false` → no sockets at all (no passthrough); `true` → host passthrough. Groundwork: a domain allowlist via our own `virtual-net` wrapper — out of scope. |
 | CPU/time | timeout `python_wasm_timeout_secs` → `mfsb_cancel` → terminates the WASIX process; residual risk of a CPU loop — §4.1 |
 | Memory | wasm32 ≤ 4 GB address space; limit Store tunables (e.g. 512 MB–1 GB max memory pages) |
