@@ -658,6 +658,225 @@ async fn sandbox_outputs_e2e_live() {
     }
 }
 
+/// A chat whose only tool is `python_exec` in its sandbox mode, on a temporary data root
+/// pointed at a provisioned sandbox (§11 S13). `None` — the live stack or the sandbox is
+/// not configured, and the caller skips. One fixture for the stage-3 smokes: three copies
+/// of a spawn prologue written minutes apart is the duplication this project keeps paying
+/// for (docs/lessons.md §2).
+async fn spawn_python_chat() -> Option<(
+    tempfile::TempDir,
+    UnboundedSender<AppCommand>,
+    UnboundedReceiver<AppEvent>,
+    tokio::task::JoinHandle<()>,
+)> {
+    let sandbox = match std::env::var_os("MINDFORK_SANDBOX_DIR").map(std::path::PathBuf::from) {
+        Some(dir) => dir,
+        None => {
+            eprintln!("skip: MINDFORK_SANDBOX_DIR not set");
+            return None;
+        }
+    };
+    let mut cfg = no_auto_cfg();
+    cfg.tools.python_enabled = true;
+    cfg.tools.python_mode = crate::shared::config::PythonMode::Wasmer;
+    cfg.tools.python_net_enabled = false;
+    cfg.default_sampling.max_tokens = Some(4096);
+    let (dir, cmd_tx, mut evt_rx, handle) =
+        spawn_orch_live_sandbox(cfg, sandbox).or_else(|| {
+            eprintln!("skip: MINDFORK_ENGINE_URL not set");
+            None
+        })?;
+    narrow_profile_to(
+        &cmd_tx,
+        &mut evt_rx,
+        vec![crate::features::tools::PYTHON_EXEC_ID.into()],
+    )
+    .await;
+    Some((dir, cmd_tx, evt_rx, handle))
+}
+
+/// Sends one message and collects the turn: the reply, and every `python_exec` result.
+/// Both are printed — a live smoke that fails has to say what the model actually did.
+async fn python_turn(
+    cmd_tx: &UnboundedSender<AppCommand>,
+    evt_rx: &mut UnboundedReceiver<AppEvent>,
+    message: &str,
+) -> (String, Vec<String>) {
+    cmd_tx
+        .send(AppCommand::SendMessage(message.into()))
+        .unwrap();
+    let mut reply = String::new();
+    let mut results = Vec::new();
+    while let Some(ev) = evt_rx.recv().await {
+        match ev {
+            AppEvent::Chunk { text, .. } => reply.push_str(&text),
+            AppEvent::ToolCall { name, result, .. }
+                if name == crate::features::tools::PYTHON_EXEC_ID =>
+            {
+                results.push(result);
+            }
+            AppEvent::Finished { .. } => break,
+            _ => {}
+        }
+    }
+    for result in &results {
+        eprintln!("python_exec →\n{result}");
+    }
+    eprintln!("reply: {reply}");
+    (reply, results)
+}
+
+/// The first run of at least `digits` digits in `s`, with any thousands separators dropped
+/// — what the sandbox computed, as the reply would repeat it.
+fn first_number(s: &str, digits: usize) -> Option<String> {
+    let plain: String = s.chars().filter(|c| *c != ',' && *c != ' ').collect();
+    let mut best: Option<String> = None;
+    let mut run = String::new();
+    for c in plain.chars().chain(std::iter::once('.')) {
+        if c.is_ascii_digit() {
+            run.push(c);
+            continue;
+        }
+        if run.len() >= digits && best.is_none() {
+            best = Some(run.clone());
+        }
+        run.clear();
+    }
+    best
+}
+
+/// Sandbox file exchange, stage 3 (docs/sandbox-file-exchange.md §12 T14): what one call
+/// saved, a **later** call reads — D4's persistence, end to end, through the chat's files.
+/// Turn 1 writes a workbook into `/w/out` with numbers the model does not choose and is
+/// told not to print; turn 2 names that workbook in `files`, so it is copied into `/w/in`,
+/// and reads the total back with pandas.
+///
+/// A workbook rather than a CSV on purpose: its bytes have to survive being stored and
+/// staged **unchanged**, or openpyxl cannot open it at all. And the number is the
+/// sandbox's, not the conversation's — the peak-month probe of §10 showed how easily an
+/// answer arrives through a channel the test did not mean to leave open — so the assertion
+/// is that the reply repeats what the second call actually printed.
+///
+/// `#[ignore]`, manual against a live stack.
+#[tokio::test]
+#[ignore = "requires a live model (MINDFORK_ENGINE_URL) and a provisioned sandbox (MINDFORK_SANDBOX_DIR)"]
+async fn sandbox_inputs_e2e_live() {
+    use crate::features::file_command::FileProgress;
+    const MAKE: &str = "Use python_exec once. Build an Excel workbook with openpyxl: one \
+        sheet with the header row month,total and twelve data rows, where row i (1..12) has \
+        month 2026-i and total = i*i*7 + 13. Save it as /w/out/sales.xlsx. Do NOT print the \
+        numbers or the sum — just say the file is saved.";
+    const READ: &str = "Use python_exec again. The workbook you saved is one of this chat's \
+        files: name it in the files argument of the call so it is copied into /w/in, read it \
+        from there with pandas, and print the sum of the total column. Then tell me that sum \
+        in your reply.";
+
+    let Some((dir, cmd_tx, mut evt_rx, handle)) = spawn_python_chat().await else {
+        return;
+    };
+    let (_made, first) = python_turn(&cmd_tx, &mut evt_rx, MAKE).await;
+    let (reply, second) = python_turn(&cmd_tx, &mut evt_rx, READ).await;
+    cmd_tx.send(AppCommand::FileList).unwrap();
+    let listed = wait_for(&mut evt_rx, |e| {
+        matches!(e, AppEvent::FileProgress(FileProgress::Listed { .. }))
+    })
+    .await;
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    assert!(
+        first.iter().any(|r| r.contains("files:")),
+        "the first call saved nothing to /w/out"
+    );
+    let Some(AppEvent::FileProgress(FileProgress::Listed { stored, .. })) = listed else {
+        panic!("no /file list reply");
+    };
+    let workbook = stored
+        .iter()
+        .find(|f| f.name.ends_with(".xlsx"))
+        .unwrap_or_else(|| panic!("no workbook stored: {stored:?}"));
+    assert!(
+        !workbook.missing,
+        "the listed workbook is not in the folder"
+    );
+    assert!(
+        dir.path().join("files").exists(),
+        "the chat's folder was never created"
+    );
+
+    // The second call ran (a refusal would have said so and run nothing) and printed a
+    // number the sandbox computed from the staged file.
+    assert!(
+        !second.iter().any(|r| r.contains("nothing was run")),
+        "the second call was refused: {second:?}"
+    );
+    let printed = second
+        .iter()
+        .find_map(|r| first_number(r, 3))
+        .unwrap_or_else(|| panic!("the second call printed no number: {second:?}"));
+    assert!(
+        fold_dashes(&reply).contains(&printed),
+        "the reply does not carry what the call read back ({printed}): {reply}"
+    );
+}
+
+/// Fork F8a live (§12 T9, T14): a **binary** the user attaches is kept with the chat —
+/// `/file attach` no longer refuses it — and a call that names it reads the real bytes in
+/// `/w/in`. The fixture is a generated 512×512 PNG, so what the code reports is objective
+/// and no pretrained knowledge can answer it; pillow is in the sandbox's starter set.
+///
+/// `#[ignore]`, manual against a live stack.
+#[tokio::test]
+#[ignore = "requires a live model (MINDFORK_ENGINE_URL) and a provisioned sandbox (MINDFORK_SANDBOX_DIR)"]
+async fn attached_binary_reaches_the_sandbox_live() {
+    use crate::features::file_command::FileProgress;
+    const ASK: &str = "A picture is one of this chat's files. Use python_exec: name it in \
+        the files argument so it is copied into /w/in, open it there with PIL (pillow) and \
+        print its size in pixels. Then tell me the width and the height.";
+
+    let Some((_dir, cmd_tx, mut evt_rx, handle)) = spawn_python_chat().await else {
+        return;
+    };
+    let picture = tempfile::tempdir().unwrap();
+    let path = picture.path().join("figure.png");
+    std::fs::write(&path, figure_png([200, 30, 30])).unwrap();
+    cmd_tx
+        .send(AppCommand::FileAttach {
+            path: path.display().to_string(),
+        })
+        .unwrap();
+    let kept = wait_for(&mut evt_rx, |e| {
+        matches!(
+            e,
+            AppEvent::FileProgress(FileProgress::StoredFile { .. })
+                | AppEvent::FileProgress(FileProgress::Failed(_))
+        )
+    })
+    .await;
+    // A binary is kept, not refused: that is the half of F8a the model never sees.
+    let AppEvent::FileProgress(FileProgress::StoredFile { name, mime, .. }) = kept.unwrap() else {
+        panic!("the picture was refused instead of kept");
+    };
+    assert_eq!(name, "figure.png");
+    assert_eq!(mime, "image/png");
+
+    let (reply, results) = python_turn(&cmd_tx, &mut evt_rx, ASK).await;
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+    assert!(
+        !results.iter().any(|r| r.contains("nothing was run")),
+        "the call was refused: {results:?}"
+    );
+    assert!(
+        results.iter().any(|r| r.contains("512")),
+        "the code never read the picture's real size: {results:?}"
+    );
+    assert!(
+        reply.contains("512"),
+        "the reply does not carry the size the code read: {reply}"
+    );
+}
+
 /// i18n Tier 1 (docs/history/i18n.md, go/no-go): a profile with agent-scaffold language `En` —
 /// the auto-title of an English conversation is English, with NO Cyrillic. A fresh profile
 /// (its own texts, independent of the bootstrap profile's state), set it to En, create a
