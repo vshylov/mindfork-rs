@@ -33,11 +33,21 @@ bytemuck = "1.25.0"
 # the same task is solved by the system's DPAPI (windows-sys below). See shared/secrets.rs,
 # docs/research/api-key-storage.md.
 chacha20poly1305 = "0.10.1"
+# Guessing the encoding of a fetched page that declares none usable (`fetch_url`,
+# `web_search`'s result pages): the detector Firefox runs on unlabelled pages, by the
+# encoding_rs author. Pure Rust. See shared/http_text.rs, docs/research/page-charset.md.
+chardetng = "1.0.0"
 chrono = { version = "0.4.45", features = ["serde"] }
 crossterm = "0.29.0"
 # Standard OS folders for non-portable data-storage mode
 # (Windows %APPDATA%\mindfork-rs, Linux ~/.local/share/mindfork-rs). See shared/paths.rs.
 directories = "6.0.0"
+# Decoding a fetched page in the encoding it declares (windows-1251, KOI8-R, Shift_JIS,
+# GBK, ...). reqwest's own `charset` feature left with its default features, and it only
+# ever read the header — a page declaring itself in `<meta>` would stay unreadable.
+# Already in the graph transitively (via pdf-extract); the version is pinned to the one in
+# Cargo.lock, so as not to spawn a duplicate. See shared/http_text.rs.
+encoding_rs = "0.8.35"
 eventsource-stream = "0.2.3"
 # Unpacking the `wasmer` archive (tar.gz) in `mindfork sandbox setup` (Phase 2 of the Python
 # sandbox). flate2 — pure Rust (miniz_oxide, no C dependencies), tar — pure Rust.

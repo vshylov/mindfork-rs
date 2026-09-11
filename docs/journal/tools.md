@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (51)
+## Entries (52)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -63,6 +63,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: `ToolOutcome.wrote` — a memory writer reports its write (done)
 - Post-M9: `ToolOutcome.prefill` and the page summary's request — reasoning muted, usage recorded (done)
 - Post-M9: the dialogue's director on Gemma's template — the checkpoint's history must alternate too (done)
+- Post-M9: a fetched page is read in its own encoding (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -3672,6 +3673,74 @@ Gemma 4: both scenes Completed at 5 spoken lines (1296 and 1256 tokens),
 stopped by the director at the third checkpoint — the second passed with
 the text-turn history. Gemma 3's acceptance of the shape is the stage-0
 measurement. Unit: 2987 green, 153 ignored (2986 / 153 before).
+
+### Post-M9: a fetched page is read in its own encoding (done)
+
+**What.** Reported from a chat: the assistant read a 2002 article on
+`sector.biz.ua` with `fetch_url`, and the page — over the attachment budget —
+became an attachment whose name and nearly every letter were `U+FFFD` (9 289 of
+12 549 characters). Four `attachment_read` calls returned the noise, and the model
+fetched the page again through `python_exec` and `cp1251` before it could answer.
+Research and design: [docs/research/page-charset.md](../research/page-charset.md) —
+the user's decision (2026-09-11): "the most effective variant" (F1b), with F2–F7
+taken under it and listed there. Branch `fix/page-charset`.
+
+**Why.** The page declared windows-1251 in its header and in `<meta>`, and the
+client read neither. `reqwest` has had `default-features = false` since M1, and
+without its `charset` feature `Response::text()` is `String::from_utf8_lossy`. The
+proof was exact: the page's `<h1>` bytes decoded lossily equal the stored name. The
+corpus measurement then found a second cause of the same symptom — `www.163.com`
+gzips a response nobody asked to be compressed, and `reqwest` is built without
+decompression either.
+
+**Measured** (research §2). Fourteen pages in five legacy encodings plus UTF-8
+controls: four declare only in the document, so `charset`'s header-only reading
+would have fixed the chat's page and not a Shift_JIS or an ISO-8859-1 one;
+habr.com's `<meta>` sits at byte 1698, past a browser's 1024-byte prescan; legacy
+text reads as UTF-8 at worst 59 decoded against 218 broken (GBK), while every UTF-8
+page has 0 broken — the margin behind the majority rule. Through the app's client
+the detector guessed every legacy page, naming KOI8-U for KOI8-R; without the TLD,
+fourmilab.ch's two accented bytes read as windows-1257.
+
+**How.** `shared::http_text::read(resp)`, one seam for `fetch_url` and
+`web_search`'s result fetch: `Content-Encoding` undone first (`gzip`/`x-gzip`/
+`deflate` through `flate2`, last applied first, at most 32 MiB inflated), then the
+order BOM → UTF-8 by majority of the bytes → pure ASCII as declared → a declaration
+the bytes do not refute (the header, or `<meta>`/an XML declaration up to `<body>`;
+a disagreement settled by whether the detector's guess reads like one of them) →
+`chardetng` hinted by the TLD. A coding it cannot undo reaches the model as
+`tool.fetch_url.err.compressed`, which says a retry fails the same way. Two direct
+dependencies, both within `deny.toml` and credited: `encoding_rs` (already in the
+graph via `pdf-extract`) and `chardetng`.
+
+**Found on the way.** Comparing the detector's guess with a declaration by identity
+was a real defect, and the table caught it: KOI8-U is not KOI8-R, so a KOI8-R page
+with a wrong `windows-1251` header and a right `<meta>` would have taken the header.
+`reads_alike` compares what the two decode to. And a `U+FFFD` count is a vacuous
+smoke for a single-byte decode, which never produces one: the corpus test asserts
+agreement with the detector for a legacy decision instead.
+
+**Tests.** A 28-row decision table in one raw-string literal (case, the prose's
+script, the bytes' shape, `Content-Type`, the head, the TLD, the expected encoding
+and step); GBK prose checked to really form some valid UTF-8 pairs; the
+content-coding undo, its three errors, and the TLD sanitizer (`chardetng` panics on
+upper case or a period); a wire test each through `fetch_url`'s and `web_search`'s
+real request path, against a stub serving a meta-only, gzip-encoded windows-1251
+page. **Mutation-tested** — sixteen mutations, each killed by the case written for
+it: the majority rule, the pure-ASCII branch, a refuted UTF-8 obeyed, a disagreement
+sent always to the header and always to the document, `reads_alike` as identity, the
+`replacement` label, UTF-16 in a document, comments, the stop at `<body>`, the markup
+gate, `http-equiv`, the XML declaration, the TLD hint, and — through both callers —
+`read` decoding lossily again and gzip left packed. The TLD hint first survived, pinned
+only by the live corpus, and got a row of its own: fourmilab.ch's one accented letter
+on an undeclared page. Unit: 3050 green, 158 ignored (3043 / 156 before).
+
+**Live — GO** (network only). `live_windows_1251_page_is_readable`: the chat's page
+attaches under the archive's `<h1>`, 12 632 characters, the article's title in it,
+no `U+FFFD`. `live_charset_corpus`: fourteen pages, every decision in agreement with
+the evidence, `163.com` unpacked from gzip. Not done, recorded in research §5: a
+lone wrong legacy declaration, undeclared ISO-2022-JP, the `<h1>` naming the
+archive's banner rather than the article, and local files.
 
 **Not in this track** (§7): a verdict answered in text on a model that
 cannot call tools; the first checkpoint's prompt size on Gemma 3 with

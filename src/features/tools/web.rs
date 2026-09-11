@@ -469,8 +469,16 @@ impl WebSearch {
         if !is_html {
             return None;
         }
-        let body = resp.text().await.ok()?;
-        let text = extract_readable(&body, MAX_CONTENT_CHARS);
+        // Not `resp.text()`: that reads the bytes as UTF-8 whatever the page declares
+        // (docs/research/page-charset.md §1).
+        let body = match crate::shared::http_text::read(resp).await {
+            Ok(body) => body,
+            Err(err) => {
+                tracing::debug!(url, %err, "web search: the page body could not be read");
+                return None;
+            }
+        };
+        let text = extract_readable(&body.text, MAX_CONTENT_CHARS);
         if text.is_empty() {
             tracing::debug!(url, "web search: no readable text extracted from the page");
         }
@@ -1342,6 +1350,27 @@ mod tests {
     use super::*;
     use crate::shared::config::WebProvider;
     use crate::shared::secrets::SearchSlot;
+
+    /// A result page is read in its own encoding, not as UTF-8 whatever it declares
+    /// (docs/research/page-charset.md §1) — through the fetch the search really makes,
+    /// on a windows-1251 page declared only in `<meta>` and gzipped unasked.
+    #[tokio::test]
+    async fn a_result_page_is_read_in_its_own_encoding() {
+        let prose = "Старая страница в кодировке windows-1251 попала в выдачу и должна читаться.";
+        let (base, _h) = crate::features::image_fetch::stub::serve(vec![
+            crate::shared::http_text::testkit::legacy_page_response("Заголовок", prose),
+        ]);
+        let search = WebSearch::new(
+            true,
+            crate::shared::net::AddressPolicy::Unrestricted,
+            Vec::new(),
+        );
+        let text = search.fetch_content(&format!("{base}/old.html")).await;
+        assert!(
+            text.as_deref().is_some_and(|t| t.contains(prose)),
+            "{text:?}"
+        );
+    }
 
     #[test]
     fn web_search_description_is_localized() {

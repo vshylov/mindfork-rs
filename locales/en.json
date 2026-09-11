@@ -269,6 +269,7 @@
   "tool.fetch_url.err.status": "the page returned status {status}",
   "tool.fetch_url.err.read": "reading {url}",
   "tool.fetch_url.err.no_text": "could not extract readable text from the page",
+  "tool.fetch_url.err.compressed": "the server sent the page compressed ({coding}) and it could not be unpacked: the method is not supported, the data is damaged, or the page is too large once unpacked. Fetching it again with fetch_url will fail the same way.",
   "tool.fetch_url.result.fetch_failed": "Could not load {url}: {err}",
   "tool.fetch_url.result.content": "Content of {url}:",
   "tool.fetch_url.result.content_no_summary": "Content of {url} (summarization unavailable):",

@@ -17,7 +17,7 @@
 
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use futures_util::StreamExt;
 use tokio_util::sync::CancellationToken;
 
@@ -103,18 +103,27 @@ impl FetchUrl {
                 &[("status", &status.to_string())]
             ));
         }
-        // Read Content-Type BEFORE consuming the body (`resp.text()` takes resp).
-        let content_type = resp
-            .headers()
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("")
-            .to_string();
-        let body = resp
-            .text()
-            .await
-            .with_context(|| loc.tf("tool.fetch_url.err.read", &[("url", url)]))?;
-        body_to_text(&content_type, &body)
+        // Not `resp.text()`: that reads the bytes as UTF-8 whatever the page declares, and
+        // a windows-1251 page came back as U+FFFD (docs/research/page-charset.md §1).
+        let body =
+            crate::shared::http_text::read(resp)
+                .await
+                .map_err(|err| match err.coding() {
+                    Some(coding) => {
+                        anyhow::anyhow!(
+                            loc.tf("tool.fetch_url.err.compressed", &[("coding", coding)])
+                        )
+                    }
+                    None => anyhow::Error::new(err)
+                        .context(loc.tf("tool.fetch_url.err.read", &[("url", url)])),
+                })?;
+        tracing::debug!(
+            url,
+            encoding = body.encoding.name(),
+            source = ?body.source,
+            "fetch_url: the page's encoding"
+        );
+        body_to_text(&body.content_type, &body.text)
             .ok_or_else(|| anyhow::anyhow!(loc.t("tool.fetch_url.err.no_text").to_string()))
     }
 }
@@ -1163,6 +1172,58 @@ mod tests {
         .unwrap()
         .text;
         assert!(out.contains("читаемый абзац"), "got: {out}");
+    }
+
+    /// The defect this closes (docs/research/page-charset.md §1): a windows-1251 page
+    /// came back as U+FFFD, because `resp.text()` read its bytes as UTF-8 whatever they
+    /// declared. Through the tool's own request path, in the two shapes the old path
+    /// could not read at all — the encoding declared only in `<meta>`, and a body
+    /// gzipped though nothing asked for it.
+    #[tokio::test]
+    async fn a_legacy_page_is_read_in_its_own_encoding() {
+        let (_d, ctx) = ctx_with_engine(Arc::new(MockBackend::scripted(vec![])));
+        let prose =
+            "Попьем чайку? Текстовый редактор, написанный для себя, вырос в программу для всех.";
+        let (base, _h) = crate::features::image_fetch::stub::serve(vec![
+            crate::shared::http_text::testkit::legacy_page_response("Архив статей", prose),
+        ]);
+        let page = FetchUrl::new(AddressPolicy::Unrestricted)
+            .fetch_text(&format!("{base}/mycomp/aid5.html"), ctx.loc)
+            .await
+            .unwrap();
+        assert!(page.text.contains(prose), "{}", page.text);
+        assert_eq!(page.title.as_deref(), Some("Архив статей"));
+    }
+
+    /// The page from the chat that reported the defect (docs/research/page-charset.md
+    /// §1), fetched the way the assistant fetched it: a windows-1251 page over the
+    /// attachment budget, which had become an attachment named and filled with U+FFFD.
+    /// Needs no key — only network.
+    #[tokio::test]
+    #[ignore = "requires network access"]
+    async fn live_windows_1251_page_is_readable() {
+        let (_d, ctx) = ctx_with_engine(Arc::new(MockBackend::scripted(vec![])));
+        let url = "https://sector.biz.ua/mycomp/mid203/aid5.html";
+        let out = FetchUrl::default()
+            .invoke(&ctx, serde_json::json!({"url": url, "summarize": false}))
+            .await
+            .unwrap();
+        let (name, text) = match out.effects.as_slice() {
+            [ChatEffect::AddAttachment(att)] => (att.name.clone(), att.text.clone()),
+            _ => (String::new(), out.result.clone()),
+        };
+        eprintln!(
+            "--- fetch_url on {url}: attached as {name:?}, {} chars ---",
+            text.chars().count()
+        );
+        assert!(
+            text.contains("Попьем чайку"),
+            "the article is missing: {text}"
+        );
+        assert!(
+            !text.contains('\u{FFFD}') && !name.contains('\u{FFFD}'),
+            "replacement characters are back: {name:?}"
+        );
     }
 
     /// A YouTube link used to be a dead end here — the watch page is a
