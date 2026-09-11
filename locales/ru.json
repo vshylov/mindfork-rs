@@ -270,6 +270,7 @@
   "tool.fetch_url.err.status": "страница вернула статус {status}",
   "tool.fetch_url.err.read": "чтение {url}",
   "tool.fetch_url.err.no_text": "со страницы не удалось извлечь читаемый текст",
+  "tool.fetch_url.err.compressed": "сервер прислал страницу сжатой ({coding}), и распаковать её не удалось: способ сжатия не поддерживается, данные повреждены или распакованная страница слишком велика. Повторная загрузка через fetch_url закончится так же.",
   "tool.fetch_url.result.fetch_failed": "Не удалось загрузить {url}: {err}",
   "tool.fetch_url.result.content": "Содержимое {url}:",
   "tool.fetch_url.result.content_no_summary": "Содержимое {url} (саммаризация недоступна):",
