@@ -141,11 +141,13 @@ pub fn decode_file(bytes: &[u8], markup: bool, hint: Option<&str>) -> Option<Fil
 /// a local file has no `Content-Type`, and a Markdown note *about* `<meta charset>` must not
 /// declare an encoding it does not use.
 pub fn is_markup_path(path: &std::path::Path) -> bool {
-    path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
-        ["html", "htm", "xhtml", "xml"]
-            .iter()
-            .any(|m| e.eq_ignore_ascii_case(m))
-    })
+    path.extension()
+        .and_then(std::ffi::OsStr::to_str)
+        .is_some_and(|e| {
+            ["html", "htm", "xhtml", "xml"]
+                .iter()
+                .any(|m| e.eq_ignore_ascii_case(m))
+        })
 }
 
 /// `text` in `encoding`, or the first character that encoding cannot store. `encoding_rs`
