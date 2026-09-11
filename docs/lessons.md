@@ -184,6 +184,19 @@ its script. Keep the print's insertion and its reverse in one scratch script, or
 commit the stage before measuring and revert only then.
 — *the loops' timings*.
 
+**`default-features = false` removes behaviour, not just weight — read what each
+default feature *does* before trimming it.** `reqwest` has been declared that way
+since M1, to choose its TLS backend, and two of the defaults it dropped were not dead
+weight: without `charset`, `Response::text()` is `String::from_utf8_lossy` whatever
+the response declares, and without the decompression features a body a server
+compresses unasked arrives compressed. Neither fails. Every letter of a windows-1251
+page simply came back as U+FFFD — into a tool result, into the attachment made of it,
+and into that attachment's search index — while the method kept its name and its
+signature and only its meaning changed. When a feature list is trimmed, grep the
+crate's source for `cfg(feature = "…")` and `cfg(not(feature = "…"))` on the methods
+the project actually calls.
+— *a fetched page is read in its own encoding*.
+
 ## 2. Testing discipline
 
 **Mutation-test every load-bearing line, and read a surviving mutation twice.** A

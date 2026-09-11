@@ -171,8 +171,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-11, version 0.9.8)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3043 unit tests
-green, 156 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **3050 unit tests
+green, 158 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -184,6 +184,18 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **A fetched page is read in its own encoding** — reported from a chat: a
+  windows-1251 article became an attachment of `U+FFFD`, because `reqwest`
+  runs without its default features and `Response::text()` is then
+  `from_utf8_lossy` whatever the page declares. Now `shared::http_text::read`
+  serves `fetch_url` and `web_search`'s result fetches: an unasked
+  `gzip`/`deflate` undone (www.163.com sends one), then BOM → the bytes when
+  UTF-8 by majority → a declaration they do not refute (the header, or
+  `<meta>` up to `<body>`) → `chardetng` with the TLD. Measured on fourteen
+  real pages first: four declare only in `<meta>`, so the header-only
+  `charset` feature would not have been the fix
+  ([docs/research/page-charset.md](docs/research/page-charset.md),
+  spec §9.3.1, [docs/journal/tools.md](docs/journal/tools.md)).
 - **Spellcheck reads a stress mark as part of the word** — reported from
   the input box: `И́стинно так` typed, `стинно` underlined. One predicate:
   the segmenter grows a word while `is_alphabetic`, and `U+0301` — the
@@ -404,20 +416,6 @@ being recent is dropped, not shortened.
   its own run time limit), a number in seconds, `0` deciding at once by
   state ([docs/research/quit-settle-roll-and-cap.md](docs/research/quit-settle-roll-and-cap.md),
   spec §6.7, §17.6, [docs/journal/engine.md](docs/journal/engine.md)).
-- **The quit waits for the landing — a stop's own path decides, the state
-  rule only past a cap** — at a quit a silent task caught mid-tools kept
-  its window because its round's write, if any, had not reported; but a
-  cancelled loop lands on its own, and fast — its lane wait returns at
-  once, its stream ends at the next chunk, its tools finish — on the very
-  channel `run` polls. Now the `Quit` arm only cancels (`cancel_bg_all`),
-  `run` listens on `bg_done_rx` a little longer (`settle_silent_tasks`,
-  each landing through `handle_bg_done` — the stop's path, `consumed` from
-  the loop — while any slot is active, 2 s in all), then
-  `refund_unlanded` decides whatever has not landed by its state, then
-  the flush; a token check before the stream keeps a cancelled loop from
-  asking the engine once more where it has no session budget
-  ([docs/research/quit-waits-for-the-landing.md](docs/research/quit-waits-for-the-landing.md),
-  spec §17.6, §11.10, [docs/journal/engine.md](docs/journal/engine.md)).
 - **The TUI "hangs" on a headless launch** (no TTY) — this is expected; clean
   exit via `Esc`/`Ctrl+Q` is covered by unit tests. Live verification needs a
   real terminal.

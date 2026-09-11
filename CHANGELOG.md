@@ -329,6 +329,18 @@ split by subsystem.
 
 ### Fixed
 
+- **Pages in an older encoding are readable.** Reading a web page and web
+  search took every page for UTF-8 whatever it declared, so a page in
+  windows-1251, KOI8-R, Shift_JIS or GBK — common on older sites — came
+  back with every letter replaced by `�`: in the answer, in the attachment
+  a long page becomes, and in that attachment's search index, which left
+  the assistant fetching the page again some other way. A page is now read
+  in the encoding its server or the page itself declares; a site that moved
+  to UTF-8 but kept its old declaration is still read correctly; and a page
+  that declares nothing is recognised from its text. A page the server
+  compressed without being asked is unpacked instead of arriving as noise.
+  An attachment already garbled this way stays garbled — fetch the page
+  again.
 - **Spellcheck no longer stumbles over a stress mark.** A word carrying
   one — `Alt+0769`, or text pasted from Wikipedia, a dictionary or a
   grammar reference — was cut in two at the mark and each half judged
