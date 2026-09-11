@@ -16,6 +16,21 @@ split by subsystem.
 
 ### Added
 
+- **Files into the Python sandbox.** The assistant's code can now read this
+  chat's files: it names them in the call, by the number `/file list` shows or by
+  name, and each is copied into the sandbox before the code runs. Attachments go
+  in as their text, stored files and pictures as themselves. The copies are the
+  sandbox's own — changing one changes nothing here, and only what the code saves
+  to `/w/out` comes back — so a chart or a table one call made is readable by the
+  next. `/file attach` now also **keeps the file itself**: a workbook, a zip or
+  any other binary is no longer refused (it is kept with the chat, and only code
+  can read it), and a PDF, DOCX or web page keeps its original beside the text
+  the assistant reads; the two are one entry in `/file list`, and removing it
+  removes both — never your own file. `/file list` also shows the chat's
+  pictures, with the same numbers the assistant uses. When *Confirm dangerous
+  tool calls* is on, the confirmation now states which files would go into the
+  sandbox, their sizes and whether it has network access.
+
 - **Files out of the Python sandbox.** What the code saves directly into
   `/w/out` — a matplotlib chart, a CSV, a workbook — is kept with the chat, in
   `data/files/<chat-id>/`, and the call's card shows the folder and every file. A
@@ -23,8 +38,7 @@ split by subsystem.
   *Show charts to the model* under Settings → Tools → Python turns that off. Up to
   10 files and 50 MB a call; a file of a name already saved gets a numbered copy
   rather than overwriting the first. `/file list` shows stored files after the
-  attachments, `/file remove` deletes them, and backups include them. A later call
-  cannot read them yet.
+  attachments, `/file remove` deletes them, and backups include them.
 
 - **More packages in the Python sandbox.** `mindfork sandbox setup` now also
   installs sympy (symbolic maths), networkx (graphs), lxml, pyyaml, regex,

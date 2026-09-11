@@ -171,8 +171,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-12, version 0.9.8)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3134 unit tests
-green, 165 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **3155 unit tests
+green, 167 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -184,6 +184,17 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **Files into the Python sandbox — the chat's files reach the code** — a call names
+  them in `files`, by the `#N` `/file list` shows or by name, and each is copied into
+  `/w/in` under a name the pinned block states **before** the code is written; the
+  numbering is one list — attachments, stored files, the chat's images — so `#3` means the
+  same to the user and the model. `/file attach` stops refusing a binary (it is kept with
+  the chat, no attachment made) and keeps a pdf/docx/html original beside its extracted
+  text, the pair one item everywhere. An unknown handle, a shared name or a copy gone from
+  the folder refuses the call **before** it runs, and the confirmation popup states the
+  resolved names, sizes and the network — the compact view drops arrays, so `files` would
+  otherwise be invisible there ([docs/sandbox-file-exchange.md](docs/sandbox-file-exchange.md)
+  §12, spec §9.7, §9.8, §13.2, [docs/journal/tools.md](docs/journal/tools.md)).
 - **Files out of the Python sandbox — a chart reaches the user and the model** —
   `python_exec` gains `/w/out`: once the process exits (any exit code, never after a
   timeout) its regular files are collected under caps, stored in `data/files/<chat-id>/`

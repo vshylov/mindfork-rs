@@ -7,8 +7,8 @@ once the track is done this file moves to `docs/history/`.
 drops the per-chat quota (§9). **Stage 0** (a read-only `site-packages`) merged as
 #518. **Stage 1**, the MVP probe: GO on both families, Qwen 3.6 27B and Gemma 4 31B
 (§10). **Stage 2**, outputs: merged as #520, live GO on Gemma 4 31B (§11).
-**Stage 3**, inputs: sub-decisions recorded (§12), implementation on
-`feat/sandbox-files-in`.
+**Stage 3**, inputs: implemented on `feat/sandbox-files-in`, live GO on
+Gemma 4 31B (§12).
 
 The request: `python_exec` in its Wasmer mode is text in, text out — whatever the
 code writes dies with the call. The user wants (a) **files out** — what the code
@@ -410,7 +410,7 @@ true (AGENTS.md §4).
 - **Stage 3 — inputs** (`feat/sandbox-files-in`): `/w/in` staging, `files`, the
   system-block section, the popup line, binary `/file attach`, sub-agent and
   background routing; sub-decisions in §12. Docs: spec §9.7/§9.8/§13.2, architecture
-  §8, ADR 0005 §3 and §5 amended, CHANGELOG, journal.
+  §8, ADR 0005 §3 and §5 amended, CHANGELOG, journal. **Done**, live GO (§12).
 - **Stage 4 — opening** (`feat/file-open`): `/file open`, `/file folder`,
   `shared/os_open.rs`, the allowlist.
 - **Stage 5 — Local parity** (`feat/sandbox-files-local`).
@@ -717,3 +717,23 @@ because the survey found a decision (D3) resting on something that does not exis
   inputs. Live: an xlsx attached from disk, read with pandas, totals matching; and turn 1
   writing `out/clean.csv`, turn 2 naming it in `files` and using it — D4's persistence,
   end to end.
+
+**Live — GO (2026-09-12)**, Gemma 4 31B q4_0 with its projector on llama.cpp b10807, one
+slot, against the packed sandbox of stage 0. Two smokes, both written so the answer cannot
+arrive through another channel (§10's lesson):
+
+- **`sandbox_inputs_e2e_live`** — turn 1 built an Excel workbook with openpyxl from numbers
+  the prompt defines but tells it not to print, and saved it to `/w/out`: 4.9 KB stored in
+  the chat's folder as `sales.xlsx`. Turn 2 named that workbook in `files`, read the copy in
+  `/w/in` with pandas and printed **4706** — which is Σ(i²·7+13) over twelve months — and
+  the reply carried that number. A workbook rather than a CSV on purpose: its bytes have to
+  survive storing and staging unchanged or openpyxl cannot open them at all. D4's
+  persistence, end to end, in 19 s.
+- **`attached_binary_reaches_the_sandbox_live`** — a generated 512×512 PNG attached from
+  disk was **kept** rather than refused (`StoredFile`, `image/png`, no attachment made:
+  fork F8a's half the model never sees), and a call that named it opened the copy with
+  pillow and printed `(512, 512)`, which the reply repeated. 7 s.
+
+The first smoke also shows the description reads as intended: the model saved to `/w/out`
+in one turn and, a turn later, named the file rather than assuming the sandbox still held
+it.

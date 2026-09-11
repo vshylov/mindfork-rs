@@ -53,6 +53,15 @@ binary resolver `locate_wasmer` (shared by both the runtime and provisioning).
 tool id and its schema (`{ code }`) are mode-independent** — the model sees one
 tool, the implementation can change without changing the protocol.
 
+**Amended (2026-09-12, sandbox file exchange stage 3):** the schema gains an
+optional `files` — the chat's files a call copies into `/w/in`
+([docs/sandbox-file-exchange.md](../sandbox-file-exchange.md) §12 T10) — and it
+is offered **in the Wasmer mode only**. Local runs no job directory until that
+track's stage 5 brings parity, so until then the schema does depend on the mode.
+That is the lesser of the two breaks: a model offered an argument its mode cannot
+honour would name files that never arrive, and find out only from the refusal.
+The id, and the meaning of `code`, are unchanged.
+
 ### 4. Provisioning — `mindfork sandbox setup` from a lock list (auto-download)
 
 A separate clap subcommand (like `backup`) downloads into `data/sandbox/`: the
@@ -85,8 +94,13 @@ cache is warmed on setup (`warmup`), so the first real call is warm.
   with it, holds the script and an empty `out/`, whose regular files are collected
   after the process exits — never through a link, within per-call caps — and stored
   with the chat by the tool ([docs/sandbox-file-exchange.md](../sandbox-file-exchange.md)).
-  Inputs, as copies, arrive with that track's stage 3; until then the schema is still
-  `{ code }`.
+  **Amended again (2026-09-12, stage 3):** the same job directory now also holds
+  `in/`, where the chat's files a call names are **copied** — never linked —
+  before the run. They are the guest's own copies: `wasmer` 7.2.0 has no
+  read-only volume, so one can be overwritten inside the guest and nothing
+  follows from that — the chat's store is untouched, and only `out/` is
+  collected. A name is one plain component, re-checked here whatever produced
+  it, so a bug upstream cannot write outside the directory.
 - **Network**: `--net` is not passed until the user enables
   `python_net_enabled` (a toggle, **on** by default — for requests; but
   enabling the tool itself is a separate opt-in). Without the flag there are
