@@ -750,12 +750,18 @@ The `python_exec` tool works in two modes ("Tools" setting → "Python"):
 
 - **Wasmer sandbox** (default) — code runs isolated in WASIX (no access to the
   machine's files; network is a toggle), with preinstalled packages (numpy,
-  pandas, requests, beautifulsoup4, …). Doesn't need Python on the machine.
+  pandas, sympy, networkx, requests, beautifulsoup4, lxml, feedparser, pyyaml,
+  regex, openpyxl, pypdf, tabulate, pillow, matplotlib). Doesn't need Python on
+  the machine.
 - **Local interpreter** — the system `python`/`python3` (the previous behavior, no
   isolation; the path is configurable).
 
-For the sandbox mode, set it up once (downloads `wasmer` ~206 MB, `python.webc`,
-and packages into `data/sandbox/`; ~300 MB on disk):
+For the sandbox mode, set it up once (downloads `wasmer` ~206 MB, `python.webc`
+and the packages into `data/sandbox/`). Measured on disk after setup: the unpacked
+`wasmer` ~730 MB, `python.webc` 43 MB, the packages ~210 MB with their compiled
+bytecode, and the compilation cache ~420 MB — about 1.4 GB. Running it again on an
+installed sandbox fetches only what is missing, which is how packages a newer
+release adds arrive:
 
 ```bash
 mindfork sandbox setup                    # --force — re-download
