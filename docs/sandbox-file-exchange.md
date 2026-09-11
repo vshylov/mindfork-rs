@@ -5,7 +5,8 @@ once the track is done this file moves to `docs/history/`.
 
 **Status:** forks decided 2026-09-11 — every one as recommended except F10, which
 drops the per-chat quota (§9). **Stage 0** (a read-only `site-packages`) merged as
-#518. **Stage 1** — the MVP probe with its go/no-go — is next (§7).
+#518. **Stage 1**, the MVP probe: GO on Qwen 3.6 27B (§10); the Gemma 4 31B arm is
+still to run.
 
 The request: `python_exec` in its Wasmer mode is text in, text out — whatever the
 code writes dies with the call. The user wants (a) **files out** — what the code
@@ -389,13 +390,14 @@ true (AGENTS.md §4).
   images into `ToolOutcome.images`, bytes into a per-chat folder, the result
   listing, `files` staging from attachments, matplotlib named. **Go/no-go**, 5 runs
   per live-gate family (Qwen 3.6 27B, Gemma 4 31B, each with its vision projector)
-  of "`sales.csv` is attached: chart it, then tell me which month is highest and
-  what the chart's title says": (1) a valid PNG lands in the folder; (2) the reply
-  names the right month and quotes the title the code set — scored where the
-  server has a vision projector; (3) the call named `sales.csv` in `files` unaided.
-  **Go at ≥3/5 on each applicable criterion.** No-go on (3) alone → F7 becomes (c),
-  rerun; on (2) with a seeing model → images to the model deferred, files still
-  ship; on (1) → redesign the output contract first.
+  of "`sales.csv` is attached: chart the monthly totals and tell me which month is
+  highest": (1) a valid PNG lands in the folder; (2) the model sees the chart — as
+  drafted, "names the right month and quotes the title the code set", which measured
+  nothing (§10), replaced by a plotting-area colour only the image carries, against a
+  blind arm; (3) the call named `sales.csv` in `files` unaided. **Go at ≥3/5 on each
+  criterion.** No-go on (3) alone → F7 becomes (c), rerun; on (2) with a seeing model
+  → images to the model deferred, files still ship; on (1) → redesign the output
+  contract first. **Qwen 3.6 27B: GO (§10); Gemma 4 31B: to run.**
 - **Stage 2 — outputs** (`feat/sandbox-files-out`): `ChatFile`/`Chat.files`, the
   store (naming, write, sweep), `AddChatFile` apply + mirror, the job contract and
   collection, images with `tools.python_images`, the shared cap and the vision gate
@@ -442,3 +444,58 @@ Every stage: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
 | F11 | Local mode | (b) parity, last stage |
 | F12 | Sub-agents/background | parent's store; foreground contract in background runs |
 | F13 | Popup | (b) resolved names and sizes + network state |
+
+## 10. Stage 1 — the probe (2026-09-11)
+
+Branch `spike/sandbox-files-probe` (throwaway, pushed for reference): `python_exec`
+takes `files` (chat attachments copied into `/w/in`), collects regular files from
+`/w/out` into `data/files/<chat-id>/` with `name (N).ext` versioning, and returns
+PNG/JPEG outputs as tool images. `sandbox_files_probe_e2e_live` drives the scenario
+through the real orchestrator and a live model; `MINDFORK_PROBE_NO_IMAGES` withholds
+the image — the blind control arm.
+
+**Setup.** Qwen 3.6 27B Q4_K_M with its vision projector (`/props` `vision: true`),
+llama.cpp b10807, `-np 4 -c 16384`; the packed sandbox of stage 0; `sales.csv`, two
+years of daily sales (10 976 bytes), attached **by reference**, so no number is in the
+prompt, with a different month lifted to the highest total each run; tools
+`python_exec`, `attachment_read`, `attachment_search`; network off; `max_tokens` 4096.
+
+**v1 — criterion (2) as drafted measured nothing.** Every batch stored its PNG and
+named `sales.csv` unaided, and the blind arm named the right month as often as the
+seeing one. The raw trials say why: every run's code computed and printed the peak
+month ("to answer accurately"), although the request asked it not to, so the answer
+was on stdout for both arms. The draft's other half of (2), quoting the chart's title,
+could not have done better — the title is in the model's own code. And the blind
+replies said "Looking at the chart…" about a chart they were never shown.
+
+**v2 — a property only the image carries.** The probe appends `axes.facecolor: yellow`
+to the run's `matplotlibrc` and, after the chart turn, asks with no tools: "what colour
+is the background of the plotting area in the chart you just made?" Neither the code nor
+its output names the colour; a run whose code set a face colour or a style is flagged.
+
+| Batch (5 runs) | (1) PNG stored | (3) named `sales.csv` | (2, v1) month in the reply | (2, v2) plotting-area colour |
+|---|---|---|---|---|
+| v1, image shown | 5/5 | 5/5 | 5/5 | — |
+| v1, blind | 5/5 | 5/5 | 5/5 | — |
+| v2, image shown | 5/5 | 5/5 | 5/5 | **4/5**, the fifth flagged |
+| v2, blind | 5/5 | 5/5 | 5/5 | **0/5** |
+
+- **The flagged run is the feature working.** Its first chart came out with hairline
+  bars (a datetime x-axis at the default bar width) on the yellow background; the model
+  looked, rewrote the chart with a real bar width and an explicit white background, and
+  the second PNG was stored beside the first as `sales_by_month (2).png`. "White" was the
+  right answer about the chart it ended with. Both PNGs were inspected by eye, as were
+  the yellow ones of the other runs.
+- **Blind, the model does not say that it cannot see.** Three answered "white", one
+  "based on the code… white (default matplotlib setting)", one came back empty (the
+  stack's known Qwen flake). With v1's "Looking at the chart" this is a requirement for
+  stage 2: when an image is not shown — the switch off, a model without vision — the
+  result has to say so in words (lessons §4), or the model describes a chart it has not
+  seen.
+- **Naming the file was never the difficulty** with a by-reference file — 20 of 20 —
+  so F7(b) stands. A small file attached inline, whose numbers a model could paste into
+  its code instead, was not tried.
+- Time: 2.6 and 2.7 minutes for the v1 batches, 6.9 and 4.4 for v2's two turns a run.
+
+**Verdict for this family: GO** on (1), (2) and (3). **Gemma 4 31B**, the second family
+(§7), is still to run.
