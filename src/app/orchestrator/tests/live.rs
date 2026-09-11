@@ -2478,6 +2478,7 @@ async fn tool_confirmation_e2e_live() {
             call_id,
             name,
             arguments,
+            ..
         } => (generation_id, call_id, name, arguments),
         _ => unreachable!(),
     };

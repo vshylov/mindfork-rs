@@ -666,12 +666,14 @@ impl ChatScreen {
         call_id: String,
         name: String,
         arguments: String,
+        inputs: Option<crate::features::chat_inputs::ConfirmInputs>,
     ) {
         self.tool_confirm = Some(ToolConfirm {
             generation_id,
             call_id,
             name,
             arguments,
+            inputs,
         });
     }
 }

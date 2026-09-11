@@ -879,6 +879,7 @@ fn with_tool_confirm() -> (ChatScreen, Uuid) {
         TOOL_CALL_ID.into(),
         "python_exec".into(),
         r#"{"code":"print(1)"}"#.into(),
+        None,
     );
     (s, id)
 }
@@ -1005,6 +1006,7 @@ fn tool_confirm_popup_shows_the_call_as_code_with_the_three_options() {
         TOOL_CALL_ID.into(),
         "python_exec".into(),
         r#"{"code": "print(1)\nprint(2)"}"#.into(),
+        None,
     );
     let mut term = Terminal::new(TestBackend::new(90, 20)).unwrap();
     term.draw(|f| s.render(f)).unwrap();
@@ -1906,6 +1908,7 @@ fn attachment_chip_shows_count_and_standing_cost() {
             est_tokens: 1200,
             prompt_tokens: 1200,
             mode: AttachMode::Inline,
+            has_original: false,
         },
         // A by-reference file contributes only its excerpt, so it must not be
         // counted at full weight in the standing cost.
@@ -1917,6 +1920,7 @@ fn attachment_chip_shows_count_and_standing_cost() {
             // Only the excerpt is actually re-sent every turn.
             prompt_tokens: 300,
             mode: AttachMode::ByReference,
+            has_original: false,
         },
     ]);
     let hint = s.attachments_hint().expect("a chip with attachments");
@@ -1937,6 +1941,7 @@ fn file_list_note_numbers_items_for_removal() {
     let mut s = ChatScreen::new();
     s.set_file_progress(FileProgress::Listed {
         stored: Vec::new(),
+        images: Vec::new(),
         dir: String::new(),
         items: vec![AttachmentInfo {
             name: "notes.md".into(),
@@ -1945,6 +1950,7 @@ fn file_list_note_numbers_items_for_removal() {
             est_tokens: 400,
             prompt_tokens: 400,
             mode: AttachMode::Inline,
+            has_original: false,
         }],
     });
     let note = s
@@ -1995,9 +2001,11 @@ fn a_shared_file_name_is_told_apart_by_its_source() {
         est_tokens: 4,
         prompt_tokens: 4,
         mode: AttachMode::Inline,
+        has_original: false,
     };
     let list = note(FileProgress::Listed {
         stored: Vec::new(),
+        images: Vec::new(),
         dir: String::new(),
         items: vec![
             info("notes.md", "D:\\a\\notes.md"),

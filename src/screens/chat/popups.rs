@@ -365,6 +365,39 @@ pub(super) fn render_tool_confirm(
         )),
         Line::from(Span::styled(header, Style::new().fg(palette.accent))),
     ];
+    // What this call would hand the sandbox, and whether it can reach the network — the
+    // two halves of what is being consented to (docs/sandbox-file-exchange.md §12 T6).
+    // The compact view above drops array arguments, so `files` is invisible without this.
+    if let Some(inputs) = &pending.inputs {
+        let files: Vec<String> = inputs
+            .files
+            .iter()
+            .map(|f| match &f.resolved {
+                Some((name, bytes)) => format!(
+                    "{name} ({})",
+                    crate::entities::attachment::format_bytes(*bytes as usize)
+                ),
+                None => loc.tf("ui.confirm.tool.file_unknown", &[("handle", &f.handle)]),
+            })
+            .collect();
+        let net = if inputs.net {
+            loc.t("ui.confirm.tool.net_on")
+        } else {
+            loc.t("ui.confirm.tool.net_off")
+        };
+        let line = if files.is_empty() {
+            net.to_string()
+        } else {
+            loc.tf(
+                "ui.confirm.tool.inputs",
+                &[("files", &files.join(", ")), ("net", net)],
+            )
+        };
+        body.push(Line::from(Span::styled(
+            line,
+            Style::new().fg(palette.text),
+        )));
+    }
     for block in &shown.args {
         let text = match block {
             ToolBlock::Code { text, .. } | ToolBlock::Plain(text) | ToolBlock::Markdown(text) => {

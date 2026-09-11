@@ -764,6 +764,12 @@ pub enum AppEvent {
         call_id: String,
         name: String,
         arguments: String,
+        /// For a `python_exec` call: the chat's files it would copy into the sandbox,
+        /// already resolved, and whether the sandbox has the network
+        /// (docs/sandbox-file-exchange.md §12 T6). The popup's compact view of the
+        /// arguments drops arrays, so without this the argument that decides what leaves
+        /// the chat would not be shown at all. `None` for every other tool.
+        inputs: Option<crate::features::chat_inputs::ConfirmInputs>,
     },
     /// A tool call is about to execute (spec §11.3): the feed draws its card
     /// at once, marked *running*, so a long call — a sub-agent run, a build, a

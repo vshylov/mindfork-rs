@@ -7,6 +7,7 @@
 pub mod backup;
 pub mod chat_export;
 pub mod chat_files;
+pub mod chat_inputs;
 pub mod chat_links;
 pub mod chat_search;
 pub mod chat_search_sort;

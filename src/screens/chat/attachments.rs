@@ -51,6 +51,27 @@ impl ChatScreen {
                 let msg = self.loc.tf("ui.file.removed_stored", &[("name", &name)]);
                 self.push_note(&msg);
             }
+            FileProgress::StoredFile {
+                name,
+                bytes,
+                mime,
+                dir,
+            } => {
+                let msg = self.loc.tf(
+                    "ui.file.attached_stored",
+                    &[
+                        ("name", &name),
+                        ("size", &format_bytes(bytes as usize)),
+                        ("mime", &mime),
+                        ("dir", &dir),
+                    ],
+                );
+                self.push_note(&msg);
+            }
+            FileProgress::RemovedPair { name } => {
+                let msg = self.loc.tf("ui.file.removed_pair", &[("name", &name)]);
+                self.push_note(&msg);
+            }
             FileProgress::Saved { names, dir } => {
                 let msg = self.loc.tf(
                     "ui.file.saved",
@@ -58,8 +79,13 @@ impl ChatScreen {
                 );
                 self.push_note(&msg);
             }
-            FileProgress::Listed { items, stored, dir } => {
-                let text = format_file_list(&items, &stored, &dir, self.loc);
+            FileProgress::Listed {
+                items,
+                stored,
+                images,
+                dir,
+            } => {
+                let text = format_file_list(&items, &stored, &images, &dir, self.loc);
                 self.push_note(&text);
             }
             FileProgress::Indexing { name, done, total } => {
@@ -141,10 +167,11 @@ pub(super) fn format_tokens(tokens: usize) -> String {
 pub(super) fn format_file_list(
     items: &[AttachmentInfo],
     stored: &[StoredInfo],
+    images: &[crate::entities::message_image::ImageInfo],
     dir: &str,
     loc: &'static Locale,
 ) -> String {
-    if stored.is_empty() {
+    if stored.is_empty() && images.is_empty() {
         return format_attachments(items, loc);
     }
     let mut out = if items.is_empty() {
@@ -152,29 +179,54 @@ pub(super) fn format_file_list(
     } else {
         format!("{}\n", format_attachments(items, loc))
     };
-    let total: u64 = stored.iter().map(|f| f.bytes).sum();
-    out.push_str(&loc.tf(
-        "ui.file.stored_header",
-        &[
-            ("n", &stored.len().to_string()),
-            ("size", &format_bytes(total as usize)),
-            ("dir", dir),
-        ],
-    ));
-    for (i, file) in stored.iter().enumerate() {
-        let n = (items.len() + i + 1).to_string();
-        let size = format_bytes(file.bytes as usize);
+    if !stored.is_empty() {
+        let total: u64 = stored.iter().map(|f| f.bytes).sum();
         out.push_str(&loc.tf(
-            "ui.file.stored_item",
+            "ui.file.stored_header",
             &[
-                ("i", &n),
-                ("name", &file.name),
-                ("size", &size),
-                ("mime", &file.mime),
+                ("n", &stored.len().to_string()),
+                ("size", &format_bytes(total as usize)),
+                ("dir", dir),
             ],
         ));
-        if file.missing {
-            out.push_str(loc.t("ui.file.stored_missing"));
+        for (i, file) in stored.iter().enumerate() {
+            let n = (items.len() + i + 1).to_string();
+            let size = format_bytes(file.bytes as usize);
+            out.push_str(&loc.tf(
+                "ui.file.stored_item",
+                &[
+                    ("i", &n),
+                    ("name", &file.name),
+                    ("size", &size),
+                    ("mime", &file.mime),
+                ],
+            ));
+            if file.missing {
+                out.push_str(loc.t("ui.file.stored_missing"));
+            }
+        }
+    }
+    // The images the conversation carries, numbered on from the rest: the code can read
+    // one by that `#N` (docs/sandbox-file-exchange.md §12 T4), so the user sees the same
+    // handles the model does.
+    if !images.is_empty() {
+        if !out.is_empty() && !out.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push_str(&loc.tf("ui.file.images_header", &[("n", &images.len().to_string())]));
+        for (i, image) in images.iter().enumerate() {
+            let n = (items.len() + stored.len() + i + 1).to_string();
+            let size = format_bytes(image.bytes);
+            out.push_str(&loc.tf(
+                "ui.file.image_item",
+                &[
+                    ("i", &n),
+                    ("name", &image.name),
+                    ("size", &size),
+                    ("w", &image.width.to_string()),
+                    ("h", &image.height.to_string()),
+                ],
+            ));
         }
     }
     out
@@ -215,6 +267,11 @@ pub(super) fn format_attachments(items: &[AttachmentInfo], loc: &'static Locale)
                 "ui.file.list_item"
             };
         out.push_str(&loc.tf(key, &args));
+        // The chat also keeps this file's original bytes (F8a) — the half `python_exec`
+        // reads, and the half a removal deletes from disk.
+        if a.has_original {
+            out.push_str(loc.t("ui.file.list_item_original"));
+        }
     }
     out
 }
@@ -234,6 +291,7 @@ mod stored_list_tests {
             est_tokens: 3,
             prompt_tokens: 3,
             mode: AttachMode::Inline,
+            has_original: false,
         }];
         let stored = vec![
             StoredInfo {
@@ -249,7 +307,7 @@ mod stored_list_tests {
                 missing: true,
             },
         ];
-        let text = format_file_list(&items, &stored, "/data/files/c1", loc);
+        let text = format_file_list(&items, &stored, &[], "/data/files/c1", loc);
         assert!(text.contains("#1 notes.md"), "{text}");
         assert!(
             text.contains("Stored files: 2, 2.0 KB — /data/files/c1"),
@@ -261,11 +319,56 @@ mod stored_list_tests {
             "{text}"
         );
         // Stored files alone: no attachments header, and not "nothing attached".
-        let alone = format_file_list(&[], &stored[..1], "/d", loc);
+        let alone = format_file_list(&[], &stored[..1], &[], "/d", loc);
         assert!(alone.starts_with("Stored files: 1"), "{alone}");
         assert_eq!(
-            format_file_list(&[], &[], "/d", loc),
+            format_file_list(&[], &[], &[], "/d", loc),
             loc.t("ui.file.list_empty")
         );
+    }
+
+    /// The images the conversation carries are numbered on from the rest — the same `#N`
+    /// the code names in `files` — and an attachment whose original the chat kept says so
+    /// (docs/sandbox-file-exchange.md §12 T2, T4, T9).
+    #[test]
+    fn images_are_numbered_after_the_files_and_a_kept_original_is_marked() {
+        let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::En);
+        let items = vec![AttachmentInfo {
+            name: "report.pdf".into(),
+            source: "C:\\report.pdf".into(),
+            bytes: 1024,
+            est_tokens: 100,
+            prompt_tokens: 100,
+            mode: AttachMode::ByReference,
+            has_original: true,
+        }];
+        let stored = vec![StoredInfo {
+            name: "chart.png".into(),
+            bytes: 2048,
+            mime: "image/png".into(),
+            missing: false,
+        }];
+        let images = vec![crate::entities::message_image::ImageInfo {
+            name: "shot.png".into(),
+            source: "C:\\shot.png".into(),
+            mime: "image/png".into(),
+            width: 800,
+            height: 600,
+            bytes: 4096,
+            est_tokens: 600,
+        }];
+        let text = format_file_list(&items, &stored, &images, "/d", loc);
+        assert!(text.contains("#1 report.pdf"), "{text}");
+        assert!(
+            text.contains("the original is kept with the chat"),
+            "{text}"
+        );
+        assert!(text.contains("#2 chart.png"), "{text}");
+        assert!(text.contains("Images in this chat: 1"), "{text}");
+        assert!(text.contains("#3 shot.png — 4.0 KB, 800×600"), "{text}");
+        // Images with nothing attached or stored: the tail is the whole list.
+        let alone = format_file_list(&[], &[], &images, "/d", loc);
+        assert!(alone.starts_with("Images in this chat: 1"), "{alone}");
+        assert!(alone.contains("#1 shot.png"), "{alone}");
     }
 }

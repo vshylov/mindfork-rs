@@ -32,6 +32,9 @@ fn request_of(chat: &Chat, compaction: &CompactionSettings, history_tools: bool)
             attachments: &AttachmentSettings::default(),
             compaction,
             indexed: NO_INDEX,
+            // The chat-files block has its own tests below; the shared helper builds
+            // requests for a turn that stages nothing.
+            files: &[],
             history_tools,
             // The workspace block has its own tests below; this shared helper
             // builds requests for chats with no project, where the list is moot.

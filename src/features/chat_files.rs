@@ -34,6 +34,19 @@ pub enum Stored {
 /// with `create_new`, so an existing one is never overwritten whatever raced, and synced
 /// before the listing is returned: the listing must not name bytes a crash could lose.
 pub fn store(dir: &Path, listed: &[ChatFile], name: &str, content: &[u8]) -> io::Result<Stored> {
+    store_as(dir, listed, name, content, FileOrigin::Sandbox)
+}
+
+/// [`store`], for a file that is not a call's output: `/file attach` keeping the user's
+/// own bytes beside the extracted text ([`FileOrigin::Attached`], fork F8a). The writing
+/// is the same in every respect — the origin is only what the listing records.
+pub fn store_as(
+    dir: &Path,
+    listed: &[ChatFile],
+    name: &str,
+    content: &[u8],
+    origin: FileOrigin,
+) -> io::Result<Stored> {
     confined(dir, name)?;
     std::fs::create_dir_all(dir)?;
     let sha256 = sha256_hex(content);
@@ -68,7 +81,7 @@ pub fn store(dir: &Path, listed: &[ChatFile], name: &str, content: &[u8]) -> io:
             id: uuid::Uuid::new_v4(),
             mime: mime_for(&candidate, content).to_string(),
             name: candidate,
-            origin: FileOrigin::Sandbox,
+            origin,
             bytes: content.len() as u64,
             sha256,
             added_at: chrono::Utc::now(),

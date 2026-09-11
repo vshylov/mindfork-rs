@@ -589,29 +589,26 @@ pub(super) fn read_source_text(
         )?));
     }
     let file = rag_ingest::read_text(path, hint)?;
-    let encoding = (file.encoding != encoding_rs::UTF_8).then_some(file.encoding);
     let text = if rag_ingest::is_html(path) {
         crate::features::tools::web::extract_readable(&file.text, usize::MAX)
     } else {
         file.text
     };
-    Ok(SourceText { text, encoding })
+    Ok(SourceText { text })
 }
 
-/// A source's text, and the encoding it was read in when that was not UTF-8 — what an
-/// attachment's feed note names (docs/research/local-file-encoding.md F4b).
+/// A source's text, for indexing. The encoding it was read in is **not** kept here: the
+/// one caller that names it — `/file attach`, whose note says when a file was not UTF-8 —
+/// reads the file itself, because it also has to keep the bytes (fork F8a,
+/// docs/sandbox-file-exchange.md §12 T9).
 pub(super) struct SourceText {
     pub(super) text: String,
-    pub(super) encoding: Option<&'static encoding_rs::Encoding>,
 }
 
 impl SourceText {
-    /// Text an extractor produced (PDF, DOCX): no encoding of the file's own to name.
+    /// Text an extractor produced (PDF, DOCX).
     fn extracted(text: String) -> Self {
-        Self {
-            text,
-            encoding: None,
-        }
+        Self { text }
     }
 }
 

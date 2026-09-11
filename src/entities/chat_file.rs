@@ -28,6 +28,10 @@ pub enum FileOrigin {
     /// Found in the chat's folder at startup with no listing — a file a call wrote whose
     /// chat was not saved before the app stopped. Adopted, never deleted (§11 S6).
     Recovered,
+    /// The user's own file, kept by `/file attach` because its text is not the file: a
+    /// binary, or the original of a document whose extracted text became an attachment
+    /// (fork F8a, §12 T9). Our copy — removing it never touches the user's original.
+    Attached,
 }
 
 /// A file stored with a chat.
@@ -63,12 +67,6 @@ impl ChatFile {
             sha256: sha256_hex(content),
             added_at: Utc::now(),
         }
-    }
-
-    /// Whether a `/file remove` target names this file (case-insensitively, as names are
-    /// unique).
-    pub fn matches(&self, target: &str) -> bool {
-        same_name(&self.name, target)
     }
 }
 
@@ -376,7 +374,18 @@ mod tests {
         assert!(json.contains("\"origin\":\"sandbox\""), "{json}");
         let back: ChatFile = serde_json::from_str(&json).unwrap();
         assert_eq!(back, file);
-        assert!(file.matches("CHART.png"));
-        assert!(!file.matches("chart"));
+        // A handle reaches a stored file by name, case-insensitively — the rule
+        // `features::chat_inputs` resolves handles by, and the store versions names by.
+        assert!(same_name(&file.name, "CHART.png"));
+        assert!(!same_name(&file.name, "chart"));
+        // The origin a file `/file attach` kept is additive, and reads back as itself
+        // (ADR 0006 F12, docs/sandbox-file-exchange.md §12 T9).
+        let attached = ChatFile::new("report.pdf", FileOrigin::Attached, b"%PDF-1.7\n");
+        let json = serde_json::to_string(&attached).unwrap();
+        assert!(json.contains("\"origin\":\"attached\""), "{json}");
+        assert_eq!(
+            serde_json::from_str::<ChatFile>(&json).unwrap().origin,
+            FileOrigin::Attached
+        );
     }
 }

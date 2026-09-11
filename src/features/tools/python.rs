@@ -23,8 +23,8 @@ use crate::features::chat_files::{self, Stored};
 use crate::shared::config::{MAX_TOOL_RESULT_IMAGES, PythonMode};
 use crate::shared::i18n::Locale;
 use crate::shared::sandbox::{
-    OutputFile, OutputLimits, SandboxAvailability, SandboxOutput, SandboxRunner, SkipReason,
-    SkippedOutput,
+    OutputFile, OutputLimits, SandboxAvailability, SandboxInput, SandboxJob, SandboxOutput,
+    SandboxRunner, SkipReason, SkippedOutput,
 };
 
 use super::{ChatEffect, Tool, ToolContext, ToolImage, ToolOutcome};
@@ -137,16 +137,23 @@ impl PythonExec {
     /// Wasmer sandbox mode: the console output, and what the code left in `/w/out` kept in
     /// the chat's folder (docs/sandbox-file-exchange.md §11 S5–S9). The result is in the
     /// profile's language (`ctx.loc`).
-    async fn run_wasmer(&self, code: &str, ctx: &ToolContext) -> ToolOutcome {
+    async fn run_wasmer(&self, code: &str, handles: &[String], ctx: &ToolContext) -> ToolOutcome {
         let loc = ctx.loc;
         if let SandboxAvailability::Missing(why) = self.sandbox.availability(loc) {
             return ToolOutcome::text(
                 loc.tf("tool.python_exec.err.sandbox_missing", &[("why", &why)]),
             );
         }
+        let inputs = match self.stage(handles, ctx) {
+            Ok(inputs) => inputs,
+            Err(refusal) => return ToolOutcome::text(refusal),
+        };
         let out = match self
             .sandbox
-            .run(code, self.net, self.wasm_timeout, loc)
+            .run(
+                SandboxJob::new(code, self.net, self.wasm_timeout).with_inputs(&inputs),
+                loc,
+            )
             .await
         {
             Ok(out) => out,
@@ -188,6 +195,97 @@ impl PythonExec {
             }
         };
         ToolOutcome::with_effects(result, kept.effects).with_images(kept.images)
+    }
+
+    /// Resolves the files a call named against the chat's one numbered list
+    /// (docs/sandbox-file-exchange.md §12 T2) and turns them into copies for `/w/in`.
+    ///
+    /// `Err` is the refusal the model gets **instead of a run**: an unknown handle, a name
+    /// several files share, a listed file whose copy is gone. Nothing is staged and
+    /// nothing is executed, so a script cannot answer confidently from three of the four
+    /// files it asked for (§12 T7, lessons §4). A handle named twice is staged once.
+    fn stage(&self, handles: &[String], ctx: &ToolContext) -> Result<Vec<SandboxInput>, String> {
+        use crate::entities::attachment::Resolved;
+        use crate::features::chat_inputs;
+
+        if handles.is_empty() {
+            return Ok(Vec::new());
+        }
+        let loc = ctx.loc;
+        let dir = ctx.files_dir.clone().unwrap_or_default();
+        let items = chat_inputs::items(
+            &ctx.attachments,
+            &ctx.files,
+            &ctx.images.iter().collect::<Vec<_>>(),
+            &dir,
+        );
+        let mut inputs = Vec::new();
+        let mut taken: Vec<usize> = Vec::new();
+        for handle in handles {
+            let at = match chat_inputs::resolve(&items, handle) {
+                Resolved::One(at) => at,
+                Resolved::Shared(hits) => {
+                    let candidates = hits
+                        .iter()
+                        .map(|&i| format!("\n• #{} {} — {}", i + 1, items[i].name, items[i].source))
+                        .collect::<String>();
+                    return Err(loc.tf(
+                        "tool.python_exec.err.files_shared",
+                        &[("handle", handle.trim()), ("candidates", &candidates)],
+                    ));
+                }
+                Resolved::Nothing => {
+                    return Err(loc.tf(
+                        "tool.python_exec.err.files_unknown",
+                        &[("handle", handle.trim()), ("files", &known_files(&items))],
+                    ));
+                }
+            };
+            if taken.contains(&at) {
+                continue; // named twice — one copy, one name in `/w/in`
+            }
+            taken.push(at);
+            inputs.push(self.input_for(&items[at], ctx)?);
+        }
+        Ok(inputs)
+    }
+
+    /// One resolved item as a copy for `/w/in`: a file from the chat's folder is copied
+    /// without being read here, while an attachment's text and an image's pixels are bytes
+    /// the context already holds (§12 T12).
+    fn input_for(
+        &self,
+        item: &crate::features::chat_inputs::ChatInput,
+        ctx: &ToolContext,
+    ) -> Result<SandboxInput, String> {
+        let loc = ctx.loc;
+        if let Some(name) = &item.file {
+            let Some(dir) = &ctx.files_dir else {
+                return Err(loc.t("tool.python_exec.err.files_no_folder").to_string());
+            };
+            let path = dir.join(name);
+            if !path.is_file() {
+                return Err(loc.tf("tool.python_exec.err.files_missing", &[("name", name)]));
+            }
+            return Ok(SandboxInput::path(item.staged.clone(), path));
+        }
+        if let Some(at) = item.attachment {
+            let text = ctx.attachments[at].text.clone();
+            return Ok(SandboxInput::bytes(item.staged.clone(), text.into_bytes()));
+        }
+        let at = item
+            .image
+            .expect("an item is a file, an attachment or an image");
+        use base64::Engine as _;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(&ctx.images[at].data)
+            .map_err(|_| {
+                loc.tf(
+                    "tool.python_exec.err.files_missing",
+                    &[("name", &item.name)],
+                )
+            })?;
+        Ok(SandboxInput::bytes(item.staged.clone(), bytes))
     }
 
     /// Stores what the call left in `/w/out` in the chat's folder and says what became of
@@ -350,16 +448,28 @@ impl Tool for PythonExec {
                     ],
                 );
                 format!(
-                    "{} {files}",
-                    loc.tf("tool.python_exec.desc.wasmer", &[("net", net)])
+                    "{} {} {files}",
+                    loc.tf("tool.python_exec.desc.wasmer", &[("net", net)]),
+                    loc.t("tool.python_exec.desc.inputs"),
                 )
             }
         }
     }
-    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
+    /// `files` exists in Wasmer mode only: Local runs no job directory until stage 5's
+    /// parity (F11), and an argument the mode cannot honour is worse than none
+    /// (docs/sandbox-file-exchange.md §12 T10; ADR 0005 §3 records the divergence).
+    fn parameters(&self, loc: &crate::shared::i18n::Locale) -> serde_json::Value {
+        let mut properties = serde_json::json!({"code": {"type": "string"}});
+        if matches!(self.mode, PythonMode::Wasmer) {
+            properties["files"] = serde_json::json!({
+                "type": "array",
+                "items": {"type": "string"},
+                "description": loc.t("tool.python_exec.param.files"),
+            });
+        }
         serde_json::json!({
             "type": "object",
-            "properties": {"code": {"type": "string"}},
+            "properties": properties,
             "required": ["code"]
         })
     }
@@ -371,9 +481,23 @@ impl Tool for PythonExec {
             .ok_or_else(|| anyhow::anyhow!(ctx.loc.t("tool.python_exec.err.code_empty")))?
             .to_string();
 
+        // The chat's files this call wants in `/w/in` (§12 T2): names or `#N`, as the
+        // chat's file list numbers them.
+        let files: Vec<String> = args
+            .get("files")
+            .and_then(|v| v.as_array())
+            .map(|named| {
+                named
+                    .iter()
+                    .filter_map(|f| f.as_str().map(str::to_string))
+                    .filter(|f| !f.trim().is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
+
         Ok(match self.mode {
             PythonMode::Local => ToolOutcome::text(self.run_local(&code, ctx.loc).await),
-            PythonMode::Wasmer => self.run_wasmer(&code, ctx).await,
+            PythonMode::Wasmer => self.run_wasmer(&code, &files, ctx).await,
         })
     }
 }
@@ -455,6 +579,26 @@ fn skipped_line(loc: &Locale, skipped: &SkippedOutput) -> String {
         skipped.name.clone()
     };
     skipped_with(loc, &name, &reason)
+}
+
+/// What this chat *does* have, listed for a handle that reached nothing: `#N`, the name
+/// and the size, so the model can name one of them instead of guessing again (lessons §4).
+/// Data, not prose — the numbering is the same one `/file list` shows the user.
+fn known_files(items: &[crate::features::chat_inputs::ChatInput]) -> String {
+    if items.is_empty() {
+        return String::new();
+    }
+    items
+        .iter()
+        .map(|i| {
+            format!(
+                "\n• #{} {} ({})",
+                i.handle,
+                i.name,
+                format_bytes(i.bytes as usize)
+            )
+        })
+        .collect()
 }
 
 /// One `not kept` entry.

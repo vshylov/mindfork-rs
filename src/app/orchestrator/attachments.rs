@@ -26,7 +26,7 @@ use crate::entities::attachment::{
     name_is_shared, prompt_tokens,
 };
 use crate::entities::chat_file::ChatFile;
-use crate::features::file_command::{FileProgress, StoredInfo, resolve_target};
+use crate::features::file_command::{FileProgress, StoredInfo};
 use crate::features::tools::rag::ChunkParams;
 use crate::shared::api::{EmbedRole, Embedder};
 use crate::shared::i18n::Locale;
@@ -58,6 +58,11 @@ pub(super) struct ExtractedFile {
     pub(super) bytes: usize,
     /// The encoding the file was read in, when it was not UTF-8 (the feed note names it).
     pub(super) encoding: Option<&'static encoding_rs::Encoding>,
+    /// The file's own bytes, kept when its text is **not** the file (fork F8a,
+    /// docs/sandbox-file-exchange.md §12 T9): a document an extractor read, or a binary
+    /// that decodes as nothing and has no text at all. `None` for plain text, which needs
+    /// no second copy — the snapshot is the file.
+    pub(super) original: Option<Vec<u8>>,
 }
 
 impl Orchestrator {
@@ -92,7 +97,42 @@ impl Orchestrator {
                 return;
             }
         };
+        // The user's own bytes, when the text is not the file (fork F8a): kept **first**,
+        // so an attachment that links them never names a file that is not on disk.
+        let stored = match &file.original {
+            Some(bytes) => match self.store_original(res.chat_id, &file.name, bytes) {
+                Ok(stored) => Some(stored),
+                Err(msg) => {
+                    self.fail_file(&msg);
+                    return;
+                }
+            },
+            None => None,
+        };
+        // A binary decodes as no text at all, so there is no attachment to make: the chat
+        // keeps the file and the note says what reads it (docs/lessons.md §4). This is the
+        // refusal D3 asked to lift — a workbook now reaches the code.
+        if file.text.trim().is_empty() {
+            if let Some(stored) = stored {
+                let dir = self.stored_files_dir(res.chat_id).display().to_string();
+                self.emit_file_progress(FileProgress::StoredFile {
+                    name: stored.name,
+                    bytes: stored.bytes,
+                    mime: stored.mime,
+                    dir,
+                });
+            }
+            return;
+        }
         let cfg = self.config.attachments;
+        // What the attachment being replaced kept, if anything: dropped only **after** the
+        // new one is listed, so no state exists in which neither is there (§12 T9).
+        let previous = self
+            .chats
+            .iter()
+            .find(|c| c.id == res.chat_id)
+            .and_then(|c| c.attachments.iter().find(|a| a.source == file.source))
+            .and_then(|a| a.file_id);
         let Some(chat) = self.chat_mut(res.chat_id) else {
             return; // the chat is gone (deleted while reading)
         };
@@ -106,8 +146,87 @@ impl Orchestrator {
         // by reference. Attaching never fails on size (docs/file-attachments.md §4.2).
         let mode = decide_mode(est, used, &cfg);
         let read_as = file.encoding.map(encoding_rs::Encoding::name);
-        let attachment = Attachment::new(file.name, file.source, file.text, file.bytes, mode);
+        let mut attachment = Attachment::new(file.name, file.source, file.text, file.bytes, mode);
+        if let Some(stored) = &stored {
+            attachment = attachment.with_file(stored.id);
+        }
         self.insert_attachment(res.chat_id, attachment, read_as);
+        // The copy the replaced attachment kept — unless the new one is that very file,
+        // which `store` reports as unchanged and nothing has to move.
+        if let Some(old) = previous.filter(|old| stored.as_ref().is_none_or(|s| s.id != *old)) {
+            self.drop_original(res.chat_id, old);
+        }
+    }
+
+    /// Keeps the user's own file with the chat (fork F8a): a sanitized name, versioned on
+    /// a collision, listed like a call's output. The same bytes under the same name are
+    /// kept once, so re-attaching an unchanged file moves nothing.
+    fn store_original(
+        &mut self,
+        chat_id: Uuid,
+        name: &str,
+        bytes: &[u8],
+    ) -> Result<ChatFile, String> {
+        use crate::features::chat_files::Stored;
+
+        let loc = self.ui_locale();
+        let dir = self.stored_files_dir(chat_id);
+        let listed: Vec<ChatFile> = self
+            .chats
+            .iter()
+            .find(|c| c.id == chat_id)
+            .map(|c| c.files.clone())
+            .unwrap_or_default();
+        // A real file name survives sanitizing; the fallback is for what no path should
+        // produce, and gives the file a name code can open rather than a refusal.
+        let name =
+            crate::entities::chat_file::sanitize_name(name).unwrap_or_else(|| "file".to_string());
+        let stored = crate::features::chat_files::store_as(
+            &dir,
+            &listed,
+            &name,
+            bytes,
+            crate::entities::chat_file::FileOrigin::Attached,
+        )
+        .map_err(|e| {
+            loc.tf(
+                "ui.err.file_store_failed",
+                &[("name", &name), ("err", &e.to_string())],
+            )
+        })?;
+        Ok(match stored {
+            Stored::New(file) => {
+                if let Some(chat) = self.chat_mut(chat_id) {
+                    chat.list_file(file.clone());
+                }
+                self.mark_dirty(chat_id);
+                file
+            }
+            Stored::Unchanged(file) => file,
+        })
+    }
+
+    /// Deletes our copy of a replaced original and drops its listing: the copy first, so a
+    /// failed delete leaves it listed and removable rather than orphaned on disk
+    /// (§11 S11's order, §12 T9).
+    fn drop_original(&mut self, chat_id: Uuid, file_id: Uuid) {
+        let dir = self.stored_files_dir(chat_id);
+        let Some(name) = self
+            .chats
+            .iter()
+            .find(|c| c.id == chat_id)
+            .and_then(|c| c.files.iter().find(|f| f.id == file_id))
+            .map(|f| f.name.clone())
+        else {
+            return;
+        };
+        if crate::features::chat_files::remove(&dir, &name).is_err() {
+            return; // still on disk and still listed — nothing lost, `/file remove` retries
+        }
+        if let Some(chat) = self.chat_mut(chat_id) {
+            chat.files.retain(|f| f.id != file_id);
+        }
+        self.mark_dirty(chat_id);
     }
 
     /// Puts an **already-built** attachment into a chat and does everything that
@@ -202,24 +321,17 @@ impl Orchestrator {
             return;
         };
         let loc = self.ui_locale();
-        let dir = self.stored_files_dir(chat_id);
-        let Some(chat) = self.chats.iter().find(|c| c.id == chat_id) else {
-            return;
-        };
-        let attached = chat.attachments.len();
-        let idx = match resolve_target(&chat.attachments, &chat.files, &target) {
-            Resolved::One(idx) => idx,
+        let (items, dir) = self.chat_file_list(chat_id);
+        let item = match crate::features::chat_inputs::resolve(&items, &target) {
+            Resolved::One(at) => items[at].clone(),
             Resolved::Shared(hits) => {
-                // A stored file's source is where it lies — its name alone is what is shared.
-                let sources: Vec<(usize, String)> = hits
+                // Each one's source is what tells them apart — an attachment's path, a
+                // stored file's place in the folder, an image's origin.
+                let sources: Vec<(usize, &str)> = hits
                     .iter()
-                    .map(|&i| match i.checked_sub(attached) {
-                        None => (i, chat.attachments[i].source.clone()),
-                        Some(j) => (i, dir.join(&chat.files[j].name).display().to_string()),
-                    })
+                    .map(|&i| (i, items[i].source.as_str()))
                     .collect();
-                let candidates =
-                    Self::candidate_lines(sources.iter().map(|(i, s)| (*i, s.as_str())));
+                let candidates = Self::candidate_lines(sources.into_iter());
                 let msg = loc.tf(
                     "ui.err.file_name_shared",
                     &[("target", target.trim()), ("candidates", &candidates)],
@@ -233,27 +345,91 @@ impl Orchestrator {
                 return;
             }
         };
-        if let Some(j) = idx.checked_sub(attached) {
-            let name = chat.files[j].name.clone();
-            self.remove_stored_file(chat_id, &dir, name);
+        // An image belongs to the message that carries it: taking it out of the
+        // conversation is not what `/file remove` does, and saying only "no" would leave
+        // the user looking for the command that does (docs/lessons.md §4).
+        if item.is_image() {
+            let msg = loc.tf("ui.err.file_is_image", &[("name", &item.name)]);
+            self.fail_file(&msg);
             return;
         }
-        let Some(chat) = self.chat_mut(chat_id) else {
-            return;
+        match (item.attachment, item.file.as_deref()) {
+            // An attached document that kept its original — one item, both halves.
+            (Some(at), Some(file)) => self.remove_pair(chat_id, &dir, at, file, &item.name),
+            (Some(at), None) => {
+                // Removed by `#N` or path, a file whose name another item shares is named
+                // by its source too — the name alone would not say which of them went (F2a).
+                let shared = name_is_shared(&items, item.handle - 1, |i| i.name.as_str());
+                let Some(chat) = self.chat_mut(chat_id) else {
+                    return;
+                };
+                let removed = chat.attachments.remove(at);
+                let keep: Vec<Uuid> = chat.attachments.iter().map(|a| a.id).collect();
+                self.mark_dirty(chat_id);
+                // The removed file's index chunks go with it — otherwise the model could
+                // still find fragments of a file the user took out of the conversation.
+                self.prune_attachment_index(chat_id, &keep);
+                self.emit_file_progress(FileProgress::Removed {
+                    name: removed.name,
+                    source: shared.then_some(removed.source),
+                });
+                self.emit_attachments();
+            }
+            (None, Some(file)) => self.remove_stored_file(chat_id, &dir, file.to_string()),
+            (None, None) => {}
+        }
+    }
+
+    /// The chat's files as one numbered list, and the folder its stored files live in —
+    /// the single numbering `/file list`, `/file remove`, the pinned block and
+    /// `python_exec` all take (docs/sandbox-file-exchange.md §12 T2). The images are
+    /// borrowed, never cloned: a listing must not copy a conversation's base64 payloads.
+    pub(super) fn chat_file_list(
+        &self,
+        chat_id: Uuid,
+    ) -> (
+        Vec<crate::features::chat_inputs::ChatInput>,
+        std::path::PathBuf,
+    ) {
+        let dir = self.stored_files_dir(chat_id);
+        let Some(chat) = self.chats.iter().find(|c| c.id == chat_id) else {
+            return (Vec::new(), dir);
         };
-        // Removed by `#N` or path, a file whose name another one shares is named by its
-        // source too — the name alone would not say which of them went (F2a).
-        let shared = name_is_shared(&chat.attachments, idx, |a| a.name.as_str());
-        let removed = chat.attachments.remove(idx);
-        let keep: Vec<Uuid> = chat.attachments.iter().map(|a| a.id).collect();
+        let images: Vec<&crate::entities::message_image::MessageImage> =
+            chat.messages.iter().flat_map(|m| m.images.iter()).collect();
+        let items =
+            crate::features::chat_inputs::items(&chat.attachments, &chat.files, &images, &dir);
+        (items, dir)
+    }
+
+    /// Removes an attached document that kept its original (fork F8a, §12 T9): our copy of
+    /// the file first, then both listings — the order in which a failed delete leaves
+    /// everything listed and retryable (§11 S11). The user's own file is never touched.
+    fn remove_pair(
+        &mut self,
+        chat_id: Uuid,
+        dir: &std::path::Path,
+        attachment_at: usize,
+        file: &str,
+        name: &str,
+    ) {
+        if let Err(err) = crate::features::chat_files::remove(dir, file) {
+            let msg = self.ui_locale().tf(
+                "ui.err.file_delete_failed",
+                &[("name", file), ("err", &err.to_string())],
+            );
+            self.fail_file(&msg);
+            return;
+        }
+        let mut keep = Vec::new();
+        if let Some(chat) = self.chat_mut(chat_id) {
+            chat.files.retain(|f| f.name != file);
+            chat.attachments.remove(attachment_at);
+            keep = chat.attachments.iter().map(|a| a.id).collect();
+        }
         self.mark_dirty(chat_id);
-        // The removed file's index chunks go with it — otherwise the model could
-        // still find fragments of a file the user took out of the conversation.
         self.prune_attachment_index(chat_id, &keep);
-        self.emit_file_progress(FileProgress::Removed {
-            name: removed.name,
-            source: shared.then_some(removed.source),
-        });
+        self.emit_file_progress(FileProgress::RemovedPair { name: name.into() });
         self.emit_attachments();
     }
 
@@ -299,9 +475,13 @@ impl Orchestrator {
         let excerpt = self.config.attachments.excerpt_tokens;
         let items = chat.attachments.iter().map(|a| a.info(excerpt)).collect();
         let dir = self.stored_files_dir(chat.id);
+        // A stored file an attachment links is shown on that attachment's line, not as an
+        // item of its own — the pair is one item, here as everywhere (§12 T9).
+        let linked: Vec<Uuid> = chat.attachments.iter().filter_map(|a| a.file_id).collect();
         let stored = chat
             .files
             .iter()
+            .filter(|f| !linked.contains(&f.id))
             .map(|f| StoredInfo {
                 name: f.name.clone(),
                 bytes: f.bytes,
@@ -309,9 +489,18 @@ impl Orchestrator {
                 missing: !crate::features::chat_files::exists(&dir, &f.name),
             })
             .collect();
+        // The images the conversation carries, numbered on from the rest: the user sees
+        // the `#N` the code can name (§12 T4).
+        let images = chat
+            .messages
+            .iter()
+            .flat_map(|m| m.images.iter())
+            .map(crate::entities::message_image::ImageInfo::from)
+            .collect();
         self.emit_file_progress(FileProgress::Listed {
             items,
             stored,
+            images,
             dir: dir.display().to_string(),
         });
     }
@@ -604,11 +793,43 @@ fn extract_file(
             ],
         ));
     }
-    // A file is read in its own encoding (docs/research/local-file-encoding.md F1a); a
-    // binary fails here with a clear message — the honest boundary of "text files".
-    let read = super::rag::read_source_text(path, hint)
-        .map_err(|e| loc.tf("ui.err.file_unreadable", &[("err", &e.to_string())]))?;
-    if read.text.trim().is_empty() {
+    // Read once: the text comes from these bytes, and so does the original the chat keeps
+    // when the text is not the file (fork F8a). The **rules** are the shared ones —
+    // `doc_extract`, `text_decode::decode_file`, `extract_readable` — as in
+    // `rag::read_source_text`, which reads for indexing and keeps no bytes; only the
+    // orchestration differs, because only here does the file itself have to survive.
+    let bytes = std::fs::read(path)
+        .map_err(|e| loc.tf("ui.err.file_unavailable", &[("err", &e.to_string())]))?;
+    let (text, encoding, original) = if crate::features::rag_ingest::is_pdf(path) {
+        let text = crate::features::doc_extract::extract_pdf(&bytes)
+            .map_err(|e| loc.tf("ui.err.file_unreadable", &[("err", &e.to_string())]))?;
+        (text, None, Some(bytes))
+    } else if crate::features::rag_ingest::is_docx(path) {
+        let text = crate::features::doc_extract::extract_docx(&bytes)
+            .map_err(|e| loc.tf("ui.err.file_unreadable", &[("err", &e.to_string())]))?;
+        (text, None, Some(bytes))
+    } else {
+        // A file is read in its own encoding (docs/research/local-file-encoding.md F1a).
+        let markup = crate::shared::text_decode::is_markup_path(path);
+        match crate::shared::text_decode::decode_file(&bytes, markup, hint) {
+            Some(file) => {
+                let encoding = (file.encoding != encoding_rs::UTF_8).then_some(file.encoding);
+                if crate::features::rag_ingest::is_html(path) {
+                    let text =
+                        crate::features::tools::web::extract_readable(&file.text, usize::MAX);
+                    (text, encoding, Some(bytes))
+                } else {
+                    // Plain text: the snapshot **is** the file, and a second copy would
+                    // only be another thing to keep in step.
+                    (file.text, encoding, None)
+                }
+            }
+            // Not text at all: the file itself is what the chat keeps, with no attachment
+            // made of it — the refusal D3 asked to lift (§12 T9).
+            None => (String::new(), None, Some(bytes)),
+        }
+    };
+    if text.trim().is_empty() && original.is_none() {
         return Err(loc.t("ui.err.file_empty").to_string());
     }
     let name = path
@@ -618,9 +839,10 @@ fn extract_file(
     Ok(ExtractedFile {
         name,
         source: crate::features::rag_ingest::canonical_source(path),
-        text: read.text,
+        text,
         bytes: meta.len() as usize,
-        encoding: read.encoding,
+        encoding,
+        original,
     })
 }
 
@@ -672,15 +894,24 @@ mod tests {
         assert!(file.text.contains("fn main()"));
     }
 
+    /// Fork F8a (docs/sandbox-file-exchange.md §12 T9): a binary is no longer turned away
+    /// — it has no text, so no attachment is made of it, and the file itself is what the
+    /// chat keeps for the code to read. What is still refused is a file that is not there
+    /// and one that carries nothing at all.
     #[test]
-    fn binary_and_missing_and_empty_files_are_refused() {
+    fn a_binary_is_kept_while_a_missing_or_empty_file_is_refused() {
         let dir = tempfile::tempdir().unwrap();
 
-        // Binary content → a clear refusal, not a panic or mojibake — even one opening
+        // Binary content → kept as bytes, with no text and no mojibake — even one opening
         // `FF FE`, which is not a whole UTF-16 file.
         let bin = dir.path().join("blob.bin");
         std::fs::write(&bin, [0xff, 0xfe, 0x00, 0x01, 0x80]).unwrap();
-        assert!(extract_file(&bin, ru(), None).is_err());
+        let kept = extract_file(&bin, ru(), None).expect("a binary is kept, not refused");
+        assert!(kept.text.trim().is_empty(), "text: {:?}", kept.text);
+        assert_eq!(
+            kept.original.as_deref(),
+            Some(&[0xff, 0xfe, 0x00, 0x01, 0x80][..])
+        );
 
         // A missing path.
         assert!(extract_file(&dir.path().join("nope.txt"), ru(), None).is_err());
@@ -692,6 +923,42 @@ mod tests {
         let empty = dir.path().join("empty.txt");
         std::fs::write(&empty, "   \n\t ").unwrap();
         assert!(extract_file(&empty, ru(), None).is_err());
+    }
+
+    /// The original is kept exactly where the text is **not** the file (§12 T9): a page an
+    /// extractor read keeps its bytes; a source file, whose snapshot is the file, does not
+    /// get a second copy.
+    #[test]
+    fn an_extracted_document_keeps_its_original_and_plain_text_does_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let page = dir.path().join("page.html");
+        // A real page, not a snippet: the readable-text extractor weighs a block against
+        // the rest of the document, so a one-line body extracts to nothing at all.
+        std::fs::write(
+            &page,
+            "<html><head><title>A page</title></head><body><article>\
+             <p>The readable text of this page runs for several sentences, because that \
+             is what the extractor weighs a block of prose against the markup around \
+             it.</p>\
+             <p>A second paragraph gives it something to keep: the file is read in its \
+             own encoding, the prose becomes the attachment, and the page itself stays \
+             with the chat for the code to open.</p>\
+             </article></body></html>",
+        )
+        .unwrap();
+        let extracted = extract_file(&page, ru(), None).unwrap();
+        assert!(extracted.text.contains("readable text"), "{extracted:?}");
+        assert!(
+            extracted.original.is_some_and(|b| b.starts_with(b"<html>")),
+            "an extracted page keeps the file it was read from"
+        );
+
+        let notes = dir.path().join("notes.md");
+        std::fs::write(&notes, "# heading\n\ntext").unwrap();
+        assert!(
+            extract_file(&notes, ru(), None).unwrap().original.is_none(),
+            "plain text needs no second copy — the snapshot is the file"
+        );
     }
 
     #[test]
