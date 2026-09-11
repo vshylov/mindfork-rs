@@ -34,8 +34,13 @@ const WASMER_BIN: &str = if cfg!(windows) {
 const DEFAULT_PYTHON_PKG: &str = "python/python";
 /// The guest mount point of the working directory (holding the task script).
 const GUEST_WORK: &str = "/w";
-/// The guest mount point of `site-packages` (preinstalled packages).
-const GUEST_SITE: &str = "/sp";
+/// Where `site-packages` sits in the guest: a volume of the packed image, or — for
+/// provisioning's warmup only — the mounted directory.
+pub(crate) const GUEST_SITE: &str = "/sp";
+/// The sandbox image `mindfork sandbox setup` packs into the sandbox directory: CPython
+/// and `site-packages` in one self-contained package (ADR 0005 §5, amended). A hyphen
+/// in the name, so the i18n key scanner cannot read it as a `sandbox.` key.
+pub(crate) const SANDBOX_IMAGE: &str = "packed-sandbox.webc";
 /// Environment variable: the path/name of the `wasmer` binary (a lookup override).
 const ENV_WASMER: &str = "MINDFORK_SANDBOX_WASMER";
 /// Environment variable: the path to `python.webc` or a package reference (an override).
@@ -131,11 +136,37 @@ pub trait SandboxRunner: Send + Sync {
     ) -> Result<SandboxOutput>;
 }
 
+/// Where a launch takes the guest's `site-packages` from.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum SiteSource {
+    /// The packed image ([`SANDBOX_IMAGE`]), where `site-packages` is a volume: what the
+    /// guest writes there lands in memory and dies with the call. The runtime's source.
+    Image,
+    /// The `site-packages` directory mounted from the host — writable, which is the
+    /// point for its one user, provisioning's warmup, filling `__pycache__` before the
+    /// image is packed. It never runs model code.
+    Directory,
+}
+
+/// What one launch runs and mounts ([`WasmerSandbox::plan`]).
+#[derive(Debug, PartialEq)]
+struct LaunchPlan {
+    /// The package `wasmer run` starts: the packed image, or CPython itself.
+    program: OsString,
+    /// A host `site-packages` directory to mount at [`GUEST_SITE`] (the warmup's only).
+    site_mount: Option<PathBuf>,
+    /// Whether [`GUEST_SITE`] exists in the guest and belongs on `PYTHONPATH`.
+    site_on_path: bool,
+}
+
 /// The real sandbox: drives the bundled `wasmer` as a child process.
 pub struct WasmerSandbox {
     /// The sandbox directory (`data/sandbox/`): `wasmer[.exe]`, `python.webc`,
-    /// `site-packages/`. `None` — only through an env-override (tests/default).
+    /// `site-packages/`, the packed image. `None` — only through an env-override
+    /// (tests/default).
     dir: Option<PathBuf>,
+    /// Where `site-packages` comes from — the image, except for provisioning.
+    site: SiteSource,
     /// The "one task at a time" gate (a single permit). Protection against
     /// process/thread leaks and predictable load: a concurrent call is
     /// rejected immediately. In the normal agentic loop, calls are already
@@ -150,8 +181,20 @@ impl WasmerSandbox {
     /// Creates a sandbox with the assets directory (`data/sandbox/`; `None` —
     /// without it, then the binary is taken only from an env-override).
     pub fn new(dir: Option<PathBuf>) -> Self {
+        Self::with_site(dir, SiteSource::Image)
+    }
+
+    /// The sandbox provisioning's warmup runs in: `site-packages` mounted as the
+    /// writable directory it is on the host, so the bytecode the warmup compiles lands
+    /// where the image is packed from. Only for code the application itself wrote.
+    pub fn for_provisioning(dir: PathBuf) -> Self {
+        Self::with_site(Some(dir), SiteSource::Directory)
+    }
+
+    fn with_site(dir: Option<PathBuf>, site: SiteSource) -> Self {
         Self {
             dir,
+            site,
             gate: Arc::new(Semaphore::new(1)),
             memory_mb: None,
         }
@@ -193,11 +236,42 @@ impl WasmerSandbox {
         OsString::from(DEFAULT_PYTHON_PKG)
     }
 
-    /// The `site-packages` directory to mount (if it exists).
-    fn site_packages(&self) -> Option<PathBuf> {
-        let dir = self.dir.as_ref()?;
-        let sp = dir.join("site-packages");
-        sp.is_dir().then_some(sp)
+    /// What a launch runs. The packed image wins wherever it exists — it carries CPython
+    /// and `site-packages` both, so an [`ENV_PYTHON`] override has nothing to add to it.
+    /// A `site-packages` directory with no image is an install from before the image:
+    /// `None`, refused rather than mounted writable, and the caller says to run
+    /// `mindfork sandbox setup` again. With neither, plain CPython and no packages.
+    fn plan(&self) -> Option<LaunchPlan> {
+        let site_dir = self
+            .dir
+            .as_ref()
+            .map(|d| d.join("site-packages"))
+            .filter(|p| p.is_dir());
+        if self.site == SiteSource::Directory {
+            return Some(LaunchPlan {
+                program: self.resolve_python(),
+                site_on_path: site_dir.is_some(),
+                site_mount: site_dir,
+            });
+        }
+        let image = self
+            .dir
+            .as_ref()
+            .map(|d| d.join(SANDBOX_IMAGE))
+            .filter(|p| p.is_file());
+        match (image, site_dir) {
+            (Some(image), _) => Some(LaunchPlan {
+                program: image.into_os_string(),
+                site_mount: None,
+                site_on_path: true,
+            }),
+            (None, Some(_)) => None,
+            (None, None) => Some(LaunchPlan {
+                program: self.resolve_python(),
+                site_mount: None,
+                site_on_path: false,
+            }),
+        }
     }
 }
 
@@ -205,8 +279,11 @@ impl WasmerSandbox {
 impl SandboxRunner for WasmerSandbox {
     fn availability(&self, loc: &Locale) -> SandboxAvailability {
         match self.resolve_wasmer() {
-            Some(_) => SandboxAvailability::Ready,
             None => SandboxAvailability::Missing(loc.t("sandbox.err.not_installed").to_string()),
+            Some(_) if self.plan().is_none() => {
+                SandboxAvailability::Missing(loc.t("sandbox.err.needs_repack").to_string())
+            }
+            Some(_) => SandboxAvailability::Ready,
         }
     }
 
@@ -225,7 +302,9 @@ impl SandboxRunner for WasmerSandbox {
         let wasmer = self
             .resolve_wasmer()
             .ok_or_else(|| anyhow::anyhow!("{}", loc.t("sandbox.err.not_found")))?;
-        let python = self.resolve_python();
+        let plan = self
+            .plan()
+            .ok_or_else(|| anyhow::anyhow!("{}", loc.t("sandbox.err.needs_repack")))?;
 
         // The task script in a unique temp directory (auto-cleanup via Drop).
         let job = JobDir::create().with_context(|| loc.t("sandbox.err.job_dir").to_string())?;
@@ -234,18 +313,21 @@ impl SandboxRunner for WasmerSandbox {
             .await
             .with_context(|| loc.t("sandbox.err.write_script").to_string())?;
 
-        // Mount the working directory and (if present) site-packages; PYTHONPATH for the guest.
+        // Mount the working directory — and a `site-packages` directory only for
+        // provisioning's warmup, since the image carries its own; PYTHONPATH for the guest.
         let mut mounts: Vec<(PathBuf, &str)> = vec![(job.path.clone(), GUEST_WORK)];
         let mut envs: Vec<(&str, String)> = vec![
             ("PYTHONIOENCODING", "utf-8".into()),
             ("PYTHONUTF8", "1".into()),
         ];
-        if let Some(sp) = self.site_packages() {
+        if let Some(sp) = plan.site_mount {
             mounts.push((sp, GUEST_SITE));
+        }
+        if plan.site_on_path {
             envs.push(("PYTHONPATH", GUEST_SITE.into()));
         }
         let script_guest = format!("{GUEST_WORK}/job.py");
-        let args = build_args(&python, &mounts, &envs, net, &script_guest);
+        let args = build_args(&plan.program, &mounts, &envs, net, &script_guest);
 
         let mut cmd = tokio::process::Command::new(&wasmer);
         cmd.args(&args)
@@ -663,5 +745,81 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let sb = WasmerSandbox::new(Some(dir.path().to_path_buf()));
         assert_eq!(sb.resolve_python(), OsString::from(DEFAULT_PYTHON_PKG));
+    }
+
+    /// A sandbox directory with a stub `wasmer`, and optionally a `site-packages`
+    /// directory and a packed image.
+    fn sandbox_dir(site_packages: bool, image: bool) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(WASMER_BIN), b"stub").unwrap();
+        if site_packages {
+            std::fs::create_dir(dir.path().join("site-packages")).unwrap();
+        }
+        if image {
+            std::fs::write(dir.path().join(SANDBOX_IMAGE), b"stub").unwrap();
+        }
+        dir
+    }
+
+    /// The image carries its own `site-packages`: it is what runs, nothing is mounted
+    /// beside the job, and `/sp` goes on `PYTHONPATH` — with the directory present too.
+    #[test]
+    fn the_packed_image_runs_and_nothing_is_mounted() {
+        let dir = sandbox_dir(true, true);
+        let plan = WasmerSandbox::new(Some(dir.path().to_path_buf()))
+            .plan()
+            .unwrap();
+        assert_eq!(
+            plan.program,
+            dir.path().join(SANDBOX_IMAGE).into_os_string()
+        );
+        assert_eq!(plan.site_mount, None);
+        assert!(plan.site_on_path);
+    }
+
+    /// A `site-packages` directory with no image — an install from before the image — is
+    /// refused rather than mounted writable, and the reason names the command that packs it.
+    #[tokio::test]
+    async fn unpacked_site_packages_is_refused_with_the_way_out() {
+        let dir = sandbox_dir(true, false);
+        let sb = WasmerSandbox::new(Some(dir.path().to_path_buf()));
+        assert_eq!(sb.plan(), None);
+        let SandboxAvailability::Missing(why) = sb.availability(locale(Lang::En)) else {
+            panic!("an unpacked site-packages must not be Ready");
+        };
+        assert!(why.contains("mindfork sandbox setup"), "{why}");
+        let err = sb
+            .run("print(1)", false, Duration::from_secs(5), locale(Lang::En))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("mindfork sandbox setup"), "{err}");
+    }
+
+    /// Provisioning's warmup is the one launch that mounts the directory — writably, to
+    /// fill `__pycache__` before packing — and it does so even once an image exists.
+    #[test]
+    fn provisioning_mounts_the_directory() {
+        let dir = sandbox_dir(true, true);
+        let plan = WasmerSandbox::for_provisioning(dir.path().to_path_buf())
+            .plan()
+            .unwrap();
+        assert_eq!(plan.site_mount, Some(dir.path().join("site-packages")));
+        assert!(plan.site_on_path);
+        assert_ne!(
+            plan.program,
+            dir.path().join(SANDBOX_IMAGE).into_os_string()
+        );
+    }
+
+    /// Neither a directory nor an image: plain CPython, nothing on `PYTHONPATH`.
+    #[test]
+    fn without_packages_plain_python_runs() {
+        let dir = sandbox_dir(false, false);
+        let sb = WasmerSandbox::new(Some(dir.path().to_path_buf()));
+        let plan = sb.plan().unwrap();
+        assert_eq!(plan.program, sb.resolve_python());
+        assert_eq!(plan.site_mount, None);
+        assert!(!plan.site_on_path);
+        assert_eq!(sb.availability(ru()), SandboxAvailability::Ready);
     }
 }

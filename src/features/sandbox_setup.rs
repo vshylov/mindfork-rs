@@ -218,6 +218,8 @@ pub async fn setup(
     ensure_python_webc(dir, &wasmer, opts, loc, &mut progress).await?;
     ensure_wheels(&client, dir, opts, loc, &mut progress).await?;
     warmup(dir, loc, &mut progress).await;
+    pack_image(dir, &wasmer, loc, &mut progress).await?;
+    verify_image(dir, loc, &mut progress).await?;
 
     progress(loc.t("sandbox.setup.done"));
     Ok(())
@@ -252,15 +254,187 @@ const WARMUP_TIMEOUT: Duration = Duration::from_secs(600);
 /// multi-second compilation in front of the user (replaces the "first-run banner").
 /// "Best effort": a warmup failure doesn't fail the install, and one cut short keeps
 /// what it compiled (the interpreter is cached first, the bytecode file by file). Runs
-/// through a real [`WasmerSandbox`], so the cache and paths match the runtime.
+/// through a real [`WasmerSandbox`] — over the `site-packages` *directory*
+/// ([`WasmerSandbox::for_provisioning`]), because the bytecode has to be written where
+/// [`pack_image`] packs from; the compilation cache it fills serves the image as well
+/// (measured: the image's first imports after it were as warm as the directory's).
 async fn warmup(dir: &Path, loc: &Locale, progress: &mut impl FnMut(&str)) {
     progress(loc.t("sandbox.setup.warmup.start"));
-    let sb = WasmerSandbox::new(Some(dir.to_path_buf()));
+    let sb = WasmerSandbox::for_provisioning(dir.to_path_buf());
     match sb.run(WARMUP_SCRIPT, false, WARMUP_TIMEOUT, loc).await {
         Ok(out) if out.exit_code == Some(0) => progress(loc.t("sandbox.setup.warmup.ok")),
         Ok(_) => progress(loc.t("sandbox.setup.warmup.partial")),
         Err(e) => progress(&loc.tf("sandbox.setup.warmup.skipped", &[("err", &e.to_string())])),
     }
+}
+
+/// Where [`pack_image`] assembles the image's package, inside the sandbox directory —
+/// a sibling of `site-packages`, which is how the manifest's `../site-packages` finds it.
+const IMAGE_STAGING: &str = "image-build";
+
+/// The `name`/`version` the image's manifest gets when the unpacked CPython manifest has
+/// none — `wasmer package build` names what it builds.
+const IMAGE_PACKAGE_ID: &str = "name = \"mindfork/sandbox\"\nversion = \"1.0.0\"\n";
+
+/// What [`verify_image`] imports: the heaviest native wheels, compiled by the warmup.
+const VERIFY_SCRIPT: &str = "import numpy, pandas, lxml.etree, matplotlib.pyplot";
+
+/// Packs CPython and `site-packages` into the sandbox image
+/// ([`SANDBOX_IMAGE`](crate::shared::sandbox::SANDBOX_IMAGE)) — the only form the
+/// runtime runs.
+///
+/// Mounted from the host, `site-packages` is writable from the guest (`wasmer` 7.2.0's
+/// `--volume` has no read-only form), and a `sitecustomize.py` one call wrote there ran
+/// inside the next. Inside a package the same directory is a volume: what the guest
+/// writes there lands in memory and dies with the call. One self-contained package, not
+/// a second one depending on `python/python`: resolving a dependency queries the
+/// registry even with `--include-webc`, and on a fresh cache offline that run cannot
+/// start at all (docs/journal/tools.md). Measured: packing takes seconds.
+async fn pack_image(
+    dir: &Path,
+    wasmer: &Path,
+    loc: &Locale,
+    progress: &mut impl FnMut(&str),
+) -> Result<()> {
+    use crate::shared::sandbox::SANDBOX_IMAGE;
+    use std::ffi::OsStr;
+
+    progress(loc.t("sandbox.setup.pack.start"));
+    let io = |path: &str| loc.tf("sandbox.setup.pack.io", &[("path", path)]);
+    let staging = dir.join(IMAGE_STAGING);
+    let _ = tokio::fs::remove_dir_all(&staging).await;
+    let python = dir.join("python.webc");
+    let unpack: [&OsStr; 7] = [
+        "package".as_ref(),
+        "unpack".as_ref(),
+        "--format".as_ref(),
+        "package".as_ref(),
+        "--out-dir".as_ref(),
+        staging.as_os_str(),
+        python.as_os_str(),
+    ];
+    wasmer_command(wasmer, &unpack, loc).await?;
+
+    let manifest_path = staging.join("wasmer.toml");
+    let shown = manifest_path.display().to_string();
+    let manifest = tokio::fs::read_to_string(&manifest_path)
+        .await
+        .with_context(|| io(&shown))?;
+    let manifest = with_site_packages(&manifest).ok_or_else(|| {
+        anyhow::anyhow!(
+            "{}",
+            loc.tf("sandbox.setup.pack.manifest", &[("path", &shown)])
+        )
+    })?;
+    tokio::fs::write(&manifest_path, manifest)
+        .await
+        .with_context(|| io(&shown))?;
+
+    // Built beside the image and renamed over it, so an interrupted build never leaves
+    // a truncated image for the runtime to start.
+    let partial = dir.join(format!("{SANDBOX_IMAGE}.partial"));
+    let build: [&OsStr; 5] = [
+        "package".as_ref(),
+        "build".as_ref(),
+        staging.as_os_str(),
+        "-o".as_ref(),
+        partial.as_os_str(),
+    ];
+    wasmer_command(wasmer, &build, loc).await?;
+    let image = dir.join(SANDBOX_IMAGE);
+    let image_shown = image.display().to_string();
+    tokio::fs::rename(&partial, &image)
+        .await
+        .with_context(|| io(&image_shown))?;
+    let _ = tokio::fs::remove_dir_all(&staging).await;
+    progress(&loc.tf("sandbox.setup.pack.done", &[("path", &image_shown)]));
+    Ok(())
+}
+
+/// The unpacked CPython manifest with `site-packages` added as a volume at
+/// [`GUEST_SITE`](crate::shared::sandbox::GUEST_SITE) — relative to [`IMAGE_STAGING`],
+/// where the manifest sits — plus a `name`/`version` where `[package]` has none. `None`
+/// when there is no `[fs]` table to extend: a `python.webc` of another shape than the
+/// pinned one, which this does not guess at.
+fn with_site_packages(manifest: &str) -> Option<String> {
+    use crate::shared::sandbox::GUEST_SITE;
+
+    let named = package_is_named(manifest);
+    let mut out = String::with_capacity(manifest.len() + 128);
+    let mut volume = false;
+    for line in manifest.lines() {
+        out.push_str(line);
+        out.push('\n');
+        match line.trim() {
+            "[package]" if !named => out.push_str(IMAGE_PACKAGE_ID),
+            "[fs]" => {
+                out.push_str(&format!("\"{GUEST_SITE}\" = \"../site-packages\"\n"));
+                volume = true;
+            }
+            _ => {}
+        }
+    }
+    volume.then_some(out)
+}
+
+/// Whether the manifest's `[package]` table already has a `name` — `[[module]]` and
+/// `[[command]]` carry names of their own, so only that one table counts.
+fn package_is_named(manifest: &str) -> bool {
+    manifest
+        .lines()
+        .map(str::trim)
+        .skip_while(|l| *l != "[package]")
+        .skip(1)
+        .take_while(|l| !l.starts_with('['))
+        .any(|l| l.starts_with("name"))
+}
+
+/// Starts the packed image once and imports what the warmup compiled. The runtime runs
+/// nothing but the image, so one that does not start leaves no sandbox at all — which
+/// has to fail `setup`, not the first call in a chat.
+async fn verify_image(dir: &Path, loc: &Locale, progress: &mut impl FnMut(&str)) -> Result<()> {
+    let sb = WasmerSandbox::new(Some(dir.to_path_buf()));
+    let out = sb.run(VERIFY_SCRIPT, false, WARMUP_TIMEOUT, loc).await?;
+    if out.exit_code != Some(0) {
+        bail!(
+            "{}",
+            loc.tf(
+                "sandbox.setup.verify.failed",
+                &[("detail", out.stderr.trim())]
+            )
+        );
+    }
+    progress(loc.t("sandbox.setup.verify.ok"));
+    Ok(())
+}
+
+/// Runs one `wasmer` subcommand to completion; a non-zero exit is an error naming the
+/// subcommand and carrying its stderr.
+async fn wasmer_command(wasmer: &Path, args: &[&std::ffi::OsStr], loc: &Locale) -> Result<()> {
+    let out = tokio::process::Command::new(wasmer)
+        .args(args)
+        .output()
+        .await
+        .with_context(|| {
+            loc.tf(
+                "sandbox.setup.pack.run",
+                &[("path", &wasmer.display().to_string())],
+            )
+        })?;
+    if !out.status.success() {
+        let command: Vec<_> = args.iter().take(2).map(|a| a.to_string_lossy()).collect();
+        bail!(
+            "{}",
+            loc.tf(
+                "sandbox.setup.pack.failed",
+                &[
+                    ("command", &command.join(" ")),
+                    ("stderr", String::from_utf8_lossy(&out.stderr).trim()),
+                ],
+            )
+        );
+    }
+    Ok(())
 }
 
 /// The `wasmer` archive for platform `(os, arch)` (pure, testable).
@@ -714,6 +888,60 @@ mod tests {
             assert!(w.sha256.len() == 64 && hex, "{}: {}", w.dir, w.sha256);
             assert!(dirs.insert(w.dir), "{} is claimed twice", w.dir);
         }
+    }
+
+    /// The manifest `wasmer package unpack --format package` wrote for the pinned
+    /// `python.webc` (3.13.5), verbatim.
+    const UNPACKED_PYTHON_MANIFEST: &str = r#"[package]
+entrypoint = "python"
+
+[fs]
+"/lib" = "./root/lib"
+"/usr/local" = "./root/usr/local"
+
+[[module]]
+name = "python"
+source = "./modules/python"
+
+[[command]]
+name = "python"
+module = "python"
+runner = "https://webc.org/runner/wasi"
+
+[command.annotations.wasi]
+atom = "python"
+env = ["PYTHONEXECUTABLE=/bin/python", "TERM=dumb"]
+"#;
+
+    #[test]
+    fn the_image_manifest_adds_site_packages_and_a_name() {
+        let out =
+            with_site_packages(UNPACKED_PYTHON_MANIFEST).expect("the pinned manifest has [fs]");
+        // The volume joins CPython's own inside the `[fs]` table, not after it.
+        let fs_table: Vec<&str> = out
+            .split("[fs]\n")
+            .nth(1)
+            .unwrap()
+            .lines()
+            .take_while(|l| !l.is_empty())
+            .collect();
+        assert!(
+            fs_table.contains(&"\"/sp\" = \"../site-packages\""),
+            "{out}"
+        );
+        assert!(fs_table.contains(&"\"/lib\" = \"./root/lib\""), "{out}");
+        // `[package]` gains a name; `[[module]]` and `[[command]]` keep their own.
+        assert!(package_is_named(&out), "{out}");
+        assert_eq!(out.matches("name = ").count(), 3, "{out}");
+        assert!(out.contains("entrypoint = \"python\""), "{out}");
+    }
+
+    #[test]
+    fn the_image_manifest_keeps_a_name_and_refuses_a_manifest_without_fs() {
+        let named = "[package]\nname = \"x/y\"\nversion = \"1\"\n\n[fs]\n\"/lib\" = \"./lib\"\n";
+        let out = with_site_packages(named).unwrap();
+        assert_eq!(out.matches("name = ").count(), 1, "a second name: {out}");
+        assert!(with_site_packages("[package]\nentrypoint = \"python\"\n").is_none());
     }
 
     #[test]
