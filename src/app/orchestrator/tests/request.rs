@@ -44,6 +44,48 @@ fn request_of(chat: &Chat, compaction: &CompactionSettings, history_tools: bool)
     )
 }
 
+/// The chat-files block names each item's `#N` — the one the user sees — and the name the
+/// code will open in `/w/in`, so the model can write the path before it ever sees a result
+/// (docs/sandbox-file-exchange.md §12 T3, T5). A turn that can stage nothing carries no
+/// block at all, and never names a tool it does not have.
+#[test]
+fn the_chat_files_block_names_handles_and_staged_names() {
+    let p = Profile::new("X", "Ты — X.");
+    let chat = Chat::from_profile(&p, "c");
+    let attached = att("report.pdf", "the extracted text", AttachMode::ByReference);
+    let items = crate::features::chat_inputs::items(
+        std::slice::from_ref(&attached),
+        &[],
+        &[],
+        std::path::Path::new("/d"),
+    );
+    let req = build_request(
+        &chat,
+        SamplingConfig::default(),
+        vec![],
+        &PromptContext {
+            attachments: &AttachmentSettings::default(),
+            compaction: &CompactionSettings::default(),
+            indexed: NO_INDEX,
+            files: &items,
+            history_tools: false,
+            offered_tools: &[],
+            loc: ru(),
+        },
+    );
+    let system = req.system.unwrap_or_default();
+    assert!(system.contains("#1 report.pdf"), "{system}");
+    // What the extractor read is staged as text, under the name the block states.
+    assert!(system.contains("/w/in/report.pdf.txt"), "{system}");
+    assert!(system.contains("python_exec"), "{system}");
+
+    // The same chat on a turn that stages nothing: no block, and no mention of /w/in.
+    let bare = request_of(&chat, &CompactionSettings::default(), false)
+        .system
+        .unwrap_or_default();
+    assert!(!bare.contains("/w/in"), "{bare}");
+}
+
 #[test]
 fn build_request_puts_system_aside_and_maps_roles() {
     let mut p = Profile::new("X", "Ты — X.");

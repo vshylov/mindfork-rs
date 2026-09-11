@@ -823,6 +823,177 @@ mod tests {
         }
     }
 
+    /// A chat whose files a call can name (docs/sandbox-file-exchange.md §12 T2): one
+    /// attachment, one stored file that is really on disk, one image — the three kinds
+    /// `/file list` numbers, in that order.
+    fn ctx_with_inputs() -> (tempfile::TempDir, tempfile::TempDir, ToolContext) {
+        use crate::entities::attachment::{AttachMode, Attachment};
+        use crate::entities::chat_file::FileOrigin;
+        use crate::entities::message_image::MessageImage;
+        use base64::Engine as _;
+
+        let (dir, folder, mut ctx) = ctx_with_folder();
+        std::fs::write(folder.path().join("sales.xlsx"), XLSX).unwrap();
+        ctx.attachments = std::sync::Arc::from(vec![Attachment::new(
+            "notes.md",
+            "C:\\notes.md",
+            NOTES.to_string(),
+            NOTES.len(),
+            AttachMode::Inline,
+        )]);
+        ctx.files = std::sync::Arc::from(vec![ChatFile::new(
+            "sales.xlsx",
+            FileOrigin::Attached,
+            XLSX,
+        )]);
+        ctx.images = std::sync::Arc::from(vec![MessageImage::new(
+            "shot.png",
+            "C:\\shot.png",
+            "image/png",
+            10,
+            10,
+            base64::engine::general_purpose::STANDARD.encode(PNG),
+        )]);
+        (dir, folder, ctx)
+    }
+
+    const NOTES: &str = "the note's text";
+    const XLSX: &[u8] = b"PK\x03\x04not-really-a-workbook";
+
+    /// A ready mock and the tool over it, for the staging tests.
+    fn staging_tool() -> (Arc<MockSandbox>, PythonExec) {
+        let sb = Arc::new(MockSandbox::ready(SandboxOutput::default()));
+        (sb.clone(), wasmer(sb, false))
+    }
+
+    #[tokio::test]
+    async fn the_files_a_call_names_are_copied_into_the_guest() {
+        let (_d, _folder, ctx) = ctx_with_inputs();
+        let (sb, tool) = staging_tool();
+        let out = tool
+            .invoke(
+                &ctx,
+                serde_json::json!({"code": "print(1)", "files": ["notes.md", "#2", "shot.png"]}),
+            )
+            .await
+            .unwrap();
+        assert!(!out.result.contains("nothing was run"), "{}", out.result);
+        let staged = sb.staged.lock().unwrap();
+        let names: Vec<&str> = staged[0].iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, ["notes.md", "sales.xlsx", "shot.png"]);
+        // An attachment goes in as its text, a stored file as the bytes on disk, an image
+        // as the pixels the model was shown.
+        assert_eq!(staged[0][0].1, NOTES.as_bytes());
+        assert_eq!(staged[0][1].1, XLSX);
+        assert_eq!(staged[0][2].1, PNG);
+    }
+
+    #[tokio::test]
+    async fn an_unknown_handle_runs_nothing_and_lists_what_the_chat_has() {
+        let (_d, _folder, ctx) = ctx_with_inputs();
+        let (sb, tool) = staging_tool();
+        let out = tool
+            .invoke(
+                &ctx,
+                serde_json::json!({"code": "print(1)", "files": ["ghost.csv"]}),
+            )
+            .await
+            .unwrap();
+        assert!(out.result.contains("ghost.csv"), "{}", out.result);
+        assert!(out.result.contains("nothing was run"), "{}", out.result);
+        // The valid handles, so the next call can name one instead of guessing again.
+        assert!(out.result.contains("#1 notes.md"), "{}", out.result);
+        assert!(out.result.contains("#3 shot.png"), "{}", out.result);
+        assert!(
+            sb.calls.lock().unwrap().is_empty(),
+            "a refused call must not reach the sandbox"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_name_two_files_share_runs_nothing() {
+        use crate::entities::attachment::{AttachMode, Attachment};
+        let (_d, _folder, mut ctx) = ctx_with_inputs();
+        ctx.attachments = std::sync::Arc::from(vec![
+            Attachment::new(
+                "notes.md",
+                "C:\\a\\notes.md",
+                "a".into(),
+                1,
+                AttachMode::Inline,
+            ),
+            Attachment::new(
+                "notes.md",
+                "C:\\b\\notes.md",
+                "b".into(),
+                1,
+                AttachMode::Inline,
+            ),
+        ]);
+        let (sb, tool) = staging_tool();
+        let out = tool
+            .invoke(
+                &ctx,
+                serde_json::json!({"code": "print(1)", "files": ["notes.md"]}),
+            )
+            .await
+            .unwrap();
+        assert!(out.result.contains("C:\\a\\notes.md"), "{}", out.result);
+        assert!(out.result.contains("C:\\b\\notes.md"), "{}", out.result);
+        assert!(sb.calls.lock().unwrap().is_empty(), "{}", out.result);
+    }
+
+    #[tokio::test]
+    async fn a_listed_file_whose_copy_is_gone_runs_nothing() {
+        use crate::entities::chat_file::FileOrigin;
+        let (_d, _folder, mut ctx) = ctx_with_inputs();
+        ctx.files = std::sync::Arc::from(vec![ChatFile::new(
+            "gone.csv",
+            FileOrigin::Sandbox,
+            b"month,total\n",
+        )]);
+        let (sb, tool) = staging_tool();
+        let out = tool
+            .invoke(
+                &ctx,
+                serde_json::json!({"code": "print(1)", "files": ["gone.csv"]}),
+            )
+            .await
+            .unwrap();
+        assert!(out.result.contains("gone.csv"), "{}", out.result);
+        assert!(sb.calls.lock().unwrap().is_empty(), "{}", out.result);
+    }
+
+    #[tokio::test]
+    async fn a_file_named_twice_is_staged_once() {
+        let (_d, _folder, ctx) = ctx_with_inputs();
+        let (sb, tool) = staging_tool();
+        tool.invoke(
+            &ctx,
+            serde_json::json!({"code": "print(1)", "files": ["notes.md", "#1"]}),
+        )
+        .await
+        .unwrap();
+        let staged = sb.staged.lock().unwrap();
+        assert_eq!(
+            staged[0].len(),
+            1,
+            "one copy, one name in /w/in: {staged:?}"
+        );
+    }
+
+    /// Local mode has no job directory until stage 5's parity, so it is never offered the
+    /// argument its mode cannot honour (§12 T10).
+    #[test]
+    fn only_the_sandbox_mode_offers_the_files_argument() {
+        let en = crate::shared::i18n::locale(Lang::En);
+        let sb: Arc<dyn SandboxRunner> = Arc::new(MockSandbox::missing("x"));
+        let wasmer_schema = wasmer(sb, false).parameters(en);
+        assert!(wasmer_schema["properties"]["files"].is_object());
+        let local_schema = local(None).parameters(en);
+        assert!(local_schema["properties"].get("files").is_none());
+    }
+
     fn stored_names(out: &ToolOutcome) -> Vec<String> {
         out.effects
             .iter()

@@ -1048,6 +1048,65 @@ fn tool_confirm_popup_shows_the_call_as_code_with_the_three_options() {
     }
 }
 
+/// The popup states what a `python_exec` call would hand the sandbox, and whether that
+/// sandbox has the network (docs/sandbox-file-exchange.md §12 T6). The compact view of the
+/// arguments drops arrays outright — which this test also pins — so `files`, the argument
+/// that decides what leaves the chat, would otherwise not be shown at all.
+#[test]
+fn the_confirm_popup_names_the_files_going_in_and_the_network() {
+    use crate::features::chat_inputs::{ConfirmFile, ConfirmInputs};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    let mut s = ChatScreen::new();
+    let id = gen_id();
+    s.begin_generation(id, None);
+    s.request_tool_confirm(
+        id,
+        TOOL_CALL_ID.into(),
+        "python_exec".into(),
+        // `r##"…"##`: the handle `"#9"` carries the sequence that would close a
+        // single-hash raw string early.
+        r##"{"code": "print(1)", "files": ["sales.xlsx", "#9"]}"##.into(),
+        Some(ConfirmInputs {
+            files: vec![
+                ConfirmFile {
+                    handle: "sales.xlsx".into(),
+                    resolved: Some(("sales.xlsx".into(), 18_432)),
+                },
+                ConfirmFile {
+                    handle: "#9".into(),
+                    resolved: None,
+                },
+            ],
+            net: false,
+        }),
+    );
+    let mut term = Terminal::new(TestBackend::new(90, 20)).unwrap();
+    term.draw(|f| s.render(f)).unwrap();
+    let buf = term.backend().buffer();
+    let mut text = String::new();
+    for y in buf.area.top()..buf.area.bottom() {
+        for x in buf.area.left()..buf.area.right() {
+            text.push_str(buf[(x, y)].symbol());
+        }
+        text.push('\n');
+    }
+
+    // The file that is going in, with the size the copy will cost.
+    assert!(text.contains("sales.xlsx"), "{text}");
+    assert!(text.contains("18.0 KB"), "{text}");
+    // A handle that reaches nothing is named as such, not shown as a file.
+    assert!(text.contains("#9"), "{text}");
+    // The other half of the decision.
+    assert!(text.contains("сеть"), "{text}");
+    // The premise: the argument itself never reaches the popup's own rendering.
+    assert!(
+        !text.contains("\"files\""),
+        "the compact view shows no arrays: {text}"
+    );
+}
+
 #[test]
 fn esc_opens_chat_list_else_cancels_generation() {
     let mut s = ChatScreen::new();
