@@ -3826,9 +3826,12 @@ async fn code_edit_e2e_live() {
 #[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
 async fn code_edit_legacy_encoding_e2e_live() {
     use crate::features::tools::code::CODE_EDIT_ID;
+    // cyrillic-ok:start — the fixture is a Russian source file: its comments are the
+    // text under test, and a string's continuation line reads to the scanner as a comment.
     const FIRST_LINE: &str = "// Расчёт скидки для постоянного покупателя.\r\n";
     const REST: &str = "pub fn discount(orders: u32) -> u32 {\r\n\
         \x20   // Скидка растёт с каждым десятым заказом.\r\n    orders / 10\r\n}\r\n";
+    // cyrillic-ok:end
     let cp1251 = |t: &str| encoding_rs::WINDOWS_1251.encode(t).0.into_owned();
     let files = [("src/discount.rs", cp1251(&format!("{FIRST_LINE}{REST}")))];
     let prompt = "В файле src/discount.rs скидка растёт слишком медленно: пусть она растёт \

@@ -1748,11 +1748,14 @@ mod tests {
         assert_eq!(std::fs::read(&path).unwrap(), want);
     }
 
+    // cyrillic-ok:start — the fixture is a Russian source file: its comments are the
+    // text under test, and a string's continuation line reads to the scanner as a comment.
     /// A Rust source whose only Cyrillic is its comments, as a Windows editor saved it
     /// (docs/research/local-file-encoding.md §2.1).
     const LEGACY_SOURCE: &str = "// Расчёт скидки для постоянного покупателя.\r\n\
         fn discount(orders: u32) -> u32 {\r\n    // Скидка растёт с каждым десятым заказом.\r\n\
         \x20   orders / 10\r\n}\r\n";
+    // cyrillic-ok:end
 
     fn cp1251(text: &str) -> Vec<u8> {
         encoding_rs::WINDOWS_1251.encode(text).0.into_owned()
