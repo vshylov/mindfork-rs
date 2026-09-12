@@ -594,6 +594,11 @@ fn real_png() -> Vec<u8> {
 /// a listing effect, and `image` for the model.
 struct Charting {
     image: Vec<u8>,
+    /// Draw a different chart each round — a trailing byte per call. Off, every round
+    /// stores the same bytes, which is the dedupe case; on, each round has an image of its
+    /// own, which is what a tool called three times normally produces.
+    vary: bool,
+    calls: std::sync::atomic::AtomicUsize,
 }
 
 #[async_trait::async_trait]
@@ -614,8 +619,14 @@ impl Tool for Charting {
     ) -> anyhow::Result<ToolOutcome> {
         use base64::Engine as _;
         let dir = ctx.files_dir.clone().expect("a turn has a files folder");
-        let stored =
-            crate::features::chat_files::store(&dir, &ctx.files, "chart.png", &self.image)?;
+        let nth = self
+            .calls
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let mut image = self.image.clone();
+        if self.vary {
+            image.push(nth as u8);
+        }
+        let stored = crate::features::chat_files::store(&dir, &ctx.files, "chart.png", &image)?;
         let file = match stored {
             crate::features::chat_files::Stored::New(file) => file,
             // Listed, but the copy had gone from the folder: the bytes are back and the
@@ -634,7 +645,7 @@ impl Tool for Charting {
         )
         .with_images(vec![ToolImage {
             mime: "image/png".into(),
-            data: base64::engine::general_purpose::STANDARD.encode(&self.image),
+            data: base64::engine::general_purpose::STANDARD.encode(&image),
         }]))
     }
     fn group(&self) -> ToolGroup {
@@ -645,10 +656,14 @@ impl Tool for Charting {
     }
 }
 
-/// A scripted engine that says what it can see.
+/// A scripted engine that says what it can see, and counts being asked.
 struct Sighted {
     inner: Arc<ScriptRecorder>,
     vision: VisionSupport,
+    /// How many times the turn asked. The answer belongs to the server and the model, so
+    /// it cannot change inside a turn — and asking is an HTTP round trip on the critical
+    /// path, paid once per round that returned an image until it was memoized.
+    asked: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 #[async_trait::async_trait]
@@ -661,6 +676,8 @@ impl EngineBackend for Sighted {
         self.inner.chat_stream(req, cancel).await
     }
     async fn vision(&self) -> VisionSupport {
+        self.asked
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.vision
     }
 }
@@ -672,10 +689,22 @@ struct ChartingTurn {
     record: crate::entities::message::ToolCallRecord,
     files: Vec<ChatFile>,
     folder: std::path::PathBuf,
+    /// How many times the turn asked the engine about images.
+    asked: usize,
 }
 
 /// One turn in which the model calls `charting` once in each of `rounds` rounds.
 async fn charting_turn(vision: VisionSupport, image: Vec<u8>, rounds: usize) -> ChartingTurn {
+    charting_turn_drawing(vision, image, rounds, false).await
+}
+
+/// [`charting_turn`], with `vary` deciding whether each round draws a new chart.
+async fn charting_turn_drawing(
+    vision: VisionSupport,
+    image: Vec<u8>,
+    rounds: usize,
+    vary: bool,
+) -> ChartingTurn {
     let mut scripts: Vec<Script> = (1..=rounds)
         .map(|round| Script {
             chunks: vec![
@@ -693,14 +722,20 @@ async fn charting_turn(vision: VisionSupport, image: Vec<u8>, rounds: usize) -> 
         .collect();
     scripts.push(text("done"));
     let recorder = ScriptRecorder::new(scripts);
+    let asked = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let backend: Arc<dyn EngineBackend> = Arc::new(Sighted {
         inner: recorder,
         vision,
+        asked: Arc::clone(&asked),
     });
     let (dir, cmd_tx, mut evt_rx, handle) = spawn_orch_tools(
         Some(backend),
         no_auto_cfg(),
-        vec![Arc::new(Charting { image })],
+        vec![Arc::new(Charting {
+            image,
+            vary,
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        })],
     );
     let (mut pid, mut chat_id) = (None, None);
     while pid.is_none() || chat_id.is_none() {
@@ -747,11 +782,26 @@ async fn charting_turn(vision: VisionSupport, image: Vec<u8>, rounds: usize) -> 
         record,
         files: chat.files,
         folder,
+        asked: asked.load(std::sync::atomic::Ordering::Relaxed),
     }
 }
 
 fn profile_note(key: &str, n: &str) -> String {
     crate::shared::i18n::locale(crate::shared::i18n::Lang::default()).tf(key, &[("n", n)])
+}
+
+/// Whether the engine takes images belongs to the server and the model behind it, so it
+/// cannot change inside a turn — but asking is a real HTTP round trip on the turn's
+/// critical path, and nothing memoized it: a turn whose every round returned an image paid
+/// one probe per round, up to `max_tool_rounds` of them.
+#[tokio::test]
+async fn the_engine_is_asked_about_images_once_a_turn_however_many_rounds_return_one() {
+    let ChartingTurn { asked, .. } =
+        charting_turn_drawing(VisionSupport::Supported, real_png(), 3, true).await;
+    assert_eq!(
+        asked, 1,
+        "three rounds, three images, and the answer cannot have changed between them"
+    );
 }
 
 #[tokio::test]
@@ -761,6 +811,7 @@ async fn an_image_the_model_cannot_take_is_withheld_and_the_result_says_so() {
         record,
         files,
         folder,
+        ..
     } = charting_turn(VisionSupport::Unsupported, real_png(), 1).await;
     let result = record.result.unwrap_or_default();
     assert_eq!(record.images, 0, "{result}");
