@@ -15,6 +15,7 @@ split by subsystem.
 ## [Unreleased]
 
 ### Fixed
+- **The "show charts" switch is shown in local Python mode too** — `tools.python_images` decides whether an image the code saved goes back to the model, and the local interpreter collects its output folder exactly as the sandbox does; the settings row, written when the flag meant nothing there, appeared only in sandbox mode. Off and switched to local, the charts were withheld with nowhere to see why.
 
 - **A stalled engine can no longer freeze a reply that produced a picture.** Before
   sending an image to the model the app asks the server whether it accepts images — a

@@ -830,6 +830,16 @@ impl SettingsScreen {
                     FieldKind::Toggle(t.python_enabled),
                 )
                 .describe(loc.t("ui.settings.desc.python")),
+                // Above the mode split, with the switches that mean the same in both:
+                // the local interpreter answers the same contract as the sandbox and
+                // collects the same `out/`, so what it draws is withheld by the same
+                // flag (docs/history/sandbox-file-exchange.md §14 V1).
+                row(
+                    FieldId::TPythonImages,
+                    loc.t("ui.settings.field.python_images"),
+                    FieldKind::Toggle(t.python_images),
+                )
+                .describe(loc.t("ui.settings.desc.python_images")),
             ];
             match t.python_mode {
                 PythonMode::Local => py.push(
@@ -848,16 +858,6 @@ impl SettingsScreen {
                             FieldKind::Toggle(t.python_net_enabled),
                         )
                         .describe(loc.t("ui.settings.desc.python_net")),
-                    );
-                    // Beside the network switch: both decide what a sandbox call costs
-                    // or reaches, and neither means anything in local mode.
-                    py.push(
-                        row(
-                            FieldId::TPythonImages,
-                            loc.t("ui.settings.field.python_images"),
-                            FieldKind::Toggle(t.python_images),
-                        )
-                        .describe(loc.t("ui.settings.desc.python_images")),
                     );
                     py.push(
                         num_field(

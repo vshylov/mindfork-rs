@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (68)
+## Entries (69)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -80,6 +80,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: two letters are not a format, and an invisible mark is not a name (done)
 - Post-M9: the `files` argument is read once, and the result stops listing (done)
 - Post-M9: a process the script leaves behind stops deciding the call (done)
+- Post-M9: the "show charts" switch is shown in local Python mode too (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -4771,3 +4772,31 @@ mock: the defect is in how a real child's pipes behave, which is the one thing a
 have. Plus a pure test of the sweep in both directions: a fresh directory is left alone, a
 stale one goes with the copies in it, and another program's temp directory is never touched.
 Both fail with their guard reverted. Unit: 3188 green, 174 ignored.
+
+### Post-M9: the "show charts" switch is shown in local Python mode too (done)
+
+The last item of the review's tier 2, and the smallest. `tools.python_images` decides
+whether an image the code saved goes back to the model; stage 5 (§14) gave `LocalSandbox`
+the same `SandboxRunner` contract as the sandbox — one job directory with `in/` and `out/`,
+one collector, one set of caps — so the flag has meant exactly the same thing in both modes
+since. The settings row did not follow: it was pushed inside the `PythonMode::Wasmer` arm of
+the catalog, beside the network toggle, with a comment saying neither means anything in
+local mode. That was true when it was written.
+
+What it cost is the ordinary shape of a hidden setting rather than anything exotic: the flag
+is **on** by default, so most users saw the charts anyway — but someone who turned it off in
+sandbox mode and then switched to the local interpreter kept the "off", with the row gone and
+`config.json` the only way back, while every `python_exec` result said the model had not seen
+an image it could have been shown. The row now sits above the mode split, beside the enable
+toggle, with the switches that mean the same in both; it also stops appearing and vanishing
+as the mode is cycled. The description needed nothing — it already named both folders
+(`/w/out` in the sandbox, `out/` in local mode), which is the half that would have been
+wrong to leave.
+
+The visibility test already existed and already listed this row — in the **sandbox** arm. Its
+local arm asserted only what is hidden there, which is why the defect survived a test whose
+whole subject is which rows a mode shows. The lesson is narrower than "test the other
+branch": a test that enumerates the presences of one arm and the absences of the other cannot
+fail on a row that should be in both. Both arms now name it, and the local one carries why.
+
+No live run: a settings row, no engine path touched.
