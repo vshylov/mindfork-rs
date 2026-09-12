@@ -5,10 +5,14 @@
 //! are relative to the data root):
 //! - files `settings.json`, `profiles.json`, `data.db` (+ sidecar `-wal`/`-shm`,
 //!   if present — see the compaction note below), `personal_dictionary.txt`;
-//! - directories `chats/`, `dictionaries/`, `locales/` and `files/` (recursively —
-//!   their `*.bak` files are pulled in too; `locales/` — user overrides of the
-//!   scaffold/UI text; `files/` — what the Python sandbox saved for each chat, which
-//!   cannot be recomputed, docs/history/sandbox-file-exchange.md F10);
+//! - directories `chats/`, `dictionaries/`, `locales/`, `files/` and `workspace/`
+//!   (recursively — their `*.bak` files are pulled in too; `locales/` — user overrides
+//!   of the scaffold/UI text; `files/` — what the Python sandbox saved for each chat,
+//!   which cannot be recomputed, docs/history/sandbox-file-exchange.md F10;
+//!   `workspace/` — the change journals of chats' code workspaces, spec §9.12: the
+//!   **pre-image** of every file the assistant edited, which exists nowhere else once
+//!   the file is overwritten, so a restore without them can show a change but not put
+//!   it back);
 //! - all `*.bak` at the root (`settings.bak`, `profiles.bak`);
 //! - the file-tools "sandbox" directory (`config.tools.fs_root`) — **only if**
 //!   it lies inside the data root.
@@ -156,7 +160,10 @@ const TOP_FILES: &[&str] = &["settings.json", "profiles.json", "personal_diction
 const DB_FILES: &[&str] = &["data.db", "data.db-wal", "data.db-shm"];
 
 /// Directories included in the backup whole (recursively).
-const TOP_DIRS: &[&str] = &["chats", "dictionaries", "locales", "files"];
+///
+/// One list for both halves — what a backup packs and what a restore clears — so a
+/// directory cannot be packed and then survive a restore, or be cleared and not come back.
+const TOP_DIRS: &[&str] = &["chats", "dictionaries", "locales", "files", "workspace"];
 
 /// A packing entry: the source's absolute path + its name inside the archive (with `/`).
 struct Entry {
@@ -906,6 +913,12 @@ mod tests {
         fs::write(root.join("locales").join("en.json"), b"{}").unwrap();
         fs::create_dir_all(root.join("files").join("c1")).unwrap();
         fs::write(root.join("files").join("c1").join("chart.png"), b"png").unwrap();
+        fs::create_dir_all(root.join("workspace").join("c1")).unwrap();
+        fs::write(
+            root.join("workspace").join("c1").join("journal.json"),
+            b"{\"entries\":[]}",
+        )
+        .unwrap();
         // Must not end up in the backup:
         fs::create_dir_all(root.join("logs")).unwrap();
         fs::write(root.join("logs").join("mindfork.log"), b"log").unwrap();
@@ -985,6 +998,9 @@ mod tests {
             "dictionaries/en.dic",
             "locales/en.json",
             "files/c1/chart.png",
+            // The pre-images of what the assistant edited in a chat's project: the one
+            // thing that track stores which cannot be recomputed (spec §9.12).
+            "workspace/c1/journal.json",
         ] {
             assert!(
                 names.contains(&expected.to_string()),
@@ -1049,6 +1065,14 @@ mod tests {
         seed_data(dst.path());
         fs::write(dst.path().join("settings.json"), b"{\"v\":999}").unwrap();
         fs::write(dst.path().join("chats").join("stale.json"), b"{}").unwrap();
+        // A journal of a chat the archive knows nothing about: the clearing half has to
+        // take it, or a restore would leave another conversation's baselines behind.
+        fs::create_dir_all(dst.path().join("workspace").join("other")).unwrap();
+        fs::write(
+            dst.path().join("workspace").join("other").join("j.json"),
+            b"{}",
+        )
+        .unwrap();
         let dst_paths = Paths::with_root(dst.path());
 
         let outcome = restore_backup(&dst_paths, &archive_path, None, None, ru(), |_| {}).unwrap();
@@ -1068,6 +1092,20 @@ mod tests {
         );
         // The stale chat absent from the archive was removed by the cleanup.
         assert!(!dst.path().join("chats").join("stale.json").exists());
+        // The code workspaces' change journals travel with the rest: the archive's
+        // baseline is back, and the one it does not carry is gone (spec §9.12, §12.3).
+        assert!(
+            dst.path()
+                .join("workspace")
+                .join("c1")
+                .join("journal.json")
+                .exists(),
+            "the archive's workspace journal was not restored"
+        );
+        assert!(
+            !dst.path().join("workspace").join("other").exists(),
+            "a journal the archive does not carry survived the restore"
+        );
         // The backups directory is preserved (it holds the pre-restore copy).
         assert!(dst.path().join("backups").exists());
     }

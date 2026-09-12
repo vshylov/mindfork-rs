@@ -14,6 +14,14 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A backup now carries the code workspaces too.** The change journal of a chat's attached
+  project — the original of every file the assistant edited, which is what "revert" puts
+  back — was left out of `mindfork backup`, so a restored chat could still show what had
+  changed but no longer undo it. `workspace/` is packed and restored with the rest of the
+  data now.
+
 ### Added
 
 - **The local-interpreter mode exchanges files too.** Running Python on your own machine

@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (12)
+## Entries (13)
 
 - Post-M9: persisting the input-box draft in the chat file (done)
 - Post-M9: persisting deleted exchanges in the chat file (`Ctrl+E`/`Ctrl+R`) (done)
@@ -24,6 +24,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the first real settings step — `SETTINGS_SCHEMA` 1→2 (done)
 - Post-M9: sub-agent chats, PR 3 — `CHAT_SCHEMA` 1→2, a transcript for every old call (done)
 - Post-M9: a launch that finds chats but no `data.db` says so (done)
+- Post-M9: `workspace/` joins the backup (done)
 
 ### Post-M9: persisting the input-box draft in the chat file (done)
 - **Unsaved input-box text is stored on the chat and restored on
@@ -775,3 +776,38 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
   would pass for the wrong reason. Both halves were mutation-checked (disabling
   the emission, and moving it before `bootstrap`: each fails the test it should).
   No live run: startup and UI, no engine, memory or tool path involved.
+
+### Post-M9: `workspace/` joins the backup (done)
+
+A gap the sandbox file-exchange track found and left flagged (fork F10, where `files/` was
+added to the archive): `TOP_DIRS` held `chats`, `dictionaries`, `locales` and `files` — and
+**not** `workspace/`, the change journals of chats' code workspaces. So a backup carried
+the conversation that edited a project and not the **pre-image** of what it edited; a
+restore brought the chat back with a changes screen that could still say what changed and
+no longer put it back. `paths.rs` had been asserting the opposite in its own doc comment
+since the workspace track ("Backed up with the rest of the data root — a baseline is the
+one thing this track stores that cannot be recomputed"), which is how the gap survived a
+review: the claim was there, the line was not.
+
+**The fix is the constant**, because `TOP_DIRS` serves both halves — what a backup packs
+and what a restore clears. Adding `workspace` therefore does two things at once, and the
+second is the one worth testing: without it a restore would leave another conversation's
+baselines in a root it had just replaced.
+
+**Tests.** The archive-contents test and the restore round trip both grew a workspace
+journal: the round trip now seeds a journal for a chat the archive does **not** know, and
+asserts it is gone afterwards while the archive's own is back. Both fail with the line
+reverted — checked, not assumed. Unit: 3171 green, 169 ignored (unchanged: the two tests
+were extended rather than added).
+
+**Verified through the real CLI**, not only in-process (no live model needed — this is
+storage): a throwaway portable root with `workspace/c1/journal.json`, `mindfork backup`
+packing it (`workspace/c1/journal.json` in the zip beside `files/c1/chart.png`), then the
+journal deleted, a stale `workspace/other/j.json` planted and `settings.json` changed, and
+`mindfork restore` putting the baseline back byte for byte, removing the stale one, and
+carrying that stale journal into the pre-restore copy — so even the data the restore
+discards is recoverable from `backups/`.
+
+**Still open, and deliberate**: the directories of a soft-deleted chat are not purged
+(`files/<id>`, `workspace/<id>`), so a restore of a hidden chat brings its files with it
+(F10 (a)).
