@@ -2153,6 +2153,8 @@
   "sandbox.setup.pack.failed": "`wasmer {command}` завершился ошибкой: {stderr}",
   "sandbox.setup.verify.ok": "Образ песочницы запускается.",
   "sandbox.setup.verify.failed": "упакованный образ песочницы не запускается: {detail}",
+  "sandbox.setup.verify.timeout": "упакованный образ песочницы не успел запуститься за {secs} с и не был установлен; прежняя песочница не тронута",
+  "sandbox.setup.install.done": "Образ песочницы установлен: {path}",
   "sandbox.setup.wasmer.present": "wasmer уже установлен: {path}",
   "sandbox.setup.wasmer.no_platform": "автоскачивание wasmer недоступно для платформы {os}/{arch} — установите wasmer вручную (https://wasmer.io) и задайте MINDFORK_SANDBOX_WASMER",
   "sandbox.setup.wasmer.downloading": "Скачивание wasmer {version} ({os}/{arch})…",

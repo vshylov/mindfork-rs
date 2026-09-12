@@ -1854,6 +1854,8 @@
   "sandbox.setup.pack.failed": "`wasmer {command}` failed: {stderr}",
   "sandbox.setup.verify.ok": "The sandbox image starts.",
   "sandbox.setup.verify.failed": "the packed sandbox image does not start: {detail}",
+  "sandbox.setup.verify.timeout": "the packed sandbox image did not finish starting within {secs} s, so it was not installed; the sandbox you had is untouched",
+  "sandbox.setup.install.done": "Sandbox image installed: {path}",
   "sandbox.setup.wasmer.present": "wasmer already installed: {path}",
   "sandbox.setup.wasmer.no_platform": "automatic wasmer download is unavailable for platform {os}/{arch} — install wasmer manually (https://wasmer.io) and set MINDFORK_SANDBOX_WASMER",
   "sandbox.setup.wasmer.downloading": "Downloading wasmer {version} ({os}/{arch})…",

@@ -218,8 +218,12 @@ pub async fn setup(
     ensure_python_webc(dir, &wasmer, opts, loc, &mut progress).await?;
     ensure_wheels(&client, dir, opts, loc, &mut progress).await?;
     warmup(dir, loc, &mut progress).await;
+    // Pack, start, *then* install. The three are separate steps because the order is the
+    // guarantee: until the candidate has run, the image the runtime picks up is still the
+    // one that worked yesterday.
     pack_image(dir, &wasmer, loc, &mut progress).await?;
     verify_image(dir, loc, &mut progress).await?;
+    install_image(dir, loc, &mut progress).await?;
 
     progress(loc.t("sandbox.setup.done"));
     Ok(())
@@ -297,7 +301,6 @@ async fn pack_image(
     loc: &Locale,
     progress: &mut impl FnMut(&str),
 ) -> Result<()> {
-    use crate::shared::sandbox::SANDBOX_IMAGE;
     use std::ffi::OsStr;
 
     progress(loc.t("sandbox.setup.pack.start"));
@@ -331,9 +334,10 @@ async fn pack_image(
         .await
         .with_context(|| io(&shown))?;
 
-    // Built beside the image and renamed over it, so an interrupted build never leaves
-    // a truncated image for the runtime to start.
-    let partial = dir.join(format!("{SANDBOX_IMAGE}.partial"));
+    // Built beside the installed image and renamed over it only once it has been started
+    // ([`install_image`]), so neither an interrupted build nor an image that does not run
+    // can become the one the runtime picks up.
+    let partial = dir.join(partial_image());
     let build: [&OsStr; 5] = [
         "package".as_ref(),
         "build".as_ref(),
@@ -342,13 +346,36 @@ async fn pack_image(
         partial.as_os_str(),
     ];
     wasmer_command(wasmer, &build, loc).await?;
-    let image = dir.join(SANDBOX_IMAGE);
-    let image_shown = image.display().to_string();
-    tokio::fs::rename(&partial, &image)
-        .await
-        .with_context(|| io(&image_shown))?;
     let _ = tokio::fs::remove_dir_all(&staging).await;
-    progress(&loc.tf("sandbox.setup.pack.done", &[("path", &image_shown)]));
+    progress(&loc.tf(
+        "sandbox.setup.pack.done",
+        &[("path", &partial.display().to_string())],
+    ));
+    Ok(())
+}
+
+/// The freshly packed image, before it is installed: [`pack_image`] builds here and
+/// [`verify_image`] starts *this* file, so a candidate that does not run never replaces a
+/// sandbox that does.
+fn partial_image() -> String {
+    format!("{}.partial", crate::shared::sandbox::SANDBOX_IMAGE)
+}
+
+/// Renames the verified candidate over the installed image — the last step of `setup`, and
+/// the only one that touches what the runtime will pick up.
+///
+/// Ordering is the whole point. Installing first and verifying after (which is what this
+/// did) meant a failed verification left the broken image in place **and** destroyed the
+/// one it replaced, while `WasmerSandbox::plan` — which asks only whether the file exists —
+/// went on reporting the sandbox ready, so every call in every chat failed at launch.
+async fn install_image(dir: &Path, loc: &Locale, progress: &mut impl FnMut(&str)) -> Result<()> {
+    use crate::shared::sandbox::SANDBOX_IMAGE;
+    let image = dir.join(SANDBOX_IMAGE);
+    let shown = image.display().to_string();
+    tokio::fs::rename(dir.join(partial_image()), &image)
+        .await
+        .with_context(|| loc.tf("sandbox.setup.pack.io", &[("path", &shown.clone() as &str)]))?;
+    progress(&loc.tf("sandbox.setup.install.done", &[("path", &shown)]));
     Ok(())
 }
 
@@ -394,20 +421,36 @@ fn package_is_named(manifest: &str) -> bool {
 /// nothing but the image, so one that does not start leaves no sandbox at all — which
 /// has to fail `setup`, not the first call in a chat.
 async fn verify_image(dir: &Path, loc: &Locale, progress: &mut impl FnMut(&str)) -> Result<()> {
-    let sb = WasmerSandbox::new(Some(dir.to_path_buf()));
+    let candidate = partial_image();
+    let sb = WasmerSandbox::for_candidate(dir.to_path_buf(), &candidate);
     let job = crate::shared::sandbox::SandboxJob::new(VERIFY_SCRIPT, false, WARMUP_TIMEOUT);
     let out = sb.run(job, loc).await?;
-    if out.exit_code != Some(0) {
+    if out.exit_code == Some(0) {
+        progress(loc.t("sandbox.setup.verify.ok"));
+        return Ok(());
+    }
+    // Nothing is installed, so the rejected candidate is only a large file nobody reads.
+    let _ = tokio::fs::remove_file(dir.join(&candidate)).await;
+    // A timeout has the same shape as a failure — `SandboxOutput::default` carries no exit
+    // code — and it is the one case with an empty stderr, so the message would be blank
+    // exactly where the cause is the 600 s limit. Say which of the two it was.
+    if out.timed_out {
         bail!(
             "{}",
             loc.tf(
-                "sandbox.setup.verify.failed",
-                &[("detail", out.stderr.trim())]
+                "sandbox.setup.verify.timeout",
+                &[("secs", &WARMUP_TIMEOUT.as_secs().to_string())]
             )
         );
     }
-    progress(loc.t("sandbox.setup.verify.ok"));
-    Ok(())
+    let detail = match out.stderr.trim() {
+        "" => out.stdout.trim(),
+        stderr => stderr,
+    };
+    bail!(
+        "{}",
+        loc.tf("sandbox.setup.verify.failed", &[("detail", detail)])
+    );
 }
 
 /// Runs one `wasmer` subcommand to completion; a non-zero exit is an error naming the
@@ -1066,5 +1109,112 @@ env = ["PYTHONEXECUTABLE=/bin/python", "TERM=dumb"]
             .await
             .expect_err("a missing file cannot verify");
         assert!(err.to_string().contains("absent.bin"), "got: {err:#}");
+    }
+
+    /// A `wasmer` that does just enough for [`pack_image`]: `package unpack` lays down a
+    /// manifest with the `[fs]` table the rewrite needs, `package build` writes the file it
+    /// was pointed at. Unix only — CI runs it, and a stub the shell can execute is the
+    /// cheap half of this; what it pins is the **order**, which is platform-independent.
+    #[cfg(unix)]
+    fn stub_wasmer(at: &Path) -> PathBuf {
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+
+        let script = at.join("wasmer");
+        let mut f = std::fs::File::create(&script).unwrap();
+        writeln!(f, "#!/bin/sh").unwrap();
+        writeln!(f, "case \"$2\" in").unwrap();
+        // args: package unpack --format package --out-dir <staging> <python.webc>
+        writeln!(f, "  unpack) mkdir -p \"$6\";").unwrap();
+        writeln!(
+            f,
+            "    printf '[package]\\nname = \"a/b\"\\nversion = \"1.0.0\"\\n\\n[fs]\\n' > \"$6/wasmer.toml\" ;;"
+        )
+        .unwrap();
+        // args: package build <staging> -o <partial>
+        writeln!(f, "  build) printf 'FRESHLY-PACKED' > \"$5\" ;;").unwrap();
+        writeln!(f, "esac").unwrap();
+        drop(f);
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        script
+    }
+
+    /// The defect this order exists for: packing used to rename the new image over the
+    /// installed one and only *then* start it, so a candidate that did not run destroyed
+    /// the sandbox that did — and `plan` reports ready on a file that merely exists, so
+    /// every call in every chat failed at launch with the tool still advertising itself.
+    ///
+    /// Packing must therefore leave the installed image untouched; installing it is a
+    /// separate step, after the start.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn packing_leaves_the_installed_image_alone_and_installing_replaces_it() {
+        use crate::shared::i18n::{Lang, locale};
+        use crate::shared::sandbox::SANDBOX_IMAGE;
+
+        const WORKING: &[u8] = b"the sandbox that works today";
+        let dir = tempfile::tempdir().unwrap();
+        let at = dir.path();
+        std::fs::write(at.join(SANDBOX_IMAGE), WORKING).unwrap();
+        std::fs::write(at.join("python.webc"), b"webc").unwrap();
+        let wasmer = stub_wasmer(at);
+        let loc = locale(Lang::En);
+
+        pack_image(at, &wasmer, loc, &mut |_| {}).await.unwrap();
+        assert_eq!(
+            std::fs::read(at.join(SANDBOX_IMAGE)).unwrap(),
+            WORKING,
+            "packing must not touch the image the runtime is using"
+        );
+        assert_eq!(
+            std::fs::read(at.join(partial_image())).unwrap(),
+            b"FRESHLY-PACKED",
+            "the candidate is what packing produces"
+        );
+
+        install_image(at, loc, &mut |_| {}).await.unwrap();
+        assert_eq!(
+            std::fs::read(at.join(SANDBOX_IMAGE)).unwrap(),
+            b"FRESHLY-PACKED",
+            "installing is the step that replaces it"
+        );
+        assert!(
+            !at.join(partial_image()).exists(),
+            "the candidate is consumed by the install, not left beside it"
+        );
+    }
+
+    /// With a real `wasmer`: a candidate that cannot start fails `setup`, the installed
+    /// image is **byte for byte** the one that was there, and the rejected candidate is not
+    /// left behind. `#[ignore]` — needs the binary a provisioned sandbox holds.
+    #[tokio::test]
+    #[ignore = "requires a real wasmer binary (MINDFORK_SANDBOX_WASMER)"]
+    async fn a_candidate_that_does_not_start_leaves_the_installed_image_alone_live() {
+        use crate::shared::i18n::{Lang, locale};
+        use crate::shared::sandbox::SANDBOX_IMAGE;
+
+        if std::env::var_os("MINDFORK_SANDBOX_WASMER").is_none() {
+            eprintln!("skip: MINDFORK_SANDBOX_WASMER not set");
+            return;
+        }
+        const WORKING: &[u8] = b"the sandbox that works today";
+        let dir = tempfile::tempdir().unwrap();
+        let at = dir.path();
+        std::fs::write(at.join(SANDBOX_IMAGE), WORKING).unwrap();
+        std::fs::write(at.join(partial_image()), b"not a webc at all").unwrap();
+
+        let err = verify_image(at, locale(Lang::En), &mut |_| {})
+            .await
+            .expect_err("junk must not pass verification");
+        eprintln!("verification said: {err}");
+        assert_eq!(
+            std::fs::read(at.join(SANDBOX_IMAGE)).unwrap(),
+            WORKING,
+            "a failed verification must not cost the user the sandbox they had"
+        );
+        assert!(
+            !at.join(partial_image()).exists(),
+            "the rejected candidate is cleaned up, not left as dead weight"
+        );
     }
 }
