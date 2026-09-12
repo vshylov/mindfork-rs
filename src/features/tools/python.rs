@@ -667,6 +667,19 @@ mod tests {
         )
     }
 
+    /// [`local`] with a memory limit per interpreter process — Windows only, as the limit is.
+    #[cfg(windows)]
+    fn local_capped(memory_mb: u64) -> PythonExec {
+        PythonExec::new(
+            PythonMode::Local,
+            Arc::new(
+                crate::shared::sandbox::LocalSandbox::new(None).with_memory_limit(Some(memory_mb)),
+            ),
+            false,
+            Duration::from_secs(30),
+        )
+    }
+
     /// The tool in local mode over a mock runner — for the parts that are about the
     /// wording and the staging rather than about spawning an interpreter.
     fn local_mock(sandbox: Arc<dyn SandboxRunner>) -> PythonExec {
@@ -2108,6 +2121,59 @@ print('pillow', png.getvalue()[:4] == b'\x89PNG')
             })
             .expect("the file was stored");
         assert_eq!(kept, NOTES.len() as u64);
+    }
+
+    /// The local interpreter under a memory limit (Windows Job Object): an allocation past it
+    /// fails **inside** the script, as a `MemoryError` it reports — native CPython is refused
+    /// the memory, where V8 in the sandbox dies. And the limit follows the script into a
+    /// process it starts. 256 MB against a 1 GiB allocation: without the limit any machine
+    /// that runs this hands the gigabyte over, and the test fails.
+    #[cfg(windows)]
+    #[tokio::test]
+    #[ignore = "requires a Python interpreter on PATH"]
+    async fn a_local_memory_limit_stops_a_runaway_allocation_and_its_child() {
+        let (_d, _s, ctx) = ctx_with_storage(Uuid::new_v4());
+        let code = "b = bytearray(1024 * 1024 * 1024)\nprint('allocated', len(b))";
+        let out = local_capped(256)
+            .invoke(&ctx, serde_json::json!({ "code": code }))
+            .await
+            .unwrap();
+        assert!(out.result.contains("MemoryError"), "got: {}", out.result);
+        assert!(!out.result.contains("allocated"), "got: {}", out.result);
+
+        let code = concat!(
+            "import subprocess, sys\n",
+            "r = subprocess.run([sys.executable, '-c', 'b = bytearray(1 << 30); print(len(b))'],\n",
+            "                   capture_output=True, text=True)\n",
+            "print('child exit', r.returncode)\n",
+            "print('child stdout', r.stdout.strip() or '-')\n",
+            "print('child stderr', (r.stderr.strip().splitlines() or ['-'])[-1])\n",
+        );
+        let out = local_capped(256)
+            .invoke(&ctx, serde_json::json!({ "code": code }))
+            .await
+            .unwrap();
+        assert!(
+            out.result.contains("child stderr MemoryError"),
+            "the child is capped too: {}",
+            out.result
+        );
+        assert!(!out.result.contains("1073741824"), "got: {}", out.result);
+    }
+
+    /// And a limit sized for work does not get in its way: the interpreter starts, imports
+    /// and prints under 256 MB.
+    #[cfg(windows)]
+    #[tokio::test]
+    #[ignore = "requires a Python interpreter on PATH"]
+    async fn a_local_memory_limit_leaves_ordinary_work_alone() {
+        let (_d, _s, ctx) = ctx_with_storage(Uuid::new_v4());
+        let code = "import json, csv, statistics\nprint(sum(range(1000)))";
+        let out = local_capped(256)
+            .invoke(&ctx, serde_json::json!({ "code": code }))
+            .await
+            .unwrap();
+        assert!(out.result.contains("499500"), "got: {}", out.result);
     }
 
     /// Cyrillic in `print` must not fail with `UnicodeEncodeError` (Windows cp1252).

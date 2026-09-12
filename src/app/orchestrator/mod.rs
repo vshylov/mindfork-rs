@@ -445,6 +445,7 @@ fn build_registry(
         python_net: config.tools.python_net_enabled,
         python_wasm_timeout: Duration::from_secs(config.tools.python_wasm_timeout_secs),
         python_wasm_memory_mb: config.tools.python_wasm_memory_mb,
+        python_local_memory_mb: config.tools.python_local_memory_mb,
         python_images: config.tools.python_images,
         sandbox_dir: Some(sandbox_dir),
         web_fetch_content: config.tools.web_fetch_content,

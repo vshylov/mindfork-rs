@@ -480,6 +480,9 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
         TPythonWasmMemory => int(|c, t| {
             c.tools.python_wasm_memory_mb = t.trim().parse::<u64>().ok().filter(|&m| m > 0);
         }),
+        TPythonLocalMemory => int(|c, t| {
+            c.tools.python_local_memory_mb = t.trim().parse::<u64>().ok().filter(|&m| m > 0);
+        }),
         VideoModel => text(|c, t| c.video.model_name = opt(t)),
         VideoMaxMinutes => int(|c, t| {
             if let Ok(v) = t.parse() {

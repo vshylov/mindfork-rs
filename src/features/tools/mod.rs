@@ -847,6 +847,8 @@ pub struct ToolConfig {
     pub python_wasm_timeout: Duration,
     /// Hard sandbox memory limit (MB; `None` — no limit). Windows only.
     pub python_wasm_memory_mb: Option<u64>,
+    /// Hard memory limit per local interpreter process (MB; `None` — no limit). Windows only.
+    pub python_local_memory_mb: Option<u64>,
     /// Show the model the images `python_exec` saved (`config.tools.python_images`).
     pub python_images: bool,
     /// Sandbox directory (`data/sandbox/`) with the `wasmer` binary and assets
@@ -890,6 +892,7 @@ impl Default for ToolConfig {
                 crate::shared::config::DEFAULT_PYTHON_WASM_TIMEOUT_SECS,
             ),
             python_wasm_memory_mb: None,
+            python_local_memory_mb: None,
             python_images: true,
             sandbox_dir: None,
             web_fetch_content: true,
@@ -980,7 +983,8 @@ pub fn standard_registry(cfg: &ToolConfig) -> ToolRegistry {
                 .with_memory_limit(cfg.python_wasm_memory_mb),
         ),
         crate::shared::config::PythonMode::Local => Arc::new(
-            crate::shared::sandbox::LocalSandbox::new(cfg.python_path.clone()),
+            crate::shared::sandbox::LocalSandbox::new(cfg.python_path.clone())
+                .with_memory_limit(cfg.python_local_memory_mb),
         ),
     };
     reg.register(Arc::new(

@@ -292,6 +292,7 @@ fn python_group_visibility_follows_mode() {
     assert!(ids.contains(&FieldId::TPythonWasmTimeout));
     assert!(ids.contains(&FieldId::TPythonWasmMemory));
     assert!(!ids.contains(&FieldId::TPythonPath));
+    assert!(!ids.contains(&FieldId::TPythonLocalMemory));
 
     // Local mode: the interpreter path is visible, sandbox fields are hidden.
     let mut cfg = AppConfig::default();
@@ -306,6 +307,8 @@ fn python_group_visibility_follows_mode() {
     assert!(!ids.contains(&FieldId::TPythonNet));
     assert!(!ids.contains(&FieldId::TPythonWasmTimeout));
     assert!(!ids.contains(&FieldId::TPythonWasmMemory));
+    // ...and its own memory limit stands in the sandbox's place.
+    assert!(ids.contains(&FieldId::TPythonLocalMemory));
     // ...and "show charts" stays: the local interpreter collects `out/` too, so the
     // switch decides something here (docs/history/sandbox-file-exchange.md §14 V1).
     // Hidden, it read as a sandbox-only setting while it was silently withholding
@@ -5000,6 +5003,42 @@ fn background_rows_save_their_fields() {
     s.config.tools.subagent_background_max = 3;
     match edit_max(&mut s, "0") {
         Some(SettingsIntent::SaveConfig(c)) => assert_eq!(c.tools.subagent_background_max, 1),
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+}
+
+/// The local interpreter's limit is stored in its own field and never in the sandbox's —
+/// the two floors are far apart — and `0` reads as no limit, as it does for the sandbox.
+#[test]
+fn editing_the_local_memory_limit_stores_its_own_field_and_zero_reads_none() {
+    let edit = |s: &mut SettingsScreen, text: &str| {
+        goto_section(s, Section::Tools);
+        goto_field(s, FieldId::TPythonLocalMemory);
+        s.handle_key(key(KeyCode::Enter));
+        s.handle_key(ctrl('k'));
+        for c in text.chars() {
+            s.handle_key(key(KeyCode::Char(c)));
+        }
+        s.handle_key(key(KeyCode::Enter))
+    };
+    let mut cfg = AppConfig::default();
+    cfg.tools.python_mode = PythonMode::Local;
+    let mut p = Profile::new("Базовый", "Ты — ассистент.");
+    p.enabled_tools = default_tool_ids();
+    let mut s = SettingsScreen::new(cfg, vec![p], vec![]);
+    match edit(&mut s, "512") {
+        Some(SettingsIntent::SaveConfig(c)) => {
+            assert_eq!(c.tools.python_local_memory_mb, Some(512));
+            assert_eq!(
+                c.tools.python_wasm_memory_mb, None,
+                "the sandbox's limit is not touched"
+            );
+        }
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+    s.config.tools.python_local_memory_mb = Some(512);
+    match edit(&mut s, "0") {
+        Some(SettingsIntent::SaveConfig(c)) => assert_eq!(c.tools.python_local_memory_mb, None),
         other => panic!("expected SaveConfig, got {other:?}"),
     }
 }
