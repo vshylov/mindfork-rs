@@ -541,6 +541,8 @@ enum FieldId {
     TPythonImages,
     TPythonWasmTimeout,
     TPythonWasmMemory,
+    /// The local interpreter's memory limit per process (`tools.python_local_memory_mb`).
+    TPythonLocalMemory,
     /// The Gemini model that watches a video (`youtube_watch`). See spec §9.3,
     /// docs/research/youtube-integration.md.
     VideoModel,

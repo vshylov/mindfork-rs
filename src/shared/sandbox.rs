@@ -535,11 +535,30 @@ impl SandboxRunner for WasmerSandbox {
 pub struct LocalSandbox {
     /// The interpreter: a path or a bare name. `None` → the platform default.
     python: Option<String>,
+    /// A hard memory limit per interpreter process (MB; `None` — none). See
+    /// [`LocalSandbox::with_memory_limit`].
+    memory_mb: Option<u64>,
 }
 
 impl LocalSandbox {
     pub fn new(python: Option<String>) -> Self {
-        Self { python }
+        Self {
+            python,
+            memory_mb: None,
+        }
+    }
+
+    /// Sets a hard memory limit per process (MB; `Some(0)`/`None` — no limit;
+    /// `tools.python_local_memory_mb`). Windows only, through the sandbox's own Job Object
+    /// ([`apply_memory_limit`]). How it ends differs: native CPython asks the OS for memory
+    /// and is refused, so the script gets a `MemoryError` it can report, where V8 in the
+    /// sandbox dies. The limit is per process — a process the script starts joins the job
+    /// and gets the same cap — and it is a guard, not isolation: the job is assigned just
+    /// after the spawn, so a launcher that starts the real interpreter at once (`py.exe`)
+    /// can hand the work to a process outside it.
+    pub fn with_memory_limit(mut self, mb: Option<u64>) -> Self {
+        self.memory_mb = mb.filter(|&m| m > 0);
+        self
     }
 
     /// The interpreter's name or path, with the platform's default when none is set.
@@ -597,6 +616,11 @@ impl SandboxRunner for LocalSandbox {
         let mut child = cmd
             .spawn()
             .with_context(|| loc.tf("sandbox.err.spawn_python", &[("path", &python)]))?;
+        // Right after the spawn, as the sandbox does it: CPython spends its first tens of
+        // milliseconds starting up, so none of the call's code has run yet.
+        if let Some(mb) = self.memory_mb {
+            apply_memory_limit(&child, mb);
+        }
         // Read beside the process, and wait on the **process** — see [`pipe_reader`]. The
         // pipes belong to whatever the script spawned as much as to the script.
         let (out_buf, out_task) = pipe_reader(child.stdout.take().expect("stdout is piped"));
@@ -647,7 +671,8 @@ fn env_override(key: &str) -> Option<OsString> {
     std::env::var_os(key).filter(|v| !v.is_empty())
 }
 
-/// Applies a hard memory limit to the `wasmer` process (a Windows Job Object).
+/// Applies a hard memory limit to a just-spawned process — `wasmer` in the sandbox, the
+/// interpreter in Local mode (a Windows Job Object, limiting each process in it).
 /// Exceeding it kills the process — protects the host from OOM. "Best
 /// effort": a winapi failure is only logged. Verified live (research §9.6):
 /// the limit holds even after the job handle is closed (the job lives as
@@ -700,7 +725,9 @@ fn apply_memory_limit(child: &tokio::process::Child, mb: u64) {
 /// A hard memory limit isn't applied on non-Windows: `rlimit`/`RLIMIT_AS` is
 /// unreliable with the V8 backend (it reserves a large virtual address
 /// space, so a low limit breaks the very startup). We rely on the timeout
-/// and wasm32 (~4 GB). See ADR 0005.
+/// and wasm32 (~4 GB). See ADR 0005. Local mode is no better served: a limit on address
+/// space is the wrong measure for native CPython too, whose numeric libraries reserve far
+/// more of it than they use.
 #[cfg(not(windows))]
 fn apply_memory_limit(_child: &tokio::process::Child, _mb: u64) {
     tracing::debug!("sandbox: memory limit is supported only on Windows — skipping");
@@ -1344,6 +1371,15 @@ mod tests {
                 .expect_err("the name must be refused");
             assert!(format!("{err:#}").contains("имя"), "{name:?}: {err:#}");
         }
+    }
+
+    /// `0` is "no limit" in the settings, and must not become a zero-byte cap here.
+    #[test]
+    fn a_local_memory_limit_of_zero_is_no_limit() {
+        let limit = |mb| LocalSandbox::new(None).with_memory_limit(mb).memory_mb;
+        assert_eq!(limit(Some(0)), None);
+        assert_eq!(limit(None), None);
+        assert_eq!(limit(Some(512)), Some(512));
     }
 
     /// §14 V4: a path is checked as a file, a bare name is left to `PATH` — no probe.

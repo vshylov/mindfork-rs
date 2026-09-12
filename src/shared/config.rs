@@ -1057,6 +1057,13 @@ pub struct ToolSettings {
     /// needs ~768 MB). Unlimited by default (defense in depth on top of the timeout
     /// and wasm32's ~4 GB).
     pub python_wasm_memory_mb: Option<u64>,
+    /// Hard OS-level memory limit for each local interpreter process in
+    /// [`PythonMode::Local`] (MB; `None`/0 — no limit). Its own field rather than the
+    /// sandbox's, because the two floors are far apart: V8 and CPython need ~768 MB before
+    /// the sandbox starts, native CPython tens of MB. An allocation past it fails, so the
+    /// script sees a `MemoryError`. **Windows only** (Job Object), and not isolation — see
+    /// `LocalSandbox::with_memory_limit`. Unlimited by default.
+    pub python_local_memory_mb: Option<u64>,
     /// Access to local files (`fs_read`/`fs_write`/`fs_list`). Off by
     /// default (the tool can read/overwrite any file — privacy/
     /// security, like Python). See spec §9.3, §13.2.
@@ -1139,6 +1146,7 @@ impl Default for ToolSettings {
             python_net_enabled: true,
             python_wasm_timeout_secs: DEFAULT_PYTHON_WASM_TIMEOUT_SECS,
             python_wasm_memory_mb: None,
+            python_local_memory_mb: None,
             fs_enabled: false,
             fs_root: None,
             subagent_max_tokens: DEFAULT_SUBAGENT_MAX_TOKENS,
@@ -2559,6 +2567,18 @@ mod tests {
         );
         // The sandbox memory limit is off by default (opt-in, Windows only).
         assert_eq!(c.tools.python_wasm_memory_mb, None);
+        // So is the local interpreter's — its own field, and additive: a config written
+        // before it existed reads with none, the sandbox's untouched.
+        assert_eq!(c.tools.python_local_memory_mb, None);
+        let old: AppConfig =
+            serde_json::from_str(r#"{"tools": {"python_wasm_memory_mb": 2048}}"#).unwrap();
+        assert_eq!(
+            (
+                old.tools.python_wasm_memory_mb,
+                old.tools.python_local_memory_mb
+            ),
+            (Some(2048), None)
+        );
         assert_eq!(c.rag.chunk_target_chars, DEFAULT_CHUNK_TARGET_CHARS);
         assert_eq!(c.self_model.max_narrative, DEFAULT_SELF_MODEL_MAX_NARRATIVE);
         assert_eq!(

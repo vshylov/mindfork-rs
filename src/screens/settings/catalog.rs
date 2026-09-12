@@ -842,14 +842,26 @@ impl SettingsScreen {
                 .describe(loc.t("ui.settings.desc.python_images")),
             ];
             match t.python_mode {
-                PythonMode::Local => py.push(
-                    text_row(
-                        FieldId::TPythonPath,
-                        loc.t("ui.settings.field.python_path"),
-                        &t.python_path,
-                    )
-                    .describe(loc.t("ui.settings.desc.python_path")),
-                ),
+                PythonMode::Local => {
+                    py.push(
+                        text_row(
+                            FieldId::TPythonPath,
+                            loc.t("ui.settings.field.python_path"),
+                            &t.python_path,
+                        )
+                        .describe(loc.t("ui.settings.desc.python_path")),
+                    );
+                    // Its own row and field, not the sandbox's: the floors are far apart
+                    // (V8 and CPython need ~768 MB to start, native CPython tens of MB).
+                    py.push(
+                        num_row(
+                            FieldId::TPythonLocalMemory,
+                            loc.t("ui.settings.field.python_memory"),
+                            t.python_local_memory_mb,
+                        )
+                        .describe(loc.t("ui.settings.desc.python_local_memory")),
+                    );
+                }
                 PythonMode::Wasmer => {
                     py.push(
                         row(

@@ -1637,6 +1637,7 @@
   "ui.settings.desc.python_net": "Allow the sandboxed code network access (--net; needed for requests). On by default.",
   "ui.settings.desc.python_images": "An image the code saves to its output folder (/w/out in the sandbox, out/ in local mode) — a matplotlib chart — is shown to the model after the call, so it can check what it drew. Off: such an image is only saved to the chat's files, and the result says so.",
   "ui.settings.desc.python_timeout": "Time limit for code execution in the sandbox (seconds).",
+  "ui.settings.desc.python_local_memory": "Hard memory limit for each interpreter process (protects the host from a runaway script). Past it an allocation fails and the script gets a MemoryError; a process the script starts gets the same limit. Windows only. 0/empty — no limit.",
   "ui.settings.desc.python_memory": "Hard memory limit for the sandbox (protects the host from OOM). Windows only; minimum ~1024 (lower — the sandbox may fail to start). 0/empty — no limit.",
   "ui.settings.desc.video_model": "The Gemini model that watches the video. The key is the shared Gemini one — enter it in the row below or in the \"Model\" section.",
   "ui.settings.desc.video_resolution": "How finely frames are sampled. On Gemini 3.x models (including the default one) this was measured to change nothing: ≈90 tokens per second of video either way. On 2.5 it works: ≈100 tokens per second against ≈295.",
