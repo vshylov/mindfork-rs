@@ -848,6 +848,36 @@ mod tests {
         );
     }
 
+    #[test]
+    fn every_withheld_image_string_tells_the_model_not_to_describe_it() {
+        // Measured, not stylistic (docs/journal/tools.md, spec §9.10): naming a
+        // withholding is indistinguishable from saying nothing — on Gemma 4 31B the
+        // descriptive form left the model describing a screenshot it never received
+        // 5/5, exactly as silence did, and only the directive clause moved it to 0/5.
+        // So the clause is the working part of these strings, and an editor tidying
+        // them back into a plain statement has to fail here rather than in production.
+        const FAMILY: &[&str] = &[
+            "loop.images_no_vision",
+            "loop.images_dropped",
+            "tool.mcp.images_off",
+            "tool.python_exec.files.not_shown_off",
+            "tool.python_exec.files.not_shown_cap",
+            "tool.python_exec.files.svg",
+        ];
+        // One per language, because the clause is a sentence and not a token.
+        for (lang, needle) in [(Lang::En, "do not describe"), (Lang::Ru, "не описывай")] {
+            let loc = locale(lang);
+            for key in FAMILY {
+                let text = loc.t(key);
+                assert!(
+                    text.contains(needle),
+                    "{lang:?} {key} must tell the model not to describe what it \
+                     has not seen, got: {text:?}"
+                );
+            }
+        }
+    }
+
     // ------- External locales (Tier 3): pure tests over a local map -------
     // We do NOT touch the global registry (`init`/`REGISTRY`) in tests — otherwise
     // one test would swap the bundles for the whole test binary. We check

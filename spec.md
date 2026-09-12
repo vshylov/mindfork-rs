@@ -1569,11 +1569,16 @@ append-only shape keeps the prefix cache intact across an image turn
   the result by the same rule as everything above, and stated *after* the result is
   clipped to `max_result_chars`: the protocol's own `[image content omitted]` marks
   only a **malformed** block, so a well-formed image under the cap would otherwise
-  leave no trace at all. Measured, that statement has to be **directive**: naming the
-  withholding is not enough — on Gemma 4 31B a descriptive note ("you have not seen
-  them") left the model describing the screenshot 5/5, exactly as saying nothing did,
-  and only adding "do not describe what they show; say that you cannot see them" took
-  it to 0/5 ([docs/journal/tools.md](docs/journal/tools.md)). `tools.python_images` (**on** by
+  leave no trace at all. **Every one of these statements is directive, and that is
+  measured rather than stylistic**: naming a withholding is not enough. On Gemma 4 31B
+  a descriptive note ("you have not seen them") left the model describing a screenshot
+  it never received 5/5 — exactly as saying nothing did — and only adding "do not
+  describe what they show; say that you cannot see them" took it to 0/5; the no-vision
+  note went 3/5 → 0/5 and the dropped-image note 5/5 → 1/5. The `python_exec` notes are
+  a suffix on a file's line rather than a line of their own, and there the shipped form
+  was not inert but wasteful: the model mostly answered by calling the tool again, whose
+  image is withheld for the same reason. One test holds the whole family to the clause
+  ([docs/journal/tools.md](docs/journal/tools.md)). `tools.python_images` (**on** by
   default, the Python group) is the sandbox's own switch, separate because its pixels
   are the model's own chart rather than a third party's; off, the file is still
   saved and the result says the model has not seen it.

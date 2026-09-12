@@ -305,12 +305,18 @@ impl McpConnection {
         }
         if dropped > 0 {
             // The cap is stated, never silent — otherwise the model reads the result as
-            // complete and answers about images it was never shown.
+            // complete and answers about images it was never shown. Stating it is not
+            // enough on its own: measured (docs/journal/tools.md), naming a withholding
+            // without telling the model what to do about it leaves it describing the
+            // picture anyway, so this carries the same directive clause as the localized
+            // members of the family. English here because the protocol layer has no
+            // `Locale` — the rest of this parser's markers are in the same position.
             push_line(
                 &mut text,
                 &format!(
                     "[{dropped} more image(s) were returned but not included: at most \
-                     {MAX_TOOL_RESULT_IMAGES} images per tool result]"
+                     {MAX_TOOL_RESULT_IMAGES} images per tool result. You have not seen \
+                     them — do not describe what they show; say that you cannot see them.]"
                 ),
             );
         }

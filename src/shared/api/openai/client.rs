@@ -1285,6 +1285,87 @@ mod ignored_smoke {
         );
     }
 
+    /// The other shape of the same family: `python_exec`'s note is a **suffix on one
+    /// file's line** inside the result's `files:` section, not a bracketed line of its
+    /// own — so it gets its own arm rather than inheriting the MCP one's verdict.
+    ///
+    /// The measured outcome differs too, and the assertion says so. With the shipped
+    /// suffix the model mostly answered by **calling the tool again** (7 of 9 runs,
+    /// `finish_reason: tool_calls`) — not a hallucination, but a wasted round, since the
+    /// second call's image is withheld for the same reason. With the directive clause it
+    /// declines outright 4/5 and re-calls 1/5. Either is acceptable; inventing an answer
+    /// about the chart is not, and that is what this asserts.
+    #[tokio::test]
+    #[ignore = "requires MINDFORK_ENGINE_URL"]
+    async fn a_withheld_chart_is_not_described_live() {
+        let Some(client) = client_from_env() else {
+            eprintln!("skip: MINDFORK_ENGINE_URL not set");
+            return;
+        };
+        use crate::shared::i18n::{Lang, locale};
+        let loc = locale(Lang::En);
+        let result = format!(
+            "stdout:\nsaved\n\nfiles:\n{}\n- chart.png — 24.1 KB, image/png{}",
+            loc.tf("tool.python_exec.files.saved_in", &[("dir", "/chat/files")]),
+            loc.t("tool.python_exec.files.not_shown_off"),
+        );
+        let (answer, _, finish) = collect(
+            client
+                .chat_stream(chart_turn(&result), Default::default())
+                .await
+                .unwrap(),
+        )
+        .await;
+        eprintln!("withheld chart ({finish:?}): {answer}");
+        if finish == Some(FinishReason::ToolCalls) {
+            // It went back to the tool instead of answering — it did not invent anything.
+            return;
+        }
+        let low = answer.to_lowercase();
+        assert!(
+            low.contains("cannot see")
+                || low.contains("can't see")
+                || low.contains("cannot tell")
+                || low.contains("unable to"),
+            "a chart it was never shown must not be answered for: {answer:?}"
+        );
+    }
+
+    /// A `python_exec` turn whose result is `result`: the question asks something only
+    /// the rendered image could answer, so any substantive answer is a claim to have
+    /// seen it.
+    fn chart_turn(result: &str) -> ChatRequest {
+        ChatRequest {
+            continue_final: false,
+            system: None,
+            messages: vec![
+                ApiMessage::user(
+                    "Plot the monthly totals and save the chart, then tell me: does the \
+                     legend overlap the plotted line? Answer briefly.",
+                ),
+                ApiMessage::assistant_tool_calls(
+                    "",
+                    vec![crate::shared::api::ApiToolCall {
+                        id: "call-1".into(),
+                        name: "python_exec".into(),
+                        arguments: "{}".into(),
+                        thought_signature: None,
+                    }],
+                ),
+                ApiMessage::tool("call-1", result),
+            ],
+            sampling: SamplingConfig {
+                max_tokens: Some(8192),
+                ..Default::default()
+            },
+            tools: vec![ToolSchema {
+                name: "python_exec".into(),
+                description: "Run Python.".into(),
+                parameters: serde_json::json!({ "type": "object", "properties": {} }),
+            }],
+        }
+    }
+
     pub(super) async fn collect(stream: ChatStream) -> (String, String, Option<FinishReason>) {
         let mut text = String::new();
         let mut thoughts = String::new();
