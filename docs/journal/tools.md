@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (64)
+## Entries (65)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -76,6 +76,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the rest of the withheld-image family gets the clause that works (done)
 - Post-M9: a handle means one file for the whole turn (done)
 - Post-M9: an image is installed only after it has started (done)
+- Post-M9: the same bytes put a missing copy back (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -4595,3 +4596,46 @@ candidate, which is itself the evidence that verification looks at the right fil
 sentinel image untouched, the junk cleaned up. And a real `mindfork sandbox setup` end to
 end over the restructured order, followed by the sandbox's own smokes, because a fix to
 provisioning that has not provisioned anything is a fix that has not been run.
+### Post-M9: the same bytes put a missing copy back (done)
+
+The fourth finding of the review pass, reached by two reviewers independently, and the one
+where the app was giving advice it could not honour. `store_as` matched a listed file by
+name **and** SHA-256 and returned `Stored::Unchanged` without ever looking at the disk. But
+listed-but-missing is a state this code supports and reports — `StoredInfo.missing`,
+rendered by `/file list` — and `tool.python_exec.err.files_missing` tells the model, in so
+many words, to *ask the user to attach it again*. Doing that wrote nothing: the name and the
+digest agreed, so the entry stayed missing and the next call refused identically. The only
+way out was `/file remove` first, which nothing says anywhere.
+
+Both halves were dead, for the same reason. A call re-rendering an identical chart got
+"unchanged: already stored", and `/file attach` of the very same document returned the
+listing's own id, so `handle_attach_result`'s `previous.filter(|old| stored.id != *old)`
+skipped the drop too — nothing changed at all.
+
+**The fix costs nothing**: `on_disk` is already read at the top of `store_as` for the
+collision check, so the presence of the copy is a lookup in a list already in hand. Present
+→ `Unchanged`, as before. Absent → write the bytes and return the new `Stored::Restored`,
+which carries the **same listing**: the id, the name and the digest were right all along,
+only the bytes were gone, so nothing is added to the chat and no effect is emitted. The
+write goes through an extracted `write_new` shared with the ordinary path — `create_new`, so
+a race keeps its file, `sync_all` before the listing is trusted, and a half-written file
+removed rather than left. `AlreadyExists` on the restore path means someone wrote it between
+the listing and now, and the digest already agreed, so it answers `Unchanged`.
+
+The model is told: `tool.python_exec.files.restored` says the copy was gone and these bytes
+put it back, rather than "unchanged … neither saved nor shown again", which would have been
+a lie about a write that did happen. For `/file attach` the feedback is the `missing` marker
+disappearing from `/file list`.
+
+**Tests.** A pure one for each direction — the copy present is still a genuine no-op
+(the old test asserted "nothing was written" against an **empty folder**, which is the
+defect, and now seeds the copies it claims are there), and the copy missing is written back,
+with a second offer then being the no-op it claims to be. And one through the orchestrator:
+attach a binary, delete the copy, attach the same file again, and the bytes are back with
+**one** listing rather than a second beside it. Both fail with the disk check removed.
+Unit: 3180 green, 172 ignored.
+
+**Live.** The file-exchange smokes re-measured on Gemma 4 31B q4_0 (b10807) with the
+provisioned sandbox, because every `python_exec` output goes through `store` and this change
+adds a branch to it — a spurious `Restored` would stop outputs being listed and shown at
+all, which no unit test of the new path would notice.
