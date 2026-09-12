@@ -86,7 +86,10 @@ pub fn sanitize_name(raw: &str) -> Option<String> {
     let replaced: String = base
         .chars()
         .map(|c| {
-            if c.is_control() || matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') {
+            if c.is_control()
+                || is_deceptive(c)
+                || matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
+            {
                 '_'
             } else {
                 c
@@ -104,6 +107,25 @@ pub fn sanitize_name(raw: &str) -> Option<String> {
         name = shorten(&name);
     }
     Some(name)
+}
+
+/// Characters that change how the **rest of the name** is displayed while being invisible
+/// themselves: the bidi controls, and the zero-width marks beside them.
+///
+/// `char::is_control` is category `Cc` only, so these passed through untouched — and a name
+/// a call wrote is the model's choice, not the user's. `report\u{202E}cod.exe` is rendered
+/// `reportexe.doc` by every listing here **and** by the file manager `/file folder` opens,
+/// so the launch allowlist correctly refuses it (§13 U3) while the user reads a document
+/// name and double-clicks it themselves. The allowlist holds; the name the user decides by
+/// has to hold as well.
+fn is_deceptive(c: char) -> bool {
+    matches!(c,
+        '\u{061C}'                 // ARABIC LETTER MARK
+        | '\u{200B}'..='\u{200F}'  // zero-width space/non-joiner/joiner, LRM, RLM
+        | '\u{202A}'..='\u{202E}'  // embeddings, the pop, and the overrides
+        | '\u{2066}'..='\u{2069}'  // isolates
+        | '\u{FEFF}'               // zero-width no-break space (a BOM mid-name)
+    )
 }
 
 /// `CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`, `LPT1`–`LPT9` — reserved on Windows whatever
@@ -168,11 +190,39 @@ pub fn sniff_image(content: &[u8]) -> Option<&'static str> {
         Some("image/gif")
     } else if content.len() >= 12 && &content[..4] == b"RIFF" && &content[8..12] == b"WEBP" {
         Some("image/webp")
-    } else if content.len() >= 26 && content.starts_with(b"BM") {
+    } else if is_bmp(content) {
         Some("image/bmp")
     } else {
         None
     }
+}
+
+/// Whether `content` opens like a BMP, rather than merely starting with the two letters.
+///
+/// `BM` plus a length is not evidence, and BMP is the only one of the five whose signature
+/// can occur in plain text: a CSV whose first column is `BMI` cleared it, and the file was
+/// then listed as an image, denied the text head the model reads, base64'd into the call's
+/// images — said to be "shown" — and dropped again by the decoder, with a note contradicting
+/// the one beside it.
+///
+/// The DIB header's own size, at offset 14, is a value from a closed set, which text lands
+/// on essentially never. Only the first 18 bytes are read: adoption sniffs a 64-byte head
+/// ([`crate::features::chat_files::unlisted`]), so a check against the whole file's length
+/// is not available here.
+fn is_bmp(content: &[u8]) -> bool {
+    /// The DIB header sizes BMP defines, `BITMAPCOREHEADER` through `BITMAPV5HEADER`, with
+    /// OS/2's two. Measured rather than assumed on the encoder this app actually meets:
+    /// pillow writes **40** for every mode it can save (1, L, P, RGB, RGBA), and pillow is
+    /// what a `matplotlib` `savefig('.bmp')` in the sandbox goes through.
+    const DIB: [u32; 8] = [12, 16, 40, 52, 56, 64, 108, 124];
+    content.len() >= 26
+        && content.starts_with(b"BM")
+        && DIB.contains(&u32::from_le_bytes([
+            content[14],
+            content[15],
+            content[16],
+            content[17],
+        ]))
 }
 
 /// The MIME type a stored file is listed with. An image or a PDF is recognised by its
@@ -271,6 +321,27 @@ mod tests {
         );
     }
 
+    /// A name a call wrote is the model's choice, and `char::is_control` is category `Cc`
+    /// only — so the bidi controls went through untouched. `report<RLO>cod.exe` reads as
+    /// `reportexe.doc` in every listing here *and* in the file manager `/file folder`
+    /// opens: the launch allowlist refuses it correctly (§13 U3) and the user then
+    /// double-clicks an executable they were shown as a document.
+    #[test]
+    fn sanitize_replaces_the_marks_that_rewrite_a_name_on_screen() {
+        assert_eq!(
+            sanitize_name("report\u{202E}cod.exe").as_deref(),
+            Some("report_cod.exe"),
+            "a right-to-left override must not survive into a listing"
+        );
+        // The rest of the family: isolates, the zero-width marks, a BOM mid-name.
+        assert_eq!(
+            sanitize_name("a\u{2066}b\u{200B}c\u{FEFF}d\u{061C}e.csv").as_deref(),
+            Some("a_b_c_d_e.csv")
+        );
+        // Ordinary non-ASCII is not a control and is kept as it is.
+        assert_eq!(sanitize_name("отчёт.csv").as_deref(), Some("отчёт.csv"));
+    }
+
     #[test]
     fn sanitize_trims_trailing_dots_and_spaces() {
         assert_eq!(sanitize_name("name. . ").as_deref(), Some("name"));
@@ -328,11 +399,29 @@ mod tests {
         assert_eq!(sniff_image(b"\xFF\xD8\xFF\xE0...."), Some("image/jpeg"));
         assert_eq!(sniff_image(b"GIF89a...."), Some("image/gif"));
         assert_eq!(sniff_image(b"RIFF\x10\0\0\0WEBPVP8 "), Some("image/webp"));
+        // A real BMP opening: "BM", the file size, the reserved pair, the offset to the
+        // pixels, and then the DIB header's own size — 40 (`BITMAPINFOHEADER`).
         let mut bmp = b"BM".to_vec();
+        bmp.extend_from_slice(&64u32.to_le_bytes());
+        bmp.extend_from_slice(&0u32.to_le_bytes());
+        bmp.extend_from_slice(&54u32.to_le_bytes());
+        bmp.extend_from_slice(&40u32.to_le_bytes());
         bmp.resize(64, 0);
         assert_eq!(sniff_image(&bmp), Some("image/bmp"));
         assert_eq!(sniff_image(b"BM short"), None);
         assert_eq!(sniff_image(b"month,total\n"), None);
+        // BMP's signature is two letters of ordinary text, and it is the only one of the
+        // five that is: a spreadsheet whose first column is BMI used to be listed as an
+        // image, withheld from the model as text, and then dropped by the decoder with a
+        // note contradicting the one beside it. Two letters are not a format.
+        assert_eq!(
+            sniff_image(b"BMI,weight,height,age\nmale,80.0,180,41\n"),
+            None
+        );
+        // Nor is the length: the bytes after them have to be a DIB header.
+        let mut almost = b"BM".to_vec();
+        almost.resize(64, b'x');
+        assert_eq!(sniff_image(&almost), None);
         // A text file named like a PNG is not listed as one.
         assert_eq!(
             mime_for("chart.png", b"not an image"),
