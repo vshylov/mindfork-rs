@@ -23,16 +23,29 @@ pub enum Stored {
     /// Written, under this listing's name: the one asked for, or its next free version.
     New(ChatFile),
     /// Nothing written: the chat already lists a file of this name's family with the same
-    /// bytes.
+    /// bytes, **and** the copy is there.
     Unchanged(ChatFile),
+    /// The listing was right and the bytes were gone: the chat lists this file with these
+    /// contents, nothing was on disk under its name, and it has just been written back.
+    ///
+    /// Listed-but-missing is a state the app supports and reports (`StoredInfo.missing`,
+    /// `/file list`), and the way out of it is to produce the bytes again — a call that
+    /// re-renders the same chart, or the user re-attaching the same document, which is
+    /// what `tool.python_exec.err.files_missing` tells the model to ask for. Matching on
+    /// the listing alone made that advice a dead end: the name and the digest agreed, so
+    /// nothing was written and the copy stayed missing however many times it was offered.
+    Restored(ChatFile),
 }
 
 /// Writes `content` into `dir` as `name` (already sanitized) or, when the name is taken —
 /// by a listed file with other bytes, or by any file on disk, compared case-insensitively
 /// — as its next free version, `name (2).ext`… A listed file of the family with the same
-/// SHA-256 comes back as [`Stored::Unchanged`] and nothing is written. The file is opened
-/// with `create_new`, so an existing one is never overwritten whatever raced, and synced
-/// before the listing is returned: the listing must not name bytes a crash could lose.
+/// SHA-256 comes back as [`Stored::Unchanged`] with nothing written **when its copy is on
+/// disk**, and as [`Stored::Restored`] when it is not: the listing is not evidence that the
+/// bytes are there, and offering them again is the documented way back from
+/// listed-but-missing. The file is opened with `create_new`, so an existing one is never
+/// overwritten whatever raced, and synced before the listing is returned: the listing must
+/// not name bytes a crash could lose.
 pub fn store(dir: &Path, listed: &[ChatFile], name: &str, content: &[u8]) -> io::Result<Stored> {
     store_as(dir, listed, name, content, FileOrigin::Sandbox)
 }
@@ -55,27 +68,31 @@ pub fn store_as(
         let candidate = versioned(name, n);
         if let Some(existing) = listed.iter().find(|f| same_name(&f.name, &candidate)) {
             if existing.sha256 == sha256 {
-                return Ok(Stored::Unchanged(existing.clone()));
+                // The listing is not evidence that the bytes are there. `on_disk` is
+                // already in hand, so this costs nothing and turns "nothing to do" into
+                // "put it back" exactly when the copy has gone missing.
+                if on_disk.iter().any(|d| same_name(d, &candidate)) {
+                    return Ok(Stored::Unchanged(existing.clone()));
+                }
+                match write_new(&dir.join(&candidate), content) {
+                    // Written between the listing and now: the bytes are there either way,
+                    // and they are the same bytes — the digest already agreed.
+                    Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+                        return Ok(Stored::Unchanged(existing.clone()));
+                    }
+                    other => other?,
+                }
+                return Ok(Stored::Restored(existing.clone()));
             }
             continue;
         }
         if on_disk.iter().any(|d| same_name(d, &candidate)) {
             continue;
         }
-        let path = dir.join(&candidate);
-        let mut file = match std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
-        {
-            Ok(file) => file,
+        match write_new(&dir.join(&candidate), content) {
+            Ok(()) => {}
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
             Err(e) => return Err(e),
-        };
-        if let Err(e) = file.write_all(content).and_then(|()| file.sync_all()) {
-            drop(file);
-            let _ = std::fs::remove_file(&path);
-            return Err(e);
         }
         return Ok(Stored::New(ChatFile {
             id: uuid::Uuid::new_v4(),
@@ -88,6 +105,24 @@ pub fn store_as(
         }));
     }
     Err(io::Error::other("no free version of the name"))
+}
+
+/// Writes `content` to `path`, creating it and never overwriting: `create_new`, so whatever
+/// raced keeps its file, and `sync_all` before the caller lists it — a listing must not
+/// name bytes a crash could lose. A half-written file is removed rather than left behind.
+/// `AlreadyExists` is passed back untouched: what an occupied name means is the caller's to
+/// say, and the two callers here say different things.
+fn write_new(path: &Path, content: &[u8]) -> io::Result<()> {
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)?;
+    if let Err(e) = file.write_all(content).and_then(|()| file.sync_all()) {
+        drop(file);
+        let _ = std::fs::remove_file(path);
+        return Err(e);
+    }
+    Ok(())
 }
 
 /// The regular files in `dir` that `listed` does not name — never following a link — as
@@ -213,6 +248,7 @@ mod tests {
         match stored {
             Stored::New(file) => file.name,
             Stored::Unchanged(file) => panic!("expected a new file, got unchanged {}", file.name),
+            Stored::Restored(file) => panic!("expected a new file, got restored {}", file.name),
         }
     }
 
@@ -250,9 +286,41 @@ mod tests {
             listing("chart.png", b"first"),
             listing("chart (2).png", PNG),
         ];
+        // The copy is where the listing says it is, so there is genuinely nothing to do.
+        std::fs::write(dir.path().join("chart.png"), b"first").unwrap();
+        std::fs::write(dir.path().join("chart (2).png"), PNG).unwrap();
+
         let stored = store(dir.path(), &listed, "chart.png", PNG).unwrap();
         assert_eq!(stored, Stored::Unchanged(listed[1].clone()));
-        assert_eq!(names_in(dir.path()).len(), 0, "nothing was written");
+        assert_eq!(names_in(dir.path()).len(), 2, "nothing was written");
+    }
+
+    /// Listed-but-missing is a supported state, and the way out of it is to offer the
+    /// bytes again — the refusal `python_exec` hands the model says exactly that. Matching
+    /// on the listing alone made that advice a dead end: name and digest agreed, so nothing
+    /// was written and the copy stayed gone however many times it was offered.
+    #[test]
+    fn the_same_bytes_put_a_listed_copy_back_when_it_has_gone_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let listed = [listing("chart.png", PNG)];
+        // The listing stands, the folder is empty — a pruned `data/files/`, a partial sync,
+        // a chat file restored without its folder.
+        assert_eq!(names_in(dir.path()).len(), 0);
+
+        let stored = store(dir.path(), &listed, "chart.png", PNG).unwrap();
+        assert_eq!(
+            stored,
+            Stored::Restored(listed[0].clone()),
+            "the listing keeps its identity; only the bytes came back"
+        );
+        assert_eq!(
+            std::fs::read(dir.path().join("chart.png")).unwrap(),
+            PNG,
+            "the copy has to be readable again, which is the point"
+        );
+        // And offering them once more is then the no-op it claims to be.
+        let again = store(dir.path(), &listed, "chart.png", PNG).unwrap();
+        assert_eq!(again, Stored::Unchanged(listed[0].clone()));
     }
 
     /// An unlisted file already on disk — say, one a crashed session left — is never

@@ -202,7 +202,12 @@ impl Orchestrator {
                 self.mark_dirty(chat_id);
                 file
             }
-            Stored::Unchanged(file) => file,
+            // Both mean "the chat already lists this file": the listing is right and keeps
+            // its id, so nothing is added and the replaced original is not dropped. The
+            // difference is only that a restore has just put the bytes back — which is the
+            // whole point of re-attaching a file whose copy went missing, and what the
+            // `missing` marker disappearing from `/file list` tells the user.
+            Stored::Unchanged(file) | Stored::Restored(file) => file,
         })
     }
 
