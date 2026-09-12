@@ -428,7 +428,8 @@ src/
 │  ├─ chat_inputs.rs        the chat's files as ONE numbered list — attachments, stored
 │  │                        files, the messages' images — with each one's name in
 │  │                        /w/in; the numbering /file list, /file remove, the pinned
-│  │                        block and python_exec's `files` all take
+│  │                        block and python_exec's `files` all take; `open_path`
+│  │                        says what a handle means on disk for /file open
 │  ├─ rag_command.rs        /rag add|remove|list|rebuild parser
 │  ├─ compaction.rs        history compression, pure part: one renderer of a
 │  │                       message range (parameterized by the tool-result clip,
@@ -442,9 +443,10 @@ src/
 │  ├─ compact_command.rs   /compact parser
 │  ├─ reindex_command.rs    /reindex parser (top-level, not a /rag subcommand: it
 │  │                        spans notes, attachments and every profile's base)
-│  ├─ file_command.rs       /file attach|remove|list parser + FileProgress
+│  ├─ file_command.rs       /file attach|remove|list|open|folder parser + FileProgress
 │  │                        (chat attachments and stored files, spec §9.7,
-│  │                        docs/file-attachments.md)
+│  │                        docs/file-attachments.md; opening goes through
+│  │                        shared/os_open.rs)
 │  ├─ image_command.rs      /image attach|remove|list parser + ImageProgress
 │  │                        (images staged for the next message, spec §9.10)
 │  ├─ image_fetch.rs        downloads an image named by URL (`/image attach <url>`):
@@ -677,6 +679,14 @@ src/
    │                       (begin in main.rs before Storage::open, harvest in
    │                       app/runtime after ratatui::init; Windows does both at
    │                       once). docs/terminal-background-detection.md
+   ├─ os_open.rs           opening one of a chat's files, or its folder, in the desktop
+   │                       (`/file open`/`/file folder`, fork F9 of
+   │                       docs/sandbox-file-exchange.md): `ShellExecuteW` / `xdg-open` /
+   │                       `open`, one argument and no shell line, plus the policy that
+   │                       makes that safe — `is_document`/`decide`, an allowlist of
+   │                       document types, everything else opening the folder it sits in
+   │                       (the chat's folder holds what `python_exec` wrote). Blocking:
+   │                       callers run it on the blocking pool
    ├─ keys.rs              layout-independent Ctrl shortcuts (`hotkey_char`: Windows
    │                       keyboard-layout resolution → JCUKEN table → pass-through)
    ├─ server.rs            ServerStatus (server status for the UI)

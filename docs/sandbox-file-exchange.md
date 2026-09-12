@@ -8,7 +8,8 @@ drops the per-chat quota (§9). **Stage 0** (a read-only `site-packages`) merged
 #518. **Stage 1**, the MVP probe: GO on both families, Qwen 3.6 27B and Gemma 4 31B
 (§10). **Stage 2**, outputs: merged as #520, live GO on Gemma 4 31B (§11).
 **Stage 3**, inputs: merged as #521, live GO on Gemma 4 31B (§12).
-**Stage 4**, opening: on `feat/file-open`, sub-decisions in §13.
+**Stage 4**, opening: implemented on `feat/file-open`, manual gate done on
+Windows (§13).
 
 The request: `python_exec` in its Wasmer mode is text in, text out — whatever the
 code writes dies with the call. The user wants (a) **files out** — what the code
@@ -413,7 +414,8 @@ true (AGENTS.md §4).
   §8, ADR 0005 §3 and §5 amended, CHANGELOG, journal. **Done**, live GO (§12).
 - **Stage 4 — opening** (`feat/file-open`): `/file open`, `/file folder`,
   `shared/os_open.rs`, the allowlist; sub-decisions in §13. Docs: spec §9.7, README,
-  architecture §3/§10, CHANGELOG, journal. No model run — the gate is manual (§8).
+  architecture §3, CHANGELOG, journal. No model run — the gate is manual (§8). **Done**,
+  gate in §13.
 - **Stage 5 — Local parity** (`feat/sandbox-files-local`).
 - **Close:** this file to `docs/history/`; roadmap item and CLAUDE.md map updated.
 
@@ -798,3 +800,13 @@ survey added under it, recorded before implementing as §11 and §12 were.
 - **U10 — the gate is manual** (§8): no model runs anywhere in this stage. A document, a
   refused type and the folder, opened by hand on Windows and on Linux, with the result in
   the PR.
+
+**Gate — manual, no model run (2026-09-12).** On Windows 11,
+`MINDFORK_OPEN_LIVE=1 cargo test -- --ignored opens_a_document_and_a_folder_live` opened a
+viewer on `mindfork open gate.txt` — a name with spaces, handed over whole — and a file
+manager on the folder standing in for `run.bat`, both `ShellExecuteW` calls returning above
+32. The Linux half runs in CI rather than by hand: the unix launch takes its launcher as an
+argument, so a stub script records what it was given, and the test asserts the path arrives
+unsplit (`my chart (1).png`) and that a launcher which is not installed comes back as an
+error. What is **not** verified here is a GUI launch on a Linux desktop — the development
+machine has none, and WSL carries only docker's utility distribution.
