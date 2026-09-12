@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (70)
+## Entries (71)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -82,6 +82,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a process the script leaves behind stops deciding the call (done)
 - Post-M9: the "show charts" switch is shown in local Python mode too (done)
 - Post-M9: one name means one file — the fold, the empty cut, and the numbering (done)
+- Post-M9: `/file open` — whose file, which chat, and the folder's invariant (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -4850,3 +4851,60 @@ which the mutation run is what showed.
 No live run: the three changes are in-process name transformations and reach no engine. The
 chart's naming is covered through the real tool loop with a scripted engine
 (`each_round_s_chart_gets_a_name_of_its_own`).
+
+### Post-M9: `/file open` — whose file, which chat, and the folder's invariant (done)
+
+Tier 3's second group: four findings on one path — `plan_open`, `os_open::decide`,
+`spawn_open`, the feed note — and one repair found on the way.
+
+**The reason was always the assistant's.** A type outside the launch allowlist opens its
+folder instead, and the note said why: "a file the assistant wrote could run under its
+handler". True of a `run.bat` a call left in `/w/out`; untrue of a `.py` the user attached
+themselves, which takes the same branch because the list is by type. The policy is right
+and stays — a user-provenance exception would be a second rule to keep, for a case the
+folder already serves — but a note that blames the assistant for the user's own file teaches
+the user to distrust the notes. `OpenedFolder` now carries `OpenedInstead { name, by_a_call }`,
+where `by_a_call` is a stored file whose origin is `Sandbox` or `Recovered` (adopted from
+the folder as a call's leftover); an attachment, its kept original and an image are the
+user's own, and get a second wording that states only the type rule.
+
+**The note was not addressed.** `spawn_open` sent `FileProgress` from the blocking pool
+straight to the feed, so a launch that outlasted a switch of chats — `ShellExecuteW` returns
+only once the handler has started — said "opened report.pdf" in another chat. It now comes
+back through the loop as `OpenResult { chat_id, progress }`, the shape `AttachResult`
+already has. The sub-fork was what to do when the chat is no longer open, and it splits by
+outcome rather than being one rule. A success is dropped, as `list_stored_files` drops its
+note: the window that opened is its own confirmation. A failure is shown wherever the user
+is, because it answers a command given a moment ago, it carries the path that makes it
+actionable, and a feed note is `FeedMessage::note` — kept with no chat — so holding it for
+the chat it belongs to would have lost it rather than delivered it later.
+
+**The join skipped the folder's invariant.** `chat_inputs::open_path` built a stored file's
+path with `dir.join(name)`, while every other join into the folder goes through
+`chat_files::confined` — which was private to that module, so the invariant could not have
+been kept here even deliberately. A stored name is read back from `chat.json` unvalidated,
+and a name like `../../escape.pdf` pointing at a real file would have passed the existence
+check and, being a document, been launched. `confined` is public now, documented as the
+folder's invariant rather than the module's, and `open_path` returns `None` for a name that
+is not one plain component. The orchestrator test writes the file two levels up for real,
+so the refusal is shown to come from the join and not from a missing file.
+
+**The fallback handed over what it had refused.** `decide` answered a non-document with no
+parent by returning the path itself, so a bare `run.bat` would have been launched as
+`run.bat`. Unreachable today — every path reaching it is absolute — which is why it is a
+signature change (`Option`) and not a behaviour change anyone would see.
+
+**In passing.** `tests/files.rs` had a doc head — "Removing an attached document that kept
+its original takes both halves" — fused onto the doc of the `/file open` test beneath it,
+with its own test left bare further down. The same split-doc-comment shape clippy's
+`empty_line_after_doc_comments` catches only when a blank line separates the halves; here
+none did, so nothing flagged it. Moved back.
+
+**Tests.** Five new or changed tests: whose file (a user's attachment, a binary
+`/file attach` kept, a call's script, an adopted leftover — so each arm of the origin
+match is pinned), the name that leaves the folder, the landing in and out of the chat
+asked in, `decide` with a bare script and a bare document, and the screen's two wordings
+compared whole through the bundle. Each guard was reverted in turn and its test failed.
+
+No live run: nothing here reaches an engine, and the launch itself — the part §13 U10 keeps
+as a manual gate — is unchanged; what changed around it is covered by the landing test.

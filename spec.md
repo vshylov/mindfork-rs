@@ -1203,7 +1203,15 @@ across its readers.
   is not a file on this machine (a pasted image, a fetched page's URL, a copy since
   moved) opens nothing and is named; the path is printed either way, so a launch the
   desktop refuses is one copy-paste from working. The launch is the app's own call —
-  `ShellExecuteW`, `xdg-open`, `open` — with one argument and no shell line.
+  `ShellExecuteW`, `xdg-open`, `open` — with one argument and no shell line. Whose
+  file it is decides the reason the note gives, never whether it opens: a type outside
+  the list opens its folder for a `.py` the user attached as for a `run.bat` a call
+  wrote, and only the second is described as the assistant's writing. A stored name is
+  joined into the folder through the same check every other path into it takes, so a
+  name the chat file hands back as `../../x.pdf` opens nothing. The outcome is
+  addressed to the chat the command was given in: a success is dropped if the user has
+  moved to another chat by the time the desktop answers, a failure is shown wherever
+  they are.
 - **Storage**: `Chat.attachments` — the **extracted text snapshot** plus the
   name, source path, size and estimated token count. The snapshot means the
   conversation stays coherent if the file later changes or disappears, building a
