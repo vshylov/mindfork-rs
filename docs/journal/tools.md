@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (69)
+## Entries (70)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -81,6 +81,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the `files` argument is read once, and the result stops listing (done)
 - Post-M9: a process the script leaves behind stops deciding the call (done)
 - Post-M9: the "show charts" switch is shown in local Python mode too (done)
+- Post-M9: one name means one file — the fold, the empty cut, and the numbering (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -4800,3 +4801,52 @@ branch": a test that enumerates the presences of one arm and the absences of the
 fail on a row that should be in both. Both arms now name it, and the local one carries why.
 
 No live run: a settings row, no engine path touched.
+### Post-M9: one name means one file — the fold, the empty cut, and the numbering (done)
+
+Tier 3's first group. Three findings that look unrelated in a list and are one thing in the
+code: a name has to reach exactly the item it names, and three different places could break
+that.
+
+**The fold was ASCII.** `ChatInput::matches` — what `/file open`, `/file remove` and the
+tool's `files` argument all resolve through — compared with `eq_ignore_ascii_case`, while
+`chat_file::same_name`, which the chat's folder uses to decide whether two stored names are
+one file, compared with Unicode `to_lowercase`. So the folder treated a Cyrillic name typed
+in lower case as the same file and the handle did not: the listing showed the name, the user
+typed it back, and the answer was "no such file". `ru` is a fully supported locale; this is
+not an exotic input. Two siblings had the same spelling (`Attachment::matches`,
+`MessageImage::matches`) and so did `name_is_shared`, which is the worse half — it decides
+whether a listing prints the source beside a name, so the listing could show two names as
+distinct while the removal refused them as one, leaving the user nothing to act on. All four
+now go through `same_name`, which is the one definition of the comparison.
+
+**The emptiness check did not outlive the cut.** `sanitize_name` returned `None` for a name
+that trimmed to nothing, then shortened a long one — and `shorten` takes the first 120
+characters and trims trailing dots and spaces off *those*, so 121 spaces and a letter passed
+the check and came back `Some("")`. Reachable from both callers (a model-chosen `/w/out`
+name, a real file name). Downstream it was caught only by luck: `confined` refuses an empty
+name, `unique_staged` would have taken it. The check moved after the cut.
+
+**The image numbering was per call.** `prepare_tool_images` named with the index inside one
+result, so every round's first image was `tool-image-1.png`. Two rounds each returning a
+chart therefore put two items with one name in the chat, and `resolve` refuses a shared name
+(`Resolved::Shared`) — the model naming its own chart in the next call's `files` got a
+refusal, and the round was spent finding out. `ToolImageNames` now hands out the first free
+number, seeded from the names the chat's messages already carry and carried through the turn
+(`GenSpawn` → `TurnLoop`), so the count survives rounds rather than restarting. Two details
+worth their lines: the number is taken whatever the extension, because `tool-image-1.png`
+and `tool-image-1.jpg` are two names to `resolve` and one name one digit apart to a reader;
+and naming now happens **after** the drop rather than before it, so a result whose first
+image failed to decode no longer hands the second a number that contradicts the label the
+model reads beside it — an inconsistency the old code had and nothing had noticed.
+
+**On the tests.** All three defects were live in a suite of 3189 green tests, and the reason
+is the same in each: the existing tests asserted the cases the author had in mind. The name
+tests used ASCII names; the sanitizer tests used long names that were long *in letters*; the
+chart test stored the same bytes twice, so the second round deduplicated and never produced
+a second name at all. Each new test was mutation-checked against the guard it covers, and
+the fifth (`name_is_shared`) needed a test of its own — the handle test did not reach it,
+which the mutation run is what showed.
+
+No live run: the three changes are in-process name transformations and reach no engine. The
+chart's naming is covered through the real tool loop with a scripted engine
+(`each_round_s_chart_gets_a_name_of_its_own`).

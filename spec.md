@@ -1585,10 +1585,15 @@ append-only shape keeps the prefix cache intact across an image turn
   llama.cpp already answers), and an image the preparation drops (over
   `max_bytes`, undecodable) is counted — both said in the result, because a model
   told an image is "shown below" that never arrives describes a picture it has not
-  seen (measured, docs/history/sandbox-file-exchange.md §10). The switch `tools.mcp_images`
-  (**on** by default, settings → "Plugins") decides whether a server's pixels reach
-  the model at all: the MCP double opt-in already gates the *server*, but an image
-  carries a hazard text does not — see §13.4. Off, the number withheld is stated in
+  seen (measured, docs/history/sandbox-file-exchange.md §10). What survives is named
+  `tool-image-N` against the **chat**, not against the call: numbered per call, every
+  round's first image was `tool-image-1`, and a name two of the chat's items share
+  resolves to nothing (§9.7) — so the model naming its own chart in the next call's
+  `files` was refused. The number is taken whatever the extension, and handed out after
+  the drop, so the name and the label the model reads beside it agree. The switch
+  `tools.mcp_images` (**on** by default, settings → "Plugins") decides whether a server's
+  pixels reach the model at all: the MCP double opt-in already gates the *server*, but an
+  image carries a hazard text does not — see §13.4. Off, the number withheld is stated in
   the result by the same rule as everything above, and stated *after* the result is
   clipped to `max_result_chars`: the protocol's own `[image content omitted]` marks
   only a **malformed** block, so a well-formed image under the cap would otherwise

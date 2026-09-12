@@ -70,8 +70,11 @@ impl ChatFile {
     }
 }
 
-/// Whether two stored names are the same name. Case-insensitive: a chat's folder may be
-/// restored onto Windows, where `Chart.png` and `chart.png` are one file.
+/// Whether two names are the same name — the one comparison every handle, listing and
+/// removal in the application goes through. Case-insensitive over **Unicode**, not ASCII:
+/// a chat's folder may be restored onto Windows, where `Chart.png` and `chart.png` are one
+/// file, and the interface has a Russian locale, where a Cyrillic name typed in lower case
+/// is the same name to whoever typed it.
 pub fn same_name(a: &str, b: &str) -> bool {
     a == b || a.to_lowercase() == b.to_lowercase()
 }
@@ -97,16 +100,17 @@ pub fn sanitize_name(raw: &str) -> Option<String> {
         })
         .collect();
     let mut name = replaced.trim_end_matches(['.', ' ']).to_string();
-    if name.is_empty() {
-        return None;
-    }
     if is_device_name(&name) {
         name.insert(0, '_');
     }
     if name.chars().count() > MAX_NAME_CHARS {
         name = shorten(&name);
     }
-    Some(name)
+    // Asked **after** the cut, not before it: `shorten` takes the first `MAX_NAME_CHARS`
+    // characters and then trims trailing dots and spaces, so a long name whose first 120
+    // characters are spaces comes back empty from a check that had already passed. An
+    // empty name is not a name — `confined` refuses it, but `unique_staged` would take it.
+    (!name.is_empty()).then_some(name)
 }
 
 /// Characters that change how the **rest of the name** is displayed while being invisible
@@ -375,6 +379,21 @@ mod tests {
         // An "extension" too long to be one is cut with the rest.
         let odd = format!("x.{}", "e".repeat(150));
         assert_eq!(sanitize_name(&odd).unwrap().chars().count(), MAX_NAME_CHARS);
+    }
+
+    /// The cut can take everything the emptiness check approved, so the check has to
+    /// outlive it. 121 spaces then a letter survive the trailing trim (the letter is
+    /// last), and `shorten` keeps the first 120 characters — all spaces — then trims
+    /// them away.
+    #[test]
+    fn a_name_the_cut_empties_is_no_name() {
+        let spaces = format!("{}a", " ".repeat(MAX_NAME_CHARS + 1));
+        assert_eq!(sanitize_name(&spaces), None, "an empty name is not a name");
+        // The neighbours still hold: one character shorter nothing is cut and the name
+        // stands, and a name that is only spaces was already refused.
+        let fits = format!("{}a", " ".repeat(MAX_NAME_CHARS - 1));
+        assert_eq!(sanitize_name(&fits).as_deref(), Some(fits.as_str()));
+        assert_eq!(sanitize_name("   "), None);
     }
 
     #[test]

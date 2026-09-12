@@ -124,10 +124,12 @@ impl Attachment {
 
     /// Does the user's `/file remove <target>` refer to this attachment? Matches
     /// the display name or the full source path, case-insensitively (Windows
-    /// paths differ only in case all the time).
+    /// paths differ only in case all the time) — through
+    /// [`same_name`](super::chat_file::same_name), so a name folds here the way it folds
+    /// in the chat's folder.
     pub fn matches(&self, target: &str) -> bool {
         let t = target.trim().trim_matches(|c| c == '"' || c == '\'');
-        self.name.eq_ignore_ascii_case(t) || self.source.eq_ignore_ascii_case(t)
+        super::chat_file::same_name(&self.name, t) || super::chat_file::same_name(&self.source, t)
     }
 
     /// The leading `max_tokens` (estimated) of the text — the excerpt shown in
@@ -255,7 +257,7 @@ pub fn name_is_shared<T>(items: &[T], i: usize, name: impl Fn(&T) -> &str) -> bo
     items
         .iter()
         .enumerate()
-        .any(|(j, item)| j != i && name(item).eq_ignore_ascii_case(own))
+        .any(|(j, item)| j != i && super::chat_file::same_name(name(item), own))
 }
 
 /// Splits text into pages of `page_tokens` (estimated) for `attachment_read`.
@@ -461,6 +463,37 @@ mod tests {
             .collect();
         assert_eq!(shared, [true, true, false]);
         assert!(!name_is_shared(&items, 9, |a| a.name.as_str()));
+    }
+
+    /// `name_is_shared` decides whether a listing prints the source beside the name, and
+    /// `matches` decides whether a removal accepts that name. Folding them differently is
+    /// worse than folding either one wrongly: the listing would show two names as distinct
+    /// while the removal refuses them as one, and the user has nothing to act on.
+    #[test]
+    fn the_listing_and_the_removal_share_one_fold() {
+        let file = |dir: &str, name: &str| {
+            Attachment::new(
+                name,
+                format!("/tmp/{dir}/{name}"),
+                "x".into(),
+                1,
+                AttachMode::Inline,
+            )
+        };
+        let items = vec![
+            file("a", "Отчёт.csv"),
+            file("b", "отчёт.csv"),
+            file("a", "sales.csv"),
+        ];
+        let shared: Vec<bool> = (0..items.len())
+            .map(|i| name_is_shared(&items, i, |a| a.name.as_str()))
+            .collect();
+        assert_eq!(shared, [true, true, false], "one name, two holders");
+        assert_eq!(
+            resolve_handle(&items, "ОТЧЁТ.CSV", Attachment::matches),
+            Resolved::Shared(vec![0, 1]),
+            "and the removal reads it the same way"
+        );
     }
 
     #[test]

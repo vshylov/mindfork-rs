@@ -707,6 +707,11 @@ impl Orchestrator {
         let mut request;
         let ctx;
         let last_user;
+        // Which `tool-image-N` names the chat has already spent. Collected whatever the
+        // turn stages, unlike the images themselves: a name is a few bytes, and a turn
+        // that cannot stage a file can still produce an image the next turn will name
+        // against.
+        let image_names;
         {
             let Some(chat) = self.chat_mut(active_id) else {
                 return;
@@ -723,6 +728,12 @@ impl Orchestrator {
             } else {
                 Vec::new()
             };
+            image_names = ToolImageNames::seeded(
+                chat.messages
+                    .iter()
+                    .flat_map(|m| m.images.iter())
+                    .map(|i| i.name.as_str()),
+            );
             let inputs = if stages_files {
                 crate::features::chat_inputs::items(
                     &chat.attachments,
@@ -846,6 +857,7 @@ impl Orchestrator {
             registry: self.registry.clone(),
             ctx,
             request,
+            image_names,
             cancel,
             confirm_dangerous: self.config.tools.confirm_dangerous,
             image_cfg: self.config.images,
@@ -1264,6 +1276,9 @@ struct GenSpawn {
     compaction_summary: Option<String>,
     /// Effectively allowed tools (protection against calling a disabled one).
     allowed: Vec<ToolId>,
+    /// The `tool-image-N` numbers the chat has already spent, read off its messages while
+    /// the chat was borrowed. See [`ToolImageNames`].
+    image_names: ToolImageNames,
     /// The profile's "self-model" (a snapshot at the start of the turn) + injection
     /// parameters/flags. Injection into the system prompt is done in the task (needs
     /// async embedding for relevance-based selection of observations). See
@@ -1499,6 +1514,7 @@ fn spawn_generation(spawn: GenSpawn) {
         sessions,
         concurrent_calls,
         allowed,
+        image_names,
         self_model,
         self_model_params,
         inject_enabled,
@@ -1584,6 +1600,7 @@ fn spawn_generation(spawn: GenSpawn) {
             cancel,
             // Asked on the first result that carries an image, and not again.
             vision: None,
+            image_names,
             allowed,
             messages: Vec::new(),
             effects: Vec::new(),
@@ -1745,6 +1762,9 @@ struct TurnLoop<'a> {
     /// What the engine answered about images, asked at most once per loop
     /// ([`TurnLoop::vision`]).
     vision: Option<VisionSupport>,
+    /// The `tool-image-N` numbers this chat has spent — seeded from the images it already
+    /// carries and grown as the turn produces more. See [`ToolImageNames`].
+    image_names: ToolImageNames,
     allowed: Vec<ToolId>,
     /// New domain messages accumulated across the loop's rounds.
     messages: Vec<Message>,
@@ -2766,7 +2786,13 @@ impl TurnLoop<'_> {
             // Decoded and downscaled here, once, so the same prepared bytes go into the
             // request and into the stored message — the object the model sees and the
             // object the chat keeps must be one (spec §9.10).
-            let prepared = prepare_tool_images(images, self.shared.image_cfg).await;
+            let (prepared, taken) = prepare_tool_images(
+                images,
+                self.shared.image_cfg,
+                std::mem::take(&mut self.image_names),
+            )
+            .await;
+            self.image_names = taken;
             if prepared.len() < offered {
                 let dropped = (offered - prepared.len()).to_string();
                 let note = self.ctx.loc.tf("loop.images_dropped", &[("n", &dropped)]);
@@ -3632,6 +3658,8 @@ async fn run_child(
         cancel: cancel.clone(),
         // A child asks the same engine, and asks it for itself: its loop is its own.
         vision: None,
+        // A child's chat opens with the one user message, so that is all it can have spent.
+        image_names: ToolImageNames::seeded(user.images.iter().map(|i| i.name.as_str())),
         allowed,
         // A child is never a woken turn: the notification reaches the parent.
         woken: false,
@@ -4722,6 +4750,45 @@ impl From<String> for CallResult {
     }
 }
 
+/// The stem every tool image's name is built on.
+const TOOL_IMAGE_PREFIX: &str = "tool-image-";
+
+/// Hands out `tool-image-N.<ext>` names, skipping every `N` the chat has already used.
+///
+/// A tool image is named for the **chat**, not for the call that produced it. Numbered per
+/// call, two rounds each returning one chart both produced `tool-image-1.png`, and a name
+/// two items share resolves to nothing (`Resolved::Shared`, §12 T2) — so the model naming
+/// its own chart in the next call's `files` got a refusal instead of the file, and the
+/// round was spent on finding that out.
+#[derive(Debug, Default)]
+struct ToolImageNames(std::collections::HashSet<u32>);
+
+impl ToolImageNames {
+    /// Seeds from the names a chat's images already carry. Anything that is not
+    /// `tool-image-<number>.<ext>` claims no number — a user's `chart.png` is not in the
+    /// family, and a user's own `tool-image-2.png` is.
+    fn seeded<'a>(names: impl Iterator<Item = &'a str>) -> Self {
+        Self(names.filter_map(Self::number_of).collect())
+    }
+
+    /// `tool-image-7.png` → `7`; any other name → `None`.
+    fn number_of(name: &str) -> Option<u32> {
+        let stem = name.rsplit_once('.').map_or(name, |(s, _)| s);
+        stem.strip_prefix(TOOL_IMAGE_PREFIX)?.parse().ok()
+    }
+
+    /// The next free name. The number is taken whatever the extension: `tool-image-1.png`
+    /// and `tool-image-1.jpg` are two different names to `resolve`, and two names one
+    /// digit apart to a reader.
+    fn next(&mut self, mime: &str) -> String {
+        let mut n = 1;
+        while !self.0.insert(n) {
+            n += 1;
+        }
+        format!("{TOOL_IMAGE_PREFIX}{n}.{}", ext_of(mime))
+    }
+}
+
 /// Decodes, downscales and re-encodes the images a tool returned, on the blocking pool.
 ///
 /// The same preparation a user's `/image attach` gets, for the same reasons (spec §9.10):
@@ -4729,20 +4796,27 @@ impl From<String> for CallResult {
 /// only png/jpeg must not be handed a webp. An image that fails to decode, or is over
 /// `images.max_bytes`, is **dropped** — a half-broken picture is not something the model
 /// can act on — and the caller says how many were (docs/history/sandbox-file-exchange.md §11 S8).
+///
+/// Names come from `taken`, which is handed back so the turn keeps them: naming happens
+/// **after** the drop, so a result whose first image failed to decode does not hand the
+/// second a number the model's own label contradicts.
 async fn prepare_tool_images(
     images: Vec<crate::features::tools::ToolImage>,
     cfg: crate::shared::config::ImageSettings,
-) -> Vec<crate::entities::message_image::MessageImage> {
+    mut taken: ToolImageNames,
+) -> (
+    Vec<crate::entities::message_image::MessageImage>,
+    ToolImageNames,
+) {
     if images.is_empty() {
-        return Vec::new();
+        return (Vec::new(), taken);
     }
     tokio::task::spawn_blocking(move || {
         use base64::Engine as _;
         let b64 = base64::engine::general_purpose::STANDARD;
-        images
+        let prepared = images
             .into_iter()
-            .enumerate()
-            .filter_map(|(i, image)| {
+            .filter_map(|image| {
                 let raw = b64.decode(&image.data).ok()?;
                 if raw.len() as u64 > cfg.max_bytes {
                     tracing::warn!(bytes = raw.len(), "tool image over the size cap, dropped");
@@ -4751,10 +4825,7 @@ async fn prepare_tool_images(
                 let prepared =
                     crate::features::image_prepare::prepare(&raw, cfg.downscale_px).ok()?;
                 Some(crate::entities::message_image::MessageImage::new(
-                    // Numbered from 1, like everything the user sees: the name is what
-                    // the model's label cites, and "the second image" has to mean the
-                    // same thing on both sides.
-                    format!("tool-image-{}.{}", i + 1, ext_of(prepared.mime)),
+                    taken.next(prepared.mime),
                     format!("tool:{}", Uuid::new_v4()),
                     prepared.mime,
                     prepared.width,
@@ -4762,7 +4833,8 @@ async fn prepare_tool_images(
                     b64.encode(&prepared.bytes),
                 ))
             })
-            .collect()
+            .collect();
+        (prepared, taken)
     })
     .await
     .unwrap_or_default()
