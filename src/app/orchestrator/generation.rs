@@ -765,6 +765,10 @@ impl Orchestrator {
                 // (spec §9.7). `Arc` — the context is cloned per call and the
                 // texts can be large.
                 attachments: std::sync::Arc::from(chat.attachments.clone()),
+                // The very list the pinned block was just rendered from, handed to the
+                // tools so `files` resolves against what the model was told rather than
+                // against a list re-derived a round later (fork F12, §12 T2).
+                inputs: std::sync::Arc::from(inputs),
                 // The folded-away range, rendered for `history_read`/
                 // `history_search` (spec §6.7). Rendered only when the tools are
                 // actually in this turn's set: with none of them offered, the
@@ -1383,14 +1387,10 @@ async fn confirm_call(
             .as_ref()
             .map(crate::features::chat_inputs::named_files)
             .unwrap_or_default();
-        let dir = gate.ctx.files_dir.clone().unwrap_or_default();
-        let items = crate::features::chat_inputs::items(
-            &gate.ctx.attachments,
-            &gate.ctx.files,
-            &gate.ctx.images.iter().collect::<Vec<_>>(),
-            &dir,
-        );
-        crate::features::chat_inputs::for_confirm(&items, &named, gate.ctx.python_net)
+        // The turn's list — the same one `stage` will resolve against. Derived afresh,
+        // this popup could name a different set than the call ends up staging, which is
+        // the one thing it exists to prevent (fork F12).
+        crate::features::chat_inputs::for_confirm(&gate.ctx.inputs, &named, gate.ctx.python_net)
     });
     let _ = gate.evt_tx.send(AppEvent::ToolConfirmRequest {
         generation_id: gate.id,
@@ -2345,6 +2345,13 @@ impl TurnLoop<'_> {
         // snapshot.
         sync_attachments(&mut self.ctx, &self.effects);
         sync_files(&mut self.ctx, &self.effects);
+        // …and the numbered list over them, last, because it reads both. It re-derives
+        // rather than re-numbers: `#N` and the `/w/in` name the pinned block promised
+        // outlive the round they were promised in (fork F12, §12 T2–T3). Only for a turn
+        // that has such a list — for any other, building one would be pure cost.
+        if self.ctx.stages_files {
+            self.ctx.sync_inputs();
+        }
 
         // The turn was cancelled while tools were executing — what's
         // accumulated is already saved above, don't start the next round.
@@ -3085,20 +3092,18 @@ impl TurnLoop<'_> {
         // The chat's files as the child sees them (§12 T13): its context is the parent's,
         // so the list is the same one — and the block is built for a child that actually
         // offers the tool, which the parent's turn may have withheld.
-        let child_files_dir = ctx.files_dir.clone().unwrap_or_default();
-        let inputs = if ctx.stages_files
+        // Literally the parent's list, not a re-derivation of it: the child's context is
+        // the parent's clone, so `stage` will resolve against `ctx.inputs`, and a block
+        // numbered afresh here would be telling the child a different `#N` than the one
+        // its own tool honours (fork F12).
+        let inputs: &[crate::features::chat_inputs::ChatInput] = if ctx.stages_files
             && allowed
                 .iter()
                 .any(|t| t == crate::features::tools::PYTHON_EXEC_ID)
         {
-            crate::features::chat_inputs::items(
-                &ctx.attachments,
-                &ctx.files,
-                &ctx.images.iter().collect::<Vec<_>>(),
-                &child_files_dir,
-            )
+            &ctx.inputs
         } else {
-            Vec::new()
+            &[]
         };
         let user = Message::user(parsed.message.clone());
         let request = build_request_in(
@@ -3117,7 +3122,7 @@ impl TurnLoop<'_> {
                 // sub-agent does not go through: its compaction is `None` above.
                 compaction: &crate::shared::config::CompactionSettings::default(),
                 indexed: &indexed,
-                files: &inputs,
+                files: inputs,
                 // The child runs in the mode its parent's context carries.
                 python_dirs: ctx.python_mode.dirs(),
                 history_tools: false,

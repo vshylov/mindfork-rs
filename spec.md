@@ -1162,6 +1162,18 @@ message that carries it, and the refusal says which command is about images. The
 naming these files exists only while the turn offers `python_exec` in its sandbox mode, and
 the confirmation popup (§9.8) states the resolved names and sizes going in.
 
+**And it holds for the whole turn.** The block is written once, before the model writes a
+line of code, while the list under it keeps growing: a round lands a fetched page, a
+`python_exec` call stores its chart. Numbering the list again at staging time would move
+every item past the insertion point — a stored file numbered `#2` becomes `#3` when an
+attachment arrives, and its `/w/in` name re-versions with it — so a number the model was
+given would be handed to whatever slid into that slot, with no refusal to notice. The
+turn's list is therefore **carried, not re-numbered**: each round re-derives it from the
+chat and restores the `#N` and the staged name already promised, numbering only what is
+new, after them. A number is never reused, so a handle for an item that has left the chat
+misses rather than landing on a newcomer. The one list is one list in time as well as
+across its readers.
+
 - **Commands** (input box, like `/rag`/`/tts`): `/file attach <path>`,
   `/file remove <name|#N>`, `/file list`, `/file open <name|#N>`, `/file folder`.
   As with RAG, the removal subcommand is

@@ -164,17 +164,14 @@ impl PythonExec {
             return Ok(Vec::new());
         }
         let loc = ctx.loc;
-        let dir = ctx.files_dir.clone().unwrap_or_default();
-        let items = chat_inputs::items(
-            &ctx.attachments,
-            &ctx.files,
-            &ctx.images.iter().collect::<Vec<_>>(),
-            &dir,
-        );
+        // The turn's list, not a fresh one: `#N` and the `/w/in` names were promised to
+        // the model by the pinned block before it wrote a line of code, and a list derived
+        // again here would have renumbered under it (fork F12, §12 T2–T3).
+        let items = &ctx.inputs;
         let mut inputs = Vec::new();
         let mut taken: Vec<usize> = Vec::new();
         for handle in handles {
-            let at = match chat_inputs::resolve(&items, handle) {
+            let at = match chat_inputs::resolve(items, handle) {
                 Resolved::One(at) => at,
                 Resolved::Shared(hits) => {
                     let candidates = hits
@@ -189,7 +186,7 @@ impl PythonExec {
                 Resolved::Nothing => {
                     return Err(loc.tf(
                         "tool.python_exec.err.files_unknown",
-                        &[("handle", handle.trim()), ("files", &known_files(&items))],
+                        &[("handle", handle.trim()), ("files", &known_files(items))],
                     ));
                 }
             };
@@ -830,7 +827,17 @@ mod tests {
             10,
             base64::engine::general_purpose::STANDARD.encode(PNG),
         )]);
+        ctx.sync_inputs();
         (dir, folder, ctx)
+    }
+
+    /// Numbers the context's list from scratch — for a test that **replaces** the
+    /// snapshots [`ctx_with_inputs`] set, i.e. describes a different chat rather than a
+    /// later round of this one. A turn never does this: it reconciles, so that `#N`
+    /// survives the round (fork F12). Tests about that carry-over say so by name.
+    fn renumber(ctx: &mut ToolContext) {
+        ctx.inputs = std::sync::Arc::from(Vec::new());
+        ctx.sync_inputs();
     }
 
     const NOTES: &str = "the note's text";
@@ -862,6 +869,50 @@ mod tests {
         assert_eq!(staged[0][0].1, NOTES.as_bytes());
         assert_eq!(staged[0][1].1, XLSX);
         assert_eq!(staged[0][2].1, PNG);
+    }
+
+    /// Fork F12, end to end through the tool: a round lands an attachment, and `#2` — the
+    /// number the pinned block gave the chat's stored file — still stages that file.
+    ///
+    /// This is the whole defect in one call. `sync_attachments` pushes the newcomer onto
+    /// the end of the attachments, which sit ahead of every stored file, so a list derived
+    /// afresh at staging time would hand `#2` to the page and copy the wrong bytes into
+    /// `/w/in` without a word.
+    #[tokio::test]
+    async fn a_number_promised_before_the_round_still_stages_the_same_file() {
+        use crate::entities::attachment::{AttachMode, Attachment};
+        let (_d, _folder, mut ctx) = ctx_with_inputs();
+        // What the block said: #1 notes.md, #2 sales.xlsx, #3 shot.png.
+        assert_eq!(ctx.inputs[1].name, "sales.xlsx");
+        assert_eq!(ctx.inputs[1].handle, 2);
+
+        // Round 1: `fetch_url` lands a page, exactly as `sync_attachments` mirrors it.
+        let mut attachments = ctx.attachments.to_vec();
+        attachments.push(Attachment::new(
+            "A page",
+            "https://example.com/a",
+            "page text".into(),
+            9,
+            AttachMode::Inline,
+        ));
+        ctx.attachments = std::sync::Arc::from(attachments);
+        ctx.sync_inputs();
+
+        let (sb, tool) = staging_tool();
+        let out = tool
+            .invoke(
+                &ctx,
+                serde_json::json!({"code": "print(1)", "files": ["#2"]}),
+            )
+            .await
+            .unwrap();
+        assert!(!out.result.contains("nothing was run"), "{}", out.result);
+        let staged = sb.staged.lock().unwrap();
+        assert_eq!(
+            staged[0][0].0, "sales.xlsx",
+            "#2 must still be the file the block numbered"
+        );
+        assert_eq!(staged[0][0].1, XLSX);
     }
 
     /// §14 V1: Local runs the same contract — a call names one of the chat's files, it is
@@ -961,6 +1012,7 @@ mod tests {
                 AttachMode::Inline,
             ),
         ]);
+        renumber(&mut ctx);
         let (sb, tool) = staging_tool();
         let out = tool
             .invoke(
@@ -983,6 +1035,7 @@ mod tests {
             FileOrigin::Sandbox,
             b"month,total\n",
         )]);
+        renumber(&mut ctx);
         let (sb, tool) = staging_tool();
         let out = tool
             .invoke(
@@ -992,6 +1045,16 @@ mod tests {
             .await
             .unwrap();
         assert!(out.result.contains("gone.csv"), "{}", out.result);
+        // The refusal has to be *this* one: a list that never held the file refuses it
+        // too, and "nothing ran, and the name appears" cannot tell the two apart.
+        assert_eq!(
+            out.result,
+            ctx.loc.tf(
+                "tool.python_exec.err.files_missing",
+                &[("name", "gone.csv")]
+            ),
+            "listed-but-missing, not unknown"
+        );
         assert!(sb.calls.lock().unwrap().is_empty(), "{}", out.result);
     }
 

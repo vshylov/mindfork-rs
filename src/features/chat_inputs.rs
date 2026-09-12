@@ -29,7 +29,15 @@ use crate::entities::message_image::MessageImage;
 /// One thing a call can name in `files`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ChatInput {
-    /// 1-based position — the `#N` of `/file list`, of the pinned block and of `files`.
+    /// What this item **is**, across a re-derivation of the list: the attachment's, the
+    /// stored file's or the image's own id. The one field [`reconcile`] matches on, so a
+    /// number promised to the model keeps meaning the same thing even when the list
+    /// underneath it grows or reorders.
+    pub id: uuid::Uuid,
+    /// The `#N` of `/file list`, of the pinned block and of `files`. 1-based, and on a
+    /// freshly built list it is the position — but never assume that: within a turn it is
+    /// carried by [`reconcile`], so it outlives the position it was born at, and a gap is
+    /// possible when an item leaves mid-turn. Resolve it with [`resolve`], not by index.
     pub handle: usize,
     /// The item's own name, as the listings show it.
     pub name: String,
@@ -74,11 +82,72 @@ pub fn items(
     images: &[&MessageImage],
     dir: &Path,
 ) -> Vec<ChatInput> {
+    let mut items = derive(attachments, files, images, dir);
+    number(&mut items);
+    items
+}
+
+/// The same list, re-derived from the chat as it is **now**, carrying the promises the
+/// turn has already made: an item `previous` numbered keeps its `#N` **and** its `/w/in`
+/// name, and whatever arrived since is appended with fresh ones.
+///
+/// This is what makes the pinned block true for a whole turn (fork F12,
+/// docs/history/sandbox-file-exchange.md §12 T2–T3). The block is written once, before the
+/// model writes any code; the list under it then grows every round — `fetch_url` lands an
+/// attachment, a `python_exec` call stores its chart — and a plain re-derivation would
+/// renumber everything after the insertion point and re-version the staged names with it.
+/// The model would then read `#2 sales.csv` from the block, name `#2`, and be handed
+/// whatever slid into that slot, or open `/w/in/notes (2).md` that is now `notes (3).md`.
+///
+/// Re-derived rather than frozen on purpose: `attachment` and `image` are positions in the
+/// live context, so a frozen copy would go stale exactly when `sync_attachments` reorders.
+/// Only the two fields the model was *told* are carried.
+///
+/// A number is never reused: it counts on from the highest the turn has issued, so a
+/// handle for an item that has since left the chat misses rather than landing on a
+/// newcomer.
+pub fn reconcile(
+    previous: &[ChatInput],
+    attachments: &[Attachment],
+    files: &[ChatFile],
+    images: &[&MessageImage],
+    dir: &Path,
+) -> Vec<ChatInput> {
+    let mut out = derive(attachments, files, images, dir);
+    let mut taken: Vec<String> = Vec::new();
+    let mut next = previous.iter().map(|p| p.handle).max().unwrap_or(0);
+    for item in out.iter_mut() {
+        if let Some(p) = previous.iter().find(|p| p.id == item.id) {
+            item.handle = p.handle;
+            item.staged = p.staged.clone();
+            taken.push(p.staged.to_lowercase());
+        }
+    }
+    for item in out.iter_mut().filter(|i| i.handle == 0) {
+        next += 1;
+        item.handle = next;
+        item.staged = unique_staged(&item.staged, next, &mut taken);
+    }
+    // What the turn already promised keeps its order; the newcomers follow, in the order
+    // they arrived — which is the order their own results announced them in.
+    out.sort_by_key(|i| i.handle);
+    out
+}
+
+/// The three groups in listing order, unnumbered: attachments, the stored files no
+/// attachment links, then the images.
+fn derive(
+    attachments: &[Attachment],
+    files: &[ChatFile],
+    images: &[&MessageImage],
+    dir: &Path,
+) -> Vec<ChatInput> {
     let mut items: Vec<ChatInput> = Vec::new();
     for (i, a) in attachments.iter().enumerate() {
         // The original, when `/file attach` kept one beside the extracted text (F8a).
         let linked = a.file_id.and_then(|id| files.iter().find(|f| f.id == id));
         items.push(ChatInput {
+            id: a.id,
             handle: 0,
             name: a.name.clone(),
             source: a.source.clone(),
@@ -97,6 +166,7 @@ pub fn items(
     let linked: Vec<uuid::Uuid> = attachments.iter().filter_map(|a| a.file_id).collect();
     for f in files.iter().filter(|f| !linked.contains(&f.id)) {
         items.push(ChatInput {
+            id: f.id,
             handle: 0,
             name: f.name.clone(),
             source: dir.join(&f.name).display().to_string(),
@@ -110,6 +180,7 @@ pub fn items(
     }
     for (i, im) in images.iter().enumerate() {
         items.push(ChatInput {
+            id: im.id,
             handle: 0,
             name: im.name.clone(),
             source: im.source.clone(),
@@ -121,13 +192,25 @@ pub fn items(
             image: Some(i),
         });
     }
-    number(&mut items);
     items
 }
 
 /// Resolves a handle — `#N`, a name or a path — against the list, refusing a name several
 /// items share the way `/file remove` does (docs/research/remove-by-shared-name.md).
+///
+/// `#N` is matched against the handle the model was **given**, never against the position:
+/// inside a turn the two part company (see [`reconcile`]), and a number for an item that
+/// has left has to miss rather than land on whoever took its place.
 pub fn resolve(items: &[ChatInput], target: &str) -> Resolved {
+    let target = target.trim().trim_matches(|c| c == '"' || c == '\'').trim();
+    if let Some(digits) = target.strip_prefix('#')
+        && let Ok(n) = digits.trim().parse::<usize>()
+    {
+        return match items.iter().position(|i| i.handle == n) {
+            Some(at) => Resolved::One(at),
+            None => Resolved::Nothing,
+        };
+    }
     resolve_handle(items, target, ChatInput::matches)
 }
 
@@ -211,17 +294,20 @@ fn number(items: &mut [ChatInput]) {
     let mut taken: Vec<String> = Vec::new();
     for (i, item) in items.iter_mut().enumerate() {
         item.handle = i + 1;
-        let base = sanitize_name(&item.staged).unwrap_or_else(|| format!("file-{}", i + 1));
-        let name = (1..)
-            .map(|n| versioned(&base, n))
-            .find(|candidate| {
-                let lower = candidate.to_lowercase();
-                !taken.contains(&lower)
-            })
-            .unwrap_or(base);
-        taken.push(name.to_lowercase());
-        item.staged = name;
+        item.staged = unique_staged(&item.staged, item.handle, &mut taken);
     }
+}
+
+/// One staged name, valid and unused: sanitized, then versioned case-insensitively against
+/// `taken`, which it grows. `handle` only feeds the fallback name.
+fn unique_staged(raw: &str, handle: usize, taken: &mut Vec<String>) -> String {
+    let base = sanitize_name(raw).unwrap_or_else(|| format!("file-{handle}"));
+    let name = (1..)
+        .map(|n| versioned(&base, n))
+        .find(|candidate| !taken.contains(&candidate.to_lowercase()))
+        .unwrap_or(base);
+    taken.push(name.to_lowercase());
+    name
 }
 
 /// The name an attachment's **text** is staged under. It gains `.txt` exactly where the
@@ -458,5 +544,129 @@ mod tests {
         assert_eq!(resolve(&list, "nothing.csv"), Resolved::Nothing);
         // The staged name is not a handle: `#2` and the path are what reach the second one.
         assert_eq!(resolve(&list, "notes (2).md"), Resolved::Nothing);
+    }
+
+    /// Fork F12, §12 T2: the number the pinned block gave the model has to mean the same
+    /// item for the whole turn. The block is written once, before the model writes a line
+    /// of code; the list under it then grows every round.
+    #[test]
+    fn a_number_the_block_promised_survives_what_lands_mid_turn() {
+        let shot = [image("shot.png", "image/png")];
+        let notes = attached("notes.md", "C:\\notes.md");
+        let sales = stored("sales.csv");
+        let block = items(
+            std::slice::from_ref(&notes),
+            std::slice::from_ref(&sales),
+            &shown(&shot),
+            dir(),
+        );
+        assert_eq!(
+            (block[0].handle, block[1].handle, block[2].handle),
+            (1, 2, 3)
+        );
+
+        // Round 1: `fetch_url` lands an attachment — `sync_attachments` pushes it onto the
+        // end of the attachments, which in a freshly derived list sits *before* every
+        // stored file and every image.
+        let page = attached("A page", "https://example.com/a");
+        let after = reconcile(
+            &block,
+            &[notes.clone(), page.clone()],
+            std::slice::from_ref(&sales),
+            &shown(&shot),
+            dir(),
+        );
+
+        let by_handle = |n: usize| {
+            let Resolved::One(at) = resolve(&after, &format!("#{n}")) else {
+                panic!("#{n} resolves to nothing");
+            };
+            after[at].name.clone()
+        };
+        assert_eq!(by_handle(1), "notes.md");
+        assert_eq!(by_handle(2), "sales.csv", "a stored file must not slide");
+        assert_eq!(by_handle(3), "shot.png", "an image must not slide either");
+        assert_eq!(
+            by_handle(4),
+            "A page",
+            "the newcomer is numbered after them"
+        );
+    }
+
+    /// The other half of the same promise (§12 T3): the model writes `/w/in/<name>` into
+    /// its code before any result exists, so the staged name cannot move either — and it
+    /// is versioned by list position, which is exactly what an insertion changes.
+    #[test]
+    fn a_staged_name_the_block_promised_survives_too() {
+        let a = attached("notes.md", "C:\\a\\notes.md");
+        let b = attached("notes.md", "C:\\b\\notes.md");
+        let block = items(&[a.clone(), b.clone()], &[], &[], dir());
+        assert_eq!(block[0].staged, "notes.md");
+        assert_eq!(block[1].staged, "notes (2).md");
+
+        // A third `notes.md` arrives and sorts ahead of `b` — a plain re-derivation would
+        // hand `b` the name `notes (3).md` while the block still says `notes (2).md`.
+        let c = attached("notes.md", "C:\\c\\notes.md");
+        let after = reconcile(&block, &[a, c, b], &[], &[], dir());
+        let staged = |source: &str| {
+            let Resolved::One(at) = resolve(&after, source) else {
+                panic!("{source} resolves to nothing");
+            };
+            after[at].staged.clone()
+        };
+        assert_eq!(staged("C:\\a\\notes.md"), "notes.md");
+        assert_eq!(staged("C:\\b\\notes.md"), "notes (2).md");
+        assert_eq!(
+            staged("C:\\c\\notes.md"),
+            "notes (3).md",
+            "the newcomer takes a name neither of the promised two holds"
+        );
+    }
+
+    /// `sync_attachments` re-fetching one source does `retain` + `push`: the item moves to
+    /// the end of the attachments without the list changing length, so a position-based
+    /// number would change meaning while nothing was added at all.
+    #[test]
+    fn an_attachment_that_moved_keeps_the_number_it_was_given() {
+        let first = attached("notes.md", "C:\\notes.md");
+        let page = attached("A page", "https://example.com/a");
+        let block = items(&[first.clone(), page.clone()], &[], &[], dir());
+        assert_eq!(block[0].name, "notes.md");
+
+        let after = reconcile(&block, &[page, first], &[], &[], dir());
+        let Resolved::One(at) = resolve(&after, "#1") else {
+            panic!("#1 resolves to nothing");
+        };
+        assert_eq!(after[at].name, "notes.md");
+    }
+
+    /// A number is never handed on. An item that leaves mid-turn takes its handle with it,
+    /// so a model still holding that `#N` misses — rather than being quietly given
+    /// whatever arrived next.
+    #[test]
+    fn a_number_is_never_reused_by_a_newcomer() {
+        let notes = attached("notes.md", "C:\\notes.md");
+        let sales = stored("sales.csv");
+        let block = items(
+            std::slice::from_ref(&notes),
+            std::slice::from_ref(&sales),
+            &[],
+            dir(),
+        );
+        assert_eq!(block[1].handle, 2);
+
+        // `sales.csv` is gone and a chart arrives in the same round.
+        let after = reconcile(
+            &block,
+            std::slice::from_ref(&notes),
+            &[stored("chart.png")],
+            &[],
+            dir(),
+        );
+        assert_eq!(resolve(&after, "#2"), Resolved::Nothing);
+        let Resolved::One(at) = resolve(&after, "#3") else {
+            panic!("#3 resolves to nothing");
+        };
+        assert_eq!(after[at].name, "chart.png");
     }
 }

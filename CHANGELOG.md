@@ -16,6 +16,14 @@ split by subsystem.
 
 ### Fixed
 
+- **A file's number stays that file's for the whole reply.** The assistant is told your
+  files as a numbered list before it starts working — `#1`, `#2`, `#3`. If something was
+  added while it worked (a page it fetched, a chart it saved), the numbering underneath
+  shifted, and a `#2` it had been given could quietly become a different file: the code ran
+  against the wrong one, or against a name that no longer existed. Numbers now belong to
+  the file they were given for until the reply ends, and anything new gets a number of its
+  own after them.
+
 - **Every "you weren't shown this image" note now says it in words that work.** The same
   measurement was run against the rest of them — the notes for a model that takes no
   images, for a picture too large to show, for charts held back by the Python settings or

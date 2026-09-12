@@ -429,7 +429,12 @@ src/
 │  │                        files, the messages' images — with each one's name in
 │  │                        /w/in; the numbering /file list, /file remove, the pinned
 │  │                        block and python_exec's `files` all take; `open_path`
-│  │                        says what a handle means on disk for /file open
+│  │                        says what a handle means on disk for /file open.
+│  │                        `items` numbers a fresh list; `reconcile` re-derives one
+│  │                        while carrying the #N and the /w/in name a turn already
+│  │                        promised, so a round that adds a file cannot renumber
+│  │                        under a model still reading the block (ToolContext.inputs,
+│  │                        refreshed by ToolContext::sync_inputs once a round)
 │  ├─ rag_command.rs        /rag add|remove|list|rebuild parser
 │  ├─ compaction.rs        history compression, pure part: one renderer of a
 │  │                       message range (parameterized by the tool-result clip,
