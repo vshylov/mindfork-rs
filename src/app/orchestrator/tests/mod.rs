@@ -301,6 +301,9 @@ fn bare_orch_rx() -> (tempfile::TempDir, Orchestrator, UnboundedReceiver<AppEven
         attach_tx: unbounded_channel().0,
         // Same for images: staging is exercised through the real loop.
         image_tx: unbounded_channel().0,
+        // And launches: what the bare tests assert is the plan and the landing, each
+        // called directly (`plan_open`, `handle_open_result`).
+        open_tx: unbounded_channel().0,
         staged_images: Default::default(),
         bg: std::collections::HashMap::new(),
         bg_done_tx: unbounded_channel().0,

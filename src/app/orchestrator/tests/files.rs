@@ -13,7 +13,7 @@ use super::*;
 use crate::entities::attachment::{AttachMode, Attachment};
 use crate::entities::chat_file::{ChatFile, FileOrigin};
 use crate::entities::profile::ToolId;
-use crate::features::file_command::FileProgress;
+use crate::features::file_command::{FileProgress, OpenedInstead};
 use crate::features::tools::meta::ToolGroup;
 use crate::features::tools::{ChatEffect, Tool, ToolContext, ToolImage, ToolOutcome};
 use crate::shared::api::VisionSupport;
@@ -178,8 +178,6 @@ fn removing_an_image_is_refused_with_the_way_out() {
     assert!(msg.contains("/image remove"), "{msg}");
 }
 
-/// Removing an attached document that kept its original takes both halves — the listing
-/// and our copy of the file — and never the user's own (§12 T9).
 /// Fork F9 (§13 U3): a type the shell may run is never handed to a handler — the folder
 /// opens instead, and the note says which happened. The plan is asserted rather than the
 /// launch: nothing opens a window on the machine running the tests (§13 U10).
@@ -206,10 +204,146 @@ fn a_document_opens_and_a_script_the_call_wrote_opens_its_folder() {
     let (path, note) = orch.plan_open("run.bat").expect("the folder opens instead");
     assert_eq!(path, dir, "a script must not reach a handler");
     assert!(
-        matches!(&note, FileProgress::OpenedFolder { instead_of: Some(name), .. } if name == "run.bat"),
+        matches!(
+            &note,
+            FileProgress::OpenedFolder {
+                instead_of: Some(OpenedInstead { name, by_a_call: true }),
+                ..
+            } if name == "run.bat"
+        ),
         "{note:?}"
     );
     assert_eq!(failure(drain(&mut rx)), None, "neither is a refusal");
+}
+
+/// The folder stands in for a refused type whoever wrote the file — the allowlist is by
+/// type — but the reason the note gives is true only of a file a call wrote. A `.py` the
+/// user attached and a binary `/file attach` kept are the user's own; a call's script and
+/// a leftover adopted from the folder are a call's (§13 U3).
+#[test]
+fn the_reason_a_folder_opens_instead_names_whose_file_it_is() {
+    let (root, mut orch, mut rx) = bare_orch_rx();
+    let chat_id = open_chat(&mut orch);
+    let dir = orch.stored_files_dir(chat_id);
+    std::fs::create_dir_all(&dir).unwrap();
+    for name in ["setup.msi", "run.cmd", "old.sh"] {
+        std::fs::write(dir.join(name), b"x").unwrap();
+    }
+    // The user's own script, attached from where it lives: plain text keeps no copy.
+    let own = root.path().join("script.py");
+    std::fs::write(&own, b"print(1)").unwrap();
+    let chat = orch.chats.iter_mut().find(|c| c.id == chat_id).unwrap();
+    chat.attachments.push(Attachment::new(
+        "script.py",
+        own.display().to_string(),
+        "print(1)".into(),
+        3,
+        AttachMode::Inline,
+    ));
+    chat.files
+        .push(ChatFile::new("setup.msi", FileOrigin::Attached, b"x"));
+    chat.files
+        .push(ChatFile::new("run.cmd", FileOrigin::Sandbox, b"x"));
+    chat.files
+        .push(ChatFile::new("old.sh", FileOrigin::Recovered, b"x"));
+
+    let by_a_call = |target: &str| match orch.plan_open(target) {
+        Some((
+            _,
+            FileProgress::OpenedFolder {
+                instead_of: Some(instead),
+                ..
+            },
+        )) => instead.by_a_call,
+        other => panic!("{target}: expected its folder instead, got {other:?}"),
+    };
+    assert!(!by_a_call("script.py"), "the user attached it");
+    assert!(
+        !by_a_call("setup.msi"),
+        "the user's binary, kept by /file attach"
+    );
+    assert!(by_a_call("run.cmd"), "a call wrote it");
+    assert!(
+        by_a_call("old.sh"),
+        "adopted from the folder as a call's leftover"
+    );
+    assert_eq!(failure(drain(&mut rx)), None, "none of them is a refusal");
+}
+
+/// A stored name comes back from `chat.json` unvalidated. One that leaves the folder is
+/// refused before anything is handed over — and the file it points at is **real**, so
+/// the existence check alone would have let it through to a handler.
+#[test]
+fn a_stored_name_that_leaves_the_folder_is_refused_even_when_the_file_is_real() {
+    let (_dir, mut orch, mut rx) = bare_orch_rx();
+    let chat_id = open_chat(&mut orch);
+    let dir = orch.stored_files_dir(chat_id);
+    std::fs::create_dir_all(&dir).unwrap();
+    // Two levels above `files/<chat-id>/`: outside every chat's folder.
+    std::fs::write(dir.join("..").join("..").join("escape.pdf"), b"%PDF").unwrap();
+    // As `chat.json` would hand it back, not as `ChatFile::new` would build it.
+    let mut file = ChatFile::new("escape.pdf", FileOrigin::Sandbox, b"%PDF");
+    file.name = "../../escape.pdf".into();
+    let chat = orch.chats.iter_mut().find(|c| c.id == chat_id).unwrap();
+    chat.files.push(file);
+
+    assert!(
+        orch.plan_open("#1").is_none(),
+        "nothing outside the folder is opened"
+    );
+    let msg = failure(drain(&mut rx)).expect("a refusal");
+    assert!(msg.contains("escape.pdf"), "{msg}");
+}
+
+/// A launch runs off the loop and can outlast a switch of chats (§13 U5). Its success is
+/// noted only in the chat it was asked in; its failure wherever the user is, because that
+/// note is the only report of a command just given and a note is kept with no chat.
+#[test]
+fn a_launch_s_note_goes_to_its_chat_and_a_failure_is_never_lost() {
+    use crate::app::orchestrator::attachments::OpenResult;
+    let (_dir, mut orch, mut rx) = bare_orch_rx();
+    let asked_in = open_chat(&mut orch);
+    let opened = || FileProgress::Opened {
+        name: "report.pdf".into(),
+        path: "/data/files/a/report.pdf".into(),
+    };
+    let notes = |rx: &mut UnboundedReceiver<AppEvent>| {
+        drain(rx)
+            .iter()
+            .filter(|e| matches!(e, AppEvent::FileProgress(_)))
+            .count()
+    };
+
+    // Still in the chat: the note lands.
+    orch.handle_open_result(OpenResult {
+        chat_id: asked_in,
+        progress: opened(),
+    });
+    assert_eq!(notes(&mut rx), 1);
+
+    // The user moved on before the launch came back.
+    let elsewhere = open_chat(&mut orch);
+    assert_ne!(elsewhere, asked_in);
+    orch.handle_open_result(OpenResult {
+        chat_id: asked_in,
+        progress: opened(),
+    });
+    assert_eq!(
+        notes(&mut rx),
+        0,
+        "another chat's feed does not say this chat's file opened"
+    );
+
+    let why = "could not open /data/files/a/report.pdf";
+    orch.handle_open_result(OpenResult {
+        chat_id: asked_in,
+        progress: FileProgress::Failed(why.into()),
+    });
+    assert_eq!(
+        failure(drain(&mut rx)).as_deref(),
+        Some(why),
+        "a failure still reaches the user"
+    );
 }
 
 /// The three shapes of "there is no file to open" — a pasted image, a handle nothing
@@ -294,6 +428,8 @@ fn the_folder_of_a_chat_that_saved_nothing_is_refused_with_its_path() {
     );
 }
 
+/// Removing an attached document that kept its original takes both halves — the listing
+/// and our copy of the file — and never the user's own (§12 T9).
 #[test]
 fn removing_a_pair_deletes_our_copy_and_both_listings() {
     let (_dir, mut orch, mut rx) = bare_orch_rx();

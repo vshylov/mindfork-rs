@@ -807,6 +807,7 @@
   "ui.file.opened": "Files: opened {name} — {path}",
   "ui.file.opened_folder": "Files: opened this chat's folder — {path}",
   "ui.file.opened_folder_instead": "Files: {name} is not a type that opens on its own — a file the assistant wrote could run under its handler. Opened the folder instead: {path}",
+  "ui.file.opened_folder_instead_own": "Files: {name} is not a type that opens from here — only documents are handed to a program. Opened its folder instead: {path}",
   "ui.file.removed_pair": "removed {name} — the attachment and our copy of the file (your own file is untouched)",
   "ui.file.stored_missing": " — missing from the folder",
   "ui.file.failed": "Files: {err}",

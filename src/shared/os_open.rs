@@ -78,19 +78,21 @@ pub fn is_document(name: &str) -> bool {
 }
 
 /// What opens for a file, and the path to hand to [`open`]: the file itself when its type
-/// is a document, otherwise the folder it sits in (§13 U3). A path with no parent — a
-/// bare name — stands in for its own folder rather than opening nothing.
-pub fn decide(path: &Path) -> (Opens, &Path) {
+/// is a document, otherwise the folder it sits in (§13 U3).
+///
+/// `None` when the type is not a document and the path names no folder — a bare name.
+/// This used to fall back onto the path itself, which is exactly the file the allowlist
+/// had just refused: `run.bat` with no folder was handed to the shell as `run.bat`. Every
+/// caller passes an absolute path today, so the case does not arise; the signature is
+/// what keeps it from arising later.
+pub fn decide(path: &Path) -> Option<(Opens, &Path)> {
     let name = path.file_name().and_then(OsStr::to_str).unwrap_or_default();
     if is_document(name) {
-        (Opens::File, path)
+        Some((Opens::File, path))
     } else {
-        (
-            Opens::Folder,
-            path.parent()
-                .filter(|p| !p.as_os_str().is_empty())
-                .unwrap_or(path),
-        )
+        path.parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .map(|dir| (Opens::Folder, dir))
     }
 }
 
@@ -315,7 +317,7 @@ mod tests {
         let doc = dir.path().join("mindfork open gate.txt");
         std::fs::write(&doc, b"stage 4: this file was opened by /file open\n").unwrap();
 
-        let (opens, at) = decide(&doc);
+        let (opens, at) = decide(&doc).expect("a document opens");
         assert_eq!(opens, Opens::File);
         println!("opening the document: {}", at.display());
         open(at).expect("the document opened");
@@ -323,7 +325,7 @@ mod tests {
         // And the fallback half: a type no handler may run opens the folder it sits in.
         let script = dir.path().join("run.bat");
         std::fs::write(&script, b"@echo off\n").unwrap();
-        let (opens, at) = decide(&script);
+        let (opens, at) = decide(&script).expect("its folder opens");
         assert_eq!(opens, Opens::Folder);
         println!("opening the folder instead of run.bat: {}", at.display());
         open(at).expect("the folder opened");
@@ -337,17 +339,20 @@ mod tests {
     fn a_refused_type_opens_its_folder_instead() {
         let dir = Path::new("/data/files/chat");
         let chart = dir.join("chart.png");
-        let (opens, at) = decide(&chart);
+        let (opens, at) = decide(&chart).expect("a document opens");
         assert_eq!(opens, Opens::File);
         assert_eq!(at, chart);
 
         let script = dir.join("run.bat");
-        let (opens, at) = decide(&script);
+        let (opens, at) = decide(&script).expect("its folder opens");
         assert_eq!(opens, Opens::Folder);
         assert_eq!(at, dir);
 
-        // A bare name has no folder to fall back to: it stands in for its own.
-        let bare = Path::new("run.bat");
-        assert_eq!(decide(bare), (Opens::Folder, bare));
+        // A bare name has no folder to fall back to, and the file itself is the one thing
+        // that may not stand in for it: nothing opens.
+        assert_eq!(decide(Path::new("run.bat")), None);
+        // A bare *document* is still a document.
+        let bare = Path::new("report.pdf");
+        assert_eq!(decide(bare), Some((Opens::File, bare)));
     }
 }

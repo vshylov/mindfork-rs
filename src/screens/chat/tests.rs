@@ -2083,10 +2083,12 @@ fn file_list_note_numbers_items_for_removal() {
 
 /// The two notes `/file open` leaves (fork F9, §13 U3/U6): the file opened, or its
 /// folder standing in for a type no handler may run — and the path in both, which is
-/// what makes a launch that failed on the way recoverable.
+/// what makes a launch that failed on the way recoverable. And when the folder stood in,
+/// the reason given depends on whose file it was: the assistant's writing is a reason only
+/// for a file the assistant wrote.
 #[test]
 fn the_open_notes_name_the_path_and_say_when_the_folder_stood_in() {
-    use crate::features::file_command::FileProgress;
+    use crate::features::file_command::{FileProgress, OpenedInstead};
     let mut s = ChatScreen::new();
     s.set_file_progress(FileProgress::Opened {
         name: "chart.png".into(),
@@ -2094,11 +2096,21 @@ fn the_open_notes_name_the_path_and_say_when_the_folder_stood_in() {
     });
     s.set_file_progress(FileProgress::OpenedFolder {
         path: "/data/files/c1".into(),
-        instead_of: Some("run.bat".into()),
+        instead_of: Some(OpenedInstead {
+            name: "run.bat".into(),
+            by_a_call: true,
+        }),
     });
     s.set_file_progress(FileProgress::OpenedFolder {
         path: "/data/files/c1".into(),
         instead_of: None,
+    });
+    s.set_file_progress(FileProgress::OpenedFolder {
+        path: "/home/me".into(),
+        instead_of: Some(OpenedInstead {
+            name: "script.py".into(),
+            by_a_call: false,
+        }),
     });
     let notes: Vec<&str> = s
         .feed
@@ -2106,7 +2118,7 @@ fn the_open_notes_name_the_path_and_say_when_the_folder_stood_in() {
         .filter(|m| m.role == FeedRole::Note)
         .map(|m| m.text.as_str())
         .collect();
-    assert_eq!(notes.len(), 3, "{notes:?}");
+    assert_eq!(notes.len(), 4, "{notes:?}");
     assert!(
         notes[0].contains("chart.png") && notes[0].contains("/data/files/c1/chart.png"),
         "{}",
@@ -2120,6 +2132,24 @@ fn the_open_notes_name_the_path_and_say_when_the_folder_stood_in() {
     );
     assert!(!notes[2].contains("run.bat"), "{}", notes[2]);
     assert!(notes[2].contains("/data/files/c1"), "{}", notes[2]);
+    // Whose file it was picks the reason. Compared whole, through the bundle, so the test
+    // holds in any interface language and cannot pass on a shared prefix.
+    let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::default());
+    let args = |name, path| [("name", name), ("path", path)];
+    assert_eq!(
+        notes[1],
+        loc.tf(
+            "ui.file.opened_folder_instead",
+            &args("run.bat", "/data/files/c1")
+        )
+    );
+    assert_eq!(
+        notes[3],
+        loc.tf(
+            "ui.file.opened_folder_instead_own",
+            &args("script.py", "/home/me")
+        )
+    );
 }
 
 /// A staged-image card for the tests — `est_tokens` is what the chip and the

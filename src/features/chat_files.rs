@@ -181,7 +181,12 @@ pub fn exists(dir: &Path, name: &str) -> bool {
 
 /// `dir/name` when `name` is one plain component — no separator, no drive, not `.` or
 /// `..` — and an error otherwise, rather than a join that could leave the folder.
-fn confined(dir: &Path, name: &str) -> io::Result<PathBuf> {
+///
+/// Public because it is the folder's invariant, not this module's: a stored name is read
+/// back from `chat.json` without being validated again, so **every** join of a stored
+/// name into the folder goes through here — `/file open` included
+/// ([`chat_inputs::open_path`](crate::features::chat_inputs::open_path)).
+pub fn confined(dir: &Path, name: &str) -> io::Result<PathBuf> {
     let plain = !name.is_empty() && name != "." && name != ".." && !name.contains(['/', '\\', ':']);
     if plain {
         Ok(dir.join(name))
