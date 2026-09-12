@@ -298,6 +298,10 @@ pub struct WasmerSandbox {
     dir: Option<PathBuf>,
     /// Where `site-packages` comes from — the image, except for provisioning.
     site: SiteSource,
+    /// Which image file in [`Self::dir`] a launch runs. The installed one
+    /// ([`SANDBOX_IMAGE`]) for every caller but provisioning's verification, which has to
+    /// start a freshly packed candidate **before** it replaces the sandbox that works.
+    image: String,
     /// The "one task at a time" gate (a single permit). Protection against
     /// process/thread leaks and predictable load: a concurrent call is
     /// rejected immediately. In the normal agentic loop, calls are already
@@ -312,20 +316,28 @@ impl WasmerSandbox {
     /// Creates a sandbox with the assets directory (`data/sandbox/`; `None` —
     /// without it, then the binary is taken only from an env-override).
     pub fn new(dir: Option<PathBuf>) -> Self {
-        Self::with_site(dir, SiteSource::Image)
+        Self::with_site(dir, SiteSource::Image, SANDBOX_IMAGE)
+    }
+
+    /// Runs one named image out of the sandbox directory rather than the installed one.
+    /// Provisioning's verification, and nothing else: a candidate that does not start must
+    /// fail `setup` while the previous image is still the one on disk.
+    pub fn for_candidate(dir: PathBuf, image: &str) -> Self {
+        Self::with_site(Some(dir), SiteSource::Image, image)
     }
 
     /// The sandbox provisioning's warmup runs in: `site-packages` mounted as the
     /// writable directory it is on the host, so the bytecode the warmup compiles lands
     /// where the image is packed from. Only for code the application itself wrote.
     pub fn for_provisioning(dir: PathBuf) -> Self {
-        Self::with_site(Some(dir), SiteSource::Directory)
+        Self::with_site(Some(dir), SiteSource::Directory, SANDBOX_IMAGE)
     }
 
-    fn with_site(dir: Option<PathBuf>, site: SiteSource) -> Self {
+    fn with_site(dir: Option<PathBuf>, site: SiteSource, image: &str) -> Self {
         Self {
             dir,
             site,
+            image: image.to_string(),
             gate: Arc::new(Semaphore::new(1)),
             memory_mb: None,
         }
@@ -388,7 +400,7 @@ impl WasmerSandbox {
         let image = self
             .dir
             .as_ref()
-            .map(|d| d.join(SANDBOX_IMAGE))
+            .map(|d| d.join(&self.image))
             .filter(|p| p.is_file());
         match (image, site_dir) {
             (Some(image), _) => Some(LaunchPlan {
@@ -1340,6 +1352,34 @@ mod tests {
             std::fs::write(dir.path().join(SANDBOX_IMAGE), b"stub").unwrap();
         }
         dir
+    }
+
+    /// Provisioning verifies a **candidate** image, so it has to be able to start one that
+    /// is not the installed file — that is what lets `setup` reject a bad build while the
+    /// sandbox that works is still on disk.
+    #[test]
+    fn a_candidate_image_is_what_runs_when_one_is_named() {
+        let dir = sandbox_dir(true, true);
+        let candidate = format!("{SANDBOX_IMAGE}.partial");
+        std::fs::write(dir.path().join(&candidate), b"fresh").unwrap();
+
+        let installed = WasmerSandbox::new(Some(dir.path().to_path_buf()))
+            .plan()
+            .unwrap();
+        assert_eq!(installed.program, dir.path().join(SANDBOX_IMAGE));
+
+        let fresh = WasmerSandbox::for_candidate(dir.path().to_path_buf(), &candidate)
+            .plan()
+            .unwrap();
+        assert_eq!(fresh.program, dir.path().join(&candidate));
+
+        // And a candidate that was never built is not silently the installed one.
+        std::fs::remove_file(dir.path().join(&candidate)).unwrap();
+        let plan = WasmerSandbox::for_candidate(dir.path().to_path_buf(), &candidate).plan();
+        assert!(
+            plan.is_none(),
+            "a missing candidate must not fall through to the installed image: {plan:?}"
+        );
     }
 
     /// The image carries its own `site-packages`: it is what runs, nothing is mounted
