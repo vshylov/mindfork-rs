@@ -43,6 +43,16 @@ const TEXT_HEAD_BYTES: usize = 1024;
 /// kept: a run that skipped a handful wants them all named.
 const MAX_SKIPPED_LINES: usize = 20;
 
+/// How many files one call may name in `files`. The output side has had its caps from the
+/// start (`OutputLimits::DEFAULT`: 10 files, 50 MB); the input side had none, while every
+/// file a call names is copied into the job directory before the code starts.
+const MAX_INPUT_FILES: usize = 20;
+
+/// How many bytes the files one call names may add up to: room for three attachments at
+/// their own ceiling of 32 MB, while a call naming a long chat's every stored file at once
+/// is refused before any of it is copied or decoded.
+const MAX_INPUT_BYTES: u64 = 100 * 1024 * 1024;
+
 /// `python_exec` — executes the given Python code and returns stdout/stderr.
 pub struct PythonExec {
     /// The execution mode (sandbox/local).
@@ -174,7 +184,6 @@ impl PythonExec {
         // the model by the pinned block before it wrote a line of code, and a list derived
         // again here would have renumbered under it (fork F12, §12 T2–T3).
         let items = &ctx.inputs;
-        let mut inputs = Vec::new();
         let mut taken: Vec<usize> = Vec::new();
         for handle in handles {
             let at = match chat_inputs::resolve(items, handle) {
@@ -189,20 +198,32 @@ impl PythonExec {
                         &[("handle", handle.trim()), ("candidates", &candidates)],
                     ));
                 }
-                Resolved::Nothing => {
-                    return Err(loc.tf(
-                        "tool.python_exec.err.files_unknown",
-                        &[("handle", handle.trim()), ("files", &known_files(items))],
-                    ));
-                }
+                Resolved::Nothing => return Err(unknown_handle(loc, handle, items)),
             };
-            if taken.contains(&at) {
-                continue; // named twice — one copy, one name in `/w/in`
+            if !taken.contains(&at) {
+                taken.push(at); // named twice — one copy, one name in `/w/in`
             }
-            taken.push(at);
-            inputs.push(self.input_for(&items[at], ctx)?);
         }
-        Ok(inputs)
+        // The caps, once every handle has resolved and before anything is copied or decoded.
+        // A call over them is refused whole, as every other `files` refusal is: a script
+        // handed the first twenty of thirty files would answer from twenty (§12 T7).
+        let bytes: u64 = taken.iter().map(|&at| items[at].bytes).sum();
+        if taken.len() > MAX_INPUT_FILES || bytes > MAX_INPUT_BYTES {
+            return Err(loc.tf(
+                "tool.python_exec.err.files_over_cap",
+                &[
+                    ("count", &taken.len().to_string()),
+                    ("size", &format_bytes(bytes as usize)),
+                    ("max_files", &MAX_INPUT_FILES.to_string()),
+                    ("max_size", &format_bytes(MAX_INPUT_BYTES as usize)),
+                    ("out", self.mode.dirs().1),
+                ],
+            ));
+        }
+        taken
+            .iter()
+            .map(|&at| self.input_for(&items[at], ctx))
+            .collect()
     }
 
     /// One resolved item as a copy for `/w/in`: a file from the chat's folder is copied
@@ -587,9 +608,6 @@ fn skipped_line(loc: &Locale, skipped: &SkippedOutput, out_dir: &str) -> String 
 /// and the size, so the model can name one of them instead of guessing again (lessons §4).
 /// Data, not prose — the numbering is the same one `/file list` shows the user.
 fn known_files(items: &[crate::features::chat_inputs::ChatInput]) -> String {
-    if items.is_empty() {
-        return String::new();
-    }
     items
         .iter()
         .map(|i| {
@@ -601,6 +619,26 @@ fn known_files(items: &[crate::features::chat_inputs::ChatInput]) -> String {
             )
         })
         .collect()
+}
+
+/// The refusal for a handle nothing answers to. It lists the chat's files by number, so the
+/// next call can name one instead of guessing again — and in a chat with no files it says
+/// that, rather than ending on a list header with nothing under it.
+fn unknown_handle(
+    loc: &Locale,
+    handle: &str,
+    items: &[crate::features::chat_inputs::ChatInput],
+) -> String {
+    if items.is_empty() {
+        return loc.tf(
+            "tool.python_exec.err.files_unknown_none",
+            &[("handle", handle.trim())],
+        );
+    }
+    loc.tf(
+        "tool.python_exec.err.files_unknown",
+        &[("handle", handle.trim()), ("files", &known_files(items))],
+    )
 }
 
 /// One `not kept` entry.
@@ -1119,6 +1157,121 @@ mod tests {
             sb.calls.lock().unwrap().is_empty(),
             "a refused call must not reach the sandbox"
         );
+    }
+
+    /// An inline attachment of a few bytes of text, recorded at `bytes` — the size the caps
+    /// are checked against, so a test can be over them without allocating anything.
+    fn attachment_of(name: &str, bytes: usize) -> crate::entities::attachment::Attachment {
+        crate::entities::attachment::Attachment::new(
+            name,
+            format!("/data/{name}"),
+            "a,b".to_string(),
+            bytes,
+            crate::entities::attachment::AttachMode::Inline,
+        )
+    }
+
+    /// In a chat with no files at all, the refusal says so. It used to end on "The chat's
+    /// files, by number:" with nothing under it — a list the model could only read as cut
+    /// off.
+    #[tokio::test]
+    async fn an_unknown_handle_in_a_chat_with_no_files_says_it_has_none() {
+        let (_d, _folder, ctx) = ctx_with_folder();
+        let (sb, tool) = staging_tool();
+        let out = tool
+            .invoke(
+                &ctx,
+                serde_json::json!({"code": "print(1)", "files": ["#1"]}),
+            )
+            .await
+            .unwrap();
+        let en = crate::shared::i18n::locale(Lang::En);
+        assert_eq!(
+            out.result,
+            en.tf(
+                "tool.python_exec.err.files_unknown_none",
+                &[("handle", "#1")]
+            )
+        );
+        assert!(sb.calls.lock().unwrap().is_empty(), "{}", out.result);
+    }
+
+    /// The input side gets the caps the output side always had (§12 T7). A call naming more
+    /// files than one call takes is refused **whole** — nothing copied, nothing run — with
+    /// the numbers and the way through, never a guess at which ones to drop. At the cap
+    /// exactly, it runs.
+    #[tokio::test]
+    async fn a_call_naming_more_files_than_the_cap_runs_nothing() {
+        let (_d, _folder, mut ctx) = ctx_with_folder();
+        ctx.attachments = std::sync::Arc::from(
+            (1..=MAX_INPUT_FILES + 1)
+                .map(|n| attachment_of(&format!("part{n}.csv"), 10))
+                .collect::<Vec<_>>(),
+        );
+        renumber(&mut ctx);
+        let handles = |n: usize| (1..=n).map(|i| format!("#{i}")).collect::<Vec<_>>();
+        let (sb, tool) = staging_tool();
+
+        let out = tool
+            .invoke(
+                &ctx,
+                serde_json::json!({"code": "print(1)", "files": handles(MAX_INPUT_FILES + 1)}),
+            )
+            .await
+            .unwrap();
+        assert!(
+            out.result
+                .contains(&format!("names {} files", MAX_INPUT_FILES + 1)),
+            "{}",
+            out.result
+        );
+        assert!(out.result.contains("Nothing was run"), "{}", out.result);
+        assert!(
+            out.result.contains("/w/out"),
+            "the way through: {}",
+            out.result
+        );
+        assert!(sb.calls.lock().unwrap().is_empty(), "{}", out.result);
+
+        let out = tool
+            .invoke(
+                &ctx,
+                serde_json::json!({"code": "print(1)", "files": handles(MAX_INPUT_FILES)}),
+            )
+            .await
+            .unwrap();
+        let staged = sb.staged.lock().unwrap();
+        assert_eq!(staged.len(), 1, "at the cap the call runs: {}", out.result);
+        assert_eq!(staged[0].len(), MAX_INPUT_FILES);
+    }
+
+    /// And by size, from what the chat records — nothing is read to find out. Two
+    /// attachments one byte over half the cap each are refused; the same pair at exactly
+    /// the cap in all runs. The text staged is a few bytes either way.
+    #[tokio::test]
+    async fn a_call_naming_more_bytes_than_the_cap_runs_nothing() {
+        let (_d, _folder, mut ctx) = ctx_with_folder();
+        let half = |over: u64| (MAX_INPUT_BYTES / 2 + over) as usize;
+        let pair = |ctx: &mut ToolContext, each: usize| {
+            ctx.attachments = std::sync::Arc::from(vec![
+                attachment_of("a.csv", each),
+                attachment_of("b.csv", each),
+            ]);
+            renumber(ctx);
+        };
+        let (sb, tool) = staging_tool();
+        let both = serde_json::json!({"code": "print(1)", "files": ["#1", "#2"]});
+
+        pair(&mut ctx, half(1));
+        let out = tool.invoke(&ctx, both.clone()).await.unwrap();
+        assert!(out.result.contains("names 2 files"), "{}", out.result);
+        assert!(sb.calls.lock().unwrap().is_empty(), "{}", out.result);
+
+        pair(&mut ctx, half(0));
+        let out = tool.invoke(&ctx, both).await.unwrap();
+        let staged = sb.staged.lock().unwrap();
+        assert_eq!(staged.len(), 1, "at the cap the call runs: {}", out.result);
+        assert_eq!(staged[0].len(), 2);
     }
 
     #[tokio::test]
