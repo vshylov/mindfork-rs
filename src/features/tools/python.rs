@@ -300,6 +300,15 @@ impl PythonExec {
                     &[("name", &file.name), ("stored", &existing.name)],
                 )];
             }
+            // The chat listed it, the copy was gone, and this call's bytes put it back —
+            // so the model is told it can name the file again, rather than being told
+            // nothing happened when something did.
+            Ok(Stored::Restored(existing)) => {
+                return vec![loc.tf(
+                    "tool.python_exec.files.restored",
+                    &[("name", &file.name), ("stored", &existing.name)],
+                )];
+            }
             Err(e) => {
                 let reason = loc.tf(
                     "tool.python_exec.files.reason.write_failed",

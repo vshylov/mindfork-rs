@@ -535,6 +535,7 @@
   "tool.python_exec.files.item": "- {name} — {size}, {mime}",
   "tool.python_exec.files.renamed": "- {name} → сохранён как {stored} — {size}, {mime}",
   "tool.python_exec.files.unchanged": "- {name} — без изменений: {stored} уже хранит то же содержимое, поэтому файл не сохранён и не показан повторно",
+  "tool.python_exec.files.restored": "- {name} — в чате числился {stored}, но его копия пропала из папки; эти байты вернули её на место, файл снова можно называть",
   "tool.python_exec.files.shown": " — показан тебе ниже",
   "tool.python_exec.files.not_shown_off": " — не показан тебе (показ изображений выключен в настройках): ты его не видел, поэтому не описывай его; скажи, что не можешь его увидеть",
   "tool.python_exec.files.not_shown_cap": " — не показан тебе (за вызов показывается не больше {max} изображений): ты его не видел, поэтому не описывай его; скажи, что не можешь его увидеть",

@@ -16,6 +16,13 @@ split by subsystem.
 
 ### Fixed
 
+- **"Attach it again" now actually brings a lost file back.** When a chat's copy of a file
+  went missing from its folder — a pruned data directory, a half-finished sync — the list
+  marked it missing and the assistant refused to use it, telling you to attach the file
+  again. Doing that did nothing: the name and the contents matched what was already listed,
+  so nothing was written and the next attempt refused all the same. Offering the same file
+  again now puts the copy back, and the assistant says so when its own code re-creates one.
+
 - **A failed `sandbox setup` no longer costs you the sandbox you had.** The new Python
   image was put in place first and only then started, so a build that would not run left
   you with a broken sandbox *and* without the working one it replaced — while the app went

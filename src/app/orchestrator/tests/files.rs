@@ -365,6 +365,54 @@ fn attaching_a_binary_keeps_the_file_and_makes_no_attachment() {
     assert_eq!(note.as_deref(), Some("sales.xlsx"));
 }
 
+/// The remedy the app itself prescribes has to work. A stored copy can go missing while
+/// its listing stands — a pruned `data/files/`, a partial sync, a chat file restored
+/// without its folder — `/file list` marks it, and `python_exec` refuses the file and tells
+/// the model to *ask the user to attach it again*. Matching on the listing alone made that
+/// a dead end: name and digest agreed, so re-attaching wrote nothing, the entry stayed
+/// missing and the next call refused identically.
+#[test]
+fn reattaching_a_file_whose_copy_went_missing_puts_it_back() {
+    use crate::app::orchestrator::attachments::{AttachResult, ExtractedFile};
+    const WORKBOOK: &[u8] = b"PK\x03\x04not-really-a-workbook";
+    let (_dir, mut orch, _rx) = bare_orch_rx();
+    let chat_id = open_chat(&mut orch);
+    let attach = || AttachResult {
+        chat_id,
+        outcome: Ok(ExtractedFile {
+            name: "sales.xlsx".into(),
+            source: "C:\\sales.xlsx".into(),
+            text: String::new(),
+            bytes: WORKBOOK.len(),
+            encoding: None,
+            original: Some(WORKBOOK.to_vec()),
+        }),
+    };
+
+    orch.handle_attach_result(attach());
+    let dir = orch.stored_files_dir(chat_id);
+    let copy = dir.join("sales.xlsx");
+    assert_eq!(std::fs::read(&copy).unwrap(), WORKBOOK);
+    let listed_before = files_of(&orch, chat_id);
+
+    // The copy goes; the chat goes on listing it.
+    std::fs::remove_file(&copy).unwrap();
+    assert!(!crate::features::chat_files::exists(&dir, "sales.xlsx"));
+
+    // Attaching the very same file again is what the refusal tells the user to do.
+    orch.handle_attach_result(attach());
+    assert_eq!(
+        std::fs::read(&copy).unwrap(),
+        WORKBOOK,
+        "the copy was not put back"
+    );
+    assert_eq!(
+        files_of(&orch, chat_id),
+        listed_before,
+        "one listing, not a second one beside it"
+    );
+}
+
 /// A document an extractor read becomes the attachment **and** keeps its original, the two
 /// linked as one item (§12 T9) — which is what lets `python_exec` open the file itself
 /// while the model reads the text.
@@ -570,6 +618,11 @@ impl Tool for Charting {
             crate::features::chat_files::store(&dir, &ctx.files, "chart.png", &self.image)?;
         let file = match stored {
             crate::features::chat_files::Stored::New(file) => file,
+            // Listed, but the copy had gone from the folder: the bytes are back and the
+            // listing stands, so there is still nothing to add.
+            crate::features::chat_files::Stored::Restored(_) => {
+                return Ok(ToolOutcome::text("files:\n- chart.png — restored"));
+            }
             // The same bytes under a name the turn already listed: nothing to add.
             crate::features::chat_files::Stored::Unchanged(_) => {
                 return Ok(ToolOutcome::text("files:\n- chart.png — unchanged"));

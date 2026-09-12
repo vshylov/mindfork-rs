@@ -534,6 +534,7 @@
   "tool.python_exec.files.item": "- {name} — {size}, {mime}",
   "tool.python_exec.files.renamed": "- {name} → saved as {stored} — {size}, {mime}",
   "tool.python_exec.files.unchanged": "- {name} — unchanged: {stored} already holds the same content, so it was neither saved nor shown again",
+  "tool.python_exec.files.restored": "- {name} — the chat listed {stored} but its copy was gone from the folder; these bytes put it back, so it can be named again",
   "tool.python_exec.files.shown": " — shown to you below",
   "tool.python_exec.files.not_shown_off": " — not shown to you (showing images is turned off in the settings): you have not seen it, so do not describe it; say that you cannot see it",
   "tool.python_exec.files.not_shown_cap": " — not shown to you (at most {max} images are shown per call): you have not seen it, so do not describe it; say that you cannot see it",

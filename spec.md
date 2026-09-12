@@ -1138,7 +1138,11 @@ handle: sanitized (only the last component, split on both separators; characters
 Windows refuses replaced; a device name prefixed; at most 120 characters) and versioned
 on a collision — `chart (2).png`, compared case-insensitively — while the same name
 with the same bytes is not stored twice. `/file list` numbers them after the
-attachments and marks one missing from the folder; `/file remove` deletes our copy
+attachments and marks one missing from the folder; offering the **same bytes under that
+name again** — a call that re-renders the same chart, the user re-attaching the same
+document — puts the copy back rather than reporting that nothing needed doing, which is
+what makes "attach it again" a real way out of a missing copy instead of a dead end.
+`/file remove` deletes our copy
 first and drops the listing second, so a delete that fails leaves the file listed and
 retryable. A file in a chat's folder that the chat does not list — the output of a call
 whose chat was not saved before the app stopped — is adopted at startup, never
