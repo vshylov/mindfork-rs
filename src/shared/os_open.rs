@@ -16,6 +16,7 @@
 //! is a script that execs another, so callers run [`open`] on the blocking pool rather
 //! than on the orchestrator's command loop.
 
+use std::ffi::OsStr;
 use std::io;
 use std::path::Path;
 
@@ -69,7 +70,7 @@ pub const DOCUMENTS: &[&str] = &[
 /// — `report.pdf.bat` is a batch file — and the comparison is case-insensitive, as both
 /// supported platforms' shells are about extensions.
 pub fn is_document(name: &str) -> bool {
-    let Some(ext) = Path::new(name).extension().and_then(|e| e.to_str()) else {
+    let Some(ext) = Path::new(name).extension().and_then(OsStr::to_str) else {
         return false;
     };
     let ext = ext.to_ascii_lowercase();
@@ -80,10 +81,7 @@ pub fn is_document(name: &str) -> bool {
 /// is a document, otherwise the folder it sits in (§13 U3). A path with no parent — a
 /// bare name — stands in for its own folder rather than opening nothing.
 pub fn decide(path: &Path) -> (Opens, &Path) {
-    let name = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or_default();
+    let name = path.file_name().and_then(OsStr::to_str).unwrap_or_default();
     if is_document(name) {
         (Opens::File, path)
     } else {
