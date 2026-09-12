@@ -417,9 +417,6 @@ pub(super) fn render_tool_confirm(
     }
 
     let width = 72u16.min(frame.area().width);
-    let height = (body.len() as u16 + 2).min(frame.area().height);
-    let area = centered_rect(width, height, frame.area());
-    frame.render_widget(Clear, area);
     let block = palette
         .panel(loc.t("ui.confirm.tool.title"), true)
         .title_bottom(
@@ -429,10 +426,18 @@ pub(super) fn render_tool_confirm(
             ))
             .centered(),
         );
-    frame.render_widget(
-        Paragraph::new(body).block(block).wrap(Wrap { trim: false }),
-        area,
-    );
+    let paragraph = Paragraph::new(body).block(block).wrap(Wrap { trim: false });
+    // Sized by the rows it will actually take, not by the lines it holds. The two part
+    // company as soon as one wraps — which the `files` line does at two named files — and
+    // counting lines then clipped the last row off the bottom: the code being approved.
+    // `line_count` is ratatui's own, over ratatui's own word wrapping and including the
+    // block's two border rows; counting it here by hand would be a second implementation of
+    // word wrapping whose only job is to agree with the first, and every disagreement is a
+    // consent given to something the user could not see.
+    let rows = paragraph.line_count(width.saturating_sub(2)) as u16;
+    let area = centered_rect(width, rows.min(frame.area().height), frame.area());
+    frame.render_widget(Clear, area);
+    frame.render_widget(paragraph, area);
 }
 
 /// How many lines of a call's arguments the confirmation popup shows before
