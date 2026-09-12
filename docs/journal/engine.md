@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (58)
+## Entries (59)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -70,6 +70,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the engine, downloaded — llama.cpp's backends named, fetched and pointed at (done)
 - Post-M9: the engine binary is found, not just typed — an empty field resolves (done)
 - Post-M9: `llama remove` — a build comes off disk, and says what that changed (done)
+- Post-M9: the turn asks about images once, and stops waiting for the answer (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -3784,3 +3785,35 @@ with no turns, unmeasured), the clouds re-measured.
   that an empty field now resolves to `vulkan-b10883`. **Smoke — GO.**
 - **Tests**: 3032 green, 156 ignored (3024 / 156 before) — 6 over finding,
   the use check and the removal, 1 over the CLI surface.
+
+### Post-M9: the turn asks about images once, and stops waiting for the answer (done)
+
+The last of tier 2. Whether the engine takes images belongs to the server and the model
+behind it, so it cannot change inside a turn — but `land_call` asked on **every** result
+that carried one, and asking is a real HTTP round trip: `OpenAiClient::vision` fetches
+`/props` and nothing memoizes it. A turn whose rounds each returned a chart paid the trip
+each time, up to `max_tool_rounds` of them, which in this repository's own working config is
+32.
+
+Two ways it could stop the turn outright, both closed. The engine client sets a **connect**
+timeout and no request timeout — correct for a stream that may take minutes, wrong for a
+probe — so a server that accepted the connection and then stalled the response waited for
+ever. And it was a bare `await`, outside the loop's cancellation: `Esc` could not end it and
+the turn sat in `Cancelling` with nothing to show for it.
+
+`TurnLoop::vision` now answers from a per-loop memo, and the one real ask is bounded by
+`VISION_PROBE` (5 s) inside a `select!` on the loop's token. A probe that does not answer is
+`VisionSupport::Unknown` — already the answer for everything that is not llama.cpp, so
+nothing about what gets sent changes; the turn simply stops waiting to find out.
+
+**The test had to be made honest first.** Counting the engine's `vision()` calls over a
+three-round turn gave **1** with the memo *removed*, because the `Charting` fixture stored
+identical bytes every round: round two got `Stored::Unchanged` and returned without an
+image, so only one round ever asked. The fixture now draws a different chart per round when
+a test asks it to — which is what a tool called three times normally does — while the dedupe
+test keeps the identical bytes it is about. With that, the mutation gives 3 against the
+memo's 1. A test that cannot tell the fix from its absence is worth less than no test, and
+this one could not until the fixture matched the case.
+
+**Live.** `sandbox_outputs_e2e_live` on Gemma 4 31B q4_0 (b10807): the probe runs against a
+real `/props` there, which is the half a scripted engine cannot check.

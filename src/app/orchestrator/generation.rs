@@ -36,6 +36,11 @@ use super::request::{
     PromptContext, RequestEnv, build_request, build_request_in, last_user_message_at,
 };
 
+/// How long the turn waits to learn whether the engine takes images
+/// ([`TurnLoop::vision`]). Long enough for a local `/props` many times over, short enough
+/// that a server which accepts a connection and then says nothing cannot hold a turn.
+const VISION_PROBE: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// Result of a completed generation task (internal channel).
 /// What the generation task sends the orchestrator on its one channel: the
 /// turn's progress while it runs, then its result. One channel, so every
@@ -1577,6 +1582,8 @@ fn spawn_generation(spawn: GenSpawn) {
             ctx,
             request,
             cancel,
+            // Asked on the first result that carries an image, and not again.
+            vision: None,
             allowed,
             messages: Vec::new(),
             effects: Vec::new(),
@@ -1735,6 +1742,9 @@ struct TurnLoop<'a> {
     /// child token for a sub-agent, so a run timeout ends the child alone while
     /// `Esc` on the turn ends both.
     cancel: CancellationToken,
+    /// What the engine answered about images, asked at most once per loop
+    /// ([`TurnLoop::vision`]).
+    vision: Option<VisionSupport>,
     allowed: Vec<ToolId>,
     /// New domain messages accumulated across the loop's rounds.
     messages: Vec<Message>,
@@ -2690,6 +2700,38 @@ impl TurnLoop<'_> {
             .await
     }
 
+    /// Whether the engine takes images — asked **once per loop**, bounded, and interruptible.
+    ///
+    /// The answer is a property of the server and the model behind it, so it cannot change
+    /// inside a turn; asking, though, is a real HTTP round trip on the turn's critical path.
+    /// `OpenAiClient::vision` fetches `/props` and nothing memoizes it, so a turn whose
+    /// rounds each returned an image paid the round trip each time — up to `max_tool_rounds`
+    /// of them.
+    ///
+    /// Two ways it could stop the turn outright, both closed here. The engine client sets a
+    /// **connect** timeout and no request timeout — right for a stream that may take
+    /// minutes, wrong for a probe — so a server that accepted the connection and then
+    /// stalled the response waited for ever. And this was a bare `await`, outside the loop's
+    /// cancellation: `Esc` could not end it, and the turn sat in `Cancelling`.
+    ///
+    /// A probe that does not answer in time is [`VisionSupport::Unknown`], which is already
+    /// the answer for everything that is not llama.cpp, so nothing about what gets sent
+    /// changes — the turn simply stops waiting to find out.
+    async fn vision(&mut self) -> VisionSupport {
+        if let Some(known) = self.vision {
+            return known;
+        }
+        let answer = tokio::select! {
+            biased;
+            () = self.cancel.cancelled() => VisionSupport::Unknown,
+            answered = tokio::time::timeout(VISION_PROBE, self.ctx.engine.vision()) => {
+                answered.unwrap_or(VisionSupport::Unknown)
+            }
+        };
+        self.vision = Some(answer);
+        answer
+    }
+
     /// Records one resolved call: the tool message into the request history,
     /// the record and the domain tool message for the round — and closes the
     /// card, unless the round already did as the result landed (`announced`,
@@ -2713,8 +2755,7 @@ impl TurnLoop<'_> {
         // (docs/history/sandbox-file-exchange.md §11 S8): a result that promised an image the
         // model never receives gets a chart described that it has not seen (§10).
         let offered = images.len();
-        let images = if offered > 0 && self.ctx.engine.vision().await == VisionSupport::Unsupported
-        {
+        let images = if offered > 0 && self.vision().await == VisionSupport::Unsupported {
             let note = self
                 .ctx
                 .loc
@@ -3589,6 +3630,8 @@ async fn run_child(
         ctx,
         request,
         cancel: cancel.clone(),
+        // A child asks the same engine, and asks it for itself: its loop is its own.
+        vision: None,
         allowed,
         // A child is never a woken turn: the notification reaches the parent.
         woken: false,
