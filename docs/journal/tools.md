@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (66)
+## Entries (67)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -78,6 +78,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: an image is installed only after it has started (done)
 - Post-M9: the same bytes put a missing copy back (done)
 - Post-M9: two letters are not a format, and an invisible mark is not a name (done)
+- Post-M9: the `files` argument is read once, and the result stops listing (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -4684,3 +4685,44 @@ reverted — checked, not assumed. Unit: 3183 green, 173 ignored.
 **Live.** `sniff_image` sits on the path of every stored file, so the stored-file smokes
 were re-measured on Gemma 4 31B q4_0 (b10807) with the provisioned sandbox rather than
 assumed: a stricter signature that rejected a real image would show up nowhere else.
+### Post-M9: the `files` argument is read once, and the result stops listing (done)
+
+Two more of tier 2, both about `python_exec`'s contract with the model — what it accepts,
+and what it says back.
+
+**One name where a list was asked for named nothing.** `args.get("files").and_then(as_array)`
+answers `None` for `"files": "sales.csv"` — the shape models emit most often — and
+`unwrap_or_default()` then turned that into *no files*: nothing staged, **nothing refused**,
+the code run against an empty `in/`, and the model left to interpret a `FileNotFoundError`
+with no hint that its argument was the problem. So it tried the same shape again. Every
+other unusable `files` — an unknown handle, a shared name, a copy gone from the folder — is
+a refusal before the run (§12 T7); this one was silence.
+
+Worse, the parse existed **twice**: the tool's and the confirmation popup's, character for
+character. Two readings of one argument is what §12 T6 exists to prevent, and they would
+have drifted the first time either was touched. There is one now, `chat_inputs::named_files`,
+returning `NamedFiles::Named | Malformed` so the caller can tell "names nothing" from
+"cannot be read" — a distinction `unwrap_or_default` had collapsed.
+
+The two are treated differently on purpose. A bare string is **taken**: the intent is not in
+doubt and a round spent teaching JSON is a round the user pays for. A non-string *element*
+is a **refusal**: dropping it would stage three of the four files a call asked for, which is
+the exact failure T7 was written against.
+
+**Nothing bounded what the result said about skipped outputs.** `OutputLimits` caps what a
+call may *collect* — ten files, 25 MB each, 50 MB in all — and everything past a cap is
+named in the result, one line per entry. A script that wrote twenty thousand files therefore
+put twenty thousand lines into the tool message: into the conversation, into every later
+turn's prompt and onto the bill, while its own stdout was clipped at 8000 characters two
+fields away. The timeout path listed the whole directory the same way. The result now names
+the first twenty and counts the rest.
+
+**Tests.** The parser's own table (absent, null, empty, a list, a bare string, blanks
+dropped, a number in the list, a number, an object), the tool taking a bare string end to
+end, the tool refusing a malformed one with nothing run, and a call with five hundred
+skipped entries reporting twenty lines and the number 480. Each fails with its own guard
+reverted — checked, not assumed. Unit: 3186 green, 173 ignored.
+
+**Live.** `sandbox_inputs_e2e_live` and `local_mode_files_round_trip_e2e_live` on Gemma 4
+31B q4_0 (b10807): both are a real model choosing the `files` argument's shape for itself,
+which is the half a table of JSON values cannot check.
