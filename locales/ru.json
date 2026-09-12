@@ -2155,6 +2155,7 @@
   "sandbox.setup.pack.manifest": "в распакованном пакете Python нет таблицы [fs], куда добавить пакеты ({path})",
   "sandbox.setup.pack.run": "запуск wasmer ({path})",
   "sandbox.setup.pack.failed": "`wasmer {command}` завершился ошибкой: {stderr}",
+  "sandbox.setup.wasmer.timeout": "`wasmer {command}` не завершился за {secs} с и был остановлен; прежняя песочница не тронута",
   "sandbox.setup.verify.ok": "Образ песочницы запускается.",
   "sandbox.setup.verify.failed": "упакованный образ песочницы не запускается: {detail}",
   "sandbox.setup.verify.timeout": "упакованный образ песочницы не успел запуститься за {secs} с и не был установлен; прежняя песочница не тронута",

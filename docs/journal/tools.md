@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (71)
+## Entries (72)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -83,6 +83,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the "show charts" switch is shown in local Python mode too (done)
 - Post-M9: one name means one file — the fold, the empty cut, and the numbering (done)
 - Post-M9: `/file open` — whose file, which chat, and the folder's invariant (done)
+- Post-M9: sandbox job hygiene — off the runtime's threads, a failed collection said, bounded setup steps (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -4908,3 +4909,70 @@ compared whole through the bundle. Each guard was reverted in turn and its test 
 
 No live run: nothing here reaches an engine, and the launch itself — the part §13 U10 keeps
 as a manual gate — is unchanged; what changed around it is covered by the landing test.
+
+### Post-M9: sandbox job hygiene — off the runtime's threads, a failed collection said, bounded setup steps (done)
+
+Tier 3's third group: the blocking calls on the sandbox's async path, a collector failure
+that turned into "no files", and three `wasmer` subprocesses with no time limit.
+
+**SonarQube reported none of it.** Both files had zero open findings on `main` when this
+started, although `rust:S7493` is the rule the review cited. The lesson already says why
+(docs/lessons.md): the rule reads `std::fs` *inside* an `async fn`, and every call here was
+one synchronous hop away — `JobDir::create`, `timed_out_outputs`, `Drop`. A clean analysis
+is the floor, and this group is what sits beneath it.
+
+**What actually blocked.** The review named the `Drop` and the timeout listing. The heavier
+one it did not name: `JobDir::create` runs `sweep_stale_jobs` on the first call in a
+process, which is a `read_dir` plus a metadata call per entry over the **system temp
+directory** — on Windows routinely tens of thousands of entries — on a runtime thread, in
+front of the first `python_exec` of the session. Creation now runs on the blocking pool,
+sweep included. `Drop` hands its `remove_dir_all` to the blocking pool when a runtime is
+current (every call site in the application) and removes in place otherwise; a removal the
+runtime's shutdown abandons is what the 24-hour sweep is for. The timeout path's listing
+goes through the pool as well.
+
+**A failed collection said "nothing".** Both runners collected `out/` with
+`spawn_blocking(..).await.unwrap_or_default()`, so a panic in the collector reported no
+files to the model and wrote nothing to the log — a chart the script saved became a chart
+it never made. The two identical blocks are now one `collected(out, collect)`: on a join
+error it logs and names what `out/` holds as `Unreadable`, the way a timeout names what it
+left as `TimedOut` — `timed_out_outputs` became `named_outputs(out, reason)` to serve both.
+`collect` is a function parameter so the test can hand in one that panics; production
+passes `collect_outputs` in both runners.
+
+**Setup's three `wasmer` calls had no limit.** `package unpack` and `package build` through
+`wasmer_command`, and `package download` inline in `ensure_python_webc`, all awaited
+`.output()` bare — a registry that accepted the connection and stalled hung
+`mindfork sandbox setup` with nothing on the screen. One `bounded_output(cmd, limit)` now
+wraps all three with `kill_on_drop`, and a stopped step fails with
+`sandbox.setup.wasmer.timeout`, naming the step and its limit. Two limits, because the steps
+are not alike: ten minutes for unpack and build (measured at seconds; the warmup's own
+margin), thirty for the download — the package is 44.7 MB, so thirty minutes leaves a link
+of about 200 kbit/s room to finish. A wall-clock limit cannot tell a stalled download from a
+very slow one; this one is set so that only the first is plausible past it. A partial
+`python.webc` a stopped download leaves is replaced by the next run, whose checksum it
+cannot match.
+
+**Left out on purpose.** The review's tier 3 also noted that `LocalSandbox` has neither the
+"one task at a time" gate nor the memory limit `WasmerSandbox` has. It is the same two `run`
+impls, but not hygiene: the Wasmer gate *refuses* a concurrent call (`sandbox.err.busy`), so
+adding it to Local would turn two `python_exec` calls in one round (ADR 0012) from both
+running into one refused — a behaviour change that wants its own decision.
+
+**Tests.** A collector that panics names `out/`'s file as unreadable, through the same
+helper that collects it normally; a job directory is removed on drop both on a runtime (the
+blocking pool, observed after the runtime is dropped, which waits for it) and off one; a
+real command that outlives a 300 ms limit is stopped well inside ten seconds on either
+platform (`ping` on Windows, `sleep` elsewhere); and, Unix only like the existing stub, a
+`wasmer` that hangs fails with the step's name and its limit. Each guard was reverted in
+turn and its test failed — except the Unix-only stub test, which CI runs and this Windows
+machine cannot.
+
+**Live.** Twenty smokes against the provisioned sandbox and the local interpreter, all
+passing — real `wasmer` through the async job directory, the pool-side drop and the shared
+collector: outputs kept, a timed-out call keeping none and naming what it left, the process
+killed at its limit, the memory caps, the network on and off, a process the script leaves
+behind. And a real `mindfork sandbox setup`, exit 0: unpack and build under
+`PACK_STEP_TIMEOUT`, the candidate started, then installed. The download step did **not**
+run — `python.webc` was present and matched its checksum — so `DOWNLOAD_TIMEOUT` is covered
+by the unit tests alone, not by a live download.

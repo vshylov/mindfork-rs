@@ -254,6 +254,17 @@ fig.savefig(io.BytesIO(), format='png')
 /// several times that before the warmup is reported as partial.
 const WARMUP_TIMEOUT: Duration = Duration::from_secs(600);
 
+/// How long a local `wasmer package` step may run — `unpack` and `build`, measured at
+/// seconds — before it is stopped. The warmup's generous margin: this bounds a step that
+/// hangs, it does not time a slow disk.
+const PACK_STEP_TIMEOUT: Duration = Duration::from_secs(600);
+
+/// How long `wasmer package download` may run. The package is 44.7 MB, so this bounds a
+/// registry that accepted the connection and then stalled, while leaving a link of about
+/// 200 kbit/s room to finish: past it the download is stopped, and the command says so
+/// instead of waiting for ever.
+const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(1800);
+
 /// Warms the caches ([`WARMUP_SCRIPT`]) so the **first real tool call** is warm — no
 /// multi-second compilation in front of the user (replaces the "first-run banner").
 /// "Best effort": a warmup failure doesn't fail the install, and one cut short keeps
@@ -317,7 +328,7 @@ async fn pack_image(
         staging.as_os_str(),
         python.as_os_str(),
     ];
-    wasmer_command(wasmer, &unpack, loc).await?;
+    wasmer_command(wasmer, &unpack, PACK_STEP_TIMEOUT, loc).await?;
 
     let manifest_path = staging.join("wasmer.toml");
     let shown = manifest_path.display().to_string();
@@ -345,7 +356,7 @@ async fn pack_image(
         "-o".as_ref(),
         partial.as_os_str(),
     ];
-    wasmer_command(wasmer, &build, loc).await?;
+    wasmer_command(wasmer, &build, PACK_STEP_TIMEOUT, loc).await?;
     let _ = tokio::fs::remove_dir_all(&staging).await;
     progress(&loc.tf(
         "sandbox.setup.pack.done",
@@ -453,13 +464,44 @@ async fn verify_image(dir: &Path, loc: &Locale, progress: &mut impl FnMut(&str))
     );
 }
 
-/// Runs one `wasmer` subcommand to completion; a non-zero exit is an error naming the
-/// subcommand and carrying its stderr.
-async fn wasmer_command(wasmer: &Path, args: &[&std::ffi::OsStr], loc: &Locale) -> Result<()> {
-    let out = tokio::process::Command::new(wasmer)
-        .args(args)
-        .output()
+/// Runs `cmd` to completion under `limit`; `None` once the limit has passed. The process
+/// is killed as the future is dropped (`kill_on_drop`), so a stopped step leaves nothing
+/// running behind the command that reported it.
+async fn bounded_output(
+    mut cmd: tokio::process::Command,
+    limit: Duration,
+) -> Option<std::io::Result<std::process::Output>> {
+    cmd.kill_on_drop(true);
+    tokio::time::timeout(limit, cmd.output()).await.ok()
+}
+
+/// The error a stopped step reports: which subcommand, and how long it was given.
+fn stopped(command: &str, limit: Duration, loc: &Locale) -> anyhow::Error {
+    anyhow::anyhow!(
+        "{}",
+        loc.tf(
+            "sandbox.setup.wasmer.timeout",
+            &[("command", command), ("secs", &limit.as_secs().to_string())],
+        )
+    )
+}
+
+/// Runs one `wasmer` subcommand to completion within `limit`. A non-zero exit is an error
+/// naming the subcommand and carrying its stderr, and so is a step that does not finish:
+/// before the limit, a `wasmer` that stalled hung `sandbox setup` with nothing on screen.
+async fn wasmer_command(
+    wasmer: &Path,
+    args: &[&std::ffi::OsStr],
+    limit: Duration,
+    loc: &Locale,
+) -> Result<()> {
+    let command: Vec<_> = args.iter().take(2).map(|a| a.to_string_lossy()).collect();
+    let command = command.join(" ");
+    let mut cmd = tokio::process::Command::new(wasmer);
+    cmd.args(args);
+    let out = bounded_output(cmd, limit)
         .await
+        .ok_or_else(|| stopped(&command, limit, loc))?
         .with_context(|| {
             loc.tf(
                 "sandbox.setup.pack.run",
@@ -467,13 +509,12 @@ async fn wasmer_command(wasmer: &Path, args: &[&std::ffi::OsStr], loc: &Locale) 
             )
         })?;
     if !out.status.success() {
-        let command: Vec<_> = args.iter().take(2).map(|a| a.to_string_lossy()).collect();
         bail!(
             "{}",
             loc.tf(
                 "sandbox.setup.pack.failed",
                 &[
-                    ("command", &command.join(" ")),
+                    ("command", &command),
                     ("stderr", String::from_utf8_lossy(&out.stderr).trim()),
                 ],
             )
@@ -579,16 +620,20 @@ async fn ensure_python_webc(
     // wasmer's home/cache — under the sandbox directory (self-contained, not in ~/.wasmer).
     let home = dir.join("wasmer-home");
     tokio::fs::create_dir_all(&home).await.ok();
-    let out = tokio::process::Command::new(wasmer)
+    let mut download = tokio::process::Command::new(wasmer);
+    download
         .arg("package")
         .arg("download")
         .arg(PYTHON_PACKAGE)
         .arg("-o")
         .arg(&webc)
         .arg("--wasmer-dir")
-        .arg(&home)
-        .output()
+        .arg(&home);
+    // A download that stops is refused like one that fails. A partial file it leaves is
+    // replaced by the next run, whose checksum it cannot match.
+    let out = bounded_output(download, DOWNLOAD_TIMEOUT)
         .await
+        .ok_or_else(|| stopped("package download", DOWNLOAD_TIMEOUT, loc))?
         .with_context(|| {
             loc.tf(
                 "sandbox.setup.webc.run",
@@ -1109,6 +1154,63 @@ env = ["PYTHONEXECUTABLE=/bin/python", "TERM=dumb"]
             .await
             .expect_err("a missing file cannot verify");
         assert!(err.to_string().contains("absent.bin"), "got: {err:#}");
+    }
+
+    /// A step that does not finish is stopped at its limit, not waited on. The three
+    /// `wasmer` calls had no limit, so a registry that accepted the connection and stalled
+    /// hung `sandbox setup` for ever. A real command that outlives the limit, on either
+    /// platform.
+    #[tokio::test]
+    async fn a_step_that_does_not_finish_is_stopped_at_its_limit() {
+        let cmd = if cfg!(windows) {
+            let mut c = tokio::process::Command::new("ping");
+            c.args(["-n", "30", "127.0.0.1"]);
+            c
+        } else {
+            let mut c = tokio::process::Command::new("sleep");
+            c.arg("30");
+            c
+        };
+        let started = std::time::Instant::now();
+        let out = bounded_output(cmd, Duration::from_millis(300)).await;
+        assert!(
+            out.is_none(),
+            "past its limit the step is reported as stopped"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "and not waited on: {:?}",
+            started.elapsed()
+        );
+    }
+
+    /// And a stopped `wasmer` step fails with the step's name and its limit. Unix only,
+    /// like the stub below: a script the shell executes is the cheap way to a `wasmer`
+    /// that hangs.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_wasmer_step_that_hangs_fails_naming_the_step_and_its_limit() {
+        use crate::shared::i18n::{Lang, locale};
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let wasmer = dir.path().join("wasmer");
+        let mut f = std::fs::File::create(&wasmer).unwrap();
+        writeln!(f, "#!/bin/sh").unwrap();
+        writeln!(f, "exec sleep 30").unwrap();
+        drop(f);
+        std::fs::set_permissions(&wasmer, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let args: [&std::ffi::OsStr; 2] = ["package".as_ref(), "build".as_ref()];
+        let err = wasmer_command(&wasmer, &args, Duration::from_secs(1), locale(Lang::En))
+            .await
+            .expect_err("a step that hangs fails");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("package build") && msg.contains("1 s"),
+            "{msg}"
+        );
     }
 
     /// A `wasmer` that does just enough for [`pack_image`]: `package unpack` lays down a
