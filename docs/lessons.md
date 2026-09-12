@@ -536,6 +536,18 @@ shape after a real delta (an `sse_server` test), not the parser on its own — a
 one arm in every live smoke that must see the failure path fire.
 — *admission by budget*.
 
+**A runtime's drop does not wait for work still queued on its blocking pool.** A test
+dropped a job directory inside `block_on`, dropped the runtime, and then asserted the
+directory was gone — on the belief that `Runtime::drop` waits for `spawn_blocking` work. It
+waits for what is *running*: a task still in the queue when shutdown begins is dropped
+unrun (tokio 1.52, `runtime/blocking/pool.rs` drains the queue through
+`shutdown_or_run_if_mandatory`, and `spawn_blocking` is not mandatory). The test passed on
+every local run and failed in CI once on Windows and once on Ubuntu, which is the shape of
+a race and not of a platform. Wait for the effect while the runtime is alive, with a
+deadline; and in production, anything a `Drop` hands to the pool at exit needs a fallback
+that does not depend on it running — here, the sweep of stale job directories.
+— *a test that believed a runtime's drop waits for its blocking pool*.
+
 ## 3. Measure; do not assume
 
 **Assume the measurement will overturn the plan, because it repeatedly has.** Defender

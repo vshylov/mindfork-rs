@@ -1217,20 +1217,35 @@ mod collect_tests {
     }
 
     /// The drop hands the removal to the blocking pool on a runtime, and does it in place
-    /// outside one — and in both cases the directory, with the copies in it, is gone.
+    /// outside one — and in both cases the directory, with the copies in it, goes.
+    ///
+    /// The on-runtime half waits for the removal **while the runtime is alive**. It used to
+    /// drop the runtime and then look, on the belief that the drop waits for the blocking
+    /// pool. It does not for a task still in the queue: a pool that is shutting down drops a
+    /// queued `spawn_blocking` task unrun (tokio's `runtime/blocking/pool.rs`,
+    /// `shutdown_or_run_if_mandatory` — only mandatory tasks run). So the test failed
+    /// whenever no pool thread had taken the removal yet: on Windows in one CI run, on
+    /// Ubuntu in another, and never on the machine that wrote it.
     #[test]
     fn a_job_directory_is_removed_on_drop_on_a_runtime_and_off_one() {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(1)
+            .enable_time()
             .build()
             .unwrap();
         let on_runtime = runtime.block_on(async {
             let job = JobDir::create().await.expect("a job dir");
             std::fs::write(job.path.join("copy.csv"), b"a,b").unwrap();
-            job.path.clone()
+            let path = job.path.clone();
+            drop(job);
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+            while tokio::fs::try_exists(&path).await.unwrap_or(false)
+                && tokio::time::Instant::now() < deadline
+            {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            path
         });
-        // Dropping the runtime waits for its blocking pool, where the removal went.
-        drop(runtime);
         assert!(!on_runtime.exists(), "{}", on_runtime.display());
 
         let job = tokio::runtime::Runtime::new()

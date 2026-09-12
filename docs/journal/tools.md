@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (73)
+## Entries (74)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -85,6 +85,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: `/file open` — whose file, which chat, and the folder's invariant (done)
 - Post-M9: sandbox job hygiene — off the runtime's threads, a failed collection said, bounded setup steps (done)
 - Post-M9: a memory limit for the local interpreter — the sandbox's Job Object, a field of its own (done)
+- Post-M9: a test that believed a runtime's drop waits for its blocking pool (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -4962,7 +4963,8 @@ running into one refused — a behaviour change that wants its own decision.
 
 **Tests.** A collector that panics names `out/`'s file as unreadable, through the same
 helper that collects it normally; a job directory is removed on drop both on a runtime (the
-blocking pool, observed after the runtime is dropped, which waits for it) and off one; a
+blocking pool — waited for while the runtime is alive, not after it is dropped: see the
+entry on the flaky test that followed) and off one; a
 real command that outlives a 300 ms limit is stopped well inside ten seconds on either
 platform (`ping` on Windows, `sleep` elsewhere); and, Unix only like the existing stub, a
 `wasmer` that hangs fails with the step's name and its limit. Each guard was reverted in
@@ -5024,3 +5026,40 @@ test — including the live one, where without the after-spawn call the gigabyte
 handed over. Not covered, as it is not for the sandbox's own limit either: that the setting
 reaches the runner through `standard_registry`, a one-line hand-off in each mode that no
 test observes.
+
+### Post-M9: a test that believed a runtime's drop waits for its blocking pool (done)
+
+CI went red on the `files` caps PR — Tests (ubuntu-latest), and SonarQube Cloud, whose
+coverage step runs the same tests — and not for anything that PR changed. One test failed
+in both: `a_job_directory_is_removed_on_drop_on_a_runtime_and_off_one`, added by the
+sandbox-hygiene entry above, its on-runtime half finding `/tmp/mindfork-sbx-…` still there.
+The same test had failed that PR's own CI on Windows while Ubuntu passed; the run between
+them passed on both; every local run had passed.
+
+**The cause is a claim the test made about tokio.** It dropped the job directory inside
+`block_on` — `Drop` hands `remove_dir_all` to `spawn_blocking` — then dropped the runtime
+and looked, with the comment "dropping the runtime waits for its blocking pool". It waits
+for what is running. Read in tokio 1.52.3's `runtime/blocking/pool.rs`: when shutdown
+begins, the queue is drained through `shutdown_or_run_if_mandatory`, and a non-mandatory
+task — every `spawn_blocking` — is shut down unrun. Whether the removal ran depended on
+whether a pool thread had taken it before the drop: a race, which is why it chose a
+different platform each time.
+
+**The application is not affected.** While the runtime lives, the removal runs. At exit, a
+removal still queued can be dropped, and the directory is left for `sweep_stale_jobs`,
+which removes job directories older than a day — exactly what `Drop`'s own documentation
+already said. The false part was the test's comment, and one phrase of entry 72, which
+said the removal was "observed after the runtime is dropped, which waits for it"; that
+phrase is corrected in place.
+
+**The fix** waits on a live runtime: after the drop, the test polls
+`tokio::fs::try_exists` every 10 ms up to a ten-second deadline, and the runtime is built
+with `enable_time()` so it can. A hundred consecutive runs of the test binary passed, and
+with the drop's hand-off to the pool removed the test fails at its deadline — so the wait
+cannot pass by waiting out a removal that never comes. The lesson went into
+docs/lessons.md §2: a runtime's drop does not wait for queued blocking work, and anything a
+`Drop` sends there at exit needs a fallback of its own.
+
+Not reproduced locally before the fix, and not for want of trying to reason it: the tokio
+source and two CI failures on two platforms are the evidence, and the race is narrow enough
+that a desktop wins it every time.
