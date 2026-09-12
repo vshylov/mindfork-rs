@@ -16,6 +16,12 @@ split by subsystem.
 
 ### Fixed
 
+- **A stalled engine can no longer freeze a reply that produced a picture.** Before
+  sending an image to the model the app asks the server whether it accepts images — a
+  question with no time limit, asked again for every picture in the reply, and one that
+  `Esc` could not interrupt. It is now asked once per reply, gives up after five seconds,
+  and ends with the rest of the turn when you cancel.
+
 - **Running Python on your own machine no longer reports a finished script as timed out.**
   If the code started a background process, the call waited for that process instead of
   the script — then gave up after the time limit and threw away everything the script had

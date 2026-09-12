@@ -1578,7 +1578,11 @@ append-only shape keeps the prefix cache intact across an image turn
   per tool result** (`MAX_TOOL_RESULT_IMAGES`, one constant for every producer),
   and the extras are named in the result text rather than dropped in silence. So is
   everything else withheld: on an engine that reports no vision the orchestrator
-  sends none of a result's images, and an image the preparation drops (over
+  sends none of a result's images (asked **once a turn** and bounded — the answer
+  belongs to the server and the model, so it cannot change inside one, while asking
+  is an HTTP round trip on the turn's critical path; a probe that does not answer
+  in five seconds counts as "cannot say", which is what every server that is not
+  llama.cpp already answers), and an image the preparation drops (over
   `max_bytes`, undecodable) is counted — both said in the result, because a model
   told an image is "shown below" that never arrives describes a picture it has not
   seen (measured, docs/history/sandbox-file-exchange.md §10). The switch `tools.mcp_images`
