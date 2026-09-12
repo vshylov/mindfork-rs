@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (67)
+## Entries (68)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -79,6 +79,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the same bytes put a missing copy back (done)
 - Post-M9: two letters are not a format, and an invisible mark is not a name (done)
 - Post-M9: the `files` argument is read once, and the result stops listing (done)
+- Post-M9: a process the script leaves behind stops deciding the call (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -4726,3 +4727,47 @@ reverted — checked, not assumed. Unit: 3186 green, 173 ignored.
 **Live.** `sandbox_inputs_e2e_live` and `local_mode_files_round_trip_e2e_live` on Gemma 4
 31B q4_0 (b10807): both are a real model choosing the `files` argument's shape for itself,
 which is the half a table of JSON values cannot check.
+
+### Post-M9: a process the script leaves behind stops deciding the call (done)
+
+Tier 2's Local-mode finding, which turned out to be three things wearing one coat. Two are
+fixed here; the third is named rather than half-fixed.
+
+**The verdict was wrong.** `Child::wait_with_output` waits for the **pipes** to reach EOF,
+not for the process to exit — and everything a script spawns inherits those pipes. So a
+Local call whose script finished in a second was reported as having *exceeded its time
+limit*, ten seconds later, and everything it had printed was thrown away with the verdict,
+because a background process it left behind still held the write end. The call now waits on
+the process (`child.wait()`) with the pipes read beside it, and the readers are given a
+short grace before being stopped: a pipe a grandchild still holds must not hold the turn as
+well. The buffers are capped at 1 MB per stream while they are at it — `MAX_OUTPUT_CHARS`
+truncates at format time, which is after the bytes are already resident.
+
+**The leftovers were the chat's files.** `JobDir::drop` cannot always run: a crash or a kill
+never reaches it, and on Windows a directory that is some process's working directory cannot
+be removed at all — which is exactly the state that same orphan leaves behind. What stayed
+in `%TEMP%\mindfork-sbx-*` was not scratch: `in/` holds **copies of the chat's files**, put
+there for the call. Leftovers older than a day are now swept once per process, by **age**
+rather than by cause, because nothing here can tell a live call's directory from a dead one
+and guessing wrong would delete a running call's inputs.
+
+**The orphan itself is Local mode.** A process the script spawns outlives the call, with the
+user's permissions. Containing that means process groups and Job Objects — and it would be
+containing the wrong thing: ADR 0005 §3 has Local as the mode with *no* isolation, where the
+code can already reach the whole machine by design and the Wasmer mode is what a user picks
+when that matters. So it is documented, not partly prevented.
+
+**Measured on the way, and worth knowing.** The blocking pipe read outlives the call however
+this is arranged — tokio dispatches it to the blocking pool, and aborting the task does not
+cancel a read already in flight. The application bounds that at exit with
+`Runtime::shutdown_timeout(2 s)`; a test binary does not, which is why the new smoke's
+sleeper is twenty seconds rather than the five minutes the first draft used, and why that
+number is in a comment.
+
+**Tests.** An `#[ignore]` smoke with a real interpreter — a script that leaves a sleeper
+behind and prints — asserting the printed line survives, the call is not reported as timed
+out, and it returns in under six seconds against the ten it used to take. Deliberately not a
+mock: the defect is in how a real child's pipes behave, which is the one thing a mock cannot
+have. Plus a pure test of the sweep in both directions: a fresh directory is left alone, a
+stale one goes with the copies in it, and another program's temp directory is never touched.
+Both fail with their guard reverted. Unit: 3188 green, 174 ignored.

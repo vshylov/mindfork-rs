@@ -74,6 +74,18 @@ guest, `in`/`out` on the host, where the working directory makes the relative
 form mean the same thing). A second staging path written beside the first is
 exactly what this section exists to prevent.
 
+**Amended (2026-09-12):** what the two runners do **not** share is containment, and that is
+the point of the mode rather than a gap in it. A process a Local script spawns outlives the
+call with the user's own permissions: the timeout kills the interpreter, not its children,
+and no process group or Job Object is placed around them. Containing that would be
+containing the wrong thing — Local is the mode where the code already reaches the whole
+machine, and Wasmer is what a user picks when that matters. Two consequences **are** handled,
+because they are ours rather than the mode's: the call waits on the process instead of on
+pipes an orphan still holds (a finished script was reported as having timed out), and job
+directories left behind — `in/` holds copies of the chat's files — are swept by age, since
+`Drop` cannot run after a kill and cannot remove a directory that is a live process's
+working directory at all.
+
 ### 4. Provisioning — `mindfork sandbox setup` from a lock list (auto-download)
 
 A separate clap subcommand (like `backup`) downloads into `data/sandbox/`: the
