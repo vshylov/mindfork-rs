@@ -1107,6 +1107,65 @@ fn the_confirm_popup_names_the_files_going_in_and_the_network() {
     );
 }
 
+/// The popup exists so the user reads the code before consenting to it — so the code has
+/// to be **on screen**. It is rendered with `Wrap`, and sizing it by the lines it holds
+/// rather than the rows they take clipped the bottom one the moment any line wrapped. The
+/// `files` line does that at two named files, which is the popup's own subject.
+#[test]
+fn the_confirm_popup_shows_the_code_when_the_files_line_wraps() {
+    use crate::features::chat_inputs::{ConfirmFile, ConfirmInputs};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    let mut s = ChatScreen::new();
+    let id = gen_id();
+    s.begin_generation(id, None);
+    // Long enough that the line cannot fit the popup's 70 columns — three files with sizes
+    // is an ordinary call, not a contrived one.
+    let files = [
+        "quarterly-report-2026.xlsx",
+        "customers-export.csv",
+        "notes.md",
+    ];
+    s.request_tool_confirm(
+        id,
+        TOOL_CALL_ID.into(),
+        "python_exec".into(),
+        r#"{"code": "print(MARKER)", "files": ["a", "b", "c"]}"#.into(),
+        Some(ConfirmInputs {
+            files: files
+                .iter()
+                .map(|name| ConfirmFile {
+                    handle: (*name).into(),
+                    resolved: Some(((*name).into(), 18_432)),
+                })
+                .collect(),
+            net: false,
+        }),
+    );
+    let mut term = Terminal::new(TestBackend::new(90, 20)).unwrap();
+    term.draw(|f| s.render(f)).unwrap();
+    let buf = term.backend().buffer();
+    let mut text = String::new();
+    for y in buf.area.top()..buf.area.bottom() {
+        for x in buf.area.left()..buf.area.right() {
+            text.push_str(buf[(x, y)].symbol());
+        }
+        text.push('\n');
+    }
+
+    // The premise: the files line really is longer than the popup is wide, so it wraps and
+    // the two counts disagree. Without it the test would pass on a popup that never wrapped.
+    assert!(
+        files.iter().all(|f| text.contains(f)),
+        "the files going in are the subject of the popup: {text}"
+    );
+    assert!(
+        text.contains("print(MARKER)"),
+        "the code being approved was clipped off the bottom: {text}"
+    );
+}
+
 #[test]
 fn esc_opens_chat_list_else_cancels_generation() {
     let mut s = ChatScreen::new();
