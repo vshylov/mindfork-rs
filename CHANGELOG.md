@@ -16,6 +16,16 @@ split by subsystem.
 
 ### Fixed
 
+- **Running Python on your own machine no longer reports a finished script as timed out.**
+  If the code started a background process, the call waited for that process instead of
+  the script — then gave up after the time limit and threw away everything the script had
+  printed. It now waits for the script itself.
+
+- **Temporary copies of a chat's files are cleaned up even after a crash.** Each call
+  copies the files it needs into a temporary folder; if the app was killed, or something
+  the code started was still holding that folder, it stayed on disk indefinitely. Anything
+  left over for more than a day is now removed.
+
 - **Naming one file for the code no longer silently names none.** When the assistant asked
   for a single file by name — without wrapping it in a list — nothing was copied in and
   nothing was said: the code then failed to find the file and the assistant tried the same

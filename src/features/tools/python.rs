@@ -2024,6 +2024,55 @@ print('pillow', png.getvalue()[:4] == b'\x89PNG')
         assert!(no_cyrillic(r), "cyrillic leaked on en-profile: {r}");
     }
 
+    /// A process the script leaves behind must not decide the call's verdict.
+    ///
+    /// `wait_with_output` waits for the **pipes** to close, and anything a script spawns
+    /// inherits them — so a call whose script finished in a moment was reported as having
+    /// exceeded its time limit, ten seconds later, with everything it printed thrown away.
+    /// Waiting on the process and reading beside it separates the two questions.
+    ///
+    /// Deliberately not a unit test with a mock: the defect is in how a real child's pipes
+    /// behave, which is the one thing a mock cannot have.
+    #[tokio::test]
+    #[ignore = "requires a Python interpreter on PATH"]
+    async fn a_process_the_script_leaves_behind_does_not_make_the_call_time_out() {
+        let (_d, _folder, ctx) = ctx_with_inputs();
+        // A sleeper that outlives its parent by minutes and keeps the inherited stdout.
+        let code = concat!(
+            "import subprocess, sys\n",
+            // Twenty seconds: long enough to outlive `LOCAL_TIMEOUT` (10 s), which is what
+            // makes the point, and no longer. The blocking pipe read outlives the call
+            // whatever this test does — the app bounds that with
+            // `Runtime::shutdown_timeout`, a test binary does not — so this number is also
+            // how long the run lingers after the assertions have passed.
+            "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(20)'])\n",
+            "print('parent done')\n",
+        );
+        let started = std::time::Instant::now();
+        let out = local(None)
+            .invoke(&ctx, serde_json::json!({"code": code}))
+            .await
+            .unwrap();
+        let took = started.elapsed();
+
+        assert!(
+            out.result.contains("parent done"),
+            "the script's own output has to survive: {}",
+            out.result
+        );
+        assert!(
+            !out.result.contains("exceeded"),
+            "the call did not time out — a child of the script outlived it: {}",
+            out.result
+        );
+        // The premise: without the fix this took the whole `LOCAL_TIMEOUT` (10 s). A couple
+        // of seconds is generous for an interpreter start and still nowhere near it.
+        assert!(
+            took < Duration::from_secs(6),
+            "the call waited on the pipes rather than the process: {took:?}"
+        );
+    }
+
     /// Real local execution (manual, if Python is installed).
     #[tokio::test]
     #[ignore = "requires a Python interpreter on PATH"]

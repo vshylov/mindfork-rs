@@ -595,12 +595,16 @@ impl SandboxRunner for LocalSandbox {
             .env("PYTHONUTF8", "1")
             // On a timeout the future is dropped → the process is killed.
             .kill_on_drop(true);
-        let child = cmd
+        let mut child = cmd
             .spawn()
             .with_context(|| loc.tf("sandbox.err.spawn_python", &[("path", &python)]))?;
+        // Read beside the process, and wait on the **process** — see [`pipe_reader`]. The
+        // pipes belong to whatever the script spawned as much as to the script.
+        let (out_buf, out_task) = pipe_reader(child.stdout.take().expect("stdout is piped"));
+        let (err_buf, err_task) = pipe_reader(child.stderr.take().expect("stderr is piped"));
 
-        match tokio::time::timeout(spec.timeout, child.wait_with_output()).await {
-            Ok(Ok(out)) => {
+        match tokio::time::timeout(spec.timeout, child.wait()).await {
+            Ok(Ok(status)) => {
                 // Whatever the exit code: a script that saved its chart and then failed
                 // still made the chart (F4). The same rule, the same collector and the
                 // same caps as the guest's.
@@ -611,9 +615,9 @@ impl SandboxRunner for LocalSandbox {
                 .await
                 .unwrap_or_default();
                 Ok(SandboxOutput {
-                    stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
-                    stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
-                    exit_code: out.status.code(),
+                    stdout: drained(&out_buf, out_task).await,
+                    stderr: drained(&err_buf, err_task).await,
+                    exit_code: status.code(),
                     timed_out: false,
                     files,
                     skipped,
@@ -804,10 +808,110 @@ struct JobDir {
 
 impl JobDir {
     fn create() -> std::io::Result<Self> {
-        let path = std::env::temp_dir().join(format!("mindfork-sbx-{}", Uuid::new_v4()));
+        sweep_stale_jobs();
+        let path = std::env::temp_dir().join(format!("{JOB_PREFIX}{}", Uuid::new_v4()));
         std::fs::create_dir_all(&path)?;
         Ok(Self { path })
     }
+}
+
+/// What a job directory is called in the system temp directory.
+const JOB_PREFIX: &str = "mindfork-sbx-";
+
+/// How old a leftover job directory must be before it is swept: long enough that no
+/// running call's directory can be mistaken for one, including another instance's.
+const JOB_STALE_AFTER: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// Removes job directories left behind by earlier runs, once per process.
+///
+/// [`JobDir::drop`] cleans up and cannot always succeed: a crash or a kill never runs it,
+/// and on Windows a directory that is some process's working directory cannot be removed at
+/// all — which is exactly the state a Local call leaves when the script spawned something
+/// that outlived it. What is left behind is not scratch: `in/` holds **copies of the chat's
+/// files**, put there for the call. So the sweep is by age rather than by cause, and it runs
+/// whatever the leak was.
+fn sweep_stale_jobs() {
+    static SWEPT: std::sync::Once = std::sync::Once::new();
+    SWEPT.call_once(|| sweep_stale_in(&std::env::temp_dir(), JOB_STALE_AFTER));
+}
+
+/// [`sweep_stale_jobs`] over a named directory and age — the testable half. Only entries
+/// carrying [`JOB_PREFIX`] are considered, and only by age: nothing here can tell a live
+/// call's directory from a dead one, and guessing wrong would delete the inputs of a call
+/// that is still running.
+fn sweep_stale_in(temp: &Path, older_than: Duration) {
+    let Ok(entries) = std::fs::read_dir(temp) else {
+        return;
+    };
+    for entry in entries.filter_map(std::result::Result::ok) {
+        if !entry.file_name().to_string_lossy().starts_with(JOB_PREFIX) {
+            continue;
+        }
+        let stale = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .is_ok_and(|t| t.elapsed().is_ok_and(|age| age >= older_than));
+        if stale {
+            let _ = std::fs::remove_dir_all(entry.path());
+        }
+    }
+}
+
+/// The most a call's stdout or stderr is held in memory, per stream. `MAX_OUTPUT_CHARS`
+/// truncates at format time, which is after the bytes are already resident; a script
+/// printing in a loop for its whole time limit should not be able to decide how much of
+/// this process's memory it uses.
+const MAX_PIPE_BYTES: usize = 1 << 20;
+
+/// How long a finished process's pipes are still drained. Normally nothing waits — the
+/// pipes close with the process — but anything the script spawned keeps its ends open, and
+/// the last words of the script itself may still be in flight.
+const DRAIN_GRACE: Duration = Duration::from_millis(200);
+
+/// Reads one of a child's pipes into a buffer the caller can take **whatever happens to the
+/// reader**, capped at [`MAX_PIPE_BYTES`].
+///
+/// `Child::wait_with_output` waits for the pipes to reach EOF, not for the process to exit,
+/// and everything a script spawns inherits those pipes. So a Local call whose script
+/// finished in a second was reported as having **exceeded its time limit** — and everything
+/// it had printed was thrown away with the verdict — because a background process it left
+/// behind still held the write end. Waiting on the process and reading beside it keeps the
+/// two questions apart.
+///
+/// Past the cap the pipe is still drained and the bytes dropped: stopping the read would
+/// block a child that keeps printing, which is the deadlock this shape exists to avoid.
+fn pipe_reader<R>(mut pipe: R) -> (Arc<std::sync::Mutex<Vec<u8>>>, tokio::task::JoinHandle<()>)
+where
+    R: tokio::io::AsyncRead + Unpin + Send + 'static,
+{
+    let buf = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = Arc::clone(&buf);
+    let task = tokio::spawn(async move {
+        use tokio::io::AsyncReadExt;
+        let mut chunk = [0u8; 8 * 1024];
+        while let Ok(n) = pipe.read(&mut chunk).await {
+            if n == 0 {
+                break;
+            }
+            let mut held = sink.lock().expect("pipe buffer poisoned");
+            let room = MAX_PIPE_BYTES.saturating_sub(held.len());
+            if room > 0 {
+                held.extend_from_slice(&chunk[..n.min(room)]);
+            }
+        }
+    });
+    (buf, task)
+}
+
+/// What a reader collected, once it has been given [`DRAIN_GRACE`] to finish and then
+/// stopped: a pipe a grandchild still holds must not hold the turn as well.
+async fn drained(
+    buf: &Arc<std::sync::Mutex<Vec<u8>>>,
+    mut task: tokio::task::JoinHandle<()>,
+) -> String {
+    let _ = tokio::time::timeout(DRAIN_GRACE, &mut task).await;
+    task.abort();
+    String::from_utf8_lossy(&buf.lock().expect("pipe buffer poisoned")).into_owned()
 }
 
 impl Drop for JobDir {
@@ -1352,6 +1456,39 @@ mod tests {
             std::fs::write(dir.path().join(SANDBOX_IMAGE), b"stub").unwrap();
         }
         dir
+    }
+
+    /// `JobDir::drop` cannot always run — a crash or a kill never reaches it, and on
+    /// Windows a directory that is some process's working directory cannot be removed at
+    /// all, which is exactly what a Local call leaves when the script spawned something
+    /// that outlived it. What stays behind is not scratch: `in/` holds copies of the chat's
+    /// files. So leftovers are swept by **age**, and nothing else is touched.
+    #[test]
+    fn a_stale_job_directory_is_swept_and_a_live_one_is_left() {
+        let temp = tempfile::tempdir().unwrap();
+        let ours = temp.path().join(format!("{JOB_PREFIX}0000"));
+        let theirs = temp.path().join("some-other-tool-42");
+        std::fs::create_dir_all(ours.join("in")).unwrap();
+        std::fs::write(ours.join("in").join("sales.csv"), b"month,total\n").unwrap();
+        std::fs::create_dir_all(&theirs).unwrap();
+
+        // A day old is what it takes; nothing here is.
+        sweep_stale_in(temp.path(), Duration::from_secs(24 * 60 * 60));
+        assert!(
+            ours.is_dir(),
+            "a directory a running call may own must be left alone"
+        );
+
+        // At zero, everything qualifies — and only ours is considered even then.
+        sweep_stale_in(temp.path(), Duration::ZERO);
+        assert!(
+            !ours.exists(),
+            "a stale job directory goes, and the chat's copies with it"
+        );
+        assert!(
+            theirs.is_dir(),
+            "another program's temp directory is not ours to delete"
+        );
     }
 
     /// Provisioning verifies a **candidate** image, so it has to be able to start one that
