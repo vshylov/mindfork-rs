@@ -106,6 +106,7 @@ split by subsystem.
   data now.
 
 ### Added
+- **A memory limit for the local Python interpreter** — in Settings, the Python group in local mode now has a per-process memory limit (Windows only). A script that tries to take more gets a `MemoryError` instead of the machine's memory, and so does any process it starts. Off by default, and separate from the sandbox's limit, since the sandbox needs about a gigabyte just to start.
 
 - **The local-interpreter mode exchanges files too.** Running Python on your own machine
   instead of in the sandbox used to mean the assistant's code could neither read this

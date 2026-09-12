@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (72)
+## Entries (73)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -84,6 +84,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: one name means one file — the fold, the empty cut, and the numbering (done)
 - Post-M9: `/file open` — whose file, which chat, and the folder's invariant (done)
 - Post-M9: sandbox job hygiene — off the runtime's threads, a failed collection said, bounded setup steps (done)
+- Post-M9: a memory limit for the local interpreter — the sandbox's Job Object, a field of its own (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -4976,3 +4977,50 @@ behind. And a real `mindfork sandbox setup`, exit 0: unpack and build under
 `PACK_STEP_TIMEOUT`, the candidate started, then installed. The download step did **not**
 run — `python.webc` was present and matched its checksum — so `DOWNLOAD_TIMEOUT` is covered
 by the unit tests alone, not by a live download.
+
+### Post-M9: a memory limit for the local interpreter — the sandbox's Job Object, a field of its own (done)
+
+The seventeenth of the review's tier-3 findings, the one left out of the sandbox-hygiene
+PR on purpose: `LocalSandbox` had neither the "one task at a time" gate nor the memory
+limit `WasmerSandbox` has. Split in two there, because the halves are not alike. The gate
+*refuses* a concurrent call (`sandbox.err.busy`) rather than queueing it, so copying it
+would have turned two `python_exec` calls in one round (ADR 0012) from both running into
+one refused. The limit is a guard with no such cost. User's decision (2026-09-13): the
+limit, and no gate.
+
+**A field of its own.** The one fork was whether Local reuses `python_wasm_memory_mb` or
+gets its own. User's decision (2026-09-13): its own, `tools.python_local_memory_mb`, with
+its own row in the Local branch of the Python group. The reason is the floor: V8 and
+CPython need ~768 MB before the sandbox starts, which is why its hint says "minimum ~1024",
+while native CPython runs in tens of MB — one number could not be right for both, and the
+name `wasm` would have lied about the shared one. The field is additive under the struct's
+`#[serde(default)]`, so a config written before it reads with none; the defaults test now
+reads one such config and checks the sandbox's value comes through untouched.
+
+**The same Job Object, a different ending.** `LocalSandbox::with_memory_limit` feeds the
+very `apply_memory_limit` the sandbox uses — `JOB_OBJECT_LIMIT_PROCESS_MEMORY`, assigned
+right after the spawn, the handle closed at once. What differs is how a script meets it,
+and both halves were measured on Windows with the real interpreter: a 1 GiB `bytearray`
+under a 256 MB cap raises **`MemoryError` inside the script**, which it reports like any
+other error — V8 in the sandbox dies instead — and a child the script starts with
+`subprocess` fails the same way, because a process created by a member of a job joins it.
+Ordinary work (imports, a sum) runs under the same 256 MB untouched.
+
+**What it is not.** Isolation: the job is assigned just after the spawn, so a launcher
+that starts the real interpreter immediately (`py.exe`) can hand the work to a process
+created before the assignment. Not measured — stated in the builder's doc as the limit of
+the guarantee. And not on Unix: `RLIMIT_AS` limits address space, which is the objection
+ADR 0005 already had for V8, in the form native numeric libraries give it.
+
+**The hint and the panel.** The settings panel's height is set by the longest hint, so a
+new description could move the committed screenshot dumps. Checked before writing it: 235
+characters in English and 273 in Russian, against the longest at 702 and 775.
+
+**Tests.** The Local branch shows the new row and the Wasmer branch does not; editing it
+stores the local field and leaves the sandbox's alone, and `0` reads as none; the builder
+turns `0` into no limit; and, live on Windows, the runaway allocation and its child are
+both stopped while ordinary work is not. Four guards reverted in turn, each failing its
+test — including the live one, where without the after-spawn call the gigabyte was simply
+handed over. Not covered, as it is not for the sandbox's own limit either: that the setting
+reaches the runner through `standard_registry`, a one-line hand-off in each mode that no
+test observes.

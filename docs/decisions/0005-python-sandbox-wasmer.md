@@ -159,6 +159,18 @@ cache is warmed on setup (`warmup`), so the first real call is warm.
   `AssignProcessToJobObject` (the limit holds as long as the process is a
   member of the job), so the raw HANDLE isn't held across an `await` (the
   future stays `Send`). Confirmed live (research §9.6).
+  *Amended (a memory limit for the local interpreter):* Local mode takes the same
+  Job Object under a field of its own, `tools.python_local_memory_mb` — its floor is
+  tens of MB where the sandbox's is ~1024, so one number cannot serve both. How it
+  ends differs: native CPython is refused the allocation and raises `MemoryError`,
+  which the script reports, where V8 dies. A process the script starts joins the job
+  and is capped too. Both measured live on Windows. It is a guard rather than
+  isolation — the job is assigned just after the spawn, so a launcher that starts the
+  real interpreter at once can hand the work to a process outside it. Not on Unix, for
+  the same objection in another form: `RLIMIT_AS` limits address space, which native
+  numeric libraries can reserve well beyond what they use. The "one task" gate is
+  **not** extended to Local: it refuses a concurrent call instead of queueing it, and
+  two `python_exec` calls in one round (ADR 0012) should both run there.
 - **`tools.python_enabled` stays `false` by default.** The sandbox removes the
   original reason (no OS sandbox), but "enabled but assets not installed" is
   worse than "disabled"; enabling is a deliberate step after `sandbox setup`.
