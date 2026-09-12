@@ -64,7 +64,8 @@ impl ChatInput {
     /// [`Attachment::matches`] has, so a listing's line and a removal accept the same text.
     pub fn matches(&self, target: &str) -> bool {
         let t = target.trim().trim_matches(|c| c == '"' || c == '\'');
-        self.name.eq_ignore_ascii_case(t) || self.source.eq_ignore_ascii_case(t)
+        let same = crate::entities::chat_file::same_name;
+        same(&self.name, t) || same(&self.source, t)
     }
 
     /// Whether the item is one of the chat's images.
@@ -576,6 +577,35 @@ mod tests {
         assert_eq!(resolve(&list, "nothing.csv"), Resolved::Nothing);
         // The staged name is not a handle: `#2` and the path are what reach the second one.
         assert_eq!(resolve(&list, "notes (2).md"), Resolved::Nothing);
+    }
+
+    /// The fold is Unicode's, not ASCII's. `ru` is a fully supported locale, so a name
+    /// the listing shows capitalised is typed back in lower case — and the ASCII fold
+    /// answered `Nothing`, which reads as "no such file" for a file that is right there.
+    /// The shared-name refusal folds the same way, or two names that are one name to the
+    /// user would resolve to two different items without a word about it.
+    #[test]
+    fn a_handle_folds_case_outside_ascii_too() {
+        let list = items(
+            &[attached("Отчёт.csv", "C:\\a\\Отчёт.csv")],
+            &[stored("Диаграмма.png")],
+            &[],
+            dir(),
+        );
+        assert_eq!(resolve(&list, "отчёт.csv"), Resolved::One(0));
+        assert_eq!(resolve(&list, "ДИАГРАММА.PNG"), Resolved::One(1));
+        assert_eq!(resolve(&list, "c:\\a\\отчёт.csv"), Resolved::One(0));
+        // ...and a name two items share is still one name, folded the same way.
+        let shared = items(
+            &[
+                attached("Отчёт.csv", "C:\\a\\Отчёт.csv"),
+                attached("отчёт.csv", "C:\\b\\отчёт.csv"),
+            ],
+            &[],
+            &[],
+            dir(),
+        );
+        assert_eq!(resolve(&shared, "отчёт.csv"), Resolved::Shared(vec![0, 1]));
     }
 
     /// Fork F12, §12 T2: the number the pinned block gave the model has to mean the same

@@ -691,6 +691,8 @@ struct ChartingTurn {
     folder: std::path::PathBuf,
     /// How many times the turn asked the engine about images.
     asked: usize,
+    /// The names of the images the chat's messages ended up carrying, in order.
+    image_names: Vec<String>,
 }
 
 /// One turn in which the model calls `charting` once in each of `rounds` rounds.
@@ -777,12 +779,19 @@ async fn charting_turn_drawing(
         .cloned()
         .expect("the call's record");
     let folder = dir.path().join("files").join(chat_id.to_string());
+    let image_names = chat
+        .messages
+        .iter()
+        .flat_map(|m| m.images.iter())
+        .map(|i| i.name.clone())
+        .collect();
     ChartingTurn {
         _root: dir,
         record,
         files: chat.files,
         folder,
         asked: asked.load(std::sync::atomic::Ordering::Relaxed),
+        image_names,
     }
 }
 
@@ -853,6 +862,28 @@ async fn an_image_that_cannot_be_prepared_is_dropped_and_the_result_says_so() {
     assert!(
         result.contains(&profile_note("loop.images_dropped", "1")),
         "{result}"
+    );
+}
+
+/// A tool image is named for the chat, not for the call. Numbered per call, every round
+/// handed its first image `tool-image-1.png`, and two of those in one chat are a name two
+/// items share — which `resolve` refuses (`Resolved::Shared`), so the model naming its own
+/// chart in the next call's `files` bought a refusal with the round.
+///
+/// Two rounds, each drawing a chart of its own: the same bytes twice would be deduplicated
+/// into one file and could not collide (the test below is that case).
+#[tokio::test]
+async fn each_round_s_chart_gets_a_name_of_its_own() {
+    let ChartingTurn {
+        _root, image_names, ..
+    } = charting_turn_drawing(VisionSupport::Supported, real_png(), 2, true).await;
+    assert_eq!(
+        image_names,
+        vec![
+            "tool-image-1.png".to_string(),
+            "tool-image-2.png".to_string()
+        ],
+        "the second round's chart takes the next free number"
     );
 }
 

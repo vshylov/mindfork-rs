@@ -83,8 +83,13 @@ impl MessageImage {
     /// Case-insensitive match on the display name or the full source path — the same
     /// contract as [`Attachment::matches`](super::attachment::Attachment::matches), so
     /// `/image remove` accepts what `/image list` shows (Windows path casing included).
+    /// The same contract means the same folding, which is
+    /// [`same_name`](super::chat_file::same_name)'s and so is Unicode rather than ASCII.
+    /// Trimming stays `resolve_handle`'s, as the note in `resolve_target_by_index_name_and_path`
+    /// records.
     pub fn matches(&self, target: &str) -> bool {
-        self.name.eq_ignore_ascii_case(target) || self.source.eq_ignore_ascii_case(target)
+        let same = super::chat_file::same_name;
+        same(&self.name, target) || same(&self.source, target)
     }
 }
 
@@ -182,6 +187,9 @@ mod tests {
         assert!(i.matches("chart.png"));
         assert!(i.matches("d:\\pics\\Chart.PNG"));
         assert!(!i.matches("other.png"));
+        // Folded over Unicode, not ASCII: `ru` is a supported locale, and the name the
+        // listing shows has to be the name the removal takes.
+        assert!(image("Отчёт.png", 8, 8).matches("отчёт.png"));
     }
 
     #[test]

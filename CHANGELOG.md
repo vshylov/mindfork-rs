@@ -16,6 +16,7 @@ split by subsystem.
 
 ### Fixed
 - **The "show charts" switch is shown in local Python mode too** — `tools.python_images` decides whether an image the code saved goes back to the model, and the local interpreter collects its output folder exactly as the sandbox does; the settings row, written when the flag meant nothing there, appeared only in sandbox mode. Off and switched to local, the charts were withheld with nowhere to see why.
+- **One name means one file, outside ASCII too** — a handle typed as a name folded case over ASCII only, so a Cyrillic file name typed in lower case did not reach the file the listing had just shown; the listing's own “two items share this name” check folded the same narrow way. Both now fold over Unicode, as the chat's folder always did. Beside them: a very long name whose start is blank no longer survives shortening as an empty name, and an image a tool returns is numbered against the chat rather than the call — two rounds each drawing a chart produced two `tool-image-1.png`, which the model could then not name.
 
 - **A stalled engine can no longer freeze a reply that produced a picture.** Before
   sending an image to the model the app asks the server whether it accepts images — a
