@@ -7,8 +7,8 @@ once the track is done this file moves to `docs/history/`.
 drops the per-chat quota (§9). **Stage 0** (a read-only `site-packages`) merged as
 #518. **Stage 1**, the MVP probe: GO on both families, Qwen 3.6 27B and Gemma 4 31B
 (§10). **Stage 2**, outputs: merged as #520, live GO on Gemma 4 31B (§11).
-**Stage 3**, inputs: implemented on `feat/sandbox-files-in`, live GO on
-Gemma 4 31B (§12).
+**Stage 3**, inputs: merged as #521, live GO on Gemma 4 31B (§12).
+**Stage 4**, opening: on `feat/file-open`, sub-decisions in §13.
 
 The request: `python_exec` in its Wasmer mode is text in, text out — whatever the
 code writes dies with the call. The user wants (a) **files out** — what the code
@@ -412,7 +412,8 @@ true (AGENTS.md §4).
   background routing; sub-decisions in §12. Docs: spec §9.7/§9.8/§13.2, architecture
   §8, ADR 0005 §3 and §5 amended, CHANGELOG, journal. **Done**, live GO (§12).
 - **Stage 4 — opening** (`feat/file-open`): `/file open`, `/file folder`,
-  `shared/os_open.rs`, the allowlist.
+  `shared/os_open.rs`, the allowlist; sub-decisions in §13. Docs: spec §9.7, README,
+  architecture §3/§10, CHANGELOG, journal. No model run — the gate is manual (§8).
 - **Stage 5 — Local parity** (`feat/sandbox-files-local`).
 - **Close:** this file to `docs/history/`; roadmap item and CLAUDE.md map updated.
 
@@ -737,3 +738,63 @@ arrive through another channel (§10's lesson):
 The first smoke also shows the description reads as intended: the model saved to `/w/out`
 in one turn and, a turn later, named the file rather than assuming the sandbox still held
 it.
+
+## 13. Stage 4 — sub-decisions (2026-09-12)
+
+Fork F9 decided the shape — `/file open <#N|name>` + `/file folder`, our own
+`os_open.rs`, an allowlist of document types — and these are the decisions the code
+survey added under it, recorded before implementing as §11 and §12 were.
+
+- **U1 — one resolver, the list of §12 T2.** `/file open` takes the handle `/file list`
+  shows (`#N`, a name, a path) and resolves it through `chat_inputs::resolve`, the
+  function `/file remove` and the tool's `files` already use: a name two items share is
+  refused with each candidate's `#N` and source, exactly as a removal refuses it. `/file
+  folder` takes no argument — an argument's absence must not silently change the target
+  (F9) — and opens the chat's stored-files folder.
+- **U2 — what a handle opens is decided purely, and the disk is consulted once.**
+  `chat_inputs::open_path` returns the path an item means: the chat's own copy
+  (`dir/<file>`) for a stored file **and** for an attached document that kept its original
+  — our copy is the half that is guaranteed to be there, while the user's path may have
+  moved since the attach — and the `source` for everything else, which is an attachment's
+  own file or an image's. The caller then checks that path once. A source that is not a
+  file opens nothing and the note prints it: a pasted image is `clipboard:<uuid>`, a
+  fetched page's attachment is a URL, and a listed copy can be gone from the folder. No
+  copy is written to make an open work — a command the user reads as "show me this" must
+  not put a new file on their disk.
+- **U3 — the allowlist decides *what* opens, never *whether* something happens.** The
+  document types open directly: `png jpg jpeg gif bmp webp tif tiff pdf csv tsv txt md
+  json xlsx docx`. Anything else opens the containing folder instead, and the note says
+  why. Deliberately out: `svg` and `html` — both are shapes a `python_exec` call writes
+  and both are scripted documents a browser executes; the macro-enabled `docm`/`xlsm`;
+  and every executable shape (`bat`, `cmd`, `ps1`, `sh`, `lnk`, `exe`), which is the
+  attack F9 named. The model writes into this folder, so the rule has to hold for a name
+  the model chose: the fallback means a file we refuse to launch still gets the user one
+  double-click away from it, with the reason said out loud.
+- **U4 — the launch is ~60 lines of ours** (`shared/os_open.rs`): `ShellExecuteW` on
+  Windows (windows-sys gains `Win32_UI_Shell`), `xdg-open` on Linux, `open` on macOS —
+  one argument, no shell. Not `cmd /c start`, which re-parses the argument outside Rust's
+  escaping (lessons §6), and not a crate for three calls. The part that can be tested
+  everywhere is pure (`launcher(Platform)`, `is_document(name)`); the spawn itself is the
+  stage's manual gate.
+- **U5 — launching runs on the blocking pool.** `ShellExecuteW` returns only once the
+  shell has started the handler, and `xdg-open` is a script that execs another; the
+  orchestrator's command loop waits for neither. `spawn_blocking`, and the outcome comes
+  back as a `FileProgress` event like every other file note.
+- **U6 — the path is always printed**, on success and on failure (F9). A machine with no
+  `xdg-open`, or no handler for `.xlsx`, then leaves the user one copy-paste from the
+  file instead of one error message away from nothing.
+- **U7 — `/file folder` on a chat that has stored nothing** says so and prints the path
+  rather than creating the directory: the folder is made when the first file lands, and a
+  command that reports on the chat's files should not be the thing that creates an empty
+  directory for a chat that has none.
+- **U8 — no `explorer /select,`** (rejected). Highlighting the file inside its folder
+  would be nicer on Windows and means a second, argv-shaped launch path on one platform
+  only — while the folder is the fallback precisely for the files we will not launch,
+  where "the folder opened" is already the whole message.
+- **U9 — both commands are on `FileList`'s side of the Esc back-stack**
+  (`works_on_the_open_chat` = false): opening a viewer changes nothing in the
+  conversation. `/file` stays blocked as a whole prefix in a sub-agent transcript, so
+  neither command is reachable from one.
+- **U10 — the gate is manual** (§8): no model runs anywhere in this stage. A document, a
+  refused type and the folder, opened by hand on Windows and on Linux, with the result in
+  the PR.
