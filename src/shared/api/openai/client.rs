@@ -1137,7 +1137,14 @@ mod ignored_smoke {
     /// for a screenshot, the tool returns one, and the user asks what is on it.
     /// `with_image = false` is the control arm.
     fn screenshot_turn(with_image: bool) -> ChatRequest {
-        let tool = ApiMessage::tool("call-1", "Screenshot taken.");
+        screenshot_turn_with(with_image, "Screenshot taken.")
+    }
+
+    /// The same turn with the tool result's text spelled out: the withheld-image arm
+    /// sends the statement the MCP adapter appends when `tools.mcp_images` is off
+    /// (`tool.mcp.images_off`), where the plain control arm sends nothing at all.
+    fn screenshot_turn_with(with_image: bool, result_text: &str) -> ChatRequest {
+        let tool = ApiMessage::tool("call-1", result_text);
         let tool = if with_image {
             tool.with_images(vec![crate::shared::api::ApiImage::new(
                 "image/png",
@@ -1216,6 +1223,66 @@ mod ignored_smoke {
         .await;
         eprintln!("tool-result image: {answer}");
         crate::shared::api::assert_sees_green_circle(&answer, true, "with the image");
+    }
+
+    /// The blind arm once more, this time carrying the sentence the MCP adapter appends
+    /// when `tools.mcp_images` withheld the image (`tool.mcp.images_off`).
+    ///
+    /// **Why the wording is directive and not descriptive.** Measured on Gemma 4 31B
+    /// (2026-09-12, five runs an arm, the fixture's own 2048-token budget): saying
+    /// nothing, the model described a screenshot it never received **5/5** — and the
+    /// descriptive wording the `loop.images_*` family uses ("You have not seen them.")
+    /// also went 5/5. Only adding "do not describe what they show; say that you cannot
+    /// see them" moved it, to 0/5. So the sentence that ships here is deliberately not
+    /// its siblings' shape, and this smoke is what says so. (A 256-token budget makes
+    /// this unreadable: a thinking model runs out inside its thoughts and returns empty
+    /// content, which looks like a decline and is not one.)
+    ///
+    /// No projector is needed — nothing here sends an image.
+    #[tokio::test]
+    #[ignore = "requires MINDFORK_ENGINE_URL"]
+    async fn a_withheld_tool_image_is_not_described_live() {
+        let Some(client) = client_from_env() else {
+            eprintln!("skip: MINDFORK_ENGINE_URL not set");
+            return;
+        };
+        // The control, printed rather than asserted: this is the answer the sentence has
+        // to displace, and asserting a hallucination would only pin today's guess.
+        let (control, _, _) = collect(
+            client
+                .chat_stream(screenshot_turn(false), Default::default())
+                .await
+                .unwrap(),
+        )
+        .await;
+        eprintln!("control (nothing said): {control}");
+
+        use crate::shared::i18n::{Lang, locale};
+        let said = locale(Lang::En).tf("tool.mcp.images_off", &[("n", "1")]);
+        let text = format!("Screenshot taken.\n{said}");
+        let (answer, _, _) = collect(
+            client
+                .chat_stream(screenshot_turn_with(false, &text), Default::default())
+                .await
+                .unwrap(),
+        )
+        .await;
+        eprintln!("withheld, and said so: {answer}");
+        let low = answer.to_lowercase();
+        // Two-sided on purpose. "Does not say green" would pass on a *wrong* guess —
+        // which is exactly what the control produces — so the criterion is that no
+        // colour is claimed at all, and that the model says outright it cannot see.
+        let colours = [
+            "blue", "green", "red", "white", "black", "yellow", "purple", "grey", "gray",
+        ];
+        assert!(
+            !colours.iter().any(|c| low.contains(c)),
+            "a withheld image must not be described: {answer:?}"
+        );
+        assert!(
+            low.contains("cannot see") || low.contains("can't see") || low.contains("unable to"),
+            "the model has to say it cannot see the image: {answer:?}"
+        );
     }
 
     pub(super) async fn collect(stream: ChatStream) -> (String, String, Option<FinishReason>) {
