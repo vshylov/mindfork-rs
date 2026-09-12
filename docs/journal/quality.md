@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (24)
+## Entries (25)
 
 - Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - Post-M9: SonarQube Cloud analysis in CI (done)
@@ -36,6 +36,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: the pool probe's `park` arm records its sibling (done)
 - Post-M9: SonarQube follow-up — the round resolver's three arms (done)
 - Post-M9: SonarQube follow-up — blocking file calls in the two setup paths (done)
+- Post-M9: SonarQube follow-up — the file launcher's two closures (done)
 
 ### Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - **28 relative links in the docs pointed at nothing**, and had for a while.
@@ -1373,3 +1374,43 @@ structure (AGENTS.md §3).
 - `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, `cargo test` —
   **3072 green, 159 `#[ignore]`, counts unchanged**; the six repository gates
   green. No CHANGELOG entry — nothing the user sees changed (§4).
+### Post-M9: SonarQube follow-up — the file launcher's two closures (done)
+
+- **Two open findings on `main`, the gate green** (read through the Sonar MCP
+  server, 2026-09-12; every condition OK, new duplication 0.3 % against the 3 %
+  threshold, no hotspots). Both are `rust:S1612` on `shared/os_open.rs` —
+  `.extension().and_then(|e| e.to_str())` in `is_document` and
+  `.file_name().and_then(|n| n.to_str())` in `decide` — and both carry the blame
+  date of `82b90ff` (`/file open`, 2026-09-12 00:18 UTC), so this is not the
+  backdated-analyzer genre of the previous rounds but a fresh merge: PR #523
+  passed its own gate with them in place, as it always does — the gate *rates*
+  new code and two MINOR maintainability smells do not move an A. Branch
+  `fix/sonar-os-open-closures`.
+- **The fix is the rule's own**: `and_then(OsStr::to_str)` with
+  `std::ffi::OsStr` added to the module's imports (the file had only the
+  `OsStrExt` trait, inside the Windows launch). `OsStr::to_str` is
+  `fn(&OsStr) -> Option<&str>`, exactly what `and_then` wants here, so nothing
+  around it changed; `cargo fmt` then folded `decide`'s four-line chain back
+  onto one line, which together with the import is the whole diff.
+- **The lessons §10 family again — and this time the *local* lint is the wider
+  of the two.** `S1612` is clippy's `redundant_closure_for_method_calls`, which
+  is pedantic and therefore outside the project's warn set, so
+  `cargo clippy --all-targets -- -D warnings` was green on both sites before the
+  fix and after it — the expected half. The unexpected half is the other
+  direction: turn that lint on explicitly over today's tree and it names **55**
+  further sites (`map(|s| s.to_string())`, `map(|e| e.len())`,
+  `is_some_and(|c| c.is_cancelled())`, `map(|s| s.as_str())` …), **none** of
+  which Sonar reports — not accepted, not resolved, simply never raised (the
+  project's whole accepted list is five issues, all `S3776`/`S5332`). The two
+  rule sets overlap, they are not the same set, so "clear the findings" and
+  "clear the lint" are different tasks of very different sizes; the 55 were left
+  alone and no `-W` was added to the build. Worth remembering when the next
+  `S1612` round arrives: the sites it names are *a subset* of what a local
+  pedantic pass would, and fixing the subset is what the gate asks for.
+- **No live run** (AGENTS.md §3): the change is a closure spelled as a method
+  reference in two pure functions; `os_open`'s own behaviour — which types open
+  directly, which fall back to the folder — is covered by the module's unit
+  tests, and the launch itself is the stage's manual gate, unchanged here.
+- `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, `cargo test` —
+  **3171 green, 169 `#[ignore]`, counts unchanged**; the repository gates green.
+  No CHANGELOG entry — nothing the user sees changed (§4).
