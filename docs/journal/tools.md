@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (60)
+## Entries (61)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -72,6 +72,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: sandbox file exchange — stage 3, files into the sandbox (done)
 - Post-M9: sandbox file exchange — stage 4, opening a file in the system (done)
 - Post-M9: sandbox file exchange — stage 5, the local interpreter joins the contract (done)
+- Post-M9: a withheld server image is stated, and stated in words that work (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -4368,3 +4369,63 @@ the job directory both runners lay out (the script, the copies under their own n
 component refused, the interpreter path checked without a probe, the pinned block rendered
 in the mode's own folders, both modes offering `files` with each naming its own folder, and
 the network Local reports. The track's plan moves to `docs/history/` with this entry.
+
+### Post-M9: a withheld server image is stated, and stated in words that work (done)
+
+Found by a review pass over the merged file-exchange track — §11 S8's own rule, applied
+back to the neighbour it had named. With `tools.mcp_images` **off**, the adapter dropped a
+server's images and said **nothing**: the parser's `[image content omitted]`
+(`shared/mcp.rs`) marks only a *malformed* block and the "N more image(s)" line only the
+over-cap ones, so a well-formed image under the cap left no trace at all. The model then
+read a complete-looking result and described a screenshot it had never received — exactly
+the failure §10 measured, where a plot colour only the image carried was named 4/5 and 5/5
+with it and 0/5 blind, and blind, **both** families described a chart they had not seen.
+
+Two things had been asserting the opposite, which is how it survived: the comment on the
+switch claimed "the placeholder the text already carries still says an image existed", and
+`ui.settings.desc.mcp_images` promised the user that very note in this case. And **a test
+pinned the defect** — `the_switch_decides_whether_a_server_image_reaches_the_model`
+asserted `out.result == "Screenshot taken."` in *both* directions, so the gate was green
+over it.
+
+**The fix** is one statement in the adapter, where the switch is consulted and `ctx.loc` is
+in hand (`tool.mcp.images_off`), appended **after** `clip_result`: the one line that says
+what is missing must not be the line the truncation eats.
+
+**The wording is the measured part, and it is not the family's.** The first attempt copied
+the shape `loop.images_no_vision` / `loop.images_dropped` / `tool.python_exec.files.
+not_shown_off` all use — name the withholding, end with "You have not seen them." Measured
+on **Gemma 4 31B q4_0** (llama.cpp b10807, 2026-09-12, five runs an arm, the fixture's own
+2048-token budget, no image ever sent):
+
+| the tool result carries | described a screenshot it never got |
+|---|---|
+| nothing (control) | **5/5** |
+| "You have not seen them." (the family's shape) | **5/5** |
+| …" — so say so rather than describing what they might show" | 1/5 |
+| …" — do not describe what they show; say that you cannot see them" | **0/5** |
+
+So the descriptive form buys **nothing**: it is indistinguishable from silence on this
+model, which had not been measured when the family was written. What ships is the
+directive form, and `a_withheld_tool_image_is_not_described_live` is the arm that says so —
+two-sided (no colour claimed *and* the model says outright it cannot see), because "does
+not say green" passes on a wrong guess, which is precisely what the control produces.
+
+**A false GO on the way, worth recording.** The first run of that smoke passed while
+proving nothing: the criterion was the neighbouring `assert_sees_green_circle(.., false)`,
+and the answer — *"The background colour is blue, and there is a white circle"* — satisfied
+it by hallucinating the wrong colour. The control arm produced a byte-identical answer. A
+second trap sat behind it: probing at `max_tokens: 256` returned empty content for the
+directive arms and read as a clean 0/3, when the model had simply run out of budget inside
+its thoughts (`finish=length`). Both are the same lesson §9 already carries — a vision
+criterion must ask for what neither the code nor the output names — and neither was caught
+by a gate.
+
+**Scope, deliberately.** The three sibling strings carry the same descriptive shape and are
+very likely just as inert, but they are a different defect (they *do* say something) and a
+separate measurement; this PR does not touch them. Flagged for a follow-up.
+
+**Tests.** The off arm of the switch test now asserts the server's own text survives *and*
+the statement is there; a second test drives `max_result_chars` low enough to truncate and
+asserts the statement still ends the result. Both fail with the guard reverted — checked,
+not assumed. Unit: 3172 green, 170 ignored.
