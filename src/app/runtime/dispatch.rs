@@ -718,6 +718,8 @@ pub(super) fn dispatch(
         ChatIntent::FileAttach { path } => AppCommand::FileAttach { path },
         ChatIntent::FileRemove { target } => AppCommand::FileRemove { target },
         ChatIntent::FileList => AppCommand::FileList,
+        ChatIntent::FileOpen { target } => AppCommand::FileOpen { target },
+        ChatIntent::FileFolder => AppCommand::FileFolder,
         ChatIntent::ProjectAttach { path } => AppCommand::ProjectAttach { path },
         ChatIntent::ProjectSlot { slot, action } => AppCommand::ProjectSlot { slot, action },
         ChatIntent::ProjectDetach => AppCommand::ProjectDetach,

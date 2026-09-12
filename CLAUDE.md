@@ -171,8 +171,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-12, version 0.9.8)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3155 unit tests
-green, 167 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **3165 unit tests
+green, 168 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -184,6 +184,20 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **A chat's file opens in the system** — `/file open <name|#N>` hands one of the files
+  `/file list` shows to the desktop's handler and `/file folder` opens the chat's folder,
+  on the handle and the refusals `/file remove` already had. What may be **launched** is an
+  allowlist of document types, and that is the point: the folder is written by
+  `python_exec`, so a name in it is the model's, and a `run.bat`, a `.lnk` or a scripted
+  `.html`/`.svg` would run under its handler — those open the folder they sit in instead,
+  with the reason in the note. The launch is our own three calls (`ShellExecuteW` /
+  `xdg-open` / `open`), one argument and no shell line, on the blocking pool; the path is
+  printed on success and on failure, so a desktop that will not open a type leaves the user
+  one copy-paste away. Gate manual by design — a viewer and a file manager opened on
+  Windows, while the Linux launch is covered in CI by a stub launcher that records the one
+  whole argument it was handed
+  ([docs/sandbox-file-exchange.md](docs/sandbox-file-exchange.md) §13, spec §9.7,
+  [docs/journal/tools.md](docs/journal/tools.md)).
 - **Files into the Python sandbox — the chat's files reach the code** — a call names
   them in `files`, by the `#N` `/file list` shows or by name, and each is copied into
   `/w/in` under a name the pinned block states **before** the code is written; the
@@ -394,21 +408,6 @@ being recent is dropped, not shortened.
   (36 tok/s, 4 s inside the summary's 90 s limit), a real summary on both
   ([docs/research/page-summary-usage.md](docs/research/page-summary-usage.md),
   spec §6.3, §9.3.1, [docs/journal/engine.md](docs/journal/engine.md)).
-- **The title's and impersonation's usage for the budget — and the
-  ratio they would erase** — the item was "let the two record their usage
-  too"; measured, they are the app's most over-counting requests (0.65,
-  0.59) and a turn carrying 25 KB of a tool result's JSON under-counts by
-  a third (1.34) — so under the budget's one rule, *the latest wins,
-  floored at 1.0*, the next title or roll after such a turn stored 1.0
-  and the following turn was priced a quarter under. Now `SessionBudget`
-  keeps one ratio per kind of request (`Shape::{Turn, Run, Loop, Roll,
-  Title, Impersonation, Summary}`), `price`/`record_usage`/`density`
-  take the kind, and a turn's correction is erased by nothing but a turn;
-  the title and impersonation record theirs at their usage chunk, a
-  child run's rounds are their own kind. Measured after: impersonation
-  over the JSON at 1.61 in its own slot, the prose turns at 0.9
-  ([docs/research/title-impersonation-usage.md](docs/research/title-impersonation-usage.md),
-  spec §6.3, [docs/journal/engine.md](docs/journal/engine.md)).
 - **The TUI "hangs" on a headless launch** (no TTY) — this is expected; clean
   exit via `Esc`/`Ctrl+Q` is covered by unit tests. Live verification needs a
   real terminal.

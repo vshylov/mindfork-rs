@@ -457,6 +457,7 @@ Slash commands, typed straight into the input box:
 | Command | What it does |
 |---|---|
 | `/file attach <path>` · `/file remove <name\|#N>` · `/file list` | attach a text file to this chat / detach it / list attachments |
+| `/file open <name\|#N>` · `/file folder` | open one of this chat's files in the system (document types only — anything else opens its folder) / open the chat's files folder |
 | `/image attach <path\|url>` · `/image remove <name\|#N>` · `/image list` | stage an image (a file or a web address) for your next message / unstage one / list what is staged |
 | `/image paste` | stage the image on the clipboard — a screenshot needs no file. `Ctrl+V` does the same where the terminal forwards it (Windows Terminal keeps that key for its own paste, so the command is the reliable route) |
 | `/project attach <directory>` · `/project detach` · `/project status` | attach a code project to this chat (the assistant can then list, read, search and change it) / detach it / show what is attached and what the command slots hold |

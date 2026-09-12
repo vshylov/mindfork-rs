@@ -17,6 +17,7 @@ pub mod logging;
 pub mod markdown;
 pub mod mcp;
 pub mod net;
+pub mod os_open;
 pub mod osc11;
 pub mod osc52;
 pub mod paths;

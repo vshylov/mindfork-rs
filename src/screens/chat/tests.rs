@@ -2022,6 +2022,47 @@ fn file_list_note_numbers_items_for_removal() {
     assert!(note.text.contains("notes.md"), "{}", note.text);
 }
 
+/// The two notes `/file open` leaves (fork F9, §13 U3/U6): the file opened, or its
+/// folder standing in for a type no handler may run — and the path in both, which is
+/// what makes a launch that failed on the way recoverable.
+#[test]
+fn the_open_notes_name_the_path_and_say_when_the_folder_stood_in() {
+    use crate::features::file_command::FileProgress;
+    let mut s = ChatScreen::new();
+    s.set_file_progress(FileProgress::Opened {
+        name: "chart.png".into(),
+        path: "/data/files/c1/chart.png".into(),
+    });
+    s.set_file_progress(FileProgress::OpenedFolder {
+        path: "/data/files/c1".into(),
+        instead_of: Some("run.bat".into()),
+    });
+    s.set_file_progress(FileProgress::OpenedFolder {
+        path: "/data/files/c1".into(),
+        instead_of: None,
+    });
+    let notes: Vec<&str> = s
+        .feed
+        .iter()
+        .filter(|m| m.role == FeedRole::Note)
+        .map(|m| m.text.as_str())
+        .collect();
+    assert_eq!(notes.len(), 3, "{notes:?}");
+    assert!(
+        notes[0].contains("chart.png") && notes[0].contains("/data/files/c1/chart.png"),
+        "{}",
+        notes[0]
+    );
+    // The fallback has to be readable as a fallback, not as "the file opened".
+    assert!(
+        notes[1].contains("run.bat") && notes[1].contains("/data/files/c1"),
+        "{}",
+        notes[1]
+    );
+    assert!(!notes[2].contains("run.bat"), "{}", notes[2]);
+    assert!(notes[2].contains("/data/files/c1"), "{}", notes[2]);
+}
+
 /// A staged-image card for the tests — `est_tokens` is what the chip and the
 /// listing actually add up, so it is set explicitly rather than derived.
 fn image_info(

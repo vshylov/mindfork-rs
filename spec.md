@@ -1163,13 +1163,28 @@ naming these files exists only while the turn offers `python_exec` in its sandbo
 the confirmation popup (§9.8) states the resolved names and sizes going in.
 
 - **Commands** (input box, like `/rag`/`/tts`): `/file attach <path>`,
-  `/file remove <name|#N>`, `/file list`. As with RAG, the removal subcommand is
+  `/file remove <name|#N>`, `/file list`, `/file open <name|#N>`, `/file folder`.
+  As with RAG, the removal subcommand is
   only `remove` — never `delete` (it takes nothing off disk). A name several
   attachments share — two `notes.md` from two folders — **removes nothing**: the
   refusal lists each one's `#N` and path, either of which reaches it alone, and
   `/file list` shows the path on every line whose name another line shares, as the
   removal note does for such a file
   ([docs/research/remove-by-shared-name.md](docs/research/remove-by-shared-name.md)).
+  The same handle and the same refusals serve `/file open`.
+- **Opening one in the system** (fork F9 of
+  [docs/sandbox-file-exchange.md](docs/sandbox-file-exchange.md)): `/file open <name|#N>`
+  hands a file to the desktop's handler — a stored file and an attached document's kept
+  original as the chat's own copy, a plain attachment and an image as their own source —
+  and `/file folder` opens the chat's files folder. What may be launched is an
+  **allowlist of document types** (images, pdf, csv/tsv, txt, md, json, xlsx, docx):
+  the folder is written by `python_exec`, so a name in it is a name the *model* chose,
+  and a `run.bat`, a `.lnk` or a scripted `.html`/`.svg` would run under its handler —
+  those open the folder they sit in instead, with the reason in the note. A source that
+  is not a file on this machine (a pasted image, a fetched page's URL, a copy since
+  moved) opens nothing and is named; the path is printed either way, so a launch the
+  desktop refuses is one copy-paste from working. The launch is the app's own call —
+  `ShellExecuteW`, `xdg-open`, `open` — with one argument and no shell line.
 - **Storage**: `Chat.attachments` — the **extracted text snapshot** plus the
   name, source path, size and estimated token count. The snapshot means the
   conversation stays coherent if the file later changes or disappears, building a

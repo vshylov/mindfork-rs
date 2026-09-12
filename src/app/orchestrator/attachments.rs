@@ -322,28 +322,8 @@ impl Orchestrator {
         };
         let loc = self.ui_locale();
         let (items, dir) = self.chat_file_list(chat_id);
-        let item = match crate::features::chat_inputs::resolve(&items, &target) {
-            Resolved::One(at) => items[at].clone(),
-            Resolved::Shared(hits) => {
-                // Each one's source is what tells them apart — an attachment's path, a
-                // stored file's place in the folder, an image's origin.
-                let sources: Vec<(usize, &str)> = hits
-                    .iter()
-                    .map(|&i| (i, items[i].source.as_str()))
-                    .collect();
-                let candidates = Self::candidate_lines(sources.into_iter());
-                let msg = loc.tf(
-                    "ui.err.file_name_shared",
-                    &[("target", target.trim()), ("candidates", &candidates)],
-                );
-                self.fail_file(&msg);
-                return;
-            }
-            Resolved::Nothing => {
-                let msg = loc.tf("ui.err.file_not_attached", &[("target", target.trim())]);
-                self.fail_file(&msg);
-                return;
-            }
+        let Some(item) = self.resolve_file_handle(&items, &target) else {
+            return;
         };
         // An image belongs to the message that carries it: taking it out of the
         // conversation is not what `/file remove` does, and saying only "no" would leave
@@ -502,6 +482,135 @@ impl Orchestrator {
             stored,
             images,
             dir: dir.display().to_string(),
+        });
+    }
+
+    /// Opens one of the chat's files in the desktop environment (`/file open <name|#N>`,
+    /// fork F9). The handle is the one numbered list's (§12 T2), what it means on disk is
+    /// decided purely (§13 U2), and the file's type decides whether the file itself or the
+    /// folder it sits in is handed to the shell (§13 U3).
+    pub(super) fn handle_file_open(&mut self, target: String) {
+        if let Some((path, opened)) = self.plan_open(&target) {
+            self.spawn_open(path, opened);
+        }
+    }
+
+    /// What `/file open <target>` hands to the shell, and the note it will leave — or
+    /// `None`, every refusal having been reported here with nothing launched. The decision
+    /// is separated from the launch so it can be tested without a window opening on the
+    /// machine running the tests (§13 U10: the launch itself is the manual gate).
+    pub(super) fn plan_open(&self, target: &str) -> Option<(std::path::PathBuf, FileProgress)> {
+        let Some(chat_id) = self.active_id else {
+            self.fail_file(self.ui_locale().t("ui.err.file_no_active_chat"));
+            return None;
+        };
+        let (items, dir) = self.chat_file_list(chat_id);
+        let item = self.resolve_file_handle(&items, target)?;
+        let path = crate::features::chat_inputs::open_path(&item, &dir);
+        // The one disk check: a pasted image's source is `clipboard:<uuid>`, a fetched
+        // page's attachment carries a URL, and a listed copy can be gone from the folder.
+        if !path.is_file() {
+            let msg = self.ui_locale().tf(
+                "ui.err.file_nothing_to_open",
+                &[("name", &item.name), ("source", &item.source)],
+            );
+            self.fail_file(&msg);
+            return None;
+        }
+        let (opens, at) = crate::shared::os_open::decide(&path);
+        let progress = match opens {
+            crate::shared::os_open::Opens::File => FileProgress::Opened {
+                name: item.name.clone(),
+                path: at.display().to_string(),
+            },
+            // Not a type we let a handler run: its folder opens instead, and the note says
+            // why — a `run.bat` or a scripted `.html` a call wrote would otherwise *run*.
+            crate::shared::os_open::Opens::Folder => FileProgress::OpenedFolder {
+                path: at.display().to_string(),
+                instead_of: Some(item.name.clone()),
+            },
+        };
+        Some((at.to_path_buf(), progress))
+    }
+
+    /// Opens the chat's stored-files folder (`/file folder`). A chat that has stored
+    /// nothing has no folder yet: the command says so and prints the path rather than
+    /// creating an empty directory for it (§13 U7).
+    pub(super) fn handle_file_folder(&mut self) {
+        let Some(chat_id) = self.active_id else {
+            self.fail_file(self.ui_locale().t("ui.err.file_no_active_chat"));
+            return;
+        };
+        let dir = self.stored_files_dir(chat_id);
+        let path = dir.display().to_string();
+        if !dir.is_dir() {
+            let msg = self
+                .ui_locale()
+                .tf("ui.err.file_no_folder_yet", &[("path", &path)]);
+            self.fail_file(&msg);
+            return;
+        }
+        self.spawn_open(
+            dir,
+            FileProgress::OpenedFolder {
+                path,
+                instead_of: None,
+            },
+        );
+    }
+
+    /// Resolves a handle typed after `/file remove` or `/file open` against the chat's one
+    /// numbered list, reporting the two refusals they share: nothing of that name, and a
+    /// name several items carry — which lists each candidate's `#N` and source rather than
+    /// guessing which was meant (docs/research/remove-by-shared-name.md).
+    fn resolve_file_handle(
+        &self,
+        items: &[crate::features::chat_inputs::ChatInput],
+        target: &str,
+    ) -> Option<crate::features::chat_inputs::ChatInput> {
+        let loc = self.ui_locale();
+        match crate::features::chat_inputs::resolve(items, target) {
+            Resolved::One(at) => Some(items[at].clone()),
+            Resolved::Shared(hits) => {
+                // Each one's source is what tells them apart — an attachment's path, a
+                // stored file's place in the folder, an image's origin.
+                let sources = hits.iter().map(|&i| (i, items[i].source.as_str()));
+                let candidates = Self::candidate_lines(sources);
+                let msg = loc.tf(
+                    "ui.err.file_name_shared",
+                    &[("target", target.trim()), ("candidates", &candidates)],
+                );
+                self.fail_file(&msg);
+                None
+            }
+            Resolved::Nothing => {
+                let msg = loc.tf("ui.err.file_not_attached", &[("target", target.trim())]);
+                self.fail_file(&msg);
+                None
+            }
+        }
+    }
+
+    /// Hands a path to the desktop's handler off the command loop (§13 U5) and reports the
+    /// outcome as a note. `ShellExecuteW` returns only once the shell has started the
+    /// handler, and `xdg-open` is a script that execs another; a failure — no handler for
+    /// the type, no `xdg-open` on the machine — arrives with the path, which is the half
+    /// that makes it actionable (§13 U6).
+    fn spawn_open(&self, path: std::path::PathBuf, opened: FileProgress) {
+        let loc = self.ui_locale();
+        let tx = self.evt_tx.clone();
+        tokio::task::spawn_blocking(move || {
+            let progress = match crate::shared::os_open::open(&path) {
+                Ok(()) => opened,
+                Err(err) => FileProgress::Failed(loc.tf(
+                    "ui.err.file_open_failed",
+                    &[
+                        ("path", &path.display().to_string()),
+                        ("err", &err.to_string()),
+                    ],
+                )),
+            };
+            let _ = tx.send(AppEvent::FileProgress(progress));
         });
     }
 

@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (58)
+## Entries (59)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -70,6 +70,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the sandbox's packages, packed read-only (done)
 - Post-M9: sandbox file exchange — stage 2, files out of the sandbox (done)
 - Post-M9: sandbox file exchange — stage 3, files into the sandbox (done)
+- Post-M9: sandbox file exchange — stage 4, opening a file in the system (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -4248,3 +4249,67 @@ network state.
 **Two traps, both already in lessons.** A `cargo clippy … | tail` in a `&&` chain reported
 `tail`'s status and let a commit land with the lint red (lessons §1, now three times); and
 a Rust raw string `r#"…"#` cannot hold the handle `"#9"`, which closes it early.
+
+### Post-M9: sandbox file exchange — stage 4, opening a file in the system (done)
+
+Stage 4 of [sandbox-file-exchange.md](../sandbox-file-exchange.md) (fork F9, sub-decisions
+§13): the files a chat holds became reachable outside the app. `/file open <name|#N>` hands
+one to the desktop's handler and `/file folder` opens the chat's files folder — the last
+half of D1, which asked for the outputs to be openable without hunting for the directory.
+
+**One resolver, no second numbering.** The handle is the list of §12 T2 — attachments, the
+stored files no attachment links, the chat's images — resolved through the same
+`chat_inputs::resolve` that `/file remove` and the tool's `files` take, and the two refusals
+they share (nothing of that name; a name several items carry, listed with each candidate's
+`#N` and source) moved into one `resolve_file_handle` rather than being written twice. What
+a handle *means on disk* is a pure function beside the list (`open_path`): the chat's own
+copy for a stored file and for an attached document that kept its original — ours is the
+half guaranteed to be there, the user's path may have moved since — and the item's `source`
+for everything else. The caller then checks that path once, and a source that is not a file
+opens nothing and is named: a pasted image's is `clipboard:<uuid>`, a fetched page's
+attachment carries a URL, and a listed copy can be gone from the folder. Nothing is written
+to make an open work — a command read as "show me this" must not put a new file on the
+user's disk.
+
+**The allowlist is the point of the module.** The folder it opens from is written by
+`python_exec`, so a name in it is a name the *model* chose: handing it to the shell is
+handing it to a default handler, and a `run.bat`, a `.lnk` or a scripted `.html`/`.svg`
+would **run**. `os_open::is_document` therefore names what may be launched — png/jpg/jpeg/
+gif/bmp/webp/tif/tiff, pdf, csv/tsv, txt, md, json, xlsx, docx — the last extension
+deciding, so `report.pdf.bat` is a batch file; `decide` sends everything else to the folder
+it sits in, which runs nothing and is still one double-click from the file, with the reason
+in the note. Macro-enabled office shapes (`docm`, `xlsm`) are out for the same reason, and
+`svg`/`html` are out although a call writes both.
+
+**The launch is three calls of ours** (`shared/os_open.rs`, ~60 lines): `ShellExecuteW`
+with the `open` verb on Windows (windows-sys gains `Win32_UI_Shell`; a return at or below
+32 is an error code, and `SE_ERR_NOASSOC` becomes "no application is associated"),
+`xdg-open` on Linux, `open` on macOS — one argument, no shell. Not `cmd /c start`, which
+re-parses its argument outside Rust's escaping (lessons §6), and not a crate for three
+calls. It runs on the blocking pool: the shell returns only once the handler has started.
+The path is printed on success *and* on failure, so a desktop with no handler leaves the
+user one copy-paste from the file rather than one error message from nothing.
+
+**Testability was designed in, because the last step opens a window.** The orchestrator's
+decision is a `plan_open` that returns the path and the note it will leave — every refusal
+reported, nothing launched — so the wiring is tested without anything appearing on the
+machine running the tests; and the unix launch takes its launcher as an argument, so a stub
+script on Linux records what it was given. That is the half CI covers: the argument arrives
+whole (`my chart (1).png`, spaces and brackets included) and a launcher that is not
+installed comes back as an error.
+
+**Gate — manual, no model run** (§8): on Windows 11, `MINDFORK_OPEN_LIVE=1 cargo test --
+--ignored opens_a_document_and_a_folder_live` opened a viewer on `mindfork open gate.txt`
+(a name with spaces, passed whole) and a file manager on the folder standing in for
+`run.bat` — both `ShellExecuteW` calls above 32. The Linux half runs in CI through the stub
+launcher; a GUI launch on a Linux desktop is the one thing not verified here, no Linux
+desktop being available on the development machine.
+
+**Tests.** Unit: 3165 green, 168 ignored (3155 / 167 before) — plus one more on Linux,
+the stub-launcher test being `cfg(unix)`. New: the platform→launcher
+mapping; the allowlist, including what it must refuse; `decide` falling back to the folder;
+`open_path` across the four kinds; the plan for a document and for a script a call wrote;
+the three shapes of "not a file on this machine"; a shared name refused with both
+candidates; `/file folder` on a chat that saved nothing, which must also not create the
+directory it reports on; the two feed notes; the unix launch's single whole argument and its
+missing-launcher error.

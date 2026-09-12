@@ -1,5 +1,6 @@
 //! Parses chat file-attachment slash-commands in the input box
-//! (`/file attach <path>`, `/file remove <name|#N>`, `/file list`). Pure,
+//! (`/file attach <path>`, `/file remove <name|#N>`, `/file list`,
+//! `/file open <name|#N>`, `/file folder`). Pure,
 //! testable logic: the chat screen calls it on send; a recognized command turns
 //! into an intent, while an unrecognized string goes out as a regular message.
 //! Error messages are localized in the interface language (axis B) — the caller
@@ -24,6 +25,11 @@ pub enum FileCommand {
     Remove { target: String },
     /// Show what is attached to the current chat.
     List,
+    /// Open one of the chat's files in the OS, by the handle `/file list` shows
+    /// (fork F9, docs/sandbox-file-exchange.md §13 U1).
+    Open { target: String },
+    /// Open the chat's stored-files folder in the OS (`/file folder`).
+    Folder,
 }
 
 /// Outcome of a `/file` command, for the feed note / status.
@@ -71,6 +77,16 @@ pub enum FileProgress {
         stored: Vec<StoredInfo>,
         images: Vec<crate::entities::message_image::ImageInfo>,
         dir: String,
+    },
+    /// A file was handed to the desktop's handler (`/file open`, fork F9). The path is
+    /// printed too, always: a launch that fails on the way is then one copy away from
+    /// working (§13 U6).
+    Opened { name: String, path: String },
+    /// A folder was opened: the chat's own (`/file folder`), or — when `instead_of` is
+    /// set — the folder of a file whose type is not one a handler may run (§13 U3).
+    OpenedFolder {
+        path: String,
+        instead_of: Option<String>,
     },
     /// Building the semantic index over a by-reference file is under way
     /// (a banner with a spinner; `done`/`total` are chunks).
@@ -139,6 +155,18 @@ pub fn parse(input: &str, loc: &Locale) -> Option<Result<FileCommand, String>> {
         }
     } else if sub.eq_ignore_ascii_case("list") {
         Some(Ok(FileCommand::List))
+    } else if sub.eq_ignore_ascii_case("open") {
+        // An argument's absence must not quietly change the target into the folder
+        // (fork F9): `/file folder` is the command for that.
+        match argument(&rest) {
+            Some(target) => Some(Ok(FileCommand::Open { target })),
+            None => Some(Err(loc.tf(
+                "ui.file.err.missing_target",
+                &[("usage", loc.t("ui.file.usage"))],
+            ))),
+        }
+    } else if sub.eq_ignore_ascii_case("folder") {
+        Some(Ok(FileCommand::Folder))
     } else {
         Some(Err(loc.tf(
             "ui.file.err.unknown_subcommand",
@@ -234,6 +262,25 @@ mod tests {
     }
 
     #[test]
+    fn parses_open_and_folder() {
+        assert_eq!(
+            parse("/file open #3", ru()),
+            Some(Ok(FileCommand::Open {
+                target: "#3".into()
+            }))
+        );
+        assert_eq!(
+            parse("/FILE Open \"my chart.png\"", ru()),
+            Some(Ok(FileCommand::Open {
+                target: "my chart.png".into()
+            }))
+        );
+        assert_eq!(parse("/file folder", ru()), Some(Ok(FileCommand::Folder)));
+        // `open` with nothing to open is an error, not the folder (fork F9).
+        assert!(matches!(parse("/file open", ru()), Some(Err(_))));
+    }
+
+    #[test]
     fn delete_is_not_a_command() {
         // `delete` is deliberately unsupported (see the parser's comment).
         assert!(matches!(parse("/file delete a.txt", ru()), Some(Err(_))));
@@ -255,7 +302,13 @@ mod tests {
     fn errors_are_localized_for_all_langs() {
         for &lang in crate::shared::i18n::Lang::ALL {
             let loc = crate::shared::i18n::locale(lang);
-            for input in ["/file", "/file attach", "/file remove", "/file purge x"] {
+            for input in [
+                "/file",
+                "/file attach",
+                "/file remove",
+                "/file open",
+                "/file purge x",
+            ] {
                 let Some(Err(msg)) = parse(input, loc) else {
                     panic!("expected a syntax error for {input:?} in {lang:?}");
                 };

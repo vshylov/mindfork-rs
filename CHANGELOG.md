@@ -16,6 +16,15 @@ split by subsystem.
 
 ### Added
 
+- **Opening a chat's file in the system**: `/file open <name|#N>` opens one of the files
+  `/file list` shows — an attachment, a file the assistant saved, an image of the
+  conversation — in whatever application the system uses for it, and `/file folder` opens
+  the chat's files folder. Only document types (images, pdf, csv, txt, md, json, xlsx,
+  docx) open directly; anything else — a script, a shortcut, an HTML page the assistant
+  wrote — opens the folder it sits in instead, so nothing the assistant produced can run
+  by being opened. The path is always printed, so a file the system will not open is a
+  copy-paste away.
+
 - **Files into the Python sandbox.** The assistant's code can now read this
   chat's files: it names them in the call, by the number `/file list` shows or by
   name, and each is copied into the sandbox before the code runs. Attachments go
