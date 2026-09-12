@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (62)
+## Entries (63)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -74,6 +74,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: sandbox file exchange — stage 5, the local interpreter joins the contract (done)
 - Post-M9: a withheld server image is stated, and stated in words that work (done)
 - Post-M9: the rest of the withheld-image family gets the clause that works (done)
+- Post-M9: a handle means one file for the whole turn (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -4481,3 +4482,70 @@ the `python_exec` shape end to end (the model returned `tool_calls`, inventing n
 `a_withheld_tool_image_is_not_described_live` re-run beside it (control described a
 screenshot it never got; with the note, "I cannot see the screenshot"). Unit: 3173 green,
 170 ignored.
+
+### Post-M9: a handle means one file for the whole turn (done)
+
+The second finding of the review pass over the merged file-exchange track, and the one three
+reviewers reached independently. §12 T2 promised that a pure `chat_inputs` **builds the list
+once** and its consumers read it. The code built it **three** times: at turn start for the
+pinned block, live in the confirmation popup, and live again in `PythonExec::stage`. The last
+two agreed with each other and both could disagree with the first.
+
+That matters because the list grows *during* a turn. `sync_attachments` and `sync_files`
+mirror each round's effects into the tool context, and `items()` numbers positionally —
+attachments, then stored files, then images — so one `fetch_url` landing a page pushes every
+stored file and every image down by one, and one `python_exec` output pushes every image
+down by one. The model, still reading a block written before it had produced a line of code,
+names `#2` and is handed whatever slid into that slot. **No refusal**: `#N` was a plain index,
+and an index cannot notice that it has changed meaning. `sync_attachments` also does
+`retain(|x| x.source != a.source)` then `push`, so re-fetching one source **reorders** the
+attachments without changing the length — even `#1` can move.
+
+The same shift renames what lands in `/w/in`: `number()` versions staged names in list order,
+so the `notes (2).md` the block promised becomes `notes (3).md` — and T3 exists precisely
+because the model writes `/w/in/<name>` into its code *before* any result exists.
+
+**Decision (user's, 2026-09-12): freeze the numbering for the turn**, over refusing on drift
+and over rebuilding the block each round — the latter rewrites `request.system` mid-turn and
+throws away the conversation's prefill, which on this stack was measured at ~50 tok/s cold.
+
+**Carried, not frozen.** The list is re-derived every round and only the two fields the model
+was *told* are carried over: the `#N` and the staged name. `ChatInput` gained the item's own
+id to match on, and `reconcile` restores those two from the previous list, numbering only
+what is new, after everything already promised. Freezing the whole item would have gone stale
+the moment `sync_attachments` reordered, because `attachment` and `image` are positions into
+the live context. A number is never reused — it counts on from the highest the turn issued —
+so a handle for an item that has left misses rather than landing on a newcomer, and `resolve`
+now matches `#N` against the handle instead of indexing with it. The turn's list lives on
+`ToolContext.inputs`, refreshed by `ToolContext::sync_inputs` after the two mirrors; the tool,
+the popup and the sub-agent's own block all read it, so the three derivations are one again.
+
+**Tests.** Four pure ones over `reconcile` (a file landing mid-turn moves nothing; the staged
+name survives a newcomer sorting ahead of it; a reordered attachment keeps its number; a
+number is never reused), and one through the tool over the real context. All five fail with
+the carry-over disabled — checked, not assumed. Two existing tests were repaired rather than
+adapted: one had been replacing the context's snapshots without renumbering, and
+`a_listed_file_whose_copy_is_gone_runs_nothing` turned out to assert only that *some* refusal
+mentioned the name, which the "unknown handle" refusal satisfies too — it now asserts the
+exact one. Unit: 3178 green, 172 ignored.
+
+**Live — GO (2026-09-12)** on Gemma 4 31B q4_0, llama.cpp b10807, sandbox provisioned.
+`a_handle_survives_a_round_that_adds_a_file_live`: a chat holding one image, one turn, two
+rounds — the first call saves a file, the second names `#1` and prints the first bytes of
+what arrived in `/w/in`. It printed the PNG signature. The three existing sandbox smokes were
+re-measured after the refactor rather than assumed (`sandbox_inputs_e2e_live` summing to 4706
+again, `sandbox_outputs_e2e_live`, `attached_binary_reaches_the_sandbox_live`).
+
+**Two dead ends in that smoke, both worth the warning.** Its first version asserted over the
+two calls' results **joined**, and failed on `ROUND-ONE` appearing in the *first* call's own
+result — a saved text file is listed with the head of its content, so the test was failing on
+the half that worked. Its second version passed under mutation: the prompt asked for two
+calls without making the second depend on the first, so the model issued both **in one
+round** — and the list is reconciled between rounds, so nothing it did could reach the defect.
+The fix is to make call 2 need a value only call 1 can produce (a digest), which forces the
+round boundary. Mutation-checked afterwards, the smoke fails exactly as a user would see it:
+`#1` staged the wrong file, the code raised `FileNotFoundError`, the model retried `#1` twice
+and then fell back to naming the file — three rounds spent on a number that had quietly
+changed meaning. `python_turn` now reports each call's **arguments** alongside its result,
+because a smoke about which handle was named cannot read that from the result text — which is
+how the one-round version looked green.
