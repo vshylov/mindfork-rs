@@ -683,6 +683,14 @@ because the survey found a decision (D3) resting on something that does not exis
   job directory and die with it. A cap here would be the one place where naming your own
   file fails, which is what F10 refused for the store. The popup line shows the sizes
   before the copy is made, and the description says copies are per call.
+  *Amended (2026-09-13) — user's decision: a cap after all,* twenty files and 100 MB per
+  call, checked against the recorded sizes once every handle has resolved and refusing the
+  call whole. T8's objection stands for a single file, and the cap is set so that it never
+  reaches one: attachments stop at 32 MB. What T8 did not weigh is the call that names a
+  long chat's whole store at once — every collected output is a file, and nothing bounds
+  how many a chat accumulates — while the popup it relied on appears only with
+  `confirm_dangerous`, off by default. F10, no quota on the store itself, is untouched:
+  this bounds what one call copies, not what a chat keeps.
 - **T9 — `/file attach` keeps the original (F8(a)), and the pair is one item.** The
   blocking read now ends in one of three outcomes: plain text — an attachment, as today;
   an extractor's text (pdf, docx, html) — an attachment **and** the original stored,
