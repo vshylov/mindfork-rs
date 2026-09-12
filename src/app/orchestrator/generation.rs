@@ -1383,10 +1383,17 @@ async fn confirm_call(
     // so `files` — the argument that decides what leaves the chat — is invisible without
     // this, and a set resolved twice could disagree with what goes in.
     let inputs = (call.name == crate::features::tools::PYTHON_EXEC_ID).then(|| {
-        let named = serde_json::from_str::<serde_json::Value>(&call.arguments)
+        use crate::features::chat_inputs::NamedFiles;
+        // An argument that cannot be read names nothing, and the call it belongs to will be
+        // refused before it runs — so the popup asks about the code alone rather than
+        // inventing a file list for it.
+        let named = match serde_json::from_str::<serde_json::Value>(&call.arguments)
             .as_ref()
             .map(crate::features::chat_inputs::named_files)
-            .unwrap_or_default();
+        {
+            Ok(NamedFiles::Named(named)) => named,
+            Ok(NamedFiles::Malformed) | Err(_) => Vec::new(),
+        };
         // The turn's list — the same one `stage` will resolve against. Derived afresh,
         // this popup could name a different set than the call ends up staging, which is
         // the one thing it exists to prevent (fork F12).

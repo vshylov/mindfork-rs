@@ -36,6 +36,12 @@ const LOCAL_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_OUTPUT_CHARS: usize = 8000;
 /// How much of a text-like output its entry quotes (docs/history/sandbox-file-exchange.md F5 (c)).
 const TEXT_HEAD_BYTES: usize = 1024;
+/// How many of a call's skipped outputs the result names one by one, the rest being
+/// counted. `OutputLimits` bounds what is *collected*, never what is *reported*, and a call
+/// that fills its output folder skips every entry past the tenth — so this list, unlike the
+/// files section above it, has no natural ceiling. Generous against the ten that can be
+/// kept: a run that skipped a handful wants them all named.
+const MAX_SKIPPED_LINES: usize = 20;
 
 /// `python_exec` — executes the given Python code and returns stdout/stderr.
 pub struct PythonExec {
@@ -269,7 +275,28 @@ impl PythonExec {
             )),
         }
         let out_dir = self.mode.dirs().1;
-        lines.extend(out.skipped.iter().map(|s| skipped_line(loc, s, out_dir)));
+        // Capped like stdout and stderr are, and for the same reason: this list is one line
+        // per entry the call left in the output folder, and nothing bounded it. A script
+        // that wrote twenty thousand files put twenty thousand lines into the tool result —
+        // into the conversation, into every later turn's prompt, and onto the bill — while
+        // the eight thousand characters of its own output were clipped.
+        lines.extend(
+            out.skipped
+                .iter()
+                .take(MAX_SKIPPED_LINES)
+                .map(|s| skipped_line(loc, s, out_dir)),
+        );
+        if let Some(rest) = out
+            .skipped
+            .len()
+            .checked_sub(MAX_SKIPPED_LINES)
+            .filter(|n| *n > 0)
+        {
+            lines.push(loc.tf(
+                "tool.python_exec.files.more_skipped",
+                &[("n", &rest.to_string())],
+            ));
+        }
         kept.section = Some(format!("files:\n{}", lines.join("\n")));
         kept
     }
@@ -455,18 +482,19 @@ impl Tool for PythonExec {
             .to_string();
 
         // The chat's files this call wants staged (§12 T2): names or `#N`, as the chat's
-        // file list numbers them. Both modes since stage 5's parity.
-        let files: Vec<String> = args
-            .get("files")
-            .and_then(|v| v.as_array())
-            .map(|named| {
-                named
-                    .iter()
-                    .filter_map(|f| f.as_str().map(str::to_string))
-                    .filter(|f| !f.trim().is_empty())
-                    .collect()
-            })
-            .unwrap_or_default();
+        // file list numbers them. Both modes since stage 5's parity. One reading, shared
+        // with the confirmation popup, so the set stated and the set staged cannot differ.
+        let files = match crate::features::chat_inputs::named_files(&args) {
+            crate::features::chat_inputs::NamedFiles::Named(files) => files,
+            // Read as an array and silently discarded, this ran the code against an empty
+            // `in/` and left the model a `FileNotFoundError` to interpret — so it tried the
+            // same shape again. Every other unusable `files` is a refusal; so is this.
+            crate::features::chat_inputs::NamedFiles::Malformed => {
+                return Ok(ToolOutcome::text(
+                    ctx.loc.t("tool.python_exec.err.files_shape"),
+                ));
+            }
+        };
 
         Ok(self.run_job(&code, &files, ctx).await)
     }
@@ -856,6 +884,85 @@ mod tests {
     fn staging_tool() -> (Arc<MockSandbox>, PythonExec) {
         let sb = Arc::new(MockSandbox::ready(SandboxOutput::default()));
         (sb.clone(), wasmer(sb, false))
+    }
+
+    /// A single name where the schema asks for a list is the shape models emit most often.
+    /// Read as an array and discarded, it staged **nothing** and ran the code against an
+    /// empty `in/` — so the model got a `FileNotFoundError` with no hint that the argument
+    /// was the problem, and tried the same shape again.
+    #[tokio::test]
+    async fn one_name_without_its_list_still_names_a_file() {
+        let (_d, _folder, ctx) = ctx_with_inputs();
+        let (sb, tool) = staging_tool();
+        let out = tool
+            .invoke(
+                &ctx,
+                serde_json::json!({"code": "print(1)", "files": "sales.xlsx"}),
+            )
+            .await
+            .unwrap();
+        assert!(!out.result.contains("nothing was run"), "{}", out.result);
+        let staged = sb.staged.lock().unwrap();
+        assert_eq!(
+            staged[0]
+                .iter()
+                .map(|(n, _)| n.as_str())
+                .collect::<Vec<_>>(),
+            ["sales.xlsx"]
+        );
+    }
+
+    /// An argument that is not a list of names is refused **before** the run, like every
+    /// other unusable `files` (§12 T7). Dropping the element that is not a string would
+    /// have staged three of the four files a call asked for.
+    #[tokio::test]
+    async fn a_files_argument_that_is_not_names_runs_nothing() {
+        let (_d, _folder, ctx) = ctx_with_inputs();
+        let (sb, tool) = staging_tool();
+        let out = tool
+            .invoke(
+                &ctx,
+                serde_json::json!({"code": "print(1)", "files": ["sales.xlsx", 3]}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(out.result, ctx.loc.t("tool.python_exec.err.files_shape"));
+        assert!(sb.calls.lock().unwrap().is_empty(), "{}", out.result);
+    }
+
+    /// `OutputLimits` bounds what a call's outputs may *collect*; nothing bounded what the
+    /// result may *say* about them. One line per entry left in the output folder meant a
+    /// script that wrote twenty thousand files put twenty thousand lines into the tool
+    /// result — into the conversation, into every later prompt and onto the bill — while
+    /// its own stdout was clipped at eight thousand characters.
+    #[tokio::test]
+    async fn a_call_that_skipped_a_flood_of_files_does_not_list_them_all() {
+        use crate::shared::sandbox::{SkipReason, SkippedOutput};
+
+        let skipped: Vec<SkippedOutput> = (0..500)
+            .map(|i| SkippedOutput {
+                name: format!("f{i}.txt"),
+                reason: SkipReason::TooMany,
+            })
+            .collect();
+        let (_d, _folder, ctx) = ctx_with_inputs();
+        let sb = Arc::new(MockSandbox::ready(SandboxOutput {
+            skipped,
+            ..Default::default()
+        }));
+        let tool = wasmer(sb.clone(), false);
+        let out = tool
+            .invoke(&ctx, serde_json::json!({"code": "print(1)"}))
+            .await
+            .unwrap();
+
+        let named = out.result.matches("not kept:").count();
+        assert_eq!(named, 20, "the list has to stop somewhere: {}", out.result);
+        assert!(
+            out.result.contains("480"),
+            "and say how many it did not name: {}",
+            out.result
+        );
     }
 
     #[tokio::test]

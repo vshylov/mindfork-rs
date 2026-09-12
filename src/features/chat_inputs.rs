@@ -272,18 +272,50 @@ pub fn for_confirm(items: &[ChatInput], handles: &[String], net: bool) -> Confir
 
 /// The file handles a call names in its `files` argument. One rule, two readers: the tool
 /// reads the parsed arguments, the popup the same value off the wire.
-pub fn named_files(args: &serde_json::Value) -> Vec<String> {
-    args.get("files")
-        .and_then(|v| v.as_array())
-        .map(|named| {
-            named
-                .iter()
-                .filter_map(|f| f.as_str())
-                .filter(|f| !f.trim().is_empty())
-                .map(str::to_string)
-                .collect()
-        })
-        .unwrap_or_default()
+pub fn named_files(args: &serde_json::Value) -> NamedFiles {
+    use serde_json::Value;
+
+    let Some(value) = args.get("files") else {
+        return NamedFiles::Named(Vec::new());
+    };
+    match value {
+        Value::Null => NamedFiles::Named(Vec::new()),
+        // One name where a list was asked for. Models emit this routinely and the intent is
+        // not in doubt, so it is taken rather than refused: a round spent teaching JSON is
+        // a round the user pays for.
+        Value::String(one) if !one.trim().is_empty() => NamedFiles::Named(vec![one.clone()]),
+        Value::String(_) => NamedFiles::Named(Vec::new()),
+        Value::Array(items) => {
+            let mut out = Vec::with_capacity(items.len());
+            for item in items {
+                match item.as_str() {
+                    // A non-string element is not a handle, and quietly dropping it would
+                    // stage three of the four files the call asked for — the very thing §12
+                    // T7 refuses to do for every other cause.
+                    None => return NamedFiles::Malformed,
+                    Some(handle) if handle.trim().is_empty() => continue,
+                    Some(handle) => out.push(handle.to_string()),
+                }
+            }
+            NamedFiles::Named(out)
+        }
+        _ => NamedFiles::Malformed,
+    }
+}
+
+/// What a call's `files` argument names — or that it cannot be read at all.
+///
+/// One reading for the tool and for the confirmation popup, because two would let the popup
+/// state a set the call does not stage (§12 T6). Before this existed both took
+/// `as_array().unwrap_or_default()`, so `"files": "sales.csv"` silently became *no files*:
+/// nothing staged, nothing refused, the code run against an empty `in/` and the model left
+/// to read a `FileNotFoundError` and try the same shape again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NamedFiles {
+    /// The handles, in the order the call gave them; empty when the argument is absent.
+    Named(Vec<String>),
+    /// Present, and not a list of names. The call is refused rather than run with nothing.
+    Malformed,
 }
 
 /// Fills in the handles and makes every staged name valid and unique: sanitized, and
@@ -638,6 +670,45 @@ mod tests {
             panic!("#1 resolves to nothing");
         };
         assert_eq!(after[at].name, "notes.md");
+    }
+
+    /// One reading for the tool and the popup, and it has to tell "names nothing" from
+    /// "cannot be read". Taking `as_array().unwrap_or_default()` made the two the same
+    /// answer, so a single name — the shape models emit most often — silently staged
+    /// nothing and the code met an empty `in/`.
+    #[test]
+    fn the_files_argument_is_read_once_and_says_when_it_cannot_be() {
+        use serde_json::json;
+
+        let named = |v: serde_json::Value| named_files(&v);
+        // Absent, null and empty all name nothing, and that is not an error.
+        assert_eq!(named(json!({"code": "x"})), NamedFiles::Named(vec![]));
+        assert_eq!(named(json!({"files": null})), NamedFiles::Named(vec![]));
+        assert_eq!(named(json!({"files": []})), NamedFiles::Named(vec![]));
+        assert_eq!(named(json!({"files": "  "})), NamedFiles::Named(vec![]));
+
+        assert_eq!(
+            named(json!({"files": ["sales.csv", "#2"]})),
+            NamedFiles::Named(vec!["sales.csv".into(), "#2".into()])
+        );
+        // A single name where a list was asked for: the intent is not in doubt, so it is
+        // taken rather than costing the user a round.
+        assert_eq!(
+            named(json!({"files": "sales.csv"})),
+            NamedFiles::Named(vec!["sales.csv".into()])
+        );
+        // Blank entries are dropped; they name nothing and refusing the call over one would
+        // be harsher than the handle deserves.
+        assert_eq!(
+            named(json!({"files": ["sales.csv", "", "  "]})),
+            NamedFiles::Named(vec!["sales.csv".into()])
+        );
+
+        // A non-string element **is** a refusal: dropping it would stage three of the four
+        // files the call asked for, which is what §12 T7 exists to prevent.
+        assert_eq!(named(json!({"files": ["a", 3]})), NamedFiles::Malformed);
+        assert_eq!(named(json!({"files": 7})), NamedFiles::Malformed);
+        assert_eq!(named(json!({"files": {"a": 1}})), NamedFiles::Malformed);
     }
 
     /// A number is never handed on. An item that leaves mid-turn takes its handle with it,
