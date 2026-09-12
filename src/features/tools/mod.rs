@@ -1247,6 +1247,21 @@ mod tests {
         assert_eq!(ToolParams::from_config(&cfg).file_hint, None);
     }
 
+    /// §14 V5: the network switch is the sandbox's. In Local mode the code runs with the
+    /// user's own reach, so the value the confirmation popup states is `true` there
+    /// whatever the setting says — a popup promising an isolated network would be a lie.
+    #[test]
+    fn local_mode_reports_the_network_as_reachable_whatever_the_switch_says() {
+        let mut cfg = AppConfig::default();
+        cfg.tools.python_net_enabled = false;
+        cfg.tools.python_mode = crate::shared::config::PythonMode::Wasmer;
+        assert!(!ToolParams::from_config(&cfg).python_net);
+        cfg.tools.python_mode = crate::shared::config::PythonMode::Local;
+        let params = ToolParams::from_config(&cfg);
+        assert!(params.python_net);
+        assert_eq!(params.python_mode, crate::shared::config::PythonMode::Local);
+    }
+
     /// The concurrent set is exactly the documented one
     /// (docs/research/concurrent-tools.md §2.3) — a tool cannot be marked by
     /// accident and the document cannot drift — and no marked tool is

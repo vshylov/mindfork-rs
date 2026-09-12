@@ -86,6 +86,29 @@ fn the_chat_files_block_names_handles_and_staged_names() {
         .system
         .unwrap_or_default();
     assert!(!bare.contains("/w/in"), "{bare}");
+
+    // The same list in Local mode names the folders that mode actually uses (§14 V2):
+    // one block, two spellings, and never the guest's path on the host.
+    let local = build_request(
+        &chat,
+        SamplingConfig::default(),
+        vec![],
+        &PromptContext {
+            attachments: &AttachmentSettings::default(),
+            compaction: &CompactionSettings::default(),
+            indexed: NO_INDEX,
+            files: &items,
+            python_dirs: crate::shared::config::PythonMode::Local.dirs(),
+            history_tools: false,
+            offered_tools: &[],
+            loc: ru(),
+        },
+    )
+    .system
+    .unwrap_or_default();
+    assert!(local.contains("#1 report.pdf"), "{local}");
+    assert!(local.contains("in/report.pdf.txt"), "{local}");
+    assert!(!local.contains("/w/"), "{local}");
 }
 
 #[test]
