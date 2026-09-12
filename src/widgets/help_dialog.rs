@@ -263,6 +263,8 @@ pub const HELP_COMMANDS: &[(&str, &str)] = &[
     ("ui.help.k.file_attach", "ui.help.file_attach"),
     ("ui.help.k.file_remove", "ui.help.file_remove"),
     ("/file list", "ui.help.file_list"),
+    ("ui.help.k.file_open", "ui.help.file_open"),
+    ("/file folder", "ui.help.file_folder"),
     // Images sit right after the files: the same verbs and the same `#N`
     // addressing, but staged for the **next message** rather than pinned to the
     // chat — the descriptions carry that difference (spec §9.10).
@@ -1495,7 +1497,8 @@ mod tests {
                 .position(|(k, _)| *k == label)
                 .unwrap_or_else(|| panic!("{label} is missing from HELP_COMMANDS"))
         };
-        let files = at("/file list");
+        // The `/file` block is attach · remove · list · open · folder (fork F9).
+        let files = at("/file folder");
         assert_eq!(at("ui.help.k.image_attach"), files + 1);
         assert_eq!(at("ui.help.k.image_remove"), files + 2);
         assert_eq!(at("/image list"), files + 3);
@@ -1985,6 +1988,10 @@ mod tests {
             commands.find("/file attach") < commands.find("/rag add"),
             "the /file commands must come before /rag: {commands}"
         );
+        // Opening a chat's file in the system is reachable from the help too (F9).
+        for label in ["/file open", "/file folder"] {
+            assert!(commands.contains(label), "missing the {label} command");
+        }
 
         // "License": the MIT text. This render runs in `ru`, and the legal
         // tabs follow the interface language — the markers here are the

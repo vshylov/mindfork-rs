@@ -233,6 +233,13 @@ pub enum ChatIntent {
     },
     /// Show the chat's attachments (command `/file list`).
     FileList,
+    /// Open one of the chat's files in the OS (command `/file open <name|#N>`,
+    /// docs/sandbox-file-exchange.md fork F9).
+    FileOpen {
+        target: String,
+    },
+    /// Open the chat's stored-files folder in the OS (command `/file folder`).
+    FileFolder,
     /// Attach a code project to the chat (command `/project attach <dir>`).
     /// See docs/history/code-workspace.md, spec §9.12.
     ProjectAttach {

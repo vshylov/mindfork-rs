@@ -2,7 +2,8 @@
 //! (docs/sandbox-file-exchange.md §11 S5–S8, S11): a tool's `AddChatFile` lands once and is
 //! mirrored into the turn, `/file list` and `/file remove` reach stored files, a copy that
 //! cannot be deleted stays listed, the bootstrap adopts what a chat does not list, and an
-//! image the model cannot take is withheld with a note. Part of the [`super`] module
+//! image the model cannot take is withheld with a note, and `/file open`/`/file folder`
+//! plan what reaches the shell (§13). Part of the [`super`] module
 //! (fixtures in mod.rs; the scripted engine in subagent.rs).
 
 use std::time::Duration;
@@ -179,6 +180,120 @@ fn removing_an_image_is_refused_with_the_way_out() {
 
 /// Removing an attached document that kept its original takes both halves — the listing
 /// and our copy of the file — and never the user's own (§12 T9).
+/// Fork F9 (§13 U3): a type the shell may run is never handed to a handler — the folder
+/// opens instead, and the note says which happened. The plan is asserted rather than the
+/// launch: nothing opens a window on the machine running the tests (§13 U10).
+#[test]
+fn a_document_opens_and_a_script_the_call_wrote_opens_its_folder() {
+    let (_dir, mut orch, mut rx) = bare_orch_rx();
+    let chat_id = open_chat(&mut orch);
+    let dir = orch.stored_files_dir(chat_id);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("chart.png"), PNG).unwrap();
+    std::fs::write(dir.join("run.bat"), b"echo hi").unwrap();
+    let chat = orch.chats.iter_mut().find(|c| c.id == chat_id).unwrap();
+    chat.files.push(listing("chart.png"));
+    chat.files
+        .push(ChatFile::new("run.bat", FileOrigin::Sandbox, b"echo hi"));
+
+    let (path, note) = orch.plan_open("#1").expect("the chart opens");
+    assert_eq!(path, dir.join("chart.png"));
+    assert!(
+        matches!(&note, FileProgress::Opened { name, .. } if name == "chart.png"),
+        "{note:?}"
+    );
+
+    let (path, note) = orch.plan_open("run.bat").expect("the folder opens instead");
+    assert_eq!(path, dir, "a script must not reach a handler");
+    assert!(
+        matches!(&note, FileProgress::OpenedFolder { instead_of: Some(name), .. } if name == "run.bat"),
+        "{note:?}"
+    );
+    assert_eq!(failure(drain(&mut rx)), None, "neither is a refusal");
+}
+
+/// The three shapes of "there is no file to open" — a pasted image, a handle nothing
+/// answers to, and a listed copy the folder no longer holds — refuse before the shell is
+/// reached, each naming what it looked for (§13 U2).
+#[test]
+fn opening_refuses_what_is_not_a_file_on_this_machine() {
+    let (_dir, mut orch, mut rx) = bare_orch_rx();
+    let chat_id = open_chat(&mut orch);
+    let chat = orch.chats.iter_mut().find(|c| c.id == chat_id).unwrap();
+    // Listed, but its copy never reached the folder.
+    chat.files.push(listing("chart.png"));
+    let mut message = Message::user("look");
+    message
+        .images
+        .push(crate::entities::message_image::MessageImage::new(
+            "clipboard.png",
+            "clipboard:9f2c",
+            "image/png",
+            10,
+            10,
+            "AAAA".into(),
+        ));
+    chat.messages.push(message);
+
+    assert!(orch.plan_open("#2").is_none(), "a paste has no file");
+    let msg = failure(drain(&mut rx)).expect("a refusal");
+    assert!(
+        msg.contains("clipboard.png") && msg.contains("clipboard:9f2c"),
+        "{msg}"
+    );
+
+    assert!(orch.plan_open("#1").is_none(), "the copy is gone");
+    let msg = failure(drain(&mut rx)).expect("a refusal");
+    assert!(msg.contains("chart.png"), "{msg}");
+
+    assert!(orch.plan_open("nothing.txt").is_none());
+    let msg = failure(drain(&mut rx)).expect("a refusal");
+    assert!(msg.contains("nothing.txt"), "{msg}");
+}
+
+/// A name two of the chat's files share opens nothing and lists each holder's `#N` and
+/// source — the rule `/file remove` already had, now shared by both commands (§13 U1).
+#[test]
+fn opening_a_shared_name_is_refused_with_both_candidates() {
+    let (_dir, mut orch, mut rx) = bare_orch_rx();
+    let chat_id = open_chat(&mut orch);
+    let chat = orch.chats.iter_mut().find(|c| c.id == chat_id).unwrap();
+    for source in ["C:\\a\\notes.md", "C:\\b\\notes.md"] {
+        chat.attachments.push(Attachment::new(
+            "notes.md",
+            source,
+            "text".into(),
+            4,
+            AttachMode::Inline,
+        ));
+    }
+
+    assert!(orch.plan_open("notes.md").is_none());
+    let msg = failure(drain(&mut rx)).expect("a refusal");
+    assert!(msg.contains("#1") && msg.contains("#2"), "{msg}");
+    assert!(
+        msg.contains("C:\\a\\notes.md") && msg.contains("C:\\b\\notes.md"),
+        "{msg}"
+    );
+}
+
+/// `/file folder` on a chat that has saved nothing says so and prints the path — and
+/// creates no empty directory on the way (§13 U7).
+#[test]
+fn the_folder_of_a_chat_that_saved_nothing_is_refused_with_its_path() {
+    let (_dir, mut orch, mut rx) = bare_orch_rx();
+    let chat_id = open_chat(&mut orch);
+    let dir = orch.stored_files_dir(chat_id);
+
+    orch.handle_file_folder();
+    let msg = failure(drain(&mut rx)).expect("a refusal");
+    assert!(msg.contains(&dir.display().to_string()), "{msg}");
+    assert!(
+        !dir.exists(),
+        "the command created the folder it reported on"
+    );
+}
+
 #[test]
 fn removing_a_pair_deletes_our_copy_and_both_listings() {
     let (_dir, mut orch, mut rx) = bare_orch_rx();

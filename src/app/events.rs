@@ -197,6 +197,13 @@ pub enum AppCommand {
     /// Show the active chat's attachments and stored files (the `/file list` command). The result
     /// is a `FileProgress::Listed` event.
     FileList,
+    /// Open one of the active chat's files in the desktop environment (the
+    /// `/file open <name|#N>` command, fork F9 of docs/sandbox-file-exchange.md).
+    /// The handle is the one `/file list` shows; the launch runs on the blocking
+    /// pool and the outcome arrives as a `FileProgress` event.
+    FileOpen { target: String },
+    /// Open the active chat's stored-files folder (the `/file folder` command).
+    FileFolder,
     /// Attach a code project to the active chat (the `/project attach <dir>`
     /// command). The directory is checked and canonicalized synchronously — it
     /// is a `stat`, not a read — and the result arrives as a `ProjectProgress`
@@ -373,6 +380,8 @@ impl AppCommand {
             | AppCommand::RagRebuild
             | AppCommand::Reindex
             | AppCommand::FileList
+            | AppCommand::FileOpen { .. }
+            | AppCommand::FileFolder
             | AppCommand::ImageAttach { .. }
             | AppCommand::ImageRemove { .. }
             | AppCommand::ImageList

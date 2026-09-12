@@ -459,6 +459,8 @@ impl ChatScreen {
             Ok(FileCommand::Attach { path }) => Some(ChatIntent::FileAttach { path }),
             Ok(FileCommand::Remove { target }) => Some(ChatIntent::FileRemove { target }),
             Ok(FileCommand::List) => Some(ChatIntent::FileList),
+            Ok(FileCommand::Open { target }) => Some(ChatIntent::FileOpen { target }),
+            Ok(FileCommand::Folder) => Some(ChatIntent::FileFolder),
             Err(msg) => {
                 self.push_error(&self.loc.tf("ui.file.failed", &[("err", &msg)]));
                 None

@@ -888,6 +888,8 @@ impl Orchestrator {
             AppCommand::FileAttach { path } => self.handle_file_attach(path),
             AppCommand::FileRemove { target } => self.handle_file_remove(target),
             AppCommand::FileList => self.handle_file_list(),
+            AppCommand::FileOpen { target } => self.handle_file_open(target),
+            AppCommand::FileFolder => self.handle_file_folder(),
             AppCommand::ProjectAttach { path } => self.handle_project_attach(path),
             AppCommand::ProjectDetach => self.handle_project_detach(),
             AppCommand::ProjectStatus => self.handle_project_status(),

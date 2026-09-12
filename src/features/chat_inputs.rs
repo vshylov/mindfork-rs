@@ -131,6 +131,22 @@ pub fn resolve(items: &[ChatInput], target: &str) -> Resolved {
     resolve_handle(items, target, ChatInput::matches)
 }
 
+/// The path a handle means on disk, for `/file open` (fork F9, §13 U2). Pure — the caller
+/// checks the path once and words the refusal.
+///
+/// The chat's own copy for a stored file **and** for an attached document that kept its
+/// original: our copy is the half guaranteed to be there, while the user's path may have
+/// moved since the attach. Everything else means its `source` — a plain text attachment's
+/// own file, an image's. That source is not always a file, and nothing here pretends
+/// otherwise: a pasted image's is `clipboard:<uuid>`, a fetched page's attachment carries
+/// a URL, and a listed copy can be gone from the folder.
+pub fn open_path(item: &ChatInput, dir: &Path) -> std::path::PathBuf {
+    match &item.file {
+        Some(name) => dir.join(name),
+        None => std::path::PathBuf::from(&item.source),
+    }
+}
+
 /// What a `python_exec` call would copy into `/w/in`, resolved for the confirmation popup
 /// (§12 T6). The popup presents a call's arguments compactly and drops arrays outright, so
 /// the one argument that decides what leaves the chat would otherwise not be shown at all
@@ -297,6 +313,30 @@ mod tests {
 
     fn dir() -> &'static Path {
         Path::new("C:\\data\\files\\chat")
+    }
+
+    /// §13 U2: what `/file open` hands to the shell — our copy where one exists, the
+    /// item's own source otherwise, and no pretence that every source is a file.
+    #[test]
+    fn a_handle_opens_our_copy_when_there_is_one_and_the_source_otherwise() {
+        let shot = [image("shot.png", "image/png")];
+        let original = stored_pdf("report.pdf");
+        let pair = attached("report.pdf", "D:\\downloads\\report.pdf").with_file(original.id);
+        let list = items(
+            &[pair, attached("notes.md", "C:\\notes.md")],
+            &[original, stored("chart.png")],
+            &shown(&shot),
+            dir(),
+        );
+        // The pair opens the copy in the chat's folder, not the path it was attached
+        // from: that one may have moved since, ours is always there.
+        assert_eq!(open_path(&list[0], dir()), dir().join("report.pdf"));
+        // Plain text keeps no second copy, so its own file is what opens.
+        assert_eq!(open_path(&list[1], dir()), Path::new("C:\\notes.md"));
+        assert_eq!(open_path(&list[2], dir()), dir().join("chart.png"));
+        // An image means its source — a path here, `clipboard:<uuid>` for a paste, which
+        // the caller's existence check is what refuses.
+        assert_eq!(open_path(&list[3], dir()), Path::new("C:\\pics\\shot.png"));
     }
 
     #[test]

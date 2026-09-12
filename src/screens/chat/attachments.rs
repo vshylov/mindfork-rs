@@ -88,6 +88,25 @@ impl ChatScreen {
                 let text = format_file_list(&items, &stored, &images, &dir, self.loc);
                 self.push_note(&text);
             }
+            FileProgress::Opened { name, path } => {
+                let msg = self
+                    .loc
+                    .tf("ui.file.opened", &[("name", &name), ("path", &path)]);
+                self.push_note(&msg);
+            }
+            FileProgress::OpenedFolder { path, instead_of } => {
+                // Two different things happened, and the user has to be able to tell them
+                // apart: the folder was asked for, or it stood in for a file whose type is
+                // not one a handler may run (§13 U3).
+                let msg = match instead_of {
+                    Some(name) => self.loc.tf(
+                        "ui.file.opened_folder_instead",
+                        &[("name", &name), ("path", &path)],
+                    ),
+                    None => self.loc.tf("ui.file.opened_folder", &[("path", &path)]),
+                };
+                self.push_note(&msg);
+            }
             FileProgress::Indexing { name, done, total } => {
                 // Reuses the background-indexing banner slot (see the `rag`
                 // field): both are "a background index is being built", and they
