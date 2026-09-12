@@ -157,9 +157,21 @@ fn launch(path: &Path) -> io::Result<()> {
 
 #[cfg(not(windows))]
 fn launch(path: &Path) -> io::Result<()> {
+    launch_with(launcher(HERE).unwrap_or("xdg-open"), path)
+}
+
+/// The launch off Windows, with the launcher named. `launch` passes the platform's; a test
+/// passes a stub, which is how the shape that matters — one program, one argument, nothing
+/// re-parsed on the way (docs/lessons.md §6) — is checked on Linux with no desktop, in CI.
+// `zombie_processes`: deliberate. The launcher is neither waited on nor kept — see the
+// comment below — so its entry stays in the table until the application exits, which is
+// the cheaper of the two prices (the alternative holds a thread for as long as the user
+// keeps the viewer open).
+#[allow(clippy::zombie_processes)]
+#[cfg(not(windows))]
+fn launch_with(program: &str, path: &Path) -> io::Result<()> {
     use std::process::{Command, Stdio};
 
-    let program = launcher(HERE).unwrap_or("xdg-open");
     // Spawned and **not** waited on: the launcher may exec a viewer that lives as long as
     // the user keeps it open, and a blocking-pool thread must not be held for that. The
     // child is reaped when the application exits; the failure that matters — no launcher
@@ -232,6 +244,95 @@ mod tests {
         ] {
             assert!(!is_document(name), "{name} must not be handed to a handler");
         }
+    }
+
+    /// The Linux half, checked where it can be: a stub launcher on the path of the call
+    /// records what it was given. The argument must arrive whole — spaces, brackets and
+    /// all — which is the property `cmd /c start` cannot offer (docs/lessons.md §6), and
+    /// a launcher that is not installed must come back as an error, since that is the
+    /// failure the note turns into a path the user can copy (§13 U6).
+    #[cfg(unix)]
+    #[test]
+    fn the_unix_launch_hands_over_one_whole_argument() {
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let log = dir.path().join("argv.txt");
+        let stub = dir.path().join("xdg-open");
+        let mut f = std::fs::File::create(&stub).expect("the stub");
+        writeln!(f, "#!/bin/sh").unwrap();
+        writeln!(f, "printf '%s\\n' \"$#\" \"$1\" > '{}'", log.display()).unwrap();
+        drop(f);
+        std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let target = dir.path().join("my chart (1).png");
+        std::fs::write(&target, b"x").unwrap();
+        launch_with(stub.to_str().unwrap(), &target).expect("the stub launcher started");
+
+        // The child is not waited on (a viewer outlives the call), so the recording is
+        // polled for — a second is orders of magnitude more than `/bin/sh` needs.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        let recorded = loop {
+            if let Ok(text) = std::fs::read_to_string(&log)
+                && text.lines().count() >= 2
+            {
+                break text;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the stub launcher recorded nothing"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        };
+        let mut lines = recorded.lines();
+        assert_eq!(lines.next(), Some("1"), "exactly one argument: {recorded}");
+        assert_eq!(lines.next(), target.to_str(), "the path arrived split");
+
+        let missing = launch_with("mindfork-no-such-launcher", &target);
+        assert!(
+            missing.is_err(),
+            "a machine with no launcher must report it"
+        );
+    }
+
+    /// The stage's manual gate (§13 U10): the only part no automated test can cover is
+    /// whether a real desktop actually brings something up. Run on a machine with one:
+    ///
+    /// ```text
+    /// MINDFORK_OPEN_LIVE=1 cargo test -- --ignored --nocapture opens_a_document_and_a_folder_live
+    /// ```
+    ///
+    /// It opens a viewer on a text file and a file manager on its folder, and prints both
+    /// paths — watch for two windows. Guarded by the variable so the `--ignored` suite on a
+    /// headless machine cannot start one (CLAUDE.md §Commands).
+    #[test]
+    #[ignore = "opens windows on the desktop; needs MINDFORK_OPEN_LIVE"]
+    fn opens_a_document_and_a_folder_live() {
+        if std::env::var("MINDFORK_OPEN_LIVE").is_err() {
+            println!("skipped: set MINDFORK_OPEN_LIVE=1 to open windows on this desktop");
+            return;
+        }
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let doc = dir.path().join("mindfork open gate.txt");
+        std::fs::write(&doc, b"stage 4: this file was opened by /file open\n").unwrap();
+
+        let (opens, at) = decide(&doc);
+        assert_eq!(opens, Opens::File);
+        println!("opening the document: {}", at.display());
+        open(at).expect("the document opened");
+
+        // And the fallback half: a type no handler may run opens the folder it sits in.
+        let script = dir.path().join("run.bat");
+        std::fs::write(&script, b"@echo off\n").unwrap();
+        let (opens, at) = decide(&script);
+        assert_eq!(opens, Opens::Folder);
+        println!("opening the folder instead of run.bat: {}", at.display());
+        open(at).expect("the folder opened");
+
+        // The handler and the file manager read the files after this returns, so the
+        // temporary directory has to outlive the call by more than nothing.
+        std::thread::sleep(std::time::Duration::from_secs(5));
     }
 
     #[test]
