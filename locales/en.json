@@ -1856,6 +1856,7 @@
   "sandbox.setup.pack.manifest": "the unpacked Python package has no [fs] table to add the packages to ({path})",
   "sandbox.setup.pack.run": "launching wasmer ({path})",
   "sandbox.setup.pack.failed": "`wasmer {command}` failed: {stderr}",
+  "sandbox.setup.wasmer.timeout": "`wasmer {command}` did not finish within {secs} s and was stopped; the sandbox you had is untouched",
   "sandbox.setup.verify.ok": "The sandbox image starts.",
   "sandbox.setup.verify.failed": "the packed sandbox image does not start: {detail}",
   "sandbox.setup.verify.timeout": "the packed sandbox image did not finish starting within {secs} s, so it was not installed; the sandbox you had is untouched",

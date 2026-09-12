@@ -446,7 +446,9 @@ impl SandboxRunner for WasmerSandbox {
         // The script, `in/` and `out/` in a unique temp directory (auto-cleanup via Drop),
         // laid out exactly as Local's — one helper, one layout (§14 V1). The WASIX shims
         // are the guest's own and are added here, not there.
-        let job = JobDir::create().with_context(|| loc.t("sandbox.err.job_dir").to_string())?;
+        let job = JobDir::create()
+            .await
+            .with_context(|| loc.t("sandbox.err.job_dir").to_string())?;
         let layout = prepare_job(&job, &build_wrapper(spec.code), spec.inputs, loc).await?;
         let out_dir = layout.out_dir;
 
@@ -499,12 +501,7 @@ impl SandboxRunner for WasmerSandbox {
                 // still made the chart (F4). The guest has exited, so nothing races the
                 // walk; up to a call's worth of bytes is read on the blocking pool, while
                 // `job` keeps the directory alive.
-                let collect_from = out_dir.clone();
-                let (files, skipped) = tokio::task::spawn_blocking(move || {
-                    collect_outputs(&collect_from, OutputLimits::DEFAULT)
-                })
-                .await
-                .unwrap_or_default();
+                let (files, skipped) = collected(out_dir, collect_outputs).await;
                 Ok(SandboxOutput {
                     stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
                     stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
@@ -519,7 +516,7 @@ impl SandboxRunner for WasmerSandbox {
                 timed_out: true,
                 // A killed call may have left a file half-written: nothing is read, and
                 // what `out/` held is named, so the model is not left guessing (F4).
-                skipped: timed_out_outputs(&out_dir),
+                skipped: named_off_loop(out_dir, SkipReason::TimedOut).await,
                 ..SandboxOutput::default()
             }),
         }
@@ -574,7 +571,9 @@ impl SandboxRunner for LocalSandbox {
 
     async fn run(&self, spec: SandboxJob<'_>, loc: &Locale) -> Result<SandboxOutput> {
         let python = self.interpreter();
-        let job = JobDir::create().with_context(|| loc.t("sandbox.err.job_dir").to_string())?;
+        let job = JobDir::create()
+            .await
+            .with_context(|| loc.t("sandbox.err.job_dir").to_string())?;
         // The code as written: the shims `build_wrapper` adds are the guest's libc and its
         // FreeType build, and nothing on the host wants them (§14 V3).
         let layout = prepare_job(&job, spec.code, spec.inputs, loc).await?;
@@ -608,12 +607,7 @@ impl SandboxRunner for LocalSandbox {
                 // Whatever the exit code: a script that saved its chart and then failed
                 // still made the chart (F4). The same rule, the same collector and the
                 // same caps as the guest's.
-                let collect_from = layout.out_dir.clone();
-                let (files, skipped) = tokio::task::spawn_blocking(move || {
-                    collect_outputs(&collect_from, OutputLimits::DEFAULT)
-                })
-                .await
-                .unwrap_or_default();
+                let (files, skipped) = collected(layout.out_dir, collect_outputs).await;
                 Ok(SandboxOutput {
                     stdout: drained(&out_buf, out_task).await,
                     stderr: drained(&err_buf, err_task).await,
@@ -628,7 +622,7 @@ impl SandboxRunner for LocalSandbox {
                 timed_out: true,
                 // A killed call may have left a file half-written: nothing is read, and
                 // what `out/` held is named, so the model is not left guessing (F4).
-                skipped: timed_out_outputs(&layout.out_dir),
+                skipped: named_off_loop(layout.out_dir, SkipReason::TimedOut).await,
                 ..SandboxOutput::default()
             }),
         }
@@ -807,11 +801,21 @@ struct JobDir {
 }
 
 impl JobDir {
-    fn create() -> std::io::Result<Self> {
-        sweep_stale_jobs();
-        let path = std::env::temp_dir().join(format!("{JOB_PREFIX}{}", Uuid::new_v4()));
-        std::fs::create_dir_all(&path)?;
-        Ok(Self { path })
+    /// Creates the directory on the blocking pool. The first call in a process also sweeps
+    /// the system temp directory ([`sweep_stale_jobs`]) — a `read_dir` and a metadata call
+    /// per entry, over a folder that on Windows routinely holds tens of thousands — and
+    /// none of that belongs on a runtime thread. `rust:S7493` reports nothing here: it
+    /// reads `std::fs` inside an `async fn`, and this was one synchronous call away
+    /// (docs/lessons.md).
+    async fn create() -> std::io::Result<Self> {
+        tokio::task::spawn_blocking(|| {
+            sweep_stale_jobs();
+            let path = std::env::temp_dir().join(format!("{JOB_PREFIX}{}", Uuid::new_v4()));
+            std::fs::create_dir_all(&path)?;
+            Ok(Self { path })
+        })
+        .await
+        .map_err(std::io::Error::other)?
     }
 }
 
@@ -915,8 +919,21 @@ async fn drained(
 }
 
 impl Drop for JobDir {
+    /// Removed on the blocking pool when there is a runtime to hand it to — which is every
+    /// call site in the application: `in/` holds copies of the chat's files, and deleting
+    /// them is I/O like any other. Outside a runtime, in place. A removal that a runtime's
+    /// shutdown abandons is what [`sweep_stale_jobs`] is for.
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.path);
+        let path = std::mem::take(&mut self.path);
+        let remove = move || {
+            let _ = std::fs::remove_dir_all(&path);
+        };
+        match tokio::runtime::Handle::try_current() {
+            Ok(runtime) => {
+                runtime.spawn_blocking(remove);
+            }
+            Err(_) => remove(),
+        }
     }
 }
 
@@ -979,15 +996,54 @@ fn read_capped(path: &Path, cap: u64) -> std::io::Result<Option<Vec<u8>>> {
     Ok((bytes.len() as u64 <= cap).then_some(bytes))
 }
 
-/// What a timed-out call left in `out`: named, never read.
-fn timed_out_outputs(out: &Path) -> Vec<SkippedOutput> {
+/// What a call left in `out`, named and never read: after a timeout, when a file may be
+/// half-written, or after a collector that failed, when nothing it read can be trusted.
+fn named_outputs(out: &Path, reason: SkipReason) -> Vec<SkippedOutput> {
     sorted_entries(out)
         .into_iter()
-        .map(|(name, _)| SkippedOutput {
-            name,
-            reason: SkipReason::TimedOut,
-        })
+        .map(|(name, _)| SkippedOutput { name, reason })
         .collect()
+}
+
+/// The files a call's `out/` gave up, and the entries it did not.
+type Collected = (Vec<OutputFile>, Vec<SkippedOutput>);
+
+/// [`collect_outputs`] on the blocking pool. `collect` is that function in both runners,
+/// and a stand-in only in the test that makes it fail.
+///
+/// A collector that fails is a bug, and it is **not** an empty `out/`. The join error used
+/// to be `unwrap_or_default`, so a panic on the way reported "no files" to the model and
+/// wrote nothing to the log — a chart the script saved became a chart it never made. Now
+/// the failure is logged, and what `out/` holds is named as unreadable, the way a timeout
+/// names what it left.
+async fn collected(out: PathBuf, collect: fn(&Path, OutputLimits) -> Collected) -> Collected {
+    let from = out.clone();
+    match tokio::task::spawn_blocking(move || collect(&from, OutputLimits::DEFAULT)).await {
+        Ok(collected) => collected,
+        Err(err) => {
+            tracing::error!(
+                error = %err,
+                dir = %out.display(),
+                "collecting a call's outputs failed; its files are reported as unreadable"
+            );
+            (
+                Vec::new(),
+                named_off_loop(out, SkipReason::Unreadable).await,
+            )
+        }
+    }
+}
+
+/// [`named_outputs`] on the blocking pool: the timeout's path, and the failed collector's.
+async fn named_off_loop(out: PathBuf, reason: SkipReason) -> Vec<SkippedOutput> {
+    tokio::task::spawn_blocking(move || named_outputs(&out, reason))
+        .await
+        .unwrap_or_else(|err| {
+            // Listing a directory by name is all this does; if even that fails, the log line
+            // is what is left to say.
+            tracing::error!(error = %err, "listing a call's outputs failed");
+            Vec::new()
+        })
 }
 
 #[cfg(test)]
@@ -1098,12 +1154,65 @@ mod collect_tests {
         let dir = tempfile::tempdir().unwrap();
         write(dir.path(), "half.png", b"\x89PNG");
         assert_eq!(
-            timed_out_outputs(dir.path()),
+            named_outputs(dir.path(), SkipReason::TimedOut),
             [SkippedOutput {
                 name: "half.png".into(),
                 reason: SkipReason::TimedOut
             }]
         );
+    }
+
+    /// A collector that fails is not an empty `out/`. The join error used to become "no
+    /// files" — told to the model, written nowhere — so a chart the script saved read as a
+    /// chart it never made. Now what `out/` holds is named as unreadable.
+    #[tokio::test]
+    async fn a_collector_that_fails_names_what_out_held_instead_of_reporting_nothing() {
+        fn failing(_: &Path, _: OutputLimits) -> Collected {
+            panic!("a collector bug, on purpose");
+        }
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), "chart.png", b"\x89PNG");
+
+        // The ordinary path first, through the same helper: the file is collected.
+        let (files, skipped) = collected(dir.path().to_path_buf(), collect_outputs).await;
+        assert_eq!(files.len(), 1, "{skipped:?}");
+
+        let (files, skipped) = collected(dir.path().to_path_buf(), failing).await;
+        assert!(files.is_empty());
+        assert_eq!(
+            skipped,
+            [SkippedOutput {
+                name: "chart.png".into(),
+                reason: SkipReason::Unreadable
+            }],
+            "the file is named, not forgotten"
+        );
+    }
+
+    /// The drop hands the removal to the blocking pool on a runtime, and does it in place
+    /// outside one — and in both cases the directory, with the copies in it, is gone.
+    #[test]
+    fn a_job_directory_is_removed_on_drop_on_a_runtime_and_off_one() {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .build()
+            .unwrap();
+        let on_runtime = runtime.block_on(async {
+            let job = JobDir::create().await.expect("a job dir");
+            std::fs::write(job.path.join("copy.csv"), b"a,b").unwrap();
+            job.path.clone()
+        });
+        // Dropping the runtime waits for its blocking pool, where the removal went.
+        drop(runtime);
+        assert!(!on_runtime.exists(), "{}", on_runtime.display());
+
+        let job = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(JobDir::create())
+            .expect("a job dir");
+        let off_runtime = job.path.clone();
+        drop(job);
+        assert!(!off_runtime.exists(), "{}", off_runtime.display());
     }
 
     #[test]
@@ -1201,7 +1310,7 @@ mod tests {
         let from = host.path().join("sales.xlsx");
         std::fs::write(&from, b"PK\x03\x04").unwrap();
 
-        let job = JobDir::create().expect("a job dir");
+        let job = JobDir::create().await.expect("a job dir");
         let inputs = [
             SandboxInput::bytes("memo.txt", b"the note".to_vec()),
             SandboxInput::path("sales.xlsx", &from),
@@ -1228,7 +1337,7 @@ mod tests {
     #[tokio::test]
     async fn a_staged_name_that_is_not_one_component_is_refused() {
         for name in ["../escape.txt", "sub/dir.txt", "..", ""] {
-            let job = JobDir::create().expect("a job dir");
+            let job = JobDir::create().await.expect("a job dir");
             let inputs = [SandboxInput::bytes(name, b"x".to_vec())];
             let err = prepare_job(&job, "print(1)", &inputs, ru())
                 .await
