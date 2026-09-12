@@ -369,7 +369,7 @@ src/
 │  │  ├─ python.rs          python_exec (Wasmer sandbox or local); what the code
 │  │  │                     saves to /w/out is stored with the chat, and the files
 │  │  │                     a call names are copied into /w/in before it runs
-│  │  │                     (docs/sandbox-file-exchange.md)
+│  │  │                     (docs/history/sandbox-file-exchange.md)
 │  │  ├─ web.rs             web_search (multi-provider DDG/Mojeek/Ecosia + anti-bot,
 │  │  │                     incl. a captcha served behind HTTP 200) + two
 │  │  │                     extractions: extract_readable (prose, for ranking)
@@ -681,7 +681,7 @@ src/
    │                       once). docs/terminal-background-detection.md
    ├─ os_open.rs           opening one of a chat's files, or its folder, in the desktop
    │                       (`/file open`/`/file folder`, fork F9 of
-   │                       docs/sandbox-file-exchange.md): `ShellExecuteW` / `xdg-open` /
+   │                       docs/history/sandbox-file-exchange.md): `ShellExecuteW` / `xdg-open` /
    │                       `open`, one argument and no shell line, plus the policy that
    │                       makes that safe — `is_document`/`decide`, an allowlist of
    │                       document types, everything else opening the folder it sits in
@@ -723,10 +723,16 @@ src/
    │                       `openai` client (`/audio/speech`, also used for external) and
    │                       `gemini` client (generateContent + AUDIO), `playback` (rodio
    │                       queue, lazy device open). See spec §11.9
-   ├─ sandbox.rs           SandboxRunner (behind a trait) + WasmerSandbox: `wasmer`
-   │                       sidecar for `python_exec` in sandbox mode (WASIX isolation, §8);
-   │                       runs only the packed image, refuses an unpacked site-packages;
-   │                       collects /w/out once the process exits (SandboxOutput.files)
+   ├─ sandbox.rs           SandboxRunner (behind a trait) + two runners: WasmerSandbox,
+   │                       the `wasmer` sidecar for sandbox mode (WASIX isolation, §8; runs
+   │                       only the packed image, refuses an unpacked site-packages), and
+   │                       LocalSandbox, the machine's own interpreter for Local mode. One
+   │                       job directory per call for both (prepare_job: the script beside
+   │                       in/ and out/, the staged copies, and the working directory that
+   │                       makes the relative form work everywhere) and one collect_outputs
+   │                       under OutputLimits::DEFAULT once the process exits
+   │                       (SandboxOutput.files). The mode picks the runner, never a second
+   │                       code path (docs/history/sandbox-file-exchange.md §14)
    ├─ secrets.rs           machine-bound secret storage: cloud API keys + the backup
    │                       password (ApiKeyEntry — one record
    │                       per machine, put_key/stored_key/is_ours): DPAPI (Windows) and

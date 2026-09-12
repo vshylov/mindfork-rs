@@ -957,6 +957,19 @@ impl PythonMode {
     /// All variants in UI-cycle order (for the Choice popup and the cycle).
     pub const ALL: [PythonMode; 2] = [PythonMode::Wasmer, PythonMode::Local];
 
+    /// Where a call reads the files staged for it and writes what it wants kept, **as the
+    /// model is told** (docs/history/sandbox-file-exchange.md §14 V2). Both modes run with the job
+    /// directory as the working directory, so a relative `in/`/`out/` works in either;
+    /// what differs is the form the prompt uses — the guest sees that directory mounted at
+    /// `/w`, the host process sees it as its cwd. One source for the tool's description
+    /// and for the pinned block, so the two cannot name different folders.
+    pub fn dirs(self) -> (&'static str, &'static str) {
+        match self {
+            PythonMode::Wasmer => ("/w/in", "/w/out"),
+            PythonMode::Local => ("in", "out"),
+        }
+    }
+
     /// Cyclic iteration honoring direction (`dir` = +1/-1).
     pub fn cycle(self, dir: i32) -> Self {
         let idx = Self::ALL.iter().position(|x| *x == self).unwrap_or(0) as i32;
@@ -1105,7 +1118,7 @@ pub struct ToolSettings {
     /// was returned.
     pub mcp_images: bool,
     /// Show the model an image `python_exec` saved to `/w/out` — its own chart — after
-    /// the call (docs/sandbox-file-exchange.md F5, §11 S8). **On** by default: looking at
+    /// the call (docs/history/sandbox-file-exchange.md F5, §11 S8). **On** by default: looking at
     /// the chart is how a model checks what it drew. Off stops paying for the image
     /// tokens; the files are still saved, and the result tells the model it has not seen
     /// them. Separate from [`Self::mcp_images`], whose pixels come from third-party code.
@@ -1282,7 +1295,7 @@ pub const DEFAULT_IMAGE_MAX_BYTES: u64 = 10 * 1024 * 1024;
 pub const DEFAULT_IMAGE_DOWNSCALE_PX: u32 = 1568;
 /// How many images one tool result may show the model — an MCP server's (fork F2 of
 /// docs/research/mcp-tool-images.md) and the charts a `python_exec` call saved
-/// (docs/sandbox-file-exchange.md §11 S8). Every image a result carries rides **every**
+/// (docs/history/sandbox-file-exchange.md §11 S8). Every image a result carries rides **every**
 /// later turn of the conversation, so the ceiling bounds a standing cost, not one reply.
 /// Extras are dropped and **said out loud** in the result: a silent cap reads as "the
 /// tool returned four images" when it returned fifty.

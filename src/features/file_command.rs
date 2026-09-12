@@ -26,7 +26,7 @@ pub enum FileCommand {
     /// Show what is attached to the current chat.
     List,
     /// Open one of the chat's files in the OS, by the handle `/file list` shows
-    /// (fork F9, docs/sandbox-file-exchange.md §13 U1).
+    /// (fork F9, docs/history/sandbox-file-exchange.md §13 U1).
     Open { target: String },
     /// Open the chat's stored-files folder in the OS (`/file folder`).
     Folder,
@@ -50,7 +50,7 @@ pub enum FileProgress {
         source: Option<String>,
     },
     /// A stored file's listing was dropped and our copy of it deleted
-    /// (docs/sandbox-file-exchange.md §11 S11).
+    /// (docs/history/sandbox-file-exchange.md §11 S11).
     RemovedStored { name: String },
     /// An attached document that kept its original went as one item: the attachment and
     /// our copy of the file, never the user's own (fork F8a, §12 T9).
@@ -69,7 +69,7 @@ pub enum FileProgress {
     },
     /// The chat's files as one numbered list (`/file list`): attachments, then the stored
     /// files no attachment links, then the images its messages carry — the numbering
-    /// `/file remove` takes and `python_exec` names (docs/sandbox-file-exchange.md §12 T2).
+    /// `/file remove` takes and `python_exec` names (docs/history/sandbox-file-exchange.md §12 T2).
     /// All three empty — nothing attached, stored or shown. `dir` is the stored files'
     /// folder.
     Listed {
@@ -104,7 +104,7 @@ pub enum FileProgress {
     Failed(String),
 }
 
-/// A stored file as `/file list` shows it (docs/sandbox-file-exchange.md §11 S11).
+/// A stored file as `/file list` shows it (docs/history/sandbox-file-exchange.md §11 S11).
 #[derive(Debug, Clone, PartialEq)]
 pub struct StoredInfo {
     pub name: String,

@@ -1643,7 +1643,7 @@ model's own code. What discriminated was a property the harness set and nothing 
 the plotting area's colour, through `matplotlibrc` — asked in a follow-up with no tools:
 4/5 and 5/5 with the image on two model families, 0/5 blind on both. Before trusting "the model saw it", name the other channel
 the answer could have come through, and close it.
-— *sandbox file exchange — stage 1* ([sandbox-file-exchange.md](sandbox-file-exchange.md) §10).
+— *sandbox file exchange — stage 1* ([sandbox-file-exchange.md](history/sandbox-file-exchange.md) §10).
 
 ## 10. CI and infrastructure
 

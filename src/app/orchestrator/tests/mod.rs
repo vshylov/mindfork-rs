@@ -444,7 +444,7 @@ fn spawn_orch_live_with(config: AppConfig, with_embedder: bool) -> Option<OrchHa
 
 /// Like [`spawn_orch_live_cfg`], with the sandbox at `sandbox` — a provisioned
 /// `MINDFORK_SANDBOX_DIR` — rather than the temporary data root's empty one
-/// (docs/sandbox-file-exchange.md §11 S13).
+/// (docs/history/sandbox-file-exchange.md §11 S13).
 fn spawn_orch_live_sandbox(config: AppConfig, sandbox: std::path::PathBuf) -> Option<OrchHandle> {
     spawn_orch_live_paths(config, true, Some(sandbox))
 }

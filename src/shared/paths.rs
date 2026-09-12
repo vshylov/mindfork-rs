@@ -157,7 +157,7 @@ pub struct Paths {
     /// portable (`system`/`path`). `None` in tests (`with_root`).
     exe_dir: Option<PathBuf>,
     /// A sandbox directory other than `<root>/sandbox`: a live test pointing a temporary
-    /// data root at a provisioned sandbox (docs/sandbox-file-exchange.md §11 S13). Only
+    /// data root at a provisioned sandbox (docs/history/sandbox-file-exchange.md §11 S13). Only
     /// [`Paths::with_sandbox_dir`], a test helper, sets it.
     sandbox_override: Option<PathBuf>,
 }
@@ -324,7 +324,7 @@ impl Paths {
     }
 
     /// Files stored with chats (`files/<chat-id>/`): what `python_exec` saved to
-    /// `/w/out`, kept for the user (docs/sandbox-file-exchange.md, spec §9.7). User data
+    /// `/w/out`, kept for the user (docs/history/sandbox-file-exchange.md, spec §9.7). User data
     /// that cannot be recomputed, so `features::backup` packs it.
     pub fn files_dir(&self) -> PathBuf {
         self.root.join("files")

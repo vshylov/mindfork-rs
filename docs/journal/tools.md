@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (59)
+## Entries (60)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -71,6 +71,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: sandbox file exchange — stage 2, files out of the sandbox (done)
 - Post-M9: sandbox file exchange — stage 3, files into the sandbox (done)
 - Post-M9: sandbox file exchange — stage 4, opening a file in the system (done)
+- Post-M9: sandbox file exchange — stage 5, the local interpreter joins the contract (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -4060,7 +4061,7 @@ nobody would ever see. Now the job directory holds an empty `out/` beside the sc
 once the process exits, the regular files directly in `/w/out` are collected, stored in
 the chat's folder `data/files/<chat-id>/`, listed in `Chat.files`, and a PNG or JPEG
 among them goes back to the model. Track plan and every decision:
-[docs/sandbox-file-exchange.md](../sandbox-file-exchange.md) — the user's forks in §3
+[docs/history/sandbox-file-exchange.md](../history/sandbox-file-exchange.md) — the user's forks in §3
 and §5, the stage-1 probe in §10, this stage's sub-decisions in §11. Branch
 `feat/sandbox-files-out`, stacked on the plan's `docs/sandbox-file-exchange`.
 
@@ -4174,7 +4175,7 @@ resolves, so `#3` means one thing to the user and to the model. `/file attach` s
 refusing what its text is not: a binary is kept with the chat (no attachment made), a
 pdf/docx/html keeps its original beside the extracted text, and the pair is one item
 everywhere. Track plan and every decision:
-[docs/sandbox-file-exchange.md](../sandbox-file-exchange.md) — the user's forks in §3 and
+[docs/history/sandbox-file-exchange.md](../history/sandbox-file-exchange.md) — the user's forks in §3 and
 §5, this stage's sub-decisions in §12. Branch `feat/sandbox-files-in`.
 
 **The survey found two things the plan rested on and that did not exist.** The
@@ -4252,7 +4253,7 @@ a Rust raw string `r#"…"#` cannot hold the handle `"#9"`, which closes it earl
 
 ### Post-M9: sandbox file exchange — stage 4, opening a file in the system (done)
 
-Stage 4 of [sandbox-file-exchange.md](../sandbox-file-exchange.md) (fork F9, sub-decisions
+Stage 4 of [sandbox-file-exchange.md](../history/sandbox-file-exchange.md) (fork F9, sub-decisions
 §13): the files a chat holds became reachable outside the app. `/file open <name|#N>` hands
 one to the desktop's handler and `/file folder` opens the chat's files folder — the last
 half of D1, which asked for the outputs to be openable without hunting for the directory.
@@ -4313,3 +4314,57 @@ the three shapes of "not a file on this machine"; a shared name refused with bot
 candidates; `/file folder` on a chat that saved nothing, which must also not create the
 directory it reports on; the two feed notes; the unix launch's single whole argument and its
 missing-launcher error.
+
+### Post-M9: sandbox file exchange — stage 5, the local interpreter joins the contract (done)
+
+The last stage of [sandbox-file-exchange.md](../history/sandbox-file-exchange.md) (fork
+F11 (b), sub-decisions §14), and the one that ends a divergence stage 3 had to introduce:
+`python_exec` in **Local** mode ran the code and nothing else — no files in, none out, and
+a schema without `files`, because a model must never be offered an argument its mode cannot
+honour. Local now runs the same exchange, and ADR 0005 §3's "the schema is mode-independent"
+holds again unqualified.
+
+**One runner interface, not a second code path.** `LocalSandbox` answers the same
+`SandboxRunner` contract as `WasmerSandbox`: a job directory per call holding `job.py`
+beside `in/` and `out/`, the interpreter started with that directory as its **working
+directory**, the same `collect_outputs` under the same `OutputLimits::DEFAULT`, the same
+rule that any exit code collects while a timeout collects nothing. One `prepare_job` lays
+the directory out for both — the guest's shims are added by the Wasmer side and nothing on
+the host wants them — and the registry picks the runner from the mode. `python_exec` lost
+its `run_local` entirely: the tool no longer branches by mode at all, and what the mode
+still decides is the wording and which of the two timeouts a launch gets.
+
+**The folders are one source, two spellings.** F11 asked for relative `in/`/`out/` to work
+in both modes, and the working directory gives exactly that; what the model *reads* keeps
+each mode's own form through `PythonMode::dirs` — `/w/in`, `/w/out` in the guest, `in`,
+`out` on the host — substituted into the same locale strings by the description, the
+pinned block and the `files` argument's own description. The Wasmer rendering is byte for
+byte the text stages 2 and 3 measured, which a test asserts by reconstructing it: spending
+a live GO to make two strings look alike would have bought nothing.
+
+**Three smaller decisions.** The code is written to a file rather than passed with `-c`, so
+a long script cannot overflow a command line (Windows caps it) and a traceback names a
+file. Local's availability is a **path check**, not a probe: an interpreter named with a
+separator is checked as a file, a bare name is left to `PATH` — a `--version` run per turn
+would answer a question the call answers anyway. And the network: Local has no switch to
+honour, so `ToolParams` reports `python_net = true` there whatever the setting says,
+because the confirmation popup states that value and the code really does reach the network.
+
+**Live — GO (2026-09-12)**, Gemma 4 31B q4_0 on llama.cpp b10807, one slot of 16384.
+`local_mode_files_round_trip_e2e_live` needs no sandbox at all, which is the point: a
+twelve-row CSV attached to the chat, the model asked to name it in `files`, read it from
+the input folder with the standard library, print the sum and write it into the output
+folder. It printed **4706** — Σ(i²·7+13) over twelve months, a number only the file
+carries — the reply repeated it, and `summary.txt` was stored with the chat and listed by
+`/file list`, in 10.6 s. `runs_real_python_local` does the same round trip without a model.
+The refactor's other half was re-measured rather than assumed: the nineteen `python::tests`
+sandbox smokes, `sandbox_inputs_e2e_live` (24.6 s) and `attached_binary_reaches_the_sandbox_live`
+(7.6 s) are green on the same stack after the job-preparation extraction.
+
+**Tests.** Unit: 3171 green, 169 ignored (3165 / 168 before). New: the tool's path in Local
+mode over a mock runner (a named file staged, an unknown handle refused with nothing run),
+the job directory both runners lay out (the script, the copies under their own names, an
+`out/` that exists before the run, the source untouched), a staged name that is not one
+component refused, the interpreter path checked without a probe, the pinned block rendered
+in the mode's own folders, both modes offering `files` with each naming its own folder, and
+the network Local reports. The track's plan moves to `docs/history/` with this entry.

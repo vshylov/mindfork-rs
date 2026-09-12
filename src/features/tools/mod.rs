@@ -128,14 +128,19 @@ pub struct ToolContext {
     /// Whether a `python_exec` call in this turn can reach the network
     /// (`config.tools.python_net_enabled`). The tool applies it; the confirmation popup
     /// **states** it, because network access and the files going in are the two halves of
-    /// what the user is consenting to (docs/sandbox-file-exchange.md §12 T6).
+    /// what the user is consenting to (docs/history/sandbox-file-exchange.md §12 T6). In **Local**
+    /// mode it is always `true`, and that is not a default: the code runs on the machine
+    /// with the user's own reach, and a popup saying otherwise would be a lie (§14 V5).
     pub python_net: bool,
+    /// The Python mode this turn runs in — which folders a call reads and writes
+    /// (`PythonMode::dirs`, §14 V2). A sub-agent builds its own pinned block from it.
+    pub python_mode: crate::shared::config::PythonMode,
     /// Where this chat's change journal lives (`data/workspace/<chat-id>/`,
     /// spec §9.12). `None` — no project, or a background turn; the editing tools
     /// then refuse rather than change a file they cannot record the original of.
     pub workspace_journal: Option<std::path::PathBuf>,
     /// Where this chat's stored files live (`data/files/<chat-id>/`,
-    /// docs/sandbox-file-exchange.md §11 S5): `python_exec` writes what the code saved to
+    /// docs/history/sandbox-file-exchange.md §11 S5): `python_exec` writes what the code saved to
     /// `/w/out` here. A sub-agent's or a background run's context is a clone of its
     /// parent turn's, so their files land in the parent's folder. `None` — a background
     /// task, which has no chat; the tool then keeps nothing and says so.
@@ -151,7 +156,7 @@ pub struct ToolContext {
     pub images: std::sync::Arc<[crate::entities::message_image::MessageImage]>,
     /// Whether this turn can hand the chat's files to the code: `python_exec` offered, in
     /// the Wasmer mode that has a job directory to copy them into
-    /// (docs/sandbox-file-exchange.md §12 T5). Decided once per turn by the orchestrator
+    /// (docs/history/sandbox-file-exchange.md §12 T5). Decided once per turn by the orchestrator
     /// and carried here so a sub-agent's own request repeats the decision rather than
     /// guessing it (§12 T13).
     pub stages_files: bool,
@@ -230,8 +235,11 @@ pub struct ToolParams {
     /// (`config.tools.mcp_images`). See [`ToolContext::mcp_images`].
     pub mcp_images: bool,
     /// Whether the Python sandbox has the network this turn
-    /// (`config.tools.python_net_enabled`). See [`ToolContext::python_net`].
+    /// (`config.tools.python_net_enabled`, or always in Local mode).
+    /// See [`ToolContext::python_net`].
     pub python_net: bool,
+    /// The Python mode (`config.tools.python_mode`). See [`ToolContext::python_mode`].
+    pub python_mode: crate::shared::config::PythonMode,
     /// Command-execution limits for the code workspace (`config.workspace`).
     /// See [`ToolContext::workspace_cfg`].
     pub workspace: crate::shared::config::WorkspaceSettings,
@@ -249,7 +257,14 @@ impl ToolParams {
             attachments: cfg.attachments,
             history_page_tokens: cfg.compaction.page_tokens,
             mcp_images: cfg.tools.mcp_images,
-            python_net: cfg.tools.python_net_enabled,
+            // Local has no network switch to honour: the code reaches what the user
+            // reaches, so "on" is what the popup must say there (§14 V5).
+            python_net: cfg.tools.python_net_enabled
+                || matches!(
+                    cfg.tools.python_mode,
+                    crate::shared::config::PythonMode::Local
+                ),
+            python_mode: cfg.tools.python_mode,
             workspace: cfg.workspace,
             file_hint: crate::shared::text_decode::tld_hint(cfg.interface.language),
         }
@@ -331,6 +346,7 @@ impl ToolContext {
             workspace_cfg: params.workspace,
             mcp_images: params.mcp_images,
             python_net: params.python_net,
+            python_mode: params.python_mode,
             storage: deps.storage,
             engine: deps.engine,
             embedder: deps.embedder,
@@ -468,7 +484,7 @@ pub enum ChatEffect {
     /// round rather than only in the next turn (docs/history/youtube-transcript.md §3 F1).
     AddAttachment(Box<crate::entities::attachment::Attachment>),
     /// List a file `python_exec` stored in the chat's folder
-    /// (docs/sandbox-file-exchange.md §11 S7). The bytes are already on disk — the tool
+    /// (docs/history/sandbox-file-exchange.md §11 S7). The bytes are already on disk — the tool
     /// wrote them where the listing points, as the code tools write their journal — so
     /// the effect only adds the listing, and the orchestrator stays `Chat`'s sole owner.
     /// The loop mirrors it into the turn's snapshot, as it does an attachment.
@@ -488,7 +504,7 @@ pub struct ToolOutcome {
     /// The field sits on the contract rather than inside the MCP branch (fork F5), so a
     /// built-in tool with a picture to return needed no rework: the MCP adapter fills it,
     /// and so does `python_exec` with the images its code saved
-    /// (docs/sandbox-file-exchange.md §11 S8).
+    /// (docs/history/sandbox-file-exchange.md §11 S8).
     pub images: Vec<ToolImage>,
     /// **This call changed the profile's stored memory** — the self-model or
     /// a note. Set by a memory writer on the success path that returns after
@@ -927,14 +943,21 @@ pub fn standard_registry(cfg: &ToolConfig) -> ToolRegistry {
                 c.max_minutes
             }),
     )));
+    // One contract, one call path: the mode picks the runner, not a second branch inside
+    // the tool (docs/history/sandbox-file-exchange.md §14 V1).
+    let runner: Arc<dyn crate::shared::sandbox::SandboxRunner> = match cfg.python_mode {
+        crate::shared::config::PythonMode::Wasmer => Arc::new(
+            WasmerSandbox::new(cfg.sandbox_dir.clone())
+                .with_memory_limit(cfg.python_wasm_memory_mb),
+        ),
+        crate::shared::config::PythonMode::Local => Arc::new(
+            crate::shared::sandbox::LocalSandbox::new(cfg.python_path.clone()),
+        ),
+    };
     reg.register(Arc::new(
         python::PythonExec::new(
             cfg.python_mode,
-            cfg.python_path.clone(),
-            Arc::new(
-                WasmerSandbox::new(cfg.sandbox_dir.clone())
-                    .with_memory_limit(cfg.python_wasm_memory_mb),
-            ),
+            runner,
             cfg.python_net,
             cfg.python_wasm_timeout,
         )
@@ -1076,6 +1099,7 @@ pub(crate) mod testkit {
             attachments: crate::shared::config::AttachmentSettings::default(),
             mcp_images: true,
             python_net: false,
+            python_mode: crate::shared::config::PythonMode::Wasmer,
             workspace: crate::shared::config::WorkspaceSettings::default(),
             file_hint: None,
         }
@@ -1221,6 +1245,21 @@ mod tests {
         assert_eq!(ToolParams::from_config(&cfg).file_hint, Some("ru"));
         cfg.interface.language = crate::shared::i18n::Lang::En;
         assert_eq!(ToolParams::from_config(&cfg).file_hint, None);
+    }
+
+    /// §14 V5: the network switch is the sandbox's. In Local mode the code runs with the
+    /// user's own reach, so the value the confirmation popup states is `true` there
+    /// whatever the setting says — a popup promising an isolated network would be a lie.
+    #[test]
+    fn local_mode_reports_the_network_as_reachable_whatever_the_switch_says() {
+        let mut cfg = AppConfig::default();
+        cfg.tools.python_net_enabled = false;
+        cfg.tools.python_mode = crate::shared::config::PythonMode::Wasmer;
+        assert!(!ToolParams::from_config(&cfg).python_net);
+        cfg.tools.python_mode = crate::shared::config::PythonMode::Local;
+        let params = ToolParams::from_config(&cfg);
+        assert!(params.python_net);
+        assert_eq!(params.python_mode, crate::shared::config::PythonMode::Local);
     }
 
     /// The concurrent set is exactly the documented one

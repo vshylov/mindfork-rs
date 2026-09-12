@@ -1908,7 +1908,7 @@ fn push_console(
     if !console.files.trim().is_empty() {
         // Under the universal label, as `stdout` is drawn; the lines are the tool's own —
         // the folder and each file's name — so the user can find what the call saved
-        // (docs/sandbox-file-exchange.md §11 S9).
+        // (docs/history/sandbox-file-exchange.md §11 S9).
         push_wrapped(lines, "└ ", "  ", "files", width, label);
         push_wrapped(lines, "│ ", "│ ", &console.files, width, out_style);
     }

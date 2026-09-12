@@ -4,13 +4,14 @@
 //! - **Wasmer** (default) — an isolated WASIX sandbox behind the `wasmer` sidecar
 //!   (`shared::sandbox`): no access to the host filesystem, network via a flag, preinstalled
 //!   packages. See docs/research/python-wasmer-sandbox.md.
-//! - **Local** — the previous behavior: the system interpreter as a separate process with
-//!   a timeout. No OS sandbox (the code runs on the user's machine).
+//! - **Local** — the system interpreter as a separate process with a timeout. No OS
+//!   sandbox (the code runs on the user's machine), but the **same contract** since
+//!   stage 5 of docs/history/sandbox-file-exchange.md (F11 (b), §14 V1): a job directory with
+//!   `in/` and `out/`, the same staging, the same collection, the same schema.
 //!
 //! The master switch `tools.python_enabled` gates the tool as a whole (off
 //! by default). The tool's id (`python_exec`) doesn't depend on the mode.
 
-use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -33,23 +34,22 @@ use super::{ChatEffect, Tool, ToolContext, ToolImage, ToolOutcome};
 const LOCAL_TIMEOUT: Duration = Duration::from_secs(10);
 /// Maximum size of captured output (characters) — protection against a flood.
 const MAX_OUTPUT_CHARS: usize = 8000;
-/// How much of a text-like output its entry quotes (docs/sandbox-file-exchange.md F5 (c)).
+/// How much of a text-like output its entry quotes (docs/history/sandbox-file-exchange.md F5 (c)).
 const TEXT_HEAD_BYTES: usize = 1024;
 
 /// `python_exec` — executes the given Python code and returns stdout/stderr.
 pub struct PythonExec {
     /// The execution mode (sandbox/local).
     mode: PythonMode,
-    /// The interpreter path (Local; `None` → the system `python3`/`python`).
-    python_path: Option<String>,
-    /// The sandbox implementation (Wasmer).
+    /// The runner for this mode: [`crate::shared::sandbox::WasmerSandbox`] or
+    /// [`crate::shared::sandbox::LocalSandbox`] — one contract, one call path (§14 V1).
     sandbox: Arc<dyn SandboxRunner>,
-    /// Allow network access in the sandbox (Wasmer).
+    /// Allow network access in the sandbox (Wasmer; Local has none to switch, §14 V5).
     net: bool,
     /// Execution timeout in the sandbox (Wasmer).
     wasm_timeout: Duration,
     /// Whether an image the code saved to `/w/out` is shown to the model
-    /// (`tools.python_images`, docs/sandbox-file-exchange.md §11 S8). The description reads
+    /// (`tools.python_images`, docs/history/sandbox-file-exchange.md §11 S8). The description reads
     /// it too, so what the model is told and what it gets cannot disagree.
     images: bool,
 }
@@ -57,18 +57,25 @@ pub struct PythonExec {
 impl PythonExec {
     pub fn new(
         mode: PythonMode,
-        python_path: Option<String>,
         sandbox: Arc<dyn SandboxRunner>,
         net: bool,
         wasm_timeout: Duration,
     ) -> Self {
         Self {
             mode,
-            python_path,
             sandbox,
             net,
             wasm_timeout,
             images: true,
+        }
+    }
+
+    /// The timeout this mode's launch gets (§14 V6): the numbers are about what the two
+    /// cost to start, not about the contract they share.
+    fn timeout(&self) -> Duration {
+        match self.mode {
+            PythonMode::Local => LOCAL_TIMEOUT,
+            PythonMode::Wasmer => self.wasm_timeout,
         }
     }
 
@@ -78,66 +85,11 @@ impl PythonExec {
         self
     }
 
-    /// The interpreter's name/path with a sensible platform default (Local).
-    fn interpreter(&self) -> String {
-        self.python_path.clone().unwrap_or_else(|| {
-            if cfg!(windows) {
-                "python".to_string()
-            } else {
-                "python3".to_string()
-            }
-        })
-    }
-
-    /// Local mode: the system interpreter as a separate process. Returns an already-
-    /// formatted result text (success/error/timeout) in the language `loc`.
-    async fn run_local(&self, code: &str, loc: &crate::shared::i18n::Locale) -> String {
-        // The argument is passed directly (no shell) — no escaping issues.
-        let mut cmd = tokio::process::Command::new(self.interpreter());
-        cmd.arg("-c")
-            .arg(code)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            // Output goes into a pipe, not the console, so Python on Windows picks
-            // an encoding by locale (often cp1252) and fails on Cyrillic in `print`
-            // (`UnicodeEncodeError`). We read the output as UTF-8, so we
-            // also ask Python to write UTF-8. See docs/journal/milestones.md (M7).
-            .env("PYTHONIOENCODING", "utf-8")
-            .env("PYTHONUTF8", "1")
-            .kill_on_drop(true);
-
-        let child = match cmd.spawn() {
-            Ok(c) => c,
-            Err(err) => {
-                return loc.tf(
-                    "tool.python_exec.err.spawn",
-                    &[("py", &self.interpreter()), ("err", &err.to_string())],
-                );
-            }
-        };
-
-        // On a timeout the future is dropped → the process is killed (kill_on_drop).
-        match tokio::time::timeout(LOCAL_TIMEOUT, child.wait_with_output()).await {
-            Ok(Ok(out)) => format_output_parts(
-                &String::from_utf8_lossy(&out.stdout),
-                &String::from_utf8_lossy(&out.stderr),
-                out.status.success(),
-                out.status.code(),
-                loc,
-            ),
-            Ok(Err(err)) => loc.tf("tool.python_exec.err.exec", &[("err", &err.to_string())]),
-            Err(_) => loc.tf(
-                "tool.python_exec.err.timeout",
-                &[("secs", &LOCAL_TIMEOUT.as_secs().to_string())],
-            ),
-        }
-    }
-
-    /// Wasmer sandbox mode: the console output, and what the code left in `/w/out` kept in
-    /// the chat's folder (docs/sandbox-file-exchange.md §11 S5–S9). The result is in the
+    /// One call, either mode (§14 V1): the files the call named copied into the job
+    /// directory's `in/`, the console output, and what the code left in `out/` kept in the
+    /// chat's folder (docs/history/sandbox-file-exchange.md §11 S5–S9). The result is in the
     /// profile's language (`ctx.loc`).
-    async fn run_wasmer(&self, code: &str, handles: &[String], ctx: &ToolContext) -> ToolOutcome {
+    async fn run_job(&self, code: &str, handles: &[String], ctx: &ToolContext) -> ToolOutcome {
         let loc = ctx.loc;
         if let SandboxAvailability::Missing(why) = self.sandbox.availability(loc) {
             return ToolOutcome::text(
@@ -151,7 +103,7 @@ impl PythonExec {
         let out = match self
             .sandbox
             .run(
-                SandboxJob::new(code, self.net, self.wasm_timeout).with_inputs(&inputs),
+                SandboxJob::new(code, self.net, self.timeout()).with_inputs(&inputs),
                 loc,
             )
             .await
@@ -167,7 +119,7 @@ impl PythonExec {
         let result = if out.timed_out {
             let timeout = loc.tf(
                 "tool.python_exec.err.timeout",
-                &[("secs", &self.wasm_timeout.as_secs().to_string())],
+                &[("secs", &self.timeout().as_secs().to_string())],
             );
             match kept.section {
                 Some(section) => format!("{timeout}\n\n{section}"),
@@ -198,7 +150,7 @@ impl PythonExec {
     }
 
     /// Resolves the files a call named against the chat's one numbered list
-    /// (docs/sandbox-file-exchange.md §12 T2) and turns them into copies for `/w/in`.
+    /// (docs/history/sandbox-file-exchange.md §12 T2) and turns them into copies for `/w/in`.
     ///
     /// `Err` is the refusal the model gets **instead of a run**: an unknown handle, a name
     /// several files share, a listed file whose copy is gone. Nothing is staged and
@@ -261,7 +213,10 @@ impl PythonExec {
         let loc = ctx.loc;
         if let Some(name) = &item.file {
             let Some(dir) = &ctx.files_dir else {
-                return Err(loc.t("tool.python_exec.err.files_no_folder").to_string());
+                return Err(loc.tf(
+                    "tool.python_exec.err.files_no_folder",
+                    &[("in", self.mode.dirs().0)],
+                ));
             };
             let path = dir.join(name);
             if !path.is_file() {
@@ -311,9 +266,13 @@ impl PythonExec {
                     lines.extend(self.keep_one(loc, dir, &mut listed, file, &mut kept));
                 }
             }
-            None => lines.push(loc.t("tool.python_exec.files.no_folder").to_string()),
+            None => lines.push(loc.tf(
+                "tool.python_exec.files.no_folder",
+                &[("out", self.mode.dirs().1)],
+            )),
         }
-        lines.extend(out.skipped.iter().map(|s| skipped_line(loc, s)));
+        let out_dir = self.mode.dirs().1;
+        lines.extend(out.skipped.iter().map(|s| skipped_line(loc, s, out_dir)));
         kept.section = Some(format!("files:\n{}", lines.join("\n")));
         kept
     }
@@ -421,55 +380,63 @@ impl Tool for PythonExec {
     fn gate(&self) -> Option<crate::features::tools::meta::ToolGate> {
         Some(crate::features::tools::meta::ToolGate::Python)
     }
+    /// The mode's own first sentence, then the two paragraphs both modes now share — the
+    /// files that come in and the files that go out — each naming this mode's folders
+    /// (§14 V2). The Wasmer rendering is unchanged from the one stages 2 and 3 measured.
     fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
-        match self.mode {
-            PythonMode::Local => loc.t("tool.python_exec.desc.local").into(),
+        let (in_dir, out_dir) = self.mode.dirs();
+        // The caps and the images sentence are built from the same values the run uses
+        // (docs/history/sandbox-file-exchange.md §11 S10), so the tool cannot promise another.
+        let limits = OutputLimits::DEFAULT;
+        let images = if self.images {
+            loc.tf("tool.python_exec.desc.images_on", &[("out", out_dir)])
+        } else {
+            loc.t("tool.python_exec.desc.images_off").to_string()
+        };
+        let files = loc.tf(
+            "tool.python_exec.desc.files",
+            &[
+                ("out", out_dir),
+                ("files", &limits.max_files.to_string()),
+                ("file", &format_bytes(limits.max_file_bytes as usize)),
+                ("total", &format_bytes(limits.max_total_bytes as usize)),
+                ("images", &images),
+            ],
+        );
+        let inputs = loc.tf(
+            "tool.python_exec.desc.inputs",
+            &[("in", in_dir), ("out", out_dir)],
+        );
+        let head = match self.mode {
+            PythonMode::Local => loc.t("tool.python_exec.desc.local").to_string(),
             PythonMode::Wasmer => {
                 let net = if self.net {
                     loc.t("tool.python_exec.net.on")
                 } else {
                     loc.t("tool.python_exec.net.off")
                 };
-                // What `/w/out` does, with the caps and the images sentence built from the
-                // same values the run uses (docs/sandbox-file-exchange.md §11 S10).
-                let limits = OutputLimits::DEFAULT;
-                let images = if self.images {
-                    loc.t("tool.python_exec.desc.images_on")
-                } else {
-                    loc.t("tool.python_exec.desc.images_off")
-                };
-                let files = loc.tf(
-                    "tool.python_exec.desc.files",
-                    &[
-                        ("files", &limits.max_files.to_string()),
-                        ("file", &format_bytes(limits.max_file_bytes as usize)),
-                        ("total", &format_bytes(limits.max_total_bytes as usize)),
-                        ("images", images),
-                    ],
-                );
-                format!(
-                    "{} {} {files}",
-                    loc.tf("tool.python_exec.desc.wasmer", &[("net", net)]),
-                    loc.t("tool.python_exec.desc.inputs"),
-                )
+                loc.tf("tool.python_exec.desc.wasmer", &[("net", net)])
             }
-        }
+        };
+        format!("{head} {inputs} {files}")
     }
-    /// `files` exists in Wasmer mode only: Local runs no job directory until stage 5's
-    /// parity (F11), and an argument the mode cannot honour is worse than none
-    /// (docs/sandbox-file-exchange.md §12 T10; ADR 0005 §3 records the divergence).
+    /// One schema for both modes again (ADR 0005 §3): since stage 5's parity, Local runs
+    /// in a job directory too, so `files` means the same thing there — the chat's files
+    /// copied in before the code runs (docs/history/sandbox-file-exchange.md §14 V1).
     fn parameters(&self, loc: &crate::shared::i18n::Locale) -> serde_json::Value {
-        let mut properties = serde_json::json!({"code": {"type": "string"}});
-        if matches!(self.mode, PythonMode::Wasmer) {
-            properties["files"] = serde_json::json!({
-                "type": "array",
-                "items": {"type": "string"},
-                "description": loc.t("tool.python_exec.param.files"),
-            });
-        }
         serde_json::json!({
             "type": "object",
-            "properties": properties,
+            "properties": {
+                "code": {"type": "string"},
+                "files": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": loc.tf(
+                        "tool.python_exec.param.files",
+                        &[("in", self.mode.dirs().0)],
+                    ),
+                },
+            },
             "required": ["code"]
         })
     }
@@ -481,8 +448,8 @@ impl Tool for PythonExec {
             .ok_or_else(|| anyhow::anyhow!(ctx.loc.t("tool.python_exec.err.code_empty")))?
             .to_string();
 
-        // The chat's files this call wants in `/w/in` (§12 T2): names or `#N`, as the
-        // chat's file list numbers them.
+        // The chat's files this call wants staged (§12 T2): names or `#N`, as the chat's
+        // file list numbers them. Both modes since stage 5's parity.
         let files: Vec<String> = args
             .get("files")
             .and_then(|v| v.as_array())
@@ -495,10 +462,7 @@ impl Tool for PythonExec {
             })
             .unwrap_or_default();
 
-        Ok(match self.mode {
-            PythonMode::Local => ToolOutcome::text(self.run_local(&code, ctx.loc).await),
-            PythonMode::Wasmer => self.run_wasmer(&code, &files, ctx).await,
-        })
+        Ok(self.run_job(&code, &files, ctx).await)
     }
 }
 
@@ -548,11 +512,15 @@ struct Kept {
 }
 
 /// The `not kept` entry of an output the sandbox did not collect, with its reason — a
-/// folder named as one, so the fix ("directly into /w/out") reads off the name.
-fn skipped_line(loc: &Locale, skipped: &SkippedOutput) -> String {
+/// folder named as one, so the fix ("directly into the output folder") reads off the name.
+/// `out_dir` is the mode's own spelling of that folder (§14 V2).
+fn skipped_line(loc: &Locale, skipped: &SkippedOutput, out_dir: &str) -> String {
     let limits = OutputLimits::DEFAULT;
     let reason = match skipped.reason {
-        SkipReason::Directory => loc.t("tool.python_exec.files.reason.directory").to_string(),
+        SkipReason::Directory => loc.tf(
+            "tool.python_exec.files.reason.directory",
+            &[("out", out_dir)],
+        ),
         SkipReason::NotAFile => loc
             .t("tool.python_exec.files.reason.not_a_file")
             .to_string(),
@@ -654,26 +622,26 @@ mod tests {
         crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru)
     }
 
-    /// The tool in local mode with a given interpreter path.
+    /// The tool in local mode on the real interpreter — one contract since stage 5's
+    /// parity, so the runner is `LocalSandbox` here as it is in the registry.
     fn local(python_path: Option<String>) -> PythonExec {
         PythonExec::new(
             PythonMode::Local,
-            python_path,
-            Arc::new(MockSandbox::missing("не должно вызываться в Local")),
+            Arc::new(crate::shared::sandbox::LocalSandbox::new(python_path)),
             false,
             Duration::from_secs(30),
         )
     }
 
+    /// The tool in local mode over a mock runner — for the parts that are about the
+    /// wording and the staging rather than about spawning an interpreter.
+    fn local_mock(sandbox: Arc<dyn SandboxRunner>) -> PythonExec {
+        PythonExec::new(PythonMode::Local, sandbox, false, Duration::from_secs(30))
+    }
+
     /// The tool in sandbox mode with a given mock runner.
     fn wasmer(sandbox: Arc<dyn SandboxRunner>, net: bool) -> PythonExec {
-        PythonExec::new(
-            PythonMode::Wasmer,
-            None,
-            sandbox,
-            net,
-            Duration::from_secs(30),
-        )
+        PythonExec::new(PythonMode::Wasmer, sandbox, net, Duration::from_secs(30))
     }
 
     #[tokio::test]
@@ -714,7 +682,13 @@ mod tests {
             .invoke(&ctx, serde_json::json!({"code": "print(1)"}))
             .await
             .unwrap();
-        assert!(out.result.contains("Не удалось запустить Python"));
+        // The interpreter is named, whichever layer reports it: a user who set the wrong
+        // path has to see which one was tried.
+        assert!(
+            out.result.contains("definitely-not-a-real-python-xyz"),
+            "got: {}",
+            out.result
+        );
     }
 
     #[tokio::test]
@@ -771,11 +745,13 @@ mod tests {
 
     #[test]
     fn description_varies_by_mode_and_net() {
-        assert!(
-            local(None)
-                .description(crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru))
-                .contains("локальный интерпретатор")
-        );
+        let ru = crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru);
+        let local = local(None).description(ru);
+        // Local says what it is — the machine's own interpreter, no isolation — and names
+        // its own folders, never the guest's (§14 V2/V5).
+        assert!(local.contains("интерпретатор машины"), "{local}");
+        assert!(local.contains("in") && local.contains("out/"), "{local}");
+        assert!(!local.contains("/w/"), "{local}");
         let sb: Arc<dyn SandboxRunner> = Arc::new(MockSandbox::missing("x"));
         assert!(
             wasmer(sb.clone(), true)
@@ -823,7 +799,7 @@ mod tests {
         }
     }
 
-    /// A chat whose files a call can name (docs/sandbox-file-exchange.md §12 T2): one
+    /// A chat whose files a call can name (docs/history/sandbox-file-exchange.md §12 T2): one
     /// attachment, one stored file that is really on disk, one image — the three kinds
     /// `/file list` numbers, in that order.
     fn ctx_with_inputs() -> (tempfile::TempDir, tempfile::TempDir, ToolContext) {
@@ -886,6 +862,61 @@ mod tests {
         assert_eq!(staged[0][0].1, NOTES.as_bytes());
         assert_eq!(staged[0][1].1, XLSX);
         assert_eq!(staged[0][2].1, PNG);
+    }
+
+    /// §14 V1: Local runs the same contract — a call names one of the chat's files, it is
+    /// staged, and what the run left in `out/` is kept with the chat. The runner is a mock,
+    /// because what is asserted here is the **tool's** path, which no longer branches by
+    /// mode; the interpreter itself is the live pair's business.
+    #[tokio::test]
+    async fn local_mode_stages_the_chats_files_and_keeps_what_a_run_saved() {
+        let (_d, _folder, ctx) = ctx_with_inputs();
+        let sb = Arc::new(MockSandbox::ready(SandboxOutput {
+            files: vec![OutputFile {
+                name: "clean.csv".into(),
+                bytes: b"a,b\n1,2\n".to_vec(),
+            }],
+            ..SandboxOutput::default()
+        }));
+        let out = local_mock(sb.clone())
+            .invoke(
+                &ctx,
+                serde_json::json!({"code": "print(1)", "files": ["#2"]}),
+            )
+            .await
+            .unwrap();
+        let staged = sb.staged.lock().unwrap();
+        assert_eq!(
+            staged[0]
+                .iter()
+                .map(|(n, _)| n.as_str())
+                .collect::<Vec<_>>(),
+            ["sales.xlsx"]
+        );
+        assert_eq!(staged[0][0].1, XLSX);
+        // And the way out is the same one: the file is stored with the chat and named.
+        assert_eq!(stored_names(&out), ["clean.csv"]);
+        assert!(out.result.contains("clean.csv"), "{}", out.result);
+    }
+
+    /// The refusals are the tool's, not the mode's: a handle nothing answers to stops a
+    /// Local call before the interpreter is started, exactly as it stops a sandboxed one.
+    #[tokio::test]
+    async fn local_mode_refuses_an_unknown_handle_before_running() {
+        let (_d, _folder, ctx) = ctx_with_inputs();
+        let sb = Arc::new(MockSandbox::ready(SandboxOutput::default()));
+        let out = local_mock(sb.clone())
+            .invoke(
+                &ctx,
+                serde_json::json!({"code": "print(1)", "files": ["ghost.csv"]}),
+            )
+            .await
+            .unwrap();
+        assert!(out.result.contains("ghost.csv"), "{}", out.result);
+        assert!(
+            sb.calls.lock().unwrap().is_empty(),
+            "a refused call must not reach the interpreter"
+        );
     }
 
     #[tokio::test]
@@ -982,16 +1013,29 @@ mod tests {
         );
     }
 
-    /// Local mode has no job directory until stage 5's parity, so it is never offered the
-    /// argument its mode cannot honour (§12 T10).
+    /// One schema for both modes again (ADR 0005 §3, §14 V1): stage 5 gave Local a job
+    /// directory, so `files` means there what it means in the sandbox — and each mode's
+    /// argument description names the folder that mode actually copies into (§14 V2).
     #[test]
-    fn only_the_sandbox_mode_offers_the_files_argument() {
+    fn both_modes_offer_the_files_argument_naming_their_own_folder() {
         let en = crate::shared::i18n::locale(Lang::En);
         let sb: Arc<dyn SandboxRunner> = Arc::new(MockSandbox::missing("x"));
         let wasmer_schema = wasmer(sb, false).parameters(en);
         assert!(wasmer_schema["properties"]["files"].is_object());
+        let guest = wasmer_schema["properties"]["files"]["description"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        assert!(guest.contains("/w/in"), "{guest}");
+
         let local_schema = local(None).parameters(en);
-        assert!(local_schema["properties"].get("files").is_none());
+        assert!(local_schema["properties"]["files"].is_object());
+        assert_eq!(local_schema["required"], wasmer_schema["required"]);
+        let host = local_schema["properties"]["files"]["description"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        assert!(!host.contains("/w/in"), "{host}");
     }
 
     fn stored_names(out: &ToolOutcome) -> Vec<String> {
@@ -1231,7 +1275,6 @@ mod tests {
         let (_d, _s, ctx) = ctx_with_storage(Uuid::new_v4());
         let tool = PythonExec::new(
             PythonMode::Wasmer,
-            None,
             Arc::new(WasmerSandbox::new(dir)),
             false,
             Duration::from_secs(120),
@@ -1338,7 +1381,6 @@ mod tests {
         let dir = sandbox_dir_from_env()?;
         Some(PythonExec::new(
             PythonMode::Wasmer,
-            None,
             Arc::new(WasmerSandbox::new(Some(std::path::PathBuf::from(dir)))),
             net,
             Duration::from_secs(timeout_secs),
@@ -1535,7 +1577,7 @@ print('pillow', png.getvalue()[:4] == b'\x89PNG')
         );
     }
 
-    /// Outputs from a real sandbox (docs/sandbox-file-exchange.md §8, stage 2): a
+    /// Outputs from a real sandbox (docs/history/sandbox-file-exchange.md §8, stage 2): a
     /// matplotlib chart and a CSV saved to `/w/out` are kept and the chart is shown,
     /// although the script then exits with 3; a folder in `/w/out` is named, not walked;
     /// and the violations are attempted — a link to the job script and a file written
@@ -1688,7 +1730,6 @@ print('pillow', png.getvalue()[:4] == b'\x89PNG')
         let dir = sandbox_dir_from_env()?;
         Some(PythonExec::new(
             PythonMode::Wasmer,
-            None,
             Arc::new(
                 WasmerSandbox::new(Some(std::path::PathBuf::from(dir)))
                     .with_memory_limit(Some(memory_mb)),
@@ -1752,7 +1793,6 @@ print('pillow', png.getvalue()[:4] == b'\x89PNG')
         let empty = tempfile::tempdir().unwrap();
         let tool = PythonExec::new(
             PythonMode::Wasmer,
-            None,
             Arc::new(WasmerSandbox::new(Some(empty.path().to_path_buf()))),
             false,
             Duration::from_secs(30),
@@ -1809,12 +1849,37 @@ print('pillow', png.getvalue()[:4] == b'\x89PNG')
     #[tokio::test]
     #[ignore = "requires a Python interpreter on PATH"]
     async fn runs_real_python_local() {
-        let (_d, _s, ctx) = ctx_with_storage(Uuid::new_v4());
+        let (_d, _folder, ctx) = ctx_with_inputs();
+        // The round trip stage 3 measured in the sandbox, on the host: a file of the chat
+        // staged into `in/`, read by the code, and a file written to `out/` kept with the
+        // chat (§14 V7). Relative paths, which is what the working directory buys.
+        let code = concat!(
+            "text = open('in/notes.md', encoding='utf-8').read()\n",
+            "print('read', len(text))\n",
+            "open('out/echo.txt', 'w', encoding='utf-8').write(text)\n",
+        );
         let out = local(None)
-            .invoke(&ctx, serde_json::json!({"code": "print('hello')"}))
+            .invoke(
+                &ctx,
+                serde_json::json!({"code": code, "files": ["notes.md"]}),
+            )
             .await
             .unwrap();
-        assert!(out.result.contains("hello"), "got: {}", out.result);
+        assert!(
+            out.result.contains(&format!("read {}", NOTES.len())),
+            "got: {}",
+            out.result
+        );
+        assert_eq!(stored_names(&out), ["echo.txt"]);
+        let kept = out
+            .effects
+            .iter()
+            .find_map(|e| match e {
+                ChatEffect::AddChatFile(f) => Some(f.bytes),
+                _ => None,
+            })
+            .expect("the file was stored");
+        assert_eq!(kept, NOTES.len() as u64);
     }
 
     /// Cyrillic in `print` must not fail with `UnicodeEncodeError` (Windows cp1252).

@@ -1,5 +1,5 @@
 //! Orchestrator tests — stored files, the chat's side of the sandbox file exchange
-//! (docs/sandbox-file-exchange.md §11 S5–S8, S11): a tool's `AddChatFile` lands once and is
+//! (docs/history/sandbox-file-exchange.md §11 S5–S8, S11): a tool's `AddChatFile` lands once and is
 //! mirrored into the turn, `/file list` and `/file remove` reach stored files, a copy that
 //! cannot be deleted stays listed, the bootstrap adopts what a chat does not list, and an
 //! image the model cannot take is withheld with a note, and `/file open`/`/file folder`
@@ -110,7 +110,7 @@ fn listed(events: Vec<AppEvent>) -> Option<(Vec<String>, Vec<String>, Vec<String
     })
 }
 
-/// One numbered list of the chat's three kinds (docs/sandbox-file-exchange.md §12 T2, T4):
+/// One numbered list of the chat's three kinds (docs/history/sandbox-file-exchange.md §12 T2, T4):
 /// attachments, then the stored files no attachment links, then the images its messages
 /// carry — and a document that kept its original is **one** item, shown on its attachment's
 /// line rather than twice (§12 T9).

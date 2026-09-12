@@ -1,6 +1,6 @@
 //! A chat's stored files on disk (`data/files/<chat-id>/`): writing an output under a free
 //! name, finding what the chat does not list, deleting our copy. See
-//! docs/sandbox-file-exchange.md (F2, F4, F10, §11 S5, S6, S11), spec §9.7.
+//! docs/history/sandbox-file-exchange.md (F2, F4, F10, §11 S5, S6, S11), spec §9.7.
 //!
 //! The listing is [`ChatFile`] in `Chat.files`, and the orchestrator owns it; this module
 //! only touches bytes. Every name it is handed is checked to be one plain component before

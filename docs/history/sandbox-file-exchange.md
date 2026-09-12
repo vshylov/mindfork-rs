@@ -1,6 +1,6 @@
 # Sandbox file exchange — files into, out of and between `python_exec` calls
 
-Track design plan (stages, scope, forks). Genre per [AGENTS.md](../AGENTS.md) §1;
+Track design plan (stages, scope, forks). Genre per [AGENTS.md](../../AGENTS.md) §1;
 once the track is done this file moves to `docs/history/`.
 
 **Status:** forks decided 2026-09-11 — every one as recommended except F10, which
@@ -8,8 +8,9 @@ drops the per-chat quota (§9). **Stage 0** (a read-only `site-packages`) merged
 #518. **Stage 1**, the MVP probe: GO on both families, Qwen 3.6 27B and Gemma 4 31B
 (§10). **Stage 2**, outputs: merged as #520, live GO on Gemma 4 31B (§11).
 **Stage 3**, inputs: merged as #521, live GO on Gemma 4 31B (§12).
-**Stage 4**, opening: implemented on `feat/file-open`, manual gate done on
-Windows (§13).
+**Stage 4**, opening: merged as #522, manual gate done on Windows (§13).
+**Stage 5**, Local parity: implemented on `feat/sandbox-files-local`, live GO on
+Gemma 4 31B (§14). **The track is done**; this file now lives in `docs/history/`.
 
 The request: `python_exec` in its Wasmer mode is text in, text out — whatever the
 code writes dies with the call. The user wants (a) **files out** — what the code
@@ -27,11 +28,11 @@ what one call produced is available to later calls in the same chat.
 - **matplotlib works and is deliberately unnamed.** `MATPLOTLIB_SHIM`
   (`src/shared/sandbox.rs`) renders PNG and SVG under WASIX, but the tool
   description omits it because a chart cannot leave the sandbox (spec §13.2) — why
-  it was first rejected ([journal/tools.md](journal/tools.md), "pandas in the
+  it was first rejected ([journal/tools.md](../journal/tools.md), "pandas in the
   starter set").
 - **The roadmap asks.** "A persistent per-chat scratch directory for
-  `python_exec`" is groundwork ([roadmap.md](roadmap.md)) since a model lost a
-  16 MB download between calls ([history/fetch-url-fidelity.md](history/fetch-url-fidelity.md)).
+  `python_exec`" is groundwork ([roadmap.md](../roadmap.md)) since a model lost a
+  16 MB download between calls ([history/fetch-url-fidelity.md](fetch-url-fidelity.md)).
   D4 meets that need through stored files, not a shared writable directory.
 
 ### 1.2. Not in this track
@@ -136,7 +137,7 @@ then needs F11's parity.
 ### F1. The chat file store
 
 - **(a)** A new entity `ChatFile { id, name, stored, origin, mime, bytes, sha256,
-  added_at }` in `Chat.files` (additive, [ADR 0006](decisions/0006-data-schema-versioning.md)
+  added_at }` in `Chat.files` (additive, [ADR 0006](../decisions/0006-data-schema-versioning.md)
   F12), bytes under `data/files/<chat-id>/`, `origin` = `Sandbox { call_id }` |
   `Disk { source }`. `Attachment` gains only an optional `file_id` (F8).
 - **(b)** `Attachment` gains `kind: Text | Binary` and a blob reference.
@@ -156,7 +157,7 @@ every chat for no visible gain. **User's decision: (a).**
 
 **Recommendation: (a)** — D1 opens the folder in the OS, and hashes tell the user
 nothing. `stored` is the **file name only**, never an absolute path, so a restored
-data root resolves on any machine ([lessons.md](lessons.md) §6). **User's decision:
+data root resolves on any machine ([lessons.md](../lessons.md) §6). **User's decision:
 (a).**
 
 ### F3. Existing attachments and images as inputs
@@ -318,10 +319,10 @@ breaks it. Local stays unisolated, as described. **User's decision: (b), last.**
 ### F12. Sub-agents and background runs
 
 - **Store:** the parent chat's, along `AddAttachment`'s routes, mirrored into the
-  run's snapshot ([ADR 0010](decisions/0010-subagent-nested-turn.md)).
+  run's snapshot ([ADR 0010](../decisions/0010-subagent-nested-turn.md)).
 - **No confirmation in background runs:** (a) the foreground contract — the
   profile's tool set is the control, as the user decided
-  ([research/background-subagents.md](research/background-subagents.md) F3);
+  ([research/background-subagents.md](../research/background-subagents.md) F3);
   (b) inputs refused there, outputs allowed; (c) no `python_exec` there.
   **Recommendation: (a)** — such a run can already read every attachment's text
   and hand it to networked code; inputs add binaries, not a new kind of reach. (b)
@@ -377,7 +378,7 @@ is amended.
   and `/file list` show sizes, so the growth is visible.
 - **Cancellation leaves no listing** — `Esc` or a timeout drops the job; an
   unlanded file is swept.
-- **Privacy:** no new outbound address; [PRIVACY.md](../PRIVACY.md) lists the
+- **Privacy:** no new outbound address; [PRIVACY.md](../../PRIVACY.md) lists the
   store as local data.
 
 ## 7. Stages
@@ -416,8 +417,13 @@ true (AGENTS.md §4).
   `shared/os_open.rs`, the allowlist; sub-decisions in §13. Docs: spec §9.7, README,
   architecture §3, CHANGELOG, journal. No model run — the gate is manual (§8). **Done**,
   gate in §13.
-- **Stage 5 — Local parity** (`feat/sandbox-files-local`).
-- **Close:** this file to `docs/history/`; roadmap item and CLAUDE.md map updated.
+- **Stage 5 — Local parity** (`feat/sandbox-files-local`): `LocalSandbox` behind the same
+  `SandboxRunner`, a job directory with `in/`/`out/`, the schema and the block in both
+  modes; sub-decisions in §14. Docs: spec §13.2, ADR 0005 §3 amended again, architecture
+  §3, CHANGELOG, journal. **Done**, live GO (§14).
+- **Close:** done with stage 5 — this file moved to `docs/history/`, every reference
+  re-pointed and CLAUDE.md's status carrying the track's last line. The roadmap names no
+  item of this track (it predates the plan), so nothing there needed closing.
 
 ## 8. Tests and live runs
 
@@ -810,3 +816,69 @@ argument, so a stub script records what it was given, and the test asserts the p
 unsplit (`my chart (1).png`) and that a launcher which is not installed comes back as an
 error. What is **not** verified here is a GUI launch on a Linux desktop — the development
 machine has none, and WSL carries only docker's utility distribution.
+
+## 14. Stage 5 — sub-decisions (2026-09-12)
+
+Fork F11 decided parity (b): Local runs in a job directory with `in/`/`out/`, the same
+staging and the same collection, and the two modes stop diverging. These are the decisions
+the code survey added under it, recorded before implementing as §11–§13 were.
+
+- **V1 — Local becomes a `SandboxRunner`, not a second code path.** `LocalSandbox` in
+  `shared/sandbox.rs` answers the same contract as `WasmerSandbox`: a job directory per
+  call holding the script, `in/` and `out/`; the interpreter started **with that directory
+  as its working directory**; the same `collect_outputs` under the same
+  `OutputLimits::DEFAULT`; the same rule that any exit code collects and a timeout collects
+  nothing. `python_exec` then has one path, and `PythonMode` decides only two things —
+  which runner the registry builds, and the wording. That is what makes ADR 0005 §3's "one
+  schema for both modes" true again instead of merely promised; the alternative, a second
+  staging/collection written beside the first, is the defect that document keeps warning
+  about.
+- **V2 — relative paths work in both modes, and the Wasmer prompt does not change.** F11(b)
+  asks for `in/`/`out/` to work everywhere, and they do: the working directory is the job
+  directory in both — mounted at `/w` in the guest, the process's cwd on the host. What the
+  model *reads*, though, keeps each mode's own form — `/w/in` and `/w/out` for Wasmer, `in`
+  and `out` for Local — through `{in}`/`{out}` placeholders in the pinned block and the
+  description. The Wasmer rendering stays byte-identical to the text stages 2 and 3
+  measured; spending a live GO to make two strings look alike would buy nothing.
+- **V3 — the script is a file, not `-c`.** Local passed the code as a command-line argument;
+  now it is written to `job.py` beside `in/` and `out/` and the interpreter is given the
+  path. The command line stops being somewhere a long script can overflow (Windows caps
+  it), a traceback names a file, and both modes build the same directory. The WASIX shims
+  stay Wasmer's: `setsockopt` and `MPLCONFIGDIR` are about the guest's libc and its
+  FreeType build, and nothing on the host wants them.
+- **V4 — Local's availability is a path check, not a probe.** An interpreter named with a
+  separator (`D:\py\python.exe`) is checked as a file, so a wrong setting is reported
+  before the call in the same place a missing `wasmer` is; a bare `python3`/`python` is left
+  to `PATH`, where a failure surfaces as the spawn error it already was. No `--version`
+  probe — a process per turn to answer a question the run answers anyway.
+- **V5 — `net` stays a Wasmer word, and the popup stops implying otherwise.** Local has no
+  network switch and never had one: the code runs with the user's own permissions. Its
+  description says the mode is unisolated rather than naming a network state, and the
+  confirmation popup's network line reads `true` in Local mode, because that is what is
+  true there — `python_net` keeps meaning "the sandbox's flag".
+- **V6 — each mode keeps its own timeout** (Local's 10 s, Wasmer's configured one): the
+  numbers are about what the two cost to start, not about the contract they share.
+- **V7 — what a unit test may reach.** The job directory's preparation is host-side and
+  shared, so it is tested directly — the staged copies under their names, `out/` present
+  even when nothing was staged, a name with a separator refused — and the collection
+  already has stage 2's table. Spawning a *real* interpreter is the one part a unit test
+  must not require, so it stays the `#[ignore]` pair, with `runs_real_python_local` grown
+  into the round trip the stage is about: a file staged into `in/`, read by the code, a
+  file written to `out/`, stored with the chat.
+
+**Live — GO (2026-09-12)**, Gemma 4 31B q4_0 on llama.cpp b10807, one slot of 16384.
+
+- **`local_mode_files_round_trip_e2e_live`** — the round trip with **no sandbox at all**,
+  which is the point of the mode: a twelve-row CSV attached to the chat, and one turn
+  asking the model to name it in `files`, read it from the input folder with the standard
+  library only, print the sum of the `total` column and write that sum into the output
+  folder. It printed **4706** — Σ(i²·7+13) over twelve months, a number only the file
+  carries — the reply repeated it, and `summary.txt` was stored with the chat and shown by
+  `/file list`. 10.6 s. The model was told `in/`/`out/` and used them, which is the half
+  §14 V2 could not have been argued into being true.
+- **`runs_real_python_local`** — the same round trip without a model: the chat's attachment
+  staged into `in/`, read through a relative path, and `out/echo.txt` kept with the chat.
+- **The refactor's other half, re-measured rather than assumed**: the nineteen
+  `python::tests` sandbox smokes, `sandbox_inputs_e2e_live` (24.6 s) and
+  `attached_binary_reaches_the_sandbox_live` (7.6 s) are green on the same stack after the
+  job-preparation extraction.

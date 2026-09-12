@@ -1,5 +1,5 @@
 //! What a chat can hand to `python_exec` — its attachments, its stored files and its
-//! images, as **one numbered list** (docs/sandbox-file-exchange.md §12 T2).
+//! images, as **one numbered list** (docs/history/sandbox-file-exchange.md §12 T2).
 //!
 //! One list, four readers: the pinned block that tells the model what it may name, the
 //! resolver behind the tool's `files` argument, the confirmation popup's line, and the

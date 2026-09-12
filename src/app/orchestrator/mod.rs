@@ -772,7 +772,7 @@ impl Orchestrator {
             .collect();
         // Files a call stored whose chat was not saved before the app stopped: listed,
         // never deleted — and here, before any run can be writing one
-        // (docs/sandbox-file-exchange.md §11 S6).
+        // (docs/history/sandbox-file-exchange.md §11 S6).
         self.adopt_unlisted_files();
         if self.chats.is_empty() {
             let chat = self.new_chat_value(None);

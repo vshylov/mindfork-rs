@@ -48,7 +48,7 @@ pub struct Attachment {
     pub mode: AttachMode,
     /// The chat file holding the **original bytes**, when `/file attach` kept them beside
     /// the extracted text — a pdf, a docx, an html page (fork F8a,
-    /// docs/sandbox-file-exchange.md §12 T9). `None` when the text *is* the file. The two
+    /// docs/history/sandbox-file-exchange.md §12 T9). `None` when the text *is* the file. The two
     /// halves are one item wherever files are listed, named or removed. Additive — old
     /// chats read without migration (ADR 0006 F12).
     #[serde(default, skip_serializing_if = "Option::is_none")]

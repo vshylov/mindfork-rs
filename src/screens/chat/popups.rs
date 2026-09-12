@@ -366,7 +366,7 @@ pub(super) fn render_tool_confirm(
         Line::from(Span::styled(header, Style::new().fg(palette.accent))),
     ];
     // What this call would hand the sandbox, and whether it can reach the network — the
-    // two halves of what is being consented to (docs/sandbox-file-exchange.md §12 T6).
+    // two halves of what is being consented to (docs/history/sandbox-file-exchange.md §12 T6).
     // The compact view above drops array arguments, so `files` is invisible without this.
     if let Some(inputs) = &pending.inputs {
         let files: Vec<String> = inputs

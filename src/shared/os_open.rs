@@ -1,5 +1,5 @@
 //! Opening one of the chat's files — or its folder — in the user's desktop
-//! (fork F9 of docs/sandbox-file-exchange.md, sub-decisions §13 U3–U6; spec §9.7).
+//! (fork F9 of docs/history/sandbox-file-exchange.md, sub-decisions §13 U3–U6; spec §9.7).
 //!
 //! Three platform calls and one policy. The policy is [`is_document`], and it is the
 //! reason this module is not simply "hand the path to the shell": the chat's folder is
