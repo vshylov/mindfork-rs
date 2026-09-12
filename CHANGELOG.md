@@ -16,6 +16,13 @@ split by subsystem.
 
 ### Fixed
 
+- **Every "you weren't shown this image" note now says it in words that work.** The same
+  measurement was run against the rest of them — the notes for a model that takes no
+  images, for a picture too large to show, for charts held back by the Python settings or
+  by the four-per-call cap, and for an SVG. Where the polite wording left the assistant
+  describing a picture it had never seen, it now tells it plainly not to; the SVG note
+  still points at saving a PNG instead, because there that is the useful thing to do.
+
 - **A picture a plugin held back is now said out loud — in words that work.** With "Let
   servers send images" off, an image a server's tool returned was dropped in silence: the
   assistant got a result that looked complete and went on to describe a screenshot it had

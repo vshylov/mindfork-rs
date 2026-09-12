@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (61)
+## Entries (62)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -73,6 +73,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: sandbox file exchange — stage 4, opening a file in the system (done)
 - Post-M9: sandbox file exchange — stage 5, the local interpreter joins the contract (done)
 - Post-M9: a withheld server image is stated, and stated in words that work (done)
+- Post-M9: the rest of the withheld-image family gets the clause that works (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -4429,3 +4430,54 @@ separate measurement; this PR does not touch them. Flagged for a follow-up.
 the statement is there; a second test drives `max_result_chars` low enough to truncate and
 asserts the statement still ends the result. Both fail with the guard reverted — checked,
 not assumed. Unit: 3172 green, 170 ignored.
+
+### Post-M9: the rest of the withheld-image family gets the clause that works (done)
+
+The follow-up the entry above flagged. Having measured that a *descriptive* note is
+indistinguishable from silence, the obvious next question was whether the five siblings —
+`loop.images_no_vision`, `loop.images_dropped`, `tool.python_exec.files.not_shown_off` /
+`_cap` / `.svg`, plus the parser's hardcoded over-cap line — are inert for the same
+reason. Measured on **Gemma 4 31B q4_0** (b10807, 2026-09-12, five runs an arm, nothing
+ever sent as an image), the answer is "two of them are, and the rest fail differently":
+
+| the result carries | invented an answer |
+|---|---|
+| nothing (control, bracketed shape) | 5/5 |
+| `loop.images_no_vision`, as shipped | 3/5 |
+| `loop.images_no_vision` + the clause | **0/5** |
+| `loop.images_dropped`, as shipped | 5/5 |
+| `loop.images_dropped` + the clause | 1/5 |
+| nothing (control, `python_exec` shape) | 4/5 |
+| `files.not_shown_off`, as shipped | 1/9 — and **7/9 called the tool again** |
+| `files.not_shown_off` + the clause | **0/5**, a plain refusal 4/5 |
+| `files.svg`, as shipped | 1/5 — 4/5 called the tool again |
+| `files.svg` + the clause | **0/5**, still 5/5 calling the tool again |
+
+**The family is not one shape, and the verdict is not one verdict.** `loop.images_*` are a
+bracketed line of their own and behave like the MCP string did — the descriptive form buys
+little or nothing. The `python_exec` notes are a *suffix on one file's line* inside the
+`files:` section, and there the shipped form was **not** inert: the model mostly went back
+and called the tool again. That is not a hallucination, and it was nearly recorded as one —
+the first classifier read `finish_reason: tool_calls` (empty content) as a truncation, and
+before that a 2048-token budget produced real truncations that read as clean refusals. Both
+outcomes look like "the model said nothing"; neither is. A re-call is still worth removing
+here, because the second call's image is withheld for the same reason as the first, and the
+user's round budget pays for it.
+
+**`.svg` is the exception that keeps its shape.** There a re-call is the *right* move — the
+note's whole job is to steer to "save a PNG" — so it gains "you have not seen it, so do not
+describe it" while keeping the steer, and the measurement confirms both halves: the
+invention goes to 0/5 and the re-call stays 5/5.
+
+**A gate, because nothing else holds this.** The wording change broke no test — the strings
+were pinned by nothing — so `every_withheld_image_string_tells_the_model_not_to_describe_it`
+now asserts every member of the family, in both bundles, carries the clause — one needle per
+language, since it is a sentence and not a token. Mutation-checked: reverting one string to its previous
+text fails it by name. The parser's over-cap line stays hardcoded English, since the
+protocol layer has no `Locale` and its sibling markers are in the same position.
+
+**Live — GO (2026-09-12)** on the same stack: `a_withheld_chart_is_not_described_live` is
+the `python_exec` shape end to end (the model returned `tool_calls`, inventing nothing), and
+`a_withheld_tool_image_is_not_described_live` re-run beside it (control described a
+screenshot it never got; with the note, "I cannot see the screenshot"). Unit: 3173 green,
+170 ignored.
