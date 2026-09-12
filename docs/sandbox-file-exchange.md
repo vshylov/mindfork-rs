@@ -8,8 +8,8 @@ drops the per-chat quota (§9). **Stage 0** (a read-only `site-packages`) merged
 #518. **Stage 1**, the MVP probe: GO on both families, Qwen 3.6 27B and Gemma 4 31B
 (§10). **Stage 2**, outputs: merged as #520, live GO on Gemma 4 31B (§11).
 **Stage 3**, inputs: merged as #521, live GO on Gemma 4 31B (§12).
-**Stage 4**, opening: implemented on `feat/file-open`, manual gate done on
-Windows (§13).
+**Stage 4**, opening: merged as #522, manual gate done on Windows (§13).
+**Stage 5**, Local parity: on `feat/sandbox-files-local`, sub-decisions in §14.
 
 The request: `python_exec` in its Wasmer mode is text in, text out — whatever the
 code writes dies with the call. The user wants (a) **files out** — what the code
@@ -416,7 +416,10 @@ true (AGENTS.md §4).
   `shared/os_open.rs`, the allowlist; sub-decisions in §13. Docs: spec §9.7, README,
   architecture §3, CHANGELOG, journal. No model run — the gate is manual (§8). **Done**,
   gate in §13.
-- **Stage 5 — Local parity** (`feat/sandbox-files-local`).
+- **Stage 5 — Local parity** (`feat/sandbox-files-local`): `LocalSandbox` behind the same
+  `SandboxRunner`, a job directory with `in/`/`out/`, the schema and the block in both
+  modes; sub-decisions in §14. Docs: spec §9.3/§13.2, ADR 0005 §3 amended again,
+  architecture §3/§8, CHANGELOG, journal.
 - **Close:** this file to `docs/history/`; roadmap item and CLAUDE.md map updated.
 
 ## 8. Tests and live runs
@@ -810,3 +813,52 @@ argument, so a stub script records what it was given, and the test asserts the p
 unsplit (`my chart (1).png`) and that a launcher which is not installed comes back as an
 error. What is **not** verified here is a GUI launch on a Linux desktop — the development
 machine has none, and WSL carries only docker's utility distribution.
+
+## 14. Stage 5 — sub-decisions (2026-09-12)
+
+Fork F11 decided parity (b): Local runs in a job directory with `in/`/`out/`, the same
+staging and the same collection, and the two modes stop diverging. These are the decisions
+the code survey added under it, recorded before implementing as §11–§13 were.
+
+- **V1 — Local becomes a `SandboxRunner`, not a second code path.** `LocalSandbox` in
+  `shared/sandbox.rs` answers the same contract as `WasmerSandbox`: a job directory per
+  call holding the script, `in/` and `out/`; the interpreter started **with that directory
+  as its working directory**; the same `collect_outputs` under the same
+  `OutputLimits::DEFAULT`; the same rule that any exit code collects and a timeout collects
+  nothing. `python_exec` then has one path, and `PythonMode` decides only two things —
+  which runner the registry builds, and the wording. That is what makes ADR 0005 §3's "one
+  schema for both modes" true again instead of merely promised; the alternative, a second
+  staging/collection written beside the first, is the defect that document keeps warning
+  about.
+- **V2 — relative paths work in both modes, and the Wasmer prompt does not change.** F11(b)
+  asks for `in/`/`out/` to work everywhere, and they do: the working directory is the job
+  directory in both — mounted at `/w` in the guest, the process's cwd on the host. What the
+  model *reads*, though, keeps each mode's own form — `/w/in` and `/w/out` for Wasmer, `in`
+  and `out` for Local — through `{in}`/`{out}` placeholders in the pinned block and the
+  description. The Wasmer rendering stays byte-identical to the text stages 2 and 3
+  measured; spending a live GO to make two strings look alike would buy nothing.
+- **V3 — the script is a file, not `-c`.** Local passed the code as a command-line argument;
+  now it is written to `job.py` beside `in/` and `out/` and the interpreter is given the
+  path. The command line stops being somewhere a long script can overflow (Windows caps
+  it), a traceback names a file, and both modes build the same directory. The WASIX shims
+  stay Wasmer's: `setsockopt` and `MPLCONFIGDIR` are about the guest's libc and its
+  FreeType build, and nothing on the host wants them.
+- **V4 — Local's availability is a path check, not a probe.** An interpreter named with a
+  separator (`D:\py\python.exe`) is checked as a file, so a wrong setting is reported
+  before the call in the same place a missing `wasmer` is; a bare `python3`/`python` is left
+  to `PATH`, where a failure surfaces as the spawn error it already was. No `--version`
+  probe — a process per turn to answer a question the run answers anyway.
+- **V5 — `net` stays a Wasmer word, and the popup stops implying otherwise.** Local has no
+  network switch and never had one: the code runs with the user's own permissions. Its
+  description says the mode is unisolated rather than naming a network state, and the
+  confirmation popup's network line reads `true` in Local mode, because that is what is
+  true there — `python_net` keeps meaning "the sandbox's flag".
+- **V6 — each mode keeps its own timeout** (Local's 10 s, Wasmer's configured one): the
+  numbers are about what the two cost to start, not about the contract they share.
+- **V7 — what a unit test may reach.** The job directory's preparation is host-side and
+  shared, so it is tested directly — the staged copies under their names, `out/` present
+  even when nothing was staged, a name with a separator refused — and the collection
+  already has stage 2's table. Spawning a *real* interpreter is the one part a unit test
+  must not require, so it stays the `#[ignore]` pair, with `runs_real_python_local` grown
+  into the round trip the stage is about: a file staged into `in/`, read by the code, a
+  file written to `out/`, stored with the chat.
