@@ -3367,9 +3367,10 @@ Principles:
   sets the scaffold language for new profiles (axis A —
   docs/history/i18n.md); no file → portable mode + `ru` (the old
   `location.json` is read for backward compatibility). **Backups**
-  (`features/backup.rs`): a zip with configurable compression (chats/
-  dictionaries/data.db/profiles/settings/personal + `*.bak` + `fs_root` if
-  it's inside the root); restore is transactional (validation → a
+  (`features/backup.rs`): a zip with configurable compression (the `TOP_DIRS`
+  chats/dictionaries/locales/files/workspace + data.db/profiles/settings/personal
+  + `*.bak` + `fs_root` if it's inside the root — one constant for both packing
+  and the restore's clearing, so the two cannot drift); restore is transactional (validation → a
   pre-restore copy in `backups/` → cleanup → extraction → rollback on
   failure). The archive is **optionally AES-256 encrypted** with a password
   from `--password` or from the settings (stored via `shared/secrets.rs`,
