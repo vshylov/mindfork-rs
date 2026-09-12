@@ -539,6 +539,8 @@
   "tool.python_exec.files.not_shown_off": " — not shown to you (showing images is turned off in the settings): you have not seen it, so do not describe it; say that you cannot see it",
   "tool.python_exec.files.not_shown_cap": " — not shown to you (at most {max} images are shown per call): you have not seen it, so do not describe it; say that you cannot see it",
   "tool.python_exec.files.svg": " — saved only: an SVG is not shown to you; you have not seen it, so do not describe it — save a PNG to see the drawing",
+  "tool.python_exec.err.files_shape": "The files argument has to be a list of names, like [\"sales.csv\", \"#2\"] — a single name on its own is accepted too. Nothing was run; send the call again with files in that shape.",
+  "tool.python_exec.files.more_skipped": "- …and {n} more not kept",
   "tool.python_exec.files.skipped": "- {name} — not kept: {reason}",
   "tool.python_exec.files.reason.directory": "a folder; save files directly into {out}",
   "tool.python_exec.files.reason.not_a_file": "not a regular file (links are not followed)",

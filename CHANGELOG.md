@@ -16,6 +16,16 @@ split by subsystem.
 
 ### Fixed
 
+- **Naming one file for the code no longer silently names none.** When the assistant asked
+  for a single file by name — without wrapping it in a list — nothing was copied in and
+  nothing was said: the code then failed to find the file and the assistant tried the same
+  thing again. A single name is now accepted, and an argument that makes no sense as file
+  names is refused with an explanation instead of being ignored.
+
+- **A run that produced thousands of files no longer floods the conversation.** Everything
+  a call could not keep was listed one line per file, with no limit, in a result that then
+  rode along in every later request. The first twenty are named and the rest counted.
+
 - **A spreadsheet is no longer mistaken for a picture.** A file whose first characters
   happened to be `BM` — a CSV whose first column is `BMI`, say — was listed as an image,
   kept from the assistant as text, and then failed to display anyway, with two notes
