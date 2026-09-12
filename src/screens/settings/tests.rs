@@ -306,6 +306,11 @@ fn python_group_visibility_follows_mode() {
     assert!(!ids.contains(&FieldId::TPythonNet));
     assert!(!ids.contains(&FieldId::TPythonWasmTimeout));
     assert!(!ids.contains(&FieldId::TPythonWasmMemory));
+    // ...and "show charts" stays: the local interpreter collects `out/` too, so the
+    // switch decides something here (docs/history/sandbox-file-exchange.md §14 V1).
+    // Hidden, it read as a sandbox-only setting while it was silently withholding
+    // the charts local runs drew.
+    assert!(ids.contains(&FieldId::TPythonImages));
 }
 
 /// A key row shows only where the key can be spent: under `auto` both, under a
