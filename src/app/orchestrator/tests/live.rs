@@ -701,29 +701,42 @@ async fn python_turn(
     cmd_tx: &UnboundedSender<AppCommand>,
     evt_rx: &mut UnboundedReceiver<AppEvent>,
     message: &str,
-) -> (String, Vec<String>) {
+) -> (String, Vec<PythonCall>) {
     cmd_tx
         .send(AppCommand::SendMessage(message.into()))
         .unwrap();
     let mut reply = String::new();
-    let mut results = Vec::new();
+    let mut results: Vec<PythonCall> = Vec::new();
     while let Some(ev) = evt_rx.recv().await {
         match ev {
             AppEvent::Chunk { text, .. } => reply.push_str(&text),
-            AppEvent::ToolCall { name, result, .. }
-                if name == crate::features::tools::PYTHON_EXEC_ID =>
-            {
-                results.push(result);
+            AppEvent::ToolCall {
+                name,
+                arguments,
+                result,
+                ..
+            } if name == crate::features::tools::PYTHON_EXEC_ID => {
+                results.push(PythonCall { arguments, result });
             }
             AppEvent::Finished { .. } => break,
             _ => {}
         }
     }
-    for result in &results {
-        eprintln!("python_exec →\n{result}");
+    for call in &results {
+        eprintln!("python_exec({})\n→ {}", call.arguments, call.result);
     }
     eprintln!("reply: {reply}");
     (reply, results)
+}
+
+#[derive(Debug)]
+/// One `python_exec` call of a live turn: what the model asked for, and what it got back.
+/// The arguments matter to any smoke about **which handle** was named — the result text
+/// does not carry it, and a test that cannot see it cannot tell a working numbering from
+/// a broken one.
+struct PythonCall {
+    arguments: String,
+    result: String,
 }
 
 /// The first run of at least `digits` digits in `s`, with any thousands separators dropped
@@ -785,7 +798,7 @@ async fn sandbox_inputs_e2e_live() {
     handle.await.unwrap();
 
     assert!(
-        first.iter().any(|r| r.contains("files:")),
+        first.iter().any(|c| c.result.contains("files:")),
         "the first call saved nothing to /w/out"
     );
     let Some(AppEvent::FileProgress(FileProgress::Listed { stored, .. })) = listed else {
@@ -807,12 +820,12 @@ async fn sandbox_inputs_e2e_live() {
     // The second call ran (a refusal would have said so and run nothing) and printed a
     // number the sandbox computed from the staged file.
     assert!(
-        !second.iter().any(|r| r.contains("nothing was run")),
+        !second.iter().any(|c| c.result.contains("nothing was run")),
         "the second call was refused: {second:?}"
     );
     let printed = second
         .iter()
-        .find_map(|r| first_number(r, 3))
+        .find_map(|c| first_number(&c.result, 3))
         .unwrap_or_else(|| panic!("the second call printed no number: {second:?}"));
     assert!(
         fold_dashes(&reply).contains(&printed),
@@ -891,12 +904,14 @@ async fn local_mode_files_round_trip_e2e_live() {
     handle.await.unwrap();
 
     assert!(
-        !results.iter().any(|r| r.contains("nothing was run")),
+        !results.iter().any(|c| c.result.contains("nothing was run")),
         "the call was refused: {results:?}"
     );
     // The number is the file's, and the interpreter is what computed it.
     assert!(
-        results.iter().any(|r| r.contains(&total.to_string())),
+        results
+            .iter()
+            .any(|c| c.result.contains(&total.to_string())),
         "the call never printed the total {total}: {results:?}"
     );
     assert!(
@@ -962,16 +977,90 @@ async fn attached_binary_reaches_the_sandbox_live() {
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
     assert!(
-        !results.iter().any(|r| r.contains("nothing was run")),
+        !results.iter().any(|c| c.result.contains("nothing was run")),
         "the call was refused: {results:?}"
     );
     assert!(
-        results.iter().any(|r| r.contains("512")),
+        results.iter().any(|c| c.result.contains("512")),
         "the code never read the picture's real size: {results:?}"
     );
     assert!(
         reply.contains("512"),
         "the reply does not carry the size the code read: {reply}"
+    );
+}
+
+/// Fork F12, with a real model: a number the pinned block gave stays that file for the
+/// **whole turn**, across a round that adds one.
+///
+/// The chat holds exactly one item — an image, `#1`. The turn asks for two `python_exec`
+/// calls: the first saves a file, which lands in the chat's files and, in a freshly
+/// derived list, sorts **ahead** of every image; the second names `#1` and prints the
+/// first bytes of what arrived in `/w/in`.
+///
+/// The two answers cannot be confused: the image begins with the PNG signature, the file
+/// the first call wrote begins with `ROUND-ONE`. Before this fix the second call was
+/// handed the file the turn had just created, under the number the model had been given
+/// for the picture — silently, with no refusal to notice.
+///
+/// `#[ignore]`, manual against a live stack.
+#[tokio::test]
+#[ignore = "requires a live model (MINDFORK_ENGINE_URL) and a provisioned sandbox (MINDFORK_SANDBOX_DIR)"]
+async fn a_handle_survives_a_round_that_adds_a_file_live() {
+    // Two calls in two **rounds**, which is the whole point: the list is reconciled
+    // between rounds, so two calls issued together never reach the defect. Call 2 needs a
+    // value only call 1 can produce, so it cannot be written until call 1 has answered.
+    const ASK: &str = "Do this in two separate python_exec calls, the second written only \
+        after you have seen the first one's output. \
+        Call 1: write the text ROUND-ONE into /w/out/marker.txt, then print \
+        hashlib.sha256(b'ROUND-ONE').hexdigest(). \
+        Call 2: put #1 in the files argument, open the file that appears in /w/in in \
+        binary mode, and print its first 8 bytes with repr() followed by the hex digest \
+        call 1 printed. Then tell me what call 2 printed.";
+
+    let Some((_dir, cmd_tx, mut evt_rx, handle)) = spawn_python_chat().await else {
+        return;
+    };
+    let picture = tempfile::tempdir().unwrap();
+    let path = picture.path().join("figure.png");
+    std::fs::write(&path, figure_png([30, 120, 60])).unwrap();
+    attach_image_live(&cmd_tx, &mut evt_rx, path.to_string_lossy().into_owned()).await;
+
+    let (reply, results) = python_turn(&cmd_tx, &mut evt_rx, ASK).await;
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    // Said rather than assumed: a turn that made only one call proves nothing either way,
+    // and would otherwise pass on the half that never ran.
+    assert!(
+        results.len() >= 2,
+        "the turn had to make two python_exec calls, it made {}: {results:?}",
+        results.len()
+    );
+    // The **second** call, and only it: the first legitimately carries `ROUND-ONE`,
+    // because a saved text file is listed with the head of its own content.
+    let second = &results[1];
+    // The handle has to be the number, not the name. A model that names `figure.png`
+    // reaches the picture whatever the numbering does, so this smoke would then pass
+    // against a broken list — measured, that is exactly what happened the first time.
+    assert!(
+        second.arguments.contains("#1"),
+        "the second call has to name the handle, not the file: {}",
+        second.arguments
+    );
+    assert!(
+        second.result.contains("PNG"),
+        "#1 had to stay the picture the block numbered; the call saw: {}",
+        second.result
+    );
+    assert!(
+        !second.result.contains("ROUND-ON"),
+        "#1 was handed the file this very turn created: {}",
+        second.result
+    );
+    assert!(
+        reply.contains("PNG"),
+        "the reply has to repeat what the second call printed: {reply}"
     );
 }
 
