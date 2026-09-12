@@ -101,6 +101,18 @@ cache is warmed on setup (`warmup`), so the first real call is warm.
   from before — is refused, never mounted, with the command that packs it; the
   one writable mount left is provisioning's own warmup, which fills the bytecode
   the image is packed with.
+  **Amended (2026-09-12):** an image becomes the installed one only **after it has
+  been started**. Packing wrote the new image over the old one and verified it
+  afterwards, so a build that did not run — the August 2026 `python.webc` class of
+  failure, or an OOM during `import numpy` — destroyed the sandbox it replaced and
+  left a broken one that `WasmerSandbox::plan`, which asks only whether the file
+  exists, went on reporting as ready; every call in every chat then failed at launch
+  with the tool still advertising itself. `setup` is now pack → start → install:
+  the candidate is built beside the installed image, `verify_image` starts **that
+  file** (`WasmerSandbox::for_candidate`), and only a clean exit renames it into
+  place. A rejected candidate is deleted, and a verification that ran out of its
+  600 s says so rather than reporting an empty failure — a timeout carries no exit
+  code and no stderr, which is exactly the shape that produced a blank message.
   **Amended (2026-09-11, sandbox file exchange):** "no host directories" now reads
   "one host directory per call". The job directory, created for the call and dropped
   with it, holds the script and an empty `out/`, whose regular files are collected

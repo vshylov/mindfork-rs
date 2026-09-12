@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (63)
+## Entries (64)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -75,6 +75,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a withheld server image is stated, and stated in words that work (done)
 - Post-M9: the rest of the withheld-image family gets the clause that works (done)
 - Post-M9: a handle means one file for the whole turn (done)
+- Post-M9: an image is installed only after it has started (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -4549,3 +4550,48 @@ and then fell back to naming the file — three rounds spent on a number that ha
 changed meaning. `python_turn` now reports each call's **arguments** alongside its result,
 because a smoke about which handle was named cannot read that from the result text — which is
 how the one-round version looked green.
+
+### Post-M9: an image is installed only after it has started (done)
+
+The third finding of the review pass over the merged file-exchange track, and the one that
+cost the most if it ever fired. `pack_image` renamed the freshly built image over the
+installed one and `verify_image` started it **afterwards**. So a build that did not run —
+the August 2026 `python.webc` class of failure, an OOM during `import numpy`, a wasmer that
+cannot compile what it was handed — left the broken image installed, destroyed the one it
+replaced, and failed the command. And `WasmerSandbox::plan` asks only whether the file
+**exists** (`image.is_file()`), so `availability()` went on answering `Ready`: the tool kept
+advertising itself in every chat while every call failed at launch. `verify_image`'s own doc
+comment described the opposite intent — "one that does not start … has to fail `setup`, not
+the first call in a chat" — which is how it survived review. Packing is unconditional, so a
+plain re-run to pick up a new wheel was enough to trigger it.
+
+**Pack, start, install** — three steps because the order *is* the guarantee. `pack_image`
+now builds only `packed-sandbox.webc.partial` and stops; `verify_image` starts **that file**
+through a new `WasmerSandbox::for_candidate`, which runs a named image out of the sandbox
+directory instead of the installed one; `install_image` renames it into place and is the
+only thing that ever writes the file the runtime picks up. Until the candidate has run, the
+image on disk is still the one that worked yesterday.
+
+Two smaller things fixed on the way. A rejected candidate is **deleted** rather than left as
+a few hundred megabytes nobody reads. And a verification that runs out of its 600 s is
+reported as a timeout: a timeout carries no exit code (`SandboxOutput::default`) and no
+stderr, so it took the `exit_code != Some(0)` branch and produced
+`sandbox.setup.verify.failed` with an **empty** detail — the message was blank in precisely
+the case whose cause is hardest to guess. `stdout` is the fallback detail when stderr is
+empty for any other reason.
+
+**Tests.** `for_candidate` starts the file it is named and does **not** fall through to the
+installed image when the candidate is missing. The order itself is pinned by a `cfg(unix)`
+test over a stub `wasmer` (the same device the file launcher uses): packing leaves a
+sentinel installed image byte-identical and writes only the candidate, and installing is the
+step that replaces it and consumes the candidate. The stub's shell was exercised in a real
+shell before trusting CI with it. Unit: 3179 green on Windows and 3180 on Linux — the stub
+test is `cfg(unix)`, so CI's ubuntu job is the one that runs it — 173 ignored.
+
+**Live.** Two runs, both on this machine's provisioned sandbox. A junk candidate against the
+**real** `wasmer` (`a_candidate_that_does_not_start_leaves_the_installed_image_alone_live`):
+rejected with `Unable to determine how to execute …packed-sandbox.webc.partial` — naming the
+candidate, which is itself the evidence that verification looks at the right file — the
+sentinel image untouched, the junk cleaned up. And a real `mindfork sandbox setup` end to
+end over the restructured order, followed by the sandbox's own smokes, because a fix to
+provisioning that has not provisioned anything is a fix that has not been run.

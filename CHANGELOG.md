@@ -16,6 +16,14 @@ split by subsystem.
 
 ### Fixed
 
+- **A failed `sandbox setup` no longer costs you the sandbox you had.** The new Python
+  image was put in place first and only then started, so a build that would not run left
+  you with a broken sandbox *and* without the working one it replaced — while the app went
+  on reporting Python as ready and every attempt to run code failed. The freshly built
+  image is now started before it replaces anything: if it does not run, the command says so
+  and your existing sandbox is untouched. A build that times out now says that, instead of
+  failing with an empty message.
+
 - **A file's number stays that file's for the whole reply.** The assistant is told your
   files as a numbered list before it starts working — `#1`, `#2`, `#3`. If something was
   added while it worked (a page it fetched, a chart it saved), the numbering underneath
