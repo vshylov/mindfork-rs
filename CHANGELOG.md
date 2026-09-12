@@ -16,6 +16,11 @@ split by subsystem.
 
 ### Fixed
 
+- **The confirmation popup no longer hides the code it is asking you to approve.** When
+  the line listing the files going into a call was long enough to wrap — two named files
+  is enough — the popup drew one row short and the row it lost was the code itself. It is
+  now sized by what it actually draws.
+
 - **"Attach it again" now actually brings a lost file back.** When a chat's copy of a file
   went missing from its folder — a pruned data directory, a half-finished sync — the list
   marked it missing and the assistant refused to use it, telling you to attach the file

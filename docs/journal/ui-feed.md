@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (40)
+## Entries (41)
 
 - Post-M9: mouse-wheel feed scrolling (done)
 - Post-M9: own markdown renderer (tables + LaTeX + theme) (done)
@@ -52,6 +52,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the status bar's hints never leave the corner — shed, don't wrap (done)
 - Post-M9: mid-turn the `Esc` hint says "cancel" (done)
 - Post-M9: the bar's hint grid becomes everyone's (done)
+- Post-M9: the confirmation popup shows the code it is asking about (done)
 
 ### Post-M9: mouse-wheel feed scrolling (done)
 - **The mouse wheel scrolls the feed** on par with `PageUp/PageDown`. `ratatui::init()`
@@ -2353,3 +2354,38 @@ character positions (`wrapped_grid_is_right_aligned_with_pill_on_top_line`,
 extraction had to be invisible here. `hotkey_lines_wraps_and_right_aligns` moved
 to `shared::ui` as `a_footer_is_right_aligned_and_wraps`, alongside new tests
 for the shared geometry. Pure UI — no live run needed (AGENTS.md §3).
+
+### Post-M9: the confirmation popup shows the code it is asking about (done)
+
+Tier 2 of the review pass over the merged file-exchange track. `render_tool_confirm` sized
+itself `body.len() + 2` while rendering with `Wrap { trim: false }` — logical lines against
+rendered rows. They agree only while nothing wraps, and the line the same track added is
+exactly the one that wraps: `files` names each resolved file with its size, so two ordinary
+names pass the popup's 70 columns. The popup then drew one row short and the row it lost was
+the last — the code. A user pressing Enter was consenting to a call whose code was partly or
+wholly off screen, in the one dialog that exists so that cannot happen.
+
+The track's own fixture demonstrated it and did not notice: 87 characters at width 70, four
+body lines, area height 6, five rows needed. The test asserted that the file and network
+strings appear and stopped there, so the gate was green over it.
+
+**`Paragraph::line_count`**, which is ratatui's own count over ratatui's own word wrapping
+and already includes the block's two border rows. Counting it here by hand is the one thing
+worth refusing: it would be a second implementation of word wrapping whose only job is to
+agree with the first, and every disagreement is a consent given to something the user could
+not see. Word wrapping is not `ceil(width / columns)` either — a word that does not fit is
+pushed whole to the next row, so an estimate can be short by several rows on a line of
+ordinary prose.
+
+The cost is one **unstable** feature flag: `ratatui/unstable-rendered-line-info`. Taken
+deliberately, and the trade is recorded in `Cargo.toml` beside it — the version is pinned,
+so a change to the API can only arrive with a deliberate upgrade and the compiler catches it
+at that moment, which is a better failure than a popup that silently hides what it asks
+about.
+
+**Tests.** A second render test over the real `TestBackend` buffer: three named files, which
+wraps the `files` line, and the code carries a marker the assertion looks for. It fails with
+the sizing reverted — checked, not assumed. The premise is asserted too (the three files are
+on screen), so a popup that stopped wrapping could not make it pass vacuously. Unit: 3182
+green, 173 ignored. **No live run**: pure UI, and the assertion is over the buffer a terminal
+would print.

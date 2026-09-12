@@ -2558,7 +2558,10 @@ this?"*; this screen answers *"where exactly, and take me there."*
   listed after the ones it does, alphabetically. The same order applies to the
   compact header. The detail level is [`ArgDetail`] on the presenter — the
   dangerous-tool confirmation popup (§9.8) stays `Compact`, being a decision
-  prompt rather than a viewer.
+  prompt rather than a viewer. It is sized by the rows its content actually
+  takes once wrapped, not by the lines it holds: the two part company as soon as
+  one wraps — the `files` line does at two named files — and counting lines
+  clipped the bottom row off, which is the code being approved.
   **The state is stored per chat** (`Chat.feed_view`, the [`Chat::draft`
   playbook](#117-input-box)): the toggle returns the new state as an intent, the
   orchestrator writes it to the active chat with the save debounce and **without
