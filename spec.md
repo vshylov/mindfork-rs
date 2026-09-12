@@ -1602,9 +1602,10 @@ append-only shape keeps the prefix cache intact across an image turn
   was not inert but wasteful: the model mostly answered by calling the tool again, whose
   image is withheld for the same reason. One test holds the whole family to the clause
   ([docs/journal/tools.md](docs/journal/tools.md)). `tools.python_images` (**on** by
-  default, the Python group) is the sandbox's own switch, separate because its pixels
-  are the model's own chart rather than a third party's; off, the file is still
-  saved and the result says the model has not seen it.
+  default, the Python group, shown in **both** Python modes — the local interpreter
+  collects `out/` under the same contract) is `python_exec`'s own switch, separate
+  because its pixels are the model's own chart rather than a third party's; off, the
+  file is still saved and the result says the model has not seen it.
 - **UI**: a feed note per command and a status-bar chip for what is staged
   (images are a standing cost once sent, so the pending one has to be visible).
   Rendering the pixels in the terminal is out of scope — see
