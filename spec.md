@@ -1135,7 +1135,10 @@ to `/w/out` (§13.2), kept in `data/files/<chat-id>/` and listed in `Chat.files`
 [docs/history/sandbox-file-exchange.md](docs/history/sandbox-file-exchange.md)). They are never part of
 a request, so they cost no tokens and have no status chip. The name on disk is the
 handle: sanitized (only the last component, split on both separators; characters
-Windows refuses replaced; a device name prefixed; at most 120 characters) and versioned
+Windows refuses replaced, and with them the marks that rewrite a name on screen without
+being visible in it — the bidi controls and the zero-width family, since a name a call
+wrote is the model's and `report<RLO>cod.exe` reads as `reportexe.doc` in a listing and in
+a file manager alike; a device name prefixed; at most 120 characters) and versioned
 on a collision — `chart (2).png`, compared case-insensitively — while the same name
 with the same bytes is not stored twice. `/file list` numbers them after the
 attachments and marks one missing from the folder; offering the **same bytes under that

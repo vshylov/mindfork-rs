@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (65)
+## Entries (66)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -77,6 +77,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a handle means one file for the whole turn (done)
 - Post-M9: an image is installed only after it has started (done)
 - Post-M9: the same bytes put a missing copy back (done)
+- Post-M9: two letters are not a format, and an invisible mark is not a name (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -4639,3 +4640,47 @@ Unit: 3180 green, 172 ignored.
 provisioned sandbox, because every `python_exec` output goes through `store` and this change
 adds a branch to it — a spurious `Restored` would stop outputs being listed and shown at
 all, which no unit test of the new path would notice.
+
+### Post-M9: two letters are not a format, and an invisible mark is not a name (done)
+
+Two findings of the review pass that share a seam: what a call **produced** and what a call
+**named** it, both read from `entities/chat_file.rs`, and both able to mislead the person
+reading the listing.
+
+**`BM` and a length were enough to be an image.** `sniff_image` accepted any content of 26
+bytes or more starting with those two letters — and BMP is the only one of the five
+signatures that is ordinary text. A spreadsheet export whose first column is `BMI` was
+therefore listed as `image/bmp`, and the damage ran through three places at once: the
+listing lied, `is_text_like` was false so `keep_one` withheld the text head the model would
+otherwise read, and the bytes were base64'd into the call's images and announced as
+**shown** — after which `prepare_tool_images` failed to decode them and appended "1 image
+dropped", contradicting the line above it. The existing test asserted only that `BM short`
+is not an image, which is the length guard; nothing asked whether the content was one.
+
+The fix reads the DIB header's own size, at offset 14, against the closed set BMP defines.
+Only the first 18 bytes are touched, because adoption sniffs a 64-byte head
+(`chat_files::unlisted`) and a check against the whole file's length is not available there.
+The set is **measured, not assumed**: pillow — which a `savefig('.bmp')` in the sandbox goes
+through — writes 40 for every mode it can save (1, L, P, RGB, RGBA), and the spec's other
+values are carried for the encoders this project has not met. The old fixture turned out to
+be a fake BMP (`BM` plus zeros), so it was replaced with a real opening rather than relaxed.
+
+**A right-to-left override survived into the name.** `sanitize_name` replaced
+`char::is_control`, which is category `Cc` only; `U+202E` is `Cf` and went through. A call
+that writes `report\u{202E}cod.exe` gets a file every listing here — and the file manager
+`/file folder` opens — renders as `reportexe.doc`. The launch allowlist does its job and
+refuses to hand it to a handler (§13 U3), opening the folder instead; the user then reads a
+document name and double-clicks an executable. The allowlist held and the name did not, and
+the name is what the next decision is made from. Now the bidi controls and the zero-width
+marks beside them (`U+061C`, `U+200B–200F`, `U+202A–202E`, `U+2066–2069`, `U+FEFF`) are
+replaced like any other character Windows refuses. Ordinary non-ASCII is untouched — a test
+pins a Cyrillic name with a diaeresis through unchanged.
+
+**Tests.** The sniffing test gained the CSV that used to pass as an image and a `BM` prefix
+with junk after it, and its BMP fixture became a real header; a new test covers the marks,
+including the isolate/zero-width family and the negative case. Both fail with their guard
+reverted — checked, not assumed. Unit: 3183 green, 173 ignored.
+
+**Live.** `sniff_image` sits on the path of every stored file, so the stored-file smokes
+were re-measured on Gemma 4 31B q4_0 (b10807) with the provisioned sandbox rather than
+assumed: a stricter signature that rejected a real image would show up nowhere else.

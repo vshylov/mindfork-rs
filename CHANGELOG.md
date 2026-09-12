@@ -16,6 +16,16 @@ split by subsystem.
 
 ### Fixed
 
+- **A spreadsheet is no longer mistaken for a picture.** A file whose first characters
+  happened to be `BM` — a CSV whose first column is `BMI`, say — was listed as an image,
+  kept from the assistant as text, and then failed to display anyway, with two notes
+  contradicting each other. Two letters are no longer enough to call something an image.
+
+- **A file name can no longer rewrite itself on screen.** Invisible marks that reverse the
+  text after them let a name the assistant chose be shown as something else entirely — a
+  program displayed as a document. Those marks are now stripped from stored file names, as
+  other forbidden characters already were.
+
 - **The confirmation popup no longer hides the code it is asking you to approve.** When
   the line listing the files going into a call was long enough to wrap — two named files
   is enough — the popup drew one row short and the row it lost was the code itself. It is
