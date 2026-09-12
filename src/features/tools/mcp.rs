@@ -205,24 +205,37 @@ impl Tool for McpTool {
         };
         // Images ride alongside the text rather than inside it (spec §9.10). The switch
         // is consulted here, at the boundary where third-party pixels would enter the
-        // conversation: a user who turned it off keeps the server and its text results,
-        // and the placeholder the text already carries still says an image existed.
-        let images: Vec<ToolImage> = if ctx.mcp_images {
-            result
-                .images
-                .into_iter()
-                .map(|i| ToolImage {
-                    mime: i.mime,
-                    data: i.data,
-                })
-                .collect()
+        // conversation: a user who turned it off keeps the server and its text results.
+        let (images, withheld): (Vec<ToolImage>, usize) = if ctx.mcp_images {
+            (
+                result
+                    .images
+                    .into_iter()
+                    .map(|i| ToolImage {
+                        mime: i.mime,
+                        data: i.data,
+                    })
+                    .collect(),
+                0,
+            )
         } else {
-            Vec::new()
+            (Vec::new(), result.images.len())
         };
-        Ok(
-            ToolOutcome::text(clip_result(&text, self.max_result_chars, ctx.loc))
-                .with_images(images),
-        )
+        let mut text = clip_result(&text, self.max_result_chars, ctx.loc);
+        // Nothing withheld goes unsaid (spec §9.10, docs/history/sandbox-file-exchange.md §11 S8).
+        // The parser's `[image content omitted]` covers only a *malformed* block, so a
+        // well-formed image under the cap left no trace at all and the model answered
+        // about pictures it never received — the failure §10 measured, where both families
+        // described a chart they had not seen. Said **after** the clip: the one line that
+        // says what is missing must not be the one the truncation eats.
+        if withheld > 0 {
+            text.push('\n');
+            text.push_str(
+                &ctx.loc
+                    .tf("tool.mcp.images_off", &[("n", &withheld.to_string())]),
+            );
+        }
+        Ok(ToolOutcome::text(text).with_images(images))
     }
 
     fn group(&self) -> meta::ToolGroup {
@@ -418,7 +431,9 @@ mod tests {
         );
         assert_eq!(out.result, "Screenshot taken.");
 
-        // Off: the server and its text keep working, only the pixels stay behind.
+        // Off: the server and its text keep working, only the pixels stay behind — and
+        // the result *says* they did. Silence here is what §10 measured: the model reads
+        // a complete-looking result and describes a picture it never received.
         let tool = McpTool::new(
             "test",
             &info,
@@ -429,7 +444,47 @@ mod tests {
         ctx.mcp_images = false;
         let out = tool.invoke(&ctx, json!({})).await.unwrap();
         assert!(out.images.is_empty());
-        assert_eq!(out.result, "Screenshot taken.");
+        assert!(
+            out.result.starts_with("Screenshot taken."),
+            "the server's own text survives: {}",
+            out.result
+        );
+        let said = ctx.loc.tf("tool.mcp.images_off", &[("n", "1")]);
+        assert!(
+            out.result.ends_with(&said),
+            "the withheld image has to be stated: {}",
+            out.result
+        );
+    }
+
+    /// The statement is appended **after** the clip, so the one line that says what the
+    /// model is missing cannot be the line the truncation eats.
+    #[tokio::test]
+    async fn a_withheld_image_is_still_stated_when_the_text_is_truncated() {
+        let info = McpToolInfo {
+            name: "screenshot".into(),
+            description: "Take a screenshot".into(),
+            input_schema: json!({ "type": "object" }),
+        };
+        // `max_result_chars` well under the server's text, so `clip_result` fires.
+        let tool = McpTool::new(
+            "test",
+            &info,
+            conn_with_image_reply(),
+            Duration::from_secs(5),
+            4,
+        );
+        let (_d, _s, mut ctx) = testkit::ctx_with_storage(Uuid::new_v4());
+        ctx.mcp_images = false;
+        let out = tool.invoke(&ctx, json!({})).await.unwrap();
+        assert!(
+            out.result
+                .contains(&ctx.loc.t("tool.mcp.result_truncated").to_string()),
+            "the fixture must actually be truncated: {}",
+            out.result
+        );
+        let said = ctx.loc.tf("tool.mcp.images_off", &[("n", "1")]);
+        assert!(out.result.ends_with(&said), "{}", out.result);
     }
 
     #[tokio::test]

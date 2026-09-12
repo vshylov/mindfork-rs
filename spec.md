@@ -1565,7 +1565,15 @@ append-only shape keeps the prefix cache intact across an image turn
   seen (measured, docs/history/sandbox-file-exchange.md §10). The switch `tools.mcp_images`
   (**on** by default, settings → "Plugins") decides whether a server's pixels reach
   the model at all: the MCP double opt-in already gates the *server*, but an image
-  carries a hazard text does not — see §13.4. `tools.python_images` (**on** by
+  carries a hazard text does not — see §13.4. Off, the number withheld is stated in
+  the result by the same rule as everything above, and stated *after* the result is
+  clipped to `max_result_chars`: the protocol's own `[image content omitted]` marks
+  only a **malformed** block, so a well-formed image under the cap would otherwise
+  leave no trace at all. Measured, that statement has to be **directive**: naming the
+  withholding is not enough — on Gemma 4 31B a descriptive note ("you have not seen
+  them") left the model describing the screenshot 5/5, exactly as saying nothing did,
+  and only adding "do not describe what they show; say that you cannot see them" took
+  it to 0/5 ([docs/journal/tools.md](docs/journal/tools.md)). `tools.python_images` (**on** by
   default, the Python group) is the sandbox's own switch, separate because its pixels
   are the model's own chart rather than a third party's; off, the file is still
   saved and the result says the model has not seen it.

@@ -16,6 +16,14 @@ split by subsystem.
 
 ### Fixed
 
+- **A picture a plugin held back is now said out loud — in words that work.** With "Let
+  servers send images" off, an image a server's tool returned was dropped in silence: the
+  assistant got a result that looked complete and went on to describe a screenshot it had
+  never seen. The result now says how many images were held back and tells the assistant
+  to say it cannot see them. Measured on a local model, the polite version of that
+  sentence changed nothing at all — the assistant invented a description just as often as
+  with no note — so the wording is the blunt one.
+
 - **A backup now carries the code workspaces too.** The change journal of a chat's attached
   project — the original of every file the assistant edited, which is what "revert" puts
   back — was left out of `mindfork backup`, so a restored chat could still show what had
