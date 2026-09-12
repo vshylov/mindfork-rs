@@ -1545,6 +1545,7 @@ impl Orchestrator {
                 // to a background task.
                 files_dir: None,
                 files: std::sync::Arc::from(Vec::new()),
+                inputs: std::sync::Arc::from(Vec::new()),
                 images: std::sync::Arc::from(Vec::new()),
                 stages_files: false,
                 lang,

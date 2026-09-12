@@ -145,6 +145,13 @@ pub struct ToolContext {
     /// parent turn's, so their files land in the parent's folder. `None` — a background
     /// task, which has no chat; the tool then keeps nothing and says so.
     pub files_dir: Option<std::path::PathBuf>,
+    /// The chat's one numbered list as **this turn** numbers it (fork F12,
+    /// docs/history/sandbox-file-exchange.md §12 T2): what the pinned block told the model
+    /// it may name, re-derived every round but carrying the `#N` and the `/w/in` name it
+    /// promised. `python_exec` resolves `files` against this and nothing else — deriving
+    /// it again here would renumber the list under a model that is still reading the
+    /// block. Empty when the turn stages no files.
+    pub inputs: std::sync::Arc<[crate::features::chat_inputs::ChatInput]>,
     /// The chat's stored files as of this round — a turn snapshot like `attachments`,
     /// mirrored from `AddChatFile` every round, so a turn's second call versions its
     /// names against the first's (§11 S5).
@@ -299,6 +306,8 @@ pub struct TurnInfo {
     pub files_dir: Option<std::path::PathBuf>,
     /// The chat's stored files (a `Chat` snapshot). See [`ToolContext::files`].
     pub files: std::sync::Arc<[crate::entities::chat_file::ChatFile]>,
+    /// The turn's numbered list — see [`ToolContext::inputs`].
+    pub inputs: std::sync::Arc<[crate::features::chat_inputs::ChatInput]>,
     /// The images the chat's messages carry (a `Chat` snapshot, and only when the turn
     /// offers `python_exec` in Wasmer mode). See [`ToolContext::images`].
     pub images: std::sync::Arc<[crate::entities::message_image::MessageImage]>,
@@ -341,6 +350,7 @@ impl ToolContext {
             workspace_journal: turn.workspace_journal,
             files_dir: turn.files_dir,
             files: turn.files,
+            inputs: turn.inputs,
             images: turn.images,
             stages_files: turn.stages_files,
             workspace_cfg: params.workspace,
@@ -361,6 +371,25 @@ impl ToolContext {
             sessions: turn.sessions,
             silent_lane: turn.silent_lane,
         }
+    }
+
+    /// Re-derives [`Self::inputs`] from the context's own snapshots, carrying the `#N` and
+    /// the `/w/in` name the turn has already promised (fork F12,
+    /// docs/history/sandbox-file-exchange.md §12 T2–T3).
+    ///
+    /// The orchestrator calls this once a round, after mirroring the round's effects into
+    /// `attachments` and `files`; a test that sets those snapshots by hand calls it for the
+    /// same reason. Unconditional — the caller decides whether this turn has a list at all.
+    pub fn sync_inputs(&mut self) {
+        let dir = self.files_dir.clone().unwrap_or_default();
+        self.inputs = crate::features::chat_inputs::reconcile(
+            &self.inputs,
+            &self.attachments,
+            &self.files,
+            &self.images.iter().collect::<Vec<_>>(),
+            &dir,
+        )
+        .into();
     }
 }
 
@@ -1123,6 +1152,9 @@ pub(crate) mod testkit {
             // No stored files and no folder by default; tests that store set both.
             files_dir: None,
             files: std::sync::Arc::from(Vec::new()),
+            // Empty, like the snapshots above: a test that sets them calls
+            // `ctx.sync_inputs()` afterwards, which is what a turn's round does.
+            inputs: std::sync::Arc::from(Vec::new()),
             images: std::sync::Arc::from(Vec::new()),
             stages_files: false,
             lang: crate::shared::i18n::Lang::Ru,
