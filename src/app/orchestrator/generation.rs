@@ -585,7 +585,7 @@ impl Orchestrator {
                 .workspace_dir()
                 .join(active_id.to_string())
         });
-        // Where `python_exec` keeps what the code saved (docs/sandbox-file-exchange.md
+        // Where `python_exec` keeps what the code saved (docs/history/sandbox-file-exchange.md
         // §11 S5): every chat has one, created with its first file.
         let files_dir = self.stored_files_dir(active_id);
         // The effective set = profile ∩ global switches (spec §9.4).
@@ -617,7 +617,7 @@ impl Orchestrator {
         });
         // Can this turn hand the chat's files to the code? Since stage 5's parity, that is
         // the tool being offered at all — both modes run in a job directory
-        // (docs/sandbox-file-exchange.md §12 T4/T5, §14 V1). One value, read twice: the
+        // (docs/history/sandbox-file-exchange.md §12 T4/T5, §14 V1). One value, read twice: the
         // images snapshot below is built only for such a turn, and so is the block that
         // tells the model what it may name — in that mode's own folder form (§14 V2).
         let stages_files = allowed
@@ -706,7 +706,7 @@ impl Orchestrator {
             let Some(chat) = self.chat_mut(active_id) else {
                 return;
             };
-            // What the code may be handed this turn (docs/sandbox-file-exchange.md §12
+            // What the code may be handed this turn (docs/history/sandbox-file-exchange.md §12
             // T2/T4): the images the conversation carries, and the chat's files as the one
             // numbered list the block shows, the tool resolves and the popup reports.
             // Empty — and not even collected — for a turn that cannot stage anything.
@@ -784,7 +784,7 @@ impl Orchestrator {
                 workspace_journal,
                 files_dir: Some(files_dir),
                 // The chat's stored files, which a call versions its names against
-                // (docs/sandbox-file-exchange.md §11 S5).
+                // (docs/history/sandbox-file-exchange.md §11 S5).
                 files: std::sync::Arc::from(chat.files.clone()),
                 // The images the conversation carries, which a call can stage into
                 // `/w/in` (§12 T4). Cloned only for a turn that can actually use them —
@@ -1003,7 +1003,7 @@ impl Orchestrator {
             .map(|run| run.id)
             .collect();
         // Attachments a tool produced this turn (spec §9.9) and the files it stored
-        // (docs/sandbox-file-exchange.md §11 S7) — applied below, outside the `chat`
+        // (docs/history/sandbox-file-exchange.md §11 S7) — applied below, outside the `chat`
         // borrow.
         let mut landed = Landed::default();
         if let Some(chat) = self.chat_mut(res.chat_id) {
@@ -1336,7 +1336,7 @@ struct ConfirmGate<'a> {
     loc: &'static crate::shared::i18n::Locale,
     /// The turn's snapshot, for the one question the popup cannot answer from the
     /// arguments alone: which of the chat's files a `python_exec` call would copy into the
-    /// sandbox (docs/sandbox-file-exchange.md §12 T6).
+    /// sandbox (docs/history/sandbox-file-exchange.md §12 T6).
     ctx: &'a ToolContext,
 }
 
@@ -2696,7 +2696,7 @@ impl TurnLoop<'_> {
         } = result;
         let is_control = control::is_control_tool(&call.name);
         // Nothing the model cannot take is sent, and nothing withheld goes unsaid
-        // (docs/sandbox-file-exchange.md §11 S8): a result that promised an image the
+        // (docs/history/sandbox-file-exchange.md §11 S8): a result that promised an image the
         // model never receives gets a chart described that it has not seen (§10).
         let offered = images.len();
         let images = if offered > 0 && self.ctx.engine.vision().await == VisionSupport::Unsupported
@@ -4673,7 +4673,7 @@ impl From<String> for CallResult {
 /// third-party pixels must not cost more than the user's own, and a provider that takes
 /// only png/jpeg must not be handed a webp. An image that fails to decode, or is over
 /// `images.max_bytes`, is **dropped** — a half-broken picture is not something the model
-/// can act on — and the caller says how many were (docs/sandbox-file-exchange.md §11 S8).
+/// can act on — and the caller says how many were (docs/history/sandbox-file-exchange.md §11 S8).
 async fn prepare_tool_images(
     images: Vec<crate::features::tools::ToolImage>,
     cfg: crate::shared::config::ImageSettings,
@@ -4758,7 +4758,7 @@ pub(super) fn sync_attachments(ctx: &mut ToolContext, effects: &[ChatEffect]) {
 /// Rebuilds the turn's stored-file snapshot from the `AddChatFile` effects so far, with
 /// the rule the landing applies (a name already listed stays as it is) — so the next
 /// round's `python_exec` versions its names against the files this turn already made
-/// (docs/sandbox-file-exchange.md §11 S5). A no-op in a round without such an effect.
+/// (docs/history/sandbox-file-exchange.md §11 S5). A no-op in a round without such an effect.
 pub(super) fn sync_files(ctx: &mut ToolContext, effects: &[ChatEffect]) {
     let added: Vec<&crate::entities::chat_file::ChatFile> = effects
         .iter()

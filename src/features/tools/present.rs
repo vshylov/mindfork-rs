@@ -60,7 +60,7 @@ pub struct Console {
     pub stderr: String,
     pub exit: Option<i32>,
     /// The `files:` section `python_exec` appends: what the call saved to the chat and
-    /// what it did not keep (docs/sandbox-file-exchange.md §11 S9). Verbatim — its lines
+    /// what it did not keep (docs/history/sandbox-file-exchange.md §11 S9). Verbatim — its lines
     /// are the tool's own, already localized.
     pub files: String,
 }
@@ -455,7 +455,7 @@ fn fs_read_failure_prefixes() -> Vec<&'static str> {
 
 /// Parses `python_exec`'s output (see `python::format_output_parts`) into stdout/
 /// stderr/exit-code sections, and the `files:` section a Wasmer run appends
-/// (docs/sandbox-file-exchange.md §11 S9) — a result of that section alone parses too.
+/// (docs/history/sandbox-file-exchange.md §11 S9) — a result of that section alone parses too.
 /// `None` — if the text doesn't look like this format (launch error messages, "(empty
 /// output, success)") → show it as flat text.
 fn parse_console(result: &str) -> Option<Console> {

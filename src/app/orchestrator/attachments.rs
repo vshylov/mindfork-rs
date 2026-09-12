@@ -59,7 +59,7 @@ pub(super) struct ExtractedFile {
     /// The encoding the file was read in, when it was not UTF-8 (the feed note names it).
     pub(super) encoding: Option<&'static encoding_rs::Encoding>,
     /// The file's own bytes, kept when its text is **not** the file (fork F8a,
-    /// docs/sandbox-file-exchange.md §12 T9): a document an extractor read, or a binary
+    /// docs/history/sandbox-file-exchange.md §12 T9): a document an extractor read, or a binary
     /// that decodes as nothing and has no text at all. `None` for plain text, which needs
     /// no second copy — the snapshot is the file.
     pub(super) original: Option<Vec<u8>>,
@@ -362,7 +362,7 @@ impl Orchestrator {
 
     /// The chat's files as one numbered list, and the folder its stored files live in —
     /// the single numbering `/file list`, `/file remove`, the pinned block and
-    /// `python_exec` all take (docs/sandbox-file-exchange.md §12 T2). The images are
+    /// `python_exec` all take (docs/history/sandbox-file-exchange.md §12 T2). The images are
     /// borrowed, never cloned: a listing must not copy a conversation's base64 payloads.
     pub(super) fn chat_file_list(
         &self,
@@ -425,7 +425,7 @@ impl Orchestrator {
 
     /// Deletes our copy of a stored file, then drops its listing — the order in which a
     /// failed delete keeps the listing, so the removal can be retried and nothing is lost
-    /// (docs/sandbox-file-exchange.md §11 S11, docs/lessons.md §8).
+    /// (docs/history/sandbox-file-exchange.md §11 S11, docs/lessons.md §8).
     fn remove_stored_file(&mut self, chat_id: Uuid, dir: &std::path::Path, name: String) {
         if let Err(err) = crate::features::chat_files::remove(dir, &name) {
             let msg = self.ui_locale().tf(
@@ -619,7 +619,7 @@ impl Orchestrator {
         self.storage.json().files_dir().join(chat_id.to_string())
     }
 
-    /// Lists the files a tool stored in a chat's folder (docs/sandbox-file-exchange.md
+    /// Lists the files a tool stored in a chat's folder (docs/history/sandbox-file-exchange.md
     /// §11 S7) — a name already listed is skipped, so a landing is idempotent — and names
     /// them in one feed note when the chat is the open one. The one path both a turn's
     /// landing and a background run's take.
@@ -651,7 +651,7 @@ impl Orchestrator {
     }
 
     /// Lists every file in a loaded chat's folder that the chat does not list
-    /// (docs/sandbox-file-exchange.md §11 S6): a call stored it and the chat was not saved
+    /// (docs/history/sandbox-file-exchange.md §11 S6): a call stored it and the chat was not saved
     /// before the app stopped. Adopted, never deleted — the user may have seen it on the
     /// call's card. Run at startup, when no run can be writing one.
     pub(super) fn adopt_unlisted_files(&mut self) {
@@ -1003,7 +1003,7 @@ mod tests {
         assert!(file.text.contains("fn main()"));
     }
 
-    /// Fork F8a (docs/sandbox-file-exchange.md §12 T9): a binary is no longer turned away
+    /// Fork F8a (docs/history/sandbox-file-exchange.md §12 T9): a binary is no longer turned away
     /// — it has no text, so no attachment is made of it, and the file itself is what the
     /// chat keeps for the code to read. What is still refused is a file that is not there
     /// and one that carries nothing at all.

@@ -47,7 +47,7 @@ fn request_of(chat: &Chat, compaction: &CompactionSettings, history_tools: bool)
 
 /// The chat-files block names each item's `#N` — the one the user sees — and the name the
 /// code will open in `/w/in`, so the model can write the path before it ever sees a result
-/// (docs/sandbox-file-exchange.md §12 T3, T5). A turn that can stage nothing carries no
+/// (docs/history/sandbox-file-exchange.md §12 T3, T5). A turn that can stage nothing carries no
 /// block at all, and never names a tool it does not have.
 #[test]
 fn the_chat_files_block_names_handles_and_staged_names() {

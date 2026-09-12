@@ -128,7 +128,7 @@ pub struct ToolContext {
     /// Whether a `python_exec` call in this turn can reach the network
     /// (`config.tools.python_net_enabled`). The tool applies it; the confirmation popup
     /// **states** it, because network access and the files going in are the two halves of
-    /// what the user is consenting to (docs/sandbox-file-exchange.md §12 T6). In **Local**
+    /// what the user is consenting to (docs/history/sandbox-file-exchange.md §12 T6). In **Local**
     /// mode it is always `true`, and that is not a default: the code runs on the machine
     /// with the user's own reach, and a popup saying otherwise would be a lie (§14 V5).
     pub python_net: bool,
@@ -140,7 +140,7 @@ pub struct ToolContext {
     /// then refuse rather than change a file they cannot record the original of.
     pub workspace_journal: Option<std::path::PathBuf>,
     /// Where this chat's stored files live (`data/files/<chat-id>/`,
-    /// docs/sandbox-file-exchange.md §11 S5): `python_exec` writes what the code saved to
+    /// docs/history/sandbox-file-exchange.md §11 S5): `python_exec` writes what the code saved to
     /// `/w/out` here. A sub-agent's or a background run's context is a clone of its
     /// parent turn's, so their files land in the parent's folder. `None` — a background
     /// task, which has no chat; the tool then keeps nothing and says so.
@@ -156,7 +156,7 @@ pub struct ToolContext {
     pub images: std::sync::Arc<[crate::entities::message_image::MessageImage]>,
     /// Whether this turn can hand the chat's files to the code: `python_exec` offered, in
     /// the Wasmer mode that has a job directory to copy them into
-    /// (docs/sandbox-file-exchange.md §12 T5). Decided once per turn by the orchestrator
+    /// (docs/history/sandbox-file-exchange.md §12 T5). Decided once per turn by the orchestrator
     /// and carried here so a sub-agent's own request repeats the decision rather than
     /// guessing it (§12 T13).
     pub stages_files: bool,
@@ -484,7 +484,7 @@ pub enum ChatEffect {
     /// round rather than only in the next turn (docs/history/youtube-transcript.md §3 F1).
     AddAttachment(Box<crate::entities::attachment::Attachment>),
     /// List a file `python_exec` stored in the chat's folder
-    /// (docs/sandbox-file-exchange.md §11 S7). The bytes are already on disk — the tool
+    /// (docs/history/sandbox-file-exchange.md §11 S7). The bytes are already on disk — the tool
     /// wrote them where the listing points, as the code tools write their journal — so
     /// the effect only adds the listing, and the orchestrator stays `Chat`'s sole owner.
     /// The loop mirrors it into the turn's snapshot, as it does an attachment.
@@ -504,7 +504,7 @@ pub struct ToolOutcome {
     /// The field sits on the contract rather than inside the MCP branch (fork F5), so a
     /// built-in tool with a picture to return needed no rework: the MCP adapter fills it,
     /// and so does `python_exec` with the images its code saved
-    /// (docs/sandbox-file-exchange.md §11 S8).
+    /// (docs/history/sandbox-file-exchange.md §11 S8).
     pub images: Vec<ToolImage>,
     /// **This call changed the profile's stored memory** — the self-model or
     /// a note. Set by a memory writer on the success path that returns after
@@ -944,7 +944,7 @@ pub fn standard_registry(cfg: &ToolConfig) -> ToolRegistry {
             }),
     )));
     // One contract, one call path: the mode picks the runner, not a second branch inside
-    // the tool (docs/sandbox-file-exchange.md §14 V1).
+    // the tool (docs/history/sandbox-file-exchange.md §14 V1).
     let runner: Arc<dyn crate::shared::sandbox::SandboxRunner> = match cfg.python_mode {
         crate::shared::config::PythonMode::Wasmer => Arc::new(
             WasmerSandbox::new(cfg.sandbox_dir.clone())

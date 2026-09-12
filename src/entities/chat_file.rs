@@ -1,6 +1,6 @@
 //! A file stored with a chat: bytes a `python_exec` call saved to `/w/out`, kept in the
 //! chat's folder (`data/files/<chat-id>/`) for the user. See
-//! docs/sandbox-file-exchange.md (F1, F2, F4, §11), spec §9.7.
+//! docs/history/sandbox-file-exchange.md (F1, F2, F4, §11), spec §9.7.
 //!
 //! Unlike an [`Attachment`](super::attachment::Attachment), a stored file is not text the
 //! model is shown on every turn: the chat lists it and the bytes live on disk. The
@@ -379,7 +379,7 @@ mod tests {
         assert!(same_name(&file.name, "CHART.png"));
         assert!(!same_name(&file.name, "chart"));
         // The origin a file `/file attach` kept is additive, and reads back as itself
-        // (ADR 0006 F12, docs/sandbox-file-exchange.md §12 T9).
+        // (ADR 0006 F12, docs/history/sandbox-file-exchange.md §12 T9).
         let attached = ChatFile::new("report.pdf", FileOrigin::Attached, b"%PDF-1.7\n");
         let json = serde_json::to_string(&attached).unwrap();
         assert!(json.contains("\"origin\":\"attached\""), "{json}");

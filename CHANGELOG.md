@@ -16,6 +16,13 @@ split by subsystem.
 
 ### Added
 
+- **The local-interpreter mode exchanges files too.** Running Python on your own machine
+  instead of in the sandbox used to mean the assistant's code could neither read this
+  chat's files nor save anything for you. It now works exactly as the sandbox does: the
+  call names the files it needs, each is copied in before the code runs, and what the code
+  saves comes back into the chat's files and into `/file list`. Nothing else changes about
+  the mode — it is still your machine, with your permissions and your network.
+
 - **Opening a chat's file in the system**: `/file open <name|#N>` opens one of the files
   `/file list` shows — an attachment, a file the assistant saved, an image of the
   conversation — in whatever application the system uses for it, and `/file folder` opens

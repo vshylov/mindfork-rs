@@ -537,7 +537,7 @@ enum FieldId {
     TPythonPath,
     TPythonNet,
     /// Show the model the images `python_exec` saved (`tools.python_images`,
-    /// docs/sandbox-file-exchange.md §11 S8).
+    /// docs/history/sandbox-file-exchange.md §11 S8).
     TPythonImages,
     TPythonWasmTimeout,
     TPythonWasmMemory,

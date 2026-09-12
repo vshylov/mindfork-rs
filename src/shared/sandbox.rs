@@ -105,7 +105,7 @@ pub struct SandboxOutput {
     pub timed_out: bool,
     /// The regular files the code left directly in `/w/out`, within
     /// [`OutputLimits::DEFAULT`], in name order — collected after the process exited,
-    /// whatever its exit code; none after a timeout (docs/sandbox-file-exchange.md F4,
+    /// whatever its exit code; none after a timeout (docs/history/sandbox-file-exchange.md F4,
     /// §11 S1–S2).
     pub files: Vec<OutputFile>,
     /// What `/w/out` held that was not collected, each with its reason.
@@ -163,7 +163,7 @@ impl OutputLimits {
     };
 }
 
-/// One file staged into the guest's `/w/in` (docs/sandbox-file-exchange.md §12 T12): the
+/// One file staged into the guest's `/w/in` (docs/history/sandbox-file-exchange.md §12 T12): the
 /// name it gets there and where its bytes come from. `shared` knows nothing about chats —
 /// which file this is, and what the guest calls it, are the tool's decisions.
 #[derive(Debug, Clone, PartialEq)]
@@ -514,7 +514,7 @@ impl SandboxRunner for WasmerSandbox {
     }
 }
 
-/// The **Local** mode behind the same contract (docs/sandbox-file-exchange.md F11 (b),
+/// The **Local** mode behind the same contract (docs/history/sandbox-file-exchange.md F11 (b),
 /// §14 V1): the user's own interpreter, started in a job directory laid out exactly like
 /// the guest's — `job.py` beside `in/` and `out/`, the working directory being the job
 /// directory, so the relative `in/`/`out/` a call writes mean the same thing in both modes.
@@ -735,7 +735,7 @@ fn build_args(
 }
 
 /// The job directory a call runs in, laid out the same way for both runners
-/// (docs/sandbox-file-exchange.md §14 V1): `job.py` beside `in/` and `out/`.
+/// (docs/history/sandbox-file-exchange.md §14 V1): `job.py` beside `in/` and `out/`.
 ///
 /// `in/` and `out/` are created whatever the call stages, so code that looks into either
 /// finds a folder rather than an error, and the staged files are the call's own copies:
@@ -805,7 +805,7 @@ impl Drop for JobDir {
 }
 
 /// Collects the regular files directly in `out` within `limits` (F4,
-/// docs/sandbox-file-exchange.md §11 S2), after the guest has exited. Entries are taken in
+/// docs/history/sandbox-file-exchange.md §11 S2), after the guest has exited. Entries are taken in
 /// name order, so which ones a cap keeps does not depend on the file system. An entry that
 /// is not a regular file by `symlink_metadata` is skipped, never followed. A file is read
 /// at most one byte past its cap, so a size the metadata understated cannot slip through;

@@ -55,12 +55,24 @@ tool, the implementation can change without changing the protocol.
 
 **Amended (2026-09-12, sandbox file exchange stage 3):** the schema gains an
 optional `files` — the chat's files a call copies into `/w/in`
-([docs/sandbox-file-exchange.md](../sandbox-file-exchange.md) §12 T10) — and it
+([docs/history/sandbox-file-exchange.md](../history/sandbox-file-exchange.md) §12 T10) — and it
 is offered **in the Wasmer mode only**. Local runs no job directory until that
 track's stage 5 brings parity, so until then the schema does depend on the mode.
 That is the lesser of the two breaks: a model offered an argument its mode cannot
 honour would name files that never arrive, and find out only from the refusal.
 The id, and the meaning of `code`, are unchanged.
+
+**Amended again (2026-09-12, the same track's stage 5):** that divergence is
+over, and the sentence above holds unqualified — `{ code, files }` in both modes.
+`LocalSandbox` answers the same `SandboxRunner` contract as `WasmerSandbox`: one
+job directory per call with the script beside `in/` and `out/`, the interpreter
+started with that directory as its working directory, one `prepare_job` laying
+both out and one `collect_outputs` reading them back. `python_exec` no longer
+branches by mode at all — the mode picks which runner the registry builds and
+which folders the prompt names (`PythonMode::dirs`: `/w/in`/`/w/out` in the
+guest, `in`/`out` on the host, where the working directory makes the relative
+form mean the same thing). A second staging path written beside the first is
+exactly what this section exists to prevent.
 
 ### 4. Provisioning — `mindfork sandbox setup` from a lock list (auto-download)
 
@@ -93,7 +105,7 @@ cache is warmed on setup (`warmup`), so the first real call is warm.
   "one host directory per call". The job directory, created for the call and dropped
   with it, holds the script and an empty `out/`, whose regular files are collected
   after the process exits — never through a link, within per-call caps — and stored
-  with the chat by the tool ([docs/sandbox-file-exchange.md](../sandbox-file-exchange.md)).
+  with the chat by the tool ([docs/history/sandbox-file-exchange.md](../history/sandbox-file-exchange.md)).
   **Amended again (2026-09-12, stage 3):** the same job directory now also holds
   `in/`, where the chat's files a call names are **copied** — never linked —
   before the run. They are the guest's own copies: `wasmer` 7.2.0 has no

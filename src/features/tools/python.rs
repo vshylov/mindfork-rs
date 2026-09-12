@@ -6,7 +6,7 @@
 //!   packages. See docs/research/python-wasmer-sandbox.md.
 //! - **Local** — the system interpreter as a separate process with a timeout. No OS
 //!   sandbox (the code runs on the user's machine), but the **same contract** since
-//!   stage 5 of docs/sandbox-file-exchange.md (F11 (b), §14 V1): a job directory with
+//!   stage 5 of docs/history/sandbox-file-exchange.md (F11 (b), §14 V1): a job directory with
 //!   `in/` and `out/`, the same staging, the same collection, the same schema.
 //!
 //! The master switch `tools.python_enabled` gates the tool as a whole (off
@@ -34,7 +34,7 @@ use super::{ChatEffect, Tool, ToolContext, ToolImage, ToolOutcome};
 const LOCAL_TIMEOUT: Duration = Duration::from_secs(10);
 /// Maximum size of captured output (characters) — protection against a flood.
 const MAX_OUTPUT_CHARS: usize = 8000;
-/// How much of a text-like output its entry quotes (docs/sandbox-file-exchange.md F5 (c)).
+/// How much of a text-like output its entry quotes (docs/history/sandbox-file-exchange.md F5 (c)).
 const TEXT_HEAD_BYTES: usize = 1024;
 
 /// `python_exec` — executes the given Python code and returns stdout/stderr.
@@ -49,7 +49,7 @@ pub struct PythonExec {
     /// Execution timeout in the sandbox (Wasmer).
     wasm_timeout: Duration,
     /// Whether an image the code saved to `/w/out` is shown to the model
-    /// (`tools.python_images`, docs/sandbox-file-exchange.md §11 S8). The description reads
+    /// (`tools.python_images`, docs/history/sandbox-file-exchange.md §11 S8). The description reads
     /// it too, so what the model is told and what it gets cannot disagree.
     images: bool,
 }
@@ -87,7 +87,7 @@ impl PythonExec {
 
     /// One call, either mode (§14 V1): the files the call named copied into the job
     /// directory's `in/`, the console output, and what the code left in `out/` kept in the
-    /// chat's folder (docs/sandbox-file-exchange.md §11 S5–S9). The result is in the
+    /// chat's folder (docs/history/sandbox-file-exchange.md §11 S5–S9). The result is in the
     /// profile's language (`ctx.loc`).
     async fn run_job(&self, code: &str, handles: &[String], ctx: &ToolContext) -> ToolOutcome {
         let loc = ctx.loc;
@@ -150,7 +150,7 @@ impl PythonExec {
     }
 
     /// Resolves the files a call named against the chat's one numbered list
-    /// (docs/sandbox-file-exchange.md §12 T2) and turns them into copies for `/w/in`.
+    /// (docs/history/sandbox-file-exchange.md §12 T2) and turns them into copies for `/w/in`.
     ///
     /// `Err` is the refusal the model gets **instead of a run**: an unknown handle, a name
     /// several files share, a listed file whose copy is gone. Nothing is staged and
@@ -386,7 +386,7 @@ impl Tool for PythonExec {
     fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
         let (in_dir, out_dir) = self.mode.dirs();
         // The caps and the images sentence are built from the same values the run uses
-        // (docs/sandbox-file-exchange.md §11 S10), so the tool cannot promise another.
+        // (docs/history/sandbox-file-exchange.md §11 S10), so the tool cannot promise another.
         let limits = OutputLimits::DEFAULT;
         let images = if self.images {
             loc.tf("tool.python_exec.desc.images_on", &[("out", out_dir)])
@@ -422,7 +422,7 @@ impl Tool for PythonExec {
     }
     /// One schema for both modes again (ADR 0005 §3): since stage 5's parity, Local runs
     /// in a job directory too, so `files` means the same thing there — the chat's files
-    /// copied in before the code runs (docs/sandbox-file-exchange.md §14 V1).
+    /// copied in before the code runs (docs/history/sandbox-file-exchange.md §14 V1).
     fn parameters(&self, loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
@@ -799,7 +799,7 @@ mod tests {
         }
     }
 
-    /// A chat whose files a call can name (docs/sandbox-file-exchange.md §12 T2): one
+    /// A chat whose files a call can name (docs/history/sandbox-file-exchange.md §12 T2): one
     /// attachment, one stored file that is really on disk, one image — the three kinds
     /// `/file list` numbers, in that order.
     fn ctx_with_inputs() -> (tempfile::TempDir, tempfile::TempDir, ToolContext) {
@@ -1577,7 +1577,7 @@ print('pillow', png.getvalue()[:4] == b'\x89PNG')
         );
     }
 
-    /// Outputs from a real sandbox (docs/sandbox-file-exchange.md §8, stage 2): a
+    /// Outputs from a real sandbox (docs/history/sandbox-file-exchange.md §8, stage 2): a
     /// matplotlib chart and a CSV saved to `/w/out` are kept and the chart is shown,
     /// although the script then exits with 3; a folder in `/w/out` is named, not walked;
     /// and the violations are attempted — a link to the job script and a file written

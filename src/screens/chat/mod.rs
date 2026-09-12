@@ -234,7 +234,7 @@ pub enum ChatIntent {
     /// Show the chat's attachments (command `/file list`).
     FileList,
     /// Open one of the chat's files in the OS (command `/file open <name|#N>`,
-    /// docs/sandbox-file-exchange.md fork F9).
+    /// docs/history/sandbox-file-exchange.md fork F9).
     FileOpen {
         target: String,
     },
@@ -443,7 +443,7 @@ pub(super) struct ToolConfirm {
     pub(super) name: String,
     pub(super) arguments: String,
     /// What a `python_exec` call would hand the sandbox, resolved by the orchestrator
-    /// (docs/sandbox-file-exchange.md §12 T6) — the compact argument view cannot show it.
+    /// (docs/history/sandbox-file-exchange.md §12 T6) — the compact argument view cannot show it.
     pub(super) inputs: Option<crate::features::chat_inputs::ConfirmInputs>,
 }
 

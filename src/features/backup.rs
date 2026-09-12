@@ -8,7 +8,7 @@
 //! - directories `chats/`, `dictionaries/`, `locales/` and `files/` (recursively —
 //!   their `*.bak` files are pulled in too; `locales/` — user overrides of the
 //!   scaffold/UI text; `files/` — what the Python sandbox saved for each chat, which
-//!   cannot be recomputed, docs/sandbox-file-exchange.md F10);
+//!   cannot be recomputed, docs/history/sandbox-file-exchange.md F10);
 //! - all `*.bak` at the root (`settings.bak`, `profiles.bak`);
 //! - the file-tools "sandbox" directory (`config.tools.fs_root`) — **only if**
 //!   it lies inside the data root.

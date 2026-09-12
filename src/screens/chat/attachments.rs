@@ -182,7 +182,7 @@ pub(super) fn format_tokens(tokens: usize) -> String {
 
 /// Formats the `/file list` reply: the attachments, then the stored files numbered on
 /// from them — the same `#N` handles `/file remove` accepts
-/// (docs/sandbox-file-exchange.md §11 S11).
+/// (docs/history/sandbox-file-exchange.md §11 S11).
 pub(super) fn format_file_list(
     items: &[AttachmentInfo],
     stored: &[StoredInfo],
@@ -226,7 +226,7 @@ pub(super) fn format_file_list(
         }
     }
     // The images the conversation carries, numbered on from the rest: the code can read
-    // one by that `#N` (docs/sandbox-file-exchange.md §12 T4), so the user sees the same
+    // one by that `#N` (docs/history/sandbox-file-exchange.md §12 T4), so the user sees the same
     // handles the model does.
     if !images.is_empty() {
         if !out.is_empty() && !out.ends_with('\n') {
@@ -348,7 +348,7 @@ mod stored_list_tests {
 
     /// The images the conversation carries are numbered on from the rest — the same `#N`
     /// the code names in `files` — and an attachment whose original the chat kept says so
-    /// (docs/sandbox-file-exchange.md §12 T2, T4, T9).
+    /// (docs/history/sandbox-file-exchange.md §12 T2, T4, T9).
     #[test]
     fn images_are_numbered_after_the_files_and_a_kept_original_is_marked() {
         let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::En);

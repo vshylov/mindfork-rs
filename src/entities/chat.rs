@@ -68,7 +68,7 @@ pub struct Chat {
     /// Files stored with the chat — what `python_exec` saved to `/w/out` — whose bytes
     /// live in `data/files/<chat-id>/`. Not part of any request: the chat lists them for
     /// the user. Additive field — old chat files read without migration, and a chat with
-    /// no files writes no new key (ADR 0006 F12). See docs/sandbox-file-exchange.md,
+    /// no files writes no new key (ADR 0006 F12). See docs/history/sandbox-file-exchange.md,
     /// spec §9.7.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub files: Vec<ChatFile>,
@@ -267,7 +267,7 @@ impl Chat {
 
     /// Lists a stored file, unless the chat already lists one of that name — compared
     /// case-insensitively, as the folder may be restored onto Windows. Returns whether it
-    /// was listed: a landing that repeats is a no-op (docs/sandbox-file-exchange.md §11 S7).
+    /// was listed: a landing that repeats is a no-op (docs/history/sandbox-file-exchange.md §11 S7).
     pub fn list_file(&mut self, file: ChatFile) -> bool {
         if self
             .files

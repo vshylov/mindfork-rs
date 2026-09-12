@@ -138,7 +138,7 @@ pub(super) struct PromptContext<'a> {
     /// which commands it can run (see [`inject_workspace`]).
     pub offered_tools: &'a [crate::entities::profile::ToolId],
     /// The chat's files as one numbered list, for the block that tells the model what
-    /// `python_exec` may copy into its input folder (docs/sandbox-file-exchange.md §12 T5).
+    /// `python_exec` may copy into its input folder (docs/history/sandbox-file-exchange.md §12 T5).
     /// Empty unless the turn offers that tool — the **caller** decides, so the block can
     /// never name a tool the turn does not have (docs/lessons.md §4).
     pub files: &'a [crate::features::chat_inputs::ChatInput],
@@ -460,7 +460,7 @@ pub(super) fn inject_attachments(
 
 /// Appends the **chat files** block: what this turn's `python_exec` may copy into `/w/in`,
 /// numbered exactly as `/file list` numbers it for the user
-/// (docs/sandbox-file-exchange.md §12 T5).
+/// (docs/history/sandbox-file-exchange.md §12 T5).
 ///
 /// Which items reach it is the caller's decision, not this function's: `build_request` is
 /// given a list **only** for a turn that offers `python_exec` in its Wasmer mode. So the

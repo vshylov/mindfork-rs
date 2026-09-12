@@ -600,7 +600,7 @@ pub(super) fn read_source_text(
 /// A source's text, for indexing. The encoding it was read in is **not** kept here: the
 /// one caller that names it — `/file attach`, whose note says when a file was not UTF-8 —
 /// reads the file itself, because it also has to keep the bytes (fork F8a,
-/// docs/sandbox-file-exchange.md §12 T9).
+/// docs/history/sandbox-file-exchange.md §12 T9).
 pub(super) struct SourceText {
     pub(super) text: String,
 }

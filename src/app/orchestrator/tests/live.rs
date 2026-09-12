@@ -540,7 +540,7 @@ async fn image_attachment_e2e_live() {
     );
 }
 
-/// Sandbox file exchange, stage 2 (docs/sandbox-file-exchange.md §8): a chart the model's
+/// Sandbox file exchange, stage 2 (docs/history/sandbox-file-exchange.md §8): a chart the model's
 /// code saves to `/w/out` lands in the chat's folder, is listed in the chat — `/file list`
 /// finds its bytes on disk — and is shown to the model; with `tools.python_images` off the
 /// file still lands, no image is sent, and the result tells the model it has not seen it.
@@ -745,7 +745,7 @@ fn first_number(s: &str, digits: usize) -> Option<String> {
     best
 }
 
-/// Sandbox file exchange, stage 3 (docs/sandbox-file-exchange.md §12 T14): what one call
+/// Sandbox file exchange, stage 3 (docs/history/sandbox-file-exchange.md §12 T14): what one call
 /// saved, a **later** call reads — D4's persistence, end to end, through the chat's files.
 /// Turn 1 writes a workbook into `/w/out` with numbers the model does not choose and is
 /// told not to print; turn 2 names that workbook in `files`, so it is copied into `/w/in`,

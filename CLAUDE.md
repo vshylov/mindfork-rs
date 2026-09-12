@@ -171,8 +171,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-12, version 0.9.8)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3165 unit tests
-green, 168 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **3171 unit tests
+green, 169 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -184,6 +184,20 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **The local interpreter joins the file exchange, and the track closes** — `python_exec`
+  in Local mode ran the code and nothing else: no files in, none out, and a schema without
+  `files`, because a model must never be offered an argument its mode cannot honour. Now
+  `LocalSandbox` answers the same `SandboxRunner` contract as the sandbox — one job
+  directory per call with the script beside `in/` and `out/`, the interpreter started with
+  that directory as its working directory, one collector under the same caps — so the tool
+  has no second code path and ADR 0005 §3's "the schema is mode-independent" holds again.
+  The folders are one source with two spellings (`/w/in`/`/w/out` in the guest, `in`/`out`
+  on the host), and the Wasmer prompt is byte-identical to the text the earlier gates
+  measured. Live GO on Gemma 4 31B with **no sandbox at all**: the chat's CSV named in
+  `files`, read from `in/`, summed to 4706 and written back to `out/`, stored with the chat
+  — and the sandbox's own smokes re-measured after the refactor
+  ([docs/history/sandbox-file-exchange.md](docs/history/sandbox-file-exchange.md) §14,
+  spec §13.2, [docs/journal/tools.md](docs/journal/tools.md)).
 - **A chat's file opens in the system** — `/file open <name|#N>` hands one of the files
   `/file list` shows to the desktop's handler and `/file folder` opens the chat's folder,
   on the handle and the refusals `/file remove` already had. What may be **launched** is an
@@ -196,7 +210,7 @@ being recent is dropped, not shortened.
   one copy-paste away. Gate manual by design — a viewer and a file manager opened on
   Windows, while the Linux launch is covered in CI by a stub launcher that records the one
   whole argument it was handed
-  ([docs/sandbox-file-exchange.md](docs/sandbox-file-exchange.md) §13, spec §9.7,
+  ([docs/history/sandbox-file-exchange.md](docs/history/sandbox-file-exchange.md) §13, spec §9.7,
   [docs/journal/tools.md](docs/journal/tools.md)).
 - **Files into the Python sandbox — the chat's files reach the code** — a call names
   them in `files`, by the `#N` `/file list` shows or by name, and each is copied into
@@ -207,7 +221,7 @@ being recent is dropped, not shortened.
   text, the pair one item everywhere. An unknown handle, a shared name or a copy gone from
   the folder refuses the call **before** it runs, and the confirmation popup states the
   resolved names, sizes and the network — the compact view drops arrays, so `files` would
-  otherwise be invisible there ([docs/sandbox-file-exchange.md](docs/sandbox-file-exchange.md)
+  otherwise be invisible there ([docs/history/sandbox-file-exchange.md](docs/history/sandbox-file-exchange.md)
   §12, spec §9.7, §9.8, §13.2, [docs/journal/tools.md](docs/journal/tools.md)).
 - **Files out of the Python sandbox — a chart reaches the user and the model** —
   `python_exec` gains `/w/out`: once the process exits (any exit code, never after a
@@ -218,7 +232,7 @@ being recent is dropped, not shortened.
   described a chart they had not seen, so every withheld image is now said in the
   result, MCP's too. `/file list`/`remove` reach stored files, backups pack them, and an
   unlisted file is adopted at startup, never swept
-  ([docs/sandbox-file-exchange.md](docs/sandbox-file-exchange.md) §10–§11, spec §9.7,
+  ([docs/history/sandbox-file-exchange.md](docs/history/sandbox-file-exchange.md) §10–§11, spec §9.7,
   §9.10, §13.2, [docs/journal/tools.md](docs/journal/tools.md)).
 - **The sandbox's packages, packed read-only** — `site-packages` was mounted with a
   plain `--volume` (wasmer has no read-only one), and a `sitecustomize.py` one call
@@ -390,24 +404,6 @@ being recent is dropped, not shortened.
   prefill)
   ([docs/research/oneshot-samples.md](docs/research/oneshot-samples.md),
   spec §3.4, §11.2, §11.8, [docs/journal/engine.md](docs/journal/engine.md)).
-- **The page summary's usage — the one kind that under-counts, and a
-  summary that came back empty** — the item was "let the page summary
-  record its usage too", left unrecorded on a reading: a request of prose,
-  over-counted. Measured, a page's text ran above the estimate on four
-  pages of five (a docs page 1.04, an English article 1.16, a Rust source
-  1.17, an API's JSON 1.28) — the one kind that under-counts as a rule —
-  and on the thinking gate model the summary came back empty on every
-  page, the whole 768-token cap spent on thoughts. Now the summary records
-  under `Shape::Summary` at its `Usage` chunk, mutes reasoning as the
-  title does (`reasoning_budget = 0`), and hands the engine's timing of
-  its prompt — the coldest the turn makes, 3236 tokens for a
-  12 000-character head — back on `ToolOutcome.prefill`, which the turn's
-  loop (`keep_tool_sample`) and the silent loop (`ToolsReport`) fold into
-  the largest sample they keep for the slow-prefill note. Measured after:
-  the JSON page at 1.29 in its own slot on the 4090, 1.51 on the CPU build
-  (36 tok/s, 4 s inside the summary's 90 s limit), a real summary on both
-  ([docs/research/page-summary-usage.md](docs/research/page-summary-usage.md),
-  spec §6.3, §9.3.1, [docs/journal/engine.md](docs/journal/engine.md)).
 - **The TUI "hangs" on a headless launch** (no TTY) — this is expected; clean
   exit via `Esc`/`Ctrl+Q` is covered by unit tests. Live verification needs a
   real terminal.

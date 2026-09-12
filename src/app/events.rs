@@ -198,7 +198,7 @@ pub enum AppCommand {
     /// is a `FileProgress::Listed` event.
     FileList,
     /// Open one of the active chat's files in the desktop environment (the
-    /// `/file open <name|#N>` command, fork F9 of docs/sandbox-file-exchange.md).
+    /// `/file open <name|#N>` command, fork F9 of docs/history/sandbox-file-exchange.md).
     /// The handle is the one `/file list` shows; the launch runs on the blocking
     /// pool and the outcome arrives as a `FileProgress` event.
     FileOpen { target: String },
@@ -775,7 +775,7 @@ pub enum AppEvent {
         arguments: String,
         /// For a `python_exec` call: the chat's files it would copy into the sandbox,
         /// already resolved, and whether the sandbox has the network
-        /// (docs/sandbox-file-exchange.md §12 T6). The popup's compact view of the
+        /// (docs/history/sandbox-file-exchange.md §12 T6). The popup's compact view of the
         /// arguments drops arrays, so without this the argument that decides what leaves
         /// the chat would not be shown at all. `None` for every other tool.
         inputs: Option<crate::features::chat_inputs::ConfirmInputs>,

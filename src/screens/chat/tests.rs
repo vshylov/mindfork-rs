@@ -1049,7 +1049,7 @@ fn tool_confirm_popup_shows_the_call_as_code_with_the_three_options() {
 }
 
 /// The popup states what a `python_exec` call would hand the sandbox, and whether that
-/// sandbox has the network (docs/sandbox-file-exchange.md §12 T6). The compact view of the
+/// sandbox has the network (docs/history/sandbox-file-exchange.md §12 T6). The compact view of the
 /// arguments drops arrays outright — which this test also pins — so `files`, the argument
 /// that decides what leaves the chat, would otherwise not be shown at all.
 #[test]
