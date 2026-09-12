@@ -34,6 +34,9 @@ const WASMER_BIN: &str = if cfg!(windows) {
 const DEFAULT_PYTHON_PKG: &str = "python/python";
 /// The guest mount point of the working directory (holding the task script).
 const GUEST_WORK: &str = "/w";
+
+/// The script both runners write into the job directory and start.
+const JOB_SCRIPT: &str = "job.py";
 /// Where `site-packages` sits in the guest: a volume of the packed image, or — for
 /// provisioning's warmup only — the mounted directory.
 pub(crate) const GUEST_SITE: &str = "/sp";
@@ -428,40 +431,12 @@ impl SandboxRunner for WasmerSandbox {
             .plan()
             .ok_or_else(|| anyhow::anyhow!("{}", loc.t("sandbox.err.needs_repack")))?;
 
-        // The task script in a unique temp directory (auto-cleanup via Drop).
+        // The script, `in/` and `out/` in a unique temp directory (auto-cleanup via Drop),
+        // laid out exactly as Local's — one helper, one layout (§14 V1). The WASIX shims
+        // are the guest's own and are added here, not there.
         let job = JobDir::create().with_context(|| loc.t("sandbox.err.job_dir").to_string())?;
-        let script = job.path.join("job.py");
-        tokio::fs::write(&script, build_wrapper(spec.code))
-            .await
-            .with_context(|| loc.t("sandbox.err.write_script").to_string())?;
-        // Where the code leaves what it wants kept (docs/sandbox-file-exchange.md §4):
-        // collected below once the process has exited, before the job directory drops.
-        let out_dir = job.path.join("out");
-        tokio::fs::create_dir(&out_dir)
-            .await
-            .with_context(|| loc.t("sandbox.err.job_dir").to_string())?;
-        // What the call may read (§12 T11–T12). Always created, so code that looks into
-        // `/w/in` finds a folder rather than an error, and the copies are the guest's own:
-        // `wasmer` 7.2.0 has no read-only volume, so the guest may overwrite one, and
-        // nothing follows — the chat's copies are untouched and only `out/` is collected.
-        let in_dir = job.path.join("in");
-        tokio::fs::create_dir(&in_dir)
-            .await
-            .with_context(|| loc.t("sandbox.err.job_dir").to_string())?;
-        for input in spec.inputs {
-            if !is_one_component(&input.name) {
-                anyhow::bail!(
-                    "{}",
-                    loc.tf("sandbox.err.input_name", &[("name", &input.name)])
-                );
-            }
-            let to = in_dir.join(&input.name);
-            match &input.source {
-                InputSource::Bytes(bytes) => tokio::fs::write(&to, bytes).await.map(|()| 0),
-                InputSource::Path(from) => tokio::fs::copy(from, &to).await,
-            }
-            .with_context(|| loc.tf("sandbox.err.stage_input", &[("name", &input.name)]))?;
-        }
+        let layout = prepare_job(&job, &build_wrapper(spec.code), spec.inputs, loc).await?;
+        let out_dir = layout.out_dir;
 
         // Mount the working directory — and a `site-packages` directory only for
         // provisioning's warmup, since the image carries its own; PYTHONPATH for the guest.
@@ -476,7 +451,7 @@ impl SandboxRunner for WasmerSandbox {
         if plan.site_on_path {
             envs.push(("PYTHONPATH", GUEST_SITE.into()));
         }
-        let script_guest = format!("{GUEST_WORK}/job.py");
+        let script_guest = format!("{GUEST_WORK}/{JOB_SCRIPT}");
         let args = build_args(&plan.program, &mounts, &envs, spec.net, &script_guest);
 
         let mut cmd = tokio::process::Command::new(&wasmer);
@@ -533,6 +508,111 @@ impl SandboxRunner for WasmerSandbox {
                 // A killed call may have left a file half-written: nothing is read, and
                 // what `out/` held is named, so the model is not left guessing (F4).
                 skipped: timed_out_outputs(&out_dir),
+                ..SandboxOutput::default()
+            }),
+        }
+    }
+}
+
+/// The **Local** mode behind the same contract (docs/sandbox-file-exchange.md F11 (b),
+/// §14 V1): the user's own interpreter, started in a job directory laid out exactly like
+/// the guest's — `job.py` beside `in/` and `out/`, the working directory being the job
+/// directory, so the relative `in/`/`out/` a call writes mean the same thing in both modes.
+///
+/// What it is **not** is isolation. The code runs on the machine with the user's
+/// permissions and reaches whatever they reach — the network included, which is why this
+/// mode has no network flag to honour (§14 V5). The job directory is a place to exchange
+/// files, not a boundary; ADR 0005 §5 says the same of the mode as a whole.
+pub struct LocalSandbox {
+    /// The interpreter: a path or a bare name. `None` → the platform default.
+    python: Option<String>,
+}
+
+impl LocalSandbox {
+    pub fn new(python: Option<String>) -> Self {
+        Self { python }
+    }
+
+    /// The interpreter's name or path, with the platform's default when none is set.
+    pub fn interpreter(&self) -> String {
+        self.python.clone().unwrap_or_else(|| {
+            if cfg!(windows) {
+                "python".to_string()
+            } else {
+                "python3".to_string()
+            }
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl SandboxRunner for LocalSandbox {
+    /// A path check, not a probe (§14 V4): an interpreter named with a separator is
+    /// checked as a file, so a wrong setting is reported where a missing `wasmer` is; a
+    /// bare name is left to `PATH`, where a failure surfaces as the spawn error it was.
+    fn availability(&self, loc: &Locale) -> SandboxAvailability {
+        let python = self.interpreter();
+        if python.contains(['/', '\\']) && !Path::new(&python).is_file() {
+            return SandboxAvailability::Missing(
+                loc.tf("sandbox.err.python_not_found", &[("path", &python)]),
+            );
+        }
+        SandboxAvailability::Ready
+    }
+
+    async fn run(&self, spec: SandboxJob<'_>, loc: &Locale) -> Result<SandboxOutput> {
+        let python = self.interpreter();
+        let job = JobDir::create().with_context(|| loc.t("sandbox.err.job_dir").to_string())?;
+        // The code as written: the shims `build_wrapper` adds are the guest's libc and its
+        // FreeType build, and nothing on the host wants them (§14 V3).
+        let layout = prepare_job(&job, spec.code, spec.inputs, loc).await?;
+
+        let mut cmd = tokio::process::Command::new(&python);
+        cmd.arg(&layout.script)
+            // The working directory is the job directory, which is what makes `in/` and
+            // `out/` mean here what `/w/in` and `/w/out` mean in the guest.
+            .current_dir(&job.path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            // Output goes into a pipe, not a console, so Python on Windows picks an
+            // encoding by locale (often cp1252) and fails on Cyrillic in `print`
+            // (`UnicodeEncodeError`). We read UTF-8, so we ask for UTF-8.
+            // See docs/journal/milestones.md (M7).
+            .env("PYTHONIOENCODING", "utf-8")
+            .env("PYTHONUTF8", "1")
+            // On a timeout the future is dropped → the process is killed.
+            .kill_on_drop(true);
+        let child = cmd
+            .spawn()
+            .with_context(|| loc.tf("sandbox.err.spawn_python", &[("path", &python)]))?;
+
+        match tokio::time::timeout(spec.timeout, child.wait_with_output()).await {
+            Ok(Ok(out)) => {
+                // Whatever the exit code: a script that saved its chart and then failed
+                // still made the chart (F4). The same rule, the same collector and the
+                // same caps as the guest's.
+                let collect_from = layout.out_dir.clone();
+                let (files, skipped) = tokio::task::spawn_blocking(move || {
+                    collect_outputs(&collect_from, OutputLimits::DEFAULT)
+                })
+                .await
+                .unwrap_or_default();
+                Ok(SandboxOutput {
+                    stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+                    stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+                    exit_code: out.status.code(),
+                    timed_out: false,
+                    files,
+                    skipped,
+                })
+            }
+            Ok(Err(e)) => Err(e).with_context(|| loc.t("sandbox.err.wait_python").to_string()),
+            Err(_) => Ok(SandboxOutput {
+                timed_out: true,
+                // A killed call may have left a file half-written: nothing is read, and
+                // what `out/` held is named, so the model is not left guessing (F4).
+                skipped: timed_out_outputs(&layout.out_dir),
                 ..SandboxOutput::default()
             }),
         }
@@ -652,6 +732,56 @@ fn build_args(
     a.push("--".into());
     a.push(script_guest.into());
     a
+}
+
+/// The job directory a call runs in, laid out the same way for both runners
+/// (docs/sandbox-file-exchange.md §14 V1): `job.py` beside `in/` and `out/`.
+///
+/// `in/` and `out/` are created whatever the call stages, so code that looks into either
+/// finds a folder rather than an error, and the staged files are the call's own copies:
+/// `wasmer` 7.2.0 has no read-only volume, and on the host there is nothing to make one —
+/// the guest may overwrite a copy and nothing follows, since the chat's files are
+/// elsewhere and only `out/` is collected.
+async fn prepare_job(
+    job: &JobDir,
+    code: &str,
+    inputs: &[SandboxInput],
+    loc: &Locale,
+) -> Result<JobLayout> {
+    let script = job.path.join(JOB_SCRIPT);
+    tokio::fs::write(&script, code)
+        .await
+        .with_context(|| loc.t("sandbox.err.write_script").to_string())?;
+    let out_dir = job.path.join("out");
+    let in_dir = job.path.join("in");
+    for dir in [&out_dir, &in_dir] {
+        tokio::fs::create_dir(dir)
+            .await
+            .with_context(|| loc.t("sandbox.err.job_dir").to_string())?;
+    }
+    for input in inputs {
+        if !is_one_component(&input.name) {
+            anyhow::bail!(
+                "{}",
+                loc.tf("sandbox.err.input_name", &[("name", &input.name)])
+            );
+        }
+        let to = in_dir.join(&input.name);
+        match &input.source {
+            InputSource::Bytes(bytes) => tokio::fs::write(&to, bytes).await.map(|()| 0),
+            InputSource::Path(from) => tokio::fs::copy(from, &to).await,
+        }
+        .with_context(|| loc.tf("sandbox.err.stage_input", &[("name", &input.name)]))?;
+    }
+    Ok(JobLayout { script, out_dir })
+}
+
+/// What [`prepare_job`] laid out and the run then needs: the script to start, and the
+/// directory collected once the process has exited.
+#[derive(Debug)]
+struct JobLayout {
+    script: PathBuf,
+    out_dir: PathBuf,
 }
 
 /// A temp directory for the task script (auto-cleanup on `Drop`). Lives in the
@@ -944,6 +1074,72 @@ mod tests {
     /// The reference locale for tests (ru byte-for-byte — the previous substring asserts stay intact).
     fn ru() -> &'static Locale {
         locale(Lang::Ru)
+    }
+
+    /// Both runners lay the job directory out through one helper (§14 V1): the script, the
+    /// staged copies under their own names in `in/`, and an `out/` that exists even when
+    /// the call staged nothing — code that looks into either finds a folder, not an error.
+    #[tokio::test]
+    async fn a_job_directory_holds_the_script_the_copies_and_an_out_folder() {
+        let host = tempfile::tempdir().expect("a source dir");
+        let from = host.path().join("sales.xlsx");
+        std::fs::write(&from, b"PK\x03\x04").unwrap();
+
+        let job = JobDir::create().expect("a job dir");
+        let inputs = [
+            SandboxInput::bytes("memo.txt", b"the note".to_vec()),
+            SandboxInput::path("sales.xlsx", &from),
+        ];
+        let layout = prepare_job(&job, "print(1)", &inputs, ru()).await.unwrap();
+
+        assert_eq!(std::fs::read_to_string(&layout.script).unwrap(), "print(1)");
+        assert!(layout.out_dir.is_dir(), "out/ must exist before the run");
+        let staged = job.path.join("in");
+        assert_eq!(
+            std::fs::read_to_string(staged.join("memo.txt")).unwrap(),
+            "the note"
+        );
+        assert_eq!(
+            std::fs::read(staged.join("sales.xlsx")).unwrap(),
+            b"PK\x03\x04"
+        );
+        // The copy is the call's own: the source is untouched by anything the run does.
+        assert!(from.is_file());
+    }
+
+    /// The guard `shared` can make without knowing what named a file: a name that is not
+    /// one plain component is refused, so a bug upstream cannot write outside the job.
+    #[tokio::test]
+    async fn a_staged_name_that_is_not_one_component_is_refused() {
+        for name in ["../escape.txt", "sub/dir.txt", "..", ""] {
+            let job = JobDir::create().expect("a job dir");
+            let inputs = [SandboxInput::bytes(name, b"x".to_vec())];
+            let err = prepare_job(&job, "print(1)", &inputs, ru())
+                .await
+                .expect_err("the name must be refused");
+            assert!(format!("{err:#}").contains("имя"), "{name:?}: {err:#}");
+        }
+    }
+
+    /// §14 V4: a path is checked as a file, a bare name is left to `PATH` — no probe.
+    #[test]
+    fn a_local_interpreter_path_is_checked_and_a_bare_name_is_not() {
+        let missing = LocalSandbox::new(Some("D:\\nowhere\\python.exe".into()));
+        assert!(matches!(
+            missing.availability(ru()),
+            SandboxAvailability::Missing(_)
+        ));
+        assert_eq!(
+            LocalSandbox::new(None).availability(ru()),
+            SandboxAvailability::Ready
+        );
+        assert_eq!(
+            LocalSandbox::new(Some("python3".into())).availability(ru()),
+            SandboxAvailability::Ready
+        );
+        // The platform's default is what the mode runs when nothing is configured.
+        let default = LocalSandbox::new(None).interpreter();
+        assert_eq!(default, if cfg!(windows) { "python" } else { "python3" });
     }
 
     #[test]

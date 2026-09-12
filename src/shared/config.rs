@@ -957,6 +957,19 @@ impl PythonMode {
     /// All variants in UI-cycle order (for the Choice popup and the cycle).
     pub const ALL: [PythonMode; 2] = [PythonMode::Wasmer, PythonMode::Local];
 
+    /// Where a call reads the files staged for it and writes what it wants kept, **as the
+    /// model is told** (docs/sandbox-file-exchange.md §14 V2). Both modes run with the job
+    /// directory as the working directory, so a relative `in/`/`out/` works in either;
+    /// what differs is the form the prompt uses — the guest sees that directory mounted at
+    /// `/w`, the host process sees it as its cwd. One source for the tool's description
+    /// and for the pinned block, so the two cannot name different folders.
+    pub fn dirs(self) -> (&'static str, &'static str) {
+        match self {
+            PythonMode::Wasmer => ("/w/in", "/w/out"),
+            PythonMode::Local => ("in", "out"),
+        }
+    }
+
     /// Cyclic iteration honoring direction (`dir` = +1/-1).
     pub fn cycle(self, dir: i32) -> Self {
         let idx = Self::ALL.iter().position(|x| *x == self).unwrap_or(0) as i32;

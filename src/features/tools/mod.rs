@@ -128,8 +128,13 @@ pub struct ToolContext {
     /// Whether a `python_exec` call in this turn can reach the network
     /// (`config.tools.python_net_enabled`). The tool applies it; the confirmation popup
     /// **states** it, because network access and the files going in are the two halves of
-    /// what the user is consenting to (docs/sandbox-file-exchange.md §12 T6).
+    /// what the user is consenting to (docs/sandbox-file-exchange.md §12 T6). In **Local**
+    /// mode it is always `true`, and that is not a default: the code runs on the machine
+    /// with the user's own reach, and a popup saying otherwise would be a lie (§14 V5).
     pub python_net: bool,
+    /// The Python mode this turn runs in — which folders a call reads and writes
+    /// (`PythonMode::dirs`, §14 V2). A sub-agent builds its own pinned block from it.
+    pub python_mode: crate::shared::config::PythonMode,
     /// Where this chat's change journal lives (`data/workspace/<chat-id>/`,
     /// spec §9.12). `None` — no project, or a background turn; the editing tools
     /// then refuse rather than change a file they cannot record the original of.
@@ -230,8 +235,11 @@ pub struct ToolParams {
     /// (`config.tools.mcp_images`). See [`ToolContext::mcp_images`].
     pub mcp_images: bool,
     /// Whether the Python sandbox has the network this turn
-    /// (`config.tools.python_net_enabled`). See [`ToolContext::python_net`].
+    /// (`config.tools.python_net_enabled`, or always in Local mode).
+    /// See [`ToolContext::python_net`].
     pub python_net: bool,
+    /// The Python mode (`config.tools.python_mode`). See [`ToolContext::python_mode`].
+    pub python_mode: crate::shared::config::PythonMode,
     /// Command-execution limits for the code workspace (`config.workspace`).
     /// See [`ToolContext::workspace_cfg`].
     pub workspace: crate::shared::config::WorkspaceSettings,
@@ -249,7 +257,14 @@ impl ToolParams {
             attachments: cfg.attachments,
             history_page_tokens: cfg.compaction.page_tokens,
             mcp_images: cfg.tools.mcp_images,
-            python_net: cfg.tools.python_net_enabled,
+            // Local has no network switch to honour: the code reaches what the user
+            // reaches, so "on" is what the popup must say there (§14 V5).
+            python_net: cfg.tools.python_net_enabled
+                || matches!(
+                    cfg.tools.python_mode,
+                    crate::shared::config::PythonMode::Local
+                ),
+            python_mode: cfg.tools.python_mode,
             workspace: cfg.workspace,
             file_hint: crate::shared::text_decode::tld_hint(cfg.interface.language),
         }
@@ -331,6 +346,7 @@ impl ToolContext {
             workspace_cfg: params.workspace,
             mcp_images: params.mcp_images,
             python_net: params.python_net,
+            python_mode: params.python_mode,
             storage: deps.storage,
             engine: deps.engine,
             embedder: deps.embedder,
@@ -927,14 +943,21 @@ pub fn standard_registry(cfg: &ToolConfig) -> ToolRegistry {
                 c.max_minutes
             }),
     )));
+    // One contract, one call path: the mode picks the runner, not a second branch inside
+    // the tool (docs/sandbox-file-exchange.md §14 V1).
+    let runner: Arc<dyn crate::shared::sandbox::SandboxRunner> = match cfg.python_mode {
+        crate::shared::config::PythonMode::Wasmer => Arc::new(
+            WasmerSandbox::new(cfg.sandbox_dir.clone())
+                .with_memory_limit(cfg.python_wasm_memory_mb),
+        ),
+        crate::shared::config::PythonMode::Local => Arc::new(
+            crate::shared::sandbox::LocalSandbox::new(cfg.python_path.clone()),
+        ),
+    };
     reg.register(Arc::new(
         python::PythonExec::new(
             cfg.python_mode,
-            cfg.python_path.clone(),
-            Arc::new(
-                WasmerSandbox::new(cfg.sandbox_dir.clone())
-                    .with_memory_limit(cfg.python_wasm_memory_mb),
-            ),
+            runner,
             cfg.python_net,
             cfg.python_wasm_timeout,
         )
@@ -1076,6 +1099,7 @@ pub(crate) mod testkit {
             attachments: crate::shared::config::AttachmentSettings::default(),
             mcp_images: true,
             python_net: false,
+            python_mode: crate::shared::config::PythonMode::Wasmer,
             workspace: crate::shared::config::WorkspaceSettings::default(),
             file_hint: None,
         }

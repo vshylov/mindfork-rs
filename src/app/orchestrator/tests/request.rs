@@ -35,6 +35,7 @@ fn request_of(chat: &Chat, compaction: &CompactionSettings, history_tools: bool)
             // The chat-files block has its own tests below; the shared helper builds
             // requests for a turn that stages nothing.
             files: &[],
+            python_dirs: ("/w/in", "/w/out"),
             history_tools,
             // The workspace block has its own tests below; this shared helper
             // builds requests for chats with no project, where the list is moot.
@@ -68,6 +69,7 @@ fn the_chat_files_block_names_handles_and_staged_names() {
             compaction: &CompactionSettings::default(),
             indexed: NO_INDEX,
             files: &items,
+            python_dirs: ("/w/in", "/w/out"),
             history_tools: false,
             offered_tools: &[],
             loc: ru(),

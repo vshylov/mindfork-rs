@@ -138,10 +138,13 @@ pub(super) struct PromptContext<'a> {
     /// which commands it can run (see [`inject_workspace`]).
     pub offered_tools: &'a [crate::entities::profile::ToolId],
     /// The chat's files as one numbered list, for the block that tells the model what
-    /// `python_exec` may copy into `/w/in` (docs/sandbox-file-exchange.md §12 T5). Empty
-    /// unless the turn offers that tool in its Wasmer mode — the **caller** decides, so
-    /// the block can never name a tool the turn does not have (docs/lessons.md §4).
+    /// `python_exec` may copy into its input folder (docs/sandbox-file-exchange.md §12 T5).
+    /// Empty unless the turn offers that tool — the **caller** decides, so the block can
+    /// never name a tool the turn does not have (docs/lessons.md §4).
     pub files: &'a [crate::features::chat_inputs::ChatInput],
+    /// That mode's input and output folders as the model must write them (§14 V2):
+    /// `/w/in`/`/w/out` in the sandbox, `in`/`out` on the host.
+    pub python_dirs: (&'static str, &'static str),
     /// Scaffold language (axis A): every injected block is read by the model.
     pub loc: &'a Locale,
 }
@@ -219,7 +222,7 @@ pub(super) fn build_request_in(
     let system = inject_attachments(system, env.attachments, cx.attachments, cx.indexed, cx.loc);
     // After the attachments, whose handles it repeats and whose content it does not, and
     // before the project: the same volatility order the other blocks follow (spec §6.6).
-    let system = inject_files(system, cx.files, cx.loc);
+    let system = inject_files(system, cx.files, cx.python_dirs, cx.loc);
     ChatRequest {
         continue_final: false,
         system: inject_workspace(system, env.workspace, cx.offered_tools, cx.loc),
@@ -473,17 +476,20 @@ pub(super) fn inject_attachments(
 pub(super) fn inject_files(
     system: Option<String>,
     inputs: &[crate::features::chat_inputs::ChatInput],
+    dirs: (&str, &str),
     loc: &Locale,
 ) -> Option<String> {
     if inputs.is_empty() {
         return system;
     }
-    let mut block = String::from(loc.t("prompt.files.header"));
+    let (in_dir, out_dir) = dirs;
+    let mut block = loc.tf("prompt.files.header", &[("in", in_dir), ("out", out_dir)]);
     for item in inputs {
         block.push_str(&loc.tf(
             "prompt.files.item",
             &[
                 ("i", &item.handle.to_string()),
+                ("in", in_dir),
                 ("name", &item.name),
                 ("staged", &item.staged),
                 ("size", &format_bytes(item.bytes as usize)),

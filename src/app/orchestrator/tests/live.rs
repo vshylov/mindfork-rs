@@ -820,6 +820,104 @@ async fn sandbox_inputs_e2e_live() {
     );
 }
 
+/// Sandbox file exchange, stage 5 (§14 V7): the **Local** mode's round trip through a live
+/// model — the half a unit test cannot reach, since what is being checked is that a model
+/// told about `in/` and `out/` uses them. The chat's attached table is named in `files`,
+/// read from `in/` and summed, and the summary is written to `out/` and kept with the chat.
+///
+/// Needs `MINDFORK_ENGINE_URL` and a Python on `PATH` — and no sandbox at all, which is the
+/// point of the mode. The standard library only: the machine's interpreter is the user's,
+/// and pandas may not be on it.
+///
+/// `#[ignore]`, manual against a live stack.
+#[tokio::test]
+#[ignore = "requires a live model (MINDFORK_ENGINE_URL) and a Python interpreter on PATH"]
+async fn local_mode_files_round_trip_e2e_live() {
+    use crate::features::file_command::FileProgress;
+    const ASK: &str = "A table is one of this chat's files. Use python_exec once: name that \
+        file in the files argument of the call so it is copied into the input folder, read \
+        it from there with the standard library only (no pandas), print the sum of the \
+        total column, and write that sum into a file called summary.txt in the output \
+        folder. Then tell me the sum in your reply.";
+    // Twelve rows the model is not told, so the number can only come from the file.
+    let rows: Vec<(u32, u32)> = (1..=12).map(|i| (i, i * i * 7 + 13)).collect();
+    let total: u32 = rows.iter().map(|(_, t)| t).sum();
+    let table = std::iter::once("month,total".to_string())
+        .chain(rows.iter().map(|(m, t)| format!("2026-{m:02},{t}")))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let mut cfg = no_auto_cfg();
+    cfg.tools.python_enabled = true;
+    cfg.tools.python_mode = crate::shared::config::PythonMode::Local;
+    cfg.default_sampling.max_tokens = Some(4096);
+    let Some((dir, cmd_tx, mut evt_rx, handle)) = spawn_orch_live_cfg(cfg).or_else(|| {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        None
+    }) else {
+        return;
+    };
+    narrow_profile_to(
+        &cmd_tx,
+        &mut evt_rx,
+        vec![crate::features::tools::PYTHON_EXEC_ID.into()],
+    )
+    .await;
+
+    let source = tempfile::tempdir().unwrap();
+    let path = source.path().join("sales.csv");
+    std::fs::write(&path, &table).unwrap();
+    cmd_tx
+        .send(AppCommand::FileAttach {
+            path: path.display().to_string(),
+        })
+        .unwrap();
+    wait_for(&mut evt_rx, |e| {
+        matches!(
+            e,
+            AppEvent::FileProgress(FileProgress::Attached { .. })
+                | AppEvent::FileProgress(FileProgress::Failed(_))
+        )
+    })
+    .await;
+
+    let (reply, results) = python_turn(&cmd_tx, &mut evt_rx, ASK).await;
+    cmd_tx.send(AppCommand::FileList).unwrap();
+    let listed = wait_for(&mut evt_rx, |e| {
+        matches!(e, AppEvent::FileProgress(FileProgress::Listed { .. }))
+    })
+    .await;
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    assert!(
+        !results.iter().any(|r| r.contains("nothing was run")),
+        "the call was refused: {results:?}"
+    );
+    // The number is the file's, and the interpreter is what computed it.
+    assert!(
+        results.iter().any(|r| r.contains(&total.to_string())),
+        "the call never printed the total {total}: {results:?}"
+    );
+    assert!(
+        fold_dashes(&reply).contains(&total.to_string()),
+        "the reply does not carry the total {total}: {reply}"
+    );
+    // And the way out works on the host too: what the code wrote was stored with the chat.
+    let Some(AppEvent::FileProgress(FileProgress::Listed { stored, .. })) = listed else {
+        panic!("no /file list reply");
+    };
+    let kept = stored
+        .iter()
+        .find(|f| f.name.starts_with("summary"))
+        .unwrap_or_else(|| panic!("nothing was kept from the output folder: {stored:?}"));
+    assert!(!kept.missing, "the listed file is not in the folder");
+    assert!(
+        dir.path().join("files").exists(),
+        "the chat's folder was never created"
+    );
+}
+
 /// Fork F8a live (§12 T9, T14): a **binary** the user attaches is kept with the chat —
 /// `/file attach` no longer refuses it — and a call that names it reads the real bytes in
 /// `/w/in`. The fixture is a generated 512×512 PNG, so what the code reports is objective

@@ -615,17 +615,15 @@ impl Orchestrator {
             t == crate::features::tools::history::HISTORY_READ_ID
                 || t == crate::features::tools::history::HISTORY_SEARCH_ID
         });
-        // Can this turn hand the chat's files to the code? The tool offered, and in the
-        // mode that has a job directory to copy them into (docs/sandbox-file-exchange.md
-        // §12 T4/T5). One value, read twice: the images snapshot below is built only for
-        // such a turn, and so is the block that tells the model what it may name.
+        // Can this turn hand the chat's files to the code? Since stage 5's parity, that is
+        // the tool being offered at all — both modes run in a job directory
+        // (docs/sandbox-file-exchange.md §12 T4/T5, §14 V1). One value, read twice: the
+        // images snapshot below is built only for such a turn, and so is the block that
+        // tells the model what it may name — in that mode's own folder form (§14 V2).
         let stages_files = allowed
             .iter()
-            .any(|t| t == crate::features::tools::PYTHON_EXEC_ID)
-            && matches!(
-                self.config.tools.python_mode,
-                crate::shared::config::PythonMode::Wasmer
-            );
+            .any(|t| t == crate::features::tools::PYTHON_EXEC_ID);
+        let python_dirs = self.config.tools.python_mode.dirs();
         let profile_loc = crate::shared::i18n::locale(profile_lang);
         let schemas = self.registry.schemas_for(&allowed, profile_loc);
         // Copied out before the `chat_mut` borrow below (config can't be read
@@ -739,6 +737,7 @@ impl Orchestrator {
                     compaction: &compact_cfg,
                     indexed: &indexed,
                     files: &inputs,
+                    python_dirs,
                     history_tools,
                     // A project can be attached while the profile has some or
                     // all of the tools switched off; the block describes what
@@ -3119,6 +3118,8 @@ impl TurnLoop<'_> {
                 compaction: &crate::shared::config::CompactionSettings::default(),
                 indexed: &indexed,
                 files: &inputs,
+                // The child runs in the mode its parent's context carries.
+                python_dirs: ctx.python_mode.dirs(),
                 history_tools: false,
                 offered_tools: &allowed,
                 loc,
