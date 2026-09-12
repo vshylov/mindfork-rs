@@ -777,7 +777,12 @@ survey added under it, recorded before implementing as §11 and §12 were.
   and every executable shape (`bat`, `cmd`, `ps1`, `sh`, `lnk`, `exe`), which is the
   attack F9 named. The model writes into this folder, so the rule has to hold for a name
   the model chose: the fallback means a file we refuse to launch still gets the user one
-  double-click away from it, with the reason said out loud.
+  double-click away from it, with the reason said out loud. *Amended after the track's
+  review:* the reason said out loud depends on whose file it is. "A file the assistant
+  wrote could run" was shown for a `.py` the user attached as well; the folder still
+  stands in for it — the list is by type — but the note now says only that the type
+  does not open from here. And the fallback never hands over the refused file itself: a
+  path with no folder around it opens nothing (`os_open::decide` returns `None`).
 - **U4 — the launch is ~60 lines of ours** (`shared/os_open.rs`): `ShellExecuteW` on
   Windows (windows-sys gains `Win32_UI_Shell`), `xdg-open` on Linux, `open` on macOS —
   one argument, no shell. Not `cmd /c start`, which re-parses the argument outside Rust's
@@ -787,7 +792,12 @@ survey added under it, recorded before implementing as §11 and §12 were.
 - **U5 — launching runs on the blocking pool.** `ShellExecuteW` returns only once the
   shell has started the handler, and `xdg-open` is a script that execs another; the
   orchestrator's command loop waits for neither. `spawn_blocking`, and the outcome comes
-  back as a `FileProgress` event like every other file note.
+  back as a `FileProgress` event like every other file note. *Amended after the track's
+  review:* it comes back through the loop, addressed (`OpenResult`), not straight to the
+  feed — the launch can outlast a switch of chats, and "opened report.pdf" in another
+  chat's feed reads as that chat's file. A success is dropped there; a failure is shown
+  wherever the user is, being the only report of the command and a note being kept with
+  no chat.
 - **U6 — the path is always printed**, on success and on failure (F9). A machine with no
   `xdg-open`, or no handler for `.xlsx`, then leaves the user one copy-paste from the
   file instead of one error message away from nothing.

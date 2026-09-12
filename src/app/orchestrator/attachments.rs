@@ -25,8 +25,8 @@ use crate::entities::attachment::{
     AttachMode, Attachment, AttachmentChunk, Resolved, decide_mode, inline_tokens_excluding,
     name_is_shared, prompt_tokens,
 };
-use crate::entities::chat_file::ChatFile;
-use crate::features::file_command::{FileProgress, StoredInfo};
+use crate::entities::chat_file::{ChatFile, FileOrigin};
+use crate::features::file_command::{FileProgress, OpenedInstead, StoredInfo};
 use crate::features::tools::rag::ChunkParams;
 use crate::shared::api::{EmbedRole, Embedder};
 use crate::shared::i18n::Locale;
@@ -46,6 +46,15 @@ pub(super) struct AttachResult {
     /// task finishes — the attachment still belongs to it).
     pub(super) chat_id: Uuid,
     pub(super) outcome: Result<ExtractedFile, String>,
+}
+
+/// What a launch handed to the desktop's handler came back as (internal channel, §13 U5).
+pub(super) struct OpenResult {
+    /// The chat the command was issued in. The launch runs off the loop and can outlast a
+    /// switch of chats, so the note is addressed rather than sent to whichever feed is open
+    /// when it lands ([`Orchestrator::handle_open_result`]).
+    pub(super) chat_id: Uuid,
+    pub(super) progress: FileProgress,
 }
 
 /// Text successfully extracted from a file (the mode is decided by the
@@ -495,8 +504,12 @@ impl Orchestrator {
     /// decided purely (§13 U2), and the file's type decides whether the file itself or the
     /// folder it sits in is handed to the shell (§13 U3).
     pub(super) fn handle_file_open(&mut self, target: String) {
-        if let Some((path, opened)) = self.plan_open(&target) {
-            self.spawn_open(path, opened);
+        let Some((path, opened)) = self.plan_open(&target) else {
+            return;
+        };
+        // `plan_open` refuses without an open chat, so there is one to address.
+        if let Some(chat_id) = self.active_id {
+            self.spawn_open(chat_id, path, opened);
         }
     }
 
@@ -511,18 +524,28 @@ impl Orchestrator {
         };
         let (items, dir) = self.chat_file_list(chat_id);
         let item = self.resolve_file_handle(&items, target)?;
-        let path = crate::features::chat_inputs::open_path(&item, &dir);
-        // The one disk check: a pasted image's source is `clipboard:<uuid>`, a fetched
-        // page's attachment carries a URL, and a listed copy can be gone from the folder.
-        if !path.is_file() {
+        let nothing_to_open = || {
             let msg = self.ui_locale().tf(
                 "ui.err.file_nothing_to_open",
                 &[("name", &item.name), ("source", &item.source)],
             );
             self.fail_file(&msg);
+        };
+        // The one disk check: a pasted image's source is `clipboard:<uuid>`, a fetched
+        // page's attachment carries a URL, and a listed copy can be gone from the folder.
+        // A stored name that is not one plain component names no file of ours at all.
+        let Some(path) =
+            crate::features::chat_inputs::open_path(&item, &dir).filter(|path| path.is_file())
+        else {
+            nothing_to_open();
             return None;
-        }
-        let (opens, at) = crate::shared::os_open::decide(&path);
+        };
+        // `None` only for a refused type with no folder around it, which the absolute
+        // paths above never are — refused rather than handed over if one ever is.
+        let Some((opens, at)) = crate::shared::os_open::decide(&path) else {
+            nothing_to_open();
+            return None;
+        };
         let progress = match opens {
             crate::shared::os_open::Opens::File => FileProgress::Opened {
                 name: item.name.clone(),
@@ -530,12 +553,27 @@ impl Orchestrator {
             },
             // Not a type we let a handler run: its folder opens instead, and the note says
             // why — a `run.bat` or a scripted `.html` a call wrote would otherwise *run*.
+            // Whose file it is decides whether that is the reason to give (§13 U3).
             crate::shared::os_open::Opens::Folder => FileProgress::OpenedFolder {
                 path: at.display().to_string(),
-                instead_of: Some(item.name.clone()),
+                instead_of: Some(OpenedInstead {
+                    name: item.name.clone(),
+                    by_a_call: self.written_by_a_call(chat_id, item.id),
+                }),
             },
         };
         Some((at.to_path_buf(), progress))
+    }
+
+    /// Whether the chat's item `id` is a file a `python_exec` call wrote: stored from
+    /// `/w/out`, or adopted from the folder as one. An attachment, its kept original and an
+    /// image are the user's own.
+    fn written_by_a_call(&self, chat_id: Uuid, id: Uuid) -> bool {
+        self.chats
+            .iter()
+            .find(|chat| chat.id == chat_id)
+            .and_then(|chat| chat.files.iter().find(|file| file.id == id))
+            .is_some_and(|file| matches!(file.origin, FileOrigin::Sandbox | FileOrigin::Recovered))
     }
 
     /// Opens the chat's stored-files folder (`/file folder`). A chat that has stored
@@ -556,6 +594,7 @@ impl Orchestrator {
             return;
         }
         self.spawn_open(
+            chat_id,
             dir,
             FileProgress::OpenedFolder {
                 path,
@@ -600,10 +639,11 @@ impl Orchestrator {
     /// outcome as a note. `ShellExecuteW` returns only once the shell has started the
     /// handler, and `xdg-open` is a script that execs another; a failure — no handler for
     /// the type, no `xdg-open` on the machine — arrives with the path, which is the half
-    /// that makes it actionable (§13 U6).
-    fn spawn_open(&self, path: std::path::PathBuf, opened: FileProgress) {
+    /// that makes it actionable (§13 U6). The outcome goes back to the loop addressed to
+    /// `chat_id` ([`OpenResult`]), not straight to the feed.
+    fn spawn_open(&self, chat_id: Uuid, path: std::path::PathBuf, opened: FileProgress) {
         let loc = self.ui_locale();
-        let tx = self.evt_tx.clone();
+        let tx = self.open_tx.clone();
         tokio::task::spawn_blocking(move || {
             let progress = match crate::shared::os_open::open(&path) {
                 Ok(()) => opened,
@@ -615,8 +655,23 @@ impl Orchestrator {
                     ],
                 )),
             };
-            let _ = tx.send(AppEvent::FileProgress(progress));
+            let _ = tx.send(OpenResult { chat_id, progress });
         });
+    }
+
+    /// Lands a launch's outcome (§13 U5/U6). The launch ran off the loop and may have
+    /// outlasted a switch of chats, so a **success** is noted only in the chat it was asked
+    /// in — the rule `list_stored_files` keeps — and dropped otherwise: the window that
+    /// opened is its own confirmation, and "opened report.pdf" in another chat's feed reads
+    /// as that chat's file. A **failure** is noted wherever the user is: it answers a
+    /// command given a moment ago, it carries the path that makes it actionable, and a
+    /// note is not kept with a chat — holding it for the chat it belongs to would lose it,
+    /// not deliver it later.
+    pub(super) fn handle_open_result(&self, res: OpenResult) {
+        let addressed = self.active_id == Some(res.chat_id);
+        if addressed || matches!(res.progress, FileProgress::Failed(_)) {
+            self.emit_file_progress(res.progress);
+        }
     }
 
     /// The folder of a chat's stored files (`data/files/<chat-id>/`).

@@ -84,7 +84,7 @@ use crate::shared::config::{AppConfig, CloudProvider};
 use crate::shared::secrets::{SearchSlot, SecretKey};
 use crate::shared::storage::Storage;
 
-use self::attachments::AttachResult;
+use self::attachments::{AttachResult, OpenResult};
 use self::background::BgSlot;
 use self::compaction::{CompactResult, ContextDiscovery};
 use self::engines::EngineManager;
@@ -194,6 +194,9 @@ pub async fn run(deps: OrchestratorDeps) {
     // The same shape for `/image attach`: decoding and downscaling a photo is far too
     // slow to run on the command loop.
     let (image_tx, mut image_rx) = unbounded_channel::<ImageAttachResult>();
+    // And for `/file open`: the shell call blocks until the handler has started, and what
+    // it answers is addressed to the chat it was asked in (`handle_open_result`).
+    let (open_tx, mut open_rx) = unbounded_channel::<OpenResult>();
     let registry = {
         let mut reg = build_registry(&config, storage.json().sandbox_dir());
         for tool in &extra_tools {
@@ -236,6 +239,7 @@ pub async fn run(deps: OrchestratorDeps) {
         rag_cancel: None,
         attach_tx,
         image_tx,
+        open_tx,
         staged_images: StagedImages::default(),
         tts_cancel: None,
         tts_gen: None,
@@ -391,6 +395,11 @@ pub async fn run(deps: OrchestratorDeps) {
             res = attach_rx.recv() => {
                 if let Some(res) = res {
                     orch.handle_attach_result(res);
+                }
+            }
+            res = open_rx.recv() => {
+                if let Some(res) = res {
+                    orch.handle_open_result(res);
                 }
             }
             _ = sleep_until_opt(deadline) => orch.flush_saves(),
@@ -683,6 +692,9 @@ struct Orchestrator {
     /// Channel for results of reading/decoding an attached image (`/image attach`,
     /// a background task → the loop). See [`images`].
     image_tx: UnboundedSender<ImageAttachResult>,
+    /// Channel for what a launch handed to the desktop's handler came back as (`/file open`,
+    /// `/file folder`; a blocking task → the loop). See [`attachments`].
+    open_tx: UnboundedSender<OpenResult>,
     /// Images staged for each chat's **next** message (`/image attach`, spec §9.10).
     /// Session-only and deliberately not persisted: what was staged but never sent is a
     /// half-finished thought, not conversation state. See [`images`].

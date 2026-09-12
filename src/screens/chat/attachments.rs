@@ -97,12 +97,18 @@ impl ChatScreen {
             FileProgress::OpenedFolder { path, instead_of } => {
                 // Two different things happened, and the user has to be able to tell them
                 // apart: the folder was asked for, or it stood in for a file whose type is
-                // not one a handler may run (§13 U3).
+                // not one a handler may run (§13 U3). When it stood in, whose file it was
+                // decides the reason given: the assistant's writing is a reason only for a
+                // file the assistant wrote.
                 let msg = match instead_of {
-                    Some(name) => self.loc.tf(
-                        "ui.file.opened_folder_instead",
-                        &[("name", &name), ("path", &path)],
-                    ),
+                    Some(crate::features::file_command::OpenedInstead { name, by_a_call }) => {
+                        let key = if by_a_call {
+                            "ui.file.opened_folder_instead"
+                        } else {
+                            "ui.file.opened_folder_instead_own"
+                        };
+                        self.loc.tf(key, &[("name", &name), ("path", &path)])
+                    }
                     None => self.loc.tf("ui.file.opened_folder", &[("path", &path)]),
                 };
                 self.push_note(&msg);

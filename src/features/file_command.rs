@@ -86,7 +86,7 @@ pub enum FileProgress {
     /// set — the folder of a file whose type is not one a handler may run (§13 U3).
     OpenedFolder {
         path: String,
-        instead_of: Option<String>,
+        instead_of: Option<OpenedInstead>,
     },
     /// Building the semantic index over a by-reference file is under way
     /// (a banner with a spinner; `done`/`total` are chunks).
@@ -102,6 +102,20 @@ pub enum FileProgress {
     IndexSkipped { name: String, reason: String },
     /// The command failed (no such file, undecodable content, no active chat…).
     Failed(String),
+}
+
+/// The file a folder stood in for ([`FileProgress::OpenedFolder`]), and who put it there.
+///
+/// The reason a type is refused is the same for everyone — the allowlist is by type — but
+/// what the note may honestly *say* is not: "a file the assistant wrote could run under
+/// its handler" is the reason for a call's `run.bat`, and untrue of a `.py` the user
+/// attached themselves.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OpenedInstead {
+    pub name: String,
+    /// Written by a `python_exec` call — stored from `/w/out`, or adopted from the folder
+    /// as one. `false` for the user's own file: an attachment, its kept original, an image.
+    pub by_a_call: bool,
 }
 
 /// A stored file as `/file list` shows it (docs/history/sandbox-file-exchange.md §11 S11).

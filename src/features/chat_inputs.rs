@@ -224,10 +224,15 @@ pub fn resolve(items: &[ChatInput], target: &str) -> Resolved {
 /// own file, an image's. That source is not always a file, and nothing here pretends
 /// otherwise: a pasted image's is `clipboard:<uuid>`, a fetched page's attachment carries
 /// a URL, and a listed copy can be gone from the folder.
-pub fn open_path(item: &ChatInput, dir: &Path) -> std::path::PathBuf {
+///
+/// `None` when a stored name is not one plain component. The name comes from `chat.json`,
+/// which is read back without being validated again, so a name like `../../x.pdf` would
+/// otherwise reach a handler outside the chat's folder — the join every other path into
+/// the folder already refuses ([`confined`](crate::features::chat_files::confined)).
+pub fn open_path(item: &ChatInput, dir: &Path) -> Option<std::path::PathBuf> {
     match &item.file {
-        Some(name) => dir.join(name),
-        None => std::path::PathBuf::from(&item.source),
+        Some(name) => crate::features::chat_files::confined(dir, name).ok(),
+        None => Some(std::path::PathBuf::from(&item.source)),
     }
 }
 
@@ -449,13 +454,36 @@ mod tests {
         );
         // The pair opens the copy in the chat's folder, not the path it was attached
         // from: that one may have moved since, ours is always there.
-        assert_eq!(open_path(&list[0], dir()), dir().join("report.pdf"));
+        assert_eq!(open_path(&list[0], dir()), Some(dir().join("report.pdf")));
         // Plain text keeps no second copy, so its own file is what opens.
-        assert_eq!(open_path(&list[1], dir()), Path::new("C:\\notes.md"));
-        assert_eq!(open_path(&list[2], dir()), dir().join("chart.png"));
+        assert_eq!(
+            open_path(&list[1], dir()).as_deref(),
+            Some(Path::new("C:\\notes.md"))
+        );
+        assert_eq!(open_path(&list[2], dir()), Some(dir().join("chart.png")));
         // An image means its source — a path here, `clipboard:<uuid>` for a paste, which
         // the caller's existence check is what refuses.
-        assert_eq!(open_path(&list[3], dir()), Path::new("C:\\pics\\shot.png"));
+        assert_eq!(
+            open_path(&list[3], dir()).as_deref(),
+            Some(Path::new("C:\\pics\\shot.png"))
+        );
+    }
+
+    /// A stored name is read back from `chat.json` unvalidated, so the join into the folder
+    /// is where a name that leaves it has to stop — before the existence check, which a
+    /// real file two levels up would pass.
+    #[test]
+    fn a_stored_name_that_leaves_the_folder_opens_nothing() {
+        for name in [
+            "../../escape.pdf",
+            "..\\escape.pdf",
+            "C:escape.pdf",
+            "..",
+            "",
+        ] {
+            let list = items(&[], &[stored(name)], &[], dir());
+            assert_eq!(open_path(&list[0], dir()), None, "{name:?}");
+        }
     }
 
     #[test]
