@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (34)
+## Entries (35)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -46,6 +46,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: the privacy policy in the wizard, the archive and the third translation (done)
 - Post-M9: the dictionaries get a provenance record — and their licences (done)
 - Post-M9: en_GB updated to V 4.0.9 — the licence stated, in the file itself (done)
+- Release 0.9.9 (prepared)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -1804,3 +1805,51 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - **Cost**: the word list grows from 87 455 stems to 101 294, the `.dic` from
   996 KB to 1.29 MB. It ships in every archive, package and installer, so that
   is ~300 KB before compression on each. 2746 unit tests green, 129 `#[ignore]`.
+
+### Release 0.9.9 (prepared)
+- **A release PR** per the checklist in [AGENTS.md §6](../../AGENTS.md) (branch
+  `chore/release-0.9.9`): bumped `Cargo.toml` `0.9.8 → 0.9.9` (+ `Cargo.lock`),
+  `CHANGELOG.md` — `[Unreleased]` → `[0.9.9] — 2026-09-13`, a fresh empty
+  `[Unreleased]` opened, comparison links updated. The `v0.9.9` tag is applied
+  by the user after the merge (the agent doesn't push tags/`main`).
+- **What the section carries** — 147 PRs in the seventeen days since 0.9.8,
+  96 items: the Python file exchange track (files into and out of the sandbox,
+  the local interpreter on the same contract, `/file open`, the packed
+  read-only package image, the starter packages), background runs (background
+  sub-agents and dialogues, the tasks screen, `/tasks stop`, parallel runs,
+  tool calls and sessions with the context-pool guard, the yielding background
+  requests, the CPU batch and the slow-prompt note), the directed dialogue, the
+  engine download and the resolved binary field, `/continue`, the encoding
+  fixes, the security defaults (web tools off, the Tavily key, the verified
+  Python download, Protected View), the privacy policy and the dictionaries'
+  provenance, and a long wave of fixes.
+- **The `[Unreleased]` rubrics had to be merged, not just reordered.** The
+  section had grown as Fixed / Added / Changed / Security / Fixed / Data /
+  Changed / Fixed — three Fixed blocks and two Changed blocks, because each
+  PR added its item to a rubric block it found or opened, and a rubric opened
+  at the end of the section collected the items of the PRs that followed it.
+  Two items had landed under Data that way: `/continue` and the external
+  server's model name (PRs #401–#404, merged right after the Data header was
+  opened). `release.yml` publishes the `## [0.9.9]` section verbatim as the
+  GitHub Release body, so the blocks were merged into the header's order
+  (Added / Changed / Fixed / Data / Security; no Removed), newest block first
+  within each rubric, and the two items moved to Added. The item texts are
+  untouched: a script did the slicing, and the set of non-blank lines before
+  and after was diffed and found identical.
+- **The `Data` rubric**: the `files/` directory beside `chats/` (no migration),
+  and chat files 2 → 3 (a stamp for dialogue transcripts) → 4 (the repair of
+  titles the old 100-character limit had cut), both through the
+  backup-then-migrate path.
+- **Site refreshed with the release** (reasoning in [website.md](website.md)):
+  the 0.9.9 release post, three landing cards extended in place, and a
+  paragraph in the at-a-glance article. Zola was not run locally (not
+  installed here); the site workflow's PR gate builds the site at the pinned
+  0.22.1.
+- **Gates**: `cargo fmt --check` / `cargo clippy --all-targets -- -D warnings`
+  / `cargo test` green — **3217 unit tests, 176 `#[ignore]`**; the
+  documentation gates (`cyrillic_scan`, `link_check`, `doc_index_check`,
+  `list_scroll_check`, `wizard_rtf --check`, `site_legal_pages --check`) green
+  too. No live run needed (version + docs + site content, app code untouched).
+  CLAUDE.md's "## Status" header moves to 2026-09-13 / 0.9.9 / 3217 / 176;
+  README's project-status paragraph moves `v0.9.8` / 2616 / 109 → `v0.9.9`
+  / 3217 / 176.

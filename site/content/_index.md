@@ -8,7 +8,7 @@ hero_sub = "Run local models through llama.cpp — or bring OpenAI, Anthropic, G
 
 [[extra.features]]
 title = "Local first"
-desc = "A managed llama-server under the hood — or any OpenAI-compatible endpoint you point it at. Your conversations never have to leave your machine."
+desc = "A managed llama-server under the hood — one command downloads the llama.cpp build for your GPU — or any OpenAI-compatible endpoint you point it at. Your conversations never have to leave your machine."
 
 [[extra.features]]
 title = "Four cloud providers"
@@ -20,7 +20,7 @@ desc = "A self-model with goals and observations, notes with a link graph, and R
 
 [[extra.features]]
 title = "Real tools"
-desc = "An agentic loop with web search, page fetching, a sandboxed Python runtime and file access — plus your own tools over MCP."
+desc = "An agentic loop with web search, page fetching, file access and a sandboxed Python runtime that reads the chat's files and hands back what it saves, charts included — plus your own tools over MCP."
 
 [[extra.features]]
 title = "Hand it your project"
@@ -28,7 +28,7 @@ desc = "Attach a code project to a chat: the assistant reads, searches and edits
 
 [[extra.features]]
 title = "It can delegate"
-desc = "The assistant can hand a side-task to a subagent with the same tools. The transcript is a conversation of its own — nested in the chat list, searchable, and streaming live while it runs."
+desc = "The assistant can hand a side-task to a subagent with the same tools — several at once, or in the background while it keeps talking to you. The transcript is a conversation of its own — nested in the chat list, searchable, and streaming live while it runs."
 
 [[extra.features]]
 title = "A real TUI"
