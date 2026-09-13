@@ -5,7 +5,7 @@ weight = 1
 +++
 
 *A short architectural tour — the shape of the thing, not a manual. It
-describes mindfork {{ app_version() }}; each section ends with the article
+describes mindfork {{ config.extra.app_version }}; each section ends with the article
 that tells its full story.*
 
 ## One engine contract, many backends
@@ -73,7 +73,7 @@ the server's context pool so that two streams never overfill it together.
 Parallel sessions, parallel tool calls and parallel runs are settings; all
 default to the sequential behaviour.
 
-{% screenshot(name="chat", title="chat") %}A turn with tool calls: each card opens the moment the call starts and fills in when the result lands.{% end %}
+{% <screenshot name="chat" title="chat"> %}A turn with tool calls: each card opens the moment the call starts and fills in when the result lands.{% </screenshot> %}
 
 *Full story: [Why the Python sandbox is WebAssembly, not Docker](/articles/python-sandbox/) ·
 [The code workspace](/articles/code-workspace/) ·
@@ -133,7 +133,7 @@ where it stopped, on the engines that can resume one.
 
 All of it is per-profile, and all of it lives on your disk.
 
-{% screenshot(name="self-model", title="self-model") %}The self-model screen: what the assistant keeps about itself and about you, and the dated observations behind it.{% end %}
+{% <screenshot name="self-model" title="self-model"> %}The self-model screen: what the assistant keeps about itself and about you, and the dated observations behind it.{% </screenshot> %}
 
 *Full story: [The self-model: a memory that knows it changed](/articles/self-model/) ·
 [Where vector search earns its keep](/articles/vector-search/).*
@@ -182,7 +182,7 @@ of the router. So the edges are in code, per tool, and off by default.
   crash reports or update checks; the privacy policy is in the app and on
   this site.
 
-{% screenshot(name="settings-tools", title="settings — tools") %}Every tool sits behind a switch, and the switches start off.{% end %}
+{% <screenshot name="settings-tools" title="settings — tools"> %}Every tool sits behind a switch, and the switches start off.{% </screenshot> %}
 
 *Full story: [Where the trust boundaries are](/articles/trust-boundaries/) ·
 [privacy policy](/privacy/).*

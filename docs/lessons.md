@@ -1270,20 +1270,28 @@ scaled ones, so a per-window `CopyFromScreen` comes out clipped; capture the who
 screen and crop. Neither failure announces itself — both produce a plausible image.
 — *license and disclaimer pages in the Windows installer*.
 
-**The newest Zola broke Windows twice over; reproduce on a pristine site before
-doubting your own config.** 0.23.0–0.23.2 do not discover `templates/` on Windows at
-all (upstream getzola/zola#3229 — "Template not found" for every custom template), and
-0.22.1's file-watcher never fires there, so `zola serve` keeps serving stale pages
-until restarted. The site pins 0.22.1 with the config named `config.toml` (both majors
-read that name); the dev loop is "edit → restart serve". A five-minute `zola init`
-repro answered what staring at correct templates could not. And 0.23.6 fixed only
-half of it: on Windows it discovers `templates/*.html` (the `main` site builds) but
-not `templates/shortcodes/` — every shortcode use fails with `Unknown tag` /
-`Unknown function` out of `__tera_one_off`, a one-line shortcode on a copy of `main`
-included, while the same files build under 0.22.1 in CI. A local render check of a
-shortcode needs 0.22.1, built from the git tag (crates.io does not carry Zola).
-— *website — research + S1 scaffold (Zola, terminal-styled)*; *website — the
-overview rebuilt, a screenshot shortcode and the trust-boundaries article*.
+**Zola: read the changelog before blaming the platform — and the site's content is a
+template now.** Two true things and one wrong lesson, in order. 0.23.0–0.23.2 did not
+discover `templates/` on Windows (upstream getzola/zola#3229 — "Template not found" for
+every custom template), and 0.22.1's file-watcher never fires there, so the site shipped
+pinned to 0.22.1 with the dev loop "edit → restart serve". Then, on 0.23.6, every
+shortcode failed with `Unknown tag` out of `__tera_one_off` while a shortcode-free copy of
+`main` built — and one experiment on one machine was written up here as "0.23.6 finds
+`templates/*.html` but not `templates/shortcodes/` on Windows". Wrong: 0.23.0 **removed
+shortcodes** for Tera 2 components and made every page's markdown a Tera template, so the
+same files fail on every OS; the changelog said so, and nobody read it before the
+diagnosis. The site now pins 0.23.6 (`ZOLA_VERSION` in site.yml, the same on the
+developer machines): reusable pieces are components in `templates/components.html`,
+invoked as `{% <name a="b"> %}body{% </name> %}`, `{{ config.extra.x }}` works directly in
+content, and **a literal `{{` or `{%` in a post breaks the build** unless wrapped in
+`{% raw %}…{% endraw %}` — a Jinja or Tera snippet quoted in an article is the case to
+expect. The watcher works on Windows in 0.23.6 (a change detected and rebuilt in 92 ms),
+so `zola serve` is the loop again. The release asset is installed in CI by tag and
+verified with `gh attestation verify --owner getzola`, because the install-action
+manifest lagged the tag by days.
+— *website — research + S1 scaffold (Zola, terminal-styled)*; *website — the overview
+rebuilt, a screenshot shortcode and the trust-boundaries article*; *website — Zola 0.23:
+components, the config renamed, the pin verified*.
 
 **A file the app writes is local and trusted to its handler — unless it carries the mark
 of a download.** Office decides Protected View by the `Zone.Identifier` stream a browser
