@@ -46,6 +46,69 @@ pub(super) struct AttachResult {
     /// task finishes — the attachment still belongs to it).
     pub(super) chat_id: Uuid,
     pub(super) outcome: Result<ExtractedFile, String>,
+    /// What keeping the file's own bytes did (fork F8a) — done in the same background task
+    /// as the read. `None` when there was nothing to keep: plain text, or a read that failed.
+    pub(super) stored: Option<Result<crate::features::chat_files::Stored, String>>,
+}
+
+impl AttachResult {
+    /// The background half of `/file attach`, in the order it has to happen: the read and
+    /// the extraction, then — when the text is not the file — the store of the file's own
+    /// bytes into the chat's folder. The store is why this half has to hold it: up to
+    /// [`MAX_ATTACH_BYTES`] hashed, written and synced, which ran on the command loop while
+    /// only the read was off it.
+    ///
+    /// `dir` and `listed` are the chat's folder and list as the command found them
+    /// ([`Orchestrator::attach_snapshot`]). A store against that snapshot is safe whatever
+    /// lands meanwhile: `store_as` never overwrites and moves to the next version on a taken
+    /// name — a call's outputs are stored against the turn's list the same way. What the
+    /// loop has to check on landing is only the listing a store answered from.
+    pub(super) fn prepare(
+        chat_id: Uuid,
+        mut outcome: Result<ExtractedFile, String>,
+        dir: &std::path::Path,
+        listed: &[ChatFile],
+        loc: &'static Locale,
+    ) -> Self {
+        let stored = match &mut outcome {
+            Ok(file) => file
+                .original
+                .take()
+                .map(|bytes| store_original(dir, listed, &file.name, &bytes, loc)),
+            Err(_) => None,
+        };
+        Self {
+            chat_id,
+            outcome,
+            stored,
+        }
+    }
+}
+
+/// Keeps the user's own file with the chat (fork F8a): a sanitized name, versioned on a
+/// collision, listed like a call's output. The same bytes under the same name are kept once,
+/// so re-attaching an unchanged file moves nothing. Blocking: [`AttachResult::prepare`] runs
+/// it on the blocking pool, and the listing lands on the loop
+/// ([`Orchestrator::land_original`]).
+fn store_original(
+    dir: &std::path::Path,
+    listed: &[ChatFile],
+    name: &str,
+    bytes: &[u8],
+    loc: &'static Locale,
+) -> Result<crate::features::chat_files::Stored, String> {
+    // A real file name survives sanitizing; the fallback is for what no path should
+    // produce, and gives the file a name code can open rather than a refusal.
+    let name =
+        crate::entities::chat_file::sanitize_name(name).unwrap_or_else(|| "file".to_string());
+    crate::features::chat_files::store_as(dir, listed, &name, bytes, FileOrigin::Attached).map_err(
+        |e| {
+            loc.tf(
+                "ui.err.file_store_failed",
+                &[("name", &name), ("err", &e.to_string())],
+            )
+        },
+    )
 }
 
 /// What a launch handed to the desktop's handler came back as (internal channel, §13 U5).
@@ -90,10 +153,23 @@ impl Orchestrator {
         let loc = self.ui_locale();
         let hint = crate::shared::text_decode::tld_hint(self.config.interface.language);
         let tx = self.attach_tx.clone();
+        let (dir, listed) = self.attach_snapshot(chat_id);
         tokio::task::spawn_blocking(move || {
             let outcome = extract_file(std::path::Path::new(&path), loc, hint);
-            let _ = tx.send(AttachResult { chat_id, outcome });
+            let _ = tx.send(AttachResult::prepare(chat_id, outcome, &dir, &listed, loc));
         });
+    }
+
+    /// The chat's stored-files folder and what it lists, as a store off the loop needs them
+    /// ([`AttachResult::prepare`]).
+    pub(super) fn attach_snapshot(&self, chat_id: Uuid) -> (std::path::PathBuf, Vec<ChatFile>) {
+        let listed = self
+            .chats
+            .iter()
+            .find(|c| c.id == chat_id)
+            .map(|c| c.files.clone())
+            .unwrap_or_default();
+        (self.stored_files_dir(chat_id), listed)
     }
 
     /// Applies the result of a background read: decides the mode against the
@@ -106,16 +182,25 @@ impl Orchestrator {
                 return;
             }
         };
-        // The user's own bytes, when the text is not the file (fork F8a): kept **first**,
-        // so an attachment that links them never names a file that is not on disk.
-        let stored = match &file.original {
-            Some(bytes) => match self.store_original(res.chat_id, &file.name, bytes) {
-                Ok(stored) => Some(stored),
-                Err(msg) => {
+        // The user's own bytes, when the text is not the file (fork F8a): already kept by
+        // the background task, and listed **first** here, so an attachment that links them
+        // never names a file that is not on disk.
+        let stored = match res.stored {
+            Some(Ok(stored)) => match self.land_original(res.chat_id, stored) {
+                Some(listed) => Some(listed),
+                None => {
+                    let msg = self.ui_locale().tf(
+                        "ui.err.file_removed_while_attaching",
+                        &[("name", &file.name)],
+                    );
                     self.fail_file(&msg);
                     return;
                 }
             },
+            Some(Err(msg)) => {
+                self.fail_file(&msg);
+                return;
+            }
             None => None,
         };
         // A binary decodes as no text at all, so there is no attachment to make: the chat
@@ -167,57 +252,39 @@ impl Orchestrator {
         }
     }
 
-    /// Keeps the user's own file with the chat (fork F8a): a sanitized name, versioned on
-    /// a collision, listed like a call's output. The same bytes under the same name are
-    /// kept once, so re-attaching an unchanged file moves nothing.
-    fn store_original(
+    /// Lands what the background task stored (fork F8a) — on the loop, which owns the list.
+    /// A new copy is listed here. `None` when the store answered from a listing that is gone by
+    /// now: the copy it found was removed while this file was being read, and linking the
+    /// attachment to it would name a file the chat no longer lists.
+    fn land_original(
         &mut self,
         chat_id: Uuid,
-        name: &str,
-        bytes: &[u8],
-    ) -> Result<ChatFile, String> {
+        stored: crate::features::chat_files::Stored,
+    ) -> Option<ChatFile> {
         use crate::features::chat_files::Stored;
 
-        let loc = self.ui_locale();
-        let dir = self.stored_files_dir(chat_id);
-        let listed: Vec<ChatFile> = self
-            .chats
-            .iter()
-            .find(|c| c.id == chat_id)
-            .map(|c| c.files.clone())
-            .unwrap_or_default();
-        // A real file name survives sanitizing; the fallback is for what no path should
-        // produce, and gives the file a name code can open rather than a refusal.
-        let name =
-            crate::entities::chat_file::sanitize_name(name).unwrap_or_else(|| "file".to_string());
-        let stored = crate::features::chat_files::store_as(
-            &dir,
-            &listed,
-            &name,
-            bytes,
-            crate::entities::chat_file::FileOrigin::Attached,
-        )
-        .map_err(|e| {
-            loc.tf(
-                "ui.err.file_store_failed",
-                &[("name", &name), ("err", &e.to_string())],
-            )
-        })?;
-        Ok(match stored {
+        match stored {
             Stored::New(file) => {
                 if let Some(chat) = self.chat_mut(chat_id) {
                     chat.list_file(file.clone());
                 }
                 self.mark_dirty(chat_id);
-                file
+                Some(file)
             }
             // Both mean "the chat already lists this file": the listing is right and keeps
             // its id, so nothing is added and the replaced original is not dropped. The
             // difference is only that a restore has just put the bytes back — which is the
             // whole point of re-attaching a file whose copy went missing, and what the
             // `missing` marker disappearing from `/file list` tells the user.
-            Stored::Unchanged(file) | Stored::Restored(file) => file,
-        })
+            Stored::Unchanged(file) | Stored::Restored(file) => {
+                let still_listed = self
+                    .chats
+                    .iter()
+                    .find(|c| c.id == chat_id)
+                    .is_none_or(|c| c.files.iter().any(|f| f.id == file.id));
+                still_listed.then_some(file)
+            }
+        }
     }
 
     /// Deletes our copy of a replaced original and drops its listing: the copy first, so a
