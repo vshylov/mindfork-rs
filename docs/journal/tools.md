@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (78)
+## Entries (79)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -90,6 +90,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a process's own lines stop opening sections of the console card (done)
 - Post-M9: an attached original is stored off the command loop, and only listed on it (done)
 - Post-M9: a file a call wrote carries the mark of a download — Protected View for workbooks and documents, not a CSV (done)
+- Post-M9: the confirmation popup says a call over the files cap will be refused (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -5295,3 +5296,35 @@ created by marking it — each failed its test.
 `/w/out/marker.txt`, the real store kept it under `files/<chat>/`, and the file carries the
 mark; `attached_binary_reaches_the_sandbox_live` (512 × 512) and `file_attachment_e2e_live`
 (`ZARYA-7719`) unchanged through the attach path that now reads the source's mark.
+
+### Post-M9: the confirmation popup says a call over the files cap will be refused (done)
+
+A gap left by the cap on what one `python_exec` call copies in (§12 T8, amended): the
+confirmation popup resolved the call's handles and showed each file's size, but nothing
+compared their sum with the cap. A call naming twenty-one files, or two of 60 MB, was put to
+the user as an ordinary run; approved, `stage` refused it without running — consent asked
+for a run that was never going to happen, and the refusal arriving only after the answer.
+
+**One predicate, one set.** The cap's two constants and its check moved from `python.rs` to
+`chat_inputs`, beside the resolver both readers already share: `over_input_cap(count, bytes)`
+is what `stage` refuses on and what `for_confirm` reports. The popup's count is taken over
+the same set `stage` copies — the distinct files the handles reach — so a file named twice
+is one there as it is one copy in `/w/in`; counting handles instead would have warned about
+a call that runs. `ConfirmInputs` gains `over_cap: Option<(usize, u64)>`, and the popup
+states it as the first line after the call — above the list of files, which at twenty-one
+names wraps over several rows and would otherwise push the warning down (`ui.confirm.tool.over_cap`,
+en/ru, in the warning colour). The popup still lists every handle: what the call names is
+what the user is deciding about, cap or not.
+
+**Not changed.** Enter still sends the call; the refusal the model gets is the one it got
+before. The popup is a statement of what will happen, not a second gate — and it appears
+only with `confirm_dangerous`, which is why the cap is enforced where the call runs.
+
+**Tests.** `for_confirm` at the cap reports nothing, a handle named twice keeps a call at
+the cap, one file past it and two files past the size are reported with their count and
+bytes; the popup draws the refusal above the first file. Four guards reverted — the popup
+never told, a repeated handle counted twice, the line not drawn, `stage` not applying the
+shared predicate — each failed its test.
+
+**Live.** Gemma 4 31B, the packed sandbox: `attached_binary_reaches_the_sandbox_live`, a
+call naming `#1`, staged and read as 512 × 512 — `stage` on the moved predicate.

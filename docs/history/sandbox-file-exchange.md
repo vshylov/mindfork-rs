@@ -691,6 +691,12 @@ because the survey found a decision (D3) resting on something that does not exis
   how many a chat accumulates — while the popup it relied on appears only with
   `confirm_dangerous`, off by default. F10, no quota on the store itself, is untouched:
   this bounds what one call copies, not what a chat keeps.
+  *Amended again (2026-09-13):* the popup states the cap too. It resolved the handles and
+  showed each size, but not that their sum was over the cap, so a user could approve a call
+  that `stage` then refused without running — consent to nothing. `chat_inputs::over_input_cap`
+  is now the one predicate for the refusal and for the popup, over the same distinct set (a
+  file named twice is one copy and one file), and a call over it is said to be refused,
+  above the list of files, where a long list cannot push it down.
 - **T9 — `/file attach` keeps the original (F8(a)), and the pair is one item.** The
   blocking read now ends in one of three outcomes: plain text — an attachment, as today;
   an extractor's text (pdf, docx, html) — an attachment **and** the original stored,
