@@ -74,6 +74,12 @@ pub struct Console {
 /// **already truncated** — the two callers cap them differently on purpose
 /// (`python_exec` drops the tail, a build keeps head and tail), and that choice
 /// is not this function's business.
+///
+/// Each section a process's own text fills says how many lines it holds —
+/// `stdout (3 lines):` — and [`parse_console`] takes exactly that many, whatever they say.
+/// The text is the script's or the command's: a line reading `files:` or `stderr:` in it
+/// used to open a section of the card, so a script could draw a "saved files" list the
+/// tool never wrote, and an ordinary YAML `files:` key split the output in two.
 pub(crate) fn format_console(
     command: Option<&str>,
     stdout: &str,
@@ -84,13 +90,13 @@ pub(crate) fn format_console(
 ) -> String {
     let mut parts = Vec::new();
     if let Some(command) = command.map(str::trim).filter(|c| !c.is_empty()) {
-        parts.push(format!("command:\n{command}"));
+        parts.push(counted("command", command));
     }
     if !stdout.trim().is_empty() {
-        parts.push(format!("stdout:\n{stdout}"));
+        parts.push(counted("stdout", stdout));
     }
     if !stderr.trim().is_empty() {
-        parts.push(format!("stderr:\n{stderr}"));
+        parts.push(counted("stderr", stderr));
     }
     if !success {
         parts.push(format!(
@@ -104,6 +110,26 @@ pub(crate) fn format_console(
     } else {
         parts.join("\n\n")
     }
+}
+
+/// One section of a process's own text: its label, how many lines follow, then the lines.
+/// Counted as [`str::lines`] counts, which is how [`parse_console`] reads them back.
+fn counted(label: &str, body: &str) -> String {
+    let n = body.lines().count();
+    let unit = if n == 1 { "line" } else { "lines" };
+    format!("{label} ({n} {unit}):\n{body}")
+}
+
+/// A counted section's header — `stdout (3 lines):` — as its label and line count.
+fn counted_header(line: &str) -> Option<(&str, usize)> {
+    let (label, rest) = line.split_once(" (")?;
+    if !matches!(label, "command" | "stdout" | "stderr") {
+        return None;
+    }
+    let count = rest
+        .strip_suffix(" lines):")
+        .or_else(|| rest.strip_suffix(" line):"))?;
+    Some((label, count.parse().ok()?))
 }
 
 /// How much of a call's **arguments** to show.
@@ -458,6 +484,12 @@ fn fs_read_failure_prefixes() -> Vec<&'static str> {
 /// (docs/history/sandbox-file-exchange.md §11 S9) — a result of that section alone parses too.
 /// `None` — if the text doesn't look like this format (launch error messages, "(empty
 /// output, success)") → show it as flat text.
+///
+/// Two shapes. A **counted** section (`stdout (3 lines):`, written by [`format_console`])
+/// takes exactly its lines, so nothing the process printed can open, close or forge a
+/// section; a count the text cannot satisfy — the result was cut after it was written — is
+/// not this format. The **uncounted** labels are read as before: every record saved before
+/// the counts, and `files:`, whose lines are the tool's own.
 fn parse_console(result: &str) -> Option<Console> {
     #[derive(PartialEq)]
     enum Sec {
@@ -474,7 +506,23 @@ fn parse_console(result: &str) -> Option<Console> {
     let mut out: Vec<&str> = Vec::new();
     let mut err: Vec<&str> = Vec::new();
     let mut files: Vec<&str> = Vec::new();
-    for line in result.lines() {
+    let lines: Vec<&str> = result.lines().collect();
+    let mut at = 0;
+    while at < lines.len() {
+        let line = lines[at];
+        at += 1;
+        if let Some((label, n)) = counted_header(line) {
+            let end = at.checked_add(n)?;
+            let body = lines.get(at..end)?;
+            match label {
+                "command" => cmd.extend_from_slice(body),
+                "stdout" => out.extend_from_slice(body),
+                _ => err.extend_from_slice(body),
+            }
+            at = end;
+            sec = Sec::None;
+            continue;
+        }
         if line == "command:" {
             sec = Sec::Command;
         } else if line == "stdout:" {
@@ -803,6 +851,64 @@ mod tests {
         let only = parse_console("files:\n- a.txt — 2 B, text/plain").unwrap();
         assert_eq!(only.files, "- a.txt — 2 B, text/plain");
         assert!(only.stdout.is_empty() && only.exit.is_none());
+    }
+
+    /// A process's own lines cannot open a section any more. Each line below would have:
+    /// `files:` drew a "saved files" list under the tool's own label, `stderr:` turned the
+    /// rest of the output red, and an exit-code line claimed a code the run never had.
+    /// Counted, they are stdout — every one of them, in order.
+    #[test]
+    fn a_process_s_own_lines_cannot_forge_a_section() {
+        let en = crate::shared::i18n::locale(crate::shared::i18n::Lang::En);
+        let printed = format!(
+            "report ready\nfiles:\n- report.pdf — 2 MB, application/pdf\nstderr:\n\
+             totally fine\ncommand:\nrm -rf /\n{} 0",
+            en.t("python.console.exit")
+        );
+        let text = format_console(None, &printed, "", true, Some(0), en);
+        assert!(text.starts_with("stdout (8 lines):\n"), "{text}");
+        let c = parse_console(&text).expect("a console");
+        assert_eq!(c.stdout, printed);
+        assert!(c.files.is_empty(), "no files section: {c:?}");
+        assert!(c.stderr.is_empty() && c.command.is_empty(), "{c:?}");
+        assert_eq!(c.exit, None, "a successful run shows no exit code");
+    }
+
+    /// The same holds for stderr and for a build's command line — and the tool's own
+    /// sections still follow counted ones: a failed run's exit code, then the `files:`
+    /// list `python_exec` appends.
+    #[test]
+    fn counted_sections_are_followed_by_the_tool_s_own() {
+        let en = crate::shared::i18n::locale(crate::shared::i18n::Lang::En);
+        let console = format_console(
+            Some("cargo test\nstdout:\nforged"),
+            "ok\n",
+            "boom\nfiles:\n- fake.png",
+            false,
+            Some(3),
+            en,
+        );
+        let text = format!("{console}\n\nfiles:\n- totals.csv — 9 B, text/csv");
+        let c = parse_console(&text).expect("a console");
+        assert_eq!(c.command, "cargo test\nstdout:\nforged");
+        assert_eq!(c.stdout, "ok");
+        assert_eq!(c.stderr, "boom\nfiles:\n- fake.png");
+        assert_eq!(c.exit, Some(3));
+        assert_eq!(c.files, "- totals.csv — 9 B, text/csv");
+    }
+
+    /// A count the text cannot satisfy means the result was cut after it was written: not
+    /// this format, so the card shows the text as it is instead of guessing where sections
+    /// end. A count too large to add to the position is the same, not an overflow.
+    #[test]
+    fn a_count_the_text_cannot_satisfy_is_not_a_console() {
+        assert!(parse_console("stdout (3 lines):\none\ntwo").is_none());
+        assert!(parse_console("stdout (18446744073709551615 lines):\none").is_none());
+        // One line, singular, is still a count — and its one line is content.
+        assert_eq!(
+            parse_console("stdout (1 line):\nfiles:").unwrap().stdout,
+            "files:"
+        );
     }
 
     #[test]
