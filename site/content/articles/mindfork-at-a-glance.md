@@ -75,7 +75,9 @@ default to the sequential behaviour.
 
 {% screenshot(name="chat", title="chat") %}A turn with tool calls: each card opens the moment the call starts and fills in when the result lands.{% end %}
 
-*Full story: [Why the Python sandbox is WebAssembly, not Docker](/articles/python-sandbox/).*
+*Full story: [Why the Python sandbox is WebAssembly, not Docker](/articles/python-sandbox/) ·
+[The code workspace](/articles/code-workspace/) ·
+[Background runs, and the pool they share](/articles/background-runs/).*
 
 ## One turn, start to finish
 
@@ -206,4 +208,6 @@ If that sounds like your kind of tool:
 [the self-model](/articles/self-model/) ·
 [vector search](/articles/vector-search/) ·
 [the Python sandbox](/articles/python-sandbox/) ·
-[the trust boundaries](/articles/trust-boundaries/).*
+[the trust boundaries](/articles/trust-boundaries/) ·
+[the code workspace](/articles/code-workspace/) ·
+[background runs and the pool](/articles/background-runs/).*

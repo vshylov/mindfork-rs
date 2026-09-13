@@ -10,7 +10,7 @@ the reasoning behind the site, not its current shape. For the current shape
 read the research/design doc above; for the traps that recur across areas
 read [lessons.md](../lessons.md).
 
-## Entries (14)
+## Entries (15)
 
 - Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 - Post-M9: website — S2 infra: one CloudFormation stack, mindfork.io live (done)
@@ -26,6 +26,7 @@ read [lessons.md](../lessons.md).
 - Post-M9: the site gets its legal pair — `/privacy/` and `/code-signing-policy/` (done)
 - Post-M9: website — the 0.9.9 release post and three refreshed cards (done)
 - Post-M9: website — the overview rebuilt, a screenshot shortcode and the trust-boundaries article (done)
+- Post-M9: website — two more articles: the code workspace, and background runs on the context pool (done)
 
 ### Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 
@@ -593,3 +594,67 @@ budgeted seven to eight; the diagram and the two lists are the difference,
 and both earn it), the trust article 8. No live run: site content and
 templates, no Rust touched. Gates (`cyrillic_scan`/`link_check`/
 `doc_index_check`) green.
+
+### Post-M9: website — two more articles: the code workspace, and background runs on the context pool (done)
+
+**What.** The two articles the overview's review named and the first PR left
+out, written into the same PR at the user's request:
+`articles/code-workspace.md` (weight 8) and `articles/background-runs.md`
+(weight 9), plus their links from the overview's loop section and its
+"Read on" list. Both are written from the repository's own records rather
+than from the release posts — the finished plan
+`docs/history/code-workspace.md` (its decided forks, §3.3's execution
+rules, §5's "deliberately not doing", §7.1–§7.2's probe and §7.9's no-go,
+§7.10's audit) and spec §9.12 for the first; `docs/research/`'s
+admission-by-budget, silent-tasks-budget, silent-preemption, cpu-batch,
+slow-prefill-detection, roll-usage-calibration, parallel-subagents,
+concurrent-tools and background-subagents, with spec §6.3, §9.3.2 and
+§11.10, for the second.
+
+**The code workspace article** is organised as *containment before
+capability*, the order the plan's security posture puts them in: attaching
+as the consent (byte-identical requests without a project; the contrast
+with the global file tools), the five reading and editing tools with the
+fidelity rules (exact-once fragments, EOL/BOM/encoding round trip, the
+windows-1251 damage that motivated it), the three command slots (no
+arguments by schema, no shell, the pipeline refused when the line is set,
+the process tree killed, partial output kept as the deliberate inverse of
+the sandbox, head-and-tail truncation, one at a time), the pre-image
+journal and the `F4` screen with the reattach defect the audit found, then
+the probe (5/5 on both families, the five-line fragment with the `12→`
+prefixes stripped and widened past the duplicate), and a full section on
+the semantic index that did not ship — the two denominators that point in
+opposite directions, the six instrument defects, the one effect that
+survived (answering without looking, 15 → 8) and why shipping on it would
+have been shipping unmeasured.
+
+**The background-runs article** follows the tracks in the order they were
+built: the second tool over the flag (Claude narrating a background it had
+not asked for, 0/3 against 3/3 everywhere with a required field or a second
+tool), what a run owns and why it never asks for confirmation, then the
+pool — the two collisions reproduced on a 2048 pool (the prefill collision
+that ends the healthy slot too, the growth collision two prompts that fit
+still cause) and the per-slot cap rejected for its silent `length` cut —
+admission by budget with the estimator's 2.19× and the per-kind
+calibration (85 against 4358), the silent lane (the roll at three quarters
+of the window beside the next turn; 88 s / 16.5 s after), preemption (46 s
+→ 24 s, 5.6 s → under 2 s), the CPU batch (23 s → 6.5 s at a seventh slower
+prefill), the slow-prefill note, the sessions numbers per model on one 4090
+(2.8× small, 1.22× Gemma 4 31B, 2.9× Qwen 3.6 27B; the RAM prompt cache
+making interleaving free; queueing past the slots), parallel tool calls
+(26/26), and the stop/quit window rules.
+
+**What the prose refuses to overclaim.** Every figure is the research
+document's, with its stand named (the CPU build, the LAN stack, one RTX
+4090) where the number depends on it; the 31B's 1.22× is reported beside
+the 27B's 2.9× rather than either alone, and "above two buys nothing a user
+would feel" is quoted for that card and that model. The index section keeps
+both denominators and says the effect changes sign with the definition. The
+workspace article says read-before-edit is taught, not enforced, and that
+git integration is absent by choice.
+
+**Verified** with the pinned Zola 0.22.1, now on this machine's PATH:
+`check` and `build` green, 16 pages, both articles at their slugs with
+every internal link resolving, no Tera syntax leaking; reading times as
+built are in the PR. Gates (`cyrillic_scan`/`link_check`/`doc_index_check`)
+green. No live run: site content, no Rust touched.
