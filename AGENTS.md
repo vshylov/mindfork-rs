@@ -213,7 +213,9 @@ data format change adds an item to `CHANGELOG.md` → `[Unreleased]` (§4).
 **Release checklist**:
 
 1. **Release PR** (branch `docs/release-X.Y.Z` or `chore/release-X.Y.Z`): bump
-   `Cargo.toml` (+ rebuild `Cargo.lock`) to `X.Y.Z`; in `CHANGELOG.md` rename
+   `Cargo.toml` (+ rebuild `Cargo.lock`) to `X.Y.Z`, and `site/config.toml` →
+   `[extra] app_version` (the version the site's overview says it describes);
+   in `CHANGELOG.md` rename
    `[Unreleased]` → `[X.Y.Z] — <date>`, start a fresh empty `[Unreleased]`, and
    update the comparison links at the bottom of the file. Gates
    (`fmt`/`clippy`/`test`) green, CI on the PR green.

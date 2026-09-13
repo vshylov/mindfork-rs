@@ -1,0 +1,14 @@
+{#- A screenshot in the site's terminal chrome, in both themes — the same
+    markup the landing page's gallery uses (templates/index.html). `name` is
+    the render's base name under static/screenshots/ (synced from assets/ by
+    tools/site_sync_assets.py, which CI runs before the build), `title` is
+    the caption-bar text, and the body is the figcaption. v1/v2-compatible
+    Tera only, like the templates (config.toml). -#}
+{%- set dark = "static/screenshots/" ~ name ~ "-dark-en.svg" -%}
+{%- set light = "static/screenshots/" ~ name ~ "-light-en.svg" -%}
+<figure class="term">
+  <div class="term-bar"><span class="term-title">{{ title }}</span><span class="term-controls" aria-hidden="true">─ □ ✕</span></div>
+  <div class="only-dark">{{ load_data(path=dark, format="plain") | safe }}</div>
+  <div class="only-light">{{ load_data(path=light, format="plain") | safe }}</div>
+  <figcaption>{{ body | trim }}</figcaption>
+</figure>

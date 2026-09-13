@@ -70,3 +70,10 @@
     margin: 36px 0;
   }
 }
+
+// A screenshot in the terminal chrome inside an article (the `screenshot`
+// shortcode): .term itself has no margin because the landing lays the
+// figures out in a grid; in prose they need room from the paragraphs.
+.prose figure.term {
+  margin: 28px 0;
+}
