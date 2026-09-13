@@ -369,6 +369,24 @@ pub(super) fn render_tool_confirm(
     // two halves of what is being consented to (docs/history/sandbox-file-exchange.md §12 T6).
     // The compact view above drops array arguments, so `files` is invisible without this.
     if let Some(inputs) = &pending.inputs {
+        // A call over the per-call cap is refused before it runs (§12 T8), so consenting to
+        // it consents to nothing. Said before the files, which a long list can push down.
+        if let Some((count, bytes)) = inputs.over_cap {
+            use crate::entities::attachment::format_bytes;
+            use crate::features::chat_inputs::{MAX_INPUT_BYTES, MAX_INPUT_FILES};
+            body.push(Line::from(Span::styled(
+                loc.tf(
+                    "ui.confirm.tool.over_cap",
+                    &[
+                        ("count", &count.to_string()),
+                        ("size", &format_bytes(bytes as usize)),
+                        ("max_files", &MAX_INPUT_FILES.to_string()),
+                        ("max_size", &format_bytes(MAX_INPUT_BYTES as usize)),
+                    ],
+                ),
+                Style::new().fg(palette.warning),
+            )));
+        }
         let files: Vec<String> = inputs
             .files
             .iter()

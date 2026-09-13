@@ -21,6 +21,7 @@ use crate::entities::attachment::format_bytes;
 use crate::entities::chat_file::{ChatFile, is_text_like, sanitize_name, sniff_image};
 use crate::entities::profile::ToolId;
 use crate::features::chat_files::{self, Stored};
+use crate::features::chat_inputs::{MAX_INPUT_BYTES, MAX_INPUT_FILES, over_input_cap};
 use crate::shared::config::{MAX_TOOL_RESULT_IMAGES, PythonMode};
 use crate::shared::i18n::Locale;
 use crate::shared::sandbox::{
@@ -42,16 +43,6 @@ const TEXT_HEAD_BYTES: usize = 1024;
 /// files section above it, has no natural ceiling. Generous against the ten that can be
 /// kept: a run that skipped a handful wants them all named.
 const MAX_SKIPPED_LINES: usize = 20;
-
-/// How many files one call may name in `files`. The output side has had its caps from the
-/// start (`OutputLimits::DEFAULT`: 10 files, 50 MB); the input side had none, while every
-/// file a call names is copied into the job directory before the code starts.
-const MAX_INPUT_FILES: usize = 20;
-
-/// How many bytes the files one call names may add up to: room for three attachments at
-/// their own ceiling of 32 MB, while a call naming a long chat's every stored file at once
-/// is refused before any of it is copied or decoded.
-const MAX_INPUT_BYTES: u64 = 100 * 1024 * 1024;
 
 /// `python_exec` — executes the given Python code and returns stdout/stderr.
 pub struct PythonExec {
@@ -208,7 +199,7 @@ impl PythonExec {
         // A call over them is refused whole, as every other `files` refusal is: a script
         // handed the first twenty of thirty files would answer from twenty (§12 T7).
         let bytes: u64 = taken.iter().map(|&at| items[at].bytes).sum();
-        if taken.len() > MAX_INPUT_FILES || bytes > MAX_INPUT_BYTES {
+        if over_input_cap(taken.len(), bytes) {
             return Err(loc.tf(
                 "tool.python_exec.err.files_over_cap",
                 &[

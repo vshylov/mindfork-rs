@@ -1126,6 +1126,7 @@
   "ui.confirm.tool.title": "Tool call",
   "ui.confirm.tool.inputs": "goes into the sandbox: {files} · {net}",
   "ui.confirm.tool.file_unknown": "{handle} — not in this chat",
+  "ui.confirm.tool.over_cap": "over the limit: {count} files, {size} — one call takes at most {max_files} files and {max_size}, so this call will be refused without running",
   "ui.confirm.tool.net_on": "network: on",
   "ui.confirm.tool.net_off": "network: off",
   "ui.confirm.tool.question": "Run this call?",

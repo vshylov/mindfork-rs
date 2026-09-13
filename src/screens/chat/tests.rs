@@ -1080,6 +1080,7 @@ fn the_confirm_popup_names_the_files_going_in_and_the_network() {
                 },
             ],
             net: false,
+            over_cap: None,
         }),
     );
     let mut term = Terminal::new(TestBackend::new(90, 20)).unwrap();
@@ -1104,6 +1105,56 @@ fn the_confirm_popup_names_the_files_going_in_and_the_network() {
     assert!(
         !text.contains("\"files\""),
         "the compact view shows no arrays: {text}"
+    );
+}
+
+/// A call over the per-call cap is refused before it runs (§12 T8), and the popup says so
+/// before the user is asked to consent — above the files, which a long list pushes down.
+#[test]
+fn the_confirm_popup_says_a_call_over_the_files_cap_will_be_refused() {
+    use crate::features::chat_inputs::{ConfirmFile, ConfirmInputs, MAX_INPUT_FILES};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    let mut s = ChatScreen::new();
+    let id = gen_id();
+    s.begin_generation(id, None);
+    let count = MAX_INPUT_FILES + 1;
+    s.request_tool_confirm(
+        id,
+        TOOL_CALL_ID.into(),
+        "python_exec".into(),
+        r#"{"code": "print(1)", "files": []}"#.into(),
+        Some(ConfirmInputs {
+            files: (1..=count)
+                .map(|n| ConfirmFile {
+                    handle: format!("#{n}"),
+                    resolved: Some((format!("export-{n:02}.csv"), 18_432)),
+                })
+                .collect(),
+            net: false,
+            over_cap: Some((count, 18_432 * count as u64)),
+        }),
+    );
+    let mut term = Terminal::new(TestBackend::new(90, 30)).unwrap();
+    term.draw(|f| s.render(f)).unwrap();
+    let buf = term.backend().buffer();
+    let rows: Vec<String> = (buf.area.top()..buf.area.bottom())
+        .map(|y| {
+            (buf.area.left()..buf.area.right())
+                .map(|x| buf[(x, y)].symbol())
+                .collect()
+        })
+        .collect();
+    let text = rows.join("\n");
+
+    let warned = rows.iter().position(|row| row.contains("сверх лимита"));
+    let listed = rows.iter().position(|row| row.contains("export-01.csv"));
+    assert!(warned.is_some(), "the cap is not stated: {text}");
+    assert!(text.contains("отклонён"), "{text}");
+    assert!(
+        warned < listed,
+        "the cap has to be said before the files: {text}"
     );
 }
 
@@ -1141,6 +1192,7 @@ fn the_confirm_popup_shows_the_code_when_the_files_line_wraps() {
                 })
                 .collect(),
             net: false,
+            over_cap: None,
         }),
     );
     let mut term = Terminal::new(TestBackend::new(90, 20)).unwrap();

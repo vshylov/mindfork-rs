@@ -1127,6 +1127,7 @@
   "ui.confirm.tool.title": "Вызов инструмента",
   "ui.confirm.tool.inputs": "в песочницу уйдёт: {files} · {net}",
   "ui.confirm.tool.file_unknown": "{handle} — такого файла в чате нет",
+  "ui.confirm.tool.over_cap": "сверх лимита: файлов {count}, {size} — один вызов берёт не больше {max_files} файлов и {max_size}, поэтому вызов будет отклонён без запуска",
   "ui.confirm.tool.net_on": "сеть: включена",
   "ui.confirm.tool.net_off": "сеть: выключена",
   "ui.confirm.tool.question": "Выполнить этот вызов?",
