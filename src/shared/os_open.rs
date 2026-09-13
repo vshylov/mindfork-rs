@@ -15,6 +15,10 @@
 //! **Blocking** (§13 U5): the shell starts the handler before returning and `xdg-open`
 //! is a script that execs another, so callers run [`open`] on the blocking pool rather
 //! than on the orchestrator's command loop.
+//!
+//! **The mark** (§13 U11): [`FROM_ELSEWHERE`] is what a file a call wrote carries on
+//! Windows, set where it is stored (`features::chat_files`). The allowlist says which types
+//! may be handed to a handler; the mark is what that handler is told about the file.
 
 use std::ffi::OsStr;
 use std::io;
@@ -110,6 +114,67 @@ pub fn open(path: &Path) -> io::Result<()> {
     launch(path)
 }
 
+/// What Windows writes beside a file that came from elsewhere — a download, a mail
+/// attachment — as its `Zone.Identifier` stream: zone 3, the Internet (§13 U11).
+///
+/// A file a call wrote carries it, and it is what makes the allowlist's office types safe
+/// to launch: Office opens a marked file in Protected View, where a model-written cell such
+/// as `=cmd|' /C calc'!A0` reaches no DDE server, a workbook's external links are not
+/// followed and a document's remote template is not fetched — whether the file was opened
+/// by `/file open` or double-clicked in the folder. Without it the chat's folder is a
+/// local, trusted place to Office, and nothing about the file says who wrote it. No
+/// `HostUrl`: there is no address to name, and an invented one would be a lie.
+pub const FROM_ELSEWHERE: &[u8] = b"[ZoneTransfer]\r\nZoneId=3\r\n";
+
+/// The `Zone.Identifier` stream a file carries, if it carries one. `None` off Windows,
+/// which has no such stream, and for a file on a volume that holds no alternate streams.
+pub fn zone_of(path: &Path) -> Option<Vec<u8>> {
+    #[cfg(windows)]
+    {
+        std::fs::read(zone_stream(path))
+            .ok()
+            .filter(|zone| !zone.is_empty())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+        None
+    }
+}
+
+/// Writes `zone` as the file's `Zone.Identifier` stream, replacing one it had.
+///
+/// Does nothing off Windows: no handler there reads a mark, and there is none to write. On
+/// Windows an error is a file that is not there — refused rather than written, because a
+/// stream opened for writing creates the file it belongs to — or a volume that cannot hold
+/// a stream (FAT, exFAT, some network shares). The file's bytes are untouched either way,
+/// so a caller keeps the file and says so in the log.
+pub fn set_zone(path: &Path, zone: &[u8]) -> io::Result<()> {
+    #[cfg(windows)]
+    {
+        if !path.is_file() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "there is no file to mark",
+            ));
+        }
+        std::fs::write(zone_stream(path), zone)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (path, zone);
+        Ok(())
+    }
+}
+
+/// `path:Zone.Identifier` — a stream is named by its file's name with its own appended.
+#[cfg(windows)]
+fn zone_stream(path: &Path) -> std::path::PathBuf {
+    let mut stream = path.as_os_str().to_owned();
+    stream.push(":Zone.Identifier");
+    stream.into()
+}
+
 #[cfg(windows)]
 fn launch(path: &Path) -> io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
@@ -163,26 +228,45 @@ fn launch(path: &Path) -> io::Result<()> {
 /// The launch off Windows, with the launcher named. `launch` passes the platform's; a test
 /// passes a stub, which is how the shape that matters — one program, one argument, nothing
 /// re-parsed on the way (docs/lessons.md §6) — is checked on Linux with no desktop, in CI.
-// `zombie_processes`: deliberate. The launcher is neither waited on nor kept — see the
-// comment below — so its entry stays in the table until the application exits, which is
-// the cheaper of the two prices (the alternative holds a thread for as long as the user
-// keeps the viewer open).
-#[allow(clippy::zombie_processes)]
 #[cfg(not(windows))]
 fn launch_with(program: &str, path: &Path) -> io::Result<()> {
+    spawn_reaped(program, path).map(|_| ())
+}
+
+/// Starts the launcher and hands it to a thread of its own that waits for it; returns its
+/// pid and that thread.
+///
+/// Not waited on **here**: the launcher may exec a viewer that lives as long as the user
+/// keeps it open, and the blocking-pool thread this runs on must not be held for that. It
+/// used to be waited on nowhere, which left one zombie per `/file open` until the
+/// application exited, on the reasoning that the alternative holds a thread for the
+/// viewer's lifetime. It mostly does not: `xdg-open` on a desktop hands the file to
+/// `gio`/`kde-open` and exits within milliseconds, taking the waiting thread with it, and
+/// only a launcher that runs the viewer itself keeps one parked thread — not a pool slot —
+/// for as long as the viewer is open. No launcher on the machine is still the spawn error;
+/// a waiting thread that cannot be started is not reported as a failed open, because by
+/// then the open has happened.
+#[cfg(not(windows))]
+fn spawn_reaped(
+    program: &str,
+    path: &Path,
+) -> io::Result<(u32, Option<std::thread::JoinHandle<()>>)> {
     use std::process::{Command, Stdio};
 
-    // Spawned and **not** waited on: the launcher may exec a viewer that lives as long as
-    // the user keeps it open, and a blocking-pool thread must not be held for that. The
-    // child is reaped when the application exits; the failure that matters — no launcher
-    // on the machine — is the spawn error itself.
-    Command::new(program)
+    let mut child = Command::new(program)
         .arg(path)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .spawn()
-        .map(|_| ())
+        .spawn()?;
+    let pid = child.id();
+    let reaper = std::thread::Builder::new()
+        .name("open-reaper".into())
+        .spawn(move || {
+            let _ = child.wait();
+        })
+        .ok();
+    Ok((pid, reaper))
 }
 
 #[cfg(test)]
@@ -270,8 +354,9 @@ mod tests {
         std::fs::write(&target, b"x").unwrap();
         launch_with(stub.to_str().unwrap(), &target).expect("the stub launcher started");
 
-        // The child is not waited on (a viewer outlives the call), so the recording is
-        // polled for — a second is orders of magnitude more than `/bin/sh` needs.
+        // The child is waited on by a thread of its own, not by the call (a viewer outlives
+        // the call), so the recording is polled for — a second is orders of magnitude more
+        // than `/bin/sh` needs.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
         let recorded = loop {
             if let Ok(text) = std::fs::read_to_string(&log)
@@ -294,6 +379,72 @@ mod tests {
             missing.is_err(),
             "a machine with no launcher must report it"
         );
+    }
+
+    /// A launcher that has exited is reaped, not left in the process table until the
+    /// application exits. A zombie keeps its `/proc` entry until its parent waits for it, so
+    /// the entry's absence once the waiting thread is done is the property itself.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_unix_launcher_is_reaped_rather_than_left_a_zombie() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let target = dir.path().join("chart.png");
+        std::fs::write(&target, b"x").unwrap();
+
+        let (pid, reaper) = spawn_reaped("true", &target).expect("`true` started");
+        reaper
+            .expect("the waiting thread started")
+            .join()
+            .expect("the waiting thread finished");
+        assert!(
+            !Path::new(&format!("/proc/{pid}")).exists(),
+            "the launcher (pid {pid}) was left a zombie"
+        );
+    }
+
+    /// The mark is a stream beside the file's bytes (§13 U11): read back as written, the
+    /// bytes left alone, one entry in the folder, a second mark replacing the first, and no
+    /// file created where there was none to mark.
+    #[cfg(windows)]
+    #[test]
+    fn a_zone_is_written_beside_the_bytes_and_read_back() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let file = dir.path().join("sales.csv");
+        std::fs::write(&file, b"=1+1\n").unwrap();
+        assert_eq!(
+            zone_of(&file),
+            None,
+            "a file we wrote carries no mark of its own"
+        );
+
+        set_zone(&file, b"[ZoneTransfer]\r\nZoneId=0\r\n").unwrap();
+        set_zone(&file, FROM_ELSEWHERE).unwrap();
+        assert_eq!(zone_of(&file).as_deref(), Some(FROM_ELSEWHERE));
+        assert_eq!(
+            std::fs::read(&file).unwrap(),
+            b"=1+1\n",
+            "the bytes are untouched"
+        );
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+
+        let missing = dir.path().join("gone.csv");
+        assert!(set_zone(&missing, FROM_ELSEWHERE).is_err());
+        assert!(
+            !missing.exists(),
+            "marking a missing file must not create it"
+        );
+    }
+
+    /// Off Windows there is no mark to read or write, and asking for one is not an error —
+    /// storing a file must not fail on a platform where the mark does not exist.
+    #[cfg(not(windows))]
+    #[test]
+    fn off_windows_there_is_no_mark_and_setting_one_succeeds() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let file = dir.path().join("sales.csv");
+        std::fs::write(&file, b"=1+1\n").unwrap();
+        assert!(set_zone(&file, FROM_ELSEWHERE).is_ok());
+        assert_eq!(zone_of(&file), None);
     }
 
     /// The stage's manual gate (§13 U10): the only part no automated test can cover is
