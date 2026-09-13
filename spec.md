@@ -1323,6 +1323,9 @@ application. Design record: [docs/history/tool-confirmation.md](docs/history/too
   sandbox has the network — the two halves of what is being consented to. Not a
   nicety: the compact view above drops array arguments outright, so `files` — the
   argument that decides what leaves the chat — would otherwise not appear at all.
+  A call that names more than one call takes — twenty files or 100 MB, counted as
+  `python_exec` counts them — is refused before it runs, and the popup says so above
+  the list rather than asking consent to a run that will not happen.
   The orchestrator resolves it with the list the call itself resolves against, so
   the popup cannot show a different set than the one that goes in
   ([docs/history/sandbox-file-exchange.md](docs/history/sandbox-file-exchange.md) §12 T6).

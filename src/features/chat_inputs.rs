@@ -236,6 +236,24 @@ pub fn open_path(item: &ChatInput, dir: &Path) -> Option<std::path::PathBuf> {
     }
 }
 
+/// How many files one call may name in `files`. The output side has had its caps from the
+/// start (`OutputLimits::DEFAULT`: 10 files, 50 MB); the input side had none, while every
+/// file a call names is copied into the job directory before the code starts.
+pub const MAX_INPUT_FILES: usize = 20;
+
+/// How many bytes the files one call names may add up to: room for three attachments at
+/// their own ceiling of 32 MB, while a call naming a long chat's every stored file at once
+/// is refused before any of it is copied or decoded.
+pub const MAX_INPUT_BYTES: u64 = 100 * 1024 * 1024;
+
+/// Whether the distinct files a call reaches — `count` of them, `bytes` in all — are more
+/// than one call takes. One predicate for `python_exec`'s refusal and for the confirmation
+/// popup, so the popup can neither ask consent to a call that will be refused nor warn about
+/// one that will run (§12 T8).
+pub fn over_input_cap(count: usize, bytes: u64) -> bool {
+    count > MAX_INPUT_FILES || bytes > MAX_INPUT_BYTES
+}
+
 /// What a `python_exec` call would copy into `/w/in`, resolved for the confirmation popup
 /// (§12 T6). The popup presents a call's arguments compactly and drops arrays outright, so
 /// the one argument that decides what leaves the chat would otherwise not be shown at all
@@ -248,6 +266,10 @@ pub struct ConfirmInputs {
     /// Whether the sandbox has network access for this call — the other half of what the
     /// user is consenting to.
     pub net: bool,
+    /// How many distinct files the call reaches and their size, when that is more than one
+    /// call takes ([`over_input_cap`]). The call will be refused before it runs, and the
+    /// popup says so rather than asking consent to a run that will not happen.
+    pub over_cap: Option<(usize, u64)>,
 }
 
 /// One handle a call named, as the popup shows it.
@@ -262,18 +284,33 @@ pub struct ConfirmFile {
 }
 
 /// Resolves the handles a call named, for the popup.
+///
+/// The cap is counted over the distinct files the handles reach, as `python_exec` stages
+/// them: a file named twice is one copy, and one file.
 pub fn for_confirm(items: &[ChatInput], handles: &[String], net: bool) -> ConfirmInputs {
+    let mut reached: Vec<usize> = Vec::new();
     let files = handles
         .iter()
         .map(|handle| ConfirmFile {
             handle: handle.trim().to_string(),
             resolved: match resolve(items, handle) {
-                Resolved::One(at) => Some((items[at].name.clone(), items[at].bytes)),
+                Resolved::One(at) => {
+                    if !reached.contains(&at) {
+                        reached.push(at);
+                    }
+                    Some((items[at].name.clone(), items[at].bytes))
+                }
                 Resolved::Shared(_) | Resolved::Nothing => None,
             },
         })
         .collect();
-    ConfirmInputs { files, net }
+    let bytes: u64 = reached.iter().map(|&at| items[at].bytes).sum();
+    let over_cap = over_input_cap(reached.len(), bytes).then_some((reached.len(), bytes));
+    ConfirmInputs {
+        files,
+        net,
+        over_cap,
+    }
 }
 
 /// The file handles a call names in its `files` argument. One rule, two readers: the tool
@@ -605,6 +642,49 @@ mod tests {
         assert_eq!(resolve(&list, "nothing.csv"), Resolved::Nothing);
         // The staged name is not a handle: `#2` and the path are what reach the second one.
         assert_eq!(resolve(&list, "notes (2).md"), Resolved::Nothing);
+    }
+
+    /// The popup answers the cap with the predicate the refusal uses, over the same distinct
+    /// set (§12 T8): a call at the cap is not warned about, a handle named twice counts once
+    /// — `stage` copies it once — and a call over it by count or by size is stated as over.
+    #[test]
+    fn the_popup_counts_a_call_over_the_cap_as_the_refusal_does() {
+        let files: Vec<ChatFile> = (1..=MAX_INPUT_FILES + 1)
+            .map(|n| stored(&format!("f{n}.csv")))
+            .collect();
+        let list = items(&[], &files, &[], dir());
+        let handles = |n: usize| (1..=n).map(|i| format!("#{i}")).collect::<Vec<_>>();
+
+        assert_eq!(
+            for_confirm(&list, &handles(MAX_INPUT_FILES), false).over_cap,
+            None
+        );
+        let mut twice = handles(MAX_INPUT_FILES);
+        twice.push("#1".into());
+        assert_eq!(
+            for_confirm(&list, &twice, false).over_cap,
+            None,
+            "a handle named twice is one file"
+        );
+        let over = for_confirm(&list, &handles(MAX_INPUT_FILES + 1), false);
+        let bytes: u64 = list.iter().map(|item| item.bytes).sum();
+        assert_eq!(over.over_cap, Some((MAX_INPUT_FILES + 1, bytes)));
+        assert_eq!(
+            over.files.len(),
+            MAX_INPUT_FILES + 1,
+            "every handle is still listed"
+        );
+
+        let mut big = [stored("a.bin"), stored("b.bin")];
+        for file in &mut big {
+            file.bytes = MAX_INPUT_BYTES / 2 + 1;
+        }
+        let list = items(&[], &big, &[], dir());
+        assert_eq!(
+            for_confirm(&list, &handles(2), false).over_cap,
+            Some((2, MAX_INPUT_BYTES + 2)),
+            "two files over the size"
+        );
     }
 
     /// The fold is Unicode's, not ASCII's. `ru` is a fully supported locale, so a name
