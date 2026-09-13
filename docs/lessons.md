@@ -1279,6 +1279,20 @@ read that name); the dev loop is "edit → restart serve". A five-minute `zola i
 repro answered what staring at correct templates could not.
 — *website — research + S1 scaffold (Zola, terminal-styled)*.
 
+**A file the app writes is local and trusted to its handler — unless it carries the mark
+of a download.** Office decides Protected View by the `Zone.Identifier` stream a browser
+or a mail client writes beside a file, not by the folder it sits in or by who wrote it: a
+workbook this app stored from a model's code opened in full edit mode, formulas and DDE
+included, and so did anything a double-click reached in the chat's folder. Taking the
+types off the launch allowlist would not have closed that, because the folder it opens
+instead runs the same handler. The mark is ours to write (`ZoneId=3`); a zip does not
+carry it, `CopyFileExW` does, and "Unblock" deletes it — so set it where the bytes are
+written and where a restore unpacks them, never in a startup pass that would undo the
+user's own "Unblock". It can be checked without Office through the consumer every Windows
+machine has: `-ExecutionPolicy RemoteSigned` refuses an unsigned script carrying those
+exact bytes and runs the same script without them.
+— *a file a call wrote carries the mark of a download*.
+
 ---
 
 ## 7. i18n, gates and localization

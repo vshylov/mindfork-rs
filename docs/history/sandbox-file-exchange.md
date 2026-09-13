@@ -796,7 +796,12 @@ survey added under it, recorded before implementing as §11 and §12 were.
   one argument, no shell. Not `cmd /c start`, which re-parses the argument outside Rust's
   escaping (lessons §6), and not a crate for three calls. The part that can be tested
   everywhere is pure (`launcher(Platform)`, `is_document(name)`); the spawn itself is the
-  stage's manual gate.
+  stage's manual gate. *Amended after the track's review (2026-09-13):* the unix
+  launcher used to be waited on nowhere — "otherwise a thread is held for the viewer's
+  lifetime" — which left one zombie per `/file open` until the app exited. It is now
+  handed to a thread of its own that waits for it: `xdg-open` on a desktop hands the file
+  on and exits within milliseconds, and only a launcher that runs the viewer itself keeps
+  one parked thread, never a pool slot.
 - **U5 — launching runs on the blocking pool.** `ShellExecuteW` returns only once the
   shell has started the handler, and `xdg-open` is a script that execs another; the
   orchestrator's command loop waits for neither. `spawn_blocking`, and the outcome comes
@@ -834,6 +839,42 @@ argument, so a stub script records what it was given, and the test asserts the p
 unsplit (`my chart (1).png`) and that a launcher which is not installed comes back as an
 error. What is **not** verified here is a GUI launch on a Linux desktop — the development
 machine has none, and WSL carries only docker's utility distribution.
+
+- **U11 — a file a call wrote carries the mark of a download** (*added after the track's
+  review, 2026-09-13*). U3 admitted `csv`, `tsv` and `xlsx` — and `docx`, which is the
+  same class — and on Windows their handler is Office: a first cell the model wrote as
+  `=cmd|' /C calc'!A0` is a DDE formula, and a `docx` can carry a `DDEAUTO` field or a
+  remote template. Office's defence against a hostile document is Protected View, and what
+  switches it on is Windows' mark of the Internet zone, the `Zone.Identifier` stream a
+  browser or a mail client writes beside a file. The chat's folder carried none, so to
+  Office it was a local, trusted place, and nothing about a file said who wrote it. Taking
+  the four types off the list would not have closed that: a refused type opens its folder,
+  and a double-click there runs the same handler.
+  **User's decision (2026-09-13): mark the files, keep the list.** What the code survey
+  added under it:
+  - *Where it is set.* `chat_files::store` marks every file it writes for a call — new,
+    and written back (`Restored`) — with `os_open::FROM_ELSEWHERE`, `ZoneId=3` and no
+    `HostUrl`, since there is no address to name. A file adopted at startup (`Recovered`)
+    is marked when it is adopted. A restore marks everything it unpacks under `files/`: a
+    zip holds no alternate streams and the archive records no file's origin, so a user's
+    own copy is marked too — the error in the safe direction, and the archive itself came
+    from wherever the user kept it.
+  - *A user's file keeps its own mark.* `/file attach` copies the source's
+    `Zone.Identifier` onto the chat's copy: a workbook downloaded from the web keeps its
+    Protected View when opened from the chat's folder, and one the user made gains no mark
+    it did not have.
+  - *No pass at startup.* Re-marking every call's file on each start would also cover a
+    folder moved across volumes, and would undo an "Unblock" the user chose in a file's
+    properties on every start. The files this track stored before the mark existed were
+    never released, so there is nothing to migrate.
+  - *A mark that cannot be written* — FAT, exFAT, some network shares — is logged and the
+    file kept: the listing has to name what is on disk.
+  - *Windows only.* DDE is Windows', and no Linux handler reads a mark. macOS's quarantine
+    attribute is not written: the app does not support macOS, it only maps its launcher.
+  - *Staged copies* carry the mark as well — `tokio::fs::copy` is `CopyFileExW`, which
+    copies alternate streams — and that is harmless: the interpreter reads the data stream.
+  - *The note is unchanged.* Office's own bar says what Protected View is; `/file open`
+    says what it opened, as before.
 
 ## 14. Stage 5 — sub-decisions (2026-09-12)
 

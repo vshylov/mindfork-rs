@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (77)
+## Entries (78)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -89,6 +89,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the files argument gets the caps the output side had — T8 amended (done)
 - Post-M9: a process's own lines stop opening sections of the console card (done)
 - Post-M9: an attached original is stored off the command loop, and only listed on it (done)
+- Post-M9: a file a call wrote carries the mark of a download, and Office opens it in Protected View (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -5217,3 +5218,61 @@ half storing nothing, a vanished listing linked anyway — failed their tests.
 **Live.** Gemma 4 31B, through the real `/file attach`: a PNG attached as a binary was kept
 off the loop, named in `files`, opened from `/w/in` and measured at 512 by 512; and a document
 whose code the model denies knowing without it was attached and quoted back, `ZARYA-7719`.
+
+### Post-M9: a file a call wrote carries the mark of a download, and Office opens it in Protected View (done)
+
+Tier 3's last group, and the one that was a decision rather than a fix. The launch
+allowlist of `/file open` (§13 U3) admitted `csv`, `tsv` and `xlsx`, whose handler on
+Windows is Excel, where a first cell the model wrote as `=cmd|' /C calc'!A0` is a DDE
+formula. Read against the code, the finding was wider in one direction and narrower in
+another. Wider: `docx` is the same class — a `DDEAUTO` field, a remote template. Narrower:
+taking the types off the list closes almost nothing, because a refused type opens its
+folder and a double-click there runs the same handler.
+
+**What actually differed from an ordinary document.** Office's defence against a hostile
+file is Protected View, and what turns it on is Windows' mark of the Internet zone — the
+`Zone.Identifier` stream a browser or a mail client writes beside a download. The chat's
+folder carried none: to Office a workbook the model wrote was a local, trusted file,
+opened in full edit mode. Office is not installed on this machine (no handler is
+registered for `.csv`, `.xlsx` or `.docx`), so what DDE does in a given Office build was
+not measured here, and the options were put to the user on the mechanism rather than on a
+build's defaults: keep and record (A), launch these types only for the user's own files
+(B), mark what a call writes (C), or B and C.
+
+**User's decision (2026-09-13): C** — mark the files, keep the list. The sub-decisions are
+§13 U11 of the track: `chat_files::store` marks every file it writes for a call, new and
+written back; an adopted file is marked when adopted; a restore marks everything under
+`files/`, because a zip holds no stream and records no origin; `/file attach` copies the
+source's own mark onto the chat's copy, so a downloaded workbook keeps Protected View and
+one the user made gains nothing. No startup pass: it would undo an "Unblock" the user chose
+in a file's properties, on every start — and the files the track stored before this were
+never released. A mark that cannot be written (FAT, exFAT, some shares) is logged and the
+file kept. Windows only.
+
+**Measured.** The mark is `[ZoneTransfer]` / `ZoneId=3`, no `HostUrl` — there is no
+address to name. Whether Windows reads *those* bytes as the Internet zone was checked
+through the consumer every Windows machine has: `powershell -ExecutionPolicy RemoteSigned
+-File` refused an unsigned script carrying exactly that stream ("is not digitally
+signed"), ran the same script without it, and ran the marked one again after
+`Unblock-File` removed the stream. Office's Protected View on a marked file is the user's
+check, on a machine that has Office.
+
+**Folded in, same file.** The unix launch left one zombie per `/file open` until the app
+exited, justified as the price of not holding a thread for the viewer's lifetime (§13 U4).
+It is now handed to a thread of its own that waits: `xdg-open` on a desktop exits within
+milliseconds, and only a launcher that runs the viewer itself keeps one parked thread,
+never a pool slot. Its test reads `/proc/<pid>` after the waiting thread joins — a zombie
+keeps its entry — and runs on the Linux CI job only; the mutation was not run here.
+
+**Tests.** Windows: the stream written beside the bytes, replaced rather than appended,
+and never creating a missing file; a call's new and written-back outputs marked, a user's
+copy carrying its source's mark or none; an adopted file marked; a restored `files/` entry
+marked and `chats/` not. Linux: the reaped launcher, and no mark (and no error) off
+Windows. Six guards reverted — a new output unmarked, a written-back one unmarked, the
+source's mark not copied, adoption unmarked, a restore marking nothing, a missing file
+created by marking it — each failed its test.
+
+**Live.** Gemma 4 31B through the packed sandbox: the two-round smoke's first call wrote
+`/w/out/marker.txt`, the real store kept it under `files/<chat>/`, and the file carries the
+mark; `attached_binary_reaches_the_sandbox_live` (512 × 512) and `file_attachment_e2e_live`
+(`ZARYA-7719`) unchanged through the attach path that now reads the source's mark.
