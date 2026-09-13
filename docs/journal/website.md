@@ -10,7 +10,7 @@ the reasoning behind the site, not its current shape. For the current shape
 read the research/design doc above; for the traps that recur across areas
 read [lessons.md](../lessons.md).
 
-## Entries (13)
+## Entries (14)
 
 - Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 - Post-M9: website — S2 infra: one CloudFormation stack, mindfork.io live (done)
@@ -25,6 +25,7 @@ read [lessons.md](../lessons.md).
 - Post-M9: website — the 0.9.8 release post and the twelve-card landing (done)
 - Post-M9: the site gets its legal pair — `/privacy/` and `/code-signing-policy/` (done)
 - Post-M9: website — the 0.9.9 release post and three refreshed cards (done)
+- Post-M9: website — the overview rebuilt, a screenshot shortcode and the trust-boundaries article (done)
 
 ### Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 
@@ -514,3 +515,71 @@ gate runs `zola check` and `zola build` at that version on every PR touching
 `site/`, so the build is verified there before the merge. No live run: site
 content plus content edits, no Rust touched. Gates
 (`cyrillic_scan`/`link_check`/`doc_index_check`) green.
+
+### Post-M9: website — the overview rebuilt, a screenshot shortcode and the trust-boundaries article (done)
+
+**What.** `articles/mindfork-at-a-glance.md` rewritten against the 0.9.9
+application, a seventh article, `articles/trust-boundaries.md`, and the
+site's first two shortcodes. The overview had been written on 2026-08-10 for
+0.9.5 and touched only by the two release-day paragraphs that grew its loop
+section by accretion; every other section still described 0.9.5. Now: the
+engine section gains the one-command download and the empty binary field;
+the loop section's tool set is a list by kind (web, files and the project,
+Python, delegation and the dialogue, plugins/speech/introspection) followed
+by one paragraph on what runs in the background — runs *and* the app's own
+requests, one at a time, yielding, reserving their place in the pool; a new
+**"One turn, start to finish"** section shows the assembly of a request as a
+mono-block diagram and a paragraph (the self-model block chosen by embedding
+the message, attachments inline or by reference, notes and RAG reached
+through tools rather than injected — checked against spec §9: `note_recall`
+and `rag_search` are tools, nothing injects them); the memory list gains
+cross-chat search and the model-history record; storage gains `files/`,
+`workspace/`, the schema versions and the backup-then-migrate rule; a new
+**"Where the trust boundaries are"** section carries the network, the
+machine, consent, and secrets/the author in four bullets; the TUI section
+gains the `auto` theme, pictures in and speech out, typed commands, OSC 52,
+`/export` and per-screen `F1`. Every section ends with a "Full story" link to
+its sister article, and the page ends with a "Read on" list — the overview
+had linked to none of the five articles that all link to it.
+
+**The trust-boundaries article.** The landing's "Private by construction"
+card was the only capability card with no article behind it, and the
+security posture is the most architectural subject the site had not written
+up. The article is written from `PRIVACY.md` and spec §9.8, not from the
+landing: what leaves the machine (endpoint by endpoint, the web tools off in
+a fresh install, the keyed provider only where the key was put, MCP as local
+subprocesses), the public-internet guard with its five-hop redirect
+re-check, what the sandbox and the project tools can touch (the caps, the
+read-only package image, the typed command lines, the empty `fs_root`
+warning, `/file open`'s allowlist, the mark of the web), when the app asks
+(what `confirm_dangerous` gates and why a server's annotations are not
+consulted; background runs never ask), secrets (DPAPI / machine-id key,
+what ADR 0008 does *not* defend against), what the author receives, and a
+closing "what this does not claim" — a process boundary is not a VM, local
+Python has no boundary, plugins run as you, the binaries are unsigned yet.
+
+**The shortcodes.** `screenshot(name, title)` with a caption body renders the
+landing's `figure.term` markup — both themes via `load_data` over the synced
+`static/screenshots/`, so the article gets the `chat`, `self-model` and
+`settings-tools` renders in the same chrome as the gallery; `.prose
+figure.term` gets a margin the grid never needed. `app_version()` prints
+`[extra] app_version` from `config.toml`, so the overview can say which
+release it describes without a hand-edited number: the release checklist
+(AGENTS.md §6 step 1) now bumps that key with `Cargo.toml`. The config
+comment that said "templates use no shortcodes" is amended — the shortcodes
+use the same v1/v2-compatible Tera, so the 0.23 bump stays a version number.
+
+**What the prose refuses to overclaim.** The turn diagram says readers *may*
+run together (four at a time on a cloud engine, one after another on a local
+one until the setting is raised). The local interpreter's memory limit is
+"of its own", not the sandbox's. The `fs_root` paragraph says an empty root
+leaves the tools unrestricted, as the privacy policy does. The signing
+paragraph repeats the policy page's order — unsigned first. The landing is
+untouched: no card gained, none reworded.
+
+**Zola was not run locally** (0.22.1 is not installed here); the site
+workflow's PR gate runs `zola check` and `zola build` at that version on
+every PR touching `site/`, and the shortcodes are the one part a local build
+would have exercised that the earlier posts did not — the gate is the
+verification. No live run: site content and templates, no Rust touched.
+Gates (`cyrillic_scan`/`link_check`/`doc_index_check`) green.
