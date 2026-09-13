@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (79)
+## Entries (80)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -91,6 +91,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: an attached original is stored off the command loop, and only listed on it (done)
 - Post-M9: a file a call wrote carries the mark of a download — Protected View for workbooks and documents, not a CSV (done)
 - Post-M9: the confirmation popup says a call over the files cap will be refused (done)
+- Post-M9: the withheld-chart smoke sends the console a call returns, re-measured (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -5328,3 +5329,36 @@ shared predicate — each failed its test.
 
 **Live.** Gemma 4 31B, the packed sandbox: `attached_binary_reaches_the_sandbox_live`, a
 call naming `#1`, staged and read as 512 × 512 — `stage` on the moved predicate.
+
+### Post-M9: the withheld-chart smoke sends the console a call returns, re-measured (done)
+
+The leftover the console-card entry recorded on purpose: `a_withheld_chart_is_not_described_live`
+in `openai/client.rs` sends the model a synthetic `python_exec` result, typed in the uncounted
+`stdout:` shape, and when the console's sections were counted it was left as it was, "being the
+text that measurement was taken on". That reason holds for the table in the withheld-image entry,
+and stops holding for the smoke: since the count, no call has returned that text, so the arm
+measured a result the model no longer gets, and a literal would have gone on sending it through
+any later change to the shape.
+
+**The fixture is assembled, not typed.** The console half is `present::format_console` itself;
+the section is `keep_outputs`' own lines — `files.saved_in`, `files.item`, the withheld note — and
+its join, a blank line and `files:`. A premise check asserts the result opens with
+`stdout (1 line):`, so a smoke that no longer sends the counted shape fails before it asks the
+model anything. No unit test beside it: the uncounted shape still parses as a console (every
+record saved before the count does), so only a check of the literal could tell the two apart,
+and the producer building the text is the stronger guard.
+
+**Re-measured, because the text changed.** Gemma 4 31B q4_0, five runs an arm, the protocol of
+the withheld-image entry — nothing ever sent as an image, and a re-call counted apart from a
+refusal:
+
+| the result carries (counted shape) | invented | refused | called the tool again |
+|---|---|---|---|
+| `files.not_shown_off` with the clause | **0/5** | 5/5 | 0/5 |
+| nothing (control) | 3/5 | 0/5 | 2/5 |
+
+On the uncounted shape the same arms measured 0/5 invented with a refusal 4/5, and 4/5 invented
+for the control. The clause does the same work on the shape a call returns — the one change is
+the re-call gone from the note arm — and the control still invents, so the smoke keeps
+measuring the note rather than a model that happens to decline. The smoke passed 5/5; the
+control, as expected, failed its assertion on each invented answer.
