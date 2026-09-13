@@ -448,6 +448,14 @@ split by subsystem.
 
 ### Security
 
+- **A workbook or document the assistant wrote opens in Protected View** — on Windows, an
+  Excel workbook or Word document saved by `python_exec` opened as a trusted local file.
+  Files the code writes now carry the same mark as a download, so Office opens them in
+  Protected View whether you use `/file open` or the folder. A CSV is not covered: Excel
+  opens a marked CSV normally unless its setting for untrusted text files is on, and what
+  keeps a formula in one from starting a program is Excel's own DDE setting, off by
+  default. An attached document's copy keeps the mark of the file it came from, and
+  restoring a backup marks its stored files.
 - **The Python sandbox's packages can no longer be changed from inside it.** The
   sandbox mounted its package directory writable, so code run in one call could
   leave a file there that then ran inside every later call, in every chat.

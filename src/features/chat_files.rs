@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use crate::entities::chat_file::{
     ChatFile, FileOrigin, mime_for, same_name, sha256_hex, versioned,
 };
+use crate::shared::os_open;
 
 /// How many versions of one name storing tries before it gives up.
 const MAX_VERSIONS: u32 = 10_000;
@@ -46,19 +47,35 @@ pub enum Stored {
 /// listed-but-missing. The file is opened with `create_new`, so an existing one is never
 /// overwritten whatever raced, and synced before the listing is returned: the listing must
 /// not name bytes a crash could lose.
+///
+/// What it writes is marked as come from elsewhere ([`os_open::FROM_ELSEWHERE`], §13
+/// U11): a call's output holds what the model put in it, and Office must not open it as a
+/// local, trusted file.
 pub fn store(dir: &Path, listed: &[ChatFile], name: &str, content: &[u8]) -> io::Result<Stored> {
-    store_as(dir, listed, name, content, FileOrigin::Sandbox)
+    store_as(
+        dir,
+        listed,
+        name,
+        content,
+        FileOrigin::Sandbox,
+        Some(os_open::FROM_ELSEWHERE),
+    )
 }
 
 /// [`store`], for a file that is not a call's output: `/file attach` keeping the user's
 /// own bytes beside the extracted text ([`FileOrigin::Attached`], fork F8a). The writing
 /// is the same in every respect — the origin is only what the listing records.
+///
+/// `zone` is the mark the copy carries ([`mark`]), set on every file this writes — a new
+/// one and one written back — and on none it leaves alone: a call's output passes
+/// [`os_open::FROM_ELSEWHERE`], a user's file the mark their own file carries, if any.
 pub fn store_as(
     dir: &Path,
     listed: &[ChatFile],
     name: &str,
     content: &[u8],
     origin: FileOrigin,
+    zone: Option<&[u8]>,
 ) -> io::Result<Stored> {
     confined(dir, name)?;
     std::fs::create_dir_all(dir)?;
@@ -82,6 +99,7 @@ pub fn store_as(
                     }
                     other => other?,
                 }
+                mark(&dir.join(&candidate), zone);
                 return Ok(Stored::Restored(existing.clone()));
             }
             continue;
@@ -94,6 +112,7 @@ pub fn store_as(
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
             Err(e) => return Err(e),
         }
+        mark(&dir.join(&candidate), zone);
         return Ok(Stored::New(ChatFile {
             id: uuid::Uuid::new_v4(),
             mime: mime_for(&candidate, content).to_string(),
@@ -123,6 +142,24 @@ fn write_new(path: &Path, content: &[u8]) -> io::Result<()> {
         return Err(e);
     }
     Ok(())
+}
+
+/// Gives a file on disk the mark `zone` (§13 U11), when there is one to give.
+///
+/// Never fails the caller: a mark that cannot be written — a volume that holds no alternate
+/// streams — is logged and the file kept, because the listing has to name what is on disk
+/// and a file the user cannot see listed is worse than one Office opens without its bar.
+pub fn mark(path: &Path, zone: Option<&[u8]>) {
+    let Some(zone) = zone else {
+        return;
+    };
+    if let Err(e) = os_open::set_zone(path, zone) {
+        tracing::warn!(
+            path = %path.display(),
+            error = %e,
+            "stored files: could not mark the file as come from elsewhere"
+        );
+    }
 }
 
 /// The regular files in `dir` that `listed` does not name — never following a link — as
@@ -326,6 +363,61 @@ mod tests {
         // And offering them once more is then the no-op it claims to be.
         let again = store(dir.path(), &listed, "chart.png", PNG).unwrap();
         assert_eq!(again, Stored::Unchanged(listed[0].clone()));
+    }
+
+    /// A call's output is marked as come from elsewhere (§13 U11) — written new and written
+    /// back alike — and a user's own copy carries the mark it was handed, or none.
+    #[cfg(windows)]
+    #[test]
+    fn what_a_call_wrote_is_marked_and_a_users_copy_carries_its_own_mark() {
+        use crate::shared::os_open::{FROM_ELSEWHERE, zone_of};
+        let dir = tempfile::tempdir().unwrap();
+
+        let name = new_name(store(dir.path(), &[], "sales.csv", b"=1+1\n").unwrap());
+        assert_eq!(
+            zone_of(&dir.path().join(&name)).as_deref(),
+            Some(FROM_ELSEWHERE),
+            "a new output"
+        );
+
+        let listed = [listing("chart.png", PNG)];
+        let restored = store(dir.path(), &listed, "chart.png", PNG).unwrap();
+        assert!(matches!(restored, Stored::Restored(_)), "{restored:?}");
+        assert_eq!(
+            zone_of(&dir.path().join("chart.png")).as_deref(),
+            Some(FROM_ELSEWHERE),
+            "an output written back"
+        );
+
+        let own = store_as(
+            dir.path(),
+            &[],
+            "book.xlsx",
+            b"PK",
+            FileOrigin::Attached,
+            None,
+        );
+        let own = new_name(own.unwrap());
+        assert_eq!(
+            zone_of(&dir.path().join(&own)),
+            None,
+            "the user's file came with no mark"
+        );
+        let zone: &[u8] = b"[ZoneTransfer]\r\nZoneId=3\r\nHostUrl=https://example.com/a.docx\r\n";
+        let got = store_as(
+            dir.path(),
+            &[],
+            "a.docx",
+            b"PK",
+            FileOrigin::Attached,
+            Some(zone),
+        );
+        let got = new_name(got.unwrap());
+        assert_eq!(
+            zone_of(&dir.path().join(&got)).as_deref(),
+            Some(zone),
+            "a download's copy keeps the download's mark"
+        );
     }
 
     /// An unlisted file already on disk — say, one a crashed session left — is never

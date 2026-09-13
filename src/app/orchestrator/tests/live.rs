@@ -1018,7 +1018,7 @@ async fn a_handle_survives_a_round_that_adds_a_file_live() {
         binary mode, and print its first 8 bytes with repr() followed by the hex digest \
         call 1 printed. Then tell me what call 2 printed.";
 
-    let Some((_dir, cmd_tx, mut evt_rx, handle)) = spawn_python_chat().await else {
+    let Some((dir, cmd_tx, mut evt_rx, handle)) = spawn_python_chat().await else {
         return;
     };
     let picture = tempfile::tempdir().unwrap();
@@ -1062,6 +1062,28 @@ async fn a_handle_survives_a_round_that_adds_a_file_live() {
         reply.contains("PNG"),
         "the reply has to repeat what the second call printed: {reply}"
     );
+
+    // The file the first call stored carries the mark of a download (§13 U11) — checked on
+    // what a real turn wrote through the real store, not on a unit's fixture.
+    #[cfg(windows)]
+    {
+        use crate::shared::os_open::{FROM_ELSEWHERE, zone_of};
+        let marker = std::fs::read_dir(dir.path().join("files"))
+            .expect("the chat's files folder")
+            .filter_map(Result::ok)
+            .map(|chat| chat.path().join("marker.txt"))
+            .find(|path| path.is_file())
+            .expect("the first call's marker.txt was stored");
+        assert_eq!(
+            zone_of(&marker).as_deref(),
+            Some(FROM_ELSEWHERE),
+            "{} carries no mark",
+            marker.display()
+        );
+        println!("marked: {}", marker.display());
+    }
+    #[cfg(not(windows))]
+    let _ = dir;
 }
 
 /// i18n Tier 1 (docs/history/i18n.md, go/no-go): a profile with agent-scaffold language `En` —

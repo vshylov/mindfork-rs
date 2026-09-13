@@ -74,7 +74,7 @@ impl AttachResult {
             Ok(file) => file
                 .original
                 .take()
-                .map(|bytes| store_original(dir, listed, &file.name, &bytes, loc)),
+                .map(|bytes| store_original(dir, listed, file, &bytes, loc)),
             Err(_) => None,
         };
         Self {
@@ -90,25 +90,36 @@ impl AttachResult {
 /// so re-attaching an unchanged file moves nothing. Blocking: [`AttachResult::prepare`] runs
 /// it on the blocking pool, and the listing lands on the loop
 /// ([`Orchestrator::land_original`]).
+///
+/// The copy carries the mark the user's file carries (§13 U11): a document downloaded from
+/// the web opens in Protected View from where it was saved, and must not open as a local,
+/// trusted file from the chat's folder.
 fn store_original(
     dir: &std::path::Path,
     listed: &[ChatFile],
-    name: &str,
+    file: &ExtractedFile,
     bytes: &[u8],
     loc: &'static Locale,
 ) -> Result<crate::features::chat_files::Stored, String> {
     // A real file name survives sanitizing; the fallback is for what no path should
     // produce, and gives the file a name code can open rather than a refusal.
     let name =
-        crate::entities::chat_file::sanitize_name(name).unwrap_or_else(|| "file".to_string());
-    crate::features::chat_files::store_as(dir, listed, &name, bytes, FileOrigin::Attached).map_err(
-        |e| {
-            loc.tf(
-                "ui.err.file_store_failed",
-                &[("name", &name), ("err", &e.to_string())],
-            )
-        },
+        crate::entities::chat_file::sanitize_name(&file.name).unwrap_or_else(|| "file".to_string());
+    let zone = crate::shared::os_open::zone_of(std::path::Path::new(&file.source));
+    crate::features::chat_files::store_as(
+        dir,
+        listed,
+        &name,
+        bytes,
+        FileOrigin::Attached,
+        zone.as_deref(),
     )
+    .map_err(|e| {
+        loc.tf(
+            "ui.err.file_store_failed",
+            &[("name", &name), ("err", &e.to_string())],
+        )
+    })
 }
 
 /// What a launch handed to the desktop's handler came back as (internal channel, §13 U5).
@@ -788,10 +799,19 @@ impl Orchestrator {
         }
         let mut adopted = Vec::new();
         for chat in &mut self.chats {
-            let found =
-                crate::features::chat_files::unlisted(&root.join(chat.id.to_string()), &chat.files);
+            let dir = root.join(chat.id.to_string());
+            let found = crate::features::chat_files::unlisted(&dir, &chat.files);
             if found.is_empty() {
                 continue;
+            }
+            // Nothing says an adopted file is the user's — it is a call's output whose chat
+            // was not saved, or something put in the folder by hand — so it carries the mark
+            // a call's output does (§13 U11).
+            for file in &found {
+                crate::features::chat_files::mark(
+                    &dir.join(&file.name),
+                    Some(crate::shared::os_open::FROM_ELSEWHERE),
+                );
             }
             tracing::info!(
                 chat = %chat.id,

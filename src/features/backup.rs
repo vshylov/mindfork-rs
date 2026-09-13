@@ -790,6 +790,13 @@ fn extract_archive(
                 &[("path", &dest.display().to_string())],
             )
         })?;
+        // An archive carries no stored file's origin, and it came from wherever the user
+        // kept it: a restored `files/` entry carries the mark a call's output does (§13
+        // U11), a user's own copy included.
+        if rel.starts_with("files") {
+            drop(out);
+            crate::features::chat_files::mark(&dest, Some(crate::shared::os_open::FROM_ELSEWHERE));
+        }
     }
     Ok(())
 }
@@ -1108,6 +1115,47 @@ mod tests {
         );
         // The backups directory is preserved (it holds the pre-restore copy).
         assert!(dst.path().join("backups").exists());
+    }
+
+    /// A zip holds no alternate streams, so a stored file's mark does not survive the round
+    /// trip — the restore sets it again on everything under `files/`, and on nothing else
+    /// (§13 U11).
+    #[cfg(windows)]
+    #[test]
+    fn a_restored_stored_file_is_marked_as_come_from_elsewhere() {
+        use crate::shared::os_open::{FROM_ELSEWHERE, zone_of};
+        let src = tempfile::tempdir().unwrap();
+        seed_data(src.path());
+        let archive_path = src.path().join("backups").join("snap.zip");
+        create_backup(
+            &Paths::with_root(src.path()),
+            Some(archive_path.clone()),
+            9,
+            None,
+            None,
+            ru(),
+            |_| {},
+        )
+        .unwrap();
+
+        let dst = tempfile::tempdir().unwrap();
+        restore_backup(
+            &Paths::with_root(dst.path()),
+            &archive_path,
+            None,
+            None,
+            ru(),
+            |_| {},
+        )
+        .unwrap();
+        let chart = dst.path().join("files").join("c1").join("chart.png");
+        assert_eq!(fs::read(&chart).unwrap(), b"png");
+        assert_eq!(zone_of(&chart).as_deref(), Some(FROM_ELSEWHERE));
+        assert_eq!(
+            zone_of(&dst.path().join("chats").join("a.json")),
+            None,
+            "only files/ is marked"
+        );
     }
 
     #[test]

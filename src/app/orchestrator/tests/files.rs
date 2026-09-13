@@ -767,6 +767,71 @@ fn adopting_lists_a_file_the_chat_does_not_and_deletes_nothing() {
     assert!(dir.join("orphan.csv").exists());
 }
 
+/// Nothing says an adopted file is the user's, so it carries the mark a call's output does
+/// (§13 U11).
+#[cfg(windows)]
+#[test]
+fn an_adopted_file_is_marked_as_come_from_elsewhere() {
+    use crate::shared::os_open::{FROM_ELSEWHERE, zone_of};
+    let (_dir, mut orch, _rx) = bare_orch_rx();
+    let chat_id = open_chat(&mut orch);
+    let dir = orch.stored_files_dir(chat_id);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("orphan.csv"), b"=1+1\n").unwrap();
+    orch.adopt_unlisted_files();
+    assert_eq!(files_of(&orch, chat_id), ["orphan.csv"]);
+    assert_eq!(
+        zone_of(&dir.join("orphan.csv")).as_deref(),
+        Some(FROM_ELSEWHERE)
+    );
+}
+
+/// The chat's copy of an attached document carries the mark the user's file carries (§13
+/// U11): a workbook downloaded from the web keeps its Protected View when it is opened from
+/// the chat's folder, and one the user made gains no mark it did not have.
+#[cfg(windows)]
+#[test]
+fn an_attached_copy_carries_the_mark_of_the_file_it_copies() {
+    use crate::app::orchestrator::attachments::ExtractedFile;
+    use crate::shared::os_open::{set_zone, zone_of};
+    const WORKBOOK: &[u8] = b"PK\x03\x04not-really-a-workbook";
+    const DOWNLOADED: &[u8] =
+        b"[ZoneTransfer]\r\nZoneId=3\r\nHostUrl=https://example.com/sales.xlsx\r\n";
+    let (_dir, mut orch, _rx) = bare_orch_rx();
+    let chat_id = open_chat(&mut orch);
+    let user = tempfile::tempdir().unwrap();
+    let downloaded = user.path().join("sales.xlsx");
+    let made = user.path().join("budget.xlsx");
+    for path in [&downloaded, &made] {
+        std::fs::write(path, WORKBOOK).unwrap();
+    }
+    set_zone(&downloaded, DOWNLOADED).unwrap();
+
+    for path in [&downloaded, &made] {
+        let file = ExtractedFile {
+            name: path.file_name().unwrap().to_string_lossy().into_owned(),
+            source: path.display().to_string(),
+            text: String::new(),
+            bytes: WORKBOOK.len(),
+            encoding: None,
+            original: Some(WORKBOOK.to_vec()),
+        };
+        let res = prepared(&orch, chat_id, file);
+        orch.handle_attach_result(res);
+    }
+    let dir = orch.stored_files_dir(chat_id);
+    assert_eq!(
+        zone_of(&dir.join("sales.xlsx")).as_deref(),
+        Some(DOWNLOADED),
+        "the download's mark"
+    );
+    assert_eq!(
+        zone_of(&dir.join("budget.xlsx")),
+        None,
+        "a mark the user's file did not have"
+    );
+}
+
 /// The call site, not only the method: a chat saved without the listing of a file in its
 /// folder has it listed — and saved — once the app has started (§11 S6).
 #[tokio::test]

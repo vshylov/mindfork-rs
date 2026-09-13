@@ -424,7 +424,9 @@ src/
 │  ├─ chat_export.rs        format_conversation (copy the conversation)
 │  ├─ chat_files.rs         a chat's stored files on disk (data/files/<chat-id>/): store
 │  │                        under a free name (a call's output, or an original
-│  │                        /file attach kept), find the unlisted, delete our copy
+│  │                        /file attach kept), find the unlisted, delete our copy;
+│  │                        marks what a call wrote as a download (`mark`,
+│  │                        Zone.Identifier, track §13 U11)
 │  ├─ chat_inputs.rs        the chat's files as ONE numbered list — attachments, stored
 │  │                        files, the messages' images — with each one's name in
 │  │                        /w/in; the numbering /file list, /file remove, the pinned
@@ -691,7 +693,10 @@ src/
    │                       makes that safe — `is_document`/`decide`, an allowlist of
    │                       document types, everything else opening the folder it sits in
    │                       (the chat's folder holds what `python_exec` wrote). Blocking:
-   │                       callers run it on the blocking pool
+   │                       callers run it on the blocking pool. `FROM_ELSEWHERE`,
+   │                       `zone_of`, `set_zone`: Windows' mark of a download, which
+   │                       makes Office open a call's workbook or document in
+   │                       Protected View (a CSV only if Excel's text-file setting is on)
    ├─ keys.rs              layout-independent Ctrl shortcuts (`hotkey_char`: Windows
    │                       keyboard-layout resolution → JCUKEN table → pass-through)
    ├─ server.rs            ServerStatus (server status for the UI)
