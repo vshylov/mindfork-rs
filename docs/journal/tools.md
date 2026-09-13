@@ -5270,6 +5270,12 @@ replacement check builds a real `.xlsx` (and a `.docx`, with Word present) throu
 marks one copy, opens both through the shell as `/file open` does, and reads
 `ProtectedViewWindows` back from the running application.
 
+**The Office gate.** Run by the user on a machine with Office: `marked.xlsx` and
+`marked.docx` opened in Protected View, under Office's own "files from the Internet can
+contain viruses" bar with Enable Editing, and the unmarked copies of the same files opened
+for editing. The mark as the store writes it does what §13 U11 relies on, for the two types
+it covers.
+
 **Folded in, same file.** The unix launch left one zombie per `/file open` until the app
 exited, justified as the price of not holding a thread for the viewer's lifetime (§13 U4).
 It is now handed to a thread of its own that waits: `xdg-open` on a desktop exits within

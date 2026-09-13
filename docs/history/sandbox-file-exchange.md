@@ -885,8 +885,12 @@ machine has none, and WSL carries only docker's utility distribution.
     were put again — keep them and say so, open a call's CSV folder-first, or take both
     types off the list. **User's decision (2026-09-13): keep `csv`/`tsv` on the list**,
     the mark unchanged, and every text that said a CSV opens in Protected View corrected.
-    Protected View on a marked `.xlsx`/`.docx` is checked by hand on a machine with Office
-    — the development machine has none.
+  - *Gate — manual, on the user's machine with Office (2026-09-13).* A COM script built a
+    real workbook and document, marked one copy of each with the bytes the store writes,
+    and opened all four through the shell as `/file open` does: `marked.xlsx` and
+    `marked.docx` opened in Protected View, under Office's own "files from the Internet can
+    contain viruses" bar with Enable Editing, and `plain.xlsx` and `plain.docx` opened for
+    editing. The development machine has no Office.
 
 ## 14. Stage 5 — sub-decisions (2026-09-12)
 
