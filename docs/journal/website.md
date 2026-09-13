@@ -577,9 +577,19 @@ leaves the tools unrestricted, as the privacy policy does. The signing
 paragraph repeats the policy page's order — unsigned first. The landing is
 untouched: no card gained, none reworded.
 
-**Zola was not run locally** (0.22.1 is not installed here); the site
-workflow's PR gate runs `zola check` and `zola build` at that version on
-every PR touching `site/`, and the shortcodes are the one part a local build
-would have exercised that the earlier posts did not — the gate is the
-verification. No live run: site content and templates, no Rust touched.
-Gates (`cyrillic_scan`/`link_check`/`doc_index_check`) green.
+**Verified three ways, because the first one lied.** The user installed Zola
+mid-PR — 0.23.6 — and on it every shortcode failed with `Unknown tag` /
+`Unknown function` out of `__tera_one_off`, while a copy of `main` (no
+shortcodes) built cleanly; a one-line shortcode dropped into that copy failed
+the same way, so 0.23.6 on Windows discovers `templates/*.html` but not
+`templates/shortcodes/` (lessons §6 amended). The `site.yml` PR gate — 0.22.1
+on Linux — was green on the same files, and 0.22.1 built from its git tag
+(crates.io does not carry Zola) then confirmed it locally: `check` and
+`build` green, 14 pages, the overview with its three figures as six inlined
+SVGs, the stamp rendered as `0.9.9`, no Tera syntax leaking into either page,
+every internal link of both articles resolving under `public/`, the pages
+served and opened. Reading times as built: the overview 9 min (the review
+budgeted seven to eight; the diagram and the two lists are the difference,
+and both earn it), the trust article 8. No live run: site content and
+templates, no Rust touched. Gates (`cyrillic_scan`/`link_check`/
+`doc_index_check`) green.
