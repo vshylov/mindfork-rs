@@ -10,7 +10,7 @@ the reasoning behind the site, not its current shape. For the current shape
 read the research/design doc above; for the traps that recur across areas
 read [lessons.md](../lessons.md).
 
-## Entries (12)
+## Entries (13)
 
 - Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 - Post-M9: website — S2 infra: one CloudFormation stack, mindfork.io live (done)
@@ -24,6 +24,7 @@ read [lessons.md](../lessons.md).
 - Post-M9: website — the 0.9.7 release post (done)
 - Post-M9: website — the 0.9.8 release post and the twelve-card landing (done)
 - Post-M9: the site gets its legal pair — `/privacy/` and `/code-signing-policy/` (done)
+- Post-M9: website — the 0.9.9 release post and three refreshed cards (done)
 
 ### Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 
@@ -465,3 +466,51 @@ build was verified with the pinned Zola 0.22.1 (0.23.x still cannot discover
   policy's rewritten links point at GitHub, and the §2 table survives the
   transform as a real `<table>`. 2745 unit tests green, 129 `#[ignore]` — no
   Rust changed.
+
+### Post-M9: website — the 0.9.9 release post and three refreshed cards (done)
+
+**What.** `blog/2026-09-13-mindfork-0-9-9.md`, published with the release, plus
+three cards of the landing page and a paragraph of the at-a-glance article. The
+post is organised around the release's theme — **keeping the conversation
+moving**: five full sections carry the Python file exchange (files in by `#N`,
+`/w/out` back into the chat, the chart shown to the model, `/file open`'s
+allowlist, the local interpreter on the same contract, the read-only package
+image), the background work (background sub-agents and dialogues with task
+notifications, the `F7` tasks screen and `/tasks stop`, the three parallelism
+settings, the yielding background requests), the directed dialogue, the engine
+download (`mindfork llama backends|setup|installed|remove`, the empty binary
+field) and `/continue` with the external server's model name; a bulleted "off
+until you say so" section carries the security and privacy items (web tools
+off in a fresh install, the Tavily key no longer read from the environment, the
+verified Python download, the privacy policy and the Legal tab, the
+dictionaries' provenance), and an "also" list the rest. The closing note tells
+the reader about the `files/` directory and the chat schema 2 → 4 in the
+CHANGELOG's Data terms.
+
+**The landing grid stays at twelve; three cards catch up.** No 0.9.9 capability
+needed a card of its own — each is a growth of one the grid already has — so
+three cards were extended in place instead of the grid being reshaped: *Local
+first* gains the one-command engine download, *Real tools* says the Python
+runtime reads the chat's files and hands back what it saves, *It can delegate*
+gains "several at once, or in the background while it keeps talking to you".
+The at-a-glance article's loop section gains a third paragraph on the same two
+things — the file exchange and background runs — since the article is the
+site's architectural tour and both change what the loop is.
+
+**What the post refuses to overclaim.** Every number is the changelog's
+measured one: the RTX 4090 sessions figures, the 46 s → 24 s and 5.6 s →
+under 2 s waits, en_GB's 14 000 stems; the withheld-chart measurement is quoted
+as "nearly every time with the picture and never without" (4/5 and 5/5 against
+0/5), with the two models named. The parallelism paragraph says which two of
+the three settings default to 1 and that tool calls default to four on a cloud
+engine only. The Protected View item says Office and a workbook or document —
+the CSV exception is the changelog's, and the post does not extend the claim to
+it. The web-tools item says an existing installation keeps its settings in the
+same sentence that announces the new default.
+
+**Zola was not run locally**: the pinned 0.22.1 is not installed on this
+machine and installing it was not part of the task — the site workflow's PR
+gate runs `zola check` and `zola build` at that version on every PR touching
+`site/`, so the build is verified there before the merge. No live run: site
+content plus content edits, no Rust touched. Gates
+(`cyrillic_scan`/`link_check`/`doc_index_check`) green.

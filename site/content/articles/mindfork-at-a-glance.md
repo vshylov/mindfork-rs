@@ -40,6 +40,17 @@ every change reviewable as a diff and revertible per file. And it can
 its transcript lands in the chat list as a read-only conversation of its
 own — searchable, and streaming live while it runs.
 
+Neither tool has to work in a vacuum, and neither has to hold the
+conversation. The Python runtime exchanges files with the chat: a call
+names the attachments and stored files it needs, each is copied in before
+the code runs, and whatever the code saves — a chart, a workbook — comes
+back into the chat's files, the picture shown to the model so it can check
+its own plot. And a delegation, or a staged dialogue between two personas
+the assistant directs, can run in the background: the assistant keeps
+talking while the run is out, the result arrives later as a task
+notification, and a tasks screen (`F7`) lists everything in flight across
+every chat.
+
 ## Memory is layered, not a vector dump
 
 - a **self-model**: a summary the assistant maintains about itself and
