@@ -1276,8 +1276,14 @@ all (upstream getzola/zola#3229 — "Template not found" for every custom templa
 0.22.1's file-watcher never fires there, so `zola serve` keeps serving stale pages
 until restarted. The site pins 0.22.1 with the config named `config.toml` (both majors
 read that name); the dev loop is "edit → restart serve". A five-minute `zola init`
-repro answered what staring at correct templates could not.
-— *website — research + S1 scaffold (Zola, terminal-styled)*.
+repro answered what staring at correct templates could not. And 0.23.6 fixed only
+half of it: on Windows it discovers `templates/*.html` (the `main` site builds) but
+not `templates/shortcodes/` — every shortcode use fails with `Unknown tag` /
+`Unknown function` out of `__tera_one_off`, a one-line shortcode on a copy of `main`
+included, while the same files build under 0.22.1 in CI. A local render check of a
+shortcode needs 0.22.1, built from the git tag (crates.io does not carry Zola).
+— *website — research + S1 scaffold (Zola, terminal-styled)*; *website — the
+overview rebuilt, a screenshot shortcode and the trust-boundaries article*.
 
 **A file the app writes is local and trusted to its handler — unless it carries the mark
 of a download.** Office decides Protected View by the `Zone.Identifier` stream a browser

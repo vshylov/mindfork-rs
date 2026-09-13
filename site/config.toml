@@ -4,9 +4,9 @@
 # Zola is pinned to 0.22.1 for now: 0.23.0–0.23.2 don't discover templates/
 # on Windows (getzola/zola#3229; the fix is merged, unreleased). The file is
 # named `config.toml`, not `zola.toml`, for the same reason — 0.22 reads only
-# this name, and 0.23 reads it as a fallback. Templates use no shortcodes and
-# only v1/v2-compatible Tera, so the future bump to 0.23.x is a version
-# number, not a migration.
+# this name, and 0.23 reads it as a fallback. The templates and the two
+# shortcodes (templates/shortcodes/) use only v1/v2-compatible Tera, so the
+# future bump to 0.23.x is a version number, not a migration.
 
 base_url = "https://mindfork.io"
 title = "mindfork"
@@ -27,3 +27,6 @@ theme = "catppuccin-mocha"
 tagline = "TUI · RUST · LOCAL LLM"
 github = "https://github.com/vshylov/mindfork-rs"
 releases = "https://github.com/vshylov/mindfork-rs/releases"
+# The application version the prose describes (the overview says so);
+# bumped by the release PR, AGENTS.md §6.
+app_version = "0.9.9"
