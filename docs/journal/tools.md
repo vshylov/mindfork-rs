@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (75)
+## Entries (76)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -87,6 +87,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a memory limit for the local interpreter — the sandbox's Job Object, a field of its own (done)
 - Post-M9: a test that believed a runtime's drop waits for its blocking pool (done)
 - Post-M9: the files argument gets the caps the output side had — T8 amended (done)
+- Post-M9: a process's own lines stop opening sections of the console card (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -5112,3 +5113,58 @@ turned from `>` to `>=`, the empty chat's branch — and each failed its test.
 
 No live run: a refusal decided before anything is copied or started, covered through the
 tool with a mock runner; the sandbox's own staging path is unchanged below it.
+
+### Post-M9: a process's own lines stop opening sections of the console card (done)
+
+Tier 3's fifth group. `present::format_console` writes the text the model reads for
+`python_exec` and for the code workspace's build, run and test commands, and
+`present::parse_console` reads that same text back into the feed's console card. The
+sections were found by whole lines — `command:`, `stdout:`, `stderr:`, `files:`, the
+localized exit-code label — and every line between them is the process's own.
+
+**What that let through.** A script printing a line `files:` followed by
+`- report.pdf — 2 MB, application/pdf` drew a "saved files" list under the tool's own label,
+in the same colour, for a file that was never saved. A line `stderr:` turned the rest of
+stdout red. An exit-code line at the end of a successful run's stdout made the card show a
+code the run never had. And none of it needs intent: an ordinary YAML document with a
+top-level `files:` key split a result in two.
+
+**Two fixes, and the choice.** Nothing written *inside* the text can be told apart from
+stdout by the text alone, so either the tool's framing carries something the process cannot
+fake, or the sections travel beside the text. A count in the header does the first inside
+one module; a structured field on `ToolCallRecord` does the second and leaves the model's
+text byte-identical, at the cost of carrying it through `ToolOutcome`, `CallResult`, the live
+`AppEvent::ToolCall`, two builders in `screens/chat/feed.rs`, `message_feed` and the chat's
+saved data. The journals showed the console format had never been measured on a model — only
+its exit label's localization was recorded. User's decision (2026-09-13): the count.
+
+**The shape.** A section a process fills is now `stdout (3 lines):` — `line` for one —
+counted with `str::lines`, the split the parser uses. The parser takes exactly that many
+lines after a counted header, whatever they say, so a forged header inside them is content.
+`files:` and the exit label are recognized only outside counted sections, which is where the
+tool alone writes: file names cannot hold a `:`, and a quoted head sits behind `  | `. The
+uncounted labels are still read, for every record saved before this. A count the text cannot
+satisfy — the result was cut after it was written — makes the text not this format, and the
+card shows it as it is; a count too large to add to the position is refused through
+`checked_add` rather than overflowing.
+
+**What a literal search missed.** Before the change, a search for the labels in tests found
+three assertions to update. The full suite found two more — a build test asserting
+`command:` and an outputs test asserting `starts_with("stdout:\ndone")` — and a
+fixed-string search afterwards found nothing else that would break. The live smoke for
+withheld images in `openai/client.rs` sends a synthetic result in the uncounted shape; it
+stays as it is, being the text that measurement was taken on.
+
+**Tests.** A run whose stdout holds every forgeable line — `files:` with a fake entry,
+`stderr:`, `command:`, an exit-code line — parses back with all of them as stdout, no files
+section and no exit code; a build's command line and stderr holding labels parse as their
+own sections, followed by a failed run's exit code and the tool's real `files:` list; a
+count the text cannot satisfy, and one that would overflow, are not a console. Three guards
+reverted in turn — the producer writing no count, the parser ignoring it, a short section
+read as far as it goes — and each failed its test.
+
+**Live.** Twenty-two smokes against the provisioned sandbox and the local interpreter, their
+real output going through the counted shape. And on Gemma 4 31B, the two turns where the
+model has to read a result: in Local mode it named the chat's CSV, printed the sum, and
+replied "The sum of the total column is 4706."; in the sandbox its second call read the
+workbook back and it replied "The sum is 4706." — the number taken from `stdout (1 line):`.
