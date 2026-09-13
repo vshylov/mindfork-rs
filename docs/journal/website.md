@@ -10,7 +10,7 @@ the reasoning behind the site, not its current shape. For the current shape
 read the research/design doc above; for the traps that recur across areas
 read [lessons.md](../lessons.md).
 
-## Entries (15)
+## Entries (16)
 
 - Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 - Post-M9: website — S2 infra: one CloudFormation stack, mindfork.io live (done)
@@ -27,6 +27,7 @@ read [lessons.md](../lessons.md).
 - Post-M9: website — the 0.9.9 release post and three refreshed cards (done)
 - Post-M9: website — the overview rebuilt, a screenshot shortcode and the trust-boundaries article (done)
 - Post-M9: website — two more articles: the code workspace, and background runs on the context pool (done)
+- Post-M9: website — Zola 0.23: components, the config renamed, the pin verified (done)
 
 ### Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 
@@ -658,3 +659,63 @@ git integration is absent by choice.
 every internal link resolving, no Tera syntax leaking; reading times as
 built are in the PR. Gates (`cyrillic_scan`/`link_check`/`doc_index_check`)
 green. No live run: site content, no Rust touched.
+
+### Post-M9: website — Zola 0.23: components, the config renamed, the pin verified (done)
+
+**What.** The site moves from Zola 0.22.1 to **0.23.6** — the pin in
+`site.yml` (`ZOLA_VERSION`), the local installs, the research document's
+§4.1/§5.5 and lessons §6 — and the two shortcodes the overview had gained
+become Tera 2 components: `templates/components.html` holds `screenshot`
+(a body component; `load_data` and `~` work inside unchanged), the version
+stamp is `{{ config.extra.app_version }}` written directly in the article,
+since every page's markdown is itself a Tera template from 0.23 on, and
+`templates/shortcodes/` is gone. The config takes its canonical name,
+`zola.toml`; AGENTS.md §6's release step names the new file. Nothing in the
+templates changed: they use `load_data`, `get_url`, `get_section`, `safe`
+and the block syntax, and none of what Tera 2 removed.
+
+**Why now, and what it corrects.** The user asked whether the bump was
+possible and worthwhile; the answer was measured on a scratch copy before
+it was given, and the first thing the measurement did was overturn the
+previous day's lesson. 0.23.6 had failed every shortcode with `Unknown tag`
+out of `__tera_one_off` while a shortcode-free copy of `main` built, and
+that had been written into lessons §6 as a Windows blind spot for
+`templates/shortcodes/`. It was not Windows: 0.23.0 removed shortcodes for
+components and templated the content, so the files fail everywhere — the
+changelog said so in its first breaking-change line, and reading it would
+have cost a minute. Lessons §6 is rewritten around that: read the tool's
+changelog before blaming the platform, and the content is a template now —
+a literal `{{` or `{%` in a post (a quoted Jinja snippet is the case to
+expect) breaks the build unless wrapped in `{% raw %}`.
+
+**What was measured on the migrated copy, 0.23.6 against the 0.22.1 build
+of the same tree.** The same 16 pages; the overview's three figures as six
+inlined SVGs, the stamp rendered as `0.9.9`, no Tera syntax leaking, no
+component wrapped in `<p>` (upstream #3242 does not reach this markup);
+every other difference cosmetic — hrefs no longer entity-escaped
+(`https:&#x2F;&#x2F;` gone), the feed's `<name>` untangled, a per-language
+reading time (8 min where 0.22.1 said 9). And the one thing the bump was
+wanted for: `zola serve`'s watcher **works on Windows** in 0.23.6 — a
+content edit detected, the site rebuilt in 92 ms and the change served —
+where 0.22.1's watcher never fired (lessons §6), so the dev loop is plain
+`zola serve` again.
+
+**The CI install moved off `taiki-e/install-action`.** Its manifest carried
+0.23.5 as the newest on the day 0.23.6 was two days old, so a pin to the
+version the developers actually run would have failed to install. The
+workflow now downloads the release asset by tag with `gh release download`
+and verifies it with `gh attestation verify --owner getzola` before
+unpacking — SLSA provenance from getzola/zola's own release workflow at the
+tag, checked locally first on the Linux asset (`--format json`: predicate
+`slsa.dev/provenance/v1`, signer `release.yml@refs/tags/v0.23.6`). One
+`env` value carries the version for both jobs.
+
+**What stays exact.** The 0.23 line is moving fast — six patch releases in
+five weeks, a maintainer who breaks between minors until 1.0 — so the pin
+stays a full version, matched on the developer machines by a git-tag build
+(crates.io does not carry Zola). Upstream #3229 (UNC paths on Windows) is
+open and irrelevant to a local drive. Verified on this branch with the
+installed 0.23.6: `check` and `build` green, the figures, the stamp and the
+links as measured on the copy; the gate itself runs on the PR. Gates
+(`cyrillic_scan`/`link_check`/`doc_index_check`) green. No live run: site
+templates, content and CI, no Rust touched.

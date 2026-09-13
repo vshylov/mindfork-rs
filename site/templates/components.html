@@ -1,0 +1,22 @@
+{#- Tera 2 components (Zola 0.23+) — the replacement for the shortcodes 0.23
+    removed. Registered globally: a component defined here is usable in the
+    templates and in the content. `config`/`page` are NOT in scope inside a
+    component unless passed as implicit parameters (`@config`); none of the
+    components here needs them. -#}
+
+{#- A screenshot in the site's terminal chrome, in both themes — the same
+    markup the landing page's gallery uses (index.html). `name` is the
+    render's base name under static/screenshots/ (synced from assets/ by
+    tools/site_sync_assets.py, which CI runs before the build), `title` is
+    the caption-bar text, and the body is the figcaption:
+      {% <screenshot name="chat" title="chat"> %}caption{% </screenshot> %} -#}
+{% component screenshot(name, title) -%}
+{%- set dark = "static/screenshots/" ~ name ~ "-dark-en.svg" -%}
+{%- set light = "static/screenshots/" ~ name ~ "-light-en.svg" -%}
+<figure class="term">
+  <div class="term-bar"><span class="term-title">{{ title }}</span><span class="term-controls" aria-hidden="true">─ □ ✕</span></div>
+  <div class="only-dark">{{ load_data(path=dark, format="plain") | safe }}</div>
+  <div class="only-light">{{ load_data(path=light, format="plain") | safe }}</div>
+  <figcaption>{{ body | trim }}</figcaption>
+</figure>
+{%- endcomponent screenshot %}

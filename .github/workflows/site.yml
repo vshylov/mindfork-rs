@@ -3,14 +3,21 @@
 # distribution, the OIDC deploy role) comes from the `mindfork-website`
 # CloudFormation stack, infra/website.cfn.yaml.
 #
-# Zola is pinned to 0.22.1 to match local development: 0.23.0–0.23.2 do not
-# discover templates/ on Windows (getzola/zola#3229), and the site must build
-# with one version everywhere. Bump here and in docs when the fix ships.
+# Zola is pinned (ZOLA_VERSION below) and must match local development: the site
+# builds with one version everywhere, and 0.23 is a different language from 0.22
+# (Tera 2 components instead of shortcodes, content templated). The binary is
+# the upstream release asset, verified against its Sigstore/SLSA attestation
+# (`gh attestation verify --owner getzola`) rather than installed through a
+# third-party manifest that lags new tags by days. Bump here, in
+# docs/research/mindfork-io-website.md §5.5 and on the developer machines.
 #
 # Deploys carry no stored keys: the job's OIDC token assumes the
 # least-privilege mindfork-site-deploy role (s3 sync + one invalidation),
 # trusted for refs/heads/main of this repository only.
 name: Site
+
+env:
+  ZOLA_VERSION: "0.23.6"
 
 on:
   pull_request:
@@ -46,10 +53,17 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
-      - name: Install Zola
-        uses: taiki-e/install-action@v2
-        with:
-          tool: zola@0.22.1
+      - name: Install Zola ${{ env.ZOLA_VERSION }} (verified release asset)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          asset="zola-v${ZOLA_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          gh release download "v${ZOLA_VERSION}" --repo getzola/zola --pattern "$asset" --dir /tmp/zola
+          gh attestation verify "/tmp/zola/$asset" --owner getzola
+          tar -xzf "/tmp/zola/$asset" -C /tmp/zola
+          sudo install -m 755 /tmp/zola/zola /usr/local/bin/zola
+          zola --version
       - name: Mirror brand assets into site/static/
         run: python tools/site_sync_assets.py
       - name: Check internal links
@@ -71,10 +85,17 @@ jobs:
       DISTRIBUTION: E8EC9ICZSRYKB
     steps:
       - uses: actions/checkout@v5
-      - name: Install Zola
-        uses: taiki-e/install-action@v2
-        with:
-          tool: zola@0.22.1
+      - name: Install Zola ${{ env.ZOLA_VERSION }} (verified release asset)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          asset="zola-v${ZOLA_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          gh release download "v${ZOLA_VERSION}" --repo getzola/zola --pattern "$asset" --dir /tmp/zola
+          gh attestation verify "/tmp/zola/$asset" --owner getzola
+          tar -xzf "/tmp/zola/$asset" -C /tmp/zola
+          sudo install -m 755 /tmp/zola/zola /usr/local/bin/zola
+          zola --version
       - name: Mirror brand assets into site/static/
         run: python tools/site_sync_assets.py
       - name: Build

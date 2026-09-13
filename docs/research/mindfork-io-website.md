@@ -196,6 +196,28 @@ unreleased). So S1 ships **pinned to 0.22.1**, with the config named
 templates written in v1/v2-compatible Tera with no shortcodes — the future
 bump to 0.23.x is a version number, not a migration.
 
+**Second amendment (2026-09-14, done):** the bump happened at 0.23.6, and it was
+a small migration after all, because the overview had gained two shortcodes in
+the meantime: they became Tera 2 components in `templates/components.html`
+(a `screenshot` with a body; the version stamp is `{{ config.extra.app_version }}`
+directly in the content, since every page is a Tera template now), the config
+took its canonical name `zola.toml`, and the templates needed nothing — they use
+only `load_data`, `get_url`, `get_section`, `safe` and the block syntax, none of
+what Tera 2 removed (`concat`, `macro`, `map`, `filter`, `slice`, the `date`
+formats). Measured on the migrated copy against the 0.22.1 build: the same 16
+pages, the figures and the stamp intact, no component wrapped in `<p>` (upstream
+#3242 does not reach this markup), and only cosmetic differences — hrefs no
+longer entity-escaped, the feed's `<name>` untangled, a per-language reading
+time. What the bump buys: `zola serve`'s watcher works on Windows (a change
+detected and rebuilt in 92 ms; 0.22.1's never fired there), the maintained line
+(0.22.1 is from January), and components usable in templates too. What it costs:
+a literal `{{`/`{%` in content now breaks the build unless wrapped in
+`{% raw %}`, and the 0.23 line is moving fast (six patch releases in five weeks),
+so the pin stays exact. The CI install moved off `taiki-e/install-action`, whose
+manifest lagged the tag (0.23.5 on the day 0.23.6 was two days old), to the
+release asset itself, verified with `gh attestation verify --owner getzola`
+(SLSA provenance from getzola/zola's release workflow at the tag).
+
 ### 4.2 Rejected alternatives
 
 - **Cobalt** (Rust) — alive but patch-level maintenance only (v0.20.4,
@@ -311,9 +333,10 @@ roadmap item as designed, from the consumer side.
 
 ### 5.5 CI (`site.yml`)
 
-- **PR** touching `site/**`: install a pinned Zola
-  (`taiki-e/install-action` — the official docs' recommended Actions route;
-  pinned to 0.22.1 until the #3229 fix ships, then 0.23.x) → `zola check`
+- **PR** touching `site/**`: install the pinned Zola (`ZOLA_VERSION` in the
+  workflow, 0.23.6 — the release asset downloaded by tag and verified with
+  `gh attestation verify --owner getzola`; `taiki-e/install-action` was the
+  route until its manifest lagged a tag, second amendment in §4.1) → `zola check`
   (broken links) → `zola build` — a build gate, no deploy.
 - **Push to `main`** touching `site/**` or `assets/screenshots/**`:
   build → OIDC role → `s3 sync --delete` → invalidate `/*`.
@@ -429,8 +452,8 @@ is the deployed site itself.
   [Amplify pricing](https://aws.amazon.com/amplify/pricing/) ·
   [GH OIDC](https://docs.github.com/en/actions/deployment/security-hardening-your-deployments/configuring-openid-connect-in-amazon-web-services) ·
   [configure-aws-credentials](https://github.com/aws-actions/configure-aws-credentials)
-- Zola: [releases](https://github.com/getzola/zola/releases) (v0.23.2,
-  2026-08-07) ·
+- Zola: [releases](https://github.com/getzola/zola/releases) (v0.23.6,
+  2026-09-12; the site pins it) ·
   [CHANGELOG](https://github.com/getzola/zola/blob/master/CHANGELOG.md)
   (the 0.23 breaking notes) ·
   [multilingual](https://www.getzola.org/documentation/content/multilingual/) ·
