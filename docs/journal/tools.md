@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (76)
+## Entries (77)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -88,6 +88,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a test that believed a runtime's drop waits for its blocking pool (done)
 - Post-M9: the files argument gets the caps the output side had — T8 amended (done)
 - Post-M9: a process's own lines stop opening sections of the console card (done)
+- Post-M9: an attached original is stored off the command loop, and only listed on it (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -5168,3 +5169,51 @@ real output going through the counted shape. And on Gemma 4 31B, the two turns w
 model has to read a result: in Local mode it named the chat's CSV, printed the sum, and
 replied "The sum of the total column is 4706."; in the sandbox its second call read the
 workbook back and it replied "The sum is 4706." — the number taken from `stdout (1 line):`.
+
+### Post-M9: an attached original is stored off the command loop, and only listed on it (done)
+
+Tier 3's sixth group, and the last with no decision in it. `/file attach` read and extracted
+a file on the blocking pool — a large PDF must not block the orchestrator — and then, back on
+the command loop in `handle_attach_result`, stored the file's own bytes (fork F8a): up to
+`MAX_ATTACH_BYTES`, 32 MB, hashed, written with `create_new` and synced. The half that was
+moved off the loop was the cheaper one.
+
+**Measured first.** On this desktop's NVMe, 32 MB: SHA-256 in 15 ms, and the write with its
+`fsync` in 83–89 ms across five runs — a loop stalled for about a tenth of a second per
+attach at the ceiling. That is small here and not bounded anywhere in the code: the sync takes
+what the disk takes, and a slow, removable or network disk is where a user notices.
+
+**Where the store could go.** The store needs the chat's list — to answer "these bytes are
+already kept" and to keep a name a listed file holds — and only the loop owns `Chat`. The
+list does not have to be current, though: `chat_files::store_as` never overwrites
+(`create_new`), moves to the next version on a name taken on disk, and `python_exec` already
+stores a call's outputs against the turn's list and lands them later. So the store now runs
+in the same background task as the read, `AttachResult::prepare`, against the folder and
+list the command found (`attach_snapshot`), and the loop only lands the result
+(`land_original`). A two-phase version — land the read, spawn the store, land again — would
+have narrowed the snapshot's age and added a second channel for no case the first does not
+handle.
+
+**What the landing has to check.** One thing. A store that answered `Unchanged` or
+`Restored` answered from a listing; if that listing is gone by the time the answer lands —
+the pair was removed with `/file remove` while the file was being read — linking the new
+attachment to it would name a file the chat no longer lists. That is refused now
+(`ui.err.file_removed_while_attaching`), with nothing attached. The rest was checked by
+walking it: the same file attached twice at once gives the second store a versioned name,
+the second landing replaces the attachment by source and drops the first copy, and the chat
+ends with one attachment and one file; a chat deleted mid-attach gets the copy in its folder,
+which the old order did too.
+
+**What stays on the loop.** `drop_original`'s `remove` of a replaced copy, and `/file
+remove`'s: a delete, not a 32 MB write, and not what the finding was about.
+
+**Tests.** The three tests that built an `AttachResult` by hand now go through `prepared`,
+which snapshots and prepares exactly as the command does, so they exercise the path that runs.
+Two new ones pin the split and the check: after the background half the bytes are on disk
+and the chat lists nothing, after the landing it lists them; and a copy removed between the
+store's answer and its landing is refused, not linked. Both guards reverted — the background
+half storing nothing, a vanished listing linked anyway — failed their tests.
+
+**Live.** Gemma 4 31B, through the real `/file attach`: a PNG attached as a binary was kept
+off the loop, named in `files`, opened from `/w/in` and measured at 512 by 512; and a document
+whose code the model denies knowing without it was attached and quoted back, `ZARYA-7719`.

@@ -803,6 +803,7 @@
   "ui.file.stored_item": "\n• #{i} {name} — {size}, {mime}",
   "ui.file.attached_stored": "файл {name} ({size}, {mime}) сохранён в чате, в {dir} — это не текст, поэтому ассистент прочитает его только кодом (python_exec; инструмент Python должен быть включён).",
   "ui.err.file_store_failed": "не удалось сохранить {name} в чате: {err}",
+  "ui.err.file_removed_while_attaching": "{name} убрали из чата, пока он прикреплялся, поэтому ничего не прикреплено — прикрепите его заново",
   "ui.err.file_is_image": "{name} — картинка в сообщении: она остаётся при сообщении, и `/file remove` её не убирает. `/image remove` — про картинки, которые ещё не отправлены.",
   "ui.file.list_item_original": " — оригинал сохранён в чате",
   "ui.file.images_header": "Картинки в этом чате: {n}",

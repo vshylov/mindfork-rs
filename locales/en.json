@@ -802,6 +802,7 @@
   "ui.file.stored_item": "\n• #{i} {name} — {size}, {mime}",
   "ui.file.attached_stored": "kept {name} ({size}, {mime}) with the chat, in {dir} — it is not text, so the assistant reads it only by running code over it (python_exec; the Python tool must be on).",
   "ui.err.file_store_failed": "could not keep {name} with the chat: {err}",
+  "ui.err.file_removed_while_attaching": "{name} was removed from this chat while it was being attached, so nothing was attached — attach it again",
   "ui.err.file_is_image": "{name} is an image in a message — it stays with the message that carries it, and `/file remove` does not take it out. `/image remove` is for images not yet sent.",
   "ui.file.list_item_original": " — the original is kept with the chat",
   "ui.file.images_header": "Images in this chat: {n}",
