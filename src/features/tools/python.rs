@@ -750,8 +750,8 @@ mod tests {
     #[test]
     fn format_output_parts_shapes_console() {
         let s = format_output_parts("hi", "oops", false, Some(2), ru());
-        assert!(s.contains("stdout:\nhi"));
-        assert!(s.contains("stderr:\noops"));
+        assert!(s.contains("stdout (1 line):\nhi"), "{s}");
+        assert!(s.contains("stderr (1 line):\noops"), "{s}");
         assert!(s.contains("код возврата: 2"));
         assert_eq!(
             format_output_parts("", "", true, Some(0), ru()),
@@ -791,7 +791,11 @@ mod tests {
             .invoke(&ctx, serde_json::json!({"code": "print(6*7)"}))
             .await
             .unwrap();
-        assert!(out.result.contains("stdout:\n42"));
+        assert!(
+            out.result.contains("stdout (1 line):\n42"),
+            "{}",
+            out.result
+        );
         // The runner is called exactly once, with the net flag.
         let calls = sb.calls.lock().unwrap();
         assert_eq!(calls.len(), 1);
@@ -1425,7 +1429,7 @@ mod tests {
         }));
         let out = run_mock(wasmer(sb, false), &ctx).await;
         let r = &out.result;
-        assert!(r.starts_with("stdout:\ndone"), "{r}");
+        assert!(r.starts_with("stdout (1 line):\ndone"), "{r}");
         assert!(r.contains("\n\nfiles:\n"), "{r}");
         assert!(r.contains(&folder.path().display().to_string()), "{r}");
         assert!(r.contains("image/png — shown to you below"), "{r}");

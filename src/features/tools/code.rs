@@ -2123,7 +2123,7 @@ mod tests {
             .await
             .unwrap()
             .result;
-        assert!(out.contains("command:"), "{out}");
+        assert!(out.contains("command (2 lines):\n"), "{out}");
         assert!(out.contains("out"), "stdout is missing: {out}");
         assert!(out.contains("err"), "stderr is missing: {out}");
         assert!(out.contains('3'), "the exit code is missing: {out}");
