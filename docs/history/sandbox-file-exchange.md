@@ -875,6 +875,18 @@ machine has none, and WSL carries only docker's utility distribution.
     copies alternate streams — and that is harmless: the interpreter reads the data stream.
   - *The note is unchanged.* Office's own bar says what Protected View is; `/file open`
     says what it opened, as before.
+  - *What the mark does not cover — `csv` and `tsv`* (*found on the user's check,
+    2026-09-13*). Excel does not put a marked `.csv` in Protected View: text-based files
+    have a setting of their own, "Always open untrusted Text-Based files (.csv, .dif and
+    .sylk) in Protected View", off by default, and `.tsv` is not a type it names. For these
+    two the defence is Excel's, not ours: "Enable Dynamic Data Exchange Server Launch" is
+    off by default in Microsoft 365, so `=cmd|…` in a CSV starts nothing unless the user
+    turned it on; what older perpetual Office does by default was not checked. The options
+    were put again — keep them and say so, open a call's CSV folder-first, or take both
+    types off the list. **User's decision (2026-09-13): keep `csv`/`tsv` on the list**,
+    the mark unchanged, and every text that said a CSV opens in Protected View corrected.
+    Protected View on a marked `.xlsx`/`.docx` is checked by hand on a machine with Office
+    — the development machine has none.
 
 ## 14. Stage 5 — sub-decisions (2026-09-12)
 

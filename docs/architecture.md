@@ -695,7 +695,8 @@ src/
    │                       (the chat's folder holds what `python_exec` wrote). Blocking:
    │                       callers run it on the blocking pool. `FROM_ELSEWHERE`,
    │                       `zone_of`, `set_zone`: Windows' mark of a download, which
-   │                       makes Office open a call's file in Protected View
+   │                       makes Office open a call's workbook or document in
+   │                       Protected View (a CSV only if Excel's text-file setting is on)
    ├─ keys.rs              layout-independent Ctrl shortcuts (`hotkey_char`: Windows
    │                       keyboard-layout resolution → JCUKEN table → pass-through)
    ├─ server.rs            ServerStatus (server status for the UI)

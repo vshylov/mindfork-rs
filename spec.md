@@ -1206,7 +1206,8 @@ across its readers.
   `ShellExecuteW`, `xdg-open`, `open` — with one argument and no shell line. On Windows a
   file a call wrote carries the mark of a download (the `Zone.Identifier` stream, zone 3),
   so Office opens a workbook or a document the model wrote in Protected View, whether it
-  was launched from here or double-clicked in the folder; an attached document's copy
+  was launched from here or double-clicked in the folder — not a `.csv`, which Excel puts
+  there only when its own setting for untrusted text files is on; an attached document's copy
   carries the mark of the file it copies, and a restored backup marks every stored file
   (§13 U11 of the track). Whose
   file it is decides the reason the note gives, never whether it opens: a type outside

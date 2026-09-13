@@ -89,7 +89,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the files argument gets the caps the output side had — T8 amended (done)
 - Post-M9: a process's own lines stop opening sections of the console card (done)
 - Post-M9: an attached original is stored off the command loop, and only listed on it (done)
-- Post-M9: a file a call wrote carries the mark of a download, and Office opens it in Protected View (done)
+- Post-M9: a file a call wrote carries the mark of a download — Protected View for workbooks and documents, not a CSV (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -5219,7 +5219,7 @@ half storing nothing, a vanished listing linked anyway — failed their tests.
 off the loop, named in `files`, opened from `/w/in` and measured at 512 by 512; and a document
 whose code the model denies knowing without it was attached and quoted back, `ZARYA-7719`.
 
-### Post-M9: a file a call wrote carries the mark of a download, and Office opens it in Protected View (done)
+### Post-M9: a file a call wrote carries the mark of a download — Protected View for workbooks and documents, not a CSV (done)
 
 Tier 3's last group, and the one that was a decision rather than a fix. The launch
 allowlist of `/file open` (§13 U3) admitted `csv`, `tsv` and `xlsx`, whose handler on
@@ -5256,6 +5256,19 @@ through the consumer every Windows machine has: `powershell -ExecutionPolicy Rem
 signed"), ran the same script without it, and ran the marked one again after
 `Unblock-File` removed the stream. Office's Protected View on a marked file is the user's
 check, on a machine that has Office.
+
+**What the user's check found first.** The first check handed over was a pair of CSVs, and
+the user pointed out that it could not work: Excel does not put a `.csv` in Protected View
+for a mark. Text-based files have a setting of their own, "Always open untrusted Text-Based
+files (.csv, .dif and .sylk) in Protected View", off by default, and `.tsv` is not among
+them — so the mark covers workbooks and documents, not the two text types the finding
+started from. For those the defence is Excel's: "Enable Dynamic Data Exchange Server
+Launch" is off by default in Microsoft 365. Put to the user again, **User's decision
+(2026-09-13): keep `csv`/`tsv` on the list and say so.** The CHANGELOG, spec §9.7, §13 U11
+and the code's own comment had said a CSV opens in Protected View, and were corrected. The
+replacement check builds a real `.xlsx` (and a `.docx`, with Word present) through COM,
+marks one copy, opens both through the shell as `/file open` does, and reads
+`ProtectedViewWindows` back from the running application.
 
 **Folded in, same file.** The unix launch left one zombie per `/file open` until the app
 exited, justified as the price of not holding a thread for the viewer's lifetime (§13 U4).

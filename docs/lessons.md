@@ -1285,10 +1285,13 @@ or a mail client writes beside a file, not by the folder it sits in or by who wr
 workbook this app stored from a model's code opened in full edit mode, formulas and DDE
 included, and so did anything a double-click reached in the chat's folder. Taking the
 types off the launch allowlist would not have closed that, because the folder it opens
-instead runs the same handler. The mark is ours to write (`ZoneId=3`); a zip does not
+instead runs the same handler. Nor is the mark the whole answer: Excel ignores it for a
+`.csv` unless its own setting for untrusted text files is on — off by default — so find
+out which types a handler honours it for before writing that a type is covered. The mark is ours to write (`ZoneId=3`); a zip does not
 carry it, `CopyFileExW` does, and "Unblock" deletes it — so set it where the bytes are
 written and where a restore unpacks them, never in a startup pass that would undo the
-user's own "Unblock". It can be checked without Office through the consumer every Windows
+user's own "Unblock". That Windows reads the bytes as the Internet zone can be checked
+without Office, through the consumer every Windows
 machine has: `-ExecutionPolicy RemoteSigned` refuses an unsigned script carrying those
 exact bytes and runs the same script without them.
 — *a file a call wrote carries the mark of a download*.

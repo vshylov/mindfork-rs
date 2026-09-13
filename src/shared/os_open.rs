@@ -117,12 +117,14 @@ pub fn open(path: &Path) -> io::Result<()> {
 /// What Windows writes beside a file that came from elsewhere — a download, a mail
 /// attachment — as its `Zone.Identifier` stream: zone 3, the Internet (§13 U11).
 ///
-/// A file a call wrote carries it, and it is what makes the allowlist's office types safe
-/// to launch: Office opens a marked file in Protected View, where a model-written cell such
-/// as `=cmd|' /C calc'!A0` reaches no DDE server, a workbook's external links are not
+/// A file a call wrote carries it. Office opens a marked workbook or document in Protected
+/// View, where a model-written formula reaches no DDE server, external links are not
 /// followed and a document's remote template is not fetched — whether the file was opened
-/// by `/file open` or double-clicked in the folder. Without it the chat's folder is a
-/// local, trusted place to Office, and nothing about the file says who wrote it. No
+/// by `/file open` or double-clicked in the folder; without it the chat's folder is a
+/// local, trusted place to Office. **Not a CSV**: Excel puts a marked `.csv` in Protected
+/// View only when "Always open untrusted Text-Based files in Protected View" is on, which
+/// it is not by default, and `.tsv` is not a type that setting names — for those the
+/// defence is Excel's own, DDE server launch being off by default in Microsoft 365. No
 /// `HostUrl`: there is no address to name, and an invented one would be a lie.
 pub const FROM_ELSEWHERE: &[u8] = b"[ZoneTransfer]\r\nZoneId=3\r\n";
 
