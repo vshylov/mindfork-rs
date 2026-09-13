@@ -1,6 +1,6 @@
 [package]
 name = "mindfork-rs"
-version = "0.9.8"
+version = "0.9.9"
 edition = "2024"
 license = "MIT"
 homepage = "https://mindfork.io"

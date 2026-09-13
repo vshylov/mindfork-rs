@@ -14,101 +14,10 @@ split by subsystem.
 
 ## [Unreleased]
 
-### Fixed
-- **Attaching a large document no longer holds up the app while its copy is written** — `/file attach` keeps the original of a PDF, a workbook or another binary with the chat, and hashing, writing and syncing that copy (up to 32 MB) ran on the loop that handles every command: about a tenth of a second on a fast disk, and as long as a slow or network disk takes. It now happens with the read, in the background.
-- **A script's output can no longer pose as the tool's own sections in a result card** — a line such as `files:` or `stderr:` printed by a Python script or a build command opened a section of the card, so the output could show a list of "saved files" that were never saved, or turn the rest of itself red as errors; an ordinary YAML `files:` key did it by accident. Results now say how many lines each section holds, and the card takes exactly those. Results saved before this are shown as before.
-- **A Python call can no longer copy a chat's whole file store into one run** — a call may name at most twenty of the chat's files, 100 MB in all; past that it is refused before anything is copied, with the numbers and a way to split the work — and the confirmation popup says so before you approve such a call. And in a chat with no files, naming one is refused with a plain "this chat has no files" instead of a list that ended on its own heading.
-- **`sandbox setup` no longer hangs on a stalled step, and a saved chart is not silently lost** — each `wasmer` step the setup runs now has a time limit (ten minutes to unpack or build, thirty for the Python package download), past which the command stops and says which step it was. When collecting the files a Python call saved went wrong, the call reported that it had saved nothing; it now names those files as unreadable and logs the failure.
-- **`/file open` says whose file it is, and its note stays in its chat** — a `.py` you attached yourself opened its folder with a note blaming “a file the assistant wrote”; it now says only that the type does not open from here. The note about a launch landed in whichever chat was open when the desktop answered; a success now stays with the chat it was asked in, and a failure is still shown. A stored file's name read back from the chat file is also checked before it is opened, as every other path into the chat's folder already was.
-- **The "show charts" switch is shown in local Python mode too** — `tools.python_images` decides whether an image the code saved goes back to the model, and the local interpreter collects its output folder exactly as the sandbox does; the settings row, written when the flag meant nothing there, appeared only in sandbox mode. Off and switched to local, the charts were withheld with nowhere to see why.
-- **One name means one file, outside ASCII too** — a handle typed as a name folded case over ASCII only, so a Cyrillic file name typed in lower case did not reach the file the listing had just shown; the listing's own “two items share this name” check folded the same narrow way. Both now fold over Unicode, as the chat's folder always did. Beside them: a very long name whose start is blank no longer survives shortening as an empty name, and an image a tool returns is numbered against the chat rather than the call — two rounds each drawing a chart produced two `tool-image-1.png`, which the model could then not name.
-
-- **A stalled engine can no longer freeze a reply that produced a picture.** Before
-  sending an image to the model the app asks the server whether it accepts images — a
-  question with no time limit, asked again for every picture in the reply, and one that
-  `Esc` could not interrupt. It is now asked once per reply, gives up after five seconds,
-  and ends with the rest of the turn when you cancel.
-
-- **Running Python on your own machine no longer reports a finished script as timed out.**
-  If the code started a background process, the call waited for that process instead of
-  the script — then gave up after the time limit and threw away everything the script had
-  printed. It now waits for the script itself.
-
-- **Temporary copies of a chat's files are cleaned up even after a crash.** Each call
-  copies the files it needs into a temporary folder; if the app was killed, or something
-  the code started was still holding that folder, it stayed on disk indefinitely. Anything
-  left over for more than a day is now removed.
-
-- **Naming one file for the code no longer silently names none.** When the assistant asked
-  for a single file by name — without wrapping it in a list — nothing was copied in and
-  nothing was said: the code then failed to find the file and the assistant tried the same
-  thing again. A single name is now accepted, and an argument that makes no sense as file
-  names is refused with an explanation instead of being ignored.
-
-- **A run that produced thousands of files no longer floods the conversation.** Everything
-  a call could not keep was listed one line per file, with no limit, in a result that then
-  rode along in every later request. The first twenty are named and the rest counted.
-
-- **A spreadsheet is no longer mistaken for a picture.** A file whose first characters
-  happened to be `BM` — a CSV whose first column is `BMI`, say — was listed as an image,
-  kept from the assistant as text, and then failed to display anyway, with two notes
-  contradicting each other. Two letters are no longer enough to call something an image.
-
-- **A file name can no longer rewrite itself on screen.** Invisible marks that reverse the
-  text after them let a name the assistant chose be shown as something else entirely — a
-  program displayed as a document. Those marks are now stripped from stored file names, as
-  other forbidden characters already were.
-
-- **The confirmation popup no longer hides the code it is asking you to approve.** When
-  the line listing the files going into a call was long enough to wrap — two named files
-  is enough — the popup drew one row short and the row it lost was the code itself. It is
-  now sized by what it actually draws.
-
-- **"Attach it again" now actually brings a lost file back.** When a chat's copy of a file
-  went missing from its folder — a pruned data directory, a half-finished sync — the list
-  marked it missing and the assistant refused to use it, telling you to attach the file
-  again. Doing that did nothing: the name and the contents matched what was already listed,
-  so nothing was written and the next attempt refused all the same. Offering the same file
-  again now puts the copy back, and the assistant says so when its own code re-creates one.
-
-- **A failed `sandbox setup` no longer costs you the sandbox you had.** The new Python
-  image was put in place first and only then started, so a build that would not run left
-  you with a broken sandbox *and* without the working one it replaced — while the app went
-  on reporting Python as ready and every attempt to run code failed. The freshly built
-  image is now started before it replaces anything: if it does not run, the command says so
-  and your existing sandbox is untouched. A build that times out now says that, instead of
-  failing with an empty message.
-
-- **A file's number stays that file's for the whole reply.** The assistant is told your
-  files as a numbered list before it starts working — `#1`, `#2`, `#3`. If something was
-  added while it worked (a page it fetched, a chart it saved), the numbering underneath
-  shifted, and a `#2` it had been given could quietly become a different file: the code ran
-  against the wrong one, or against a name that no longer existed. Numbers now belong to
-  the file they were given for until the reply ends, and anything new gets a number of its
-  own after them.
-
-- **Every "you weren't shown this image" note now says it in words that work.** The same
-  measurement was run against the rest of them — the notes for a model that takes no
-  images, for a picture too large to show, for charts held back by the Python settings or
-  by the four-per-call cap, and for an SVG. Where the polite wording left the assistant
-  describing a picture it had never seen, it now tells it plainly not to; the SVG note
-  still points at saving a PNG instead, because there that is the useful thing to do.
-
-- **A picture a plugin held back is now said out loud — in words that work.** With "Let
-  servers send images" off, an image a server's tool returned was dropped in silence: the
-  assistant got a result that looked complete and went on to describe a screenshot it had
-  never seen. The result now says how many images were held back and tells the assistant
-  to say it cannot see them. Measured on a local model, the polite version of that
-  sentence changed nothing at all — the assistant invented a description just as often as
-  with no note — so the wording is the blunt one.
-
-- **A backup now carries the code workspaces too.** The change journal of a chat's attached
-  project — the original of every file the assistant edited, which is what "revert" puts
-  back — was left out of `mindfork backup`, so a restored chat could still show what had
-  changed but no longer undo it. `workspace/` is packed and restored with the rest of the
-  data now.
+## [0.9.9] — 2026-09-13
 
 ### Added
+
 - **A memory limit for the local Python interpreter** — in Settings, the Python group in local mode now has a per-process memory limit (Windows only). A script that tries to take more gets a `MemoryError` instead of the machine's memory, and so does any process it starts. Off by default, and separate from the sandbox's limit, since the sandbox needs about a gigabyte just to start.
 
 - **The local-interpreter mode exchanges files too.** Running Python on your own machine
@@ -365,7 +274,28 @@ split by subsystem.
   starts from the newest or the oldest one. Newest first is the default — what
   the assistant noticed last is usually what you opened the screen for.
 
+- **`/continue` — resume an interrupted reply from where it stopped.** A reply
+  cut by `Esc`, by a connection failure, or by the length/context limit can now
+  be continued in place: the model picks up exactly at the cut, the text grows
+  inside the same message, and a turn interrupted between tool calls resumes
+  its tool loop. Works on the local/managed and external (llama.cpp/vLLM)
+  engines, on Gemini, and on Claude models up to the 4.5 generation; the
+  providers that cannot resume a partial reply (OpenAI, Grok, current Claude
+  models) are told apart, and the command says so instead of guessing. The
+  notes shown for a cancelled or cut-short
+  reply now name `/continue` where it applies — and a reply that hit the
+  length limit finally gets a note at all, instead of stopping mid-sentence in
+  silence.
 
+- **An external server's model is named on screen, even when you did not name
+  it.** Connect to a `llama-server` (or vLLM, LM Studio, a gateway) by URL and
+  leave the "Model (opt.)" field blank, and the app now asks the server what it
+  is running: the name appears next to the chat title and is recorded on every
+  reply, so `Ctrl+P` → Interface → "Model name in the feed" finally has something to
+  show in this mode. A file path is shortened to the model's name
+  (`D:\GGUF\gemma-4-31B_q4_0-it.gguf` → `gemma-4-31B_q4_0-it`); a name you typed
+  yourself always wins; a server that cannot say leaves the caption empty, as
+  before.
 
 ### Changed
 
@@ -446,47 +376,142 @@ split by subsystem.
   *organise* and *organize* are accepted — and it now states its licence
   (LGPL v3 or later) in the file itself, with the full text installed beside it.
 
-### Security
+- **The key hints at the bottom of every screen now sit in the same place, and
+  name only the keys that work.** They line up flush with the right edge on the
+  chat list, the settings, self-model, changes and search screens, the way the
+  chat screen's already did — the four that used to start at the left and fray
+  at the right no longer do. And each screen's hints follow what you have
+  selected: on the self-model screen (`F3`) an observation no longer offers
+  "Enter edit" (observations are deleted, not edited) and `Space` shows only on
+  a goal; on the changes screen (`F4`) `↑↓` says *file* or *scroll the diff*
+  depending on which pane you are in, and `R` is offered only on a file that can
+  actually be put back; in the settings `←→`, `Space` and `Del` appear on the
+  fields they apply to. `F1` — which opens the full key list from anywhere — is
+  now among the hints on every screen, along with `Ctrl+Q` on the two screens
+  that quit without saying so.
 
-- **A workbook or document the assistant wrote opens in Protected View** — on Windows, an
-  Excel workbook or Word document saved by `python_exec` opened as a trusted local file.
-  Files the code writes now carry the same mark as a download, so Office opens them in
-  Protected View whether you use `/file open` or the folder. A CSV is not covered: Excel
-  opens a marked CSV normally unless its setting for untrusted text files is on, and what
-  keeps a formula in one from starting a program is Excel's own DDE setting, off by
-  default. An attached document's copy keeps the mark of the file it came from, and
-  restoring a backup marks its stored files.
-- **The Python sandbox's packages can no longer be changed from inside it.** The
-  sandbox mounted its package directory writable, so code run in one call could
-  leave a file there that then ran inside every later call, in every chat.
-  `mindfork sandbox setup` now packs Python and its packages into one image the
-  code cannot alter. **An existing sandbox stops running code until you run
-  `mindfork sandbox setup` again**: it packs what is already downloaded, in
-  seconds, and the tool names that command when it refuses.
+- **The self-model screen (`F3`) reads as two named halves.** The
+  self-description and the goals now sit under an **"Assistant"** header, and
+  the traits, interests and relationship under **"User"** — where you have
+  given the assistant or yourself a name in the profile settings, the screen
+  uses that name instead of the label, matching the names over the messages in
+  the chat. Blank lines now separate every section, and every observation from
+  the next, so the model's own prose no longer runs together into one block.
 
-- **The web tools are now off until you turn them on.** `web_search`,
-  `fetch_url` and `youtube_watch` used to be enabled in a fresh installation.
-  Everything else mindfork connects to is an address you chose — your model
-  server, your embedder, your MCP servers — but the search engines behind
-  `web_search` are picked by the app, and the query it sends is built from your
-  conversation. Now nothing goes to them until you switch the tools on in
-  Settings → Tools. An existing installation keeps whatever your settings
-  already say.
+- **The chat list counts messages the way the conversation reads.** The row's
+  `N msg` is now the number of messages you see when you open the chat — your
+  questions and the assistant's replies. It used to count every stored row,
+  including each tool call's result and each round of an agentic loop, so a
+  chat with one question and one tool-assisted answer could say "34 msg".
+  Subagent transcript rows count the same way.
 
-- **A search key is only used where you put it.** The app no longer assumes the
-  environment variable `TAVILY_API_KEY`: if a key for a paid search provider was
-  sitting in your environment for some other program, mindfork could route
-  searches through it — and spend its credits — without you deciding anything
-  here. Name the variable in Settings → Tools, or enter the key there, and it
-  works as before.
+- **The Russian settings screen names spellchecking in Russian.** The toggle
+  under *Орфография* now reads *Проверять орфографию* instead of the <!-- cyrillic-ok -->
+  transliterated *Спелл-чек*. The English label is unchanged. <!-- cyrillic-ok -->
 
-- **The Python sandbox's largest download is now checked too.** `mindfork
-  sandbox setup` verified every file it downloaded itself against a pinned
-  checksum, except the Python distribution, which `wasmer` fetches on its
-  behalf. That file is now verified as well, and one that does not match is
-  replaced instead of used.
+- **One word for a subagent, in both languages.** Each interface spelled it
+  more than one way, and two spellings could show on the same screen: the role
+  header over a subagent's reply disagreed with the label on the tool card that
+  started it, and the settings screen with both — three ways in Russian, two in
+  English. The unhyphenated spelling now stands everywhere: the feed's role
+  header, the transcript rows in the chat list, `/subagents`, the settings
+  fields, and the tool descriptions the assistant itself reads, which now match
+  the name of the tool they describe.
 
 ### Fixed
+
+- **Attaching a large document no longer holds up the app while its copy is written** — `/file attach` keeps the original of a PDF, a workbook or another binary with the chat, and hashing, writing and syncing that copy (up to 32 MB) ran on the loop that handles every command: about a tenth of a second on a fast disk, and as long as a slow or network disk takes. It now happens with the read, in the background.
+- **A script's output can no longer pose as the tool's own sections in a result card** — a line such as `files:` or `stderr:` printed by a Python script or a build command opened a section of the card, so the output could show a list of "saved files" that were never saved, or turn the rest of itself red as errors; an ordinary YAML `files:` key did it by accident. Results now say how many lines each section holds, and the card takes exactly those. Results saved before this are shown as before.
+- **A Python call can no longer copy a chat's whole file store into one run** — a call may name at most twenty of the chat's files, 100 MB in all; past that it is refused before anything is copied, with the numbers and a way to split the work — and the confirmation popup says so before you approve such a call. And in a chat with no files, naming one is refused with a plain "this chat has no files" instead of a list that ended on its own heading.
+- **`sandbox setup` no longer hangs on a stalled step, and a saved chart is not silently lost** — each `wasmer` step the setup runs now has a time limit (ten minutes to unpack or build, thirty for the Python package download), past which the command stops and says which step it was. When collecting the files a Python call saved went wrong, the call reported that it had saved nothing; it now names those files as unreadable and logs the failure.
+- **`/file open` says whose file it is, and its note stays in its chat** — a `.py` you attached yourself opened its folder with a note blaming “a file the assistant wrote”; it now says only that the type does not open from here. The note about a launch landed in whichever chat was open when the desktop answered; a success now stays with the chat it was asked in, and a failure is still shown. A stored file's name read back from the chat file is also checked before it is opened, as every other path into the chat's folder already was.
+- **The "show charts" switch is shown in local Python mode too** — `tools.python_images` decides whether an image the code saved goes back to the model, and the local interpreter collects its output folder exactly as the sandbox does; the settings row, written when the flag meant nothing there, appeared only in sandbox mode. Off and switched to local, the charts were withheld with nowhere to see why.
+- **One name means one file, outside ASCII too** — a handle typed as a name folded case over ASCII only, so a Cyrillic file name typed in lower case did not reach the file the listing had just shown; the listing's own “two items share this name” check folded the same narrow way. Both now fold over Unicode, as the chat's folder always did. Beside them: a very long name whose start is blank no longer survives shortening as an empty name, and an image a tool returns is numbered against the chat rather than the call — two rounds each drawing a chart produced two `tool-image-1.png`, which the model could then not name.
+
+- **A stalled engine can no longer freeze a reply that produced a picture.** Before
+  sending an image to the model the app asks the server whether it accepts images — a
+  question with no time limit, asked again for every picture in the reply, and one that
+  `Esc` could not interrupt. It is now asked once per reply, gives up after five seconds,
+  and ends with the rest of the turn when you cancel.
+
+- **Running Python on your own machine no longer reports a finished script as timed out.**
+  If the code started a background process, the call waited for that process instead of
+  the script — then gave up after the time limit and threw away everything the script had
+  printed. It now waits for the script itself.
+
+- **Temporary copies of a chat's files are cleaned up even after a crash.** Each call
+  copies the files it needs into a temporary folder; if the app was killed, or something
+  the code started was still holding that folder, it stayed on disk indefinitely. Anything
+  left over for more than a day is now removed.
+
+- **Naming one file for the code no longer silently names none.** When the assistant asked
+  for a single file by name — without wrapping it in a list — nothing was copied in and
+  nothing was said: the code then failed to find the file and the assistant tried the same
+  thing again. A single name is now accepted, and an argument that makes no sense as file
+  names is refused with an explanation instead of being ignored.
+
+- **A run that produced thousands of files no longer floods the conversation.** Everything
+  a call could not keep was listed one line per file, with no limit, in a result that then
+  rode along in every later request. The first twenty are named and the rest counted.
+
+- **A spreadsheet is no longer mistaken for a picture.** A file whose first characters
+  happened to be `BM` — a CSV whose first column is `BMI`, say — was listed as an image,
+  kept from the assistant as text, and then failed to display anyway, with two notes
+  contradicting each other. Two letters are no longer enough to call something an image.
+
+- **A file name can no longer rewrite itself on screen.** Invisible marks that reverse the
+  text after them let a name the assistant chose be shown as something else entirely — a
+  program displayed as a document. Those marks are now stripped from stored file names, as
+  other forbidden characters already were.
+
+- **The confirmation popup no longer hides the code it is asking you to approve.** When
+  the line listing the files going into a call was long enough to wrap — two named files
+  is enough — the popup drew one row short and the row it lost was the code itself. It is
+  now sized by what it actually draws.
+
+- **"Attach it again" now actually brings a lost file back.** When a chat's copy of a file
+  went missing from its folder — a pruned data directory, a half-finished sync — the list
+  marked it missing and the assistant refused to use it, telling you to attach the file
+  again. Doing that did nothing: the name and the contents matched what was already listed,
+  so nothing was written and the next attempt refused all the same. Offering the same file
+  again now puts the copy back, and the assistant says so when its own code re-creates one.
+
+- **A failed `sandbox setup` no longer costs you the sandbox you had.** The new Python
+  image was put in place first and only then started, so a build that would not run left
+  you with a broken sandbox *and* without the working one it replaced — while the app went
+  on reporting Python as ready and every attempt to run code failed. The freshly built
+  image is now started before it replaces anything: if it does not run, the command says so
+  and your existing sandbox is untouched. A build that times out now says that, instead of
+  failing with an empty message.
+
+- **A file's number stays that file's for the whole reply.** The assistant is told your
+  files as a numbered list before it starts working — `#1`, `#2`, `#3`. If something was
+  added while it worked (a page it fetched, a chart it saved), the numbering underneath
+  shifted, and a `#2` it had been given could quietly become a different file: the code ran
+  against the wrong one, or against a name that no longer existed. Numbers now belong to
+  the file they were given for until the reply ends, and anything new gets a number of its
+  own after them.
+
+- **Every "you weren't shown this image" note now says it in words that work.** The same
+  measurement was run against the rest of them — the notes for a model that takes no
+  images, for a picture too large to show, for charts held back by the Python settings or
+  by the four-per-call cap, and for an SVG. Where the polite wording left the assistant
+  describing a picture it had never seen, it now tells it plainly not to; the SVG note
+  still points at saving a PNG instead, because there that is the useful thing to do.
+
+- **A picture a plugin held back is now said out loud — in words that work.** With "Let
+  servers send images" off, an image a server's tool returned was dropped in silence: the
+  assistant got a result that looked complete and went on to describe a screenshot it had
+  never seen. The result now says how many images were held back and tells the assistant
+  to say it cannot see them. Measured on a local model, the polite version of that
+  sentence changed nothing at all — the assistant invented a description just as often as
+  with no note — so the wording is the blunt one.
+
+- **A backup now carries the code workspaces too.** The change journal of a chat's attached
+  project — the original of every file the assistant edited, which is what "revert" puts
+  back — was left out of `mindfork backup`, so a restored chat could still show what had
+  changed but no longer undo it. `workspace/` is packed and restored with the rest of the
+  data now.
 
 - **An image a tool returns but the model does not get is now said so.** An MCP
   server's image that was too large or would not decode vanished without a word,
@@ -688,6 +713,14 @@ split by subsystem.
   affected; if you installed one in that window, re-run
   `mindfork sandbox setup --force`.
 
+- **The external server's "Model (opt.)" field is now actually sent to it.** It
+  had never left the settings file, which made every multi-model endpoint
+  unusable in `external` mode — `llama-server` in router mode, LM Studio,
+  LiteLLM and OpenRouter all pick the model from that field and refuse a request
+  without it. The chat, impersonation and embedding sections all send it now.
+  A blank field still sends nothing, so a single-model local server is
+  unaffected.
+
 ### Data
 
 - Chats gain an optional list of stored files, and the data folder a `files/`
@@ -706,82 +739,45 @@ split by subsystem.
   file with a clear message instead of failing to read it. Existing chats are
   re-stamped at first launch through the usual backup-then-migrate path.
 
-- **`/continue` — resume an interrupted reply from where it stopped.** A reply
-  cut by `Esc`, by a connection failure, or by the length/context limit can now
-  be continued in place: the model picks up exactly at the cut, the text grows
-  inside the same message, and a turn interrupted between tool calls resumes
-  its tool loop. Works on the local/managed and external (llama.cpp/vLLM)
-  engines, on Gemini, and on Claude models up to the 4.5 generation; the
-  providers that cannot resume a partial reply (OpenAI, Grok, current Claude
-  models) are told apart, and the command says so instead of guessing. The
-  notes shown for a cancelled or cut-short
-  reply now name `/continue` where it applies — and a reply that hit the
-  length limit finally gets a note at all, instead of stopping mid-sentence in
-  silence.
+### Security
 
-- **An external server's model is named on screen, even when you did not name
-  it.** Connect to a `llama-server` (or vLLM, LM Studio, a gateway) by URL and
-  leave the "Model (opt.)" field blank, and the app now asks the server what it
-  is running: the name appears next to the chat title and is recorded on every
-  reply, so `Ctrl+P` → Interface → "Model name in the feed" finally has something to
-  show in this mode. A file path is shortened to the model's name
-  (`D:\GGUF\gemma-4-31B_q4_0-it.gguf` → `gemma-4-31B_q4_0-it`); a name you typed
-  yourself always wins; a server that cannot say leaves the caption empty, as
-  before.
+- **A workbook or document the assistant wrote opens in Protected View** — on Windows, an
+  Excel workbook or Word document saved by `python_exec` opened as a trusted local file.
+  Files the code writes now carry the same mark as a download, so Office opens them in
+  Protected View whether you use `/file open` or the folder. A CSV is not covered: Excel
+  opens a marked CSV normally unless its setting for untrusted text files is on, and what
+  keeps a formula in one from starting a program is Excel's own DDE setting, off by
+  default. An attached document's copy keeps the mark of the file it came from, and
+  restoring a backup marks its stored files.
+- **The Python sandbox's packages can no longer be changed from inside it.** The
+  sandbox mounted its package directory writable, so code run in one call could
+  leave a file there that then ran inside every later call, in every chat.
+  `mindfork sandbox setup` now packs Python and its packages into one image the
+  code cannot alter. **An existing sandbox stops running code until you run
+  `mindfork sandbox setup` again**: it packs what is already downloaded, in
+  seconds, and the tool names that command when it refuses.
 
-### Changed
+- **The web tools are now off until you turn them on.** `web_search`,
+  `fetch_url` and `youtube_watch` used to be enabled in a fresh installation.
+  Everything else mindfork connects to is an address you chose — your model
+  server, your embedder, your MCP servers — but the search engines behind
+  `web_search` are picked by the app, and the query it sends is built from your
+  conversation. Now nothing goes to them until you switch the tools on in
+  Settings → Tools. An existing installation keeps whatever your settings
+  already say.
 
-- **The key hints at the bottom of every screen now sit in the same place, and
-  name only the keys that work.** They line up flush with the right edge on the
-  chat list, the settings, self-model, changes and search screens, the way the
-  chat screen's already did — the four that used to start at the left and fray
-  at the right no longer do. And each screen's hints follow what you have
-  selected: on the self-model screen (`F3`) an observation no longer offers
-  "Enter edit" (observations are deleted, not edited) and `Space` shows only on
-  a goal; on the changes screen (`F4`) `↑↓` says *file* or *scroll the diff*
-  depending on which pane you are in, and `R` is offered only on a file that can
-  actually be put back; in the settings `←→`, `Space` and `Del` appear on the
-  fields they apply to. `F1` — which opens the full key list from anywhere — is
-  now among the hints on every screen, along with `Ctrl+Q` on the two screens
-  that quit without saying so.
+- **A search key is only used where you put it.** The app no longer assumes the
+  environment variable `TAVILY_API_KEY`: if a key for a paid search provider was
+  sitting in your environment for some other program, mindfork could route
+  searches through it — and spend its credits — without you deciding anything
+  here. Name the variable in Settings → Tools, or enter the key there, and it
+  works as before.
 
-- **The self-model screen (`F3`) reads as two named halves.** The
-  self-description and the goals now sit under an **"Assistant"** header, and
-  the traits, interests and relationship under **"User"** — where you have
-  given the assistant or yourself a name in the profile settings, the screen
-  uses that name instead of the label, matching the names over the messages in
-  the chat. Blank lines now separate every section, and every observation from
-  the next, so the model's own prose no longer runs together into one block.
-
-- **The chat list counts messages the way the conversation reads.** The row's
-  `N msg` is now the number of messages you see when you open the chat — your
-  questions and the assistant's replies. It used to count every stored row,
-  including each tool call's result and each round of an agentic loop, so a
-  chat with one question and one tool-assisted answer could say "34 msg".
-  Subagent transcript rows count the same way.
-
-- **The Russian settings screen names spellchecking in Russian.** The toggle
-  under *Орфография* now reads *Проверять орфографию* instead of the <!-- cyrillic-ok -->
-  transliterated *Спелл-чек*. The English label is unchanged. <!-- cyrillic-ok -->
-
-- **One word for a subagent, in both languages.** Each interface spelled it
-  more than one way, and two spellings could show on the same screen: the role
-  header over a subagent's reply disagreed with the label on the tool card that
-  started it, and the settings screen with both — three ways in Russian, two in
-  English. The unhyphenated spelling now stands everywhere: the feed's role
-  header, the transcript rows in the chat list, `/subagents`, the settings
-  fields, and the tool descriptions the assistant itself reads, which now match
-  the name of the tool they describe.
-
-### Fixed
-
-- **The external server's "Model (opt.)" field is now actually sent to it.** It
-  had never left the settings file, which made every multi-model endpoint
-  unusable in `external` mode — `llama-server` in router mode, LM Studio,
-  LiteLLM and OpenRouter all pick the model from that field and refuse a request
-  without it. The chat, impersonation and embedding sections all send it now.
-  A blank field still sends nothing, so a single-model local server is
-  unaffected.
+- **The Python sandbox's largest download is now checked too.** `mindfork
+  sandbox setup` verified every file it downloaded itself against a pinned
+  checksum, except the Python distribution, which `wasmer` fetches on its
+  behalf. That file is now verified as well, and one that does not match is
+  replaced instead of used.
 
 ## [0.9.8] — 2026-08-27
 
@@ -2234,7 +2230,8 @@ history is in the [docs/journal/](docs/journal/) log).
   (notes/RAG/self-model, sqlite-vec, per-profile isolation). Schema format is
   v1; schema versioning and migrations are formalized in later releases.
 
-[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.9.8...HEAD
+[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.9.9...HEAD
+[0.9.9]: https://github.com/vshylov/mindfork-rs/compare/v0.9.8...v0.9.9
 [0.9.8]: https://github.com/vshylov/mindfork-rs/compare/v0.9.7...v0.9.8
 [0.9.7]: https://github.com/vshylov/mindfork-rs/compare/v0.9.6...v0.9.7
 [0.9.6]: https://github.com/vshylov/mindfork-rs/compare/v0.9.5...v0.9.6

@@ -169,10 +169,10 @@ Backend selection: `MINDFORK_ENGINE_URL` (external, any OpenAI server) OR
 rented instead of hosted — `python tools/e2e_hf.py run`, see
 `docs/history/remote-e2e-hf.md`.
 
-## Status (2026-09-12, version 0.9.8)
+## Status (2026-09-13, version 0.9.9)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3171 unit tests
-green, 169 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **3217 unit tests
+green, 176 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
