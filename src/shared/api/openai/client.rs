@@ -1295,6 +1295,14 @@ mod ignored_smoke {
     /// second call's image is withheld for the same reason. With the directive clause it
     /// declines outright 4/5 and re-calls 1/5. Either is acceptable; inventing an answer
     /// about the chart is not, and that is what this asserts.
+    ///
+    /// The result is assembled by the producers rather than typed: the console half by
+    /// `present::format_console`, the section from `keep_outputs`' own lines and join. It
+    /// was typed in the uncounted `stdout:` shape, which no call has returned since the
+    /// console's sections were counted — so the smoke measured a result the model no longer
+    /// gets, and would have gone on doing so through any later change to the shape.
+    /// Re-measured on the counted shape (Gemma 4 31B, 2026-09-13, five runs an arm): with
+    /// the note a plain refusal 5/5; without it, an invented answer 3/5 and a re-call 2/5.
     #[tokio::test]
     #[ignore = "requires MINDFORK_ENGINE_URL"]
     async fn a_withheld_chart_is_not_described_live() {
@@ -1302,12 +1310,28 @@ mod ignored_smoke {
             eprintln!("skip: MINDFORK_ENGINE_URL not set");
             return;
         };
+        use crate::features::tools::present::format_console;
         use crate::shared::i18n::{Lang, locale};
         let loc = locale(Lang::En);
+        // What a call that printed `saved` and left one chart returns with images off: the
+        // console, a blank line, then `files:` over the section's lines (`keep_outputs`).
         let result = format!(
-            "stdout:\nsaved\n\nfiles:\n{}\n- chart.png — 24.1 KB, image/png{}",
+            "{}\n\nfiles:\n{}\n{}{}",
+            format_console(None, "saved", "", true, Some(0), loc),
             loc.tf("tool.python_exec.files.saved_in", &[("dir", "/chat/files")]),
+            loc.tf(
+                "tool.python_exec.files.item",
+                &[
+                    ("name", "chart.png"),
+                    ("size", "24.1 KB"),
+                    ("mime", "image/png"),
+                ],
+            ),
             loc.t("tool.python_exec.files.not_shown_off"),
+        );
+        assert!(
+            result.starts_with("stdout (1 line):\nsaved\n\nfiles:\n"),
+            "the smoke has to send the shape a call returns: {result}"
         );
         let (answer, _, finish) = collect(
             client
