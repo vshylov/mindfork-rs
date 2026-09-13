@@ -515,6 +515,8 @@
   "tool.python_exec.net.on": "network access available",
   "tool.python_exec.net.off": "no network access",
   "tool.python_exec.err.files_unknown": "This chat has no file {handle}; nothing was run. The chat's files, by number: {files}",
+  "tool.python_exec.err.files_unknown_none": "This chat has no file {handle} — it has no files at all yet; nothing was run.",
+  "tool.python_exec.err.files_over_cap": "This call names {count} files, {size} in all; one call takes at most {max_files} files and {max_size}. Nothing was run — name fewer. To work through more, save what one call makes to {out} and name that in a later call.",
   "tool.python_exec.err.files_shared": "Several of this chat's files are named {handle}; nothing was run — name the one you meant by its number: {candidates}",
   "tool.python_exec.err.files_missing": "{name} is listed in this chat, but its copy is no longer in the chat's folder; nothing was run. Name another file, or ask the user to attach it again.",
   "tool.python_exec.err.files_no_folder": "This conversation has no file folder, so there is nothing to copy into {in}; nothing was run.",

@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (74)
+## Entries (75)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -86,6 +86,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: sandbox job hygiene — off the runtime's threads, a failed collection said, bounded setup steps (done)
 - Post-M9: a memory limit for the local interpreter — the sandbox's Job Object, a field of its own (done)
 - Post-M9: a test that believed a runtime's drop waits for its blocking pool (done)
+- Post-M9: the files argument gets the caps the output side had — T8 amended (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -5063,3 +5064,51 @@ docs/lessons.md §2: a runtime's drop does not wait for queued blocking work, an
 Not reproduced locally before the fix, and not for want of trying to reason it: the tokio
 source and two CI failures on two platforms are the evidence, and the race is narrow enough
 that a desktop wins it every time.
+
+### Post-M9: the files argument gets the caps the output side had — T8 amended (done)
+
+Tier 3's fourth group: nothing bounded what one `python_exec` call could name in `files`,
+while what a call leaves in `out/` has been capped from the start; and in a chat with no
+files, the refusal for an unknown handle ended on "The chat's files, by number:" with
+nothing under it.
+
+**The review contradicted a recorded decision, and the review did not know it.** The
+sandbox-file-exchange track decided the opposite on purpose — T8, "no cap of its own on
+what goes in": growth is bounded per attach and per output, the copies die with the job
+directory, the popup shows the sizes, and a cap would be "the one place where naming your
+own file fails", which F10 had refused for the store. The cap was already written when
+reading T8 turned this up; it went to the user rather than into the PR. User's decision
+(2026-09-13): the cap, with T8 amended rather than silently overturned.
+
+**Why it holds up against T8.** T8's objection is about *a* file, and the cap is sized so
+that no single file can reach it: attachments stop at 32 MB, the total cap is 100 MB — room
+for three at their ceiling. What T8 did not weigh is the call that names a long chat's
+whole store at once: every collected output is a stored file, nothing bounds how many a
+chat accumulates, and naming them all copied every one into the system temp directory
+before the code started. And the popup T8 leaned on appears only with `confirm_dangerous`,
+which is off by default. F10 — no quota on the store — is untouched: the cap bounds what one
+call copies, not what a chat keeps. Twenty files is twice the output side's ten; a model
+analysing several CSVs names a handful.
+
+**Where it sits.** `stage` resolved and staged in one loop, so the first file could be
+checked on disk and an image decoded before a later handle turned out to be unknown. It now
+resolves and deduplicates every handle first — the specific refusals (unknown, shared) keep
+priority — then checks the count and the total against the sizes the list already records,
+and only then builds the copies. Refused whole, as every `files` refusal is: a script handed
+twenty of thirty files would answer from twenty. The refusal gives the count, the size, both
+caps and the way through — save what one call makes to the output folder and name that in a
+later call.
+
+**The empty chat.** `known_files` guarded the empty case by returning an empty string, which
+removed the stray bullet and kept the header the template put in front of it. The empty
+chat now has its own key that says it has no files; the list's key is used only when there
+is a list.
+
+**Tests.** The empty chat's refusal compared whole against its key; a call one file over
+the count cap refused with nothing run and the way through named, and at the cap exactly
+staged in full; the same by size, from recorded sizes on a few bytes of text, so nothing
+large is allocated. Five guards reverted in turn — each half of the cap, each boundary
+turned from `>` to `>=`, the empty chat's branch — and each failed its test.
+
+No live run: a refusal decided before anything is copied or started, covered through the
+tool with a mock runner; the sandbox's own staging path is unchanged below it.
