@@ -4,12 +4,12 @@
 field name) and the documentation half of F3/F4, see §7; merged as
 [#551](https://github.com/vshylov/mindfork-rs/pull/551).
 
-**F2 is reopened by measurement and is now the urgent one** (§5, §8.1): the
-"change nothing" conclusion was drawn from reading, and the live run answers the
-silent turns' request with a `400`. Its fork — recover from the refusal, stop
-sending the field, or ask the catalogue — is open and awaits a decision.
-F3(b) and F4(c) are **confirmed buildable** by the same run (M5); F5, F6 and the
-rest stay proposals. Nothing beyond stage 1 is implemented.
+**F2 was reopened by measurement and is now fixed** (§5, §8.1, §9): the "change
+nothing" conclusion had been drawn from reading, and the live run answers the
+silent turns' request with a `400`. The user chose (a) — recover from the refusal
+and remember it — on 2026-09-14, and stage 2 implements exactly that and nothing
+else. F3(b) and F4(c) are **confirmed buildable** by the same run (M5) and stay a
+separate track; F5, F6 and the rest stay proposals.
 
 **Measured, on the second pass — by the author, not by this session.** What was
 written here came from reading: the session had no network route to
@@ -320,6 +320,9 @@ three shapes — **the fork is open, and this is what it needs a decision on**:
 one that cannot be wrong, and it is the only one that also covers LiteLLM,
 vLLM-behind-a-proxy and whatever refuses next.
 
+**User's decision, 2026-09-14: (a), and F2 alone** — F3(b)/F4(c) stay a separate
+track. Implemented; see §9.
+
 ### F3. The context window — **recommendation: documentation now, (b) as a proposal**
 
 - **(a) documentation only.** The setting exists; install.md §3 gains the
@@ -483,3 +486,44 @@ controls (§6) are the lever we do not expose.
 
 The outcome is recorded in [docs/journal/engine.md](../journal/engine.md), per
 AGENTS.md §3.
+
+## 9. Stage 2 — what was implemented for F2(a)
+
+One behaviour, in the client that owns this wire
+([client.rs](../../src/shared/api/openai/client.rs)):
+
+- `send_chat` is the single attempt (build the body, send it cancellably, check
+  the status) that `chat_stream` now calls — once normally, twice when the
+  refusal arrives;
+- `should_stop_asking` recognises the refusal, and each of its three conditions
+  rules out a way of being wrong: the turn must actually have asked
+  (`reasoning_effort == None`-effort) and the field must actually have gone out;
+  the status must be `400` — a `503` carrying the same words is the retry
+  decorator's business (spec §6.8), and dropping a sampling field to answer an
+  outage would file it as a capability; and the message must name reasoning
+  **and** its disabling. The message match is a pair of substrings rather than
+  the sentence, because providers reword — and a false positive costs exactly one
+  round trip, since the second attempt meets the same error and it surfaces
+  unchanged;
+- `reasoning_off_refused` is an `AtomicBool` on the client, so the answer is
+  learned once per server rather than rediscovered per silent turn. It feeds the
+  same `omit_effort_none` switch xAI is configured with — the fix reuses the
+  mechanism rather than adding a second one — and is never cleared: a model that
+  must reason does not change its mind mid-session, and a server swapped behind
+  the URL gets a new client from `supervisor::apply`.
+
+**Tests**: three unit tests — the recovery (and that the *second* body no longer
+carries the field), the memo (a later turn is not refused again), and one
+table-driven arm for the three cases that must **not** recover. Each negative
+script ends with a reply that would succeed, so a wrong retry turns the turn
+green and the assertion catches it; counting requests at the stub was the first
+version and it was worthless, because a second request against a spent script is
+refused by the OS and still arrives as "an error" — the count-based arm survived
+removing the status check. All five mutations (never recover; do not remember;
+drop the status check; drop the "did it ask" check; loosen the message match) are
+caught now.
+
+**Live**: `a_muted_turn_survives_an_endpoint_that_must_reason`, declared by
+`MINDFORK_LIVE_MANDATORY_REASONING_MODEL` — it sends `title.rs`'s own request
+shape and fails rather than skips if the turn does not complete, which before
+this change was the `400` itself.

@@ -16,6 +16,16 @@ split by subsystem.
 
 ### Fixed
 
+- **Auto-titles, compaction and impersonation work on a gateway whose model always
+  reasons.** Those three run with reasoning turned off — and a service that cannot
+  turn it off (OpenRouter with DeepSeek R1, for one) answered them with an error,
+  so a chat never got its title, long conversations were never compacted and
+  `Ctrl+U` did nothing, while ordinary replies kept working and nothing said why.
+  The app now asks again without that setting and remembers the answer for that
+  server. Nothing changes against a local server, which accepts the request.
+
+### Fixed
+
 - **A gateway's "thoughts" reach the feed.** Connecting `external` mode to a
   cloud gateway (OpenRouter and the services that copy its API) meant a
   reasoning model answered with its thinking invisible: the app looked for the

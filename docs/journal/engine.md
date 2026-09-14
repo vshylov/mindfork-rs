@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (61)
+## Entries (62)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -73,6 +73,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the turn asks about images once, and stops waiting for the answer (done)
 - Post-M9: `external` against a gateway — a thought under a second name, and the rest of the review (done)
 - Post-M9: the gateway's remaining measurements — the silent turns are a `400`, not a bill (done)
+- Post-M9: a refusal to stop reasoning is answered, not reported (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -3992,3 +3993,52 @@ F4(c) and F2(c), which is what makes stage 2 one piece of work rather than three
 **Documentation only; no code changed.** Tests untouched (3221 / 177 on the
 tracked count), so no live run of our own was needed beyond the two measurements
 recorded here. M3 is still owed.
+
+### Post-M9: a refusal to stop reasoning is answered, not reported (done)
+
+The fix for the defect the previous entry measured, on the shape the user picked
+(research §5 F2, **user's decision 2026-09-14: (a), F2 alone**).
+
+**What was broken.** Three turns ask for reasoning to be off — the auto-title,
+the compaction roll, impersonation — and an endpoint may be unable to honour it:
+`reasoning_effort: "none"` against a model that always reasons is answered `400
+"Reasoning is mandatory for this endpoint and cannot be disabled"`. So on such a
+model those three failed while ordinary chat worked, which is the worst shape a
+failure can take — the app looked fine and quietly stopped titling, compacting
+and impersonating.
+
+**What it does now.** `chat_stream` splits its one attempt into `send_chat` and
+calls it twice when that refusal arrives: once as before, then again without the
+field, remembering the answer in an `AtomicBool` on the client so a session pays
+one refusal rather than one per silent turn. The memo feeds the **existing**
+`omit_effort_none` switch that xAI is configured with, so the fix reuses that
+mechanism instead of adding a second one, and a local `llama-server` — which
+accepts the request — never takes the path at all.
+
+**Narrow on purpose**, three conditions each ruling out a way of being wrong: the
+turn must have asked and the field must have gone out; the status must be `400`,
+because a `503` carrying the same words is the retry decorator's (spec §6.8) and
+dropping a sampling field to answer an outage would file it as a capability; and
+the message must name reasoning **and** its disabling — a pair of substrings
+rather than the sentence, since providers reword, and a false positive costs one
+round trip because the second attempt meets the same error and it surfaces
+unchanged.
+
+**The tests had to be rebuilt before they were worth anything.** The first
+version of the three negative arms counted requests at the stub — and every one
+of them survived removing the status check, because a second request against a
+spent script is refused by the OS and still arrives as "an error". They now each
+end with a reply that *would succeed*, so a wrong retry turns the turn green and
+`expect_err` catches it. With that, all five mutations fall: never recover; do
+not remember; drop the status check; drop the "did it ask" check; loosen the
+message match to "reasoning" alone. The stub also grew a body reader that honours
+`Content-Length` instead of taking one `read`, so a split request makes these
+tests fail rather than flake.
+
+**Tests**: 3224 green, 178 ignored (3221 / 177 before) on the tracked count; on
+Linux 3217 / 173 (3214 / 172 before). **Live — owed, not run**: this session has
+no route to OpenRouter, so the smoke
+`a_muted_turn_survives_an_endpoint_that_must_reason` is written and declared by
+`MINDFORK_LIVE_MANDATORY_REASONING_MODEL` (R1 is exactly such a model), sending
+`title.rs`'s own request shape and failing rather than skipping if the turn does
+not complete — which before this change was the `400` itself.

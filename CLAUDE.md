@@ -171,8 +171,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-14, version 0.9.9)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3221 unit tests
-green, 177 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **3224 unit tests
+green, 178 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -196,9 +196,12 @@ being recent is dropped, not shortened.
   **was refuted by the measurement that followed**: that body is answered `400
   "Reasoning is mandatory for this endpoint and cannot be disabled"`, so on an
   always-reasoning model the title, the compaction roll and impersonation fail
-  while chat works (the xAI failure by another road). The fork is open — recover
-  from the refusal and memoise it, drop the field on `external`, or ask the
-  catalogue — and nothing is implemented yet. The catalogue itself is measured
+  while chat works (the xAI failure by another road). Fixed on the user's choice: the
+  client re-sends once without the field and **remembers** the refusal per server,
+  feeding the same `omit_effort_none` switch xAI is configured with — narrow by
+  construction (a `400` only, only when the turn asked, only when the message
+  names reasoning *and* its disabling), so a `503` stays the retry decorator's.
+  The catalogue itself is measured
   and carries `context_length` **and** `supported_parameters` per model, so the
   window and the honest sampling list are one fetch away.
   Live **GO** on `deepseek/deepseek-r1` through OpenRouter (the session had no

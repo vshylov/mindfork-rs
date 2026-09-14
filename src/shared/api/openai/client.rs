@@ -10,6 +10,7 @@ use futures_util::StreamExt;
 use tokio_util::sync::CancellationToken;
 
 use super::wire;
+use crate::entities::sampling::ReasoningEffort;
 use crate::shared::api::contract::{
     ChatChunk, ChatRequest, ChatStream, EmbedRole, Embedder, EngineBackend, FinishReason,
     TokenUsage, ToolCallDelta, VisionSupport,
@@ -39,6 +40,16 @@ pub struct OpenAiClient {
     /// instead of sending the literal `"none"`. See
     /// [`Self::with_effort_none_omitted`].
     omit_effort_none: bool,
+    /// The same thing, learned at runtime: this server has **refused** a request
+    /// to disable reasoning, so stop asking.
+    ///
+    /// Set by [`Self::chat_stream`] when a `400` says so, and never cleared — a
+    /// model that must reason does not stop mid-session, and a server swapped
+    /// behind the URL gets a new client anyway (`supervisor::apply`). An
+    /// `AtomicBool` rather than a builder flag because this is discovered, not
+    /// configured: nothing at construction time can know it
+    /// (docs/research/openrouter-external.md §5, F2(a)).
+    reasoning_off_refused: std::sync::atomic::AtomicBool,
 }
 
 impl OpenAiClient {
@@ -52,6 +63,7 @@ impl OpenAiClient {
             api_key: None,
             model: None,
             omit_effort_none: false,
+            reasoning_off_refused: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -175,23 +187,103 @@ impl OpenAiClient {
     }
 }
 
-#[async_trait::async_trait]
-impl EngineBackend for OpenAiClient {
-    async fn chat_stream(&self, req: ChatRequest, cancel: CancellationToken) -> Result<ChatStream> {
-        let body =
-            wire::build_chat_request(&req, true, self.model.as_deref(), self.omit_effort_none);
-        let url = format!("{}/chat/completions", self.base_url);
+impl OpenAiClient {
+    /// Whether a `reasoning_effort` of `"none"` is dropped rather than sent:
+    /// because the backend was built that way (xAI, [`Self::with_effort_none_omitted`])
+    /// **or** because this server has already refused such a request.
+    fn omit_effort_none(&self) -> bool {
+        self.omit_effort_none
+            || self
+                .reasoning_off_refused
+                .load(std::sync::atomic::Ordering::Relaxed)
+    }
 
+    /// One attempt at the chat request. `Ok(None)` — the cancellation token
+    /// fired before a response arrived (the caller answers with a cancelled
+    /// stream, never an error).
+    async fn send_chat(
+        &self,
+        req: &ChatRequest,
+        omit_effort_none: bool,
+        cancel: &CancellationToken,
+    ) -> Result<Option<reqwest::Response>, error::EngineError> {
+        let body = wire::build_chat_request(req, true, self.model.as_deref(), omit_effort_none);
+        let url = format!("{}/chat/completions", self.base_url);
         // Cancellable: until this moved inside the token's reach, `Esc` could not
         // interrupt a request that had not yet produced a stream.
         let Some(response) =
-            http::send_cancellable(self.auth(self.http.post(&url)).json(&body), &cancel).await?
+            http::send_cancellable(self.auth(self.http.post(&url)).json(&body), cancel).await?
         else {
-            return Ok(http::cancelled_stream());
+            return Ok(None);
         };
         // The error body is not swallowed (llama.cpp/OpenAI servers put the reason
-        // in JSON); status, `Retry-After` and the text all come back typed.
-        let response = error::check_status(SUBJECT_ENGINE, response).await?;
+        // in JSON); status, `Retry-After` and the text all come back typed — which
+        // is also what lets the refusal below be recognised at all.
+        error::check_status(SUBJECT_ENGINE, response)
+            .await
+            .map(Some)
+    }
+
+    /// Does this failure mean "this endpoint cannot turn reasoning off", for a
+    /// request that asked it to?
+    ///
+    /// Measured on OpenRouter (docs/research/openrouter-external.md §8.1, M4):
+    /// `reasoning_effort: "none"` against `deepseek/deepseek-r1` is answered
+    /// `400 {"error":{"message":"Reasoning is mandatory for this endpoint and
+    /// cannot be disabled."}}`. The silent turns — the title, the compaction roll
+    /// and impersonation — are the only ones that ask, so on such a model they
+    /// were the only ones failing, while ordinary chat worked: the same shape xAI
+    /// produces by rejecting the *value* ([`Self::with_effort_none_omitted`]).
+    ///
+    /// Three conditions, and each rules out a way of being wrong:
+    ///
+    /// - the turn **asked** to mute reasoning, and the field was actually sent
+    ///   (`omit_effort_none()` false) — otherwise re-sending changes nothing;
+    /// - the status is `400`: a refusal of the request as written, not a rate
+    ///   limit or an outage the retry decorator owns;
+    /// - the message names reasoning **and** its disabling. Deliberately a pair of
+    ///   substrings rather than the sentence: providers reword. A false positive
+    ///   costs exactly one extra round trip — the second attempt meets the same
+    ///   error and it surfaces unchanged — so the loose match is the safe side.
+    fn should_stop_asking(&self, req: &ChatRequest, err: &error::EngineError) -> bool {
+        if self.omit_effort_none()
+            || req.sampling.reasoning_effort != Some(ReasoningEffort::None)
+            || err.status != Some(400)
+        {
+            return false;
+        }
+        let message = err.message.to_lowercase();
+        message.contains("reasoning")
+            && (message.contains("disable") || message.contains("mandatory"))
+    }
+}
+
+#[async_trait::async_trait]
+impl EngineBackend for OpenAiClient {
+    async fn chat_stream(&self, req: ChatRequest, cancel: CancellationToken) -> Result<ChatStream> {
+        let response = match self.send_chat(&req, self.omit_effort_none(), &cancel).await {
+            Ok(Some(response)) => response,
+            Ok(None) => return Ok(http::cancelled_stream()),
+            // The one refusal worth answering rather than reporting: the server
+            // says reasoning cannot be turned off here, and the turn *asked* for
+            // it to be. Ask again without the field, once, and remember the
+            // answer for this server — see `is_reasoning_off_refused`.
+            Err(err) if self.should_stop_asking(&req, &err) => {
+                tracing::info!(
+                    reason = %err.message,
+                    "the engine refuses to disable reasoning; re-sending without \
+                     reasoning_effort, and not asking again on this server"
+                );
+                self.reasoning_off_refused
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+                match self.send_chat(&req, true, &cancel).await {
+                    Ok(Some(response)) => response,
+                    Ok(None) => return Ok(http::cancelled_stream()),
+                    Err(err) => return Err(err.into()),
+                }
+            }
+            Err(err) => return Err(err.into()),
+        };
 
         let mut events = response.bytes_stream().eventsource();
 
@@ -604,6 +696,107 @@ mod tests {
         format!("http://{addr}/v1")
     }
 
+    /// One stubbed HTTP exchange per connection: the status to answer with and
+    /// the body to answer it with. Named because the arms below hold a table of
+    /// them, and the tuple-in-an-array spelled out inline is what clippy calls a
+    /// very complex type — rightly.
+    type Script = &'static [(u16, &'static str)];
+
+    /// Serves `replies` in order, one per connection, and hands back the request
+    /// **bodies** it saw — which is what the refusal tests are really about: not
+    /// only that the turn recovers, but that the second request no longer carries
+    /// the field the server refused.
+    fn scripted_server(replies: Script) -> (String, std::thread::JoinHandle<Vec<String>>) {
+        use std::io::Write;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = std::thread::spawn(move || {
+            let mut seen = Vec::new();
+            for (status, payload) in replies {
+                let (mut sock, _) = listener.accept().unwrap();
+                seen.push(read_request_body(&mut sock));
+                let (reason, kind) = match status {
+                    200 => ("OK", "text/event-stream"),
+                    503 => ("Service Unavailable", "application/json"),
+                    _ => ("Bad Request", "application/json"),
+                };
+                let resp = format!(
+                    "HTTP/1.1 {status} {reason}\r\nContent-Type: {kind}\r\nContent-Length: {}\r\n\r\n{payload}",
+                    payload.len()
+                );
+                let _ = sock.write_all(resp.as_bytes());
+            }
+            seen
+        });
+        (format!("http://{addr}/v1"), handle)
+    }
+
+    /// Reads one HTTP request off the socket and returns its body. Reads until
+    /// `Content-Length` is satisfied rather than taking one `read`: a body split
+    /// across segments would otherwise make these tests flaky rather than wrong.
+    fn read_request_body(sock: &mut std::net::TcpStream) -> String {
+        use std::io::Read;
+        let mut raw = Vec::new();
+        let mut chunk = [0u8; 4096];
+        loop {
+            let n = match sock.read(&mut chunk) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => n,
+            };
+            raw.extend_from_slice(&chunk[..n]);
+            let text = String::from_utf8_lossy(&raw);
+            let Some((head, body)) = text.split_once("\r\n\r\n") else {
+                continue;
+            };
+            let want: usize = head
+                .lines()
+                .find_map(|l| {
+                    let (k, v) = l.split_once(':')?;
+                    k.eq_ignore_ascii_case("content-length")
+                        .then(|| v.trim().parse().ok())?
+                })
+                .unwrap_or(0);
+            if body.len() >= want {
+                return body.to_string();
+            }
+        }
+        String::new()
+    }
+
+    /// The `400` OpenRouter answers a request to mute reasoning with, on a model
+    /// that always reasons (docs/research/openrouter-external.md §8.1, M4).
+    const REASONING_MANDATORY: &str = r#"{"error":{"message":"Reasoning is mandatory for this endpoint and cannot be disabled.","code":400}}"#;
+
+    /// A one-chunk SSE reply, as the server sends it after the retry succeeds.
+    const ONE_CHUNK_SSE: &str = "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n";
+
+    /// A turn that asks for reasoning to be off — the shape `title.rs`, the
+    /// compaction roll and impersonation all send.
+    fn muted_turn() -> ChatRequest {
+        ChatRequest {
+            continue_final: false,
+            system: None,
+            messages: vec![crate::shared::api::ApiMessage::user("hi".to_string())],
+            sampling: crate::entities::sampling::SamplingConfig {
+                reasoning_effort: Some(ReasoningEffort::None),
+                ..Default::default()
+            },
+            tools: Vec::new(),
+        }
+    }
+
+    async fn collect_turn(client: &OpenAiClient, req: ChatRequest) -> Vec<ChatChunk> {
+        let mut s = client
+            .chat_stream(req, CancellationToken::new())
+            .await
+            .unwrap();
+        let mut out = Vec::new();
+        while let Some(c) = s.next().await {
+            out.push(c);
+        }
+        out
+    }
+
     async fn collect(url: String) -> Vec<ChatChunk> {
         let client = OpenAiClient::new(url);
         let req = ChatRequest {
@@ -680,6 +873,119 @@ mod tests {
             ),
             "{chunks:?}"
         );
+    }
+
+    /// The defect this recovery exists for, end to end: a server that refuses to
+    /// disable reasoning answers the silent turns' request with a `400`
+    /// (measured on `deepseek/deepseek-r1`, research §8.1 M4), so the title, the
+    /// compaction roll and impersonation all failed on such a model while
+    /// ordinary chat kept working. The turn must now ask again without the field
+    /// — and the second request is the assertion that matters, not just the text.
+    #[tokio::test]
+    async fn a_refusal_to_disable_reasoning_is_answered_by_asking_again_without_it() {
+        let (url, seen) = scripted_server(&[(400, REASONING_MANDATORY), (200, ONE_CHUNK_SSE)]);
+        let client = OpenAiClient::new(url);
+        let chunks = collect_turn(&client, muted_turn()).await;
+        assert!(
+            matches!(&chunks[0], ChatChunk::Text(t) if t == "hi"),
+            "the turn must recover, not fail: {chunks:?}"
+        );
+
+        let bodies = seen.join().unwrap();
+        assert_eq!(bodies.len(), 2, "exactly one retry");
+        assert!(
+            bodies[0].contains(r#""reasoning_effort":"none""#),
+            "the first attempt asks, as before: {}",
+            bodies[0]
+        );
+        assert!(
+            !bodies[1].contains("reasoning_effort"),
+            "the second must not ask again: {}",
+            bodies[1]
+        );
+    }
+
+    /// And it is remembered: the *next* turn on the same backend does not spend a
+    /// round trip rediscovering it. A model that must reason does not stop
+    /// mid-session, so the memo costs one refusal per server rather than one per
+    /// silent turn.
+    #[tokio::test]
+    async fn the_refusal_is_remembered_for_the_next_turn() {
+        let (url, seen) = scripted_server(&[
+            (400, REASONING_MANDATORY),
+            (200, ONE_CHUNK_SSE),
+            (200, ONE_CHUNK_SSE),
+        ]);
+        let client = OpenAiClient::new(url);
+        collect_turn(&client, muted_turn()).await;
+        collect_turn(&client, muted_turn()).await;
+
+        let bodies = seen.join().unwrap();
+        assert_eq!(bodies.len(), 3, "the second turn must not be refused again");
+        assert!(
+            !bodies[2].contains("reasoning_effort"),
+            "the second turn asks nothing: {}",
+            bodies[2]
+        );
+    }
+
+    /// The three arms that must **not** recover. Each script ends with a reply
+    /// that would succeed, so a wrong retry does not merely make an extra
+    /// request — it turns the turn **green**, and the `expect_err` catches it.
+    /// That shape is deliberate: counting requests at the stub is not a test
+    /// here, because a second request against a spent script is refused by the
+    /// OS and still arrives as "an error" — measured, the count-based version of
+    /// these arms survived removing the status check below.
+    ///
+    /// - a `400` about something else is a plain failure, its message intact;
+    /// - the same *message* under a transient status belongs to the retry
+    ///   decorator (spec §6.8): answering a `503` by dropping a sampling field
+    ///   would file an outage as a capability;
+    /// - a turn that never asked to mute reasoning has nothing to re-send — an
+    ///   identical body would only buy the same refusal twice.
+    #[tokio::test]
+    async fn the_recovery_does_not_fire_on_anything_else() {
+        const UNRELATED: &str = r#"{"error":{"message":"model not found","code":400}}"#;
+        let cases: [(Script, bool, &str); 3] = [
+            (
+                &[(400, UNRELATED), (200, ONE_CHUNK_SSE)],
+                true,
+                "model not found",
+            ),
+            (
+                &[(503, REASONING_MANDATORY), (200, ONE_CHUNK_SSE)],
+                true,
+                "",
+            ),
+            (
+                &[(400, REASONING_MANDATORY), (200, ONE_CHUNK_SSE)],
+                false,
+                "",
+            ),
+        ];
+        for (script, asks_to_mute, expected) in cases {
+            let (url, _seen) = scripted_server(script);
+            let client = OpenAiClient::new(url);
+            let req = if asks_to_mute {
+                muted_turn()
+            } else {
+                ChatRequest {
+                    sampling: Default::default(),
+                    ..muted_turn()
+                }
+            };
+            let err = client
+                .chat_stream(req, CancellationToken::new())
+                .await
+                // The stream is not `Debug`, and its *absence* is the assertion:
+                // a recovery would have been answered by the script's `200`.
+                .map(|_| ())
+                .expect_err("this failure must reach the caller unrecovered");
+            assert!(
+                err.to_string().contains(expected),
+                "{err} (expected to carry {expected:?})"
+            );
+        }
     }
 
     /// A **gateway** streams its reasoning as `delta.reasoning`, not
@@ -1892,6 +2198,61 @@ mod ignored_smoke {
             !thoughts.is_empty(),
             "{model} was declared a reasoning model, so its thoughts must reach the app \
              under one of the two field names: text={text:?}"
+        );
+    }
+
+    /// The silent turns against an endpoint that **cannot** be told to stop
+    /// reasoning — the defect the recovery exists for, live.
+    ///
+    /// `MINDFORK_LIVE_MANDATORY_REASONING_MODEL` declares such a model
+    /// (`deepseek/deepseek-r1` on OpenRouter is one: measured, it answers
+    /// `reasoning_effort: "none"` with `400 "Reasoning is mandatory for this
+    /// endpoint and cannot be disabled"` — docs/research/openrouter-external.md
+    /// §8.1, M4/M4a). The smoke then sends exactly what `title.rs` sends and
+    /// **fails** rather than skips if the turn does not complete: before the
+    /// recovery this request was the `400` itself, so a pass here is the whole
+    /// claim — the title, the compaction roll and impersonation work on such a
+    /// model again.
+    #[tokio::test]
+    #[ignore = "requires MINDFORK_ENGINE_URL + MINDFORK_LIVE_MANDATORY_REASONING_MODEL (a model that must reason)"]
+    async fn a_muted_turn_survives_an_endpoint_that_must_reason() {
+        let Some(client) = client_from_env() else {
+            eprintln!("skip: MINDFORK_ENGINE_URL not set");
+            return;
+        };
+        let Ok(model) = std::env::var("MINDFORK_LIVE_MANDATORY_REASONING_MODEL") else {
+            eprintln!("skip: MINDFORK_LIVE_MANDATORY_REASONING_MODEL not set");
+            return;
+        };
+        let client = client.with_model(Some(model.clone()));
+        // The title turn's own shape (title.rs): muted reasoning, a short cap, a
+        // moderate temperature, no tools.
+        let req = ChatRequest {
+            continue_final: false,
+            system: Some(
+                "Give this conversation a short title. Answer with the title only.".into(),
+            ),
+            messages: vec![ApiMessage::user("How do database indexes work?")],
+            sampling: SamplingConfig {
+                max_tokens: Some(2048),
+                temperature: Some(0.3),
+                thinking: Some(false),
+                reasoning_effort: Some(ReasoningEffort::None),
+                reasoning_budget: Some(0),
+                ..Default::default()
+            },
+            tools: vec![],
+        };
+        let (text, thoughts, finish) =
+            collect(client.chat_stream(req, Default::default()).await.unwrap()).await;
+        println!(
+            "{model}: finish={finish:?}\ntitle={text}\nthoughts={} chars",
+            thoughts.len()
+        );
+        assert!(
+            finish.is_some() && !text.is_empty(),
+            "the muted turn must complete on an endpoint that refuses to be muted: \
+             finish={finish:?} text={text:?}"
         );
     }
 
