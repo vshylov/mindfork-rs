@@ -287,6 +287,10 @@ route. And the nested shape is no escape: the endpoint does not refuse a
 *spelling*, it refuses the *request to disable reasoning*, so
 `reasoning: {enabled: false}` would be refused the same way.
 
+The control (M4a) narrows it to one field: a minimal request carrying
+`reasoning_effort: "none"` and nothing else of ours is refused identically, so
+the llama.cpp-only fields the silent turns also send are not involved.
+
 The fix therefore is not "which spelling" but "when to ask at all", and it has
 three shapes — **the fork is open, and this is what it needs a decision on**:
 
@@ -455,6 +459,7 @@ review. Three smokes answer M1 and M2 in under a minute.
 | **usage — works** | The same failure printed the counter it was measuring against: `exact prompt: Some(4875)`, `Some(5158)`, `Some(22255)`, `Some(22567)`, each flagged exact. OpenRouter's `usage` parses, and a 22.5k-token prompt streams through the gateway without trouble. |
 | **M4 — a `400`, not a bill** | The exact body `title.rs` builds, sent to `deepseek/deepseek-r1`, is answered `HTTP 400`: `{"error":{"message":"Reasoning is mandatory for this endpoint and cannot be disabled.","code":400}}`. The parameter is read and **refused**, not ignored — so the title, the compaction roll and impersonation fail on a model that always reasons, while ordinary chat keeps working. F2 reopens as a functional defect; its fork is above. |
 | **M5 — both stage-2 proposals are buildable** | `deepseek/deepseek-r1` carries `context_length: 64000` **and** `supported_parameters: frequency_penalty, include_reasoning, max_tokens, presence_penalty, reasoning, repetition_penalty, response_format, seed, stop, temperature, tool_choice, tools, top_k, top_p`. The window is there for F3(b); the list is there for F4(c) — and it confirms §4.2 field by field: **none** of `min_p`, `typical_p`, `top_n_sigma`, dynatemp, adaptive, mirostat, DRY, XTC or `samplers` appears, while the penalty it does take is spelled `repetition_penalty` where we send `repeat_penalty`. Note also what is **absent**: `reasoning_effort`. |
+| **M4a — the field is isolated** | The control: a *minimal* request — `model`, one user message, `stream` — plus `reasoning_effort: "none"` and nothing else, answered by the same `400`. So the refusal is that field's alone; the llama.cpp-only fields the silent turns also carry (`thinking`, `reasoning_budget`, `chat_template_kwargs`) are absent from this body and cannot be the cause. F2's fix has one target. |
 | **M3** | not run. |
 
 **The failure mode worth knowing about: a provider that does not parse its own
@@ -475,7 +480,6 @@ controls (§6) are the lever we do not expose.
 | | what to run | what would falsify the design |
 |---|---|---|
 | **M3** | the app itself: a chat, a `python_exec` chart, a `/file` round trip | tool-result images refused → F6 hardens into a real limit |
-| **M4a** | the same body with **only** `reasoning_effort:"none"` added to a minimal request (the control the M4 run skipped) | it passes → something other than that field triggered the refusal, and F2's fix changes shape |
 
 The outcome is recorded in [docs/journal/engine.md](../journal/engine.md), per
 AGENTS.md §3.

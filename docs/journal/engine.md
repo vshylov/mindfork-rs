@@ -3970,9 +3970,13 @@ per backend; stop sending the field on `external` and lean on `reasoning_budget:
 llama.cpp; or ask the catalogue, which lists `reasoning`/`include_reasoning` and
 **not** `reasoning_effort` for this model. Recommended: the first, with the third
 when the catalogue fetch lands — it is the only one that cannot be wrong, and it
-covers LiteLLM and every future wording drift too. Not implemented: a wire change
-made on one model's refusal, without the control that isolates the field (§8.2,
-M4a), would be the same mistake this entry is correcting.
+covers LiteLLM and every future wording drift too. The control (M4a) then isolated the
+field: a minimal request carrying `reasoning_effort: "none"` and nothing else of
+ours is refused identically, so the llama.cpp-only fields the silent turns also
+send are not involved and the fix has one target. Not implemented here — which
+of the three shapes to build is the user's decision, and two of them need a
+measurement this session cannot make (a local `llama-server` for (b), a gateway
+for (a)).
 
 **M5: both stage-2 proposals are buildable, and the sampling prediction was
 exact.** `deepseek/deepseek-r1` carries `context_length: 64000` — the number
@@ -3987,4 +3991,4 @@ F4(c) and F2(c), which is what makes stage 2 one piece of work rather than three
 
 **Documentation only; no code changed.** Tests untouched (3221 / 177 on the
 tracked count), so no live run of our own was needed beyond the two measurements
-recorded here. M3 and the M4a control are still owed.
+recorded here. M3 is still owed.
