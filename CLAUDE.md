@@ -171,7 +171,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-14, version 0.9.9)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3220 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **3221 unit tests
 green, 177 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
@@ -201,7 +201,10 @@ being recent is dropped, not shortened.
   the one measurement nobody has made — a gateway's catalogue carries
   `context_length` and `supported_parameters` per model, one request for both.
   Not measured live at all: no route to the service from the session, so the
-  `#[ignore]` smoke is written and declared rather than run
+  `#[ignore]` smoke is written and declared rather than run — and writing out its
+  command found that `live_client` sent no `model`, i.e. **no** live smoke could
+  have been pointed at a gateway; it now derives `MINDFORK_ENGINE_MODEL` from the
+  URL variable (install.md §7.1)
   ([docs/research/openrouter-external.md](docs/research/openrouter-external.md),
   spec §6.5, [docs/journal/engine.md](docs/journal/engine.md)).
 - **The local interpreter joins the file exchange, and the track closes** — `python_exec`

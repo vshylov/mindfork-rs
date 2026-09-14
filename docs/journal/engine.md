@@ -3867,10 +3867,10 @@ unmade measurement: a gateway's catalogue carries `context_length` and
 at once. Left as roadmap proposals with `reasoning_details` (F5), not built
 blind.
 
-**Tests**: 3220 green, 177 ignored (3217 / 176 before) on the tracked count —
-this change was measured on Linux, where the same suite is 3213 / 172 (3210 /
+**Tests**: 3221 green, 177 ignored (3217 / 176 before) on the tracked count —
+this change was measured on Linux, where the same suite is 3214 / 172 (3210 /
 171 before) because the Windows-only tests do not compile there; the delta is
-+3 and +1 either way. Three over the new
++4 and +1 either way. Three over the new
 parse (a gateway's field becomes thoughts; `reasoning_content` wins when both
 arrive; a keep-alive comment adds nothing), plus one `#[ignore]` smoke,
 `a_gateway_streams_thoughts_under_its_own_field_name`, declared by
@@ -3878,12 +3878,32 @@ arrive; a keep-alive comment adds nothing), plus one `#[ignore]` smoke,
 states that the named model reasons, and the smoke **fails** rather than skips
 if no thoughts arrive (lessons §9). Both new parse tests were mutation-checked,
 and the precedence fixture had to be sharpened to earn it — with one string
-under both keys, swapping the precedence passed unnoticed.
+under both keys, swapping the precedence passed unnoticed. The fourth is the
+model-variable derivation below.
 
 **Live — not run, and that is the state of it.** The session had no route to
-`openrouter.ai` (the environment's egress proxy refuses the host) and no
-account, so nothing here was measured against the service; the unit tests prove
-the parse and the smoke is written for whoever has a key. The five measurements
-that would close it are [openrouter-external.md](../research/openrouter-external.md)
-§8. Everything shipped is safe under either answer, which is why it shipped
-without them.
+`openrouter.ai` (the environment's egress proxy answers `403` to the `CONNECT`,
+and its own README forbids routing around an organization policy denial) and the
+account key added afterwards does not reach a container that started before it;
+so nothing here was measured against the service. The unit tests prove the parse
+and the smoke is written for whoever has a key. The five measurements that would
+close it are [openrouter-external.md](../research/openrouter-external.md) §8.
+Everything shipped is safe under either answer, which is why it shipped without
+them.
+
+**The live set could not have been pointed at a gateway at all** — found while
+writing those commands, which is the value of writing them out. `live_client`
+names a stack by a pair of variables (URL + key) and sent **no** `model`, so
+every `#[ignore]` smoke in the repository — this client's, the orchestrator's
+e2e set, the embedder's — would have met `400 "model name is missing"` on
+OpenRouter, and only the new gateway smoke would have passed, because it sets
+its own. The helper now derives a third variable from the same convention the
+seventeen call sites already spell (`MINDFORK_ENGINE_URL` →
+`MINDFORK_ENGINE_MODEL`; a suffixed stack keeps its suffix, as its key variable
+does) and sends it when set — unset, the request is byte-identical to before.
+Derived rather than passed because a third argument at seventeen call sites buys
+nothing the convention does not already guarantee; the derivation itself is
+pinned by a test, since a wrong name there would not fail loudly — it would read
+an unset variable and leave a correctly-configured-looking run answering `400`.
+Test-only code (`#[cfg(test)]`), and install.md §7.1 now carries the OpenRouter
+invocation.

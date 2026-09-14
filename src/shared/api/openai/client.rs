@@ -521,6 +521,14 @@ mod tests {
 
         let with_key = live_client(SET, SET).expect("URL is set");
         assert!(with_key.api_key.is_some(), "a set key is carried");
+
+        // …and the model stays unset unless its own variable names one: a
+        // single-model `llama-server` must keep receiving a request with no
+        // `model` key at all (docs/research/external-model-name.md §2.3).
+        assert!(
+            no_key.model.is_none() && with_key.model.is_none(),
+            "no MINDFORK_*_MODEL variable is set in a unit-test environment"
+        );
     }
 
     /// `probe()` must carry the key: an authenticated server answers `/health`

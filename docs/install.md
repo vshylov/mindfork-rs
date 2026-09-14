@@ -1080,6 +1080,25 @@ $env:MINDFORK_ENGINE_KEY = "<token>"
 cargo test -- --ignored --nocapture --test-threads=1
 ```
 
+**A multi-model endpoint needs a third variable** — `MINDFORK_ENGINE_MODEL`
+(and `MINDFORK_EMBED_MODEL` for the embedder). A gateway routes on the request's
+`model` and answers `400` without one, so the whole live set was a single-model
+stack's privilege until these existed; unset, nothing is sent and the request is
+what it always was. Against OpenRouter:
+
+```powershell
+$env:MINDFORK_ENGINE_URL   = "https://openrouter.ai/api/v1"
+$env:MINDFORK_ENGINE_KEY   = $env:OPENROUTER_API_KEY
+$env:MINDFORK_ENGINE_MODEL = "deepseek/deepseek-r1"   # any model on the account
+cargo test -- --ignored --nocapture --test-threads=1
+```
+
+One smoke asks for more: `a_gateway_streams_thoughts_under_its_own_field_name`
+runs only when `MINDFORK_LIVE_GATEWAY_MODEL` **declares** a model that reasons,
+and then fails rather than skips if no "thoughts" arrive — the gateway's field
+name is the thing it is there to prove
+([docs/research/openrouter-external.md](research/openrouter-external.md) §8).
+
 ### 7.2. The remote gate (rented GPU, no local stack)
 
 `tools/e2e_hf.py` runs the same suite against **ephemeral Hugging Face Inference

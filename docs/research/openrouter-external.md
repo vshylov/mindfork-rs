@@ -341,17 +341,52 @@ OpenAI-compatible mode than it is.
 ## 8. The live run this still owes
 
 Stage 1's unit tests prove the parse; only a live gateway proves the claim. The
-session could not run it (§ header), so these are the measurements to make
-before the PR is called done — `MINDFORK_ENGINE_URL=https://openrouter.ai/api/v1`,
-`MINDFORK_ENGINE_KEY=sk-or-…`:
+session could not run it — twice over, and both refusals are the environment's
+rather than the code's: the organization's egress policy answers `403` to a
+`CONNECT` for `openrouter.ai:443` (recorded by the proxy's own status endpoint,
+which the session is told not to route around), and an `OPENROUTER_API_KEY`
+added to the environment after this container started does not reach it.
+
+**The live set could not have targeted a gateway at all, either** — found while
+preparing these commands, and fixed with them. `live_client` names a stack by a
+pair of variables (URL + key) and sent **no** `model`, so every `#[ignore]`
+smoke in the repository — this client's, the orchestrator's e2e set, the
+embedder's — would have answered `400 "model name is missing"` against
+OpenRouter, with only the new gateway smoke passing because it sets its own. It
+now derives a third variable from the same convention
+(`MINDFORK_ENGINE_URL` → `MINDFORK_ENGINE_MODEL`,
+`MINDFORK_EMBED_URL_ALT` → `MINDFORK_EMBED_MODEL_ALT`) and sends it when set;
+unset, the request is byte-identical to before. Test-only code — nothing in the
+application reads these.
+
+So the run is one paste, from a machine that can reach the service
+(PowerShell; `$env:OPENROUTER_API_KEY` is where the key already is):
+
+```powershell
+$env:MINDFORK_ENGINE_URL        = "https://openrouter.ai/api/v1"
+$env:MINDFORK_ENGINE_KEY        = $env:OPENROUTER_API_KEY
+$env:MINDFORK_ENGINE_MODEL      = "deepseek/deepseek-r1"   # any model on the account
+$env:MINDFORK_LIVE_GATEWAY_MODEL = "deepseek/deepseek-r1"  # …and it must reason
+cargo test -- --ignored --nocapture --test-threads=1
+```
+
+and these are the measurements it has to produce:
 
 | | what to run | what would falsify the design |
 |---|---|---|
-| **M1** | `MINDFORK_LIVE_GATEWAY_MODEL=<a reasoning model> cargo test a_gateway_streams_thoughts -- --ignored --nocapture` | no thoughts → the field name is wrong or the model needs `reasoning:{…}` to emit any |
-| **M2** | the same, but a tool-calling prompt over two rounds | a `400` naming reasoning blocks → F5 is not optional |
+| **M1** | `cargo test a_gateway_streams_thoughts -- --ignored --nocapture` | no thoughts → the field name is wrong, or the model needs `reasoning:{…}` to emit any |
+| **M2** | `cargo test tool_call_is_emitted_and_parsed -- --ignored --nocapture`, then a two-round tool prompt in the app | a `400` naming reasoning blocks → F5 is not optional |
 | **M3** | the app itself: a chat, a `python_exec` chart, a `/file` round trip | tool-result images refused → F6 hardens into a real limit |
 | **M4** | a title + a compaction roll, then read `usage.reasoning_tokens` on the gateway's activity page | non-zero → `reasoning_effort:"none"` is being dropped, and F2 reopens as a cost defect |
 | **M5** | `GET /v1/models`, one entry for the configured model | `context_length`/`supported_parameters` present as documented → F3(b)+F4(c) are worth building |
+
+A caveat that is the point of running the *whole* set rather than one smoke:
+several of these smokes were written against a local `llama-server` and assert
+its behaviour, not a gateway's — `accepts_creative_sampling_extensions` in
+particular asserts that the server *takes* the llama.cpp extension fields, which
+a gateway silently drops (§4.2, F4), and the vision smokes need a model that
+takes images. A failure there is a statement about the stack, not necessarily a
+defect; read each one before filing it.
 
 Record the model, the stack and the outcome in
 [docs/journal/engine.md](../journal/engine.md), per AGENTS.md §3.
