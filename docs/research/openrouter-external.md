@@ -363,14 +363,24 @@ So the run is one paste, from a machine that can reach the service
 (PowerShell; `$env:OPENROUTER_API_KEY` is where the key already is):
 
 ```powershell
-$env:MINDFORK_ENGINE_URL        = "https://openrouter.ai/api/v1"
-$env:MINDFORK_ENGINE_KEY        = $env:OPENROUTER_API_KEY
-$env:MINDFORK_ENGINE_MODEL      = "deepseek/deepseek-r1"   # any model on the account
-$env:MINDFORK_LIVE_GATEWAY_MODEL = "deepseek/deepseek-r1"  # …and it must reason
-cargo test -- --ignored --nocapture --test-threads=1
+$env:MINDFORK_ENGINE_URL         = "https://openrouter.ai/api/v1"
+$env:MINDFORK_ENGINE_KEY         = $env:OPENROUTER_API_KEY
+$env:MINDFORK_ENGINE_MODEL       = "<vendor/model>"   # any model on the account
+$env:MINDFORK_LIVE_GATEWAY_MODEL = "<vendor/model>"   # …and it must reason
+
+cargo test a_gateway_streams_thoughts_under_its_own_field_name -- --ignored --nocapture
+cargo test tool_call_is_emitted_and_parsed                     -- --ignored --nocapture
+cargo test simple_generation                                   -- --ignored --nocapture
 ```
 
-and these are the measurements it has to produce:
+**Named smokes, not `cargo test -- --ignored`** — the correction the first
+attempt earned. The set is ~235 smokes, 121 of them multi-round end-to-end
+conversations built for a local stack where a token is free and a 20k-token
+ballast costs nothing; against a metered gateway that is hours of wall clock and
+a real bill, most of it spent on behaviour that has nothing to do with this
+review. Three smokes answer M1 and M2 in under a minute.
+
+and these are the measurements the run has to produce:
 
 | | what to run | what would falsify the design |
 |---|---|---|

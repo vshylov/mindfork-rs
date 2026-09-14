@@ -1087,16 +1087,32 @@ stack's privilege until these existed; unset, nothing is sent and the request is
 what it always was. Against OpenRouter:
 
 ```powershell
-$env:MINDFORK_ENGINE_URL   = "https://openrouter.ai/api/v1"
-$env:MINDFORK_ENGINE_KEY   = $env:OPENROUTER_API_KEY
-$env:MINDFORK_ENGINE_MODEL = "deepseek/deepseek-r1"   # any model on the account
-cargo test -- --ignored --nocapture --test-threads=1
+$env:MINDFORK_ENGINE_URL         = "https://openrouter.ai/api/v1"
+$env:MINDFORK_ENGINE_KEY         = $env:OPENROUTER_API_KEY
+$env:MINDFORK_ENGINE_MODEL       = "<vendor/model>"   # any model on the account
+$env:MINDFORK_LIVE_GATEWAY_MODEL = "<vendor/model>"   # …and, for the smoke below, one that reasons
+
+cargo test a_gateway_streams_thoughts_under_its_own_field_name -- --ignored --nocapture
+cargo test tool_call_is_emitted_and_parsed                     -- --ignored --nocapture
+cargo test simple_generation                                   -- --ignored --nocapture
 ```
 
-One smoke asks for more: `a_gateway_streams_thoughts_under_its_own_field_name`
-runs only when `MINDFORK_LIVE_GATEWAY_MODEL` **declares** a model that reasons,
-and then fails rather than skips if no "thoughts" arrive — the gateway's field
-name is the thing it is there to prove
+**Do not run the whole `--ignored` set against a paid gateway.** It is ~235
+smokes, 121 of them multi-round end-to-end conversations written for a local
+stack where a token costs nothing and a 20k-token ballast is free: against a
+metered endpoint that is hours of wall clock and a real bill. Name the smokes
+you need, as above. Two more things follow from "written for a local stack":
+several of those smokes assert **llama.cpp's** behaviour rather than an
+OpenAI-compatible server's — `accepts_creative_sampling_extensions` checks that
+the sampling *extensions* are accepted, which a gateway drops by design (§3),
+and `auto_compaction_fires_without_the_command_live` deliberately leaves the
+context window undiscovered, which on a gateway means the trigger cannot fire at
+all. A red result there is a statement about the stack, not necessarily a defect.
+
+`a_gateway_streams_thoughts_under_its_own_field_name` is the one that must be
+green: it runs only when `MINDFORK_LIVE_GATEWAY_MODEL` **declares** a model that
+reasons, and then fails rather than skips if no "thoughts" arrive — the
+gateway's field name is the thing it is there to prove
 ([docs/research/openrouter-external.md](research/openrouter-external.md) §8).
 
 ### 7.2. The remote gate (rented GPU, no local stack)
