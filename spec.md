@@ -504,6 +504,7 @@ loop:
 > **Confirmed:** the server sends reasoning in a **dedicated `delta.reasoning_content` field** (in `llama-server` — when started with `--reasoning-format`, e.g. `auto`). Otherwise reasoning arrives inline in `content`, and the fallback `<think>` parsing kicks in (below).
 
 - **Primary path**: reasoning arrives in `delta.reasoning_content` → directly into `ChatChunk::Thoughts`. Enabled via `thinking: true` (+ `reasoning_effort`) in the request.
+- **The same text under a second name**: a **gateway** (OpenRouter and the clients that copy its wire) streams reasoning as `delta.reasoning`, where llama.cpp, vLLM, DeepSeek and xAI send `delta.reasoning_content`. The client reads **either**, `reasoning_content` first — a server that sends both sends one trace under two names, and thoughts must not be doubled. An unknown field deserializes away in silence, so until this was added every thought from such a gateway was dropped without a trace, and the `<think>` fallback below could not catch it either: the gateway has already lifted the reasoning out of `content` ([docs/research/openrouter-external.md](docs/research/openrouter-external.md) §5, F1).
 - **Fallback path** (external mode without the environment variable): a streaming parser extracts `<think>…</think>` from `content`, correctly handling tags **split across a chunk boundary** (an unfinished-tag buffer). Covered by unit tests in both modes.
 - "Thoughts" are stored in `Message.thoughts` and shown in a **collapsible block** in the feed.
 

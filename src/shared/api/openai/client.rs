@@ -273,17 +273,20 @@ impl EngineBackend for OpenAiClient {
                                             });
                                         }
                                         let Some(choice) = chunk.choices.into_iter().next() else { continue };
-                                        if let Some(r) = choice.delta.reasoning_content
+                                        let mut delta = choice.delta;
+                                        // `reasoning_content` or a gateway's `reasoning`, one of
+                                        // the two (wire::Delta::thoughts).
+                                        if let Some(r) = delta.thoughts()
                                             && !r.is_empty()
                                         {
                                             yield ChatChunk::Thoughts(r);
                                         }
-                                        if let Some(c) = choice.delta.content
+                                        if let Some(c) = delta.content
                                             && !c.is_empty()
                                         {
                                             for piece in parser.push(&c) { yield piece_to_chunk(piece); }
                                         }
-                                        if let Some(tool_calls) = choice.delta.tool_calls {
+                                        if let Some(tool_calls) = delta.tool_calls {
                                             for tc in tool_calls {
                                                 let (name, arguments) = match tc.function {
                                                     Some(f) => (f.name, f.arguments.unwrap_or_default()),
@@ -573,6 +576,26 @@ mod tests {
         format!("http://{addr}/v1")
     }
 
+    /// Serves one SSE response whose body is written **verbatim** — for the
+    /// lines [`sse_server`] cannot express, such as a comment
+    /// (`: OPENROUTER PROCESSING`), which carries no `data:` field.
+    fn sse_raw_server(body: &'static str) -> String {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let (mut sock, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 8192];
+            let _ = sock.read(&mut buf);
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = sock.write_all(resp.as_bytes());
+        });
+        format!("http://{addr}/v1")
+    }
+
     async fn collect(url: String) -> Vec<ChatChunk> {
         let client = OpenAiClient::new(url);
         let req = ChatRequest {
@@ -649,6 +672,80 @@ mod tests {
             ),
             "{chunks:?}"
         );
+    }
+
+    /// A **gateway** streams its reasoning as `delta.reasoning`, not
+    /// `delta.reasoning_content` (OpenRouter, and the clients that copy it).
+    /// Serde drops an unknown field in silence, so before the field existed this
+    /// stream reached the feed as a reply with no thoughts at all — and the
+    /// `<think>` fallback could not rescue it, since the gateway has already
+    /// lifted the reasoning out of `content`
+    /// (docs/research/openrouter-external.md §5, F1).
+    #[tokio::test]
+    async fn a_gateways_reasoning_field_becomes_thoughts() {
+        let url = sse_server(&[
+            r#"{"choices":[{"index":0,"delta":{"reasoning":"weighing it"},"finish_reason":null}]}"#,
+            r#"{"choices":[{"index":0,"delta":{"content":"42"},"finish_reason":"stop"}]}"#,
+            "[DONE]",
+        ]);
+        let chunks = collect(url).await;
+        assert!(
+            matches!(&chunks[0], ChatChunk::Thoughts(t) if t == "weighing it"),
+            "{chunks:?}"
+        );
+        assert!(
+            matches!(&chunks[1], ChatChunk::Text(t) if t == "42"),
+            "{chunks:?}"
+        );
+    }
+
+    /// A server that sends **both** names sends one trace twice, so exactly one
+    /// of them may be read — otherwise every thought would appear doubled in the
+    /// feed. `reasoning_content` wins: it is what llama.cpp, vLLM, DeepSeek and
+    /// xAI emit natively, while `reasoning` is the gateway's spelling of the
+    /// same text. The two fixtures deliberately differ — with one string under
+    /// both keys, swapping the precedence would pass unnoticed (lessons §2).
+    #[tokio::test]
+    async fn reasoning_content_wins_when_a_server_sends_both() {
+        let url = sse_server(&[
+            r#"{"choices":[{"index":0,"delta":{"reasoning_content":"native","reasoning":"mirrored"},"finish_reason":null}]}"#,
+            "[DONE]",
+        ]);
+        let chunks = collect(url).await;
+        let thoughts: Vec<&String> = chunks
+            .iter()
+            .filter_map(|c| match c {
+                ChatChunk::Thoughts(t) => Some(t),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(thoughts, vec!["native"], "one trace, once: {chunks:?}");
+    }
+
+    /// OpenRouter parks an SSE **comment** (`: OPENROUTER PROCESSING`) in the
+    /// stream while it waits for the provider, to keep the connection from
+    /// timing out. A comment carries no `data:`, so the SSE parser dispatches no
+    /// event for it at all — the turn must not see a chunk, a parse warning or
+    /// an early terminator (docs/research/openrouter-external.md §4.1).
+    #[tokio::test]
+    async fn a_keep_alive_comment_does_not_disturb_the_stream() {
+        let url = sse_raw_server(concat!(
+            ": OPENROUTER PROCESSING\n\n",
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"},\"finish_reason\":null}]}\n\n",
+            ": OPENROUTER PROCESSING\n\n",
+            "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ));
+        let chunks = collect(url).await;
+        assert!(
+            matches!(&chunks[0], ChatChunk::Text(t) if t == "hi"),
+            "{chunks:?}"
+        );
+        assert!(
+            matches!(chunks.last(), Some(ChatChunk::Finished(FinishReason::Stop))),
+            "{chunks:?}"
+        );
+        assert_eq!(chunks.len(), 2, "the comments added nothing: {chunks:?}");
     }
 
     /// llama.cpp's error object inside an open stream — the shape of its
@@ -1731,6 +1828,62 @@ mod ignored_smoke {
         assert!(
             !thoughts.is_empty(),
             "expected non-empty thoughts from a reasoning model: text={text:?}"
+        );
+    }
+
+    /// The **gateway** arm of the same claim: a reasoning model reached through
+    /// OpenRouter (or any gateway that copies its wire) streams its reasoning as
+    /// `delta.reasoning`, where llama.cpp, vLLM, DeepSeek and xAI send
+    /// `delta.reasoning_content`. The client reads either
+    /// (`wire::Delta::thoughts`) — this is what proves it against a live one
+    /// (docs/research/openrouter-external.md §5, F1).
+    ///
+    /// **Declared, never guessed**, on the pattern of `MINDFORK_LIVE_TEXT_ONLY`:
+    /// `MINDFORK_LIVE_GATEWAY_MODEL` names a *reasoning* model on the endpoint
+    /// `MINDFORK_ENGINE_URL` points at (e.g. `deepseek/deepseek-r1`), and the
+    /// smoke then **fails** rather than skips when no thoughts arrive. A smoke
+    /// that quietly passes on a stack which sent none is worse than no smoke
+    /// (lessons §9) — and this one exists precisely because the gateway path
+    /// used to end that way, silently.
+    ///
+    /// The model name is not optional here as it is on a single-model
+    /// `llama-server`: a gateway routes on the request's `model` and answers
+    /// `400` without it (docs/research/external-model-name.md §2.3).
+    #[tokio::test]
+    #[ignore = "requires MINDFORK_ENGINE_URL + MINDFORK_ENGINE_KEY + MINDFORK_LIVE_GATEWAY_MODEL (a reasoning model on a gateway)"]
+    async fn a_gateway_streams_thoughts_under_its_own_field_name() {
+        let Some(client) = client_from_env() else {
+            eprintln!("skip: MINDFORK_ENGINE_URL not set");
+            return;
+        };
+        let Ok(model) = std::env::var("MINDFORK_LIVE_GATEWAY_MODEL") else {
+            eprintln!("skip: MINDFORK_LIVE_GATEWAY_MODEL not set");
+            return;
+        };
+        let client = client.with_model(Some(model.clone()));
+        let req = ChatRequest {
+            continue_final: false,
+            system: None,
+            messages: vec![ApiMessage::user(
+                "Think step by step, then answer: what is 17*23?",
+            )],
+            sampling: SamplingConfig {
+                // Thinking and the reply share one budget on a reasoning model,
+                // and the reply is emitted last (see `simple_generation`).
+                max_tokens: Some(2048),
+                thinking: Some(true),
+                ..Default::default()
+            },
+            tools: vec![],
+        };
+        let (text, thoughts, finish) =
+            collect(client.chat_stream(req, Default::default()).await.unwrap()).await;
+        println!("gateway={model} finish={finish:?}\nthoughts={thoughts}\ntext={text}");
+        assert!(finish.is_some());
+        assert!(
+            !thoughts.is_empty(),
+            "{model} was declared a reasoning model, so its thoughts must reach the app \
+             under one of the two field names: text={text:?}"
         );
     }
 

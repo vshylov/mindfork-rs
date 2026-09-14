@@ -433,6 +433,38 @@ Two modes (configured on the settings screen, `Ctrl+P`, "Model/server" section):
   calls"** field sits beside it, **1** by default here as on managed; the
   cloud modes default to **4**.
 
+**A cloud gateway is an `external` server too** — OpenRouter, LiteLLM, or any
+OpenAI-compatible reseller. It works, and four things are worth knowing before
+you point the app at one (the full compatibility review:
+[docs/research/openrouter-external.md](research/openrouter-external.md)):
+
+- **the URL carries `/v1` and the model name is mandatory** — for OpenRouter,
+  `https://openrouter.ai/api/v1` and a slug such as `deepseek/deepseek-r1` in
+  "Model (opt.)". The key goes into the same "API key (opt.)" field described in
+  §3.2. A gateway routes on the request's `model` and refuses a request without
+  one, so the field is only "optional" against a single-model server;
+- **type the context window yourself**, Settings → Memory → Context. Automatic
+  compaction measures against the window the engine reports, and a gateway
+  reports none (`/props` is llama.cpp's own endpoint) — so without that number
+  the automatic trigger stays inactive and a long chat ends in the provider's
+  "context length exceeded" instead of a rolling summary. `/compact` works
+  either way. The same missing endpoint leaves the "Parallel sessions" hint
+  blank and the model-name caption empty unless you typed a name;
+- **the sampling settings are a llama.cpp set, and a gateway keeps only part of
+  it**: `temperature`, `top_p`, `top_k`, `min_p`, `max_tokens`, `seed`,
+  `frequency_penalty` and `presence_penalty` go through; dynamic temperature,
+  adaptive-p, typical-p, top-n-sigma, mirostat, DRY, XTC and the sampler order
+  are dropped on the way, silently. Mind `repeat_penalty` in particular — the
+  gateways spell that field `repetition_penalty`, so it looks set and does
+  nothing;
+- **"Parallel sessions" and "Parallel tool calls" default to 1** here, as for a
+  local server. A gateway is a cloud in practice: raising both (4 is the cloud
+  modes' default for tool calls) is what makes a reply's reads overlap.
+
+Thinking models work through a gateway as they do anywhere else: the "thoughts"
+arrive under the field name the gateway uses (`reasoning`) as readily as under
+the one a local server uses (`reasoning_content`).
+
 **How the app knows whether images are accepted.** It asks the server, rather than
 matching model names: `llama-server` reports `modalities` on its `/props` endpoint
 (`{"vision": true, "video": true, "audio": false}`) — the same request that already
@@ -455,7 +487,8 @@ llama-server -m google_gemma-4-E4B-it-Q4_1.gguf \
 
 "Thoughts" (`reasoning_content`) are enabled on `llama-server` with the
 `--reasoning-format` flag (e.g. `auto`) for thinking models; otherwise mindfork
-falls back to parsing `<think>…</think>` from the text.
+falls back to parsing `<think>…</think>` from the text. A gateway sends the same
+text in a field of its own (`reasoning`) — the app reads either.
 
 ### 3.1. Downloading llama.cpp (`mindfork llama`)
 

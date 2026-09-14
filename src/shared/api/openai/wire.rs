@@ -483,8 +483,31 @@ pub struct Delta {
     pub content: Option<String>,
     #[serde(default)]
     pub reasoning_content: Option<String>,
+    /// The same reasoning text under the name a **gateway** gives it: OpenRouter
+    /// streams it as `delta.reasoning`, while llama.cpp, vLLM, DeepSeek and xAI
+    /// use `reasoning_content` above. Unknown fields deserialize away in
+    /// silence, so before this field existed every thought from such a gateway
+    /// was dropped without a trace — and the `<think>` fallback could not catch
+    /// it either, since a gateway has already lifted the reasoning out of
+    /// `content` (docs/research/openrouter-external.md §5, F1).
+    ///
+    /// Read **only when `reasoning_content` says nothing**: a server that sends
+    /// both sends one trace under two names, and thoughts must not be doubled.
+    #[serde(default)]
+    pub reasoning: Option<String>,
     #[serde(default)]
     pub tool_calls: Option<Vec<DeltaToolCall>>,
+}
+
+impl Delta {
+    /// This delta's reasoning text, under whichever of the two names the server
+    /// used — `reasoning_content` first (see [`Delta::reasoning`]). Takes both
+    /// fields, so the same trace cannot be read twice.
+    pub fn thoughts(&mut self) -> Option<String> {
+        self.reasoning_content
+            .take()
+            .or_else(|| self.reasoning.take())
+    }
 }
 
 #[derive(Debug, Deserialize)]

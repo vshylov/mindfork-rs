@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (59)
+## Entries (60)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -71,6 +71,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the engine binary is found, not just typed — an empty field resolves (done)
 - Post-M9: `llama remove` — a build comes off disk, and says what that changed (done)
 - Post-M9: the turn asks about images once, and stops waiting for the answer (done)
+- Post-M9: `external` against a gateway — a thought under a second name, and the rest of the review (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -3817,3 +3818,72 @@ this one could not until the fixture matched the case.
 
 **Live.** `sandbox_outputs_e2e_live` on Gemma 4 31B q4_0 (b10807): the probe runs against a
 real `/props` there, which is the half a scripted engine cannot check.
+
+### Post-M9: `external` against a gateway — a thought under a second name, and the rest of the review (done)
+
+The question was "how compatible is `external` mode with OpenRouter", and the
+honest answer needed reading rather than guessing, because `external` is the
+mode we recommend for exactly that: install.md names OpenRouter, the settings
+hint names it, and `ExternalSettings::model_name` exists because a gateway
+routes on the request's `model`
+([external-model-name.md](../research/external-model-name.md)). The review:
+[openrouter-external.md](../research/openrouter-external.md).
+
+**The core loop was fine, and one channel of three was not.** Streaming, tool
+calls, images, the token counter, the Bearer key, the retry decorator and the
+`{"error":…}` envelope inside an open `200` all already speak that wire — and
+the keep-alive SSE **comment** a gateway parks in the stream
+(`: OPENROUTER PROCESSING`), which is the classic way a hand-rolled reader
+breaks, is inert here for a reason worth recording: `eventsource-stream` 0.2.3
+discards a comment line (`RawEventLine::Comment(_) => {}`) and dispatches
+nothing for an event whose data buffer is empty, so the app sees no chunk and
+not even a parse warning. Read in the crate's own source, then pinned by a unit
+test against a raw-body SSE stub, because "the parser looked right" is not a
+test.
+
+**What was broken: thoughts, in the quietest way available.** The client read
+`delta.reasoning_content`; a gateway sends `delta.reasoning`. An unknown field
+deserializes away in silence, so a reasoning model reached through OpenRouter
+answered with its thinking dropped — and the `<think>` fallback cannot rescue
+it, since the gateway has already lifted the reasoning out of `content`. A model
+that thinks and a model that does not produced the same feed. `wire::Delta`
+gained the second field and a `thoughts()` accessor that **takes both**,
+`reasoning_content` first: a server that sends both names sends one trace twice,
+and precedence keeps the local stack byte-identical to before. Rejected:
+`#[serde(alias)]`, which cannot express precedence and leaves the outcome to the
+server's key order.
+
+**What the review decided *not* to change** matters as much. `reasoning_effort:
+"none"` on the three silent turns (title, roll, impersonation) looked like the
+next fix — until the protocol said the flat field is the supported legacy
+spelling, that sending it *and* the nested `reasoning: {effort}` is rejected,
+and that `external` is also every local `llama-server`, which reads `"none"` as
+"do not think". So: no wire change, a cost risk recorded, and a measurement
+(§8 M4) that would reopen it. The context window and the sampling set got
+documentation rather than code for a related reason — the relief already exists
+(`compaction.context_tokens`), and the code version of both wants the same
+unmade measurement: a gateway's catalogue carries `context_length` and
+`supported_parameters` per model, which is one request serving F3(b) and F4(c)
+at once. Left as roadmap proposals with `reasoning_details` (F5), not built
+blind.
+
+**Tests**: 3220 green, 177 ignored (3217 / 176 before) on the tracked count —
+this change was measured on Linux, where the same suite is 3213 / 172 (3210 /
+171 before) because the Windows-only tests do not compile there; the delta is
++3 and +1 either way. Three over the new
+parse (a gateway's field becomes thoughts; `reasoning_content` wins when both
+arrive; a keep-alive comment adds nothing), plus one `#[ignore]` smoke,
+`a_gateway_streams_thoughts_under_its_own_field_name`, declared by
+`MINDFORK_LIVE_GATEWAY_MODEL` on the `MINDFORK_LIVE_TEXT_ONLY` pattern: the run
+states that the named model reasons, and the smoke **fails** rather than skips
+if no thoughts arrive (lessons §9). Both new parse tests were mutation-checked,
+and the precedence fixture had to be sharpened to earn it — with one string
+under both keys, swapping the precedence passed unnoticed.
+
+**Live — not run, and that is the state of it.** The session had no route to
+`openrouter.ai` (the environment's egress proxy refuses the host) and no
+account, so nothing here was measured against the service; the unit tests prove
+the parse and the smoke is written for whoever has a key. The five measurements
+that would close it are [openrouter-external.md](../research/openrouter-external.md)
+§8. Everything shipped is safe under either answer, which is why it shipped
+without them.

@@ -14,6 +14,22 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A gateway's "thoughts" reach the feed.** Connecting `external` mode to a
+  cloud gateway (OpenRouter and the services that copy its API) meant a
+  reasoning model answered with its thinking invisible: the app looked for the
+  field name a local server uses, the gateway sends its own, and the difference
+  was silent — a model that thinks and a model that does not looked exactly the
+  same. Both names are now read. Nothing changes for a local `llama-server`.
+
+### Changed
+
+- **Setting up a gateway in `external` mode is written down** (install.md §3):
+  the model name a gateway requires, the context window you have to type in
+  yourself — without it long chats are not compacted automatically — and which
+  of the sampling settings actually survive the trip.
+
 ## [0.9.9] — 2026-09-13
 
 ### Added
