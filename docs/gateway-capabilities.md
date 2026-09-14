@@ -1,8 +1,8 @@
 # Track plan: the endpoint is asked what the model can do
 
 **Status:** design complete, **all forks decided** (G3 and the scope by the user,
-2026-09-14) and **implemented** — see §6. The live run (§5) is owed: this session
-has no route to the service.
+2026-09-14), **implemented** (§6) and **N1–N2 measured GO** (§5.1). N3 — the
+local stack seen with one's own eyes — is the one thing still owed.
 
 - **G3 — (ii): the offer *and* the metadata snapshot.** The wire keeps sending
   everything; what narrows is what the settings screen and `set_sampling` offer,
@@ -151,6 +151,34 @@ a local `llama-server` for the half that must not regress:
 | **N2** | the settings screen's sampling group shows the catalogue's set, and `set_sampling`'s schema carries the same |
 | **N3** | a local `llama-server` is unchanged: `/props` still answers first, every field still offered, no second request where there was none |
 | **N4** | a blank model field, a fetch failure and a catalogue without the keys each leave today's behaviour exactly |
+
+### 5.1 What the run measured — `deepseek/deepseek-r1`, 2026-09-14
+
+`a_gateways_catalogue_answers_for_the_configured_model`, **green**:
+
+```
+ModelCapabilities { context_length: Some(64000), sampling_fields: Some([
+  "frequency_penalty", "include_reasoning", "max_tokens", "presence_penalty",
+  "reasoning", "repetition_penalty", "response_format", "seed", "stop",
+  "temperature", "tool_choice", "tools", "top_k", "top_p"]) }
+offered after narrowing: ["temperature", "top_k", "top_p", "frequency_penalty",
+  "presence_penalty", "repeat_penalty", "max_tokens", "seed", "thinking",
+  "reasoning_effort"]
+```
+
+- **N1 — GO.** 64 000 is the window the compaction trigger now measures against,
+  where a gateway previously left it unknown for good.
+- **N2 — GO, and the translation is visible in the output.** Ten fields offered
+  instead of thirty: every llama.cpp extension is gone (`min_p` among them — R1's
+  endpoint does not list it), `repeat_penalty` **survived under the catalogue's
+  own `repetition_penalty`**, and the two reasoning switches survived on the one
+  `reasoning` entry. That is the alias table doing exactly what it was written
+  for; had it been missing, `repeat_penalty` would have been dropped from the
+  offer while still being the field the gateway ignores.
+- **N3 — owed**, and it is the regression half: a local `llama-server` must be
+  untouched. The unit tests cover it three ways (silence in each of its shapes),
+  and a llama.cpp catalogue carries neither key, so nothing *can* narrow — but
+  that is an argument, not a look.
 
 ## 6. What was implemented
 

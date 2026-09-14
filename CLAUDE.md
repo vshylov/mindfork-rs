@@ -201,8 +201,11 @@ being recent is dropped, not shortened.
   The narrowing reaches the settings screen, `set_sampling`'s schema and the
   metadata snapshot — **not** the wire, since the list is per model while the
   route that serves the request is per provider, and dropping a field ourselves
-  on that evidence would trade their silent drop for ours. Live owed: the smoke
-  is declared by `MINDFORK_LIVE_CATALOGUE` and fails rather than skips
+  on that evidence would trade their silent drop for ours. Live **GO** on R1: 64 000 for the
+  window a gateway never had, and thirty offered fields down to ten — with
+  `repeat_penalty` surviving under the catalogue's own `repetition_penalty`, which
+  is the alias table earning its place. Still owed: a look at an unchanged local
+  `llama-server`
   ([docs/gateway-capabilities.md](docs/gateway-capabilities.md), spec §6.7, §8.1,
   [docs/journal/engine.md](docs/journal/engine.md)).
 - **`external` against a gateway — a thought under a second name** — the mode we

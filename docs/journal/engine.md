@@ -4106,7 +4106,19 @@ the gateway window and `/props` winning over it; the published fields reaching
 the gates; and the narrowing itself, whose fixture is the list OpenRouter
 actually returned for `deepseek/deepseek-r1` rather than an invented one.
 
-**Live — owed**: `a_gateways_catalogue_answers_for_the_configured_model`, declared
-by `MINDFORK_LIVE_CATALOGUE`, fails rather than skips when an endpoint said to
-publish a catalogue returns none. This session has no route to the service, so it
-is written and handed over with N1–N4 ([gateway-capabilities.md](../gateway-capabilities.md) §5).
+**Live — GO on N1 and N2**, run by the author on `deepseek/deepseek-r1` through
+OpenRouter (this session has no route to the service).
+`a_gateways_catalogue_answers_for_the_configured_model` came back with
+`context_length: 64000` — the window a gateway previously never had — and a
+fourteen-name list that the narrowing turned into **ten** offered fields. The
+output is also where the alias table proves itself: every llama.cpp extension is
+gone (`min_p` included — that endpoint does not list it), while `repeat_penalty`
+survives **under the catalogue's own `repetition_penalty`** and the two reasoning
+switches survive on the single `reasoning` entry. Without the table the first of
+those would have been dropped from the offer while remaining exactly the field the
+gateway ignores.
+
+**N3 is owed** and it is the regression half: a local `llama-server` seen
+unchanged. Three unit tests cover silence in each of its shapes and a llama.cpp
+catalogue carries neither key, so nothing *can* narrow — but that is an argument,
+not a look ([gateway-capabilities.md](../gateway-capabilities.md) §5).
