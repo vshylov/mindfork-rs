@@ -109,6 +109,9 @@ pub(super) fn apply_event(
         AppEvent::TranscriptReset { id, messages } => screen.reset_transcript(id, &messages),
         AppEvent::EngineModel(model) => screen.set_engine_model(model),
         AppEvent::EngineSlots(slots) => apply_engine_slots(screen, active, slots),
+        AppEvent::EngineSamplingFields(fields) => {
+            apply_engine_sampling_fields(screen, active, fields)
+        }
         AppEvent::UserMessage(text) => screen.push_user_message(text),
         AppEvent::RestoreInput(text) => screen.restore_input(text),
         AppEvent::GenerationStarted {
@@ -231,6 +234,21 @@ fn apply_server_status(screen: &mut ChatScreen, active: &mut ActiveScreen, statu
         settings.set_server_statuses(status.clone());
     }
     screen.set_server_status(status);
+}
+
+/// The `EngineSamplingFields` arm of [`apply_event`], on the shape of its
+/// neighbour below: the chat keeps what the endpoint published for the next
+/// settings screen it builds, and an open one narrows its sampling group at once
+/// (spec §8, docs/gateway-capabilities.md).
+fn apply_engine_sampling_fields(
+    screen: &mut ChatScreen,
+    active: &mut ActiveScreen,
+    fields: Option<std::sync::Arc<[String]>>,
+) {
+    if let ActiveScreen::Settings(settings) = active {
+        settings.set_engine_sampling_fields(fields.clone());
+    }
+    screen.set_engine_sampling_fields(fields);
 }
 
 /// The `EngineSlots` arm of [`apply_event`]: the chat keeps the engine's answer
@@ -743,6 +761,7 @@ pub(super) fn dispatch(
                 // to the `sessions` field; afterward `apply_event` updates it
                 // from the `EngineSlots` event.
                 settings.set_engine_slots(screen.engine_slots());
+                settings.set_engine_sampling_fields(screen.engine_sampling_fields());
                 // The MCP-host snapshot (the tool catalog + server statuses);
                 // afterward `apply_event` updates it from the `Settings` event.
                 settings.set_mcp(mcp);

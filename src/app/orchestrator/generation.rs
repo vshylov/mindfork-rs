@@ -611,6 +611,7 @@ impl Orchestrator {
                     .map(crate::features::tools::code::WorkspaceCommands::of)
                     .unwrap_or_default(),
                 sampling_provider: self.config.engine.mode.cloud_provider(),
+                sampling_endpoint: self.endpoint_sampling_fields(),
             },
         );
         // Does this turn actually offer the read-back tools? A folded range
@@ -882,6 +883,7 @@ impl Orchestrator {
             maintenance_protocol: self.config.self_model.maintenance_protocol,
             last_user,
             engine_mode,
+            endpoint_sampling_fields: self.endpoint_sampling_fields(),
             model_name,
             ui_loc: self.ui_locale(),
             compaction_enabled: self.config.compaction.enabled,
@@ -1291,6 +1293,9 @@ struct GenSpawn {
     last_user: String,
     /// Engine mode and model name — a snapshot for `Message.metadata` (spec §8.3).
     engine_mode: ServerMode,
+    /// What the endpoint published about the model's sampling fields, for the
+    /// same snapshot (docs/gateway-capabilities.md §4, G3(ii)).
+    endpoint_sampling_fields: Option<std::sync::Arc<[String]>>,
     model_name: Option<String>,
     /// Interface language (axis B) — for error messages shown to a human.
     ui_loc: &'static crate::shared::i18n::Locale,
@@ -1521,6 +1526,7 @@ fn spawn_generation(spawn: GenSpawn) {
         maintenance_protocol,
         last_user,
         engine_mode,
+        endpoint_sampling_fields,
         model_name,
         ui_loc,
         compaction_enabled,
@@ -1586,6 +1592,7 @@ fn spawn_generation(spawn: GenSpawn) {
             sessions,
             concurrent_calls,
             engine_mode,
+            endpoint_sampling_fields,
             model_name,
             ui_loc,
             evt_tx: evt_tx.clone(),
@@ -1701,6 +1708,10 @@ struct TurnShared {
     /// call takes the sequential path, bit for bit.
     concurrent_calls: u32,
     engine_mode: ServerMode,
+    /// What the endpoint published about the model's sampling fields, when it
+    /// published anything: the turn's metadata snapshot must not record a field
+    /// the endpoint drops (docs/gateway-capabilities.md §4, G3(ii)).
+    endpoint_sampling_fields: Option<std::sync::Arc<[String]>>,
     model_name: Option<String>,
     ui_loc: &'static crate::shared::i18n::Locale,
     evt_tx: UnboundedSender<AppEvent>,
@@ -2167,6 +2178,7 @@ impl TurnLoop<'_> {
                 &self.ctx.effective_sampling,
                 self.shared.engine_mode,
                 &self.shared.model_name,
+                self.shared.endpoint_sampling_fields.as_deref(),
             ) {
                 m.new_bubble = self.pending_new_bubble;
                 self.messages.push(m);
@@ -2243,6 +2255,7 @@ impl TurnLoop<'_> {
             &self.ctx.effective_sampling,
             self.shared.engine_mode,
             &self.shared.model_name,
+            self.shared.endpoint_sampling_fields.as_deref(),
         ) {
             m.new_bubble = self.pending_new_bubble;
             self.messages.push(m);
@@ -3366,6 +3379,9 @@ struct SharedParts {
     subagent: SubagentLimits,
     concurrent_calls: u32,
     engine_mode: ServerMode,
+    /// The endpoint's published sampling fields, carried for the snapshot the
+    /// dialogue's messages record (docs/gateway-capabilities.md §4, G3(ii)).
+    endpoint_sampling_fields: Option<std::sync::Arc<[String]>>,
     model_name: Option<String>,
     ui_loc: &'static crate::shared::i18n::Locale,
     compaction_enabled: bool,
@@ -3384,6 +3400,7 @@ impl SharedParts {
             subagent: shared.subagent,
             concurrent_calls: shared.concurrent_calls,
             engine_mode: shared.engine_mode,
+            endpoint_sampling_fields: shared.endpoint_sampling_fields.clone(),
             model_name: shared.model_name.clone(),
             ui_loc: shared.ui_loc,
             compaction_enabled: shared.compaction_enabled,
@@ -3540,6 +3557,7 @@ pub(super) fn spawn_background_run(
         sessions,
         concurrent_calls: parts.concurrent_calls,
         engine_mode: parts.engine_mode,
+        endpoint_sampling_fields: parts.endpoint_sampling_fields.clone(),
         model_name: parts.model_name,
         ui_loc: parts.ui_loc,
         evt_tx,
@@ -4388,6 +4406,7 @@ impl DialogueCtx<'_> {
             &self.sampling,
             self.shared.engine_mode,
             &self.shared.model_name,
+            self.shared.endpoint_sampling_fields.as_deref(),
         ) else {
             return Err(DialogueEnd::Failed {
                 who: who.to_string(),
@@ -5343,6 +5362,7 @@ fn finalize_message(
     sampling: &SamplingConfig,
     mode: ServerMode,
     model: &Option<String>,
+    endpoint_fields: Option<&[String]>,
 ) -> Option<Message> {
     if out.text.is_empty() && out.thoughts.is_empty() {
         return None;
@@ -5352,7 +5372,11 @@ fn finalize_message(
         m.thoughts = Some(out.thoughts.clone());
     }
     m.metadata = Some(MessageMetadata {
-        sampling: sampling.retain_supported(mode.cloud_provider()),
+        // G3(ii): the snapshot records what was *applied*, so it must not name a
+        // field the endpoint drops — that is the same lie as the settings screen
+        // showing it, and this is the copy that survives into the chat file
+        // (docs/gateway-capabilities.md §4).
+        sampling: sampling.retain_supported(mode.cloud_provider(), endpoint_fields),
         mode,
         model: model.clone(),
         finish: Some(match out.reason {

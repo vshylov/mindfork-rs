@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (62)
+## Entries (63)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -74,6 +74,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: `external` against a gateway — a thought under a second name, and the rest of the review (done)
 - Post-M9: the gateway's remaining measurements — the silent turns are a `400`, not a bill (done)
 - Post-M9: a refusal to stop reasoning is answered, not reported (done)
+- Post-M9: the endpoint is asked what the model can do (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -4050,3 +4051,62 @@ risk" reading of F2 was about, and it is genuinely unavoidable here; what the fi
 buys is the turn completing at all. Worth keeping straight, because a later reader
 looking at a title that cost 772 characters of reasoning might otherwise think the
 recovery failed.
+
+### Post-M9: the endpoint is asked what the model can do (done)
+
+F3(b) and F4(c) of the OpenRouter review, built as one track because they are one
+HTTP request. Plan, forks and the decisions:
+[gateway-capabilities.md](../gateway-capabilities.md).
+
+**Both defects were silent, and both are measured.** A gateway serves no
+`/props`, so `context_budget` had no source and automatic compaction simply never
+fired — a conversation reached 22 567 tokens with nothing folded. And
+`supported_sampling_fields(None)` returns *every* field for `external`, because
+`external` used to mean llama.cpp: through a gateway the extensions are dropped
+on the way, `repeat_penalty` worst of all, since that field is spelled
+`repetition_penalty` there and so looked set while doing nothing. The catalogue
+the app **already fetches** for the model's name carries both answers —
+`context_length` and `supported_parameters`, per model — so the marginal cost was
+parsing two more keys plus the plumbing.
+
+**What the shape had to get right.** `EngineBackend::model_capabilities` defaults
+to `None` and only `OpenAiClient` overrides it, so every cloud keeps its
+compile-time table — a gateway's catalogue has no standing to trim a protocol's
+own limits. `RetryBackend` delegates it, with the test lessons §9 demands: three
+times before, a defaulted question-method was left un-delegated and answered
+"cannot say" invisibly. One background task asks both questions and lands one
+answer (`EngineFacts`), because two tasks racing to fill two memos against one
+endpoint is a heisenbug waiting to be written. The landing rebuilds the tool
+registry — but only when the published set actually changed, since `set_sampling`'s
+schema is baked into it and a re-ask after a readiness flip should cost nothing.
+
+**Silence is never a claim**, and that is the invariant the whole track rests on:
+no catalogue, an empty list, a blank model field, a llama.cpp `/v1/models` that
+carries ids and nothing else — each leaves behaviour exactly as it shipped. The
+feature can only narrow from a positive answer. The window is used as reported
+and sits **after** `/props`: a running server describes the process serving this
+turn, a catalogue describes the model in the abstract. An explicit setting still
+beats both.
+
+**The narrowing travels as far as the user's choice took it** (fork G3(ii)): the
+settings screen, the `set_sampling` schema and `Message.metadata`'s record of
+"what was applied" — but **not** the wire. The list is per model while the request
+is served by a per-provider route, so dropping a field ourselves on that evidence
+would trade their silent drop for ours, and ours would be unrecoverable. The two
+vocabularies are translated explicitly rather than assumed equal
+(`repetition_penalty` ↔ `repeat_penalty`, one `reasoning` ↔ `thinking` +
+`reasoning_effort`), and the settings screen's own per-provider predicate was
+deleted: it was the first half of `available_sampling_fields`, and a second
+spelling is how the two drift apart.
+
+**Tests**: 3232 green, 179 ignored (3224 / 178 before) on the tracked count; on
+Linux 3225 / 174. Eight new: the catalogue answers for the configured model and
+for no neighbour; silence in each of its three shapes; the decorator delegation;
+the gateway window and `/props` winning over it; the published fields reaching
+the gates; and the narrowing itself, whose fixture is the list OpenRouter
+actually returned for `deepseek/deepseek-r1` rather than an invented one.
+
+**Live — owed**: `a_gateways_catalogue_answers_for_the_configured_model`, declared
+by `MINDFORK_LIVE_CATALOGUE`, fails rather than skips when an endpoint said to
+publish a catalogue returns none. This session has no route to the service, so it
+is written and handed over with N1–N4 ([gateway-capabilities.md](../gateway-capabilities.md) §5).

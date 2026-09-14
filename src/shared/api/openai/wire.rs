@@ -543,6 +543,15 @@ pub struct ModelList {
 pub struct ModelEntry {
     #[serde(default)]
     pub id: String,
+    /// The model's context window, where the endpoint publishes one (OpenRouter
+    /// does; llama.cpp does not). Absent → the catalogue did not say.
+    #[serde(default)]
+    pub context_length: Option<u32>,
+    /// The request parameters the endpoint says this model takes, in its own
+    /// spelling. Absent → the catalogue did not say; see
+    /// [`ModelCapabilities`](crate::shared::api::contract::ModelCapabilities).
+    #[serde(default)]
+    pub supported_parameters: Option<Vec<String>>,
 }
 
 // ---------- embeddings ----------

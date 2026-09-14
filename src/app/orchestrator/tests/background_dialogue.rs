@@ -316,6 +316,7 @@ fn start_dialogue_is_gated_by_the_setting() {
         workspace: false,
         workspace_commands: Default::default(),
         sampling_provider: None,
+        sampling_endpoint: None,
     };
     let off = effective_tool_ids(&all, &gates(false));
     let on = effective_tool_ids(&all, &gates(true));

@@ -254,6 +254,28 @@ impl FinishReason {
     }
 }
 
+/// What an endpoint's catalogue says about one model
+/// ([docs/gateway-capabilities.md](../../../docs/gateway-capabilities.md)).
+///
+/// Every field is `Option` and every `None` means **"the catalogue did not say"**,
+/// never "no" — a positive answer can narrow what the application offers, and
+/// silence can never widen or invent. Measured on OpenRouter, which carries both
+/// per model; llama.cpp lists neither
+/// ([openrouter-external.md](../../../docs/research/openrouter-external.md) §8.1, M5).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ModelCapabilities {
+    /// The model's context window in tokens (`context_length`), used **as
+    /// reported** — the same rule `/props` follows (spec §6.7).
+    pub context_length: Option<u32>,
+    /// The request parameters the endpoint says this model takes
+    /// (`supported_parameters`), in the endpoint's own spelling — the translation
+    /// to our field names lives in [`crate::entities::sampling`], because the two
+    /// vocabularies differ (their `repetition_penalty` is our `repeat_penalty`).
+    /// An empty list is read as silence: a catalogue that lists nothing is not
+    /// claiming the model takes nothing.
+    pub sampling_fields: Option<std::sync::Arc<[String]>>,
+}
+
 /// The token counter from the server response (the `usage` field). The server sends it
 /// as the stream's final chunk when `stream_options.include_usage=true` is requested
 /// (see [`openai::wire`]). Fields may be zero if the server didn't return them.
@@ -494,6 +516,24 @@ pub trait EngineBackend: Send + Sync {
     /// Called rarely — once per applied engine, re-asked when readiness flips —
     /// so a network round trip here is not on any hot path.
     async fn context_budget(&self) -> Option<u32> {
+        None
+    }
+
+    /// What the **endpoint's own catalogue** says about the model this backend is
+    /// configured for, when it says anything at all.
+    ///
+    /// The default is `None` — "did not say" — and everything downstream treats
+    /// it that way: a silent catalogue leaves the window unknown and every
+    /// sampling field offered, i.e. exactly the behaviour that shipped before
+    /// this existed. Only [`super::openai::OpenAiClient`] overrides it, off the
+    /// `GET /v1/models` it already fetches for the model's name; a llama.cpp
+    /// answers that endpoint without either key, which is the same "did not say".
+    ///
+    /// Asked on the same schedule as [`Self::context_budget`] — once per applied
+    /// engine, in the background — and by the same background task, so a gateway
+    /// is not asked the same question twice
+    /// ([docs/gateway-capabilities.md](../../../docs/gateway-capabilities.md) §3).
+    async fn model_capabilities(&self) -> Option<ModelCapabilities> {
         None
     }
 

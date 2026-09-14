@@ -37,6 +37,7 @@ impl SettingsScreen {
                 impersonation: ServerStatus::NotConfigured,
             },
             engine_slots: None,
+            engine_sampling_fields: None,
             language_locked,
             mcp: Default::default(),
             secrets_present: Vec::new(),
@@ -57,6 +58,14 @@ impl SettingsScreen {
     /// Updates what the engine said about its slot count (the hint next to the
     /// `sessions` field, spec §11.6). Called by `app` when creating the screen
     /// and on the `EngineSlots` event; `None` — the engine cannot say.
+    /// What the endpoint's catalogue published about the configured model's
+    /// sampling fields (`AppEvent::EngineSamplingFields`). `None` — it said
+    /// nothing, and the sampling group shows what it always did
+    /// (docs/gateway-capabilities.md §4, G3).
+    pub fn set_engine_sampling_fields(&mut self, fields: Option<std::sync::Arc<[String]>>) {
+        self.engine_sampling_fields = fields;
+    }
+
     pub fn set_engine_slots(&mut self, slots: Option<u32>) {
         self.engine_slots = slots;
     }
@@ -691,13 +700,19 @@ impl SettingsScreen {
         // (llama.cpp extensions and reasoning fields are hidden — ADR 0004).
         // Hidden parameters' values are preserved and will work on a local model.
         let provider = self.sampling_cloud_provider(imp);
+        // …and in `external` mode, only the parameters the endpoint's own
+        // catalogue lists for the configured model, when it lists any: a gateway
+        // drops the llama.cpp extensions on the way, and `repeat_penalty` worst
+        // of all — it is spelled `repetition_penalty` there, so the knob looked
+        // set and did nothing (docs/gateway-capabilities.md §1).
+        let available = crate::entities::sampling::available_sampling_fields(
+            provider,
+            self.engine_sampling_fields.as_deref(),
+        );
         rows.extend(
             SAMPLING_PARAMS
                 .iter()
-                .filter(|&&p| match provider {
-                    Some(provider) => cloud_supported_param(provider, p),
-                    None => true,
-                })
+                .filter(|&&p| available.contains(&p.field_name()))
                 .map(|&p| {
                     let mut r = sampling_row(mk(p), p, s, loc);
                     r.group = p.group(loc);

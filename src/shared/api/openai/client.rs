@@ -13,7 +13,7 @@ use super::wire;
 use crate::entities::sampling::ReasoningEffort;
 use crate::shared::api::contract::{
     ChatChunk, ChatRequest, ChatStream, EmbedRole, Embedder, EngineBackend, FinishReason,
-    TokenUsage, ToolCallDelta, VisionSupport,
+    ModelCapabilities, TokenUsage, ToolCallDelta, VisionSupport,
 };
 use crate::shared::api::error::{self, SUBJECT_EMBEDDER, SUBJECT_ENGINE};
 use crate::shared::api::http;
@@ -155,6 +155,36 @@ impl OpenAiClient {
                 None
             }
         }
+    }
+
+    /// The catalogue entry for **the model this client is configured for**, or
+    /// `None` when there is nothing to look up or nothing to find.
+    ///
+    /// Deliberately keyed on `self.model` and nothing else. A blank field means a
+    /// single-model server, where `/props` already answers and the catalogue has
+    /// no per-model row worth guessing at; a name that is not in the list means
+    /// the endpoint routes differently than we assume, and inventing a neighbour
+    /// would be worse than silence
+    /// ([external-model-name.md](../../../../docs/research/external-model-name.md) §3
+    /// makes the same call about the model's name).
+    async fn catalogue_entry(&self) -> Option<wire::ModelEntry> {
+        let wanted = self.model.as_deref()?;
+        let url = format!("{}/models", self.base_url);
+        let resp = match self.auth(self.http.get(&url)).send().await {
+            Ok(r) if r.status().is_success() => r,
+            other => {
+                tracing::debug!(%url, ok = other.is_ok(), "no answer from /models");
+                return None;
+            }
+        };
+        let list: wire::ModelList = match resp.json().await {
+            Ok(list) => list,
+            Err(err) => {
+                tracing::debug!(%url, error = %err, "/models did not parse");
+                return None;
+            }
+        };
+        list.data.into_iter().find(|m| m.id == wanted)
     }
 
     /// Fetches `GET /v1/models` and returns the ids it lists.
@@ -440,6 +470,30 @@ impl EngineBackend for OpenAiClient {
             .default_generation_settings
             .and_then(|g| g.n_ctx)
             .filter(|&n| n > 0)
+    }
+
+    /// Reads the endpoint's catalogue for the configured model
+    /// (`GET /v1/models`), when it carries anything worth reading.
+    ///
+    /// The two keys are OpenRouter's and every gateway that copies it; a
+    /// llama.cpp answers the same endpoint with neither, which lands as the same
+    /// `None` this method returns when the model field is blank or the fetch
+    /// fails. An **empty** `supported_parameters` is read as silence rather than
+    /// as "takes nothing": a catalogue that lists no parameters is not claiming
+    /// the model refuses them all, and treating it as a claim would hide every
+    /// sampling field on a server that simply says little.
+    async fn model_capabilities(&self) -> Option<ModelCapabilities> {
+        let entry = self.catalogue_entry().await?;
+        let caps = ModelCapabilities {
+            context_length: entry.context_length.filter(|&n| n > 0),
+            sampling_fields: entry
+                .supported_parameters
+                .filter(|v| !v.is_empty())
+                .map(|v| v.into()),
+        };
+        // Nothing worth carrying is the same as no answer, so the layer above has
+        // one shape to handle rather than two.
+        (caps != ModelCapabilities::default()).then_some(caps)
     }
 
     /// Reads llama.cpp's `/props` → `total_slots`: the number of server slots,
@@ -1148,6 +1202,76 @@ mod tests {
             String::from_utf8_lossy(&buf[..n]).to_string()
         });
         (format!("http://{addr}/v1"), handle)
+    }
+
+    /// A catalogue in the shape OpenRouter actually answers, trimmed to the two
+    /// keys this reads and carrying a neighbour so the lookup has something to
+    /// get wrong ([openrouter-external.md](../../../../docs/research/openrouter-external.md) §8.1, M5).
+    const CATALOGUE_BODY: &str = r#"{"data":[
+        {"id":"vendor/other","context_length":8192,"supported_parameters":["temperature"]},
+        {"id":"deepseek/deepseek-r1","context_length":64000,
+         "supported_parameters":["max_tokens","reasoning","repetition_penalty","seed","temperature","top_k","top_p"]}
+    ]}"#;
+
+    /// The catalogue answers for **the configured model**, and for no other: the
+    /// window and the field list come back off the entry whose id matches, which
+    /// is what the compaction trigger and the sampling offer are then built on
+    /// (docs/gateway-capabilities.md §3).
+    #[tokio::test]
+    async fn the_catalogue_answers_for_the_configured_model() {
+        let (url, seen) = one_shot_server("200 OK", CATALOGUE_BODY);
+        let caps = OpenAiClient::new(url)
+            .with_model(Some("deepseek/deepseek-r1".into()))
+            .model_capabilities()
+            .await
+            .expect("the catalogue lists that model");
+        assert_eq!(caps.context_length, Some(64000));
+        let fields = caps.sampling_fields.expect("it lists parameters too");
+        assert!(fields.iter().any(|f| f == "repetition_penalty"));
+        assert!(
+            !fields.iter().any(|f| f == "min_p"),
+            "the neighbour's list must not leak in: {fields:?}"
+        );
+        assert!(seen.join().unwrap().contains("/v1/models"));
+    }
+
+    /// Silence, in each of its three shapes, is never a claim: a blank model
+    /// field has nothing to look up and must not even ask, a model the catalogue
+    /// does not list is not a neighbour's row, and a server that answers without
+    /// the keys (every llama.cpp) says nothing. All three land as `None`, which
+    /// downstream means "behave exactly as before this existed".
+    #[tokio::test]
+    async fn silence_is_never_a_claim() {
+        // A blank model: no request at all — the port is closed, so a request
+        // would fail loudly rather than pass.
+        let dead = {
+            let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = l.local_addr().unwrap().port();
+            drop(l);
+            format!("http://127.0.0.1:{port}/v1")
+        };
+        assert!(OpenAiClient::new(dead).model_capabilities().await.is_none());
+
+        let (url, _seen) = one_shot_server("200 OK", CATALOGUE_BODY);
+        assert!(
+            OpenAiClient::new(url)
+                .with_model(Some("vendor/absent".into()))
+                .model_capabilities()
+                .await
+                .is_none(),
+            "a model the catalogue does not list is not a neighbour's row"
+        );
+
+        // llama.cpp's own answer: ids and nothing else.
+        let (url, _seen) = one_shot_server("200 OK", r#"{"data":[{"id":"gemma-4"}]}"#);
+        assert!(
+            OpenAiClient::new(url)
+                .with_model(Some("gemma-4".into()))
+                .model_capabilities()
+                .await
+                .is_none(),
+            "an entry without either key carries nothing to say"
+        );
     }
 
     /// The measured shape of a real `/props` (§9a M1), trimmed to what is read.
@@ -2198,6 +2322,51 @@ mod ignored_smoke {
             !thoughts.is_empty(),
             "{model} was declared a reasoning model, so its thoughts must reach the app \
              under one of the two field names: text={text:?}"
+        );
+    }
+
+    /// The catalogue, live: what a gateway publishes for the configured model is
+    /// what the compaction trigger measures against and what the sampling offer
+    /// is narrowed to (docs/gateway-capabilities.md §5, N1–N2).
+    ///
+    /// Declared rather than guessed, on the `MINDFORK_LIVE_TEXT_ONLY` pattern:
+    /// `MINDFORK_LIVE_CATALOGUE=1` says "this endpoint publishes a catalogue with
+    /// the two keys", and the smoke then **fails** rather than skips if nothing
+    /// comes back — a pass against a server that publishes neither would be a
+    /// green light for a feature that never ran. Needs `MINDFORK_ENGINE_MODEL`:
+    /// there is no per-model row to look up without a model.
+    #[tokio::test]
+    #[ignore = "requires MINDFORK_ENGINE_URL + MINDFORK_ENGINE_MODEL + MINDFORK_LIVE_CATALOGUE (an endpoint that publishes one)"]
+    async fn a_gateways_catalogue_answers_for_the_configured_model() {
+        let Some(client) = client_from_env() else {
+            eprintln!("skip: MINDFORK_ENGINE_URL not set");
+            return;
+        };
+        if std::env::var("MINDFORK_LIVE_CATALOGUE").is_err() {
+            eprintln!("skip: MINDFORK_LIVE_CATALOGUE not set");
+            return;
+        }
+        let model = std::env::var("MINDFORK_ENGINE_MODEL")
+            .expect("MINDFORK_ENGINE_MODEL names the row to look up");
+        let caps = client
+            .model_capabilities()
+            .await
+            .expect("the endpoint was declared to publish a catalogue");
+        println!("{model}: {caps:?}");
+        assert!(
+            caps.context_length.is_some_and(|n| n > 0),
+            "a published catalogue is what gives a gateway its compaction window"
+        );
+        let fields = caps
+            .sampling_fields
+            .expect("…and the parameter list is the other half");
+        // The narrowing is the point, not the raw list: what the settings screen
+        // and `set_sampling` will offer after this answer.
+        let offered = crate::entities::sampling::available_sampling_fields(None, Some(&fields));
+        println!("offered after narrowing: {offered:?}");
+        assert!(
+            offered.len() < crate::entities::sampling::SETTABLE_SAMPLING_FIELDS.len(),
+            "a gateway takes fewer fields than a llama.cpp: {offered:?}"
         );
     }
 

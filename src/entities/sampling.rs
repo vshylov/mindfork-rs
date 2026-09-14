@@ -152,8 +152,12 @@ impl SamplingConfig {
     /// the `Message.metadata` snapshot: the engine wouldn't have accepted an
     /// unavailable field anyway, so it shouldn't land in "what was applied". List
     /// fields (`samplers`/`dry_sequence_breakers`) are handled as regular keys.
-    pub fn retain_supported(&self, provider: Option<CloudProvider>) -> SamplingConfig {
-        let supported = supported_sampling_fields(provider);
+    pub fn retain_supported(
+        &self,
+        provider: Option<CloudProvider>,
+        endpoint: Option<&[String]>,
+    ) -> SamplingConfig {
+        let supported = available_sampling_fields(provider, endpoint);
         // Serializing our own type doesn't fail; on the unexpected, return as-is.
         let Ok(serde_json::Value::Object(mut map)) = serde_json::to_value(self) else {
             return self.clone();
@@ -244,6 +248,72 @@ pub const SETTABLE_SAMPLING_FIELDS: &[&str] = &[
 /// This is the single source of truth for the settings UI (`cloud_supported_param`)
 /// and the `get_sampling`/`set_sampling` tools (show/change only what's available).
 /// See ADR 0004.
+/// The catalogue spelling(s) that would mean "this endpoint takes our field", for
+/// the fields where an endpoint publishes a `supported_parameters` list
+/// ([docs/gateway-capabilities.md](../../docs/gateway-capabilities.md)).
+///
+/// Two vocabularies, and they are not the same one: their `repetition_penalty` is
+/// our `repeat_penalty` — the very mismatch that made that knob look set and do
+/// nothing through a gateway — and their single `reasoning` covers both switches
+/// we spell separately. A field with **no** catalogue name is not a mapping we
+/// forgot: it is a llama.cpp extension no gateway publishes, and the whole point
+/// of the narrowing is that such a field disappears from the offer once the
+/// endpoint has spoken.
+fn catalogue_aliases(field: &str) -> &'static [&'static str] {
+    match field {
+        // Same word in both vocabularies.
+        "temperature" => &["temperature"],
+        "top_k" => &["top_k"],
+        "top_p" => &["top_p"],
+        "min_p" => &["min_p"],
+        "max_tokens" => &["max_tokens"],
+        "seed" => &["seed"],
+        "frequency_penalty" => &["frequency_penalty"],
+        "presence_penalty" => &["presence_penalty"],
+        "verbosity" => &["verbosity"],
+        // Different word, same knob.
+        "repeat_penalty" => &["repetition_penalty"],
+        // One catalogue entry, two switches of ours: a gateway that publishes
+        // `reasoning` takes a reasoning request, however we spell it.
+        "thinking" | "reasoning_effort" => &["reasoning", "include_reasoning"],
+        // llama.cpp's own: dynatemp, adaptive-p, typical-p, top-n-sigma, DRY,
+        // XTC, mirostat, the sampler order, `repeat_last_n`.
+        _ => &[],
+    }
+}
+
+/// The sampling fields actually on offer: the mode's static set, narrowed by what
+/// the **endpoint** published about the configured model, when it published
+/// anything.
+///
+/// `endpoint` is the catalogue's own list
+/// ([`ModelCapabilities::sampling_fields`](crate::shared::api::contract::ModelCapabilities)).
+/// `None` — it said nothing, so nothing narrows and this is
+/// [`supported_sampling_fields`] exactly, which is what every local
+/// `llama-server` and every cloud gets. A **cloud** provider ignores the list
+/// outright: its table is a compile-time fact about that protocol (ADR 0004), not
+/// something a gateway's catalogue has standing to trim.
+pub fn available_sampling_fields(
+    provider: Option<CloudProvider>,
+    endpoint: Option<&[String]>,
+) -> Vec<&'static str> {
+    let base = supported_sampling_fields(provider);
+    let Some(published) = endpoint
+        .filter(|_| provider.is_none())
+        .filter(|p| !p.is_empty())
+    else {
+        return base.to_vec();
+    };
+    base.iter()
+        .copied()
+        .filter(|field| {
+            catalogue_aliases(field)
+                .iter()
+                .any(|alias| published.iter().any(|p| p == alias))
+        })
+        .collect()
+}
+
 pub fn supported_sampling_fields(provider: Option<CloudProvider>) -> &'static [&'static str] {
     match provider {
         None => SETTABLE_SAMPLING_FIELDS,
@@ -274,6 +344,98 @@ pub fn supported_sampling_fields(provider: Option<CloudProvider>) -> &'static [&
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The catalogue OpenRouter actually answered for `deepseek/deepseek-r1`,
+    /// copied from the measurement rather than invented
+    /// ([openrouter-external.md](../../docs/research/openrouter-external.md) §8.1, M5).
+    fn r1_catalogue() -> Vec<String> {
+        [
+            "frequency_penalty",
+            "include_reasoning",
+            "max_tokens",
+            "presence_penalty",
+            "reasoning",
+            "repetition_penalty",
+            "response_format",
+            "seed",
+            "stop",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_p",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
+    }
+
+    /// What a gateway's published list does to the offer: the OpenAI-shaped
+    /// fields survive, `repeat_penalty` survives **under the other name**, the
+    /// reasoning switches survive on one entry, and every llama.cpp extension
+    /// goes — which is the defect this narrowing exists for, since those were
+    /// offered, set, sent and silently dropped.
+    #[test]
+    fn a_published_catalogue_narrows_the_offer_to_what_it_lists() {
+        let fields = available_sampling_fields(None, Some(&r1_catalogue()));
+        for kept in [
+            "temperature",
+            "top_p",
+            "top_k",
+            "max_tokens",
+            "seed",
+            "frequency_penalty",
+            "presence_penalty",
+            "repeat_penalty",
+            "thinking",
+            "reasoning_effort",
+        ] {
+            assert!(
+                fields.contains(&kept),
+                "{kept} is published, under some name"
+            );
+        }
+        for dropped in [
+            "min_p",
+            "typical_p",
+            "top_n_sigma",
+            "dynatemp_range",
+            "adaptive_target",
+            "mirostat",
+            "dry_multiplier",
+            "xtc_probability",
+            "samplers",
+            "repeat_last_n",
+        ] {
+            assert!(
+                !fields.contains(&dropped),
+                "{dropped} is not in the catalogue and must stop being offered"
+            );
+        }
+    }
+
+    /// Silence never narrows: no list, an empty list, and a cloud provider (whose
+    /// table is a fact about the protocol, not the endpoint's to trim) all leave
+    /// the answer exactly as it was before this existed.
+    #[test]
+    fn silence_and_the_clouds_are_left_alone() {
+        assert_eq!(
+            available_sampling_fields(None, None),
+            SETTABLE_SAMPLING_FIELDS.to_vec(),
+            "no list — every field, as before"
+        );
+        assert_eq!(
+            available_sampling_fields(None, Some(&[])),
+            SETTABLE_SAMPLING_FIELDS.to_vec(),
+            "an empty list is silence, not a claim that nothing is taken"
+        );
+        let openai = available_sampling_fields(Some(CloudProvider::OpenAi), Some(&r1_catalogue()));
+        assert_eq!(
+            openai,
+            supported_sampling_fields(Some(CloudProvider::OpenAi)).to_vec(),
+            "a cloud's table is not a gateway catalogue's business"
+        );
+    }
 
     #[test]
     fn default_is_all_none() {
@@ -367,14 +529,14 @@ mod tests {
             ..Default::default()
         };
         // Local (None) — llama.cpp accepts everything configurable: fields are kept.
-        let local = s.retain_supported(None);
+        let local = s.retain_supported(None, None);
         assert_eq!(local.temperature, Some(0.7));
         assert_eq!(local.top_k, Some(40));
         assert_eq!(local.min_p, Some(0.05));
         assert_eq!(local.thinking, Some(true));
         // OpenAI (Responses): max_tokens + thinking remain; temperature/top_k/min_p
         // are zeroed (absent from the Responses API).
-        let openai = s.retain_supported(Some(CloudProvider::OpenAi));
+        let openai = s.retain_supported(Some(CloudProvider::OpenAi), None);
         assert_eq!(openai.max_tokens, Some(256));
         assert_eq!(openai.thinking, Some(true));
         assert_eq!(openai.temperature, None);
@@ -382,7 +544,7 @@ mod tests {
         assert_eq!(openai.min_p, None);
         // Gemini (native) accepts temperature/top_k/thinking; min_p (a llama.cpp
         // extension) is zeroed.
-        let gemini = s.retain_supported(Some(CloudProvider::Gemini));
+        let gemini = s.retain_supported(Some(CloudProvider::Gemini), None);
         assert_eq!(gemini.temperature, Some(0.7));
         assert_eq!(gemini.max_tokens, Some(256));
         assert_eq!(gemini.top_k, Some(40));
@@ -390,7 +552,7 @@ mod tests {
         assert_eq!(gemini.min_p, None);
         // Claude — only max_tokens + reasoning: temperature/top_k are zeroed,
         // thinking is kept.
-        let claude = s.retain_supported(Some(CloudProvider::Claude));
+        let claude = s.retain_supported(Some(CloudProvider::Claude), None);
         assert_eq!(claude.max_tokens, Some(256));
         assert_eq!(claude.thinking, Some(true));
         assert_eq!(claude.temperature, None);
@@ -398,7 +560,7 @@ mod tests {
         // Grok keeps temperature/max_tokens/thinking; top_k and min_p are zeroed —
         // xAI would drop them silently, and a knob that does nothing is worse than
         // one that isn't offered.
-        let grok = s.retain_supported(Some(CloudProvider::Grok));
+        let grok = s.retain_supported(Some(CloudProvider::Grok), None);
         assert_eq!(grok.temperature, Some(0.7));
         assert_eq!(grok.max_tokens, Some(256));
         assert_eq!(grok.thinking, Some(true));
@@ -416,7 +578,7 @@ mod tests {
             temperature: Some(0.7),
             ..Default::default()
         };
-        let grok = s.retain_supported(Some(CloudProvider::Grok));
+        let grok = s.retain_supported(Some(CloudProvider::Grok), None);
         assert_eq!(grok.presence_penalty, None);
         assert_eq!(grok.frequency_penalty, None);
         assert_eq!(grok.temperature, Some(0.7));

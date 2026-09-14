@@ -567,6 +567,9 @@ pub struct ChatScreen {
     /// handed to the settings screen when it is built, for the hint next to the
     /// `sessions` field (spec §11.6). `None` — it cannot say.
     engine_slots: Option<u32>,
+    /// The sampling fields the endpoint published for the configured model, or
+    /// `None` when it said nothing (every local server, every cloud).
+    engine_sampling_fields: Option<std::sync::Arc<[String]>>,
     /// The spellchecker (loads in the background; `None` until ready / with no
     /// dictionaries).
     spell: Option<SpellChecker>,
@@ -750,6 +753,7 @@ impl ChatScreen {
             settings_snapshot: None,
             engine_model: None,
             engine_slots: None,
+            engine_sampling_fields: None,
             palette: Palette::default(),
             loc: locale(crate::shared::i18n::Lang::default()),
             mouse_scroll: false,
@@ -811,6 +815,17 @@ impl ChatScreen {
     /// kept here so a settings screen opened later starts with it (spec §11.6).
     pub fn set_engine_slots(&mut self, slots: Option<u32>) {
         self.engine_slots = slots;
+    }
+
+    /// What the endpoint published about the model's sampling fields, kept for the
+    /// same reason (`AppEvent::EngineSamplingFields`, docs/gateway-capabilities.md).
+    pub fn set_engine_sampling_fields(&mut self, fields: Option<std::sync::Arc<[String]>>) {
+        self.engine_sampling_fields = fields;
+    }
+
+    /// That list, for a settings screen being built.
+    pub fn engine_sampling_fields(&self) -> Option<std::sync::Arc<[String]>> {
+        self.engine_sampling_fields.clone()
     }
 
     /// The engine's slot count as last reported, for a settings screen being built.

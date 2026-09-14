@@ -10,7 +10,9 @@ use anyhow::Result;
 use chrono::Utc;
 
 use crate::entities::profile::ToolId;
-use crate::entities::sampling::{SamplingConfig, supported_sampling_fields};
+use crate::entities::sampling::{
+    SamplingConfig, available_sampling_fields, supported_sampling_fields,
+};
 use crate::shared::config::CloudProvider;
 
 use super::{ChatEffect, Tool, ToolContext, ToolOutcome};
@@ -25,11 +27,18 @@ pub const SET_SAMPLING_ID: &str = "set_sampling";
 pub struct GetSampling {
     /// The chat engine's cloud provider (`None` — local/external: all fields available).
     provider: Option<CloudProvider>,
+    /// What the endpoint published about the configured model, when it published
+    /// anything: it narrows the same offer the provider does, so a gateway's
+    /// schema stops naming fields it drops (docs/gateway-capabilities.md).
+    endpoint: Option<std::sync::Arc<[String]>>,
 }
 
 impl GetSampling {
-    pub fn new(provider: Option<CloudProvider>) -> Self {
-        Self { provider }
+    pub fn new(
+        provider: Option<CloudProvider>,
+        endpoint: Option<std::sync::Arc<[String]>>,
+    ) -> Self {
+        Self { provider, endpoint }
     }
 }
 
@@ -53,7 +62,7 @@ impl Tool for GetSampling {
         format!(
             "{} {}",
             loc.t("tool.get_sampling.desc"),
-            scope_note(loc, self.provider)
+            scope_note(loc, self.provider, self.endpoint.as_deref())
         )
     }
     fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
@@ -62,7 +71,11 @@ impl Tool for GetSampling {
     async fn invoke(&self, ctx: &ToolContext, _args: serde_json::Value) -> Result<ToolOutcome> {
         // Show only the fields available in the current mode (the engine wouldn't
         // accept the rest anyway), so the model doesn't try to change them.
-        let filtered = filter_to_supported(&ctx.effective_sampling, self.provider)?;
+        let filtered = filter_to_supported(
+            &ctx.effective_sampling,
+            self.provider,
+            self.endpoint.as_deref(),
+        )?;
         Ok(ToolOutcome::text(serde_json::to_string(&filtered)?))
     }
 }
@@ -72,11 +85,24 @@ impl Tool for GetSampling {
 pub struct SetSampling {
     /// The chat engine's cloud provider (`None` — local/external: all fields available).
     provider: Option<CloudProvider>,
+    /// What the endpoint published about the configured model, when it published
+    /// anything: it narrows the same offer the provider does, so a gateway's
+    /// schema stops naming fields it drops (docs/gateway-capabilities.md).
+    endpoint: Option<std::sync::Arc<[String]>>,
 }
 
 impl SetSampling {
-    pub fn new(provider: Option<CloudProvider>) -> Self {
-        Self { provider }
+    pub fn new(
+        provider: Option<CloudProvider>,
+        endpoint: Option<std::sync::Arc<[String]>>,
+    ) -> Self {
+        Self { provider, endpoint }
+    }
+
+    /// The fields this tool may show and accept: the mode's set, narrowed by the
+    /// endpoint's published list.
+    fn available_fields(&self) -> Vec<&'static str> {
+        available_sampling_fields(self.provider, self.endpoint.as_deref())
     }
 }
 
@@ -95,12 +121,12 @@ impl Tool for SetSampling {
         format!(
             "{} {}",
             loc.t("tool.set_sampling.desc"),
-            scope_note(loc, self.provider)
+            scope_note(loc, self.provider, self.endpoint.as_deref())
         )
     }
     fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         // The schema carries only the fields accepted by the current mode's engine.
-        let supported = supported_sampling_fields(self.provider);
+        let supported = self.available_fields();
         let mut props = serde_json::Map::new();
         for (name, schema) in field_schemas() {
             if supported.contains(&name) {
@@ -110,7 +136,7 @@ impl Tool for SetSampling {
         serde_json::json!({ "type": "object", "properties": props })
     }
     async fn invoke(&self, ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
-        let supported = supported_sampling_fields(self.provider);
+        let supported = self.available_fields();
         // Drop fields unavailable in the current mode (the engine wouldn't accept them),
         // and tell the model about it, rather than silently applying the unsupported ones.
         let mut obj = match args {
@@ -142,7 +168,11 @@ impl Tool for SetSampling {
         let merged = merge_sampling(&ctx.effective_sampling, &patch);
         // The result only carries fields available in the current mode — otherwise the
         // feed (and the model) would get a full config with dozens of `null`s, which is confusing.
-        let json = serde_json::to_string(&filter_to_supported(&merged, self.provider)?)?;
+        let json = serde_json::to_string(&filter_to_supported(
+            &merged,
+            self.provider,
+            self.endpoint.as_deref(),
+        )?)?;
         let mut result = ctx
             .loc
             .tf("tool.set_sampling.result.updated", &[("json", &json)]);
@@ -160,22 +190,32 @@ impl Tool for SetSampling {
 }
 
 /// A hint to the model about the field set available in the current mode (in the language `loc`).
-fn scope_note(loc: &crate::shared::i18n::Locale, provider: Option<CloudProvider>) -> String {
-    match provider {
-        None => loc.t("tool.sampling.scope.all").to_string(),
-        Some(_) => loc.tf(
-            "tool.sampling.scope.limited",
-            &[("fields", &supported_sampling_fields(provider).join(", "))],
-        ),
+fn scope_note(
+    loc: &crate::shared::i18n::Locale,
+    provider: Option<CloudProvider>,
+    endpoint: Option<&[String]>,
+) -> String {
+    // A published catalogue limits the set exactly as a cloud's table does, so it
+    // is the *narrowing*, not the mode, that decides which sentence the model is
+    // told — otherwise a gateway would be described as "all fields available"
+    // while its schema carried eight.
+    let fields = available_sampling_fields(provider, endpoint);
+    if provider.is_none() && fields.len() == supported_sampling_fields(None).len() {
+        return loc.t("tool.sampling.scope.all").to_string();
     }
+    loc.tf(
+        "tool.sampling.scope.limited",
+        &[("fields", &fields.join(", "))],
+    )
 }
 
 /// Serializes sampling, keeping only the fields available in the current mode.
 fn filter_to_supported(
     sampling: &SamplingConfig,
     provider: Option<CloudProvider>,
+    endpoint: Option<&[String]>,
 ) -> Result<serde_json::Value> {
-    let supported = supported_sampling_fields(provider);
+    let supported = available_sampling_fields(provider, endpoint);
     let value = serde_json::to_value(sampling)?;
     let serde_json::Value::Object(mut map) = value else {
         return Ok(value);
@@ -409,7 +449,7 @@ mod tests {
             temperature: Some(0.7),
             ..Default::default()
         };
-        let out = GetSampling::new(None)
+        let out = GetSampling::new(None, None)
             .invoke(&ctx, serde_json::json!({}))
             .await
             .unwrap();
@@ -426,7 +466,7 @@ mod tests {
             max_tokens: Some(512),
             ..Default::default()
         };
-        let out = SetSampling::new(None)
+        let out = SetSampling::new(None, None)
             .invoke(
                 &ctx,
                 serde_json::json!({
@@ -471,7 +511,7 @@ mod tests {
             ..Default::default()
         };
         // Gemini (native): top_k is available, but min_p (a llama.cpp extension) isn't.
-        let out = GetSampling::new(Some(CloudProvider::Gemini))
+        let out = GetSampling::new(Some(CloudProvider::Gemini), None)
             .invoke(&ctx, serde_json::json!({}))
             .await
             .unwrap();
@@ -482,7 +522,7 @@ mod tests {
         assert!(v.get("min_p").is_none());
 
         // OpenAI: temperature is also unavailable (GPT 5.5/5.6 rejects it).
-        let out = GetSampling::new(Some(CloudProvider::OpenAi))
+        let out = GetSampling::new(Some(CloudProvider::OpenAi), None)
             .invoke(&ctx, serde_json::json!({}))
             .await
             .unwrap();
@@ -497,7 +537,7 @@ mod tests {
         let (_d, _s, mut ctx) = ctx_with_storage(Uuid::new_v4());
         ctx.effective_sampling = SamplingConfig::default();
         // Claude: only max_tokens is available; temperature/top_k must be dropped.
-        let out = SetSampling::new(Some(CloudProvider::Claude))
+        let out = SetSampling::new(Some(CloudProvider::Claude), None)
             .invoke(
                 &ctx,
                 serde_json::json!({"max_tokens": 1024, "temperature": 0.9, "top_k": 40}),
@@ -525,7 +565,7 @@ mod tests {
     #[test]
     fn set_sampling_schema_reflects_mode() {
         // Locally — the full schema (all settable fields).
-        let local = SetSampling::new(None)
+        let local = SetSampling::new(None, None)
             .parameters(crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru));
         let local_props = local["properties"].as_object().unwrap();
         assert_eq!(
@@ -534,7 +574,7 @@ mod tests {
         );
         assert!(local_props.contains_key("top_k"));
         // Claude — max_tokens + reasoning (thinking/reasoning_effort), but not the extensions.
-        let claude = SetSampling::new(Some(CloudProvider::Claude))
+        let claude = SetSampling::new(Some(CloudProvider::Claude), None)
             .parameters(crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru));
         let claude_props = claude["properties"].as_object().unwrap();
         assert!(claude_props.contains_key("max_tokens"));
