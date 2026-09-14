@@ -7,8 +7,8 @@ field name) and the documentation half of F3/F4, see §7; merged as
 **F2 was reopened by measurement and is now fixed** (§5, §8.1, §9): the "change
 nothing" conclusion had been drawn from reading, and the live run answers the
 silent turns' request with a `400`. The user chose (a) — recover from the refusal
-and remember it — on 2026-09-14, and stage 2 implements exactly that and nothing
-else. F3(b) and F4(c) are **confirmed buildable** by the same run (M5) and stay a
+and remember it — on 2026-09-14; stage 2 implements exactly that and nothing
+else, and its smoke is **GO** on the model that refuses (§9). F3(b) and F4(c) are **confirmed buildable** by the same run (M5) and stay a
 separate track; F5, F6 and the rest stay proposals.
 
 **Measured, on the second pass — by the author, not by this session.** What was
@@ -523,7 +523,16 @@ removing the status check. All five mutations (never recover; do not remember;
 drop the status check; drop the "did it ask" check; loosen the message match) are
 caught now.
 
-**Live**: `a_muted_turn_survives_an_endpoint_that_must_reason`, declared by
-`MINDFORK_LIVE_MANDATORY_REASONING_MODEL` — it sends `title.rs`'s own request
-shape and fails rather than skips if the turn does not complete, which before
-this change was the `400` itself.
+**Live — GO.** `a_muted_turn_survives_an_endpoint_that_must_reason`, declared by
+`MINDFORK_LIVE_MANDATORY_REASONING_MODEL` and run on `deepseek/deepseek-r1`
+through OpenRouter, 2026-09-14: `finish=Some(Stop)`, the title back as *Database
+Indexing Explained*, 8.2 s. It sends `title.rs`'s own request shape and fails
+rather than skips if the turn does not complete — which before this change was
+the `400` itself.
+
+The run also prints what the fix does **not** do: `thoughts=772 chars`. The model
+reasoned anyway, because on this endpoint it cannot be asked not to; what changed
+is that the turn now **finishes**. Those 772 characters are the residual the
+original F2 framing worried about as a "cost risk" — real, unavoidable on such a
+model, and not something a request can take back. Worth stating plainly in case a
+future reader expects the recovery to save tokens: it saves the turn.

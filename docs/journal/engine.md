@@ -4036,9 +4036,17 @@ message match to "reasoning" alone. The stub also grew a body reader that honour
 tests fail rather than flake.
 
 **Tests**: 3224 green, 178 ignored (3221 / 177 before) on the tracked count; on
-Linux 3217 / 173 (3214 / 172 before). **Live — owed, not run**: this session has
-no route to OpenRouter, so the smoke
-`a_muted_turn_survives_an_endpoint_that_must_reason` is written and declared by
-`MINDFORK_LIVE_MANDATORY_REASONING_MODEL` (R1 is exactly such a model), sending
-`title.rs`'s own request shape and failing rather than skipping if the turn does
-not complete — which before this change was the `400` itself.
+Linux 3217 / 173 (3214 / 172 before). **Live — GO**, run by the author (this session
+has no route to the service): `a_muted_turn_survives_an_endpoint_that_must_reason`
+on `deepseek/deepseek-r1` through OpenRouter — `finish=Some(Stop)`, the title back
+as *Database Indexing Explained*, 8.2 s, where before this change the same request
+**was** the `400`. The smoke sends `title.rs`'s own shape and is declared by
+`MINDFORK_LIVE_MANDATORY_REASONING_MODEL`, so it fails rather than skips.
+
+And it prints what the fix does not do: `thoughts=772 chars`. The model reasoned
+anyway — on that endpoint it cannot be asked not to — so the turn's tokens are
+still spent on thinking nobody wanted. That residual is what the original "cost
+risk" reading of F2 was about, and it is genuinely unavoidable here; what the fix
+buys is the turn completing at all. Worth keeping straight, because a later reader
+looking at a title that cost 772 characters of reasoning might otherwise think the
+recovery failed.

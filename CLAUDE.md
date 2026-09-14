@@ -200,7 +200,10 @@ being recent is dropped, not shortened.
   client re-sends once without the field and **remembers** the refusal per server,
   feeding the same `omit_effort_none` switch xAI is configured with — narrow by
   construction (a `400` only, only when the turn asked, only when the message
-  names reasoning *and* its disabling), so a `503` stays the retry decorator's.
+  names reasoning *and* its disabling), so a `503` stays the retry decorator's, and
+  **GO** on R1: the title comes back where the same request used to be the `400` —
+  with 772 characters of reasoning still spent, because that endpoint cannot be
+  asked to stop, which is the residual the fix does not claim to remove.
   The catalogue itself is measured
   and carries `context_length` **and** `supported_parameters` per model, so the
   window and the honest sampling list are one fetch away.
