@@ -3881,15 +3881,48 @@ and the precedence fixture had to be sharpened to earn it — with one string
 under both keys, swapping the precedence passed unnoticed. The fourth is the
 model-variable derivation below.
 
-**Live — not run, and that is the state of it.** The session had no route to
+**Live — GO, on the author's machine.** The session itself had no route to
 `openrouter.ai` (the environment's egress proxy answers `403` to the `CONNECT`,
 and its own README forbids routing around an organization policy denial) and the
-account key added afterwards does not reach a container that started before it;
-so nothing here was measured against the service. The unit tests prove the parse
-and the smoke is written for whoever has a key. The five measurements that would
-close it are [openrouter-external.md](../research/openrouter-external.md) §8.
-Everything shipped is safe under either answer, which is why it shipped without
-them.
+account key added afterwards does not reach a container that started before it —
+so the smoke was written, declared and handed over. Run on
+**`deepseek/deepseek-r1` through OpenRouter, 2026-09-14**:
+`a_gateway_streams_thoughts_under_its_own_field_name` **green** in 49.5 s, with a
+full reasoning trace in `thoughts` and a non-empty answer beside it —
+`delta.reasoning` reaches the feed, which is the whole of F1 and exactly what the
+old parse dropped. `tool_call_is_emitted_and_parsed` green in 4.3 s (native
+`tool_calls` do come back through a gateway), `simple_generation` green.
+**Smoke — GO.**
+
+**Two more things the same run measured, neither of them asked for.** F3 stopped
+being a `[docs]` prediction: `auto_compaction_fires_without_the_command_live`
+failed with "nothing folded. Last exact prompt: Some(22567) tokens" — that smoke
+sets `context_tokens: None` on purpose so the window can only come from the
+engine, and a gateway has no `/props` to give it. Not a defect; the documentation
+half of F3 is what it needed. And the same output proves the counter it measured
+against: `exact prompt: Some(4875) … Some(22567)`, each flagged exact, so
+OpenRouter's `usage` parses and a 22.5k-token prompt streams through without
+trouble.
+
+**The failure mode to recognise next time.** In the first run,
+`attachment_read_e2e_live` ended with DeepSeek's own chat template sitting in the
+reply *text* — `function<|tool_sep|>attachment_read … <|tool_call_end|>` — after
+that very turn had issued six correct native tool calls. Neither "R1 cannot call
+tools" nor our wire: on a gateway the template → `tool_calls` parse belongs to the
+**routed provider**, and when it misses, the model's raw special tokens arrive as
+ordinary content, the loop sees no call and the turn ends on junk. Parsing every
+vendor's template is the rabbit hole ADR 0004 exists to avoid, so nothing was
+changed — but that is what a "the model went mad" report from a gateway user will
+turn out to be. M3–M5 are still owed
+([openrouter-external.md](../research/openrouter-external.md) §8.2).
+
+**A correction the run also earned:** the first instructions said to run the
+whole `--ignored` set, which is right for a local `llama-server` and wrong for a
+metered endpoint — ~235 smokes, 121 of them multi-round e2e conversations built
+where a token is free and a 20k-token ballast costs nothing. install.md §7.1 and
+§8 now name the three smokes that answer M1 and M2 in under a minute, and say
+which local-stack smokes are expected to be red on a gateway for reasons that are
+statements about the stack.
 
 **The live set could not have been pointed at a gateway at all** — found while
 writing those commands, which is the value of writing them out. `live_client`

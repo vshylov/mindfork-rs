@@ -200,11 +200,14 @@ being recent is dropped, not shortened.
   relief exists (`compaction.context_tokens`) and the code version of both wants
   the one measurement nobody has made — a gateway's catalogue carries
   `context_length` and `supported_parameters` per model, one request for both.
-  Not measured live at all: no route to the service from the session, so the
-  `#[ignore]` smoke is written and declared rather than run — and writing out its
-  command found that `live_client` sent no `model`, i.e. **no** live smoke could
-  have been pointed at a gateway; it now derives `MINDFORK_ENGINE_MODEL` from the
-  URL variable (install.md §7.1)
+  Live **GO** on `deepseek/deepseek-r1` through OpenRouter (the session had no
+  route to the service; the author ran it): thoughts and answer both arrive, and
+  the same run turned F3 from prediction into measurement — 22 567 tokens, nothing
+  folded, because a gateway reports no window — while proving `usage` parses.
+  Writing those commands found two more things: `live_client` sent no `model`, so
+  **no** live smoke could have been pointed at a gateway (it now derives
+  `MINDFORK_ENGINE_MODEL`), and "run the whole `--ignored` set" is local-stack
+  advice that costs hours and real money on a metered one (install.md §7.1)
   ([docs/research/openrouter-external.md](docs/research/openrouter-external.md),
   spec §6.5, [docs/journal/engine.md](docs/journal/engine.md)).
 - **The local interpreter joins the file exchange, and the track closes** — `python_exec`
@@ -389,24 +392,6 @@ being recent is dropped, not shortened.
   5 lines, stopped by the director past the second checkpoint
   ([docs/research/dialogue-director-history.md](docs/research/dialogue-director-history.md),
   spec §9.13, [docs/journal/tools.md](docs/journal/tools.md)).
-- **Impersonation on Gemma's template — the swapped conversation must
-  open with the assistant's silence** — the defect the one-shot samples
-  track found: impersonation swaps the roles of the history, so a chat
-  the user opened became a conversation opening with an assistant turn,
-  and Gemma 3's chat template refused it with a `400` before any prefill.
-  Measured on Gemma 4 31B and Gemma 3 4B: Gemma 4's template takes every
-  shape; Gemma 3's refuses a leading assistant turn and two same-role
-  turns in a row, and delivers the system prompt only inside a leading
-  user turn (4 tokens for a 54-token system without one). Now
-  `alternate_for_template` merges adjacent same-role turns and folds a
-  leading assistant turn that a user turn follows into the persona as one
-  sentence (`prompt.impersonation.opening`), for every provider — the
-  same reply on Gemma 4 for five tokens more, a reply instead of a `400`
-  on Gemma 3; the opening-only chat stays the lone turn both accept.
-  Measured after: the user-opened seed impersonated on Gemma 4 in 1.5 s
-  and on Gemma 3 in 69.8 s with the note, no `400` in the log
-  ([docs/research/gemma-impersonation.md](docs/research/gemma-impersonation.md),
-  spec §11.8, [docs/journal/engine.md](docs/journal/engine.md)).
 - **The TUI "hangs" on a headless launch** (no TTY) — this is expected; clean
   exit via `Esc`/`Ctrl+Q` is covered by unit tests. Live verification needs a
   real terminal.

@@ -5,19 +5,23 @@ field name) and the documentation half of F3/F4, see §7. **F2 is a
 "change nothing", with the evidence in §5.** F3–F6 are proposals awaiting the
 user's decision; none of them is implemented.
 
-**How much of this was measured: none of it, against OpenRouter.** The session
-that wrote this had no network route to `openrouter.ai` — the environment's
-egress proxy refuses the host, for `curl` and for the doc fetcher alike — and no
-account key. So every claim below is tagged:
+**Measured, on the second pass — by the author, not by this session.** What was
+written here came from reading: the session had no network route to
+`openrouter.ai` (the environment's egress proxy answers `403` to the `CONNECT`)
+and no account. The author then ran it on **`deepseek/deepseek-r1` through
+OpenRouter, 2026-09-14** — §8 carries the results, and **M1 is a GO**: the
+thoughts this review was written about arrived. So claims are tagged:
 
-- **[code]** — read in this repository; the strongest kind here;
+- **[live]** — measured against the service on that run;
+- **[code]** — read in this repository;
 - **[crate]** — read in a dependency's own source (`~/.cargo/registry`);
 - **[docs]** — OpenRouter's published protocol, or a corroborated third-party
-  report of it.
+  report of it, and **still unmeasured**.
 
 A **[docs]** claim is exactly what [lessons.md](../lessons.md) §3 says not to
-build on without measuring, which is why §8 lists what to run before the PR is
-called done, and why stage 1 changes only what is safe under *either* answer.
+build on without measuring, which is why stage 1 changed only what is safe under
+*either* answer — and why the three that are still `[docs]` (F2's cost, F3(b),
+F4(c)) remain proposals rather than code.
 
 **Related:** [docs/install.md](../install.md) §3 (the `external` mode) and §3.2 (keys),
 spec §3.4 (the engine's lifecycle and settings), §6.5 (parsing "thoughts"),
@@ -50,8 +54,8 @@ drops), and the rest is tuning and defaults.
 | | verdict |
 |---|---|
 | chat, streaming, tools, images, usage, retries, auth | works unchanged (§4.1) |
-| **thoughts (CoT)** | **was broken** — fixed in stage 1 (§5 F1, §7) |
-| automatic compaction | inactive until the user types a window (§5 F3) |
+| **thoughts (CoT)** | **was broken** — fixed in stage 1 and measured **[live]** (§5 F1, §7, §8.1) |
+| automatic compaction | inactive until the user types a window — confirmed **[live]** (§5 F3, §8.1) |
 | sampling beyond the OpenAI set | silently dropped, while the UI offers it (§5 F4) |
 | reasoning across tool rounds, tool-result images, `/continue` | provider-dependent; noted, not fixed (§5 F5, F6) |
 
@@ -380,23 +384,36 @@ ballast costs nothing; against a metered gateway that is hours of wall clock and
 a real bill, most of it spent on behaviour that has nothing to do with this
 review. Three smokes answer M1 and M2 in under a minute.
 
-and these are the measurements the run has to produce:
+### 8.1 What the run measured — `deepseek/deepseek-r1`, 2026-09-14
+
+| | outcome |
+|---|---|
+| **M1 — GO** | `a_gateway_streams_thoughts_under_its_own_field_name` **green** in 49.5 s: `finish=Some(Stop)`, a full reasoning trace in `thoughts` (the model's own working of 17×23, several hundred words) *and* a non-empty answer. The gateway's `delta.reasoning` reaches `ChatChunk::Thoughts`, which is the whole claim of F1 — and the defect it fixed, since the same run on the old parse would have printed `thoughts=` empty. |
+| **M2 — partly** | `tool_call_is_emitted_and_parsed` **green** in 4.3 s, so native `tool_calls` do come back through the gateway. No `400` mentioning reasoning blocks anywhere in the run, i.e. nothing yet forces F5 — weak evidence, since R1's reasoning is plain text rather than Anthropic's signed blocks. See the failure mode below, which is the more interesting half. |
+| **F3 — confirmed** | `auto_compaction_fires_without_the_command_live` **failed exactly as predicted**: "nothing folded. Last exact prompt: Some(22567) tokens". That smoke sets `context_tokens: None` deliberately, so the window can only come from the engine — and a gateway has no `/props` to give it. Not a defect; §4.2 measured. |
+| **usage — works** | The same failure printed the counter it was measuring against: `exact prompt: Some(4875)`, `Some(5158)`, `Some(22255)`, `Some(22567)`, each flagged exact. OpenRouter's `usage` parses, and a 22.5k-token prompt streams through the gateway without trouble. |
+| **M3, M4, M5** | not run. |
+
+**The failure mode worth knowing about: a provider that does not parse its own
+model's tool template.** In the first (whole-set) run, `attachment_read_e2e_live`
+ended with DeepSeek's chat template in the **reply text** —
+`function<|tool_sep|>attachment_read … <|tool_call_end|><|tool_calls_end|>` —
+after the same turn had issued six correct native tool calls. So this is neither
+"R1 cannot call tools" (M2 is green) nor our wire: on a gateway the template →
+`tool_calls` parse belongs to the **routed provider**, and when it misses, the
+model's raw special tokens arrive as ordinary content, the loop sees no call, and
+the turn ends on junk. Nothing to fix here — parsing every vendor's template is
+the rabbit hole ADR 0004 exists to avoid — but it is what a "the model went mad"
+report from a gateway user will actually be, and OpenRouter's `provider` routing
+controls (§6) are the lever we do not expose.
+
+### 8.2 What is still owed
 
 | | what to run | what would falsify the design |
 |---|---|---|
-| **M1** | `cargo test a_gateway_streams_thoughts -- --ignored --nocapture` | no thoughts → the field name is wrong, or the model needs `reasoning:{…}` to emit any |
-| **M2** | `cargo test tool_call_is_emitted_and_parsed -- --ignored --nocapture`, then a two-round tool prompt in the app | a `400` naming reasoning blocks → F5 is not optional |
 | **M3** | the app itself: a chat, a `python_exec` chart, a `/file` round trip | tool-result images refused → F6 hardens into a real limit |
 | **M4** | a title + a compaction roll, then read `usage.reasoning_tokens` on the gateway's activity page | non-zero → `reasoning_effort:"none"` is being dropped, and F2 reopens as a cost defect |
 | **M5** | `GET /v1/models`, one entry for the configured model | `context_length`/`supported_parameters` present as documented → F3(b)+F4(c) are worth building |
 
-A caveat that is the point of running the *whole* set rather than one smoke:
-several of these smokes were written against a local `llama-server` and assert
-its behaviour, not a gateway's — `accepts_creative_sampling_extensions` in
-particular asserts that the server *takes* the llama.cpp extension fields, which
-a gateway silently drops (§4.2, F4), and the vision smokes need a model that
-takes images. A failure there is a statement about the stack, not necessarily a
-defect; read each one before filing it.
-
-Record the model, the stack and the outcome in
-[docs/journal/engine.md](../journal/engine.md), per AGENTS.md §3.
+The outcome is recorded in [docs/journal/engine.md](../journal/engine.md), per
+AGENTS.md §3.
