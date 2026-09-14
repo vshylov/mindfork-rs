@@ -304,7 +304,7 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
 
 ## Engine and reliability
 - **Provider bridges** — the "any OpenAI-compatible endpoint" pattern
-  (external + LiteLLM/OpenRouter) is now documented in install.md §3.1, together
+  (external + LiteLLM/OpenRouter) is now documented in install.md §3, together
   with the key such a gateway needs
   ([external-api-key.md](history/external-api-key.md)), and the request now
   actually carries the configured model name, without which none of those
@@ -314,7 +314,14 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   proxy) — on demand, and a **live run against a real multi-model endpoint**
   (`llama-server --router` or a LiteLLM container): the request body is pinned by
   a unit test, the gateway's side of it has only been read, not exercised. See
-  [plugin research §6](research/plugin-system.md).
+  [plugin research §6](research/plugin-system.md). A full review of that side —
+  [openrouter-external.md](research/openrouter-external.md) — closed the one
+  defect it found (a gateway's "thoughts" were dropped, F1) and left three
+  proposals resting on the same unrun measurement: reading the context window
+  and the per-model `supported_parameters` off the catalogue instead of leaving
+  both to the user (F3(b), F4(c) — one request serves both), and echoing
+  `reasoning_details` back across tool rounds (F5). Its §8 lists what a live
+  account has to measure before any of the three is worth building.
 - **API keys: storage extensions** (ADR 0008) — an OS keychain as an
   additional `scheme`; UI management of other machines' entries ("forget this
   computer") — also where an explicit cleanup of MCP secrets orphaned by a rename

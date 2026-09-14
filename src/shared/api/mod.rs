@@ -39,17 +39,44 @@ pub use managed::{ManagedConfig, ServerHandle, wait_until_ready};
 pub use openai::{OpenAiClient, ResponsesClient};
 
 /// A client to a live OpenAI-compatible server for the `#[ignore]` smokes,
-/// named by a pair of env variables: the URL and an **optional** Bearer key.
+/// named by a pair of env variables: the URL and an **optional** Bearer key —
+/// plus an **optional** model name, on the same naming convention.
 ///
 /// `None` when the URL variable is unset — the smoke skips, as before. An unset
 /// or empty key variable sends no `Authorization` header, i.e. byte-for-byte the
 /// previous behaviour against a local `llama-server`; setting it lets the same
 /// smokes run against an authenticated server (a hosted endpoint, a proxy). See
 /// [docs/history/remote-e2e-hf.md](../../../docs/history/remote-e2e-hf.md) §5.
+///
+/// The **model** is what makes the whole live set usable against a *gateway*
+/// (OpenRouter, LiteLLM, `llama-server --router`): those route on the request's
+/// `model` and answer `400 "model name is missing"` without one
+/// ([docs/research/external-model-name.md](../../../docs/research/external-model-name.md) §2.3),
+/// so every smoke here — engine, orchestrator e2e, embedder — used to be a
+/// single-model stack's privilege. Unset, nothing is sent and the request is
+/// byte-identical to before (docs/research/openrouter-external.md §8).
 #[cfg(test)]
 pub(crate) fn live_client(url_var: &str, key_var: &str) -> Option<OpenAiClient> {
     let url = std::env::var(url_var).ok()?;
-    Some(OpenAiClient::new(url).with_api_key(std::env::var(key_var).ok()))
+    Some(
+        OpenAiClient::new(url)
+            .with_api_key(std::env::var(key_var).ok())
+            .with_model(std::env::var(model_var(url_var)).ok()),
+    )
+}
+
+/// The model variable's name for the stack named by `url_var`, derived rather
+/// than passed: the seventeen call sites already spell the pair by convention
+/// (`MINDFORK_ENGINE_URL` + `MINDFORK_ENGINE_KEY`), and a third argument at each
+/// of them would buy nothing the convention does not already guarantee.
+/// `MINDFORK_ENGINE_URL` → `MINDFORK_ENGINE_MODEL`, and a suffixed stack keeps
+/// its suffix: `MINDFORK_EMBED_URL_ALT` → `MINDFORK_EMBED_MODEL_ALT`.
+#[cfg(test)]
+fn model_var(url_var: &str) -> String {
+    match url_var.rfind("_URL") {
+        Some(at) => format!("{}_MODEL{}", &url_var[..at], &url_var[at + "_URL".len()..]),
+        None => format!("{url_var}_MODEL"),
+    }
 }
 
 /// The `Authorization` header for a smoke that speaks to the engine **directly**
@@ -223,4 +250,28 @@ pub(crate) fn assert_sees_blue_square(answer: &str, provider: &str) {
         lower.contains("square"),
         "{provider}: the centred shape is missing from the answer: {answer:?}"
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The derivation [`live_client`] rests on. A wrong name here would not fail
+    /// loudly — it would read an unset variable, send no `model`, and leave a
+    /// gateway answering `400` to a live run that looks correctly configured.
+    #[test]
+    fn the_model_variable_follows_the_url_variable() {
+        assert_eq!(model_var("MINDFORK_ENGINE_URL"), "MINDFORK_ENGINE_MODEL");
+        assert_eq!(model_var("MINDFORK_EMBED_URL"), "MINDFORK_EMBED_MODEL");
+        // A suffixed stack keeps its suffix, exactly as its key variable does
+        // (`MINDFORK_EMBED_KEY_ALT`) — the second embedder of the re-embed and
+        // embed-guard smokes.
+        assert_eq!(
+            model_var("MINDFORK_EMBED_URL_ALT"),
+            "MINDFORK_EMBED_MODEL_ALT"
+        );
+        // A name that does not carry `_URL` at all still gets one answer rather
+        // than a panic: the test helpers name real variables like `PATH`.
+        assert_eq!(model_var("PATH"), "PATH_MODEL");
+    }
 }

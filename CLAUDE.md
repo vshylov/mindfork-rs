@@ -169,10 +169,10 @@ Backend selection: `MINDFORK_ENGINE_URL` (external, any OpenAI server) OR
 rented instead of hosted — `python tools/e2e_hf.py run`, see
 `docs/history/remote-e2e-hf.md`.
 
-## Status (2026-09-13, version 0.9.9)
+## Status (2026-09-14, version 0.9.9)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3217 unit tests
-green, 176 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **3221 unit tests
+green, 177 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -184,6 +184,32 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **`external` against a gateway — a thought under a second name** — the mode we
+  recommend for OpenRouter dropped every thought it sent: the client read
+  `delta.reasoning_content`, a gateway writes `delta.reasoning`, and an unknown
+  field deserializes away in silence, so a reasoning model there answered with
+  its thinking invisible and the `<think>` fallback could not help (the gateway
+  has already lifted the reasoning out of `content`). Both names are read now,
+  `reasoning_content` first, taking **both** fields — one trace under two names
+  must not double — so the local stack is byte-identical to before. The rest of
+  the review is a "change nothing" with reasons: `reasoning_effort:"none"` on the
+  three silent turns stays flat, because that spelling is the supported legacy
+  one, sending it *and* the nested `reasoning:{effort}` is rejected, and
+  `external` is also every local `llama-server`, which reads `"none"` as "do not
+  think"; the context window and the sampling set got documentation, since the
+  relief exists (`compaction.context_tokens`) and the code version of both wants
+  the one measurement nobody has made — a gateway's catalogue carries
+  `context_length` and `supported_parameters` per model, one request for both.
+  Live **GO** on `deepseek/deepseek-r1` through OpenRouter (the session had no
+  route to the service; the author ran it): thoughts and answer both arrive, and
+  the same run turned F3 from prediction into measurement — 22 567 tokens, nothing
+  folded, because a gateway reports no window — while proving `usage` parses.
+  Writing those commands found two more things: `live_client` sent no `model`, so
+  **no** live smoke could have been pointed at a gateway (it now derives
+  `MINDFORK_ENGINE_MODEL`), and "run the whole `--ignored` set" is local-stack
+  advice that costs hours and real money on a metered one (install.md §7.1)
+  ([docs/research/openrouter-external.md](docs/research/openrouter-external.md),
+  spec §6.5, [docs/journal/engine.md](docs/journal/engine.md)).
 - **The local interpreter joins the file exchange, and the track closes** — `python_exec`
   in Local mode ran the code and nothing else: no files in, none out, and a schema without
   `files`, because a model must never be offered an argument its mode cannot honour. Now
@@ -366,44 +392,6 @@ being recent is dropped, not shortened.
   5 lines, stopped by the director past the second checkpoint
   ([docs/research/dialogue-director-history.md](docs/research/dialogue-director-history.md),
   spec §9.13, [docs/journal/tools.md](docs/journal/tools.md)).
-- **Impersonation on Gemma's template — the swapped conversation must
-  open with the assistant's silence** — the defect the one-shot samples
-  track found: impersonation swaps the roles of the history, so a chat
-  the user opened became a conversation opening with an assistant turn,
-  and Gemma 3's chat template refused it with a `400` before any prefill.
-  Measured on Gemma 4 31B and Gemma 3 4B: Gemma 4's template takes every
-  shape; Gemma 3's refuses a leading assistant turn and two same-role
-  turns in a row, and delivers the system prompt only inside a leading
-  user turn (4 tokens for a 54-token system without one). Now
-  `alternate_for_template` merges adjacent same-role turns and folds a
-  leading assistant turn that a user turn follows into the persona as one
-  sentence (`prompt.impersonation.opening`), for every provider — the
-  same reply on Gemma 4 for five tokens more, a reply instead of a `400`
-  on Gemma 3; the opening-only chat stays the lone turn both accept.
-  Measured after: the user-opened seed impersonated on Gemma 4 in 1.5 s
-  and on Gemma 3 in 69.8 s with the note, no `400` in the log
-  ([docs/research/gemma-impersonation.md](docs/research/gemma-impersonation.md),
-  spec §11.8, [docs/journal/engine.md](docs/journal/engine.md)).
-- **The one-shot requests' samples — impersonation's prompt is the
-  session's largest, and its own twice** — the item was "the title's and
-  impersonation's timings for the slow-prefill note"; measured,
-  impersonation's prompt is the largest a session makes — the whole
-  conversation, roles swapped under its own system, nothing of it in any
-  slot's cache: 10 642 tokens where the fresh chat's first turn had 4349,
-  and 4 the second time, the cache's — while the title's is 200 on an
-  ordinary opening, under the rule's floor, a thousand at most. Now the
-  impersonation task keeps the sample under the record's own condition
-  (a budget, i.e. the shared engine — the one server the rule knows) and
-  lands `ImpDone { id, reason, prefill }` for `handle_imp_done` to offer
-  after `ImpersonationFinished`; the title's rides `TitleResult.prefill`,
-  offered after its landing whatever the text. Measured after on the CPU
-  build, a seeded chat and no turn before the request: impersonation
-  1246 tokens at 36 tok/s, the title 1119 at 35 — the note from either;
-  the 4090 none. Found in passing: Gemma's template refuses the swapped
-  conversation of a chat that opens with the user (a `400` before any
-  prefill)
-  ([docs/research/oneshot-samples.md](docs/research/oneshot-samples.md),
-  spec §3.4, §11.2, §11.8, [docs/journal/engine.md](docs/journal/engine.md)).
 - **The TUI "hangs" on a headless launch** (no TTY) — this is expected; clean
   exit via `Esc`/`Ctrl+Q` is covered by unit tests. Live verification needs a
   real terminal.

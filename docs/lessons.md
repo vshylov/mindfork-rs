@@ -1462,6 +1462,21 @@ goes second.
 
 ## 9. Live runs and model behaviour
 
+**Through a gateway, a model's raw tool template in the reply text is the
+*provider's* parser failing, not ours — and the live set costs money there.**
+Two traps from the same OpenRouter run. A turn that had just issued six correct
+native tool calls ended with DeepSeek's own template sitting in the visible reply
+(`function<|tool_sep|>attachment_read … <|tool_call_end|>`): on a gateway the
+template → `tool_calls` parse belongs to the routed provider, so when it misses,
+special tokens arrive as ordinary content, the loop sees no call, and it reads
+exactly like a client bug. Do not start parsing vendor templates (ADR 0004);
+recognise it, and check which provider the gateway routed to. The second trap is
+the instruction to "run the live set": `cargo test -- --ignored` is free against a
+local `llama-server` and is hours plus a real bill against a metered endpoint —
+121 of those smokes are multi-round e2e conversations, one of which inflates a
+conversation past 20k tokens by design. Name the smokes that answer the question.
+— *`external` against a gateway*.
+
 **A wire shape seen once per reply is not a contract — a newer model breaks the
 "one" quietly.** Every OpenAI Responses reply had carried one reasoning item, so the
 loop fused whatever arrived into one string under the last id, and nothing noticed
