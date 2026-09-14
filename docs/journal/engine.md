@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (60)
+## Entries (61)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -72,6 +72,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: `llama remove` — a build comes off disk, and says what that changed (done)
 - Post-M9: the turn asks about images once, and stops waiting for the answer (done)
 - Post-M9: `external` against a gateway — a thought under a second name, and the rest of the review (done)
+- Post-M9: the gateway's remaining measurements — the silent turns are a `400`, not a bill (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -3940,3 +3941,50 @@ pinned by a test, since a wrong name there would not fail loudly — it would re
 an unset variable and leave a correctly-configured-looking run answering `400`.
 Test-only code (`#[cfg(test)]`), and install.md §7.1 now carries the OpenRouter
 invocation.
+
+### Post-M9: the gateway's remaining measurements — the silent turns are a `400`, not a bill (done)
+
+The three measurements [openrouter-external.md](../research/openrouter-external.md)
+§8.2 still owed after the first PR, run by the author on OpenRouter (the session
+has no route to the service). Two came back, and one of them **refutes a
+conclusion this track shipped**.
+
+**M4: `reasoning_effort: "none"` is not ignored — it is refused.** The exact body
+`title.rs` builds, sent to `deepseek/deepseek-r1`, is answered `HTTP 400`,
+"Reasoning is mandatory for this endpoint and cannot be disabled". The review had
+concluded "change nothing" here, reasoning from OpenRouter's documented "an
+unsupported parameter is dropped and the rest forwarded" that the worst case was
+a **cost** — the silent turns paying for reasoning nobody wanted. It is not a
+cost. On a model that always reasons, the **title, the compaction roll and
+impersonation all fail** while ordinary chat keeps working — which is, word for
+word, the failure `with_effort_none_omitted` was written for on xAI
+([grok-xai-provider.md](../research/grok-xai-provider.md) §2.3), arriving by a
+different road. And the nested `reasoning: {enabled: false}` is no escape: the
+endpoint is not refusing a *spelling*, it is refusing the *request to disable
+reasoning*.
+
+So the fix is not "which spelling" but "when to ask at all", and the fork is open
+(research §5, F2): recover from the refusal in the engine layer and memoise it
+per backend; stop sending the field on `external` and lean on `reasoning_budget:
+0`, which `title.rs`'s own comment already calls the one that actually works on
+llama.cpp; or ask the catalogue, which lists `reasoning`/`include_reasoning` and
+**not** `reasoning_effort` for this model. Recommended: the first, with the third
+when the catalogue fetch lands — it is the only one that cannot be wrong, and it
+covers LiteLLM and every future wording drift too. Not implemented: a wire change
+made on one model's refusal, without the control that isolates the field (§8.2,
+M4a), would be the same mistake this entry is correcting.
+
+**M5: both stage-2 proposals are buildable, and the sampling prediction was
+exact.** `deepseek/deepseek-r1` carries `context_length: 64000` — the number
+F3(b) wants, so the compaction window can be filled from the catalogue instead of
+by hand — and a `supported_parameters` list that confirms §4.2 field by field:
+`temperature`, `top_p`, `top_k`, `max_tokens`, `seed`, `frequency_penalty`,
+`presence_penalty`, `stop`, `tools`, `tool_choice`, `response_format` get
+through; **none** of `min_p`, `typical_p`, `top_n_sigma`, dynatemp, adaptive,
+mirostat, DRY, XTC or `samplers` is there; and the penalty it takes is spelled
+`repetition_penalty` where we send `repeat_penalty`. One fetch serves F3(b),
+F4(c) and F2(c), which is what makes stage 2 one piece of work rather than three.
+
+**Documentation only; no code changed.** Tests untouched (3221 / 177 on the
+tracked count), so no live run of our own was needed beyond the two measurements
+recorded here. M3 and the M4a control are still owed.
