@@ -550,6 +550,20 @@ that does not depend on it running — here, the sweep of stale job directories.
 
 ## 3. Measure; do not assume
 
+**A provider's "unsupported parameters are ignored" is not a promise that a
+request cannot be refused.** OpenRouter documents exactly that rule, and this
+project reasoned from it to a "change nothing" on `reasoning_effort: "none"`: the
+worst case looked like paying for reasoning nobody asked for. One `curl` of the
+body the silent turns actually send answered `400 "Reasoning is mandatory for
+this endpoint and cannot be disabled"` — so a *recognised* parameter asking for
+something the endpoint cannot do is refused, not shrugged off, and the title, the
+compaction roll and impersonation were failing while ordinary chat worked. Read
+such a rule as being about parameters the endpoint has no use for. And when a
+documented rule is what stands between you and a wire change, spend the one
+minute it costs to send the real body — the same minute would have turned this
+from a shipped wrong conclusion into a finding.
+— *`external` against a gateway*.
+
 **Assume the measurement will overturn the plan, because it repeatedly has.** Defender
 was blamed for CI slowness and the runner reported `RealTimeProtectionEnabled = False`;
 vendoring grammars was predicted to *shrink* the binary and added 181 KiB (LTO already

@@ -1,9 +1,15 @@
 # Research: `external` mode against OpenRouter
 
 **Status:** design complete; **stage 1 implemented** — F1 (thoughts under either
-field name) and the documentation half of F3/F4, see §7. **F2 is a
-"change nothing", with the evidence in §5.** F3–F6 are proposals awaiting the
-user's decision; none of them is implemented.
+field name) and the documentation half of F3/F4, see §7; merged as
+[#551](https://github.com/vshylov/mindfork-rs/pull/551).
+
+**F2 was reopened by measurement and is now fixed** (§5, §8.1, §9): the "change
+nothing" conclusion had been drawn from reading, and the live run answers the
+silent turns' request with a `400`. The user chose (a) — recover from the refusal
+and remember it — on 2026-09-14; stage 2 implements exactly that and nothing
+else, and its smoke is **GO** on the model that refuses (§9). F3(b) and F4(c) are **confirmed buildable** by the same run (M5) and stay a
+separate track; F5, F6 and the rest stay proposals.
 
 **Measured, on the second pass — by the author, not by this session.** What was
 written here came from reading: the session had no network route to
@@ -56,7 +62,8 @@ drops), and the rest is tuning and defaults.
 | chat, streaming, tools, images, usage, retries, auth | works unchanged (§4.1) |
 | **thoughts (CoT)** | **was broken** — fixed in stage 1 and measured **[live]** (§5 F1, §7, §8.1) |
 | automatic compaction | inactive until the user types a window — confirmed **[live]** (§5 F3, §8.1) |
-| sampling beyond the OpenAI set | silently dropped, while the UI offers it (§5 F4) |
+| **the silent turns** (title, compaction roll, impersonation) | **`400` on a model that always reasons** — measured **[live]** (§5 F2, §8.1) |
+| sampling beyond the OpenAI set | silently dropped, while the UI offers it — confirmed field by field **[live]** (§5 F4, §8.1) |
 | reasoning across tool rounds, tool-result images, `/continue` | provider-dependent; noted, not fixed (§5 F5, F6) |
 
 ## 2. What `external` mode puts on the wire today **[code]**
@@ -118,10 +125,18 @@ envelope inside an open `200` stream; `usage` (+ llama.cpp's `timings`);
 - **unsupported parameters are ignored, not rejected** — the documented rule is
   that a parameter the chosen model does not support is dropped and the rest
   forwarded (`provider.require_parameters: true` opts into the stricter
-  behaviour of excluding such endpoints instead);
+  behaviour of excluding such endpoints instead). **Measured, that rule has an
+  exception, and it is the one that mattered here** (§8.1, M4): a *recognised*
+  parameter asking for something the endpoint cannot do is a `400`, not a
+  shrug — `reasoning_effort: "none"` against a model that always reasons is
+  answered "Reasoning is mandatory for this endpoint and cannot be disabled".
+  Read "ignored" as being about parameters the endpoint has no use for, never
+  as a guarantee that a request cannot be refused **[live]**;
 - **reasoning** is requested as `reasoning: { effort: … }`, with the flat
   OpenAI `reasoning_effort` supported as the legacy spelling and converted to
-  it. Reports say sending **both** shapes in one request is rejected;
+  it. Reports say sending **both** shapes in one request is rejected. The
+  catalogue's `supported_parameters` lists `reasoning` and `include_reasoning`
+  for `deepseek/deepseek-r1` and **not** `reasoning_effort` **[live]**;
 - **reasoning comes back as `delta.reasoning`** (plus a `reasoning_details`
   array carrying the provider's own signed/encrypted blocks), not as
   `delta.reasoning_content`;
@@ -233,7 +248,7 @@ feed. Fixed in stage 1 (F1).
   echo-back half (F5), it needs a live reasoning model to shape, and the plain
   string already carries the text the feed shows.
 
-### F2. `reasoning_effort: "none"` on the silent turns — **recommendation: change nothing**
+### F2. `reasoning_effort: "none"` on the silent turns — **REOPENED: measured, and it is a `400`**
 
 Three turns force `ReasoningEffort::None` — the title
 ([title.rs:156](../../src/app/orchestrator/title.rs)), the compaction roll
@@ -243,17 +258,70 @@ impersonation ([impersonation.rs:226](../../src/app/orchestrator/impersonation.r
 *value* (grok-xai-provider.md §2.3). The question was whether a gateway needs
 the same treatment, or the nested `reasoning: {effort}` shape.
 
-**No, and sending the nested shape would be a regression.** OpenRouter accepts
-the flat `reasoning_effort` as the legacy spelling and converts it; sending both
-shapes is reported to be rejected; and `none` is among the effort values it
-accepts **[docs]**. Meanwhile `external` is *also* every local `llama-server`,
-which reads `"none"` as "do not think" and would lose that on any change here.
+**The first answer, from reading, was "change nothing":** OpenRouter accepts the
+flat `reasoning_effort` as the legacy spelling and converts it, sending both
+shapes is reported to be rejected, `none` is among the effort values it accepts
+**[docs]** — and `external` is *also* every local `llama-server`, which reads
+`"none"` as "do not think". What remained looked like a **cost** risk at worst:
+a provider that cannot be muted would silently drop the parameter and the silent
+turns would pay for reasoning tokens.
 
-What remains is a **cost** risk, not a correctness one: if a routed provider
-cannot be told "do not reason", OpenRouter's documented rule is to drop the
-parameter, and the three silent turns then pay for reasoning tokens. That is
-worth a line in install.md (§7) and worth measuring (§8, M4) — not worth a wire
-change made blind.
+**Measured (M4, §8.1), that is wrong on both counts.** The exact body
+`title.rs` builds, sent to `deepseek/deepseek-r1`, is answered:
+
+```
+HTTP 400
+{"error":{"message":"Reasoning is mandatory for this endpoint and cannot be
+ disabled.","code":400,"metadata":{"provider_name":null}}}
+```
+
+So the parameter is **not** ignored — it is read, and refused — and the cost
+risk is really a **functional** one: on a model that always reasons, the title,
+the compaction roll and impersonation all fail with a `400` while ordinary chat
+keeps working. That is byte for byte the failure
+[`with_effort_none_omitted`](../../src/shared/api/openai/client.rs) was built
+for on xAI ("those three background turns would fail with a `400` while ordinary
+chat kept working — a confusing failure to diagnose",
+[grok-xai-provider.md](grok-xai-provider.md) §2.3), arriving by a different
+route. And the nested shape is no escape: the endpoint does not refuse a
+*spelling*, it refuses the *request to disable reasoning*, so
+`reasoning: {enabled: false}` would be refused the same way.
+
+The control (M4a) narrows it to one field: a minimal request carrying
+`reasoning_effort: "none"` and nothing else of ours is refused identically, so
+the llama.cpp-only fields the silent turns also send are not involved.
+
+The fix therefore is not "which spelling" but "when to ask at all", and it has
+three shapes — **the fork is open, and this is what it needs a decision on**:
+
+- **(a) recover from the refusal.** The engine layer catches a `400` whose
+  message says reasoning cannot be disabled and retries once without the
+  reasoning-disable fields, memoising the answer per backend (the
+  `TurnLoop::vision` precedent) so at most one turn per session pays the extra
+  round trip. Works for every gateway, every model and every future wording
+  drift, needs no configuration, and cannot regress a local `llama-server`
+  because that server never sends the refusal.
+- **(b) stop sending `reasoning_effort` on `external`.** The cheapest patch, and
+  less lossy than it looks: `title.rs`'s own comment says the field that
+  *actually* suppresses "thoughts" on llama.cpp is `reasoning_budget: 0` (plus
+  `chat_template_kwargs.enable_thinking: false`), with `reasoning_effort` the
+  third of three. Still a measurable risk — a llama.cpp built-in format that
+  reads only `reasoning_effort` would start thinking on the silent turns — so it
+  needs a local run before it ships, and it leaves the gateway paying for
+  reasoning it cannot refuse.
+- **(c) ask the catalogue.** `supported_parameters` for this model lists
+  `reasoning` and `include_reasoning` and **not** `reasoning_effort` (§8.1), so
+  the same fetch F3(b) and F4(c) want would also say "do not send this field
+  here". Principled, and one request serves three features — but it is a
+  heuristic: the list says what is *supported*, never that reasoning is
+  *mandatory*, so it wants (a) underneath it anyway.
+
+**Recommendation: (a), with (c) when the catalogue fetch lands** — (a) is the
+one that cannot be wrong, and it is the only one that also covers LiteLLM,
+vLLM-behind-a-proxy and whatever refuses next.
+
+**User's decision, 2026-09-14: (a), and F2 alone** — F3(b)/F4(c) stay a separate
+track. Implemented; see §9.
 
 ### F3. The context window — **recommendation: documentation now, (b) as a proposal**
 
@@ -392,7 +460,10 @@ review. Three smokes answer M1 and M2 in under a minute.
 | **M2 — partly** | `tool_call_is_emitted_and_parsed` **green** in 4.3 s, so native `tool_calls` do come back through the gateway. No `400` mentioning reasoning blocks anywhere in the run, i.e. nothing yet forces F5 — weak evidence, since R1's reasoning is plain text rather than Anthropic's signed blocks. See the failure mode below, which is the more interesting half. |
 | **F3 — confirmed** | `auto_compaction_fires_without_the_command_live` **failed exactly as predicted**: "nothing folded. Last exact prompt: Some(22567) tokens". That smoke sets `context_tokens: None` deliberately, so the window can only come from the engine — and a gateway has no `/props` to give it. Not a defect; §4.2 measured. |
 | **usage — works** | The same failure printed the counter it was measuring against: `exact prompt: Some(4875)`, `Some(5158)`, `Some(22255)`, `Some(22567)`, each flagged exact. OpenRouter's `usage` parses, and a 22.5k-token prompt streams through the gateway without trouble. |
-| **M3, M4, M5** | not run. |
+| **M4 — a `400`, not a bill** | The exact body `title.rs` builds, sent to `deepseek/deepseek-r1`, is answered `HTTP 400`: `{"error":{"message":"Reasoning is mandatory for this endpoint and cannot be disabled.","code":400}}`. The parameter is read and **refused**, not ignored — so the title, the compaction roll and impersonation fail on a model that always reasons, while ordinary chat keeps working. F2 reopens as a functional defect; its fork is above. |
+| **M5 — both stage-2 proposals are buildable** | `deepseek/deepseek-r1` carries `context_length: 64000` **and** `supported_parameters: frequency_penalty, include_reasoning, max_tokens, presence_penalty, reasoning, repetition_penalty, response_format, seed, stop, temperature, tool_choice, tools, top_k, top_p`. The window is there for F3(b); the list is there for F4(c) — and it confirms §4.2 field by field: **none** of `min_p`, `typical_p`, `top_n_sigma`, dynatemp, adaptive, mirostat, DRY, XTC or `samplers` appears, while the penalty it does take is spelled `repetition_penalty` where we send `repeat_penalty`. Note also what is **absent**: `reasoning_effort`. |
+| **M4a — the field is isolated** | The control: a *minimal* request — `model`, one user message, `stream` — plus `reasoning_effort: "none"` and nothing else, answered by the same `400`. So the refusal is that field's alone; the llama.cpp-only fields the silent turns also carry (`thinking`, `reasoning_budget`, `chat_template_kwargs`) are absent from this body and cannot be the cause. F2's fix has one target. |
+| **M3** | not run. |
 
 **The failure mode worth knowing about: a provider that does not parse its own
 model's tool template.** In the first (whole-set) run, `attachment_read_e2e_live`
@@ -412,8 +483,56 @@ controls (§6) are the lever we do not expose.
 | | what to run | what would falsify the design |
 |---|---|---|
 | **M3** | the app itself: a chat, a `python_exec` chart, a `/file` round trip | tool-result images refused → F6 hardens into a real limit |
-| **M4** | a title + a compaction roll, then read `usage.reasoning_tokens` on the gateway's activity page | non-zero → `reasoning_effort:"none"` is being dropped, and F2 reopens as a cost defect |
-| **M5** | `GET /v1/models`, one entry for the configured model | `context_length`/`supported_parameters` present as documented → F3(b)+F4(c) are worth building |
 
 The outcome is recorded in [docs/journal/engine.md](../journal/engine.md), per
 AGENTS.md §3.
+
+## 9. Stage 2 — what was implemented for F2(a)
+
+One behaviour, in the client that owns this wire
+([client.rs](../../src/shared/api/openai/client.rs)):
+
+- `send_chat` is the single attempt (build the body, send it cancellably, check
+  the status) that `chat_stream` now calls — once normally, twice when the
+  refusal arrives;
+- `should_stop_asking` recognises the refusal, and each of its three conditions
+  rules out a way of being wrong: the turn must actually have asked
+  (`reasoning_effort == None`-effort) and the field must actually have gone out;
+  the status must be `400` — a `503` carrying the same words is the retry
+  decorator's business (spec §6.8), and dropping a sampling field to answer an
+  outage would file it as a capability; and the message must name reasoning
+  **and** its disabling. The message match is a pair of substrings rather than
+  the sentence, because providers reword — and a false positive costs exactly one
+  round trip, since the second attempt meets the same error and it surfaces
+  unchanged;
+- `reasoning_off_refused` is an `AtomicBool` on the client, so the answer is
+  learned once per server rather than rediscovered per silent turn. It feeds the
+  same `omit_effort_none` switch xAI is configured with — the fix reuses the
+  mechanism rather than adding a second one — and is never cleared: a model that
+  must reason does not change its mind mid-session, and a server swapped behind
+  the URL gets a new client from `supervisor::apply`.
+
+**Tests**: three unit tests — the recovery (and that the *second* body no longer
+carries the field), the memo (a later turn is not refused again), and one
+table-driven arm for the three cases that must **not** recover. Each negative
+script ends with a reply that would succeed, so a wrong retry turns the turn
+green and the assertion catches it; counting requests at the stub was the first
+version and it was worthless, because a second request against a spent script is
+refused by the OS and still arrives as "an error" — the count-based arm survived
+removing the status check. All five mutations (never recover; do not remember;
+drop the status check; drop the "did it ask" check; loosen the message match) are
+caught now.
+
+**Live — GO.** `a_muted_turn_survives_an_endpoint_that_must_reason`, declared by
+`MINDFORK_LIVE_MANDATORY_REASONING_MODEL` and run on `deepseek/deepseek-r1`
+through OpenRouter, 2026-09-14: `finish=Some(Stop)`, the title back as *Database
+Indexing Explained*, 8.2 s. It sends `title.rs`'s own request shape and fails
+rather than skips if the turn does not complete — which before this change was
+the `400` itself.
+
+The run also prints what the fix does **not** do: `thoughts=772 chars`. The model
+reasoned anyway, because on this endpoint it cannot be asked not to; what changed
+is that the turn now **finishes**. Those 772 characters are the residual the
+original F2 framing worried about as a "cost risk" — real, unavoidable on such a
+model, and not something a request can take back. Worth stating plainly in case a
+future reader expects the recovery to save tokens: it saves the turn.

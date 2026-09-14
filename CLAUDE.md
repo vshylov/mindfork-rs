@@ -171,8 +171,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-14, version 0.9.9)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3221 unit tests
-green, 177 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **3224 unit tests
+green, 178 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -191,15 +191,22 @@ being recent is dropped, not shortened.
   its thinking invisible and the `<think>` fallback could not help (the gateway
   has already lifted the reasoning out of `content`). Both names are read now,
   `reasoning_content` first, taking **both** fields — one trace under two names
-  must not double — so the local stack is byte-identical to before. The rest of
-  the review is a "change nothing" with reasons: `reasoning_effort:"none"` on the
-  three silent turns stays flat, because that spelling is the supported legacy
-  one, sending it *and* the nested `reasoning:{effort}` is rejected, and
-  `external` is also every local `llama-server`, which reads `"none"` as "do not
-  think"; the context window and the sampling set got documentation, since the
-  relief exists (`compaction.context_tokens`) and the code version of both wants
-  the one measurement nobody has made — a gateway's catalogue carries
-  `context_length` and `supported_parameters` per model, one request for both.
+  must not double — so the local stack is byte-identical to before. The review's
+  other "change nothing" — `reasoning_effort:"none"` on the three silent turns —
+  **was refuted by the measurement that followed**: that body is answered `400
+  "Reasoning is mandatory for this endpoint and cannot be disabled"`, so on an
+  always-reasoning model the title, the compaction roll and impersonation fail
+  while chat works (the xAI failure by another road). Fixed on the user's choice: the
+  client re-sends once without the field and **remembers** the refusal per server,
+  feeding the same `omit_effort_none` switch xAI is configured with — narrow by
+  construction (a `400` only, only when the turn asked, only when the message
+  names reasoning *and* its disabling), so a `503` stays the retry decorator's, and
+  **GO** on R1: the title comes back where the same request used to be the `400` —
+  with 772 characters of reasoning still spent, because that endpoint cannot be
+  asked to stop, which is the residual the fix does not claim to remove.
+  The catalogue itself is measured
+  and carries `context_length` **and** `supported_parameters` per model, so the
+  window and the honest sampling list are one fetch away.
   Live **GO** on `deepseek/deepseek-r1` through OpenRouter (the session had no
   route to the service; the author ran it): thoughts and answer both arrive, and
   the same run turned F3 from prediction into measurement — 22 567 tokens, nothing

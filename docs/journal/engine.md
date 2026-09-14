@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (60)
+## Entries (62)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -72,6 +72,8 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: `llama remove` — a build comes off disk, and says what that changed (done)
 - Post-M9: the turn asks about images once, and stops waiting for the answer (done)
 - Post-M9: `external` against a gateway — a thought under a second name, and the rest of the review (done)
+- Post-M9: the gateway's remaining measurements — the silent turns are a `400`, not a bill (done)
+- Post-M9: a refusal to stop reasoning is answered, not reported (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -3940,3 +3942,111 @@ pinned by a test, since a wrong name there would not fail loudly — it would re
 an unset variable and leave a correctly-configured-looking run answering `400`.
 Test-only code (`#[cfg(test)]`), and install.md §7.1 now carries the OpenRouter
 invocation.
+
+### Post-M9: the gateway's remaining measurements — the silent turns are a `400`, not a bill (done)
+
+The three measurements [openrouter-external.md](../research/openrouter-external.md)
+§8.2 still owed after the first PR, run by the author on OpenRouter (the session
+has no route to the service). Two came back, and one of them **refutes a
+conclusion this track shipped**.
+
+**M4: `reasoning_effort: "none"` is not ignored — it is refused.** The exact body
+`title.rs` builds, sent to `deepseek/deepseek-r1`, is answered `HTTP 400`,
+"Reasoning is mandatory for this endpoint and cannot be disabled". The review had
+concluded "change nothing" here, reasoning from OpenRouter's documented "an
+unsupported parameter is dropped and the rest forwarded" that the worst case was
+a **cost** — the silent turns paying for reasoning nobody wanted. It is not a
+cost. On a model that always reasons, the **title, the compaction roll and
+impersonation all fail** while ordinary chat keeps working — which is, word for
+word, the failure `with_effort_none_omitted` was written for on xAI
+([grok-xai-provider.md](../research/grok-xai-provider.md) §2.3), arriving by a
+different road. And the nested `reasoning: {enabled: false}` is no escape: the
+endpoint is not refusing a *spelling*, it is refusing the *request to disable
+reasoning*.
+
+So the fix is not "which spelling" but "when to ask at all", and the fork is open
+(research §5, F2): recover from the refusal in the engine layer and memoise it
+per backend; stop sending the field on `external` and lean on `reasoning_budget:
+0`, which `title.rs`'s own comment already calls the one that actually works on
+llama.cpp; or ask the catalogue, which lists `reasoning`/`include_reasoning` and
+**not** `reasoning_effort` for this model. Recommended: the first, with the third
+when the catalogue fetch lands — it is the only one that cannot be wrong, and it
+covers LiteLLM and every future wording drift too. The control (M4a) then isolated the
+field: a minimal request carrying `reasoning_effort: "none"` and nothing else of
+ours is refused identically, so the llama.cpp-only fields the silent turns also
+send are not involved and the fix has one target. Not implemented here — which
+of the three shapes to build is the user's decision, and two of them need a
+measurement this session cannot make (a local `llama-server` for (b), a gateway
+for (a)).
+
+**M5: both stage-2 proposals are buildable, and the sampling prediction was
+exact.** `deepseek/deepseek-r1` carries `context_length: 64000` — the number
+F3(b) wants, so the compaction window can be filled from the catalogue instead of
+by hand — and a `supported_parameters` list that confirms §4.2 field by field:
+`temperature`, `top_p`, `top_k`, `max_tokens`, `seed`, `frequency_penalty`,
+`presence_penalty`, `stop`, `tools`, `tool_choice`, `response_format` get
+through; **none** of `min_p`, `typical_p`, `top_n_sigma`, dynatemp, adaptive,
+mirostat, DRY, XTC or `samplers` is there; and the penalty it takes is spelled
+`repetition_penalty` where we send `repeat_penalty`. One fetch serves F3(b),
+F4(c) and F2(c), which is what makes stage 2 one piece of work rather than three.
+
+**Documentation only; no code changed.** Tests untouched (3221 / 177 on the
+tracked count), so no live run of our own was needed beyond the two measurements
+recorded here. M3 is still owed.
+
+### Post-M9: a refusal to stop reasoning is answered, not reported (done)
+
+The fix for the defect the previous entry measured, on the shape the user picked
+(research §5 F2, **user's decision 2026-09-14: (a), F2 alone**).
+
+**What was broken.** Three turns ask for reasoning to be off — the auto-title,
+the compaction roll, impersonation — and an endpoint may be unable to honour it:
+`reasoning_effort: "none"` against a model that always reasons is answered `400
+"Reasoning is mandatory for this endpoint and cannot be disabled"`. So on such a
+model those three failed while ordinary chat worked, which is the worst shape a
+failure can take — the app looked fine and quietly stopped titling, compacting
+and impersonating.
+
+**What it does now.** `chat_stream` splits its one attempt into `send_chat` and
+calls it twice when that refusal arrives: once as before, then again without the
+field, remembering the answer in an `AtomicBool` on the client so a session pays
+one refusal rather than one per silent turn. The memo feeds the **existing**
+`omit_effort_none` switch that xAI is configured with, so the fix reuses that
+mechanism instead of adding a second one, and a local `llama-server` — which
+accepts the request — never takes the path at all.
+
+**Narrow on purpose**, three conditions each ruling out a way of being wrong: the
+turn must have asked and the field must have gone out; the status must be `400`,
+because a `503` carrying the same words is the retry decorator's (spec §6.8) and
+dropping a sampling field to answer an outage would file it as a capability; and
+the message must name reasoning **and** its disabling — a pair of substrings
+rather than the sentence, since providers reword, and a false positive costs one
+round trip because the second attempt meets the same error and it surfaces
+unchanged.
+
+**The tests had to be rebuilt before they were worth anything.** The first
+version of the three negative arms counted requests at the stub — and every one
+of them survived removing the status check, because a second request against a
+spent script is refused by the OS and still arrives as "an error". They now each
+end with a reply that *would succeed*, so a wrong retry turns the turn green and
+`expect_err` catches it. With that, all five mutations fall: never recover; do
+not remember; drop the status check; drop the "did it ask" check; loosen the
+message match to "reasoning" alone. The stub also grew a body reader that honours
+`Content-Length` instead of taking one `read`, so a split request makes these
+tests fail rather than flake.
+
+**Tests**: 3224 green, 178 ignored (3221 / 177 before) on the tracked count; on
+Linux 3217 / 173 (3214 / 172 before). **Live — GO**, run by the author (this session
+has no route to the service): `a_muted_turn_survives_an_endpoint_that_must_reason`
+on `deepseek/deepseek-r1` through OpenRouter — `finish=Some(Stop)`, the title back
+as *Database Indexing Explained*, 8.2 s, where before this change the same request
+**was** the `400`. The smoke sends `title.rs`'s own shape and is declared by
+`MINDFORK_LIVE_MANDATORY_REASONING_MODEL`, so it fails rather than skips.
+
+And it prints what the fix does not do: `thoughts=772 chars`. The model reasoned
+anyway — on that endpoint it cannot be asked not to — so the turn's tokens are
+still spent on thinking nobody wanted. That residual is what the original "cost
+risk" reading of F2 was about, and it is genuinely unavoidable here; what the fix
+buys is the turn completing at all. Worth keeping straight, because a later reader
+looking at a title that cost 772 characters of reasoning might otherwise think the
+recovery failed.
