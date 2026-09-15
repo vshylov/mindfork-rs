@@ -677,8 +677,23 @@ and `{"top_k": 40}` both answer `200`; sending `"top_k": "banana"` separates the
 a field the server actually knows fails deserialization (`422`), an unknown one is
 still dropped. That one probe turned four "supported" sampling knobs into two
 honoured, two silently discarded, and kept the settings UI from offering knobs that
-do nothing. Applies to any permissive API, not just xAI.
-— *Grok (xAI) as a cloud provider*.
+do nothing. Applies to any permissive API, not just xAI. **Recorded twice**: the
+settings' thinking switch went to OpenRouter as `thinking`, and `thinking: "banana"`
+answered `200` while `reasoning.enabled: "banana"` answered `400` — so the toggle the
+settings screen offered had never been read there, in either direction. The offer was
+right; the wire made it a lie. Probe the **switches** too, not just the knobs.
+— *Grok (xAI) as a cloud provider*, *the thinking switch reaches a gateway*.
+
+**Translating a switch into another dialect means translating every field that
+carries its intent.** The gateway fix mapped `thinking` onto `reasoning.enabled`, and
+the first draft read `thinking` alone — while the orchestrator mutes some turns with
+`reasoning_budget: 0` and leaves the user's `thinking: true` in place (the empty-reply
+re-ask, the director's checkpoints, a page summary). Read naively, those turns would
+have been sent `enabled: true`: the recovery built to stop a thinking spiral would
+have asked for one. What caught it was grepping every site that sets the budget before
+writing the rule; the Responses and Anthropic wires had already read the budget as
+"off", which is the precedent that should have been looked for first.
+— *the thinking switch reaches a gateway*.
 
 **A value the orchestrator sets on its own turns can break only the background.**
 `reasoning_effort: "none"` is never typed by a user — the app sets it for title

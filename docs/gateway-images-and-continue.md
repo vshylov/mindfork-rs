@@ -425,4 +425,5 @@ measured.**
 gateway drops the field; only with `reasoning_effort` set did any route reason
 (81 reasoning tokens on the same prompt). On a gateway the settings' thinking
 toggle is therefore inert unless an effort is chosen too — the same class of
-defect as `repeat_penalty` under its other name. A separate task.
+defect as `repeat_penalty` under its other name. A separate task — taken up, and
+measured in both directions, in [gateway-thinking-switch.md](gateway-thinking-switch.md).

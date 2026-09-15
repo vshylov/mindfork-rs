@@ -41,7 +41,9 @@ pub struct OpenAiClient {
     /// [`Self::with_effort_none_omitted`].
     omit_effort_none: bool,
     /// The same thing, learned at runtime: this server has **refused** a request
-    /// to disable reasoning, so stop asking.
+    /// to disable reasoning, so stop asking — whether it asked as
+    /// `reasoning_effort: "none"` or as a gateway's `reasoning: {enabled: false}`
+    /// (docs/gateway-thinking-switch.md, fork T2); one memo silences both.
     ///
     /// Set by [`Self::chat_stream`] when a `400` says so, and never cleared — a
     /// model that must reason does not stop mid-session, and a server swapped
@@ -242,6 +244,20 @@ impl OpenAiClient {
         }
     }
 
+    /// The gateway's own reasoning switch for this request, or `None` to send it as
+    /// built ([`wire::gateway_reasoning`], docs/gateway-thinking-switch.md). The
+    /// catalogue is consulted only by a turn that could gain the field — a switch
+    /// set or a zero budget, and no effort — so every other turn asks nothing it did
+    /// not ask before, and a blank model field asks nothing at all.
+    async fn reasoning_switch(&self, req: &ChatRequest) -> Option<wire::WireReasoning> {
+        let s = &req.sampling;
+        if s.reasoning_effort.is_some() || (s.thinking.is_none() && s.reasoning_budget != Some(0)) {
+            return None;
+        }
+        let entry = self.catalogue_entry().await?;
+        wire::gateway_reasoning(s, &entry, self.omit_effort_none())
+    }
+
     /// Fetches `GET /v1/models` and returns the ids it lists.
     ///
     /// The standard OpenAI-compatible catalogue endpoint — every server family
@@ -290,9 +306,11 @@ impl OpenAiClient {
         &self,
         req: &ChatRequest,
         omit_effort_none: bool,
+        reasoning: Option<wire::WireReasoning>,
         cancel: &CancellationToken,
     ) -> Result<Option<reqwest::Response>, error::EngineError> {
-        let body = wire::build_chat_request(req, true, self.model.as_deref(), omit_effort_none);
+        let mut body = wire::build_chat_request(req, true, self.model.as_deref(), omit_effort_none);
+        body.reasoning = reasoning;
         let url = format!("{}/chat/completions", self.base_url);
         // Cancellable: until this moved inside the token's reach, `Esc` could not
         // interrupt a request that had not yet produced a stream.
@@ -322,7 +340,10 @@ impl OpenAiClient {
     ///
     /// Three conditions, and each rules out a way of being wrong:
     ///
-    /// - the turn **asked** to mute reasoning, and the field was actually sent
+    /// - the turn **asked** to mute reasoning — `reasoning_effort: "none"`, or the
+    ///   gateway switch `reasoning: {enabled: false}`, which R1 refuses in the same
+    ///   words (docs/gateway-thinking-switch.md §2, S8) when a catalogue wrongly
+    ///   said `mandatory: false` — and the field was actually sent
     ///   (`omit_effort_none()` false) — otherwise re-sending changes nothing;
     /// - the status is `400`: a refusal of the request as written, not a rate
     ///   limit or an outage the retry decorator owns;
@@ -330,11 +351,15 @@ impl OpenAiClient {
     ///   substrings rather than the sentence: providers reword. A false positive
     ///   costs exactly one extra round trip — the second attempt meets the same
     ///   error and it surfaces unchanged — so the loose match is the safe side.
-    fn should_stop_asking(&self, req: &ChatRequest, err: &error::EngineError) -> bool {
-        if self.omit_effort_none()
-            || req.sampling.reasoning_effort != Some(ReasoningEffort::None)
-            || err.status != Some(400)
-        {
+    fn should_stop_asking(
+        &self,
+        req: &ChatRequest,
+        reasoning: Option<wire::WireReasoning>,
+        err: &error::EngineError,
+    ) -> bool {
+        let asked_off = req.sampling.reasoning_effort == Some(ReasoningEffort::None)
+            || reasoning == Some(wire::WireReasoning { enabled: false });
+        if self.omit_effort_none() || !asked_off || err.status != Some(400) {
             return false;
         }
         let message = err.message.to_lowercase();
@@ -347,22 +372,28 @@ impl OpenAiClient {
 impl EngineBackend for OpenAiClient {
     async fn chat_stream(&self, req: ChatRequest, cancel: CancellationToken) -> Result<ChatStream> {
         let req = self.shaped_for_endpoint(req).await;
-        let response = match self.send_chat(&req, self.omit_effort_none(), &cancel).await {
+        let reasoning = self.reasoning_switch(&req).await;
+        let response = match self
+            .send_chat(&req, self.omit_effort_none(), reasoning, &cancel)
+            .await
+        {
             Ok(Some(response)) => response,
             Ok(None) => return Ok(http::cancelled_stream()),
             // The one refusal worth answering rather than reporting: the server
             // says reasoning cannot be turned off here, and the turn *asked* for
             // it to be. Ask again without the field, once, and remember the
             // answer for this server — see `is_reasoning_off_refused`.
-            Err(err) if self.should_stop_asking(&req, &err) => {
+            Err(err) if self.should_stop_asking(&req, reasoning, &err) => {
                 tracing::info!(
                     reason = %err.message,
                     "the engine refuses to disable reasoning; re-sending without \
-                     reasoning_effort, and not asking again on this server"
+                     the request to, and not asking again on this server"
                 );
                 self.reasoning_off_refused
                     .store(true, std::sync::atomic::Ordering::Relaxed);
-                match self.send_chat(&req, true, &cancel).await {
+                // Asked again under the memo, which drops an "off" and keeps an "on".
+                let reasoning = self.reasoning_switch(&req).await;
+                match self.send_chat(&req, true, reasoning, &cancel).await {
                     Ok(Some(response)) => response,
                     Ok(None) => return Ok(http::cancelled_stream()),
                     Err(err) => return Err(err.into()),
@@ -1119,6 +1150,187 @@ mod tests {
                 "{err} (expected to carry {expected:?})"
             );
         }
+    }
+
+    /// A gateway catalogue carrying the reasoning metadata OpenRouter publishes, one
+    /// model per kind the switch has to tell apart — reasons only when asked, reasons
+    /// by default, must reason (docs/gateway-thinking-switch.md §2).
+    const SWITCH_CATALOGUE: &str = r#"{"data":[
+        {"id":"anthropic/claude-haiku-4.5","supported_parameters":["max_tokens","reasoning"],"reasoning":{"mandatory":false}},
+        {"id":"qwen/qwen3.6-27b","supported_parameters":["reasoning"],"reasoning":{"mandatory":false,"default_enabled":true}},
+        {"id":"deepseek/deepseek-r1","supported_parameters":["reasoning"],"reasoning":{"mandatory":true}}
+    ]}"#;
+
+    /// A plain turn with the settings' switch as given, and no effort.
+    fn switch_turn(thinking: Option<bool>) -> ChatRequest {
+        ChatRequest {
+            sampling: crate::entities::sampling::SamplingConfig {
+                thinking,
+                ..Default::default()
+            },
+            ..muted_turn()
+        }
+    }
+
+    /// The request bodies a stub saw, parsed, after its first exchange — the
+    /// catalogue's, when the script opens with one.
+    fn turn_bodies(seen: Vec<String>) -> Vec<serde_json::Value> {
+        seen[1..]
+            .iter()
+            .map(|raw| serde_json::from_str(raw).unwrap())
+            .collect()
+    }
+
+    /// Each turn's body as an endpoint serving `catalogue` and one reply per turn
+    /// received it. Only for turns that consult the catalogue, which is asked first.
+    async fn bodies_behind(
+        catalogue: &'static str,
+        model: &str,
+        turns: Vec<ChatRequest>,
+    ) -> Vec<serde_json::Value> {
+        let script: Script = Box::leak(
+            std::iter::once((200, catalogue))
+                .chain(turns.iter().map(|_| (200, ONE_CHUNK_SSE)))
+                .collect::<Vec<(u16, &'static str)>>()
+                .into_boxed_slice(),
+        );
+        let (url, seen) = scripted_server(script);
+        let client = OpenAiClient::new(url).with_model(Some(model.into()));
+        for turn in turns {
+            collect_turn(&client, turn).await;
+        }
+        turn_bodies(seen.join().unwrap())
+    }
+
+    /// Forks T1 and T2 on the wire: the switch reaches a gateway in its own field —
+    /// on for a model that reasons only when asked, off for one that reasons by
+    /// default — with `thinking` still beside it; a model that must reason is never
+    /// asked off; and a chosen effort keeps travelling alone, as it did (T3).
+    #[tokio::test]
+    async fn the_thinking_switch_reaches_a_gateway_in_its_own_field() {
+        let with_effort = ChatRequest {
+            sampling: crate::entities::sampling::SamplingConfig {
+                thinking: Some(true),
+                reasoning_effort: Some(ReasoningEffort::Low),
+                ..Default::default()
+            },
+            ..muted_turn()
+        };
+        let haiku = bodies_behind(
+            SWITCH_CATALOGUE,
+            "anthropic/claude-haiku-4.5",
+            vec![switch_turn(Some(true)), with_effort],
+        )
+        .await;
+        assert_eq!(
+            haiku[0]["reasoning"],
+            serde_json::json!({ "enabled": true })
+        );
+        assert_eq!(
+            haiku[0]["thinking"], true,
+            "the llama.cpp field still goes out"
+        );
+        assert!(haiku[1].get("reasoning").is_none(), "{}", haiku[1]);
+        assert_eq!(haiku[1]["reasoning_effort"], "low");
+
+        let qwen = bodies_behind(
+            SWITCH_CATALOGUE,
+            "qwen/qwen3.6-27b",
+            vec![switch_turn(Some(false))],
+        )
+        .await;
+        assert_eq!(
+            qwen[0]["reasoning"],
+            serde_json::json!({ "enabled": false })
+        );
+
+        let r1 = bodies_behind(
+            SWITCH_CATALOGUE,
+            "deepseek/deepseek-r1",
+            vec![switch_turn(Some(false))],
+        )
+        .await;
+        assert!(
+            r1[0].get("reasoning").is_none(),
+            "R1 answers enabled:false with a 400: {}",
+            r1[0]
+        );
+    }
+
+    /// The regression half: an endpoint whose catalogue lists the model and nothing
+    /// else — every llama.cpp — receives exactly the body it always did with the
+    /// switch on, and a turn that sets no switch does not even ask the catalogue.
+    #[tokio::test]
+    async fn a_llama_cpp_receives_the_switch_as_it_always_did() {
+        let sent = bodies_behind(
+            r#"{"data":[{"id":"gemma-4"}]}"#,
+            "gemma-4",
+            vec![switch_turn(Some(true))],
+        )
+        .await;
+        assert_eq!(
+            sent[0],
+            serde_json::to_value(wire::build_chat_request(
+                &switch_turn(Some(true)),
+                true,
+                Some("gemma-4"),
+                false
+            ))
+            .unwrap()
+        );
+
+        let (url, seen) = scripted_server(&[(200, ONE_CHUNK_SSE)]);
+        let client = OpenAiClient::new(url).with_model(Some("gemma-4".into()));
+        collect_turn(&client, switch_turn(None)).await;
+        assert!(
+            seen.join().unwrap()[0].contains("\"messages\""),
+            "the first request is the turn itself, not a catalogue lookup"
+        );
+    }
+
+    /// Fork T2's second guard: a catalogue that says `mandatory: false` about a model
+    /// that refuses to stop costs one round trip, not the turn. The refusal of
+    /// `enabled: false` is answered like the refusal of `"none"`, on the same memo —
+    /// which then keeps the next "off" from asking, and leaves "on" alone.
+    #[tokio::test]
+    async fn a_refused_switch_off_is_answered_and_remembered() {
+        let (url, seen) = scripted_server(&[
+            (200, SWITCH_CATALOGUE),
+            (400, REASONING_MANDATORY),
+            (200, ONE_CHUNK_SSE),
+            (200, ONE_CHUNK_SSE),
+            (200, ONE_CHUNK_SSE),
+        ]);
+        let client = OpenAiClient::new(url).with_model(Some("qwen/qwen3.6-27b".into()));
+        let chunks = collect_turn(&client, switch_turn(Some(false))).await;
+        assert!(
+            matches!(&chunks[0], ChatChunk::Text(t) if t == "hi"),
+            "the turn must recover, not fail: {chunks:?}"
+        );
+        collect_turn(&client, switch_turn(Some(false))).await;
+        collect_turn(&client, switch_turn(Some(true))).await;
+
+        let bodies = turn_bodies(seen.join().unwrap());
+        assert_eq!(bodies.len(), 4, "one retry, then one request per turn");
+        assert_eq!(
+            bodies[0]["reasoning"],
+            serde_json::json!({ "enabled": false })
+        );
+        assert!(
+            bodies[1].get("reasoning").is_none(),
+            "the retry: {}",
+            bodies[1]
+        );
+        assert!(
+            bodies[2].get("reasoning").is_none(),
+            "the next off: {}",
+            bodies[2]
+        );
+        assert_eq!(
+            bodies[3]["reasoning"],
+            serde_json::json!({ "enabled": true }),
+            "on is not what was refused"
+        );
     }
 
     /// A **gateway** streams its reasoning as `delta.reasoning`, not
@@ -2668,6 +2880,109 @@ mod ignored_smoke {
             finish.is_some() && !text.is_empty(),
             "the muted turn must complete on an endpoint that refuses to be muted: \
              finish={finish:?} text={text:?}"
+        );
+    }
+
+    /// One turn of the thinking-switch smokes against the model `var` declares
+    /// (docs/gateway-thinking-switch.md §5), or `None` when the stack or the model is
+    /// not declared. Returns the model, the reply, the finish reason and the
+    /// reasoning tokens the endpoint reported — the deterministic half, since a
+    /// provider may summarize its thoughts to nothing (lessons §2).
+    async fn switch_smoke(
+        var: &str,
+        thinking: bool,
+    ) -> Option<(String, String, Option<FinishReason>, u32)> {
+        let Some(client) = client_from_env() else {
+            eprintln!("skip: MINDFORK_ENGINE_URL not set");
+            return None;
+        };
+        let Ok(model) = std::env::var(var) else {
+            eprintln!("skip: {var} not set");
+            return None;
+        };
+        let req = ChatRequest {
+            continue_final: false,
+            system: None,
+            messages: vec![ApiMessage::user(
+                "Which city hosted the Summer Olympics exactly 32 years before 2024? \
+                 Answer in one sentence.",
+            )],
+            sampling: SamplingConfig {
+                max_tokens: Some(4096),
+                thinking: Some(thinking),
+                ..Default::default()
+            },
+            tools: vec![],
+        };
+        let client = client.with_model(Some(model.clone()));
+        let mut stream = client.chat_stream(req, Default::default()).await.unwrap();
+        let (mut text, mut reasoning, mut finish) = (String::new(), 0, None);
+        while let Some(chunk) = stream.next().await {
+            match chunk {
+                ChatChunk::Text(t) => text.push_str(&t),
+                ChatChunk::Usage(u) => reasoning = u.reasoning_tokens,
+                ChatChunk::Error { message, .. } => eprintln!("engine error: {message}"),
+                ChatChunk::Finished(r) => {
+                    finish = Some(r);
+                    break;
+                }
+                _ => {}
+            }
+        }
+        println!(
+            "{model}: thinking={thinking} finish={finish:?} reasoning_tokens={reasoning}\ntext={text}"
+        );
+        Some((model, text, finish, reasoning))
+    }
+
+    /// L1: the switch on, no effort, against a model that reasons only when asked —
+    /// `MINDFORK_LIVE_SWITCH_ON_MODEL`, e.g. `anthropic/claude-haiku-4.5`, which
+    /// reasoned zero tokens on every route while the switch went out as `thinking`.
+    #[tokio::test]
+    #[ignore = "requires MINDFORK_ENGINE_URL + MINDFORK_ENGINE_KEY + MINDFORK_LIVE_SWITCH_ON_MODEL (a gateway model that reasons only when asked)"]
+    async fn a_gateway_reasons_when_the_switch_is_on() {
+        let Some((model, _, finish, reasoning)) =
+            switch_smoke("MINDFORK_LIVE_SWITCH_ON_MODEL", true).await
+        else {
+            return;
+        };
+        assert!(finish.is_some());
+        assert!(
+            reasoning > 0,
+            "{model} was asked to reason and reported no reasoning tokens"
+        );
+    }
+
+    /// L2: the switch off against a model that reasons by default —
+    /// `MINDFORK_LIVE_SWITCH_OFF_MODEL`, e.g. `qwen/qwen3.6-27b`, which reasoned
+    /// anyway while "off" went out as `thinking: false`.
+    #[tokio::test]
+    #[ignore = "requires MINDFORK_ENGINE_URL + MINDFORK_ENGINE_KEY + MINDFORK_LIVE_SWITCH_OFF_MODEL (a gateway model that reasons by default)"]
+    async fn a_gateway_stops_reasoning_when_the_switch_is_off() {
+        let Some((model, text, finish, reasoning)) =
+            switch_smoke("MINDFORK_LIVE_SWITCH_OFF_MODEL", false).await
+        else {
+            return;
+        };
+        assert!(finish.is_some() && !text.is_empty(), "{model}: {text:?}");
+        assert_eq!(reasoning, 0, "{model} was told not to reason");
+    }
+
+    /// L3: the switch off against a model that must reason, declared by the variable
+    /// the silent turns' smoke reads. Its catalogue says `mandatory: true`, so no
+    /// `enabled: false` goes out — which R1 answers with a `400` — and the ordinary
+    /// turn completes, reasoning as it must.
+    #[tokio::test]
+    #[ignore = "requires MINDFORK_ENGINE_URL + MINDFORK_ENGINE_KEY + MINDFORK_LIVE_MANDATORY_REASONING_MODEL (a model that must reason)"]
+    async fn the_switch_off_completes_on_an_endpoint_that_must_reason() {
+        let Some((model, text, finish, _)) =
+            switch_smoke("MINDFORK_LIVE_MANDATORY_REASONING_MODEL", false).await
+        else {
+            return;
+        };
+        assert!(
+            finish.is_some() && !text.is_empty(),
+            "the ordinary turn must complete on {model}: finish={finish:?} text={text:?}"
         );
     }
 
