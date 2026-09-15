@@ -1,8 +1,8 @@
 # Track plan: the endpoint is asked what the model can do
 
-**Status:** design complete, **all forks decided** (G3 and the scope by the user,
-2026-09-14), **implemented** (§6) and **N1–N2 measured GO** (§5.1). N3 — the
-local stack seen with one's own eyes — is the one thing still owed.
+**Status:** closed. Design complete, **all forks decided** (G3 and the scope by
+the user, 2026-09-14), **implemented** (§6), merged (#553), and **N1–N3 measured
+GO** (§5.1) — the gateway on 2026-09-14, the local stack on 2026-09-15.
 
 - **G3 — (ii): the offer *and* the metadata snapshot.** The wire keeps sending
   everything; what narrows is what the settings screen and `set_sampling` offer,
@@ -175,10 +175,39 @@ offered after narrowing: ["temperature", "top_k", "top_p", "frequency_penalty",
   `reasoning` entry. That is the alias table doing exactly what it was written
   for; had it been missing, `repeat_penalty` would have been dropped from the
   offer while still being the field the gateway ignores.
-- **N3 — owed**, and it is the regression half: a local `llama-server` must be
-  untouched. The unit tests cover it three ways (silence in each of its shapes),
-  and a llama.cpp catalogue carries neither key, so nothing *can* narrow — but
-  that is an argument, not a look.
+- **N3 — GO**, and it is the regression half: a local `llama-server` seen
+  untouched. See §5.2.
+
+### 5.2 What the local stack measured — gemma-4-31B, 2026-09-15
+
+`external` mode against a local `llama-server` on Windows (the assistant engine
+started by hand, the embedder managed as usual). The app's own log answers N3 in
+what it says and in what it does not:
+
+```
+INFO mindfork::app::orchestrator::model_name: engine reported the model it is running model=gemma-4-31B_q4_0-it
+INFO mindfork::app::orchestrator::compaction: engine reported its context window context_budget=16384
+```
+
+- **`/props` still answers first.** 16 384 is the chat server's own `-c`,
+  reported by `/props` and landed as `EngineFacts::budget` — the source the
+  window has always had here, ahead of the catalogue this track added behind it.
+- **The catalogue said nothing, so nothing narrowed.** "the endpoint's catalogue
+  answered for the configured model" — the line the landing logs whenever `caps`
+  is `Some` — appears nowhere in the run. `caps` stayed `None`, the tool registry
+  was not rebuilt, and the settings screen was handed `None`, which is every
+  field; the author confirmed the sampling group unchanged on screen.
+- **And it was never asked**, which is the third condition. The
+  `model_name` line above is emitted only when the configuration names no model
+  (`refresh_model_name` returns early when it does), and a blank model field is
+  exactly where `catalogue_entry` returns *before* the request. Zero extra HTTP
+  in this configuration.
+- **The residual, named rather than claimed away.** With the model field *filled
+  in* against a local server, `model_capabilities` does make one
+  `GET /v1/models` per applied engine that did not happen before — once per
+  engine, against localhost — and still answers `None`, because llama.cpp's
+  catalogue carries neither key. Behaviour unchanged; one request that was not
+  there.
 
 ## 6. What was implemented
 
