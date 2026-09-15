@@ -1102,6 +1102,7 @@
   "ui.cmd.continue_thoughts": "The reply broke off inside the model's reasoning, before any visible text — a thought cannot be resumed. /regen starts the reply over.",
   "ui.cmd.continue_complete": "The last reply finished on its own — there is no cut to resume. /regen writes it again, or just ask the model to go on.",
   "ui.cmd.continue_unsupported": "This provider or model cannot resume a partial reply (local/external engines, Gemini, and Claude up to the 4.5 generation can) — /regen regenerates it instead.",
+  "ui.cmd.continue_unsupported_gateway": "Through this gateway the model cannot resume a partial reply: the provider it is routed to starts the answer over, and the new answer would be glued onto what is already there. Through a gateway only Claude up to the 4.5 generation and Gemini continue — /regen regenerates the reply instead.",
   "ui.cmd.no_chat": "No chat is open. Type /new to start one, or /chats to pick one.",
   "ui.cmd.settings_pending": "Settings are still loading — try again in a moment.",
   "ui.cmd.autotitle_started": "Asking the model for a title…",

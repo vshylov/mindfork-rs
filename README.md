@@ -487,7 +487,7 @@ confirmations included:
 | `/rename [title]` · `/clone` · `/copy` | `F2` · `Ctrl+D` · `F5` | this chat: rename (bare — edit the current title), clone, copy the conversation |
 | `/autotitle` | `Ctrl+R` in the list | have the model title this chat — in a browser tab that key reloads the page |
 | `/regen` · `/retry` · `/takeback` | `Ctrl+R` · `Ctrl+E` | regenerate the last reply / take back the last exchange |
-| `/continue` | — | resume the last interrupted reply from where it stopped (cancelled, cut by an error or by the length/context limit) — local/external engines, Gemini, and Claude up to the 4.5 generation |
+| `/continue` | — | resume the last interrupted reply from where it stopped (cancelled, cut by an error or by the length/context limit) — local/external engines, Gemini, and Claude up to the 4.5 generation; through a gateway such as OpenRouter, only Claude up to 4.5 and Gemini |
 | `/impersonate [text]` | `Ctrl+U` | the model writes your next message, continuing the text you give it |
 | `/stop` | `Esc` | cancel the running generation (`/chats` is the other half of `Esc`, and always means the list) |
 | `/find [text]` · `/search <text>` | `Ctrl+F` · `Ctrl+G` | find in this conversation / find messages across every chat |

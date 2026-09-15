@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (64)
+## Entries (65)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -76,6 +76,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a refusal to stop reasoning is answered, not reported (done)
 - Post-M9: the endpoint is asked what the model can do (done)
 - Post-M9: through a gateway, a tool's image and `/continue` belong to the route — M3 measured (done)
+- Post-M9: `/continue` follows the route table through a gateway — and F5 closes on a measurement (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -4183,6 +4184,75 @@ blind runs in sixteen, across two routes, passed the keyword criterion for a
 picture they were never shown — one of them a *"green … black circle"* — so a
 single seeing run on that family would have proved nothing, and the table reads
 8/8 against 1/8 instead.
+
+### Post-M9: `/continue` follows the route table through a gateway — and F5 closes on a measurement (done)
+
+Stage H2 of [gateway-images-and-continue.md](../gateway-images-and-continue.md),
+on the user's decisions of 2026-09-15 (H2 (b), H3 (ii): this first, the images
+second), with the review's last item measured beside it.
+
+**What was broken.** `ServerMode::supports_continuation` answered `true` for all
+of `external`, because `external` meant llama.cpp when the table was written.
+Through OpenRouter only Anthropic ≤ 4.5 and Gemini continue a trailing assistant
+message; OpenAI and every open-weight route restart — and the echo filter, which
+withholds bytes only while they match the seed, let a restart flow into the same
+stored message: `…France isThe capital of France is Paris.`, no note, no error.
+
+**What it does now.** On `external` with a catalogue — the positive sign of a
+gateway the previous track already lands — the gate reads the slug's vendor
+against the spec §6.4 table: `anthropic/…` through the existing version
+allowlist, `google/gemini-…`, everything else refused with a note of its own
+(the generic one says external engines continue, which is the lie). The one
+answer is now computed once and snapshotted into the turn, so `Finished.continuable`
+and the mid-stream interruption note can no longer offer `/continue` where the
+command refuses — they had each asked the mode separately.
+
+**The sub-decision the gate forced (H2.1).** The engine's facts were asked lazily,
+at the first turn. `/continue` as the first command after a restart is that
+command's main case, and it would have met an unanswered question and fallen back
+to the behaviour a gateway does not have. The facts are now asked when the engine
+is applied and on a readiness flip — the rule the model's name already followed.
+A `:variant` suffix is stripped before the version is read, or
+`claude-sonnet-4.6:batch` would parse as 4.0 and be allowed; the unit test that
+pins it was written for that line.
+
+**F5 — closed as measured, nothing built.** A tool round with reasoning forced,
+the second request three ways, on `claude-haiku-4.5` (four routes) and
+`claude-sonnet-4.6`: no blocks (what this client sends), the exact echo and a
+text-tampered echo all answered `200`, indistinguishable. A **garbage signature**
+was answered `400 "Invalid signature in thinking block"` — through the gateway and
+on Anthropic's own API alike — which proves the blocks are forwarded and checked,
+and that the rejection the reports describe is reachable only by sending blocks.
+The echo bought no observable continuity (zero reasoning tokens in the second round
+in every arm), so building it would add the one failure the current wire cannot
+hit. Found beside it and filed separately: `thinking: true` alone enables
+reasoning at no route; only `reasoning_effort` does.
+
+**Tests**: 3236 green, 180 ignored (3232 / 179 before) on the tracked count. Four
+new unit tests (the route table, the gate on a bare orchestrator, the whole route
+on a running one, where the catalogue must land before any turn, and the readiness
+flip's re-ask) and one smoke. **Mutation-tested**: eight mutations — the gateway
+arm, the `:variant` strip, Gemini's row, the lazy re-ask at each of its two sites,
+the gate ignoring the catalogue, the note never chosen, `Finished.continuable`
+ignoring the turn's answer. The first run left the readiness-flip site surviving:
+the fixtures learn the catalogue at settings apply and never flip, so the loop arm
+became `handle_chat_status` and got a test of its own — which then "survived" once
+more, because the mutation script's test filter did not name it. Read twice, that
+survivor indicted the instrument; with the filter fixed every mutation is caught.
+
+**Live — GO on all three declared stacks**, 2026-09-15, one smoke
+(`continue_through_a_gateway_live`) through the app's own orchestrator:
+`gateway-refuses` on `google/gemma-4-31b-it` via OpenRouter — the cut announced
+`continuable=false` and `/continue` answered with the gateway note;
+`gateway-continues` on `anthropic/claude-haiku-4.5` — `"The capital of France"` +
+`" is Paris."`, no restart; and `local`, the regression half, on the LAN
+`llama-server` with Gemma 4 31B and no catalogue — `continuable=true` and the same
+clean `" is Paris."`, exactly as before. **The first run's fixture was wrong twice,
+and the run said so**: at a 6-token cap the cut already held "Paris" and Haiku's
+continuation was a lone `"."`, which proves little; and the local Gemma spent the
+whole cap reasoning, left no visible text, and was — correctly — not continuable.
+A 4-token cap with `reasoning_budget: 0` fixed both, and the catalogue landed
+before the first turn on every stack, which is H2.1 measured rather than argued.
 
 **Forks open, nothing built** — H1 (re-home a tool's images when the catalogue
 answered), H2 (refuse `/continue` on a gateway except the slugs whose direct mode

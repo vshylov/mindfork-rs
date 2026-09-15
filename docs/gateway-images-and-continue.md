@@ -236,6 +236,17 @@ wrong.
   decision becomes visible in request tests, and every other backend gains a
   field it must ignore.
 
+**Found while preparing H1 [code]: there is no memo to await.**
+`OpenAiClient::catalogue_entry` ([client.rs](../src/shared/api/openai/client.rs))
+issues a fresh `GET /v1/models` on every call — harmless while its only caller
+was the once-per-engine background question, and a request per turn the moment
+the chat path reads it. So H1.1 (i) needs the memo it was written as if it had:
+keep the answer of a fetch that **succeeded** — an entry, or a list without the
+model — for the client's lifetime (a new engine gets a new client), and keep
+**no** answer from a transport failure, so a gateway that was briefly unreachable
+is asked again rather than filed as "no catalogue" and sent the tool shape it
+cannot see. The background question and the request builder then read one value.
+
 ### H2. `/continue` through a gateway — **recommendation (b)**
 
 - (a) **refuse on a gateway** — whenever the catalogue answered, `/continue`
@@ -265,6 +276,17 @@ In every option the refusal note (`ui.cmd.continue_unsupported`) names the
 gateway case and `/regen`, and an `external` endpoint with no catalogue keeps
 continuing as today.
 
+**H2.1 — when the catalogue is asked (decided at implementation, on the
+recommendation).** The discovery was lazy: the first turn after a (re)connect
+kicked the question off. That is fine for a compaction window, which is not needed
+until a conversation is long, and wrong for this gate — `/continue` as the first
+command after a restart is the command's main case (a reply broke off, the app
+was closed, it is opened again), and it would meet an unanswered question and fall
+back to the behaviour a gateway does not have. So the question is now asked when
+the engine is applied and on a readiness flip, the same rule the model's name
+already follows (`refresh_model_name`). The alternative — refusing "still asking,
+try again" — would have changed a local `external` user's first `/continue` too.
+
 ### H3. Scope
 
 - (i) both halves in one PR — one client, one plan, one journal entry;
@@ -291,8 +313,70 @@ Nothing above is built yet; this is the gate each stage owes before its PR.
 - **Named smokes only** — install.md §7.1; the whole `--ignored` set is not run
   against a metered gateway.
 
-## 6. F5 is not in this plan
+## 7. Stage H2 — what was implemented
 
-`reasoning_details` across tool rounds is the review's third item and has its own
-precondition — a thinking Anthropic-family model through the gateway, with
-signed blocks — and it is measured separately.
+- **`ServerMode::supports_continuation(model, catalogued)`**
+  ([config.rs](../src/shared/config.rs)) — `External` with a catalogue answers
+  through `gateway_model_continues`: the slug's vendor against the spec §6.4
+  table (`anthropic/…` through the existing version allowlist, `google/gemini-…`),
+  a `:variant` suffix dropped first so `4.6:batch` cannot read as 4.0, and every
+  other vendor, alias or router refused. Without a catalogue the arm is the one
+  that shipped.
+- **One answer per turn.** `Orchestrator::continuation_supported` is read by the
+  command's gate and snapshotted into the turn (`GenSpawn` → `TurnShared` →
+  `SharedParts`), where `Finished.continuable` and the mid-stream interruption
+  note read it — so no note can offer `/continue` where the command would refuse.
+- **The gateway's own note**, `ui.cmd.continue_unsupported_gateway` (en, ru): the
+  generic one says external engines continue, which is exactly what is untrue here.
+- **The catalogue is asked when the engine is applied** (H2.1) —
+  `refresh_engine_facts` replaces the bare invalidation at both sites (settings
+  applied, readiness flipped).
+
+**Tests** — four unit tests: the route table (including the `:batch` trap, an
+alias, a router, a vendorless id, and the silence case); the gate on a bare
+orchestrator (the gateway note for a restarting family, `true` again once the
+catalogue is forgotten, a turn started for Claude ≤ 4.5); the whole route on a
+running orchestrator, where the catalogue must land **before any turn**, a
+length-cut reply is announced as not continuable, and the command refuses with the
+gateway note; and the readiness flip's own re-ask (`handle_chat_status`, extracted
+from the loop's arm so the order it keeps can be tested where it lives). Eight
+mutations, all caught. One `#[ignore]` smoke, `continue_through_a_gateway_live`, declared by
+`MINDFORK_LIVE_CONTINUE_EXPECT`.
+
+**Live — GO on the three stacks §5 names** (2026-09-15): through OpenRouter,
+`google/gemma-4-31b-it` is announced not continuable and refused with the gateway
+note, and `anthropic/claude-haiku-4.5` resumes `"The capital of France"` with
+`" is Paris."`; on the LAN `llama-server` (Gemma 4 31B, no catalogue) the reply
+continues exactly as before. In every run the engine's facts landed before the
+first turn. The gate on the wire is unchanged for a local server by construction,
+and this is the run that shows it.
+
+## 8. F5 — measured beside H2, closed with nothing to build
+
+`reasoning_details` across tool rounds, the review's third item. Its precondition
+was a thinking Anthropic-family model through the gateway with signed blocks, and
+the account has them. Instrument: a raw non-streaming replay (so the echoed array
+is the gateway's own, not a reassembly), a `get_weather` round with reasoning
+forced by `reasoning.max_tokens`, then the second request in several shapes.
+
+| second request | through the gateway | Anthropic's own API |
+|---|---|---|
+| **no reasoning blocks** — what `OpenAiClient` sends | `200`, a normal answer — haiku-4.5 on default, Anthropic, Amazon Bedrock and Google Vertex; sonnet-4.6 on its default route | `200` |
+| the exact blocks echoed | `200`, indistinguishable | `200` |
+| the text changed, signature intact | `200` | `200` |
+| the signature replaced | **`400`** *"Invalid `signature` in `thinking` block"* | **`400`**, the same words |
+
+So the blocks are forwarded and their signatures checked, and the rejection the
+reports describe is real — but it is reachable only by **sending** blocks, and the
+wire that sends none cannot hit it. What an exact echo would buy is continuity of
+reasoning, and this instrument shows none to buy: the second round reasoned zero
+tokens in every arm, the echo included. Building it would add the one failure mode
+the current wire is immune to, for a gain no run has shown. **F5 is closed as
+measured.**
+
+**Found beside it, and not F5's to fix.** The app's own thinking switch sends
+`thinking: true`, and **alone that turns reasoning on at no route** — the
+gateway drops the field; only with `reasoning_effort` set did any route reason
+(81 reasoning tokens on the same prompt). On a gateway the settings' thinking
+toggle is therefore inert unless an effort is chosen too — the same class of
+defect as `repeat_penalty` under its other name. A separate task.

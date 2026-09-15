@@ -226,14 +226,36 @@ impl Orchestrator {
             .apply_chat(&self.config.engine, &self.config.api_keys, loc);
         // A different engine has a different context window, and an answer from
         // the previous one must not be carried over — nor an in-flight one
-        // applied when it lands (spec §6.7).
-        self.context.invalidate();
+        // applied when it lands (spec §6.7). Asked again at once, not at the first
+        // turn: a command may read the answer before any turn runs.
+        self.refresh_engine_facts();
         // The same for the model it is running: the previous server's name must
         // not survive onto the new one's messages (spec §11.3).
         self.refresh_model_name();
         // And its slot count: the hint must not describe the previous server.
         self.refresh_engine_slots();
         self.emit_server_status();
+    }
+
+    /// The chat server's readiness flipped. A method rather than the loop's arm so
+    /// the order it keeps can be tested where it lives (docs/lessons.md §2): the
+    /// engine's facts are asked again **now**, not at the next turn — a gateway that
+    /// was unreachable at startup and came up later must not leave `/continue`
+    /// answering from silence (docs/gateway-images-and-continue.md §4, H2.1).
+    pub(super) fn handle_chat_status(&mut self, status: ServerStatus) {
+        self.engines.set_chat_status(status);
+        // Readiness flipped, so the engine may answer differently now: a server
+        // that was down could not report its context window or its catalogue, and
+        // one that just came up can. The channel only carries flips, so this is not
+        // a per-probe cost. See `ContextDiscovery`.
+        self.refresh_engine_facts();
+        // And a server that just came up can now say what it loaded, where a
+        // moment ago it could not (`ModelDiscovery`).
+        self.refresh_model_name();
+        // Likewise its slot count (the `sessions` hint).
+        self.refresh_engine_slots();
+        self.emit_server_status();
+        self.relaunch_dead_managed_servers();
     }
 
     /// (Re-)raises the embedding server from `config.embed` and emits a status snapshot

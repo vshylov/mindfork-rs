@@ -1485,6 +1485,189 @@ async fn continue_refusals_answer_with_the_route_that_works() {
     );
 }
 
+/// Through a gateway `/continue` follows the route table measured in
+/// docs/gateway-images-and-continue.md §1.3 (fork H2): a refusing slug answers with
+/// the gateway's own note — not the generic one, which says external engines
+/// continue — while the same slug on an endpoint that published no catalogue keeps
+/// the behaviour that shipped, and a family the table allows starts the turn.
+#[tokio::test]
+async fn continue_through_a_gateway_follows_the_route_table() {
+    use crate::app::orchestrator::compaction::EngineFacts;
+    use crate::entities::chat::Chat;
+    use crate::entities::message::{Message, MessageFinish, MessageMetadata};
+    use crate::entities::profile::Profile;
+    use crate::shared::api::contract::ModelCapabilities;
+    use crate::shared::config::ServerMode;
+
+    let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::default());
+    let (_d, mut orch, mut rx) = bare_orch_rx();
+    orch.engines.backend = Some(Arc::new(MockBackend::scripted(vec![])) as Arc<dyn EngineBackend>);
+    orch.engines.server_status = ServerStatus::Ready;
+    orch.config.engine.mode = ServerMode::External;
+    orch.config.engine.external.model_name = Some("google/gemma-4-31b-it".into());
+    let mut chat = Chat::from_profile(&Profile::new("P", "sys"), "Чат");
+    let chat_id = chat.id;
+    chat.push_message(Message::user("вопрос"));
+    let mut partial = Message::assistant("Оборванный отв");
+    partial.metadata = Some(MessageMetadata {
+        sampling: Default::default(),
+        mode: Default::default(),
+        model: None,
+        finish: Some(MessageFinish::Cancelled),
+    });
+    chat.push_message(partial);
+    orch.chats.push(chat);
+    orch.active_id = Some(chat_id);
+    let land_catalogue = |orch: &mut super::super::Orchestrator| {
+        let epoch = orch.context.epoch();
+        orch.handle_budget_result(
+            epoch,
+            EngineFacts {
+                budget: None,
+                caps: Some(ModelCapabilities {
+                    context_length: Some(262_144),
+                    sampling_fields: None,
+                }),
+            },
+        );
+    };
+    let drain = |rx: &mut UnboundedReceiver<AppEvent>| {
+        let (mut note, mut started) = (None, None);
+        while let Ok(ev) = rx.try_recv() {
+            match ev {
+                AppEvent::Error(text) => note = Some(text),
+                AppEvent::GenerationStarted { continuation, .. } => started = Some(continuation),
+                _ => {}
+            }
+        }
+        (note, started)
+    };
+
+    // A gateway (the catalogue answered) and a slug that restarts on every route.
+    land_catalogue(&mut orch);
+    orch.handle_continue();
+    assert_eq!(
+        drain(&mut rx),
+        (
+            Some(loc.t("ui.cmd.continue_unsupported_gateway").to_string()),
+            None
+        ),
+        "a restarting family is refused through a gateway, with the gateway's note"
+    );
+
+    // The same slug on an endpoint that published nothing: silence is not a claim.
+    orch.context.invalidate();
+    assert!(
+        orch.continuation_supported(),
+        "without a catalogue external answers as it always did"
+    );
+
+    // A family the table allows continues through the same gateway.
+    land_catalogue(&mut orch);
+    orch.config.engine.external.model_name = Some("anthropic/claude-haiku-4.5".into());
+    orch.handle_continue();
+    assert_eq!(
+        drain(&mut rx),
+        (None, Some(true)),
+        "Claude up to 4.5 continues through a gateway"
+    );
+}
+
+/// A backend that publishes a catalogue entry for its model, the way a gateway does.
+struct CataloguedBackend {
+    inner: MockBackend,
+}
+
+#[async_trait::async_trait]
+impl EngineBackend for CataloguedBackend {
+    async fn chat_stream(
+        &self,
+        req: crate::shared::api::ChatRequest,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> anyhow::Result<crate::shared::api::contract::ChatStream> {
+        self.inner.chat_stream(req, cancel).await
+    }
+
+    async fn model_capabilities(&self) -> Option<crate::shared::api::contract::ModelCapabilities> {
+        Some(crate::shared::api::contract::ModelCapabilities {
+            context_length: Some(262_144),
+            sampling_fields: Some(vec!["temperature".to_string()].into()),
+        })
+    }
+}
+
+/// The whole route on a running orchestrator: the gateway's catalogue lands
+/// **before any turn** — `/continue` as the first command after a restart is the
+/// command's main case, and it must not meet an unanswered question — and then
+/// it governs all three readers: a length-cut reply is announced as *not*
+/// continuable, and the command refuses with the gateway's note
+/// (docs/gateway-images-and-continue.md §4, H2).
+#[tokio::test]
+async fn a_gateways_catalogue_lands_before_the_first_turn_and_governs_continue() {
+    use crate::shared::config::ServerMode;
+    use std::time::Duration;
+
+    let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::default());
+    let backend = Arc::new(CataloguedBackend {
+        inner: MockBackend::sequence(vec![vec![
+            ChatChunk::Text("Нача".into()),
+            ChatChunk::Finished(FinishReason::Length),
+        ]]),
+    }) as Arc<dyn EngineBackend>;
+    let mut cfg = no_auto_cfg();
+    cfg.engine.mode = ServerMode::External;
+    cfg.engine.external.model_name = Some("google/gemma-4-31b-it".into());
+    let (_dir, cmd_tx, mut evt_rx, handle) = spawn_orch_cfg(Some(backend), cfg);
+
+    let landed = tokio::time::timeout(
+        Duration::from_secs(5),
+        wait_for(&mut evt_rx, |e| {
+            matches!(e, AppEvent::EngineSamplingFields(Some(_)))
+        }),
+    )
+    .await;
+    assert!(
+        matches!(landed, Ok(Some(_))),
+        "the catalogue must be asked when the engine is applied, not at the first turn"
+    );
+
+    cmd_tx
+        .send(AppCommand::SendMessage("вопрос".into()))
+        .unwrap();
+    let finished = tokio::time::timeout(
+        Duration::from_secs(5),
+        wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. })),
+    )
+    .await
+    .expect("the turn finishes")
+    .unwrap();
+    assert!(
+        matches!(
+            finished,
+            AppEvent::Finished {
+                reason: FinishReason::Length,
+                continuable: false,
+                ..
+            }
+        ),
+        "a gateway's restarting family must not be announced as continuable: {finished:?}"
+    );
+
+    cmd_tx.send(AppCommand::ContinueLast).unwrap();
+    let note = tokio::time::timeout(
+        Duration::from_secs(5),
+        wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Error(_))),
+    )
+    .await
+    .expect("the command answers");
+    assert!(
+        matches!(&note, Some(AppEvent::Error(text)) if text == loc.t("ui.cmd.continue_unsupported_gateway")),
+        "{note:?}"
+    );
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+}
+
 // ---------- the slow-prefill note (docs/research/slow-prefill-detection.md) ----------
 
 mod slow_prefill {

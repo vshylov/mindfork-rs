@@ -157,6 +157,12 @@ impl ContextDiscovery {
         self.epoch
     }
 
+    /// Whether a question is in flight — what an eager re-ask leaves behind.
+    #[cfg(test)]
+    pub(super) fn pending(&self) -> bool {
+        self.pending
+    }
+
     /// Would this answer change what the endpoint offers? Asked before
     /// [`Self::apply`] so a landing that says the same thing (a re-ask after a
     /// readiness flip) does not rebuild the tool registry for nothing.
@@ -325,6 +331,26 @@ impl Orchestrator {
             .caps
             .as_ref()
             .and_then(|c| c.sampling_fields.clone())
+    }
+
+    /// Whether the endpoint's catalogue answered for the configured model — the
+    /// positive sign of a gateway, since a llama.cpp publishes neither key
+    /// (docs/gateway-images-and-continue.md §2). `false` on silence, which keeps
+    /// every capability that reads it exactly as it shipped.
+    pub(super) fn endpoint_catalogued(&self) -> bool {
+        self.context.caps.is_some()
+    }
+
+    /// The engine changed or its readiness flipped: forget what was learned and
+    /// ask again **now**, rather than at the first turn. A capability read before
+    /// any turn runs — `/continue` as the first command after a restart, which is
+    /// that command's main case — would otherwise meet an unanswered question and
+    /// fall back to the behaviour a gateway does not have
+    /// (docs/gateway-images-and-continue.md §4, H2). The same rule
+    /// [`Self::refresh_model_name`] already follows for the model's name.
+    pub(super) fn refresh_engine_facts(&mut self) {
+        self.context.invalidate();
+        self.ask_engine_for_budget();
     }
 
     /// Asks the engine what its window is, in the background (S1).

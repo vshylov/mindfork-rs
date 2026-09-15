@@ -924,6 +924,28 @@ async fn an_answer_about_a_replaced_engine_is_dropped() {
     );
 }
 
+/// H2.1 (docs/gateway-images-and-continue.md §4): a readiness flip asks the
+/// engine's facts again **at once**. A gateway that was unreachable at startup and
+/// came up later must not leave `/continue` answering from an unasked question
+/// until some turn happens to ask it — the startup path is covered by the running
+/// orchestrator's test, and this is the flip's own call site.
+// Spawns: the re-ask starts a task.
+#[tokio::test]
+async fn a_readiness_flip_asks_the_engine_again_at_once() {
+    let (_d, mut orch, _rx, _chat_id, _backend) = orch_with_history(1);
+    orch.config.engine.mode = ServerMode::External;
+    let before = orch.context.epoch();
+    orch.handle_chat_status(crate::shared::server::ServerStatus::Ready);
+    assert!(
+        orch.context.epoch() > before,
+        "the flip forgets the previous answer"
+    );
+    assert!(
+        orch.context.pending(),
+        "and asks again now, not at the next turn"
+    );
+}
+
 // ---------- stage 2: how a failure is reported, by origin ----------
 
 /// S6: a silent background roll spends a strike, so three consecutive failures
