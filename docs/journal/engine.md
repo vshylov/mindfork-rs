@@ -4306,7 +4306,12 @@ around a `spawn_blocking` join — hung the rerun past the harness's new ten-min
 cap all the same, because the test's runtime waits at shutdown for a blocking task
 still running. The bound now lives in the stub: `scripted_server` accepts under a
 ten-second deadline and hands back what it saw, so a missing request fails the
-test (lessons §2, recorded a second time).
+test (lessons §2, recorded a second time). And the first CI run of the pushed branch
+failed on both runners with `connection reset` — in the new tests and in two
+unchanged refusal tests: the same stub never said `Connection: close`, so the client
+pooled the socket after the catalogue's answer and sent the turn down a connection
+the stub had dropped. It says so now (lessons §2, the stub entry, recorded a second
+time and no longer Windows-only).
 
 **Live — GO**, 2026-09-15. The builder's re-homed body replayed pinned to the routes
 that failed today's shape, blind arm beside each: on `google/gemma-4-31b-it`

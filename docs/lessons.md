@@ -425,8 +425,15 @@ following. It is **Windows-only in practice** — closing a socket with unread b
 RST there rather than FIN, and a reset is a hard error where a FIN is just a stale pooled
 connection the client silently reopens. Two redirect tests were green locally and on
 Linux and red on the Windows runner; neither machine reproduces the other, so the CI run
-is the instrument.
-— *images in a message — attach by URL*.
+is the instrument. **Recorded twice, and the second time not Windows-only**: the
+`scripted_server` stub behind the reasoning-refusal tests had lacked the header since it
+was written, and stayed green while each test sent its requests back to back; a new test
+put a catalogue `GET` in front of the turn, and the next CI run reset the pooled socket on
+both runners (`10054` on Windows, `104` on Linux), failing the new tests *and* two old ones
+that had never changed. A stub that answers once per connection says so in every
+response — check the other stubs in the file when you add one.
+— *images in a message — attach by URL*, *a tool's images reach the model through a
+gateway*.
 
 **A slow test is usually paying a real cost, not misbehaving.** A "probe a dead port"
 test ran **63 s**: a connect to a closed local port costs ~2.0 s on Windows (SYN retry)

@@ -849,8 +849,12 @@ mod tests {
                     503 => ("Service Unavailable", "application/json"),
                     _ => ("Bad Request", "application/json"),
                 };
+                // `Connection: close`: this stub answers once per connection and drops
+                // it, and without the header the client pools the socket and sends the
+                // next scripted request down it — a reset under load, measured in CI
+                // on both runners once a catalogue GET preceded the turn (lessons §2).
                 let resp = format!(
-                    "HTTP/1.1 {status} {reason}\r\nContent-Type: {kind}\r\nContent-Length: {}\r\n\r\n{payload}",
+                    "HTTP/1.1 {status} {reason}\r\nContent-Type: {kind}\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{payload}",
                     payload.len()
                 );
                 let _ = sock.write_all(resp.as_bytes());
