@@ -1260,6 +1260,22 @@ mod tests {
         (format!("http://{addr}/v1"), handle)
     }
 
+    /// Waits for a stub's thread to hand back what it saw — but not forever. A
+    /// regression that leaves the stub waiting for a request that never comes must
+    /// fail the test, not hang it (docs/lessons.md §2): the first mutation run of
+    /// these tests sat for sixteen minutes on exactly that. `spawn_blocking`, because
+    /// a bare `join` would block the runtime the client under test runs on.
+    async fn joined<T: Send + 'static>(handle: std::thread::JoinHandle<T>) -> T {
+        tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            tokio::task::spawn_blocking(move || handle.join()),
+        )
+        .await
+        .expect("the stub never saw every request it was scripted for")
+        .expect("the waiting task")
+        .expect("the stub's thread")
+    }
+
     /// Fork H1.1 (docs/gateway-images-and-continue.md §4): the catalogue is asked once
     /// per client once it has answered, and **not** remembered from a "not now" — a
     /// gateway that was briefly unavailable is asked again instead of being filed as
@@ -1277,7 +1293,7 @@ mod tests {
             client.model_capabilities().await.is_some(),
             "so the next question asks again"
         );
-        assert_eq!(seen.join().unwrap().len(), 2);
+        assert_eq!(joined(seen).await.len(), 2);
         assert!(
             client.model_capabilities().await.is_some(),
             "and the answer is kept, not fetched a third time"
@@ -1324,7 +1340,7 @@ mod tests {
         let (url, seen) = scripted_server(&[(200, CATALOGUE_BODY), (200, ONE_CHUNK_SSE)]);
         let client = OpenAiClient::new(url).with_model(Some("deepseek/deepseek-r1".into()));
         collect_turn(&client, screenshot_round()).await;
-        let sent = body_of(&seen.join().unwrap()[1]);
+        let sent = body_of(&joined(seen).await[1]);
         let messages = sent["messages"].as_array().unwrap();
         assert_eq!(messages.len(), 4, "{messages:?}");
         assert_eq!(messages[2]["role"], "tool");
@@ -1342,7 +1358,7 @@ mod tests {
         let client = OpenAiClient::new(url).with_model(Some("gemma-4".into()));
         collect_turn(&client, screenshot_round()).await;
         assert_eq!(
-            body_of(&seen.join().unwrap()[1]),
+            body_of(&joined(seen).await[1]),
             serde_json::to_value(wire::build_chat_request(
                 &screenshot_round(),
                 true,
@@ -1357,7 +1373,7 @@ mod tests {
         let client = OpenAiClient::new(url).with_model(Some("gemma-4".into()));
         collect_turn(&client, muted_turn()).await;
         assert!(
-            seen.join().unwrap()[0].contains("\"messages\""),
+            joined(seen).await[0].contains("\"messages\""),
             "the first request is the turn itself, not a catalogue lookup"
         );
     }
