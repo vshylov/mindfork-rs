@@ -236,6 +236,17 @@ wrong.
   decision becomes visible in request tests, and every other backend gains a
   field it must ignore.
 
+**Found while preparing H1 [code]: there is no memo to await.**
+`OpenAiClient::catalogue_entry` ([client.rs](../src/shared/api/openai/client.rs))
+issues a fresh `GET /v1/models` on every call — harmless while its only caller
+was the once-per-engine background question, and a request per turn the moment
+the chat path reads it. So H1.1 (i) needs the memo it was written as if it had:
+keep the answer of a fetch that **succeeded** — an entry, or a list without the
+model — for the client's lifetime (a new engine gets a new client), and keep
+**no** answer from a transport failure, so a gateway that was briefly unreachable
+is asked again rather than filed as "no catalogue" and sent the tool shape it
+cannot see. The background question and the request builder then read one value.
+
 ### H2. `/continue` through a gateway — **recommendation (b)**
 
 - (a) **refuse on a gateway** — whenever the catalogue answered, `/continue`

@@ -157,6 +157,12 @@ impl ContextDiscovery {
         self.epoch
     }
 
+    /// Whether a question is in flight — what an eager re-ask leaves behind.
+    #[cfg(test)]
+    pub(super) fn pending(&self) -> bool {
+        self.pending
+    }
+
     /// Would this answer change what the endpoint offers? Asked before
     /// [`Self::apply`] so a landing that says the same thing (a re-ask after a
     /// readiness flip) does not rebuild the tool registry for nothing.

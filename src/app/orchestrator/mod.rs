@@ -309,19 +309,7 @@ pub async fn run(deps: OrchestratorDeps) {
             }
             status = status_rx.recv() => {
                 if let Some(s) = status {
-                    orch.engines.set_chat_status(s);
-                    // Readiness flipped, so the engine may answer differently now:
-                    // a server that was down could not report its context window,
-                    // and one that just came up can. The channel only carries
-                    // flips, so this is not a per-probe cost. See `ContextDiscovery`.
-                    orch.refresh_engine_facts();
-                    // And a server that just came up can now say what it loaded,
-                    // where a moment ago it could not (`ModelDiscovery`).
-                    orch.refresh_model_name();
-                    // Likewise its slot count (the `sessions` hint).
-                    orch.refresh_engine_slots();
-                    orch.emit_server_status();
-                    orch.relaunch_dead_managed_servers();
+                    orch.handle_chat_status(s);
                 }
             }
             title = title_rx.recv() => {
