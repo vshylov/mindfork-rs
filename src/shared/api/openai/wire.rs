@@ -99,7 +99,7 @@ pub struct ChatCompletionRequest {
     /// A gateway's own reasoning switch (`reasoning: {enabled}`, OpenRouter's
     /// spelling). Never set by [`build_chat_request`]: the client fills it from
     /// [`gateway_reasoning`] for an endpoint whose catalogue lists `reasoning`,
-    /// because a gateway never reads `thinking` (docs/gateway-thinking-switch.md §2).
+    /// because a gateway never reads `thinking` (docs/history/gateway-thinking-switch.md §2).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<WireReasoning>,
     /// Extra variables for the Jinja chat template (llama.cpp `chat_template_kwargs`).
@@ -416,7 +416,7 @@ pub fn build_chat_request(
 }
 
 /// The body of a gateway's `reasoning` object — the switch alone; an effort keeps
-/// travelling as `reasoning_effort` (fork T3 of docs/gateway-thinking-switch.md).
+/// travelling as `reasoning_effort` (fork T3 of docs/history/gateway-thinking-switch.md).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct WireReasoning {
     pub enabled: bool,
@@ -425,7 +425,7 @@ pub struct WireReasoning {
 /// The settings' thinking switch in the gateway's own spelling, or `None` to send
 /// the request exactly as [`build_chat_request`] built it.
 ///
-/// Measured through OpenRouter (docs/gateway-thinking-switch.md §2): `thinking` is
+/// Measured through OpenRouter (docs/history/gateway-thinking-switch.md §2): `thinking` is
 /// never read there — a wrong type in it is a `200` — so "on" left Claude Haiku 4.5
 /// reasoning zero tokens on every route and "off" left Qwen 3.6 reasoning anyway,
 /// while `reasoning: {enabled}` moved both. Every condition below keeps a request
@@ -1358,12 +1358,12 @@ mod continuation_tests {
 }
 
 /// The settings' thinking switch in a gateway's own spelling
-/// (docs/gateway-thinking-switch.md) — see [`gateway_reasoning`].
+/// (docs/history/gateway-thinking-switch.md) — see [`gateway_reasoning`].
 #[cfg(test)]
 mod gateway_reasoning_tests {
     use super::*;
 
-    /// Forks T1 and T2 of docs/gateway-thinking-switch.md as one table — a row per
+    /// Forks T1 and T2 of docs/history/gateway-thinking-switch.md as one table — a row per
     /// condition of [`gateway_reasoning`], so dropping any one of them turns its row
     /// red. Columns: thinking, effort, budget, catalogue entry, refused before,
     /// expected switch, and why. Held in one literal rather than as tuple rows, which
