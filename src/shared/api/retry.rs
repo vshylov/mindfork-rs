@@ -362,6 +362,14 @@ impl EngineBackend for RetryBackend {
         self.inner.context_budget().await
     }
 
+    /// Delegated, and the same hole again (lessons §9): the catalogue is where a
+    /// gateway's window and its sampling set come from, so a decorator answering
+    /// the trait's `None` would switch both back off for every external turn —
+    /// invisibly, since "did not say" and "was not asked" are one value.
+    async fn model_capabilities(&self) -> Option<crate::shared::api::contract::ModelCapabilities> {
+        self.inner.model_capabilities().await
+    }
+
     /// Delegated for the same reason, and it is the same hole: every cloud backend
     /// is wrapped in this decorator, so a `RetryBackend` that fell back to the
     /// trait's default would answer `Unknown` for a Claude backend that knows
@@ -414,6 +422,7 @@ mod tests {
         outcomes: Mutex<VecDeque<Outcome>>,
         calls: AtomicUsize,
         budget: Option<u32>,
+        caps: Option<crate::shared::api::contract::ModelCapabilities>,
         vision: VisionSupport,
         model: Option<String>,
         slots: Option<u32>,
@@ -425,6 +434,7 @@ mod tests {
                 outcomes: Mutex::new(outcomes.into()),
                 calls: AtomicUsize::new(0),
                 budget: None,
+                caps: None,
                 vision: VisionSupport::Unknown,
                 model: None,
                 slots: None,
@@ -438,6 +448,12 @@ mod tests {
 
     #[async_trait::async_trait]
     impl EngineBackend for Scripted {
+        async fn model_capabilities(
+            &self,
+        ) -> Option<crate::shared::api::contract::ModelCapabilities> {
+            self.caps.clone()
+        }
+
         async fn chat_stream(
             &self,
             _req: ChatRequest,
@@ -734,6 +750,32 @@ mod tests {
         Arc::get_mut(&mut scripted).unwrap().budget = Some(16384);
         let backend = RetryBackend::wrap(scripted);
         assert_eq!(backend.context_budget().await, Some(16384));
+    }
+
+    /// The third of the same family, and the one this track added: a gateway's
+    /// window and its sampling set both arrive through this call, so a decorator
+    /// that fell through to the trait's `None` would switch the compaction
+    /// trigger off and re-offer every dropped field — invisibly, since "did not
+    /// say" and "was not asked" are one value (lessons §9,
+    /// docs/gateway-capabilities.md §3).
+    #[tokio::test]
+    async fn the_model_capabilities_are_delegated() {
+        let mut scripted = Scripted::new(vec![]);
+        Arc::get_mut(&mut scripted).unwrap().caps =
+            Some(crate::shared::api::contract::ModelCapabilities {
+                context_length: Some(64000),
+                sampling_fields: Some(vec!["temperature".to_string()].into()),
+            });
+        let backend = RetryBackend::wrap(scripted);
+        let caps = backend
+            .model_capabilities()
+            .await
+            .expect("the inner backend answered");
+        assert_eq!(caps.context_length, Some(64000));
+        assert_eq!(
+            caps.sampling_fields.as_deref(),
+            Some(["temperature".to_string()].as_slice())
+        );
     }
 
     /// The sibling of the test above, and the same trap: every cloud backend is

@@ -947,6 +947,12 @@ pub struct SettingsScreen {
     /// next to the `sessions` field of the "Model/server" section, never its
     /// value (spec §11.6). `None` — the engine cannot say.
     engine_slots: Option<u32>,
+    /// The sampling fields the endpoint's catalogue published for the configured
+    /// model (`AppEvent::EngineSamplingFields`): what the sampling group offers is
+    /// narrowed to it, so a gateway stops showing knobs it drops on the way
+    /// (spec §8, docs/gateway-capabilities.md). `None` — the endpoint said
+    /// nothing, and nothing narrows.
+    engine_sampling_fields: Option<std::sync::Arc<[String]>>,
     /// Ids of profiles with a locked scaffold language (the profile has data —
     /// the "Language" field is drawn locked, edits are gated). From the `Settings`
     /// snapshot (computed by the orchestrator). See docs/history/i18n.md.

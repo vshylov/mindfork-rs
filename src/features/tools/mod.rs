@@ -43,7 +43,7 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use crate::entities::profile::ToolId;
-use crate::entities::sampling::{SamplingConfig, supported_sampling_fields};
+use crate::entities::sampling::SamplingConfig;
 use crate::entities::self_model::SelfModelParams;
 use crate::shared::api::{Embedder, EngineBackend, ToolSchema};
 use crate::shared::config::{AppConfig, CloudProvider, PythonMode};
@@ -770,7 +770,9 @@ pub fn all_tool_ids() -> Vec<ToolId> {
 /// importantly it earns an invariant, since the same `compaction_view` decides
 /// both this and whether the summary block is in the prompt — so the block can
 /// name the tools without ever promising one that is absent.
-#[derive(Debug, Clone, Copy, Default)]
+// No longer `Copy`: `sampling_endpoint` carries the endpoint's published list
+// behind an `Arc`, and the gates are read by reference anyway.
+#[derive(Debug, Clone, Default)]
 pub struct ToolGates {
     /// `tools.web_enabled` — `web_search` and `fetch_url`.
     pub web: bool,
@@ -794,10 +796,19 @@ pub struct ToolGates {
     /// The chat engine's cloud provider, deciding which sampling parameters
     /// exist at all (ADR 0004).
     pub sampling_provider: Option<CloudProvider>,
+    /// The sampling fields the **endpoint** published for the configured model,
+    /// when it published any (`external` only, docs/gateway-capabilities.md): it
+    /// narrows the same offer, so the pair of tools is also withdrawn when a
+    /// catalogue leaves nothing at all. `None` — silence, nothing narrows.
+    pub sampling_endpoint: Option<std::sync::Arc<[String]>>,
 }
 
 pub fn effective_tool_ids(enabled: &[ToolId], gates: &ToolGates) -> Vec<ToolId> {
-    let sampling_available = !supported_sampling_fields(gates.sampling_provider).is_empty();
+    let sampling_available = !crate::entities::sampling::available_sampling_fields(
+        gates.sampling_provider,
+        gates.sampling_endpoint.as_deref(),
+    )
+    .is_empty();
     let gate_of = |id: &str| CATALOG.iter().find(|i| i.id == id).and_then(|i| i.gate);
     enabled
         .iter()
@@ -880,6 +891,10 @@ pub struct ToolConfig {
     /// which sampling parameters `get_sampling`/`set_sampling` see/change (schema
     /// and result filtering) — a mirror of the wire dialect. See ADR 0004.
     pub sampling_provider: Option<CloudProvider>,
+    /// What the endpoint's catalogue published for the configured model, which
+    /// narrows that same set one step further on a gateway
+    /// (docs/gateway-capabilities.md). `None` — it said nothing.
+    pub sampling_endpoint: Option<std::sync::Arc<[String]>>,
 }
 
 impl Default for ToolConfig {
@@ -903,6 +918,7 @@ impl Default for ToolConfig {
             subagent_parallel: 1,
             video: None,
             sampling_provider: None,
+            sampling_endpoint: None,
         }
     }
 }
@@ -914,9 +930,11 @@ pub fn standard_registry(cfg: &ToolConfig) -> ToolRegistry {
     let mut reg = ToolRegistry::new();
     reg.register(Arc::new(introspection::GetSampling::new(
         cfg.sampling_provider,
+        cfg.sampling_endpoint.clone(),
     )));
     reg.register(Arc::new(introspection::SetSampling::new(
         cfg.sampling_provider,
+        cfg.sampling_endpoint.clone(),
     )));
     reg.register(Arc::new(introspection::GetSystemMessage));
     reg.register(Arc::new(introspection::SetSystemMessage));

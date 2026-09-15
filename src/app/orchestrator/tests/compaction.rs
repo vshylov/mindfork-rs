@@ -785,10 +785,98 @@ fn an_engine_that_cannot_say_leaves_the_budget_unknown() {
     orch.config.engine.mode = ServerMode::External;
     // The recording backend keeps the trait's default answer.
     let epoch = orch.context.epoch();
-    orch.handle_budget_result(epoch, None);
+    orch.handle_budget_result(
+        epoch,
+        crate::app::orchestrator::compaction::EngineFacts::default(),
+    );
     assert_eq!(orch.context_budget(), None);
     orch.maybe_auto_compact(chat_id, usage(900, 50));
     assert!(!orch.bg_running(BackgroundKind::Compaction));
+}
+
+/// A gateway serves no `/props`, so the catalogue is the only source it has — and
+/// with it the automatic trigger works where it used to stay inactive for good
+/// (docs/gateway-capabilities.md §1; measured: 22 567 tokens and nothing folded).
+#[test]
+fn a_gateway_is_measured_against_the_catalogue_it_publishes() {
+    let (_d, mut orch, _rx, _chat_id, _backend) = orch_with_history(1);
+    orch.config = auto_cfg(1000, 75);
+    orch.config.engine.mode = ServerMode::External;
+    let epoch = orch.context.epoch();
+    orch.handle_budget_result(
+        epoch,
+        crate::app::orchestrator::compaction::EngineFacts {
+            // No `/props`: a gateway serves none.
+            budget: None,
+            caps: Some(crate::shared::api::contract::ModelCapabilities {
+                context_length: Some(64000),
+                sampling_fields: None,
+            }),
+        },
+    );
+    assert_eq!(orch.context_budget(), Some(64000));
+}
+
+/// …but a running server's own report still wins: `/props` is what the process
+/// serving this turn was started with, while the catalogue describes the model in
+/// the abstract. Ordering, not preference — and the explicit setting beats both.
+#[test]
+fn a_reported_window_wins_over_the_catalogues() {
+    let (_d, mut orch, _rx, _chat_id, _backend) = orch_with_history(1);
+    orch.config = auto_cfg(1000, 75);
+    orch.config.engine.mode = ServerMode::External;
+    let epoch = orch.context.epoch();
+    orch.handle_budget_result(
+        epoch,
+        crate::app::orchestrator::compaction::EngineFacts {
+            budget: Some(16384),
+            caps: Some(crate::shared::api::contract::ModelCapabilities {
+                context_length: Some(64000),
+                sampling_fields: None,
+            }),
+        },
+    );
+    assert_eq!(orch.context_budget(), Some(16384));
+
+    orch.config.compaction.context_tokens = Some(8192);
+    assert_eq!(
+        orch.context_budget(),
+        Some(8192),
+        "the user's own number is still first"
+    );
+}
+
+/// The other half of the same landing: the fields the endpoint published reach
+/// the turn's gates, so the `set_sampling` schema and the metadata snapshot stop
+/// naming what a gateway drops (docs/gateway-capabilities.md §4, G3(ii)).
+#[test]
+fn the_published_sampling_fields_reach_the_gates() {
+    let (_d, mut orch, _rx, _chat_id, _backend) = orch_with_history(1);
+    orch.config.engine.mode = ServerMode::External;
+    assert!(
+        orch.endpoint_sampling_fields().is_none(),
+        "nothing is known before the catalogue answers"
+    );
+    let epoch = orch.context.epoch();
+    orch.handle_budget_result(
+        epoch,
+        crate::app::orchestrator::compaction::EngineFacts {
+            budget: None,
+            caps: Some(crate::shared::api::contract::ModelCapabilities {
+                context_length: None,
+                sampling_fields: Some(vec!["temperature".to_string()].into()),
+            }),
+        },
+    );
+    let fields = orch
+        .endpoint_sampling_fields()
+        .expect("the catalogue published a list");
+    assert_eq!(fields.as_ref(), ["temperature".to_string()].as_slice());
+    assert_eq!(
+        crate::entities::sampling::available_sampling_fields(None, Some(&fields)),
+        vec!["temperature"],
+        "and it narrows the offer to exactly that"
+    );
 }
 
 // Spawns: reaching a roll (or asking the engine for its window) starts a task.
@@ -798,7 +886,13 @@ async fn a_discovered_window_is_used_and_can_be_re_asked() {
     orch.config = auto_cfg(1000, 75);
     orch.config.engine.mode = ServerMode::External;
     let epoch = orch.context.epoch();
-    orch.handle_budget_result(epoch, Some(16384));
+    orch.handle_budget_result(
+        epoch,
+        crate::app::orchestrator::compaction::EngineFacts {
+            budget: Some(16384),
+            caps: None,
+        },
+    );
     assert_eq!(orch.context_budget(), Some(16384));
     // A readiness flip or an engine change forgets it: the next engine may have
     // a different window, and a server that could not answer before may now.
@@ -816,7 +910,13 @@ async fn an_answer_about_a_replaced_engine_is_dropped() {
     orch.config.engine.mode = ServerMode::External;
     let stale = orch.context.epoch();
     orch.context.invalidate();
-    orch.handle_budget_result(stale, Some(131072));
+    orch.handle_budget_result(
+        stale,
+        crate::app::orchestrator::compaction::EngineFacts {
+            budget: Some(131072),
+            caps: None,
+        },
+    );
     assert_eq!(
         orch.context_budget(),
         None,

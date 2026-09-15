@@ -109,6 +109,18 @@ pub(super) struct RollPlan {
 /// server's `-c` are read straight from the config every time. The engine is
 /// asked once per applied engine (`invalidate` on a settings change and on a
 /// readiness flip, so a server that came up late is re-asked), never per turn.
+/// What one background question about the engine brings back. Both answers ride
+/// one landing because they are one round trip's worth of asking: a gateway would
+/// otherwise be asked twice for the same thing, by two tasks racing to fill two
+/// memos (docs/gateway-capabilities.md §3).
+#[derive(Default)]
+pub(super) struct EngineFacts {
+    /// llama.cpp's `/props` window.
+    pub(super) budget: Option<u32>,
+    /// The endpoint's catalogue entry for the configured model.
+    pub(super) caps: Option<crate::shared::api::contract::ModelCapabilities>,
+}
+
 #[derive(Default)]
 pub(super) struct ContextDiscovery {
     /// Bumped by [`Self::invalidate`]. An answer that arrives for an older epoch
@@ -119,8 +131,13 @@ pub(super) struct ContextDiscovery {
     pending: bool,
     /// An answer arrived for the current epoch (possibly "cannot say").
     answered: bool,
-    /// The window the engine reported, in tokens.
+    /// The window the engine reported, in tokens (llama.cpp's `/props`).
     known: Option<u32>,
+    /// What the endpoint's catalogue said about the configured model, when it
+    /// said anything: the window it publishes and the sampling fields it takes.
+    /// Learned by the same background question, in the same epoch — one fetch,
+    /// one landing (docs/gateway-capabilities.md §3).
+    caps: Option<crate::shared::api::contract::ModelCapabilities>,
 }
 
 impl ContextDiscovery {
@@ -131,6 +148,7 @@ impl ContextDiscovery {
         self.pending = false;
         self.answered = false;
         self.known = None;
+        self.caps = None;
     }
 
     /// The engine generation a pending answer would have to match.
@@ -139,14 +157,25 @@ impl ContextDiscovery {
         self.epoch
     }
 
+    /// Would this answer change what the endpoint offers? Asked before
+    /// [`Self::apply`] so a landing that says the same thing (a re-ask after a
+    /// readiness flip) does not rebuild the tool registry for nothing.
+    fn caps_differ(&self, facts: &EngineFacts) -> bool {
+        let published = |c: Option<&crate::shared::api::contract::ModelCapabilities>| {
+            c.and_then(|c| c.sampling_fields.clone())
+        };
+        published(facts.caps.as_ref()) != published(self.caps.as_ref())
+    }
+
     /// Applies an answer if it belongs to the current engine.
-    fn apply(&mut self, epoch: u64, budget: Option<u32>) {
+    fn apply(&mut self, epoch: u64, facts: EngineFacts) {
         if epoch != self.epoch {
             return;
         }
         self.pending = false;
         self.answered = true;
-        self.known = budget;
+        self.known = facts.budget;
+        self.caps = facts.caps;
     }
 }
 
@@ -267,10 +296,35 @@ impl Orchestrator {
         if let Some(known) = self.context.known {
             return Some(known as u64);
         }
+        // Last: what the endpoint's catalogue publishes for the configured model
+        // — the only source a gateway has, since it serves no `/props`
+        // (docs/gateway-capabilities.md §1). After `/props` rather than before,
+        // because a running server's own report beats a catalogue's description
+        // of the model it is running.
+        if let Some(published) = self
+            .context
+            .caps
+            .as_ref()
+            .and_then(|c| c.context_length)
+            .filter(|&n| n > 0)
+        {
+            return Some(published as u64);
+        }
         if !self.context.answered && !self.context.pending {
             self.ask_engine_for_budget();
         }
         None
+    }
+
+    /// The sampling fields the endpoint published for the configured model, when
+    /// it published any — what narrows the settings screen, the `set_sampling`
+    /// schema and the metadata snapshot (spec §8, docs/gateway-capabilities.md).
+    /// `None` on silence, which is every local server and every cloud.
+    pub(super) fn endpoint_sampling_fields(&self) -> Option<std::sync::Arc<[String]>> {
+        self.context
+            .caps
+            .as_ref()
+            .and_then(|c| c.sampling_fields.clone())
     }
 
     /// Asks the engine what its window is, in the background (S1).
@@ -285,15 +339,43 @@ impl Orchestrator {
         let epoch = self.context.epoch;
         let tx = self.budget_tx.clone();
         tokio::spawn(async move {
-            let _ = tx.send((epoch, backend.context_budget().await));
+            // Both questions, one task: see `EngineFacts`.
+            let facts = EngineFacts {
+                budget: backend.context_budget().await,
+                caps: backend.model_capabilities().await,
+            };
+            let _ = tx.send((epoch, facts));
         });
     }
 
     /// Records what the engine answered about its context window.
-    pub(super) fn handle_budget_result(&mut self, epoch: u64, budget: Option<u32>) {
-        self.context.apply(epoch, budget);
-        if let Some(n) = budget {
+    pub(super) fn handle_budget_result(&mut self, epoch: u64, facts: EngineFacts) {
+        if let Some(n) = facts.budget {
             tracing::info!(context_budget = n, "engine reported its context window");
+        }
+        if let Some(caps) = &facts.caps {
+            tracing::info!(
+                context_length = ?caps.context_length,
+                sampling_fields = caps.sampling_fields.as_ref().map_or(0, |f| f.len()),
+                "the endpoint's catalogue answered for the configured model"
+            );
+        }
+        // The screens are told what the endpoint offers, the same way they are
+        // told the slot count (`slots.rs`): a discovered fact reaches the UI as an
+        // event, never by the UI asking.
+        let _ = self
+            .evt_tx
+            .send(crate::app::events::AppEvent::EngineSamplingFields(
+                facts.caps.as_ref().and_then(|c| c.sampling_fields.clone()),
+            ));
+        let narrowed = self.context.caps_differ(&facts);
+        self.context.apply(epoch, facts);
+        // The `set_sampling` schema is baked into the registry, so a catalogue
+        // that lands after startup has to rebuild it — otherwise the model keeps
+        // being offered fields the endpoint drops, which is half of what this
+        // discovery is for (docs/gateway-capabilities.md §4, G3).
+        if narrowed {
+            self.rebuild_registry();
         }
     }
 

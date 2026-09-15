@@ -728,6 +728,13 @@ pub enum AppEvent {
     /// the settings screen, never a value written into it (spec §11.6). `None`
     /// — it cannot say, or the engine was just replaced.
     EngineSlots(Option<u32>),
+    /// The sampling fields the **endpoint's catalogue** publishes for the
+    /// configured model, when it publishes any (spec §8,
+    /// [docs/gateway-capabilities.md](../../docs/gateway-capabilities.md)).
+    /// `None` — it said nothing, which is every local server and every cloud, and
+    /// nothing narrows. Discovered once per applied engine and pushed like
+    /// [`AppEvent::EngineSlots`]: the UI is told, it never asks.
+    EngineSamplingFields(Option<std::sync::Arc<[String]>>),
     /// The assistant's reply generation has started. `model` — the model the
     /// turn is going to, so the live bubble's header can name it right away
     /// (`interface.show_model_name`, spec §11.3); the very same value the

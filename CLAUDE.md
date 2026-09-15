@@ -171,8 +171,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-14, version 0.9.9)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3224 unit tests
-green, 178 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **3232 unit tests
+green, 179 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -184,6 +184,30 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **The endpoint is asked what the model can do** — a gateway serves no `/props`,
+  so automatic compaction had no window and never fired (measured: 22 567 tokens,
+  nothing folded), while the sampling screen offered the whole llama.cpp set of
+  which a gateway drops half — `repeat_penalty` worst of all, spelled
+  `repetition_penalty` there and so set but inert. The catalogue the app already
+  fetches for the model's *name* carries both answers, so one request now feeds
+  both: `EngineBackend::model_capabilities` (default `None`, overridden only by
+  `OpenAiClient`, delegated by the retry decorator with the test lessons §9
+  demands), one background task landing one `EngineFacts`, and the registry
+  rebuilt only when the published set really changed. **Silence is never a
+  claim** — no catalogue, an empty list, a blank model field, a llama.cpp that
+  lists ids and nothing else all leave behaviour exactly as it shipped; the
+  window sits *after* `/props` (a running server describes this turn's process, a
+  catalogue the model in the abstract) and an explicit setting still beats both.
+  The narrowing reaches the settings screen, `set_sampling`'s schema and the
+  metadata snapshot — **not** the wire, since the list is per model while the
+  route that serves the request is per provider, and dropping a field ourselves
+  on that evidence would trade their silent drop for ours. Live **GO** on R1: 64 000 for the
+  window a gateway never had, and thirty offered fields down to ten — with
+  `repeat_penalty` surviving under the catalogue's own `repetition_penalty`, which
+  is the alias table earning its place. Still owed: a look at an unchanged local
+  `llama-server`
+  ([docs/gateway-capabilities.md](docs/gateway-capabilities.md), spec §6.7, §8.1,
+  [docs/journal/engine.md](docs/journal/engine.md)).
 - **`external` against a gateway — a thought under a second name** — the mode we
   recommend for OpenRouter dropped every thought it sent: the client read
   `delta.reasoning_content`, a gateway writes `delta.reasoning`, and an unknown
@@ -381,24 +405,6 @@ being recent is dropped, not shortened.
   and reporting what an empty field resolves to afterwards
   ([docs/research/llama-cpp-download.md](docs/research/llama-cpp-download.md),
   spec §3.4, [docs/journal/engine.md](docs/journal/engine.md)).
-- **The dialogue's director on Gemma's template — the checkpoint's
-  history must alternate too** — the question the Gemma impersonation
-  track left: does a scene's first line go out as a system prompt with
-  no turns? Measured on Gemma 4 31B and Gemma 3 4B, it does not — the
-  participants' views were built for the strict template (a user-side
-  prologue, same-role lines merged) — but the director's conversation
-  kept its verdicts as tool-call turns with a `tool` "noted" result,
-  which Gemma 3's template, having no tool role, renders as a second
-  user turn in a row and refuses: a `400` at the second checkpoint of
-  every scene longer than one exchange (the clouds' wires merge the
-  pair; the dialogue track's Gemma arm was Gemma 4). Now
-  `verdict_turn` renders the verdicts as the director's own text turn —
-  `name(arguments)` per call, no `tool` messages — the conversation
-  still persistent and append-only, accepted by both templates with the
-  same verdict. Measured after: two café scenes on Gemma 4 Completed at
-  5 lines, stopped by the director past the second checkpoint
-  ([docs/research/dialogue-director-history.md](docs/research/dialogue-director-history.md),
-  spec §9.13, [docs/journal/tools.md](docs/journal/tools.md)).
 - **The TUI "hangs" on a headless launch** (no TTY) — this is expected; clean
   exit via `Esc`/`Ctrl+Q` is covered by unit tests. Live verification needs a
   real terminal.

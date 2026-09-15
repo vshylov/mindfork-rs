@@ -702,6 +702,7 @@ fn start_subagent_is_gated_by_the_setting() {
         workspace: false,
         workspace_commands: Default::default(),
         sampling_provider: None,
+        sampling_endpoint: None,
     };
     assert!(
         !effective_tool_ids(&enabled, &gates(false))

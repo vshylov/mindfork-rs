@@ -443,20 +443,27 @@ you point the app at one (the full compatibility review:
   "Model (opt.)". The key goes into the same "API key (opt.)" field described in
   §3.2. A gateway routes on the request's `model` and refuses a request without
   one, so the field is only "optional" against a single-model server;
-- **type the context window yourself**, Settings → Memory → Context. Automatic
-  compaction measures against the window the engine reports, and a gateway
-  reports none (`/props` is llama.cpp's own endpoint) — so without that number
-  the automatic trigger stays inactive and a long chat ends in the provider's
-  "context length exceeded" instead of a rolling summary. `/compact` works
-  either way. The same missing endpoint leaves the "Parallel sessions" hint
-  blank and the model-name caption empty unless you typed a name;
-- **the sampling settings are a llama.cpp set, and a gateway keeps only part of
-  it**: `temperature`, `top_p`, `top_k`, `min_p`, `max_tokens`, `seed`,
-  `frequency_penalty` and `presence_penalty` go through; dynamic temperature,
-  adaptive-p, typical-p, top-n-sigma, mirostat, DRY, XTC and the sampler order
-  are dropped on the way, silently. Mind `repeat_penalty` in particular — the
-  gateways spell that field `repetition_penalty`, so it looks set and does
-  nothing;
+- **the context window is taken from the endpoint's catalogue**, when it
+  publishes one. Automatic compaction measures against a window, and a gateway
+  serves no `/props` (that is llama.cpp's own endpoint) — so the app reads
+  `context_length` for the model you named from `GET /v1/models` instead, and the
+  trigger works without you doing anything. An endpoint that publishes no
+  catalogue still needs the number typed in, Settings → Memory → Context;
+  without a source the automatic trigger stays inactive and a long chat ends in
+  the provider's "context length exceeded" instead of a rolling summary
+  (`/compact` works either way). A typed number always wins over the catalogue.
+  The missing `/props` still leaves the "Parallel sessions" hint blank and the
+  model-name caption empty unless you typed a name;
+- **the sampling settings narrow to what that catalogue lists.** The set is
+  llama.cpp's, and a gateway takes part of it: `temperature`, `top_p`, `top_k`,
+  `min_p`, `max_tokens`, `seed`, `frequency_penalty` and `presence_penalty` go
+  through; dynamic temperature, adaptive-p, typical-p, top-n-sigma, mirostat,
+  DRY, XTC and the sampler order are dropped on the way. Where the endpoint says
+  which it takes, the settings screen and the assistant's own `set_sampling` stop
+  offering the rest, and a message's "what was applied" record stops naming them
+  — previously all three showed knobs that did nothing. `repeat_penalty` is the
+  one to know about: gateways spell that field `repetition_penalty`, and the app
+  now recognises the two as the same knob;
 - **"Parallel sessions" and "Parallel tool calls" default to 1** here, as for a
   local server. A gateway is a cloud in practice: raising both (4 is the cloud
   modes' default for tool calls) is what makes a reply's reads overlap.

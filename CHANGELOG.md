@@ -14,6 +14,19 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Added
+
+- **A gateway's own catalogue now configures the app.** Point `external` mode at a
+  service that publishes one (OpenRouter and the like) and two things stop being
+  your job: long chats are compacted automatically, measured against the window
+  the catalogue gives for the model you named — before, that number had to be
+  typed in or nothing was ever folded — and the sampling settings show only the
+  parameters that endpoint actually takes, instead of the full local-model set of
+  which it silently drops half. The same narrowing reaches the assistant's own
+  `set_sampling` and the per-message record of what was applied. A typed context
+  window still wins, and nothing changes against a local server, which publishes
+  no catalogue.
+
 ### Fixed
 
 - **Auto-titles, compaction and impersonation work on a gateway whose model always

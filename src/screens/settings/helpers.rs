@@ -6,21 +6,12 @@ use super::*;
 use crate::shared::config::WebProvider;
 // ---------- free functions ----------
 
-/// Whether a sampling parameter is in the subset accepted by a cloud provider.
-/// Gemini (strict OpenAI dialect, `restrict_to_strict`): temperature/top_p/
-/// penalties/seed/max_tokens. OpenAI — the same **without `temperature`/`top_p`**: only
-/// the GPT 5.4 family accepted them, and GPT 5.5/5.6 reject them. Anthropic (Claude):
-/// **only `max_tokens`** — the newest
-/// 4.x models "locked in" sampling and reject `temperature`/`top_p`/`top_k` as
-/// deprecated, so we don't send them (see `anthropic::wire`). Grok (xAI):
-/// `temperature`/`top_p`/`max_tokens`/`seed` — the penalties are a hard 400 and
-/// `top_k`/`min_p` aren't in xAI's schema at all. The rest — llama.cpp
-/// extensions and reasoning fields — the cloud doesn't accept. See ADR 0004.
-pub(super) fn cloud_supported_param(provider: CloudProvider, p: SamplingParam) -> bool {
-    // A single source of truth shared with the get_sampling/set_sampling tools — the set
-    // of fields the provider's engine accepts (mirrors the wire dialect).
-    crate::entities::sampling::supported_sampling_fields(Some(provider)).contains(&p.field_name())
-}
+// The sampling rows the screen offers come from
+// [`available_sampling_fields`](crate::entities::sampling::available_sampling_fields),
+// which is the one source for the mode's set *and* for the narrowing an
+// endpoint's own catalogue applies on top of it (docs/gateway-capabilities.md).
+// The per-provider predicate that used to live here was that function's first
+// half, and keeping a second spelling of it is how the two drift apart.
 
 // ---------- i18n keys for field descriptions (attached to rows at build time,
 // see `FieldRow::describe`) ----------

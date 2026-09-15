@@ -161,7 +161,7 @@ pub async fn run(deps: OrchestratorDeps) {
     // sub-decision S1): a background task asks `EngineBackend::context_budget`
     // and answers `(epoch, budget)`; the epoch is what lets the loop drop an
     // answer that belongs to an engine which has since been replaced.
-    let (budget_tx, mut budget_rx) = unbounded_channel::<(u64, Option<u32>)>();
+    let (budget_tx, mut budget_rx) = unbounded_channel::<(u64, compaction::EngineFacts)>();
     // The same shape for what the engine calls the model it is running
     // (docs/research/external-model-name.md §4): a background task asks
     // `EngineBackend::model_id` and answers `(epoch, name)`, and the epoch drops
@@ -198,7 +198,8 @@ pub async fn run(deps: OrchestratorDeps) {
     // it answers is addressed to the chat it was asked in (`handle_open_result`).
     let (open_tx, mut open_rx) = unbounded_channel::<OpenResult>();
     let registry = {
-        let mut reg = build_registry(&config, storage.json().sandbox_dir());
+        // Nothing is discovered yet at startup; the first landing rebuilds.
+        let mut reg = build_registry(&config, storage.json().sandbox_dir(), None);
         for tool in &extra_tools {
             reg.register(tool.clone());
         }
@@ -438,6 +439,7 @@ pub(super) const BACKGROUND_FAILURE_ALERT: u32 = 3;
 fn build_registry(
     config: &AppConfig,
     sandbox_dir: std::path::PathBuf,
+    endpoint_sampling_fields: Option<std::sync::Arc<[String]>>,
 ) -> crate::features::tools::ToolRegistry {
     crate::features::tools::standard_registry(&crate::features::tools::ToolConfig {
         python_mode: config.tools.python_mode,
@@ -466,6 +468,9 @@ fn build_registry(
         // The chat-engine mode determines the sampling parameters available in
         // get_sampling/set_sampling (schema + filtering). See ADR 0004.
         sampling_provider: config.engine.mode.cloud_provider(),
+        // Filled by the caller that has the orchestrator's discovery; a registry
+        // built without one simply narrows nothing.
+        sampling_endpoint: endpoint_sampling_fields,
     })
 }
 
@@ -634,7 +639,7 @@ struct Orchestrator {
     /// Channel for results of background history compression (spec §6.7).
     compact_tx: UnboundedSender<CompactResult>,
     /// Channel for the engine's answer about its context window: `(epoch, budget)`.
-    budget_tx: UnboundedSender<(u64, Option<u32>)>,
+    budget_tx: UnboundedSender<(u64, compaction::EngineFacts)>,
     /// What is known about the engine's context window — the budget the automatic
     /// compaction measures itself against.
     context: ContextDiscovery,
@@ -1494,7 +1499,14 @@ impl Orchestrator {
     /// The single rebuild path: any call site (a settings edit, an MCP event)
     /// must go through this, otherwise MCP tools would fall out of the registry.
     pub(super) fn rebuild_registry(&mut self) {
-        let mut reg = build_registry(&self.config, self.storage.json().sandbox_dir());
+        // The endpoint's published set is passed in rather than read inside:
+        // `build_registry` is a free function, and this is discovered state the
+        // orchestrator owns (docs/gateway-capabilities.md §3).
+        let mut reg = build_registry(
+            &self.config,
+            self.storage.json().sandbox_dir(),
+            self.endpoint_sampling_fields(),
+        );
         for tool in self.mcp.tools() {
             reg.register(tool);
         }
