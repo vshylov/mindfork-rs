@@ -171,8 +171,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-15, version 0.9.9)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3246 unit tests
-green, 181 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **3251 unit tests
+green, 184 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -184,6 +184,14 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **The thinking switch reaches a gateway** — a gateway never reads `thinking` (a
+  wrong type in it is a `200`), so "on" left Haiku 4.5 at 0 reasoning tokens and
+  "off" left Qwen 3.6 reasoning. Where the catalogue lists `reasoning`, a request
+  with no effort also carries `reasoning: {enabled}`; "off" only on a stated
+  `mandatory: false`, a zero budget reads as off, and the F2 recovery covers a
+  refused `enabled: false`. Default is "on", so such models now reason. Live **GO**
+  ([docs/gateway-thinking-switch.md](docs/gateway-thinking-switch.md), spec §8.1,
+  [docs/journal/engine.md](docs/journal/engine.md)).
 - **`/file open 1` — a bare number is the listed `#N`** — reported from a chat:
   `/file list` showed `#1`, and `/file open 1` was refused as "not attached". One
   resolver now reads a bare number as `#N` unless an item is called that, for `/file`,

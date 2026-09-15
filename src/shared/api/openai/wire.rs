@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::entities::sampling::ReasoningEffort;
+use crate::entities::sampling::{ReasoningEffort, SamplingConfig};
 use crate::shared::api::contract::{ApiMessage, ApiRole, ChatRequest};
 
 // The only consumer of this client is the local/external llama.cpp `llama-server`
@@ -96,6 +96,12 @@ pub struct ChatCompletionRequest {
     /// The "thoughts" budget (llama.cpp): `0` disables thinking. See [`SamplingConfig`].
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning_budget: Option<i64>,
+    /// A gateway's own reasoning switch (`reasoning: {enabled}`, OpenRouter's
+    /// spelling). Never set by [`build_chat_request`]: the client fills it from
+    /// [`gateway_reasoning`] for an endpoint whose catalogue lists `reasoning`,
+    /// because a gateway never reads `thinking` (docs/gateway-thinking-switch.md §2).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<WireReasoning>,
     /// Extra variables for the Jinja chat template (llama.cpp `chat_template_kwargs`).
     /// Used for `{"enable_thinking": false}` — different templates disable
     /// "thoughts" differently (built-in formats read `reasoning_budget`, many
@@ -400,12 +406,59 @@ pub fn build_chat_request(
             .filter(|r| !(omit_effort_none && *r == ReasoningEffort::None))
             .map(|r| r.as_wire()),
         reasoning_budget: s.reasoning_budget,
+        reasoning: None,
         chat_template_kwargs,
         continue_final_message: req.continue_final.then_some(true),
         add_generation_prompt: req.continue_final.then_some(false),
         tools,
         tool_choice,
     }
+}
+
+/// The body of a gateway's `reasoning` object — the switch alone; an effort keeps
+/// travelling as `reasoning_effort` (fork T3 of docs/gateway-thinking-switch.md).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct WireReasoning {
+    pub enabled: bool,
+}
+
+/// The settings' thinking switch in the gateway's own spelling, or `None` to send
+/// the request exactly as [`build_chat_request`] built it.
+///
+/// Measured through OpenRouter (docs/gateway-thinking-switch.md §2): `thinking` is
+/// never read there — a wrong type in it is a `200` — so "on" left Claude Haiku 4.5
+/// reasoning zero tokens on every route and "off" left Qwen 3.6 reasoning anyway,
+/// while `reasoning: {enabled}` moved both. Every condition below keeps a request
+/// that works today exactly as it is:
+///
+/// - the entry lists `reasoning` — silence is never a claim, and a llama.cpp's
+///   catalogue lists ids alone;
+/// - no effort is chosen — a `reasoning_effort` already reaches the gateway, and the
+///   silent turns' `"none"` is one;
+/// - a zero `reasoning_budget` is "off" whatever `thinking` says — the orchestrator
+///   mutes a turn that way (the empty-reply re-ask, the director's checkpoints), and
+///   the Responses and Anthropic wires read it the same;
+/// - "off" only where the entry says `mandatory: false` **explicitly**, and not once
+///   this server has refused a request to disable reasoning (`off_refused`): R1
+///   answers `enabled: false` with the same `400` it answers `"none"` with.
+pub fn gateway_reasoning(
+    sampling: &SamplingConfig,
+    entry: &ModelEntry,
+    off_refused: bool,
+) -> Option<WireReasoning> {
+    if sampling.reasoning_effort.is_some() || !entry.lists_parameter("reasoning") {
+        return None;
+    }
+    let on = match (sampling.reasoning_budget, sampling.thinking) {
+        (Some(0), _) => false,
+        (_, Some(on)) => on,
+        (_, None) => return None,
+    };
+    if on {
+        return Some(WireReasoning { enabled: true });
+    }
+    (entry.reasoning_mandatory() == Some(false) && !off_refused)
+        .then_some(WireReasoning { enabled: false })
 }
 
 // ---------- streaming response ----------
@@ -596,6 +649,27 @@ pub struct ModelEntry {
     /// [`ModelCapabilities`](crate::shared::api::contract::ModelCapabilities).
     #[serde(default)]
     pub supported_parameters: Option<Vec<String>>,
+    /// The endpoint's reasoning metadata for the model (OpenRouter:
+    /// `{"mandatory": …, "default_enabled": …}`). Kept as raw JSON and read by
+    /// [`Self::reasoning_mandatory`]: a gateway that spells this key another way
+    /// must not fail the whole list, which carries the window and the parameters.
+    #[serde(default)]
+    pub reasoning: Option<serde_json::Value>,
+}
+
+impl ModelEntry {
+    /// Whether `supported_parameters` names `name`. An absent list names nothing.
+    pub fn lists_parameter(&self, name: &str) -> bool {
+        self.supported_parameters
+            .as_ref()
+            .is_some_and(|p| p.iter().any(|x| x == name))
+    }
+
+    /// `reasoning.mandatory` when the entry states it as a boolean; `None` — the
+    /// catalogue did not say.
+    pub fn reasoning_mandatory(&self) -> Option<bool> {
+        self.reasoning.as_ref()?.get("mandatory")?.as_bool()
+    }
 }
 
 // ---------- embeddings ----------
@@ -1280,5 +1354,87 @@ mod continuation_tests {
         let plain = r#"{"choices":[],"usage":{"prompt_tokens":42,"completion_tokens":7,"total_tokens":49}}"#;
         let chunk: ChatCompletionChunk = serde_json::from_str(plain).unwrap();
         assert!(chunk.timings.is_none());
+    }
+}
+
+/// The settings' thinking switch in a gateway's own spelling
+/// (docs/gateway-thinking-switch.md) — see [`gateway_reasoning`].
+#[cfg(test)]
+mod gateway_reasoning_tests {
+    use super::*;
+
+    /// Forks T1 and T2 of docs/gateway-thinking-switch.md as one table — a row per
+    /// condition of [`gateway_reasoning`], so dropping any one of them turns its row
+    /// red. Columns: thinking, effort, budget, catalogue entry, refused before,
+    /// expected switch, and why. Held in one literal rather than as tuple rows, which
+    /// the duplication gate reads as sliding copies (lessons §2).
+    const SWITCH_CASES: &str = "
+        on    -     -  optional   no   on   | the switch on
+        off   -     -  optional   no   off  | the switch off
+        -     -     -  optional   no   -    | nothing asked
+        on    low   -  optional   no   -    | an effort already reaches the gateway
+        off   none  0  optional   no   -    | the silent turns' shape
+        on    -     0  optional   no   off  | a zero budget is off whatever thinking says
+        -     -     0  optional   no   off  | ...and with no switch set at all
+        off   -     -  mandatory  no   -    | a model that must reason is never asked off
+        off   -     -  unstated   no   -    | an unstated flag is silence
+        on    -     -  unstated   no   on   | ...while on needs no flag
+        on    -     -  unlisted   no   -    | a catalogue that does not list reasoning
+        off   -     -  optional   yes  -    | a refused off is not asked again
+        on    -     -  optional   yes  on   | ...and on is untouched by that refusal
+    ";
+
+    #[test]
+    fn the_thinking_switch_is_spelled_for_a_gateway_only_where_it_is_read() {
+        let entry = |kind: &str| -> ModelEntry {
+            serde_json::from_str(match kind {
+                "optional" => r#"{"id":"m","supported_parameters":["reasoning"],"reasoning":{"mandatory":false}}"#,
+                "mandatory" => r#"{"id":"m","supported_parameters":["reasoning"],"reasoning":{"mandatory":true}}"#,
+                "unstated" => r#"{"id":"m","supported_parameters":["reasoning"]}"#,
+                _ => r#"{"id":"m","supported_parameters":["temperature"],"reasoning":{"mandatory":false}}"#,
+            })
+            .unwrap()
+        };
+        let switch = |v: &str| match v {
+            "on" => Some(true),
+            "off" => Some(false),
+            _ => None,
+        };
+        let rows = SWITCH_CASES.lines().filter(|l| !l.trim().is_empty());
+        for row in rows {
+            let (columns, why) = row.split_once('|').unwrap();
+            let c: Vec<&str> = columns.split_whitespace().collect();
+            let sampling = SamplingConfig {
+                thinking: switch(c[0]),
+                reasoning_effort: match c[1] {
+                    "low" => Some(ReasoningEffort::Low),
+                    "none" => Some(ReasoningEffort::None),
+                    _ => None,
+                },
+                reasoning_budget: c[2].parse().ok(),
+                ..Default::default()
+            };
+            assert_eq!(
+                gateway_reasoning(&sampling, &entry(c[3]), c[4] == "yes"),
+                switch(c[5]).map(|enabled| WireReasoning { enabled }),
+                "{}",
+                why.trim()
+            );
+        }
+    }
+
+    /// The catalogue's `reasoning` key is read leniently: a gateway that spells it as
+    /// something other than an object must not cost the list it rides in — the window
+    /// and the parameters — and reads as "did not say".
+    #[test]
+    fn an_odd_reasoning_key_leaves_the_catalogue_readable() {
+        let list: ModelList = serde_json::from_str(
+            r#"{"data":[{"id":"a","context_length":8192,"reasoning":true},
+                        {"id":"b","reasoning":{"mandatory":"no"}}]}"#,
+        )
+        .unwrap();
+        assert_eq!(list.data[0].context_length, Some(8192));
+        assert_eq!(list.data[0].reasoning_mandatory(), None);
+        assert_eq!(list.data[1].reasoning_mandatory(), None);
     }
 }

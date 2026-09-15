@@ -1113,6 +1113,20 @@ cargo test tool_call_is_emitted_and_parsed                     -- --ignored --no
 cargo test simple_generation                                   -- --ignored --nocapture
 ```
 
+The settings' thinking switch reaches a gateway as its own `reasoning` field
+(docs/gateway-thinking-switch.md); its smokes each read a declared model, and
+fail rather than skip once one is declared:
+
+```powershell
+$env:MINDFORK_LIVE_SWITCH_ON_MODEL           = "anthropic/claude-haiku-4.5"  # reasons only when asked
+$env:MINDFORK_LIVE_SWITCH_OFF_MODEL          = "qwen/qwen3.6-27b"            # reasons by default
+$env:MINDFORK_LIVE_MANDATORY_REASONING_MODEL = "deepseek/deepseek-r1"        # must reason
+
+cargo test a_gateway_reasons_when_the_switch_is_on                 -- --ignored --nocapture
+cargo test a_gateway_stops_reasoning_when_the_switch_is_off        -- --ignored --nocapture
+cargo test the_switch_off_completes_on_an_endpoint_that_must_reason -- --ignored --nocapture
+```
+
 **Do not run the whole `--ignored` set against a paid gateway.** It is ~235
 smokes, 121 of them multi-round end-to-end conversations written for a local
 stack where a token costs nothing and a 20k-token ballast is free: against a

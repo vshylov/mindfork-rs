@@ -29,6 +29,14 @@ split by subsystem.
 
 ### Fixed
 
+- **The thinking switch works through a gateway.** In `external` mode against a
+  service that publishes a catalogue (OpenRouter and the like), turning thinking on
+  did nothing unless a reasoning effort was also chosen, and turning it off did not
+  stop a model that reasons by default — the gateway never read the field the app
+  sent. It now receives the switch in its own spelling. Thinking is on in the default
+  settings, so models there that reason only when asked (Claude Haiku 4.5, Sonnet 4.6,
+  Gemma 4) now **do** reason — and spend the tokens — unless you switch it off. A model
+  that must always reason is not asked to stop, and a local server is unchanged.
 - **`/file open 1` works.** The number `/file list` shows can now be typed with or
   without its `#` — in `/file open`, `/file remove` and `/image remove` — where before
   a bare `1` was refused as "not attached" and only the file's name worked. A number
