@@ -1,9 +1,15 @@
 # Track plan: through a gateway, a tool's image and `/continue` belong to the route
 
-**Status:** design. **M3 measured — GO for the app** (§1.1). The two items the
-OpenRouter review left as "worth knowing, not worth a blind change" (F6) are now
-measured, and both **harden into real limits** (§1.2, §1.3). Forks H1–H3 are
-**open** and need the user's call before any code.
+**Status:** design complete, **all forks decided** (the user, 2026-09-15).
+**M3 measured — GO for the app** (§1.1). The two items the OpenRouter review left
+as "worth knowing, not worth a blind change" (F6) are now measured, and both
+**harden into real limits** (§1.2, §1.3).
+
+- **H1 — (b), with H1.1 (i):** re-home a tool's images when the catalogue
+  answered, decided inside `OpenAiClient`.
+- **H2 — (b):** on a gateway `/continue` refuses, except the slugs whose direct
+  mode continues (Anthropic ≤ 4.5, Gemini).
+- **H3 — (ii):** H2 first, H1 second; F5 is measured beside H2.
 
 F6 of [openrouter-external.md](research/openrouter-external.md) §5 said of both
 halves that the answer lives one hop downstream — in the provider the gateway
