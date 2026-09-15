@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (17)
+## Entries (18)
 
 - Post-M9: loading/removing files in RAG via `/rag add|remove` commands (done)
 - Post-M9: smart RAG chunking (overlap + markdown) + stitching on retrieval (done)
@@ -29,6 +29,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: per-model input prefixes for embeddings (done)
 - Post-M9: `/reindex` rebuilds an attachment index that is missing entirely (done)
 - Post-M9: `/file remove` and `/image remove` refuse a name two items share (done)
+- Post-M9: `/file open 1` — a bare number is the listed `#N` (done)
 
 ### Post-M9: loading/removing files in RAG via `/rag add|remove` commands (done)
 - **Commands in the input box**: `/rag add <path>` indexes a file or directory into the
@@ -1300,3 +1301,65 @@ them for `/image remove` no longer does, so a quoted `#N` and a quoted image nam
 pinned now. Not a live run: nothing here reaches the
 engine, memory or a tool — the commands are the orchestrator's own, and its tests drive
 them whole. Unit: 3072 green, 159 ignored (3067 / 159 before).
+
+### Post-M9: `/file open 1` — a bare number is the listed `#N` (done)
+
+**What.** Reported from a live chat on 2026-09-15 (v0.9.9, `ru`): `/file list` printed
+`• #1 chart.png — 13.1 KB, image/png` and `#2 tool-image-1.png`, and `/file open 1`,
+`/file open 2` and `/file remove 1` were each refused with only "«1» is not attached to
+the chat", while `/file open chart.png` worked. The user's summary: you have to type the
+name. `entities::attachment::resolve_handle` read a number only behind `#`; a bare `1` fell
+through to the names and matched nothing — and the refusal described a *name*, so nothing
+in it said the number wanted its `#` (lessons §4). The self-model's own resolver already
+took its handle with or without the `#`. Branch `fix/file-handle-bare-number`.
+
+**The rule.** A bare all-digit target is `#N` **only when no item answers to it as a
+name**: a file really called `1` stays reachable by that name, and `#N` is still never read
+as a name, so each spelling keeps one way to reach anything the other would shadow. One
+core, `resolve_handle_by`, takes the name-first order and a `numbered` lookup — a position
+for `/file` and `/image remove`, the carried handle for a turn's list — so the two `#`
+parsers that existed (`resolve_handle` and `chat_inputs::resolve`) are one now. "All digits"
+is ASCII digits and nothing else: `+1` parses as a `usize` and is not a number here.
+
+**The model's `files` takes the same rule, and is not told about it.** The fork was whether
+`python_exec`'s `files: ["2"]` should resolve or refuse. It resolves: the user and the model
+name *one* list (spec §9.7), and a resolver that answered `/file open 2` and refused
+`files: ["2"]` would be two rules over it. The risk that remains for the model is none the
+user does not share — a name wins, and the confirmation popup states the resolved names.
+The prompts still teach `#N` (`#2`, `#3`) and are unchanged: they are the measured text,
+and leniency on input needs no advertising.
+
+**The refusals close the door.** A miss is now answered by what was typed: a number with
+the numbers there are (`this chat has no file #3 — its files are #1–#2, as /file list
+shows`), a name with the listing (`/file list shows their names and numbers`), and a chat
+with no files with `/file attach`. `/image remove` answers a missing number with the staged
+range the same way (a new key; its name refusal already named `/image list`). The usage
+lines, the help overlay and README keep `<name|#N>`: `#N` is the form the listings print,
+and the bare number is the typo it now forgives, stated in spec §9.7.
+
+**Folded in, same seam.** `python_exec`'s refusal of a shared name listed its candidates as
+`#{position + 1}`, while inside a turn the handle is carried and outlives its position
+(fork F12): after an item left mid-turn it offered `#3 notes.md` where `#3` was the
+screenshot. It prints the carried handle now, tested with exactly that turn.
+
+**Seen in the same run, no change.** After `/file remove chart.png` the remaining item
+became `#1`: the listing's numbers are positions of a freshly built list, by design, so a
+number read before a removal can miss — which is why the number refusal states the range.
+And `/file open #2` on `tool-image-1.png` — the image `python_exec` handed back to the model
+— refused as "not a file on this machine", correctly (its source is not a path), without
+pointing at `chart.png` (`#1`), the stored copy holding the same bytes. Saying so would
+need the image to know which stored file it came from; a refusal that guessed would name a
+route that may not exist, so it stays a candidate for the file exchange's own track.
+
+**Tests.** The resolver: a bare number reaches its item, quoted too; a file called `3` wins
+over `#3`'s position while `#3` still reaches the third; `0`, out of range, `+1`, `1.5` and
+an overflowing number reach nothing; `handle_number` and `handle_range`. The turn's list:
+a bare number reaches the carried handle, and the handle of an item that left misses.
+`/image` resolution by a bare number. `python_exec`: `files: ["2"]` stages `#2`, and the
+shared-name refusal after a mid-turn departure names `#4`/`#5`, never `#3`. Through the
+orchestrator, the reported sequence: `/file open 1` plans `chart.png`, `3` is refused
+naming `#3` and `#1–#2`, `/file remove 1` removes, `#2` after the renumbering is refused
+with `#1` alone, and the emptied chat points at `/file attach`; `/image remove 5` names the
+staged range and `2` unstages the second. Not a live run: this is the command path and a
+tool's argument resolution — nothing reaches the engine, memory or a model, and the
+orchestrator's and the tool's tests drive both whole. Unit: 3246 green, 181 ignored (3240 / 181 before).

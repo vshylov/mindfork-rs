@@ -22,8 +22,8 @@ use uuid::Uuid;
 
 use crate::app::events::AppEvent;
 use crate::entities::attachment::{
-    AttachMode, Attachment, AttachmentChunk, Resolved, decide_mode, inline_tokens_excluding,
-    name_is_shared, prompt_tokens,
+    AttachMode, Attachment, AttachmentChunk, Resolved, decide_mode, handle_number, handle_range,
+    inline_tokens_excluding, name_is_shared, prompt_tokens,
 };
 use crate::entities::chat_file::{ChatFile, FileOrigin};
 use crate::features::file_command::{FileProgress, OpenedInstead, StoredInfo};
@@ -706,7 +706,18 @@ impl Orchestrator {
                 None
             }
             Resolved::Nothing => {
-                let msg = loc.tf("ui.err.file_not_attached", &[("target", target.trim())]);
+                // A number is answered with the numbers there are, and an empty chat with
+                // how to add a file: "not attached" describes a name, and after a removal
+                // renumbers the list a number the user remembers is the likelier miss.
+                let target = target.trim();
+                let msg = match (items.len(), handle_number(target)) {
+                    (0, _) => loc.tf("ui.err.file_none_in_chat", &[("target", target)]),
+                    (count, Some(n)) => loc.tf(
+                        "ui.err.file_no_such_number",
+                        &[("n", &n.to_string()), ("range", &handle_range(count))],
+                    ),
+                    (_, None) => loc.tf("ui.err.file_not_attached", &[("target", target)]),
+                };
                 self.fail_file(&msg);
                 None
             }

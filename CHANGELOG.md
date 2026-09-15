@@ -29,6 +29,11 @@ split by subsystem.
 
 ### Fixed
 
+- **`/file open 1` works.** The number `/file list` shows can now be typed with or
+  without its `#` — in `/file open`, `/file remove` and `/image remove` — where before
+  a bare `1` was refused as "not attached" and only the file's name worked. A number
+  no file has is answered with the numbers there are, and a file actually named `1`
+  is still reached by that name.
 - **A chart or screenshot from a tool reaches the model through a gateway.** On
   OpenRouter and similar services some providers refused a request whose tool
   result carried a picture, and some quietly dropped the picture — after which

@@ -1195,7 +1195,13 @@ across its readers.
   `/file list` shows the path on every line whose name another line shares, as the
   removal note does for such a file
   ([docs/research/remove-by-shared-name.md](docs/research/remove-by-shared-name.md)).
-  The same handle and the same refusals serve `/file open`.
+  The same handle and the same refusals serve `/file open`. A bare number is read as
+  `#N` — `/file open 1` is `/file open #1` — unless an item is called that, since a name
+  that exists always wins, while `#N` is never read as a name; the model's `files`
+  follows the same rule, because it names the same list. A number no item carries is
+  refused with the numbers there are (`#1–#3`), and a chat with no files with
+  `/file attach`. The listing's numbers are positions, so a removal renumbers what
+  follows it, and `/file list` is where a number is read again.
 - **Opening one in the system** (fork F9 of
   [docs/history/sandbox-file-exchange.md](docs/history/sandbox-file-exchange.md)): `/file open <name|#N>`
   hands a file to the desktop's handler — a stored file and an attached document's kept
@@ -1475,7 +1481,8 @@ append-only shape keeps the prefix cache intact across an image turn
 
 - **Commands**: `/image attach <path|url>`, `/image paste`,
   `/image remove <name|#N>`, `/image list` — the same surface and the same `#N`
-  addressing as `/file`, so what `/image list` numbers is what `remove` accepts.
+  addressing as `/file` (a bare number included, §9.7), so what `/image list` numbers is
+  what `remove` accepts.
   As everywhere, the removal verb is only `remove`, never `delete`. A name two
   staged images share unstages neither, and both are told apart by their source
   exactly as `/file` does it (§9.7).

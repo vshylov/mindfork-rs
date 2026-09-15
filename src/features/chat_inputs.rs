@@ -22,7 +22,7 @@
 
 use std::path::Path;
 
-use crate::entities::attachment::{Attachment, Resolved, resolve_handle};
+use crate::entities::attachment::{Attachment, Resolved, resolve_handle_by};
 use crate::entities::chat_file::{ChatFile, mime_for, sanitize_name, versioned};
 use crate::entities::message_image::MessageImage;
 
@@ -201,18 +201,13 @@ fn derive(
 ///
 /// `#N` is matched against the handle the model was **given**, never against the position:
 /// inside a turn the two part company (see [`reconcile`]), and a number for an item that
-/// has left has to miss rather than land on whoever took its place.
+/// has left has to miss rather than land on whoever took its place. A bare `N` is `#N` when
+/// no item is called that — for the user's commands and the model's `files` alike, since
+/// both name one list ([`resolve_handle_by`]).
 pub fn resolve(items: &[ChatInput], target: &str) -> Resolved {
-    let target = target.trim().trim_matches(|c| c == '"' || c == '\'').trim();
-    if let Some(digits) = target.strip_prefix('#')
-        && let Ok(n) = digits.trim().parse::<usize>()
-    {
-        return match items.iter().position(|i| i.handle == n) {
-            Some(at) => Resolved::One(at),
-            None => Resolved::Nothing,
-        };
-    }
-    resolve_handle(items, target, ChatInput::matches)
+    resolve_handle_by(items, target, ChatInput::matches, |n| {
+        items.iter().position(|i| i.handle == n)
+    })
 }
 
 /// The path a handle means on disk, for `/file open` (fork F9, §13 U2). Pure — the caller
@@ -642,6 +637,33 @@ mod tests {
         assert_eq!(resolve(&list, "nothing.csv"), Resolved::Nothing);
         // The staged name is not a handle: `#2` and the path are what reach the second one.
         assert_eq!(resolve(&list, "notes (2).md"), Resolved::Nothing);
+    }
+
+    /// A bare number is read as the handle the turn carries, exactly as `#N` is — not as a
+    /// position, which parts company with the handle once an item leaves mid-turn.
+    #[test]
+    fn a_bare_number_reaches_the_carried_handle_not_the_position() {
+        let before = items(
+            &[
+                attached("gone.csv", "C:\\gone.csv"),
+                attached("notes.md", "C:\\notes.md"),
+            ],
+            &[],
+            &[],
+            dir(),
+        );
+        let now = [
+            attached("notes.md", "C:\\notes.md"),
+            attached("new.csv", "C:\\new.csv"),
+        ];
+        // Same ids for what stayed, as the live chat keeps them.
+        let mut now = now.to_vec();
+        now[0].id = before[1].id;
+        let after = reconcile(&before, &now, &[], &[], dir());
+        assert_eq!(after[0].handle, 2);
+        assert_eq!(resolve(&after, "2"), Resolved::One(0));
+        assert_eq!(resolve(&after, "3"), Resolved::One(1));
+        assert_eq!(resolve(&after, "1"), Resolved::Nothing, "#1 left the chat");
     }
 
     /// The popup answers the cap with the predicate the refusal uses, over the same distinct

@@ -23,7 +23,7 @@ use base64::Engine as _;
 use uuid::Uuid;
 
 use crate::app::events::AppEvent;
-use crate::entities::attachment::{Resolved, name_is_shared};
+use crate::entities::attachment::{Resolved, handle_number, handle_range, name_is_shared};
 use crate::entities::message_image::{MessageImage, infos, resolve_target};
 use crate::features::image_command::ImageProgress;
 use crate::features::image_fetch::{self, FetchError, FetchedImage};
@@ -289,7 +289,16 @@ impl Orchestrator {
                 // The message says what `remove` can and cannot reach: an image already
                 // sent is part of the conversation, and pretending otherwise sends the
                 // user hunting for a command that does not exist.
-                let msg = loc.tf("ui.err.image_not_staged", &[("target", target.trim())]);
+                let msg = match handle_number(&target).filter(|_| !staged.is_empty()) {
+                    Some(n) => loc.tf(
+                        "ui.err.image_no_such_number",
+                        &[
+                            ("n", &n.to_string()),
+                            ("range", &handle_range(staged.len())),
+                        ],
+                    ),
+                    None => loc.tf("ui.err.image_not_staged", &[("target", target.trim())]),
+                };
                 self.fail_image(&msg);
                 return;
             }
