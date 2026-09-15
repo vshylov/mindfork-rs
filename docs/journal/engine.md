@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (66)
+## Entries (67)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -78,6 +78,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: through a gateway, a tool's image and `/continue` belong to the route — M3 measured (done)
 - Post-M9: `/continue` follows the route table through a gateway — and F5 closes on a measurement (done)
 - Post-M9: a tool's images reach the model through a gateway — re-homed into a user message (done)
+- Post-M9: the thinking switch reaches a gateway in its own field (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -4325,3 +4326,78 @@ Gemma 4, Qwen 3.6, gpt-4.1-mini and Haiku 4.5; and on the LAN `llama-server`
 answered), H2 (refuse `/continue` on a gateway except the slugs whose direct mode
 continues) and H3 (scope) wait on the user. **Documentation only; no code
 changed** — tests untouched (3232 / 179 on the tracked count).
+
+### Post-M9: the thinking switch reaches a gateway in its own field (done)
+
+Found beside F5 ([gateway-images-and-continue.md](../gateway-images-and-continue.md)
+§9): through OpenRouter the settings' thinking switch did nothing. The
+OpenAI-compatible wire sends it as a top-level `thinking` — a llama.cpp field — and
+`reasoning_effort` only when an effort is chosen. Plan, table and forks:
+[gateway-thinking-switch.md](../gateway-thinking-switch.md).
+
+**Measured before building**, one raw streamed request per shape, the body the
+client builds for a tool turn with only the reasoning fields varied, reading
+`usage.completion_tokens_details.reasoning_tokens`. It was wider than the F5 note:
+"on" alone gave Claude Haiku 4.5 **0** reasoning tokens (on the default route and
+pinned to Bedrock, Anthropic and Vertex) against 66–81 with `reasoning: {enabled:
+true}`; "off" alone left Qwen 3.6 reasoning **100** tokens against 0 with `enabled:
+false`. The lessons §3 wrong-type probe settled why: `thinking: "banana"` is a `200`
+on both, `reasoning.enabled: "banana"` a `400`. The trap sat on the third model:
+DeepSeek R1 answers `enabled: false` with the very `400 "Reasoning is mandatory…"`
+the F2 memo recognises — but the memo fired only for `reasoning_effort: "none"`, so
+mapping "off" naively would have failed ordinary chat turns there. The catalogue
+turned out to carry a per-model `reasoning` object — 314 of 446 models, `mandatory`
+always, 103 of them `true` — which is the positive signal that guard needed.
+
+**Decided with the user, 2026-09-15**: T1(a) — "on" with no effort sends
+`reasoning: {enabled: true}`; T2(ii) — "off" too, only where the entry states
+`mandatory: false`, with the F2 recovery widened to a refused `enabled: false`;
+T3(a) — a request with an effort goes out as before.
+
+**What reading the call sites added**, after the forks: the orchestrator mutes some
+turns with `reasoning_budget: 0` alone while the user's `thinking: true` stays — the
+empty-reply re-ask, the director's checkpoints, `fetch_url`'s page summary — so a
+rule reading `thinking` would have sent `enabled: true` on exactly those. A zero
+budget is "off" now, as the Responses and Anthropic wires already read it. And
+`AppConfig`'s default is `thinking: Some(true)`: gateway models that reason only when
+asked now reason on an untouched configuration, which the CHANGELOG says in so many
+words.
+
+**Code**: `wire::gateway_reasoning` holds the whole rule as a pure function;
+`ChatCompletionRequest.reasoning` is never set by `build_chat_request`, so every body
+that does not pass the client's catalogue step is unchanged by construction.
+`ModelEntry` keeps the `reasoning` key as raw JSON behind `lists_parameter` and
+`reasoning_mandatory`, so an odd spelling cannot fail the list that carries the
+window and the parameters. `OpenAiClient::reasoning_switch` consults the memoised
+catalogue only for a turn that could gain the field; `should_stop_asking` counts a
+sent `enabled: false`; the retry recomputes the switch under the memo, which drops
+"off" and keeps "on".
+
+**Tests**: 3251 green, 184 ignored (3246 / 181 before). Five unit tests — a 13-row
+table over `gateway_reasoning`, held in one literal against the duplication gate
+(lessons §2); the lenient `reasoning` key; the body per model kind through the
+client; a llama.cpp-shaped catalogue giving the byte-identical body, and a switchless
+turn not asking the catalogue at all; a refused "off" answered, remembered, and "on"
+untouched by it. **Ten mutations, all caught**, each by a named failing test: the
+effort guard, the `reasoning` listing, the zero budget, an unstated `mandatory` read
+as optional, the memo ignored for "off", the flag never read, the recovery ignoring a
+refused `enabled: false`, the retry keeping the refused switch, a switchless turn
+asking the catalogue, the field never put on the body. The harness validated every
+replacement before writing and restored the files byte-identical — and counts a
+mutation caught only when a test *fails*, not when `cargo` exits non-zero: written
+the first way, a run overlapping the live smoke would have failed to relink the
+locked test binary on Windows and reported ten catches for nothing (lessons §2, a
+gate that passes for the wrong reason).
+
+**Live — GO**, 2026-09-15, through the client. OpenRouter:
+`a_gateway_reasons_when_the_switch_is_on` on Haiku 4.5 — 53 reasoning tokens (0
+before), and **red** at 0 with the "on" branch mutated to withhold the field, so the
+smoke can fail; `a_gateway_stops_reasoning_when_the_switch_is_off` on Qwen 3.6 — 0
+(100 before; with its reasoning really off it answered the "32 years before 2024"
+question with *Atlanta, 1996*); `the_switch_off_completes_on_an_endpoint_that_must_reason`
+on R1 — completes, no `400`, 239 reasoning tokens. The local half: the LAN stack was
+unreachable, so the CPU `llama-server` build with `gemma-4-12b-it-qat-q4_0` ran
+`a_gateway_streams_thoughts_under_its_own_field_name` with the model named — the turn
+asked the catalogue, got ids alone, and streamed thoughts through
+`reasoning_content` to `Stop` as **one** task in the server log (166 s). The probes
+cost cents.

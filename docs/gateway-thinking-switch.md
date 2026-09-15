@@ -1,7 +1,7 @@
 # Track plan: the thinking switch reaches a gateway
 
 **Status:** forks **decided** by the user, 2026-09-15 — all three at the
-recommendation; implementation in progress.
+recommendation; **implemented** (§6) and **L1–L4 measured GO** (§7).
 
 - **T1 — (a):** "on" with no effort sends `reasoning: {enabled: true}`.
 - **T2 — (ii):** "off" too, behind both guards — the catalogue's explicit
@@ -205,3 +205,23 @@ One behaviour, in the client that owns this wire:
   sent `enabled: false` as asking to mute, beside `reasoning_effort: "none"`. The
   retry recomputes the switch under the memo, which drops an "off" and keeps an
   "on" — one memo, `reasoning_off_refused`, silences both spellings of "off".
+
+## 7. What the live run measured — 2026-09-15
+
+Through the client, named smokes only (install.md §7.1):
+
+| | smoke | model | result |
+|---|---|---|---|
+| **L1** | `a_gateway_reasons_when_the_switch_is_on` | `anthropic/claude-haiku-4.5` | **GO** — 53 reasoning tokens, finish `Stop` (0 before) |
+| L1, mutated | the same, with `gateway_reasoning`'s "on" returning `None` | the same | **red**, as it must be — `reasoning_tokens=0`, "was asked to reason and reported no reasoning tokens" |
+| **L2** | `a_gateway_stops_reasoning_when_the_switch_is_off` | `qwen/qwen3.6-27b` | **GO** — 0 reasoning tokens (100 before) |
+| **L3** | `the_switch_off_completes_on_an_endpoint_that_must_reason` | `deepseek/deepseek-r1` | **GO** — completes, no `400`; 239 reasoning tokens, as a model that must reason spends |
+| **L4** | `a_gateway_streams_thoughts_under_its_own_field_name`, model named | local CPU `llama-server`, `gemma-4-12b-it-qat-q4_0` | **GO** — thoughts through `reasoning_content`, finish `Stop`, **one** task in the server log; the catalogue answered with ids alone, so the body was the one it always was |
+
+L2's reply is worth a line: asked which city hosted the Olympics 32 years before
+2024, Qwen 3.6 with reasoning genuinely off answered *Atlanta, 1996*. Nothing is
+wrong with the smoke — it asserts the reasoning count, not the arithmetic — and it
+is the switch doing what the user asked of it.
+
+L4 ran on the CPU build because the LAN stack was unreachable; the claim it carries
+is the wire's, not the model's, so a 12B model is enough.
