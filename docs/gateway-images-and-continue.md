@@ -332,13 +332,15 @@ Nothing above is built yet; this is the gate each stage owes before its PR.
   `refresh_engine_facts` replaces the bare invalidation at both sites (settings
   applied, readiness flipped).
 
-**Tests** — three unit tests: the route table (including the `:batch` trap, an
+**Tests** — four unit tests: the route table (including the `:batch` trap, an
 alias, a router, a vendorless id, and the silence case); the gate on a bare
 orchestrator (the gateway note for a restarting family, `true` again once the
-catalogue is forgotten, a turn started for Claude ≤ 4.5); and the whole route on a
+catalogue is forgotten, a turn started for Claude ≤ 4.5); the whole route on a
 running orchestrator, where the catalogue must land **before any turn**, a
 length-cut reply is announced as not continuable, and the command refuses with the
-gateway note. One `#[ignore]` smoke, `continue_through_a_gateway_live`, declared by
+gateway note; and the readiness flip's own re-ask (`handle_chat_status`, extracted
+from the loop's arm so the order it keeps can be tested where it lives). Eight
+mutations, all caught. One `#[ignore]` smoke, `continue_through_a_gateway_live`, declared by
 `MINDFORK_LIVE_CONTINUE_EXPECT`.
 
 **Live — GO on the three stacks §5 names** (2026-09-15): through OpenRouter,

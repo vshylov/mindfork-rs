@@ -171,7 +171,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-15, version 0.9.9)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3235 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **3236 unit tests
 green, 180 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 

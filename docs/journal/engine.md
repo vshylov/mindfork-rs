@@ -4228,9 +4228,17 @@ in every arm), so building it would add the one failure the current wire cannot
 hit. Found beside it and filed separately: `thinking: true` alone enables
 reasoning at no route; only `reasoning_effort` does.
 
-**Tests**: 3235 green, 180 ignored (3232 / 179 before) on the tracked count. Three
+**Tests**: 3236 green, 180 ignored (3232 / 179 before) on the tracked count. Four
 new unit tests (the route table, the gate on a bare orchestrator, the whole route
-on a running one, where the catalogue must land before any turn) and one smoke.
+on a running one, where the catalogue must land before any turn, and the readiness
+flip's re-ask) and one smoke. **Mutation-tested**: eight mutations — the gateway
+arm, the `:variant` strip, Gemini's row, the lazy re-ask at each of its two sites,
+the gate ignoring the catalogue, the note never chosen, `Finished.continuable`
+ignoring the turn's answer. The first run left the readiness-flip site surviving:
+the fixtures learn the catalogue at settings apply and never flip, so the loop arm
+became `handle_chat_status` and got a test of its own — which then "survived" once
+more, because the mutation script's test filter did not name it. Read twice, that
+survivor indicted the instrument; with the filter fixed every mutation is caught.
 
 **Live — GO on all three declared stacks**, 2026-09-15, one smoke
 (`continue_through_a_gateway_live`) through the app's own orchestrator:
