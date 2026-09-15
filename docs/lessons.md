@@ -233,8 +233,19 @@ failing.** The orchestrator's `wait_for` helper blocks until the event channel
 *closes*, so removing the code under test made a run sit past ten minutes; wrapped in
 a five-second `timeout` it fails immediately and says what it was waiting for. In CI a
 hang reads as broken infrastructure rather than a broken promise, which is the worse
-of the two failure modes.
-— *engine failures stop being silent*.
+of the two failure modes. **Recorded twice**: two client tests joined a scripted stub's
+thread with a bare `join()`, and the first mutation that changed the order of requests
+left the stub waiting for a connection that never came — the mutation run sat for
+sixteen minutes at zero CPU and looked, from outside, like a stuck task. The obvious
+repair was wrong too, and the next run said so: a `tokio::time::timeout` around
+`spawn_blocking(join)` makes the test *panic* on time, and then the runtime's shutdown
+waits for that blocking task, which is still running — the §1 entry on runtime drop,
+met from the other side — so the run hung past its cap exactly as before. Bound the
+**thread itself**: the stub accepts under a deadline and returns what it saw, and a
+plain `join` then fails on the missing request. Give a mutation harness its own
+wall-clock cap as well, so a hang is reported as a finding rather than waited out.
+— *engine failures stop being silent*, *a tool's images reach the model through a
+gateway*.
 
 **On a path built to degrade gracefully, `is_ok()` can never be the assertion.** A test
 asserted `is_ok()` on a tool that turns an index failure into a normal answer, so
@@ -414,8 +425,15 @@ following. It is **Windows-only in practice** — closing a socket with unread b
 RST there rather than FIN, and a reset is a hard error where a FIN is just a stale pooled
 connection the client silently reopens. Two redirect tests were green locally and on
 Linux and red on the Windows runner; neither machine reproduces the other, so the CI run
-is the instrument.
-— *images in a message — attach by URL*.
+is the instrument. **Recorded twice, and the second time not Windows-only**: the
+`scripted_server` stub behind the reasoning-refusal tests had lacked the header since it
+was written, and stayed green while each test sent its requests back to back; a new test
+put a catalogue `GET` in front of the turn, and the next CI run reset the pooled socket on
+both runners (`10054` on Windows, `104` on Linux), failing the new tests *and* two old ones
+that had never changed. A stub that answers once per connection says so in every
+response — check the other stubs in the file when you add one.
+— *images in a message — attach by URL*, *a tool's images reach the model through a
+gateway*.
 
 **A slow test is usually paying a real cost, not misbehaving.** A "probe a dead port"
 test ran **63 s**: a connect to a closed local port costs ~2.0 s on Windows (SYN retry)

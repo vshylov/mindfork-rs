@@ -29,6 +29,13 @@ split by subsystem.
 
 ### Fixed
 
+- **A chart or screenshot from a tool reaches the model through a gateway.** On
+  OpenRouter and similar services some providers refused a request whose tool
+  result carried a picture, and some quietly dropped the picture — after which
+  the model described an image it had never seen. Where the app is talking to a
+  gateway, a tool's pictures now travel in a message of their own right after the
+  tool's result, which every provider measured reads. A local server is sent
+  exactly what it was before.
 - **`/continue` no longer corrupts a reply through a gateway.** Through OpenRouter
   and similar services most models do not resume a partial reply — they start the
   answer over — and the app stored that new answer glued onto the old fragment

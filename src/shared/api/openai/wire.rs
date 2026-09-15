@@ -193,6 +193,50 @@ fn wire_content(m: &ApiMessage) -> WireContent {
     WireContent::Parts(parts)
 }
 
+/// Whether any tool result in the conversation carries an image — the only requests
+/// [`rehome_tool_images`] has anything to do for.
+pub fn carries_tool_images(messages: &[ApiMessage]) -> bool {
+    messages
+        .iter()
+        .any(|m| m.role == ApiRole::Tool && !m.images.is_empty())
+}
+
+/// The conversation with every tool result's images **re-homed**: each `role:"tool"`
+/// message goes out text-only, and the images a run of tool results carried follow it
+/// in one `user` message, in call order, each behind the label it already has — the
+/// file name the tool's own result names. `None` when no tool result carries an
+/// image, so the caller sends the request exactly as it was.
+///
+/// Why: a tool message's content is text in the OpenAI spec's letter, and through a
+/// gateway the routed provider decides what an image there means — measured, 20 of 29
+/// route-and-model pairs saw it, 6 refused the request and 3 answered about a picture
+/// they never received, while in a `user` message all 28 that answered saw it
+/// (docs/gateway-images-and-continue.md §1.2, fork H1). It is the fallback Gemini's
+/// builder already takes (docs/research/mcp-tool-images.md F1-A). **One** message per
+/// run rather than one per result, because a round's tool messages must follow its
+/// `tool_calls` contiguously.
+pub fn rehome_tool_images(messages: &[ApiMessage]) -> Option<Vec<ApiMessage>> {
+    if !carries_tool_images(messages) {
+        return None;
+    }
+    let mut out = Vec::with_capacity(messages.len() + 1);
+    let mut moved: Vec<crate::shared::api::ApiImage> = Vec::new();
+    for m in messages {
+        if m.role != ApiRole::Tool && !moved.is_empty() {
+            out.push(ApiMessage::user("").with_images(std::mem::take(&mut moved)));
+        }
+        let mut m = m.clone();
+        if m.role == ApiRole::Tool {
+            moved.append(&mut m.images);
+        }
+        out.push(m);
+    }
+    if !moved.is_empty() {
+        out.push(ApiMessage::user("").with_images(moved));
+    }
+    Some(out)
+}
+
 /// The OpenAI wrapper for a tool schema (`{type:"function", function:{...}}`).
 #[derive(Debug, Serialize)]
 pub struct WireTool {
@@ -539,7 +583,7 @@ pub struct ModelList {
     pub data: Vec<ModelEntry>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ModelEntry {
     #[serde(default)]
     pub id: String,
@@ -773,6 +817,88 @@ mod tests {
         let parts = json["messages"][0]["content"].as_array().unwrap();
         assert_eq!(parts.len(), 1);
         assert_eq!(parts[0]["image_url"]["url"], "data:image/jpeg;base64,QQ==");
+    }
+
+    /// Fork H1 (docs/gateway-images-and-continue.md): a round's tool results go out
+    /// text-only and their images follow in **one** user message after the whole run
+    /// — never between two tool messages, which must stay contiguous after the
+    /// `tool_calls` — in call order and behind their own labels; a later run gets a
+    /// message of its own, and everything else is untouched.
+    #[test]
+    fn a_rounds_tool_images_are_re_homed_after_the_run() {
+        let call = |id: &str| crate::shared::api::ApiToolCall {
+            id: id.into(),
+            name: "screenshot".into(),
+            arguments: "{}".into(),
+            thought_signature: None,
+        };
+        let messages = vec![
+            ApiMessage::user("look"),
+            ApiMessage::assistant_tool_calls("", vec![call("a"), call("b")]),
+            ApiMessage::tool("a", "first").with_images(vec![image("image/png", "AAA", Some("#1"))]),
+            ApiMessage::tool("b", "second").with_images(vec![image(
+                "image/png",
+                "BBB",
+                Some("#2"),
+            )]),
+            ApiMessage::assistant_tool_calls("", vec![call("c")]),
+            ApiMessage::tool("c", "third").with_images(vec![image(
+                "image/jpeg",
+                "CCC",
+                Some("#3"),
+            )]),
+        ];
+        let out = rehome_tool_images(&messages).expect("tool results carry images");
+        let roles: Vec<ApiRole> = out.iter().map(|m| m.role).collect();
+        use ApiRole::{Assistant, Tool, User};
+        assert_eq!(
+            roles,
+            [User, Assistant, Tool, Tool, User, Assistant, Tool, User],
+            "one user message after each run of tool results"
+        );
+        assert!(
+            out.iter()
+                .filter(|m| m.role == Tool)
+                .all(|m| m.images.is_empty()),
+            "every tool result goes out text-only"
+        );
+        assert_eq!(out[2].content, "first");
+        assert_eq!(out[3].content, "second");
+        let labels = |m: &ApiMessage| -> Vec<Option<String>> {
+            m.images.iter().map(|i| i.label.clone()).collect()
+        };
+        assert_eq!(labels(&out[4]), [Some("#1".into()), Some("#2".into())]);
+        assert!(out[4].content.is_empty());
+        assert_eq!(labels(&out[7]), [Some("#3".into())]);
+
+        // On the wire the moved images are an ordinary user image message, and the
+        // tool results are the bare strings a text-only result always was.
+        let req = ChatRequest {
+            continue_final: false,
+            system: None,
+            messages: out,
+            sampling: SamplingConfig::default(),
+            tools: vec![],
+        };
+        let json = serde_json::to_value(build_chat_request(&req, true, None, false)).unwrap();
+        assert!(json["messages"][2]["content"].is_string());
+        assert!(json["messages"][3]["content"].is_string());
+        let parts = json["messages"][4]["content"].as_array().unwrap();
+        assert_eq!(parts.len(), 4, "label, image, label, image: {parts:?}");
+        assert_eq!(parts[1]["image_url"]["url"], "data:image/png;base64,AAA");
+        assert_eq!(parts[3]["image_url"]["url"], "data:image/png;base64,BBB");
+    }
+
+    /// Nothing to move is nothing to do: without a tool image the caller must send
+    /// the conversation it has, not a copy — a user's own image stays where it is.
+    #[test]
+    fn a_conversation_without_tool_images_is_not_re_homed() {
+        let messages = vec![
+            ApiMessage::user("what is this?").with_images(vec![image("image/png", "AAA", None)]),
+            ApiMessage::tool("a", "42"),
+        ];
+        assert!(!carries_tool_images(&messages));
+        assert!(rehome_tool_images(&messages).is_none());
     }
 
     #[test]
