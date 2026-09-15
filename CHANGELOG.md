@@ -29,6 +29,14 @@ split by subsystem.
 
 ### Fixed
 
+- **`/continue` no longer corrupts a reply through a gateway.** Through OpenRouter
+  and similar services most models do not resume a partial reply — they start the
+  answer over — and the app stored that new answer glued onto the old fragment
+  (`…the capital of France isThe capital of France is Paris.`), with no error. On a
+  gateway `/continue` now resumes only the models measured to continue there
+  (Claude up to the 4.5 generation, Gemini) and says so for the rest, pointing at
+  `/regen`; the note after an interrupted reply no longer offers `/continue` where
+  it would refuse. A local server, which publishes no catalogue, is unaffected.
 - **Auto-titles, compaction and impersonation work on a gateway whose model always
   reasons.** Those three run with reasoning turned off — and a service that cannot
   turn it off (OpenRouter with DeepSeek R1, for one) answered them with an error,

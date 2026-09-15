@@ -226,8 +226,9 @@ impl Orchestrator {
             .apply_chat(&self.config.engine, &self.config.api_keys, loc);
         // A different engine has a different context window, and an answer from
         // the previous one must not be carried over — nor an in-flight one
-        // applied when it lands (spec §6.7).
-        self.context.invalidate();
+        // applied when it lands (spec §6.7). Asked again at once, not at the first
+        // turn: a command may read the answer before any turn runs.
+        self.refresh_engine_facts();
         // The same for the model it is running: the previous server's name must
         // not survive onto the new one's messages (spec §11.3).
         self.refresh_model_name();

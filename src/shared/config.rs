@@ -183,8 +183,17 @@ impl ServerMode {
     /// `400` from 4.6 on ("This model does not support assistant message
     /// prefill", pinned in `continue_probe`) — see
     /// [`anthropic_model_continues`]; OpenAI cannot; Grok measurably restarts.
-    pub fn supports_continuation(self, model: Option<&str>) -> bool {
+    ///
+    /// `catalogued` — the endpoint published a catalogue entry for the model,
+    /// which is what a gateway does and a llama.cpp never does. Through a
+    /// gateway the answer belongs to the route it picks, and measured per route
+    /// only Anthropic ≤ 4.5 and Gemini continue — every open-weight route and
+    /// OpenAI restart, which the echo filter would glue onto the partial
+    /// (docs/gateway-images-and-continue.md §1.3, fork H2). Without a catalogue
+    /// `external` answers as it always did.
+    pub fn supports_continuation(self, model: Option<&str>, catalogued: bool) -> bool {
         match self {
+            ServerMode::External if catalogued => model.is_some_and(gateway_model_continues),
             ServerMode::Managed | ServerMode::External | ServerMode::Gemini => true,
             ServerMode::Claude => model.is_some_and(anthropic_model_continues),
             ServerMode::OpenAi | ServerMode::Grok => false,
@@ -212,6 +221,27 @@ fn anthropic_model_continues(model: &str) -> bool {
     };
     let minor = nums.next().unwrap_or(0);
     major < 4 || (major == 4 && minor <= 5)
+}
+
+/// Whether a gateway slug (`vendor/model`) names a family whose direct mode
+/// continues a partial reply — the spec §6.4 table applied to the vendor half,
+/// because a gateway exposes no capability of its own here. An Anthropic model
+/// asks [`anthropic_model_continues`]; a Google Gemini continues; every other
+/// vendor, and a slug with no vendor, refuses rather than being guessed at. A
+/// `:variant` suffix (`:batch`, `:thinking`) is dropped first: left on, it would
+/// hide the minor version (`4.6:batch` reads as 4.0).
+fn gateway_model_continues(slug: &str) -> bool {
+    let slug = slug.split(':').next().unwrap_or_default();
+    let Some((vendor, model)) = slug.split_once('/') else {
+        return false;
+    };
+    if vendor.eq_ignore_ascii_case("anthropic") {
+        anthropic_model_continues(model)
+    } else if vendor.eq_ignore_ascii_case("google") {
+        model.to_ascii_lowercase().starts_with("gemini")
+    } else {
+        false
+    }
 }
 
 /// Default number of GPU layers (`-ngl`): everything on GPU.
@@ -2156,10 +2186,13 @@ mod tests {
             ServerMode::External,
             ServerMode::Gemini,
         ] {
-            assert!(mode.supports_continuation(None), "{mode:?}");
+            assert!(mode.supports_continuation(None, false), "{mode:?}");
         }
         for mode in [ServerMode::OpenAi, ServerMode::Grok] {
-            assert!(!mode.supports_continuation(Some("anything")), "{mode:?}");
+            assert!(
+                !mode.supports_continuation(Some("anything"), false),
+                "{mode:?}"
+            );
         }
         // Anthropic: ≤4.5 continues (haiku-4-5 measured; dated ids and the
         // old 3.x naming parse the same way), 4.6+ and the 5 family reject
@@ -2172,7 +2205,7 @@ mod tests {
             "claude-3-opus-20240229",
         ] {
             assert!(
-                ServerMode::Claude.supports_continuation(Some(ok)),
+                ServerMode::Claude.supports_continuation(Some(ok), false),
                 "{ok} must continue"
             );
         }
@@ -2188,14 +2221,67 @@ mod tests {
             "unknown-model",
         ] {
             assert!(
-                !ServerMode::Claude.supports_continuation(Some(no)),
+                !ServerMode::Claude.supports_continuation(Some(no), false),
                 "{no} must refuse"
             );
         }
         assert!(
-            !ServerMode::Claude.supports_continuation(None),
+            !ServerMode::Claude.supports_continuation(None, false),
             "no model name — nothing to allow by"
         );
+    }
+
+    /// Through a gateway (`external` with a catalogue) `/continue` follows the
+    /// route table measured in docs/gateway-images-and-continue.md §1.3: the
+    /// slugs whose direct mode continues do, everything else refuses — and the
+    /// same slugs on an `external` endpoint that published nothing keep the
+    /// behaviour that shipped, since silence is not a claim.
+    #[test]
+    fn through_a_gateway_only_the_measured_families_continue() {
+        let gateway = |slug: &str| ServerMode::External.supports_continuation(Some(slug), true);
+        for ok in [
+            "anthropic/claude-haiku-4.5",
+            "anthropic/claude-3.7-sonnet",
+            "anthropic/claude-3.7-sonnet:thinking",
+            "anthropic/claude-haiku-4.5:batch",
+            "google/gemini-2.5-flash",
+            "Google/Gemini-3-Flash-Preview",
+        ] {
+            assert!(gateway(ok), "{ok} continues through a gateway");
+        }
+        for no in [
+            // Measured: a `400` passed through.
+            "anthropic/claude-sonnet-4.6",
+            // The variant suffix must not hide the minor version.
+            "anthropic/claude-sonnet-4.6:batch",
+            "anthropic/claude-opus-5",
+            // Measured restarts.
+            "google/gemma-4-31b-it",
+            "openai/gpt-4.1-mini",
+            "qwen/qwen3.6-27b",
+            "x-ai/grok-4.5",
+            "mistralai/mistral-small-3.2-24b-instruct",
+            // An alias or a router names no generation to allow by.
+            "~anthropic/claude-haiku-latest",
+            "openrouter/auto",
+            // No vendor half: not a gateway slug at all.
+            "claude-haiku-4-5",
+        ] {
+            assert!(!gateway(no), "{no} refuses through a gateway");
+        }
+        assert!(
+            !ServerMode::External.supports_continuation(None, true),
+            "a gateway with no model named has nothing to allow by"
+        );
+        for slug in ["google/gemma-4-31b-it", "openai/gpt-4.1-mini"] {
+            assert!(
+                ServerMode::External.supports_continuation(Some(slug), false),
+                "without a catalogue {slug} answers as external always did"
+            );
+        }
+        // Only `external` reads the catalogue: the other modes ignore the flag.
+        assert!(ServerMode::Managed.supports_continuation(None, true));
+        assert!(!ServerMode::OpenAi.supports_continuation(Some("x"), true));
     }
 
     #[test]

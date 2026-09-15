@@ -372,6 +372,23 @@ reconstructed inexactly. Building this without a live reasoning model would be
 guessing at a shape whose whole point is byte-exactness. **Proposed as stage 3,
 after M2/M5 in §8.**
 
+**Measured 2026-09-15 — closed, nothing to build.** A tool round with reasoning
+on, `anthropic/claude-haiku-4.5` on four routes (default, Anthropic, Amazon
+Bedrock, Google Vertex) and `anthropic/claude-sonnet-4.6` on its default route,
+the second request sent three ways: **without** `reasoning_details` — what this
+client sends — answered `200` everywhere, with a normal answer; the exact echo
+answered `200` too, with nothing to tell the two apart. The blocks *are*
+forwarded and checked: a garbage `signature` is answered `400 "Invalid
+signature in thinking block"`, through the gateway and on Anthropic's own API
+alike — while a block whose **text** was changed under an intact signature was
+accepted, on both. So the "signature rejection" the reports describe is real,
+and it is reachable only by *sending* blocks; the wire that sends none cannot hit
+it, and echoing them bought no observable continuity (the second round reasoned
+zero tokens in every arm, echo included). One thing the same run found beside
+F5: the app's `thinking: true` **alone** turns reasoning on at no route — only
+with `reasoning_effort` set does the gateway enable it. Recorded in
+[gateway-images-and-continue.md](../gateway-images-and-continue.md) §6.
+
 ### F6. `/continue` and tool-result images — **recommendation: note only**
 
 `/continue` sends `continue_final_message` + `add_generation_prompt: false`

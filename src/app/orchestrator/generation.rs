@@ -374,6 +374,18 @@ impl Orchestrator {
     /// refusal answers with the route that works (docs/lessons.md §4); the
     /// cheap state gates (`generating`, no chat, a read-only transcript) were
     /// already answered by the typed route on the screen.
+    /// Whether `/continue` resumes a partial reply on the engine as configured —
+    /// the one answer the command's gate, a turn's `Finished.continuable` and its
+    /// interruption notes all read (spec §6.4). The catalogue's answer is what
+    /// tells an `external` gateway from a llama.cpp
+    /// (docs/gateway-images-and-continue.md, fork H2).
+    pub(super) fn continuation_supported(&self) -> bool {
+        self.config.engine.mode.supports_continuation(
+            self.effective_model_name().as_deref(),
+            self.endpoint_catalogued(),
+        )
+    }
+
     pub(super) fn handle_continue(&mut self) {
         if !self.gen_state.is_idle() {
             return;
@@ -390,16 +402,18 @@ impl Orchestrator {
         // The capability gate first — its answer does not depend on the server
         // being up, and a cloud user should hear "cannot" rather than wait out
         // a readiness check to hear it (single source of truth: research §2).
-        let model = self.effective_model_name();
-        if !self
-            .config
-            .engine
-            .mode
-            .supports_continuation(model.as_deref())
-        {
-            let _ = self.evt_tx.send(AppEvent::Error(
-                self.ui_locale().t("ui.cmd.continue_unsupported").into(),
-            ));
+        if !self.continuation_supported() {
+            // A gateway gets its own note: the generic one says external engines
+            // continue, which is exactly what is not true here.
+            let key =
+                if self.config.engine.mode == ServerMode::External && self.endpoint_catalogued() {
+                    "ui.cmd.continue_unsupported_gateway"
+                } else {
+                    "ui.cmd.continue_unsupported"
+                };
+            let _ = self
+                .evt_tx
+                .send(AppEvent::Error(self.ui_locale().t(key).into()));
             return;
         }
         let seed = {
@@ -883,6 +897,7 @@ impl Orchestrator {
             maintenance_protocol: self.config.self_model.maintenance_protocol,
             last_user,
             engine_mode,
+            continuation_supported: self.continuation_supported(),
             endpoint_sampling_fields: self.endpoint_sampling_fields(),
             model_name,
             ui_loc: self.ui_locale(),
@@ -1293,6 +1308,10 @@ struct GenSpawn {
     last_user: String,
     /// Engine mode and model name — a snapshot for `Message.metadata` (spec §8.3).
     engine_mode: ServerMode,
+    /// [`Orchestrator::continuation_supported`], read once when the turn starts:
+    /// what `Finished.continuable` and the interruption notes promise, so neither
+    /// can name `/continue` where the command would refuse.
+    continuation_supported: bool,
     /// What the endpoint published about the model's sampling fields, for the
     /// same snapshot (docs/gateway-capabilities.md §4, G3(ii)).
     endpoint_sampling_fields: Option<std::sync::Arc<[String]>>,
@@ -1526,6 +1545,7 @@ fn spawn_generation(spawn: GenSpawn) {
         maintenance_protocol,
         last_user,
         engine_mode,
+        continuation_supported,
         endpoint_sampling_fields,
         model_name,
         ui_loc,
@@ -1592,6 +1612,7 @@ fn spawn_generation(spawn: GenSpawn) {
             sessions,
             concurrent_calls,
             engine_mode,
+            continuation_supported,
             endpoint_sampling_fields,
             model_name,
             ui_loc,
@@ -1638,7 +1659,7 @@ fn spawn_generation(spawn: GenSpawn) {
             Some(m) if m.role == MessageRole::Assistant => !m.text.is_empty(),
             _ => continuation.is_some(),
         };
-        let continuable = engine_mode.supports_continuation(turn.shared.model_name.as_deref())
+        let continuable = turn.shared.continuation_supported
             && matches!(
                 reason,
                 FinishReason::Cancelled | FinishReason::Error | FinishReason::Length
@@ -1708,6 +1729,8 @@ struct TurnShared {
     /// call takes the sequential path, bit for bit.
     concurrent_calls: u32,
     engine_mode: ServerMode,
+    /// See [`GenSpawn::continuation_supported`].
+    continuation_supported: bool,
     /// What the endpoint published about the model's sampling fields, when it
     /// published anything: the turn's metadata snapshot must not record a field
     /// the endpoint drops (docs/gateway-capabilities.md §4, G3(ii)).
@@ -2105,9 +2128,7 @@ impl TurnLoop<'_> {
                 self.total_reasoning,
                 self.shared.ui_loc,
                 self.shared.compaction_enabled,
-                self.shared
-                    .engine_mode
-                    .supports_continuation(self.shared.model_name.as_deref()),
+                self.shared.continuation_supported,
                 echo,
             )
             .await
@@ -3379,6 +3400,7 @@ struct SharedParts {
     subagent: SubagentLimits,
     concurrent_calls: u32,
     engine_mode: ServerMode,
+    continuation_supported: bool,
     /// The endpoint's published sampling fields, carried for the snapshot the
     /// dialogue's messages record (docs/gateway-capabilities.md §4, G3(ii)).
     endpoint_sampling_fields: Option<std::sync::Arc<[String]>>,
@@ -3400,6 +3422,7 @@ impl SharedParts {
             subagent: shared.subagent,
             concurrent_calls: shared.concurrent_calls,
             engine_mode: shared.engine_mode,
+            continuation_supported: shared.continuation_supported,
             endpoint_sampling_fields: shared.endpoint_sampling_fields.clone(),
             model_name: shared.model_name.clone(),
             ui_loc: shared.ui_loc,
@@ -3557,6 +3580,7 @@ pub(super) fn spawn_background_run(
         sessions,
         concurrent_calls: parts.concurrent_calls,
         engine_mode: parts.engine_mode,
+        continuation_supported: parts.continuation_supported,
         endpoint_sampling_fields: parts.endpoint_sampling_fields.clone(),
         model_name: parts.model_name,
         ui_loc: parts.ui_loc,

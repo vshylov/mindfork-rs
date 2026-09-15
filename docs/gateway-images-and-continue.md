@@ -265,6 +265,17 @@ In every option the refusal note (`ui.cmd.continue_unsupported`) names the
 gateway case and `/regen`, and an `external` endpoint with no catalogue keeps
 continuing as today.
 
+**H2.1 — when the catalogue is asked (decided at implementation, on the
+recommendation).** The discovery was lazy: the first turn after a (re)connect
+kicked the question off. That is fine for a compaction window, which is not needed
+until a conversation is long, and wrong for this gate — `/continue` as the first
+command after a restart is the command's main case (a reply broke off, the app
+was closed, it is opened again), and it would meet an unanswered question and fall
+back to the behaviour a gateway does not have. So the question is now asked when
+the engine is applied and on a readiness flip, the same rule the model's name
+already follows (`refresh_model_name`). The alternative — refusing "still asking,
+try again" — would have changed a local `external` user's first `/continue` too.
+
 ### H3. Scope
 
 - (i) both halves in one PR — one client, one plan, one journal entry;
@@ -291,8 +302,32 @@ Nothing above is built yet; this is the gate each stage owes before its PR.
 - **Named smokes only** — install.md §7.1; the whole `--ignored` set is not run
   against a metered gateway.
 
-## 6. F5 is not in this plan
+## 6. F5 — measured beside H2, closed with nothing to build
 
-`reasoning_details` across tool rounds is the review's third item and has its own
-precondition — a thinking Anthropic-family model through the gateway, with
-signed blocks — and it is measured separately.
+`reasoning_details` across tool rounds, the review's third item. Its precondition
+was a thinking Anthropic-family model through the gateway with signed blocks, and
+the account has them. Instrument: a raw non-streaming replay (so the echoed array
+is the gateway's own, not a reassembly), a `get_weather` round with reasoning
+forced by `reasoning.max_tokens`, then the second request in several shapes.
+
+| second request | through the gateway | Anthropic's own API |
+|---|---|---|
+| **no reasoning blocks** — what `OpenAiClient` sends | `200`, a normal answer — haiku-4.5 on default, Anthropic, Amazon Bedrock and Google Vertex; sonnet-4.6 on its default route | `200` |
+| the exact blocks echoed | `200`, indistinguishable | `200` |
+| the text changed, signature intact | `200` | `200` |
+| the signature replaced | **`400`** *"Invalid `signature` in `thinking` block"* | **`400`**, the same words |
+
+So the blocks are forwarded and their signatures checked, and the rejection the
+reports describe is real — but it is reachable only by **sending** blocks, and the
+wire that sends none cannot hit it. What an exact echo would buy is continuity of
+reasoning, and this instrument shows none to buy: the second round reasoned zero
+tokens in every arm, the echo included. Building it would add the one failure mode
+the current wire is immune to, for a gain no run has shown. **F5 is closed as
+measured.**
+
+**Found beside it, and not F5's to fix.** The app's own thinking switch sends
+`thinking: true`, and **alone that turns reasoning on at no route** — the
+gateway drops the field; only with `reasoning_effort` set did any route reason
+(81 reasoning tokens on the same prompt). On a gateway the settings' thinking
+toggle is therefore inert unless an effort is chosen too — the same class of
+defect as `repeat_penalty` under its other name. A separate task.

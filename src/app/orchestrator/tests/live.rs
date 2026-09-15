@@ -469,6 +469,115 @@ async fn attach_image_live(
     }
 }
 
+/// `/continue` through a gateway, on the app's own paths (fork H2 of
+/// docs/gateway-images-and-continue.md): the endpoint's catalogue lands before any
+/// turn, a reply cut by the length limit is announced as continuable exactly when
+/// the route table says the model continues, and `/continue` then either refuses
+/// with the gateway's note or resumes the reply **without** restarting it.
+///
+/// Declared, not guessed: `MINDFORK_LIVE_GATEWAY_CONTINUES` is `1` for a model the
+/// table allows (measured: `anthropic/claude-haiku-4.5`) and `0` for one it refuses
+/// (`google/gemma-4-31b-it`), and the smoke fails rather than skips when the run
+/// disagrees. The restart criterion is the one §1.3 measured: a cut this early
+/// leaves the question's own words ahead of the answer, so a continuation carries
+/// no `capital` and a restart does.
+#[tokio::test]
+#[ignore = "requires MINDFORK_ENGINE_URL + MINDFORK_ENGINE_KEY + MINDFORK_ENGINE_MODEL on a gateway, and MINDFORK_LIVE_GATEWAY_CONTINUES (1 or 0)"]
+async fn continue_through_a_gateway_live() {
+    use crate::shared::config::ServerMode;
+    use std::time::Duration;
+
+    let Ok(declared) = std::env::var("MINDFORK_LIVE_GATEWAY_CONTINUES") else {
+        eprintln!("skip: MINDFORK_LIVE_GATEWAY_CONTINUES not set");
+        return;
+    };
+    let continues = declared.trim() == "1";
+    let Ok(model) = std::env::var("MINDFORK_ENGINE_MODEL") else {
+        eprintln!("skip: MINDFORK_ENGINE_MODEL not set");
+        return;
+    };
+    let mut cfg = no_auto_cfg();
+    cfg.engine.mode = ServerMode::External;
+    cfg.engine.external.model_name = Some(model.clone());
+    // Enough for "The capital of France is", too little for the whole sentence.
+    cfg.default_sampling.max_tokens = Some(6);
+    let Some((_dir, cmd_tx, mut evt_rx, handle)) = spawn_orch_live_cfg(cfg) else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    let landed = tokio::time::timeout(
+        Duration::from_secs(60),
+        wait_for(&mut evt_rx, |e| {
+            matches!(e, AppEvent::EngineSamplingFields(Some(_)))
+        }),
+    )
+    .await;
+    assert!(
+        matches!(landed, Ok(Some(_))),
+        "the gateway's catalogue must land before the first turn"
+    );
+
+    cmd_tx
+        .send(AppCommand::SendMessage(
+            "What is the capital of France? Answer in one short sentence.".into(),
+        ))
+        .unwrap();
+    let mut partial = String::new();
+    let (reason, continuable) = loop {
+        match evt_rx.recv().await.expect("the turn's events") {
+            AppEvent::Chunk { text, .. } => partial.push_str(&text),
+            AppEvent::Finished {
+                reason,
+                continuable,
+                ..
+            } => break (reason, continuable),
+            _ => {}
+        }
+    };
+    eprintln!("[{model}] first turn ({reason:?}, continuable={continuable}): {partial:?}");
+    assert_eq!(
+        reason,
+        FinishReason::Length,
+        "the fixture needs a length cut"
+    );
+    assert_eq!(
+        continuable, continues,
+        "the note after a cut must promise /continue exactly where it works"
+    );
+
+    cmd_tx.send(AppCommand::ContinueLast).unwrap();
+    let mut resumed = String::new();
+    let mut note = None;
+    loop {
+        match evt_rx.recv().await.expect("the command's events") {
+            AppEvent::Chunk { text, .. } => resumed.push_str(&text),
+            AppEvent::Error(text) if !continues => {
+                note = Some(text);
+                break;
+            }
+            AppEvent::Finished { .. } if continues => break,
+            _ => {}
+        }
+    }
+    eprintln!("[{model}] /continue: note={note:?} resumed={resumed:?}");
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    if continues {
+        assert!(!resumed.is_empty(), "the continuation brought nothing");
+        assert!(
+            !resumed.to_lowercase().contains("capital"),
+            "the reply restarted instead of continuing: {partial:?} + {resumed:?}"
+        );
+    } else {
+        let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::default());
+        assert_eq!(
+            note.as_deref(),
+            Some(loc.t("ui.cmd.continue_unsupported_gateway"))
+        );
+    }
+}
+
 /// Live e2e for image attachments (spec §9.10): an image staged with `/image attach`
 /// reaches a vision-capable model, and **is still seen a turn later**, replayed out of
 /// history rather than re-staged.

@@ -314,7 +314,7 @@ pub async fn run(deps: OrchestratorDeps) {
                     // a server that was down could not report its context window,
                     // and one that just came up can. The channel only carries
                     // flips, so this is not a per-probe cost. See `ContextDiscovery`.
-                    orch.context.invalidate();
+                    orch.refresh_engine_facts();
                     // And a server that just came up can now say what it loaded,
                     // where a moment ago it could not (`ModelDiscovery`).
                     orch.refresh_model_name();
