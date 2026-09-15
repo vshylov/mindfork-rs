@@ -1491,6 +1491,19 @@ local `llama-server` and is hours plus a real bill against a metered endpoint �
 conversation past 20k tokens by design. Name the smokes that answer the question.
 — *`external` against a gateway*.
 
+**Through a gateway, a failing live answer belongs to a route you did not see —
+pin the route before believing it, and keep the fixture at the size the smoke
+uses.** A tool-result-image smoke went red once on Gemma through OpenRouter and
+green on five other families. The client drops which provider served the turn, so
+the red was unattributable until the same body was replayed with `provider.only`
+per route: 20 of 29 route-and-model pairs saw the image, 6 refused, 3 silently
+answered about a picture they never got — facts about routes, none about the
+model. The replay then invented a finding of its own: built with a 128 px fixture
+instead of the smoke's 256 px, it read the OpenAI route as blind, which it is not
+at 256 px (5/5). A replay is a second instrument, and every parameter it does not
+copy from the first one — size, ids, transport — is a new variable.
+— *through a gateway, a tool's image and `/continue` belong to the route*.
+
 **A wire shape seen once per reply is not a contract — a newer model breaks the
 "one" quietly.** Every OpenAI Responses reply had carried one reasoning item, so the
 loop fused whatever arrived into one string under the last id, and nothing noticed
