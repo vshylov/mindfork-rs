@@ -302,7 +302,43 @@ Nothing above is built yet; this is the gate each stage owes before its PR.
 - **Named smokes only** — install.md §7.1; the whole `--ignored` set is not run
   against a metered gateway.
 
-## 6. F5 — measured beside H2, closed with nothing to build
+## 7. Stage H2 — what was implemented
+
+- **`ServerMode::supports_continuation(model, catalogued)`**
+  ([config.rs](../src/shared/config.rs)) — `External` with a catalogue answers
+  through `gateway_model_continues`: the slug's vendor against the spec §6.4
+  table (`anthropic/…` through the existing version allowlist, `google/gemini-…`),
+  a `:variant` suffix dropped first so `4.6:batch` cannot read as 4.0, and every
+  other vendor, alias or router refused. Without a catalogue the arm is the one
+  that shipped.
+- **One answer per turn.** `Orchestrator::continuation_supported` is read by the
+  command's gate and snapshotted into the turn (`GenSpawn` → `TurnShared` →
+  `SharedParts`), where `Finished.continuable` and the mid-stream interruption
+  note read it — so no note can offer `/continue` where the command would refuse.
+- **The gateway's own note**, `ui.cmd.continue_unsupported_gateway` (en, ru): the
+  generic one says external engines continue, which is exactly what is untrue here.
+- **The catalogue is asked when the engine is applied** (H2.1) —
+  `refresh_engine_facts` replaces the bare invalidation at both sites (settings
+  applied, readiness flipped).
+
+**Tests** — three unit tests: the route table (including the `:batch` trap, an
+alias, a router, a vendorless id, and the silence case); the gate on a bare
+orchestrator (the gateway note for a restarting family, `true` again once the
+catalogue is forgotten, a turn started for Claude ≤ 4.5); and the whole route on a
+running orchestrator, where the catalogue must land **before any turn**, a
+length-cut reply is announced as not continuable, and the command refuses with the
+gateway note. One `#[ignore]` smoke, `continue_through_a_gateway_live`, declared by
+`MINDFORK_LIVE_CONTINUE_EXPECT`.
+
+**Live — GO on the three stacks §5 names** (2026-09-15): through OpenRouter,
+`google/gemma-4-31b-it` is announced not continuable and refused with the gateway
+note, and `anthropic/claude-haiku-4.5` resumes `"The capital of France"` with
+`" is Paris."`; on the LAN `llama-server` (Gemma 4 31B, no catalogue) the reply
+continues exactly as before. In every run the engine's facts landed before the
+first turn. The gate on the wire is unchanged for a local server by construction,
+and this is the run that shows it.
+
+## 8. F5 — measured beside H2, closed with nothing to build
 
 `reasoning_details` across tool rounds, the review's third item. Its precondition
 was a thinking Anthropic-family model through the gateway with signed blocks, and

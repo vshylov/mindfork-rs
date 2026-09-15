@@ -387,7 +387,7 @@ it, and echoing them bought no observable continuity (the second round reasoned
 zero tokens in every arm, echo included). One thing the same run found beside
 F5: the app's `thinking: true` **alone** turns reasoning on at no route — only
 with `reasoning_effort` set does the gateway enable it. Recorded in
-[gateway-images-and-continue.md](../gateway-images-and-continue.md) §6.
+[gateway-images-and-continue.md](../gateway-images-and-continue.md) §8.
 
 ### F6. `/continue` and tool-result images — **recommendation: note only**
 

@@ -171,8 +171,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-15, version 0.9.9)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3232 unit tests
-green, 179 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **3235 unit tests
+green, 180 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -184,6 +184,23 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **Through a gateway, a tool's image and `/continue` belong to the route** — M3 ran
+  the app itself through OpenRouter (GO on Bedrock-routed Haiku: a chart only the
+  image could answer for, the `/file` round trip), and per pinned route with blind
+  controls both halves of F6 turned out real: of 29 route-and-model pairs 3 answer
+  about a tool image they never received (re-homed into a user message, 28 of 28
+  see it — stage H1, next), and `/continue` restarts on OpenAI and every
+  open-weight route, which the echo filter stored glued onto the partial. Stage H2
+  gates it: on an `external` endpoint whose catalogue answered, the slug's vendor
+  is read against the spec §6.4 table (Anthropic ≤ 4.5, Gemini continue; the rest
+  refuse with a gateway note), one answer feeds the gate, `Finished.continuable`
+  and the notes, and the catalogue is asked when the engine is applied so the
+  first command after a restart is not answered blind. **Silence is never a
+  claim**: no catalogue, no change. F5 closed on a measurement — a garbage
+  signature is a `400` through the gateway and direct, sending no blocks never is,
+  so there is nothing to build
+  ([docs/gateway-images-and-continue.md](docs/gateway-images-and-continue.md),
+  spec §6.4, [docs/journal/engine.md](docs/journal/engine.md)).
 - **The endpoint is asked what the model can do** — a gateway serves no `/props`,
   so automatic compaction had no window and never fired (measured: 22 567 tokens,
   nothing folded), while the sampling screen offered the whole llama.cpp set of
@@ -371,40 +388,6 @@ being recent is dropped, not shortened.
   ([docs/research/spellcheck-stress-marks.md](docs/research/spellcheck-stress-marks.md),
   spec §11.5, [docs/journal/ui-input.md](docs/journal/ui-input.md)).
 <!-- cyrillic-ok:end -->
-- **The engine, downloaded — llama.cpp's backends named, fetched and
-  pointed at** — install.md §3 named `llama-server` the recommended
-  backend and assumed it existed, leaving the user to know that the newest
-  *tagged* release is not the newest build and that a CUDA build without
-  its separate `cudart-` archive does not error, it loads no device and
-  runs on the CPU. Now `mindfork llama backends | setup --backend <id> |
-  installed`, on the shape of `sandbox setup` — except that a pinned table
-  is what this cannot be: upstream ships ~13 nightlies a day and the names
-  drifted twice in fourteen months (Linux `.zip` → `.tar.gz`,
-  `win-hip-radeon` → `win-rocm-10.0`), so the backends are derived by a
-  parse anchored on both ends, an empty middle meaning `cpu`, and anything
-  that does not match is skipped rather than guessed. The API, not the
-  releases page, because only it carries a per-asset sha256 (63 KB against
-  490 KB); one directory per install under `data/llama/<backend>-<tag>/`,
-  resumable downloads, and the binary is run before the rename — the build
-  number must equal the tag's, and `--list-devices` says whether the GPU
-  backend found anything. `--set-binary` then writes the path — the
-  assistant's engine always, impersonation and embeddings only where they
-  were empty, the mode never switched behind the user (the fork turned on
-  reading the code: `managed` is already the default). Measured after:
-  b10883 cpu, cpu-b10871 beside it, vulkan reporting a real adapter, and
-  the settings written on a config whose embedder path was left alone; the
-  downloaded build served the app's live smoke set identically to a
-  hand-built one. A follow-up closed the half of spec §3.4 that had never
-  been implemented: the binary field is now **resolved**, not taken
-  literally — a typed path as written, a bare name beside the application
-  then `PATH`, and an **empty** field meaning the build installed last
-  under `data/llama/` (not the newest tag, which would move a user off the
-  GPU because a CPU build shipped later), so a download or an archive
-  unpacked beside `mindfork` needs nothing typed; and `llama remove <id>`
-  takes one back off disk, refusing while a managed field points at it
-  and reporting what an empty field resolves to afterwards
-  ([docs/research/llama-cpp-download.md](docs/research/llama-cpp-download.md),
-  spec §3.4, [docs/journal/engine.md](docs/journal/engine.md)).
 - **The TUI "hangs" on a headless launch** (no TTY) — this is expected; clean
   exit via `Esc`/`Ctrl+Q` is covered by unit tests. Live verification needs a
   real terminal.

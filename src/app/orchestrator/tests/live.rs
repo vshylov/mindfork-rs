@@ -475,46 +475,63 @@ async fn attach_image_live(
 /// the route table says the model continues, and `/continue` then either refuses
 /// with the gateway's note or resumes the reply **without** restarting it.
 ///
-/// Declared, not guessed: `MINDFORK_LIVE_GATEWAY_CONTINUES` is `1` for a model the
-/// table allows (measured: `anthropic/claude-haiku-4.5`) and `0` for one it refuses
-/// (`google/gemma-4-31b-it`), and the smoke fails rather than skips when the run
-/// disagrees. The restart criterion is the one §1.3 measured: a cut this early
-/// leaves the question's own words ahead of the answer, so a continuation carries
-/// no `capital` and a restart does.
+/// Declared, not guessed: `MINDFORK_LIVE_CONTINUE_EXPECT` names the stack —
+/// `gateway-continues` for a model the table allows (measured:
+/// `anthropic/claude-haiku-4.5`), `gateway-refuses` for one it refuses
+/// (`google/gemma-4-31b-it`), and `local` for a llama.cpp, which publishes no
+/// catalogue and must keep continuing exactly as before (the regression half). The
+/// smoke fails rather than skips when the run disagrees. The restart criterion is
+/// the one §1.3 measured: a cut this early leaves the question's own words ahead of
+/// the answer, so a continuation carries no `capital` and a restart does.
 #[tokio::test]
-#[ignore = "requires MINDFORK_ENGINE_URL + MINDFORK_ENGINE_KEY + MINDFORK_ENGINE_MODEL on a gateway, and MINDFORK_LIVE_GATEWAY_CONTINUES (1 or 0)"]
+#[ignore = "requires MINDFORK_ENGINE_URL and MINDFORK_LIVE_CONTINUE_EXPECT (gateway-continues | gateway-refuses | local); a gateway also needs MINDFORK_ENGINE_KEY + MINDFORK_ENGINE_MODEL"]
 async fn continue_through_a_gateway_live() {
     use crate::shared::config::ServerMode;
     use std::time::Duration;
 
-    let Ok(declared) = std::env::var("MINDFORK_LIVE_GATEWAY_CONTINUES") else {
-        eprintln!("skip: MINDFORK_LIVE_GATEWAY_CONTINUES not set");
+    let Ok(declared) = std::env::var("MINDFORK_LIVE_CONTINUE_EXPECT") else {
+        eprintln!("skip: MINDFORK_LIVE_CONTINUE_EXPECT not set");
         return;
     };
-    let continues = declared.trim() == "1";
-    let Ok(model) = std::env::var("MINDFORK_ENGINE_MODEL") else {
-        eprintln!("skip: MINDFORK_ENGINE_MODEL not set");
-        return;
+    let (catalogued, continues) = match declared.trim() {
+        "gateway-continues" => (true, true),
+        "gateway-refuses" => (true, false),
+        "local" => (false, true),
+        other => panic!("MINDFORK_LIVE_CONTINUE_EXPECT={other:?} is not a declared stack"),
     };
+    let model = std::env::var("MINDFORK_ENGINE_MODEL").ok();
     let mut cfg = no_auto_cfg();
     cfg.engine.mode = ServerMode::External;
-    cfg.engine.external.model_name = Some(model.clone());
-    // Enough for "The capital of France is", too little for the whole sentence.
-    cfg.default_sampling.max_tokens = Some(6);
+    cfg.engine.external.model_name = model.clone();
+    let model = model.unwrap_or_else(|| "local".into());
+    // "The capital of France" and no further, so the continuation has an answer
+    // to carry. Measured at 6 the cut already held "Paris" and the continuation
+    // was a lone ".", which a restart could not have produced but a broken one
+    // could hardly be told from.
+    cfg.default_sampling.max_tokens = Some(4);
+    // Thinking off: a local Gemma 4 spent the whole cap reasoning, left no visible
+    // text, and a thoughts-only fragment is rightly not continuable — the fixture,
+    // not the feature. `reasoning_budget: 0` is llama.cpp's switch and a gateway
+    // drops it, so it changes nothing on the routes above.
+    cfg.default_sampling.reasoning_budget = Some(0);
     let Some((_dir, cmd_tx, mut evt_rx, handle)) = spawn_orch_live_cfg(cfg) else {
         eprintln!("skip: MINDFORK_ENGINE_URL not set");
         return;
     };
+    // The discovery lands before any turn either way; what it carries is the claim.
     let landed = tokio::time::timeout(
         Duration::from_secs(60),
         wait_for(&mut evt_rx, |e| {
-            matches!(e, AppEvent::EngineSamplingFields(Some(_)))
+            matches!(e, AppEvent::EngineSamplingFields(_))
         }),
     )
-    .await;
-    assert!(
-        matches!(landed, Ok(Some(_))),
-        "the gateway's catalogue must land before the first turn"
+    .await
+    .expect("the engine's facts must land before the first turn")
+    .expect("the event stream");
+    assert_eq!(
+        matches!(landed, AppEvent::EngineSamplingFields(Some(_))),
+        catalogued,
+        "declared {declared:?}, the endpoint answered {landed:?}"
     );
 
     cmd_tx
