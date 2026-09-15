@@ -390,7 +390,8 @@ true (AGENTS.md §4).
   CPython and `site-packages` into one image and starts it once; the runtime runs
   only the image, and a provisioned directory with no image is refused with the
   command that packs it.
-- **Stage 1 — MVP probe** (`spike/sandbox-files-probe`, throwaway): F4 collection,
+- **Stage 1 — MVP probe** (`spike/sandbox-files-probe`, throwaway; frozen as the tag
+  `probe/sandbox-files-stage1`): F4 collection,
   images into `ToolOutcome.images`, bytes into a per-chat folder, the result
   listing, `files` staging from attachments, matplotlib named. **Go/no-go**, 5 runs
   per live-gate family (Qwen 3.6 27B, Gemma 4 31B, each with its vision projector)
@@ -459,7 +460,9 @@ Every stage: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
 
 ## 10. Stage 1 — the probe (2026-09-11)
 
-Branch `spike/sandbox-files-probe` (throwaway, pushed for reference): `python_exec`
+Branch `spike/sandbox-files-probe` (throwaway, never merged; deleted on 2026-09-15 and
+frozen under the annotated tag `probe/sandbox-files-stage1` — `git show` it for the
+verdict, `git log` it for the two commits): `python_exec`
 takes `files` (chat attachments copied into `/w/in`), collects regular files from
 `/w/out` into `data/files/<chat-id>/` with `name (N).ext` versioning, and returns
 PNG/JPEG outputs as tool images. `sandbox_files_probe_e2e_live` drives the scenario
