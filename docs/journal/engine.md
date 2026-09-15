@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (63)
+## Entries (64)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -75,6 +75,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the gateway's remaining measurements — the silent turns are a `400`, not a bill (done)
 - Post-M9: a refusal to stop reasoning is answered, not reported (done)
 - Post-M9: the endpoint is asked what the model can do (done)
+- Post-M9: through a gateway, a tool's image and `/continue` belong to the route — M3 measured (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -4133,3 +4134,57 @@ naming is the other half of that condition — with the model field *filled in*
 against a local server, `model_capabilities` does make one `GET /v1/models` per
 applied engine that did not happen before, and still answers `None`, since
 llama.cpp's catalogue carries neither key ([gateway-capabilities.md](../gateway-capabilities.md) §5).
+
+### Post-M9: through a gateway, a tool's image and `/continue` belong to the route — M3 measured (done)
+
+The last measurement the OpenRouter review owed, and the one that decided what
+F6 is. Plan, tables and forks:
+[gateway-images-and-continue.md](../gateway-images-and-continue.md).
+
+**M3 — GO for the app.** Run by the author in a real terminal, 2026-09-15:
+`anthropic/claude-haiku-4.5` through OpenRouter (served by Amazon Bedrock — the
+call id `toolu_bdrk_…` says so), the Wasmer sandbox, `tools.python_images` on.
+The request closed the text channel — numpy seed 7, bar colours drawn from the
+same generator, print nothing — and the model named the tallest bar's colour and
+height from the chart alone, matching the PNG. `/file list`, `open`, `folder` and
+`remove` each did what spec §9.7 says, and the catalogue answered for a second
+model (200 000, twelve fields). One defect surfaced beside the track: a bare `1`
+is not a handle and the refusal does not say `#1` is — filed separately.
+
+**F6 hardened, both halves.** The review had called them provider-dependent and
+not worth a blind change; measured per pinned route with blind controls, each is
+a real limit:
+
+- **a tool's images** — of 29 route-and-model pairs, 20 see the image, 6 refuse
+  the request (DeepInfra's `422` names the tool message's content "should be a
+  valid string"; ModelRun's `400` counts zero media markers in its template) and
+  **3 answer confidently about a picture they never received** (Chutes on Gemma,
+  Venice on Qwen and Mistral). Moved into a `user` message right after the tool
+  result — the fallback Gemini already takes — every pair that answered, 28 of
+  28, saw it;
+- **`/continue`** — continues on Anthropic ≤ 4.5 (four routes) and Gemini;
+  restarts on OpenAI and on every open-weight route (Gemma: all eleven that
+  answered); `claude-sonnet-4.6` passes through its `400`. The three fields
+  `/continue` adds changed nothing on any route, and `enable_thinking: false`
+  does not arrive, so Qwen reasons for thousands of characters before it restarts.
+  And the app **stores the restart glued onto the partial** — `EchoFilter` lets a
+  stream that diverges at byte 0 flow into the same message — so the failure is a
+  corrupted reply, not an error.
+
+**The instrument needed three corrections before its tables meant anything.**
+The client discards the routed provider, so a failing smoke (`ครั้ง` on Gemma)
+could only be attributed by pinning `provider.only` per route in a raw replay of
+the same body. The first replay used a 128 px fixture where the smoke uses
+256 px, and read the OpenAI route as silently blind — at 256 px it sees 5/5 in
+both shapes, so the size was a second variable of that route, not a finding
+about the shape. And the Mistral routes rejected the fixture's `call-1` id before
+reading the image at all. The blind arms earned their place once more: three Qwen
+blind runs in sixteen, across two routes, passed the keyword criterion for a
+picture they were never shown — one of them a *"green … black circle"* — so a
+single seeing run on that family would have proved nothing, and the table reads
+8/8 against 1/8 instead.
+
+**Forks open, nothing built** — H1 (re-home a tool's images when the catalogue
+answered), H2 (refuse `/continue` on a gateway except the slugs whose direct mode
+continues) and H3 (scope) wait on the user. **Documentation only; no code
+changed** — tests untouched (3232 / 179 on the tracked count).

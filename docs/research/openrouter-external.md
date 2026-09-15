@@ -11,6 +11,13 @@ and remember it — on 2026-09-14; stage 2 implements exactly that and nothing
 else, and its smoke is **GO** on the model that refuses (§9). F3(b) and F4(c) are **confirmed buildable** by the same run (M5) and stay a
 separate track; F5, F6 and the rest stay proposals.
 
+**M3 was run on 2026-09-15 and F6 is no longer a note** (§8.2): the app itself is
+GO through the gateway, and both halves of F6 measured as real limits that
+belong to the routed provider — a tool's images fail on a minority of routes,
+one of them silently, and `/continue` restarts on most routes and the app stores
+the restart glued onto the partial. The plan and its forks:
+[gateway-images-and-continue.md](../gateway-images-and-continue.md).
+
 **Measured, on the second pass — by the author, not by this session.** What was
 written here came from reading: the session had no network route to
 `openrouter.ai` (the environment's egress proxy answers `403` to the `CONNECT`)
@@ -64,7 +71,8 @@ drops), and the rest is tuning and defaults.
 | automatic compaction | inactive until the user types a window — confirmed **[live]** (§5 F3, §8.1) |
 | **the silent turns** (title, compaction roll, impersonation) | **`400` on a model that always reasons** — measured **[live]** (§5 F2, §8.1) |
 | sampling beyond the OpenAI set | silently dropped, while the UI offers it — confirmed field by field **[live]** (§5 F4, §8.1) |
-| reasoning across tool rounds, tool-result images, `/continue` | provider-dependent; noted, not fixed (§5 F5, F6) |
+| reasoning across tool rounds | provider-dependent; noted, not fixed (§5 F5) |
+| tool-result images, `/continue` | **measured per route** — images fail on a minority of routes (one silently), `/continue` restarts on most and corrupts the stored reply (§5 F6, §8.2) |
 
 ## 2. What `external` mode puts on the wire today **[code]**
 
@@ -378,6 +386,17 @@ therefore provider-dependent here too. Both are worth knowing and neither is
 worth a blind change: `ServerMode::supports_continuation` cannot answer a
 question whose answer lives one hop downstream.
 
+**Measured by M3, 2026-09-15 — both halves are real limits.** Per pinned route
+and with a blind control arm: a tool's images reach most routes, are refused
+outright by a few (DeepInfra's `422` names the tool message's content as "should
+be a valid string") and are **silently dropped** by some (Venice answers `200`
+and describes a picture it never saw); moved into a user message right after the
+tool result, every route that answered saw them. `/continue` continues only on
+Anthropic ≤ 4.5 and Gemini; every open-weight route and OpenAI restarts, and the
+app's echo filter lets the restart flow into the same stored message. Tables,
+the code path and the forks:
+[gateway-images-and-continue.md](../gateway-images-and-continue.md).
+
 ## 6. What this does **not** cover
 
 No OpenRouter-specific request knobs are exposed and none are proposed here:
@@ -463,7 +482,7 @@ review. Three smokes answer M1 and M2 in under a minute.
 | **M4 — a `400`, not a bill** | The exact body `title.rs` builds, sent to `deepseek/deepseek-r1`, is answered `HTTP 400`: `{"error":{"message":"Reasoning is mandatory for this endpoint and cannot be disabled.","code":400}}`. The parameter is read and **refused**, not ignored — so the title, the compaction roll and impersonation fail on a model that always reasons, while ordinary chat keeps working. F2 reopens as a functional defect; its fork is above. |
 | **M5 — both stage-2 proposals are buildable** | `deepseek/deepseek-r1` carries `context_length: 64000` **and** `supported_parameters: frequency_penalty, include_reasoning, max_tokens, presence_penalty, reasoning, repetition_penalty, response_format, seed, stop, temperature, tool_choice, tools, top_k, top_p`. The window is there for F3(b); the list is there for F4(c) — and it confirms §4.2 field by field: **none** of `min_p`, `typical_p`, `top_n_sigma`, dynatemp, adaptive, mirostat, DRY, XTC or `samplers` appears, while the penalty it does take is spelled `repetition_penalty` where we send `repeat_penalty`. Note also what is **absent**: `reasoning_effort`. |
 | **M4a — the field is isolated** | The control: a *minimal* request — `model`, one user message, `stream` — plus `reasoning_effort: "none"` and nothing else, answered by the same `400`. So the refusal is that field's alone; the llama.cpp-only fields the silent turns also carry (`thinking`, `reasoning_budget`, `chat_template_kwargs`) are absent from this body and cannot be the cause. F2's fix has one target. |
-| **M3** | not run. |
+| **M3** | run on 2026-09-15 — see §8.2. |
 
 **The failure mode worth knowing about: a provider that does not parse its own
 model's tool template.** In the first (whole-set) run, `attachment_read_e2e_live`
@@ -478,11 +497,12 @@ the rabbit hole ADR 0004 exists to avoid — but it is what a "the model went ma
 report from a gateway user will actually be, and OpenRouter's `provider` routing
 controls (§6) are the lever we do not expose.
 
-### 8.2 What is still owed
+### 8.2 M3 — what the app run measured, 2026-09-15
 
-| | what to run | what would falsify the design |
+| | what was run | outcome |
 |---|---|---|
-| **M3** | the app itself: a chat, a `python_exec` chart, a `/file` round trip | tool-result images refused → F6 hardens into a real limit |
+| **M3 — GO for the app** | the TUI through OpenRouter on `anthropic/claude-haiku-4.5` (routed to Amazon Bedrock): a chat, a `python_exec` chart whose answer only the image carried, `/file list`/`open`/`folder`/`remove` | the model named the tallest bar's colour and height from the chart alone; the catalogue gave `context_length` 200 000 and twelve fields; every `/file` step did what spec §9.7 says |
+| **F6 — hardened** | the tool-result-image smoke on six families, then per pinned route with blind controls; the `/continue` body per pinned route | both halves provider-dependent in ways that cost the user — the per-route tables are in [gateway-images-and-continue.md](../gateway-images-and-continue.md) §1 |
 
 The outcome is recorded in [docs/journal/engine.md](../journal/engine.md), per
 AGENTS.md §3.
