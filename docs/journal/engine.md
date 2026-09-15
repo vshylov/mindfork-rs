@@ -4118,7 +4118,18 @@ switches survive on the single `reasoning` entry. Without the table the first of
 those would have been dropped from the offer while remaining exactly the field the
 gateway ignores.
 
-**N3 is owed** and it is the regression half: a local `llama-server` seen
-unchanged. Three unit tests cover silence in each of its shapes and a llama.cpp
-catalogue carries neither key, so nothing *can* narrow — but that is an argument,
-not a look ([gateway-capabilities.md](../gateway-capabilities.md) §5).
+**N3 — GO, and it is the regression half**: a local `llama-server` seen
+unchanged, 2026-09-15, `external` against gemma-4-31B on Windows. The app's own
+log carries the whole answer, in what it says and in what it does not.
+`engine reported its context window context_budget=16384` is `/props` answering
+first, as it always did; "the endpoint's catalogue answered for the configured
+model" — the line the landing logs whenever `caps` is `Some` — appears nowhere,
+so nothing narrowed, the registry was not rebuilt and the settings screen was
+handed `None`, which is every field. And the catalogue was not merely silent, it
+was **never asked**: the same log's `engine reported the model it is running` is
+emitted only when the configuration names no model, and a blank model field is
+exactly where `catalogue_entry` returns before the request. The residual worth
+naming is the other half of that condition — with the model field *filled in*
+against a local server, `model_capabilities` does make one `GET /v1/models` per
+applied engine that did not happen before, and still answers `None`, since
+llama.cpp's catalogue carries neither key ([gateway-capabilities.md](../gateway-capabilities.md) §5).

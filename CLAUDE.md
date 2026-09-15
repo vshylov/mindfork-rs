@@ -204,8 +204,8 @@ being recent is dropped, not shortened.
   on that evidence would trade their silent drop for ours. Live **GO** on R1: 64 000 for the
   window a gateway never had, and thirty offered fields down to ten — with
   `repeat_penalty` surviving under the catalogue's own `repetition_penalty`, which
-  is the alias table earning its place. Still owed: a look at an unchanged local
-  `llama-server`
+  is the alias table earning its place. The local stack is measured unchanged:
+  `/props` first, the catalogue not even asked
   ([docs/gateway-capabilities.md](docs/gateway-capabilities.md), spec §6.7, §8.1,
   [docs/journal/engine.md](docs/journal/engine.md)).
 - **`external` against a gateway — a thought under a second name** — the mode we
