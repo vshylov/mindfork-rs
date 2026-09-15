@@ -4298,6 +4298,15 @@ tool results bare strings; a user's own image left alone) and two on the client 
 memo, including "not now"; the re-homed body for a gateway, the unchanged body for a
 llama.cpp-shaped catalogue, no catalogue request for a turn without tool images) —
 and one smoke that replays the **client builder's own** body pinned to a route.
+The first mutation run **hung instead of failing**: the mutation that skipped the
+catalogue changed the order of requests, the scripted stub's thread waited for a
+connection that never came, and both client tests joined it with no limit —
+sixteen minutes at zero CPU before it was noticed. The first repair — a timeout
+around a `spawn_blocking` join — hung the rerun past the harness's new ten-minute
+cap all the same, because the test's runtime waits at shutdown for a blocking task
+still running. The bound now lives in the stub: `scripted_server` accepts under a
+ten-second deadline and hands back what it saw, so a missing request fails the
+test (lessons §2, recorded a second time).
 
 **Live — GO**, 2026-09-15. The builder's re-homed body replayed pinned to the routes
 that failed today's shape, blind arm beside each: on `google/gemma-4-31b-it`

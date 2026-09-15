@@ -821,9 +821,28 @@ mod tests {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let handle = std::thread::spawn(move || {
+            // A deadline on the whole script: a regression that never makes a
+            // scripted request must end this thread, so the test joining it fails
+            // on what it saw instead of hanging (docs/lessons.md §2). The bound has
+            // to live here — a timeout around the join cannot help, because the
+            // test's runtime waits at shutdown for a blocking task still running.
+            listener.set_nonblocking(true).unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
             let mut seen = Vec::new();
             for (status, payload) in replies {
-                let (mut sock, _) = listener.accept().unwrap();
+                let mut sock = loop {
+                    match listener.accept() {
+                        Ok((sock, _)) => break sock,
+                        Err(e)
+                            if e.kind() == std::io::ErrorKind::WouldBlock
+                                && std::time::Instant::now() < deadline =>
+                        {
+                            std::thread::sleep(std::time::Duration::from_millis(5));
+                        }
+                        Err(_) => return seen,
+                    }
+                };
+                sock.set_nonblocking(false).unwrap();
                 seen.push(read_request_body(&mut sock));
                 let (reason, kind) = match status {
                     200 => ("OK", "text/event-stream"),
@@ -1260,22 +1279,6 @@ mod tests {
         (format!("http://{addr}/v1"), handle)
     }
 
-    /// Waits for a stub's thread to hand back what it saw — but not forever. A
-    /// regression that leaves the stub waiting for a request that never comes must
-    /// fail the test, not hang it (docs/lessons.md §2): the first mutation run of
-    /// these tests sat for sixteen minutes on exactly that. `spawn_blocking`, because
-    /// a bare `join` would block the runtime the client under test runs on.
-    async fn joined<T: Send + 'static>(handle: std::thread::JoinHandle<T>) -> T {
-        tokio::time::timeout(
-            std::time::Duration::from_secs(10),
-            tokio::task::spawn_blocking(move || handle.join()),
-        )
-        .await
-        .expect("the stub never saw every request it was scripted for")
-        .expect("the waiting task")
-        .expect("the stub's thread")
-    }
-
     /// Fork H1.1 (docs/gateway-images-and-continue.md §4): the catalogue is asked once
     /// per client once it has answered, and **not** remembered from a "not now" — a
     /// gateway that was briefly unavailable is asked again instead of being filed as
@@ -1293,7 +1296,7 @@ mod tests {
             client.model_capabilities().await.is_some(),
             "so the next question asks again"
         );
-        assert_eq!(joined(seen).await.len(), 2);
+        assert_eq!(seen.join().unwrap().len(), 2);
         assert!(
             client.model_capabilities().await.is_some(),
             "and the answer is kept, not fetched a third time"
@@ -1340,7 +1343,7 @@ mod tests {
         let (url, seen) = scripted_server(&[(200, CATALOGUE_BODY), (200, ONE_CHUNK_SSE)]);
         let client = OpenAiClient::new(url).with_model(Some("deepseek/deepseek-r1".into()));
         collect_turn(&client, screenshot_round()).await;
-        let sent = body_of(&joined(seen).await[1]);
+        let sent = body_of(&seen.join().unwrap()[1]);
         let messages = sent["messages"].as_array().unwrap();
         assert_eq!(messages.len(), 4, "{messages:?}");
         assert_eq!(messages[2]["role"], "tool");
@@ -1358,7 +1361,7 @@ mod tests {
         let client = OpenAiClient::new(url).with_model(Some("gemma-4".into()));
         collect_turn(&client, screenshot_round()).await;
         assert_eq!(
-            body_of(&joined(seen).await[1]),
+            body_of(&seen.join().unwrap()[1]),
             serde_json::to_value(wire::build_chat_request(
                 &screenshot_round(),
                 true,
@@ -1373,7 +1376,7 @@ mod tests {
         let client = OpenAiClient::new(url).with_model(Some("gemma-4".into()));
         collect_turn(&client, muted_turn()).await;
         assert!(
-            joined(seen).await[0].contains("\"messages\""),
+            seen.join().unwrap()[0].contains("\"messages\""),
             "the first request is the turn itself, not a catalogue lookup"
         );
     }

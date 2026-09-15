@@ -233,8 +233,19 @@ failing.** The orchestrator's `wait_for` helper blocks until the event channel
 *closes*, so removing the code under test made a run sit past ten minutes; wrapped in
 a five-second `timeout` it fails immediately and says what it was waiting for. In CI a
 hang reads as broken infrastructure rather than a broken promise, which is the worse
-of the two failure modes.
-— *engine failures stop being silent*.
+of the two failure modes. **Recorded twice**: two client tests joined a scripted stub's
+thread with a bare `join()`, and the first mutation that changed the order of requests
+left the stub waiting for a connection that never came — the mutation run sat for
+sixteen minutes at zero CPU and looked, from outside, like a stuck task. The obvious
+repair was wrong too, and the next run said so: a `tokio::time::timeout` around
+`spawn_blocking(join)` makes the test *panic* on time, and then the runtime's shutdown
+waits for that blocking task, which is still running — the §1 entry on runtime drop,
+met from the other side — so the run hung past its cap exactly as before. Bound the
+**thread itself**: the stub accepts under a deadline and returns what it saw, and a
+plain `join` then fails on the missing request. Give a mutation harness its own
+wall-clock cap as well, so a hang is reported as a finding rather than waited out.
+— *engine failures stop being silent*, *a tool's images reach the model through a
+gateway*.
 
 **On a path built to degrade gracefully, `is_ok()` can never be the assertion.** A test
 asserted `is_ok()` on a tool that turns an index failure into a normal answer, so
