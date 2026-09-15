@@ -207,6 +207,9 @@ mod tests {
         assert_eq!(resolve_target(&items, "#0"), Resolved::Nothing);
         assert_eq!(resolve_target(&items, "#3"), Resolved::Nothing);
         assert_eq!(resolve_target(&items, "nope.png"), Resolved::Nothing);
+        // A bare number is the `#N` `/image list` prints, as for `/file`.
+        assert_eq!(resolve_target(&items, "2"), Resolved::One(1));
+        assert_eq!(resolve_target(&items, "3"), Resolved::Nothing);
     }
 
     #[test]

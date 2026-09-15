@@ -182,7 +182,12 @@ impl PythonExec {
                 Resolved::Shared(hits) => {
                     let candidates = hits
                         .iter()
-                        .map(|&i| format!("\n• #{} {} — {}", i + 1, items[i].name, items[i].source))
+                        // The handle the turn carries, not the position: after an item
+                        // leaves mid-turn the two differ (fork F12).
+                        .map(|&i| {
+                            let item = &items[i];
+                            format!("\n• #{} {} — {}", item.handle, item.name, item.source)
+                        })
                         .collect::<String>();
                     return Err(loc.tf(
                         "tool.python_exec.err.files_shared",
@@ -956,6 +961,61 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["sales.xlsx"]
         );
+    }
+
+    /// `"2"` is the `#2` the pinned block printed — the rule `/file open 2` follows, since the
+    /// user and the model name one list.
+    #[tokio::test]
+    async fn a_bare_number_names_the_file_its_hash_handle_does() {
+        let (_d, _folder, ctx) = ctx_with_inputs();
+        let (sb, tool) = staging_tool();
+        let out = tool
+            .invoke(
+                &ctx,
+                serde_json::json!({"code": "print(1)", "files": ["2"]}),
+            )
+            .await
+            .unwrap();
+        assert!(!out.result.contains("nothing was run"), "{}", out.result);
+        let staged = sb.staged.lock().unwrap();
+        assert_eq!(staged[0][0].0, "sales.xlsx");
+    }
+
+    /// A shared name is refused with the numbers the turn **gave** — after an item left
+    /// mid-turn a position is someone else's handle, and the refusal named `#3 notes.md`
+    /// where `#3` was the screenshot.
+    #[tokio::test]
+    async fn a_shared_name_is_refused_with_the_handles_the_turn_carries() {
+        use crate::entities::attachment::{AttachMode, Attachment};
+        let (_d, _folder, mut ctx) = ctx_with_inputs(); // #1 notes.md, #2 sales.xlsx, #3 shot.png
+        let note = |source: &str| {
+            Attachment::new(
+                "notes.md",
+                source,
+                NOTES.to_string(),
+                NOTES.len(),
+                AttachMode::Inline,
+            )
+        };
+        // Mid-turn the first attachment leaves and two of the same name arrive.
+        ctx.attachments =
+            std::sync::Arc::from(vec![note("C:\\a\\notes.md"), note("C:\\b\\notes.md")]);
+        ctx.sync_inputs();
+        let (sb, tool) = staging_tool();
+        let out = tool
+            .invoke(
+                &ctx,
+                serde_json::json!({"code": "print(1)", "files": ["notes.md"]}),
+            )
+            .await
+            .unwrap();
+        assert!(
+            out.result.contains("#4 notes.md") && out.result.contains("#5 notes.md"),
+            "{}",
+            out.result
+        );
+        assert!(!out.result.contains("#3 notes.md"), "{}", out.result);
+        assert!(sb.calls.lock().unwrap().is_empty(), "{}", out.result);
     }
 
     /// An argument that is not a list of names is refused **before** the run, like every

@@ -495,7 +495,9 @@ src/
 │  │                        AttachmentChunk/AttachmentHit — its semantic index;
 │  │                        resolve_handle/Resolved — what `#N`/a name/a path
 │  │                        reaches for /file and /image remove (a shared name
-│  │                        resolves to all its holders, and is refused)
+│  │                        resolves to all its holders, and is refused; a bare
+│  │                        `N` is `#N` unless an item is called that — one core,
+│  │                        resolve_handle_by, also behind chat_inputs::resolve)
 │  ├─ chat.rs               Chat, ChatSummary, CharacterNames, Chat::from_profile, draft,
 │  │                        FeedView (per-chat collapse state of the feed's foldable blocks)
 │  ├─ chat_file.rs          ChatFile/FileOrigin — a file stored with a chat (bytes in

@@ -399,7 +399,98 @@ fn opening_refuses_what_is_not_a_file_on_this_machine() {
 
     assert!(orch.plan_open("nothing.txt").is_none());
     let msg = failure(drain(&mut rx)).expect("a refusal");
-    assert!(msg.contains("nothing.txt"), "{msg}");
+    assert!(
+        msg.contains("nothing.txt") && msg.contains("/file list"),
+        "a name nothing answers to points at the listing: {msg}"
+    );
+}
+
+/// Observed live (2026-09-15, v0.9.9): `/file list` printed `#1 chart.png`, and
+/// `/file open 1` and `/file remove 1` were each refused as "not attached" while the name
+/// worked. A bare number is the `#N` the listing printed; a number no file carries is
+/// answered with the numbers there are — what the same run needed again once a removal had
+/// renumbered the list — and a chat with no files with the command that adds one.
+#[test]
+fn a_bare_number_reaches_the_listed_file_and_a_missing_one_names_the_numbers_there_are() {
+    let (_dir, mut orch, mut rx) = bare_orch_rx();
+    let chat_id = open_chat(&mut orch);
+    let dir = orch.stored_files_dir(chat_id);
+    std::fs::create_dir_all(&dir).unwrap();
+    for name in ["chart.png", "tool-image-1.png"] {
+        std::fs::write(dir.join(name), PNG).unwrap();
+        let chat = orch.chats.iter_mut().find(|c| c.id == chat_id).unwrap();
+        chat.files.push(listing(name));
+    }
+
+    let (path, _) = orch.plan_open("1").expect("`1` is `#1`");
+    assert_eq!(path, dir.join("chart.png"));
+
+    assert!(orch.plan_open("3").is_none());
+    let msg = failure(drain(&mut rx)).expect("a refusal");
+    assert!(
+        msg.contains("#3") && msg.contains("#1–#2") && msg.contains("/file list"),
+        "{msg}"
+    );
+
+    orch.handle_file_remove("1".into());
+    assert_eq!(files_of(&orch, chat_id), ["tool-image-1.png"]);
+    drain(&mut rx);
+
+    // The list renumbered: what was `#2` is `#1` now, and `#2` says what there is.
+    assert!(orch.plan_open("#2").is_none());
+    let msg = failure(drain(&mut rx)).expect("a refusal");
+    assert!(
+        msg.contains("#2") && msg.contains("#1") && !msg.contains("#1–"),
+        "{msg}"
+    );
+
+    orch.handle_file_remove("1".into());
+    assert!(files_of(&orch, chat_id).is_empty());
+    drain(&mut rx);
+    assert!(orch.plan_open("1").is_none());
+    let msg = failure(drain(&mut rx)).expect("a refusal");
+    assert!(msg.contains("/file attach"), "an empty chat: {msg}");
+}
+
+/// `/image remove` reads a bare number the way `/file` does, and a number nothing staged
+/// carries is answered with the numbers there are.
+#[test]
+fn image_remove_takes_a_bare_number_and_answers_a_missing_one_with_the_range() {
+    use crate::app::events::ImageProgress;
+    use crate::entities::message_image::MessageImage;
+    let (_dir, mut orch, mut rx) = bare_orch_rx();
+    let chat_id = open_chat(&mut orch);
+    let staged = orch.staged_images.entry(chat_id).or_default();
+    for (name, source) in [("a.png", "C:\\a.png"), ("b.png", "C:\\b.png")] {
+        staged.push(MessageImage::new(
+            name,
+            source,
+            "image/png",
+            10,
+            10,
+            "AAAA".into(),
+        ));
+    }
+    let refusal = |events: Vec<AppEvent>| {
+        events.into_iter().find_map(|e| match e {
+            AppEvent::ImageProgress(ImageProgress::Failed(msg)) => Some(msg),
+            _ => None,
+        })
+    };
+
+    orch.handle_image_remove("5".into());
+    let msg = refusal(drain(&mut rx)).expect("a refusal");
+    assert!(
+        msg.contains("#5") && msg.contains("#1–#2") && msg.contains("/image list"),
+        "{msg}"
+    );
+
+    orch.handle_image_remove("2".into());
+    let names: Vec<&str> = orch.staged_images[&chat_id]
+        .iter()
+        .map(|i| i.name.as_str())
+        .collect();
+    assert_eq!(names, ["a.png"]);
 }
 
 /// A name two of the chat's files share opens nothing and lists each holder's `#N` and

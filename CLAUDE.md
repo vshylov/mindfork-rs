@@ -171,7 +171,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-15, version 0.9.9)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3240 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **3246 unit tests
 green, 181 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
@@ -184,6 +184,11 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **`/file open 1` — a bare number is the listed `#N`** — reported from a chat:
+  `/file list` showed `#1`, and `/file open 1` was refused as "not attached". One
+  resolver now reads a bare number as `#N` unless an item is called that, for `/file`,
+  `/image remove` and `python_exec`'s `files` alike, and a miss answers with the numbers
+  there are (spec §9.7, [docs/journal/rag.md](docs/journal/rag.md)).
 - **Through a gateway, a tool's image and `/continue` belong to the route** — M3 ran
   the app itself through OpenRouter (GO on Bedrock-routed Haiku: a chart only the
   image could answer for, the `/file` round trip), and per pinned route with blind

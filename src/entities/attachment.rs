@@ -220,20 +220,36 @@ pub enum Resolved {
 }
 
 /// Resolves `#N` (1-based, as the listings number items), which is never ambiguous, or
-/// else every item `matches` accepts for the name or path typed.
+/// else every item `matches` accepts for the name or path typed, or else a bare `N` as `#N`.
 pub fn resolve_handle<T>(
     items: &[T],
     target: &str,
     matches: impl Fn(&T, &str) -> bool,
 ) -> Resolved {
-    let target = target.trim().trim_matches(|c| c == '"' || c == '\'').trim();
-    if let Some(digits) = target.strip_prefix('#')
-        && let Ok(n) = digits.trim().parse::<usize>()
-    {
-        return match n.checked_sub(1).filter(|&i| i < items.len()) {
-            Some(i) => Resolved::One(i),
-            None => Resolved::Nothing,
-        };
+    resolve_handle_by(items, target, matches, |n| {
+        n.checked_sub(1).filter(|&i| i < items.len())
+    })
+}
+
+/// [`resolve_handle`] with the number read by `numbered` — a position for a list numbered
+/// as it is listed, a carried handle for a turn's list (`chat_inputs::resolve`).
+///
+/// A bare `N` means `#N` only when no item answers to it as a name: `/file open 1` is what
+/// a user types after reading `#1` in `/file list`, while a file really called `1` stays
+/// reachable by that name. `#N` is never read as a name.
+pub fn resolve_handle_by<T>(
+    items: &[T],
+    target: &str,
+    matches: impl Fn(&T, &str) -> bool,
+    numbered: impl Fn(usize) -> Option<usize>,
+) -> Resolved {
+    let target = unquote(target);
+    let by_number = || match handle_number(target).and_then(&numbered) {
+        Some(at) => Resolved::One(at),
+        None => Resolved::Nothing,
+    };
+    if target.starts_with('#') && handle_number(target).is_some() {
+        return by_number();
     }
     let hits: Vec<usize> = items
         .iter()
@@ -242,10 +258,38 @@ pub fn resolve_handle<T>(
         .map(|(i, _)| i)
         .collect();
     match hits.len() {
-        0 => Resolved::Nothing,
+        0 => by_number(),
         1 => Resolved::One(hits[0]),
         _ => Resolved::Shared(hits),
     }
+}
+
+/// The number a handle is typed as — `#N`, or `N` alone — whether or not any item carries
+/// it. What a refusal reads to answer a number with the numbers there are, rather than
+/// with "not attached", which describes a name.
+pub fn handle_number(target: &str) -> Option<usize> {
+    let target = unquote(target);
+    match target.strip_prefix('#') {
+        Some(digits) => digits.trim().parse().ok(),
+        None if !target.is_empty() && target.bytes().all(|b| b.is_ascii_digit()) => {
+            target.parse().ok()
+        }
+        None => None,
+    }
+}
+
+/// The handles a list of `count` items answers to, as a refusal states them: `#1`, or
+/// `#1–#N`.
+pub fn handle_range(count: usize) -> String {
+    match count {
+        0 | 1 => "#1".to_string(),
+        n => format!("#1–#{n}"),
+    }
+}
+
+/// A handle without the whitespace and the quotes a name with spaces is typed in.
+fn unquote(target: &str) -> &str {
+    target.trim().trim_matches(|c| c == '"' || c == '\'').trim()
 }
 
 /// Whether the item at `i` has a name another item shares — where a listing shows the
@@ -463,6 +507,43 @@ mod tests {
             .collect();
         assert_eq!(shared, [true, true, false]);
         assert!(!name_is_shared(&items, 9, |a| a.name.as_str()));
+    }
+
+    /// Observed live: `/file list` printed `#1 chart.png`, and `/file open 1` was refused as
+    /// "not attached". A bare number is the `#N` a listing prints — unless an item is called
+    /// that, since a name that exists wins; `#N` itself never reads as a name.
+    #[test]
+    fn a_bare_number_is_its_handle_unless_an_item_is_called_that() {
+        let items = vec![
+            att("3", "x", AttachMode::Inline),
+            att("chart.png", "x", AttachMode::Inline),
+            att("notes.md", "x", AttachMode::Inline),
+        ];
+        let resolve = |target: &str| resolve_handle(&items, target, Attachment::matches);
+        assert_eq!(resolve("1"), Resolved::One(0), "`1` is `#1`");
+        assert_eq!(
+            resolve(" \"2\" "),
+            Resolved::One(1),
+            "quoted, still a number"
+        );
+        assert_eq!(resolve("3"), Resolved::One(0), "the file called `3` wins");
+        assert_eq!(
+            resolve("#3"),
+            Resolved::One(2),
+            "and `#3` is still the third"
+        );
+        for nothing in ["0", "4", "+1", "1.5", "99999999999999999999999"] {
+            assert_eq!(resolve(nothing), Resolved::Nothing, "{nothing:?}");
+        }
+
+        assert_eq!(handle_number("#2"), Some(2));
+        assert_eq!(handle_number("2"), Some(2));
+        assert_eq!(handle_number(" '7' "), Some(7));
+        for name in ["chart.png", "#x", "+1", "12a", ""] {
+            assert_eq!(handle_number(name), None, "{name:?}");
+        }
+        assert_eq!(handle_range(1), "#1");
+        assert_eq!(handle_range(3), "#1–#3");
     }
 
     /// `name_is_shared` decides whether a listing prints the source beside the name, and
