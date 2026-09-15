@@ -1,7 +1,8 @@
 # Track plan: the thinking switch reaches a gateway
 
 **Status:** forks **decided** by the user, 2026-09-15 — all three at the
-recommendation; **implemented** (§6) and **L1–L4 measured GO** (§7).
+recommendation; **implemented** (§6), **L1–L4 measured GO** (§7), merged (#559) —
+the track is **closed**.
 
 - **T1 — (a):** "on" with no effort sends `reasoning: {enabled: true}`.
 - **T2 — (ii):** "off" too, behind both guards — the catalogue's explicit
@@ -10,22 +11,22 @@ recommendation; **implemented** (§6) and **L1–L4 measured GO** (§7).
 
 The settings' thinking switch goes out as a top-level `thinking` — a llama.cpp
 field — and a gateway drops it unread. Found beside F5
-([gateway-images-and-continue.md](gateway-images-and-continue.md) §9) on the
+([gateway-images-and-continue.md](../gateway-images-and-continue.md) §9) on the
 Anthropic half: `thinking: true` alone turned reasoning on at no route. Measured
 here on both directions and on three kinds of model, it is wider than that finding:
 the switch is inert **on** for a model that does not reason by default, and inert
 **off** for one that does.
 
 **Related:** spec §8.1 (the mapping onto the OpenAI-compatible API),
-[gateway-capabilities.md](gateway-capabilities.md) (the catalogue, and why its
+[gateway-capabilities.md](../gateway-capabilities.md) (the catalogue, and why its
 `reasoning` entry already stands for our `thinking` + `reasoning_effort`),
-[openrouter-external.md](research/openrouter-external.md) §5 F2 and §9 (the
+[openrouter-external.md](../research/openrouter-external.md) §5 F2 and §9 (the
 refusal a model that must reason answers with, and the memo that recovers from it),
-[lessons.md](lessons.md) §3 (a `200` is not proof a parameter works), §9 (gateways).
+[lessons.md](../lessons.md) §3 (a `200` is not proof a parameter works), §9 (gateways).
 
 ## 1. What is broken, precisely
 
-`wire::build_chat_request` ([wire.rs](../src/shared/api/openai/wire.rs)) sends
+`wire::build_chat_request` ([wire.rs](../../src/shared/api/openai/wire.rs)) sends
 `SamplingConfig.thinking` as `thinking` and `reasoning_effort` only when an effort
 is chosen. Through OpenRouter:
 
@@ -186,7 +187,7 @@ Named smokes only — install.md §7.1.
 One behaviour, in the client that owns this wire:
 
 - **`wire::gateway_reasoning(sampling, entry, off_refused)`**
-  ([wire.rs](../src/shared/api/openai/wire.rs)) — the whole rule as a pure
+  ([wire.rs](../../src/shared/api/openai/wire.rs)) — the whole rule as a pure
   function: `None` unless the entry lists `reasoning` and no effort is chosen; a
   zero `reasoning_budget` is "off" whatever `thinking` says; "on" needs nothing
   more; "off" needs `mandatory: false` stated and no refusal remembered.

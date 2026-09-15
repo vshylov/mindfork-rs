@@ -190,7 +190,7 @@ being recent is dropped, not shortened.
   with no effort also carries `reasoning: {enabled}`; "off" only on a stated
   `mandatory: false`, a zero budget reads as off, and the F2 recovery covers a
   refused `enabled: false`. Default is "on", so such models now reason. Live **GO**
-  ([docs/gateway-thinking-switch.md](docs/gateway-thinking-switch.md), spec §8.1,
+  ([docs/history/gateway-thinking-switch.md](docs/history/gateway-thinking-switch.md), spec §8.1,
   [docs/journal/engine.md](docs/journal/engine.md)).
 - **`/file open 1` — a bare number is the listed `#N`** — reported from a chat:
   `/file list` showed `#1`, and `/file open 1` was refused as "not attached". One

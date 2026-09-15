@@ -1114,7 +1114,7 @@ cargo test simple_generation                                   -- --ignored --no
 ```
 
 The settings' thinking switch reaches a gateway as its own `reasoning` field
-(docs/gateway-thinking-switch.md); its smokes each read a declared model, and
+(docs/history/gateway-thinking-switch.md); its smokes each read a declared model, and
 fail rather than skip once one is declared:
 
 ```powershell

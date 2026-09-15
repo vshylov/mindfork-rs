@@ -43,7 +43,7 @@ pub struct OpenAiClient {
     /// The same thing, learned at runtime: this server has **refused** a request
     /// to disable reasoning, so stop asking — whether it asked as
     /// `reasoning_effort: "none"` or as a gateway's `reasoning: {enabled: false}`
-    /// (docs/gateway-thinking-switch.md, fork T2); one memo silences both.
+    /// (docs/history/gateway-thinking-switch.md, fork T2); one memo silences both.
     ///
     /// Set by [`Self::chat_stream`] when a `400` says so, and never cleared — a
     /// model that must reason does not stop mid-session, and a server swapped
@@ -245,7 +245,7 @@ impl OpenAiClient {
     }
 
     /// The gateway's own reasoning switch for this request, or `None` to send it as
-    /// built ([`wire::gateway_reasoning`], docs/gateway-thinking-switch.md). The
+    /// built ([`wire::gateway_reasoning`], docs/history/gateway-thinking-switch.md). The
     /// catalogue is consulted only by a turn that could gain the field — a switch
     /// set or a zero budget, and no effort — so every other turn asks nothing it did
     /// not ask before, and a blank model field asks nothing at all.
@@ -342,7 +342,7 @@ impl OpenAiClient {
     ///
     /// - the turn **asked** to mute reasoning — `reasoning_effort: "none"`, or the
     ///   gateway switch `reasoning: {enabled: false}`, which R1 refuses in the same
-    ///   words (docs/gateway-thinking-switch.md §2, S8) when a catalogue wrongly
+    ///   words (docs/history/gateway-thinking-switch.md §2, S8) when a catalogue wrongly
     ///   said `mandatory: false` — and the field was actually sent
     ///   (`omit_effort_none()` false) — otherwise re-sending changes nothing;
     /// - the status is `400`: a refusal of the request as written, not a rate
@@ -1154,7 +1154,7 @@ mod tests {
 
     /// A gateway catalogue carrying the reasoning metadata OpenRouter publishes, one
     /// model per kind the switch has to tell apart — reasons only when asked, reasons
-    /// by default, must reason (docs/gateway-thinking-switch.md §2).
+    /// by default, must reason (docs/history/gateway-thinking-switch.md §2).
     const SWITCH_CATALOGUE: &str = r#"{"data":[
         {"id":"anthropic/claude-haiku-4.5","supported_parameters":["max_tokens","reasoning"],"reasoning":{"mandatory":false}},
         {"id":"qwen/qwen3.6-27b","supported_parameters":["reasoning"],"reasoning":{"mandatory":false,"default_enabled":true}},
@@ -2884,7 +2884,7 @@ mod ignored_smoke {
     }
 
     /// One turn of the thinking-switch smokes against the model `var` declares
-    /// (docs/gateway-thinking-switch.md §5), or `None` when the stack or the model is
+    /// (docs/history/gateway-thinking-switch.md §5), or `None` when the stack or the model is
     /// not declared. Returns the model, the reply, the finish reason and the
     /// reasoning tokens the endpoint reported — the deterministic half, since a
     /// provider may summarize its thoughts to nothing (lessons §2).

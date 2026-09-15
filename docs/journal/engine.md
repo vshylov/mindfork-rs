@@ -4333,7 +4333,7 @@ Found beside F5 ([gateway-images-and-continue.md](../gateway-images-and-continue
 §9): through OpenRouter the settings' thinking switch did nothing. The
 OpenAI-compatible wire sends it as a top-level `thinking` — a llama.cpp field — and
 `reasoning_effort` only when an effort is chosen. Plan, table and forks:
-[gateway-thinking-switch.md](../gateway-thinking-switch.md).
+[gateway-thinking-switch.md](../history/gateway-thinking-switch.md).
 
 **Measured before building**, one raw streamed request per shape, the body the
 client builds for a tool turn with only the reasoning fields varied, reading
