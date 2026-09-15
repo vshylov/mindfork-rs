@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (65)
+## Entries (66)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -77,6 +77,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the endpoint is asked what the model can do (done)
 - Post-M9: through a gateway, a tool's image and `/continue` belong to the route — M3 measured (done)
 - Post-M9: `/continue` follows the route table through a gateway — and F5 closes on a measurement (done)
+- Post-M9: a tool's images reach the model through a gateway — re-homed into a user message (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -4253,6 +4254,58 @@ continuation was a lone `"."`, which proves little; and the local Gemma spent th
 whole cap reasoning, left no visible text, and was — correctly — not continuable.
 A 4-token cap with `reasoning_budget: 0` fixed both, and the catalogue landed
 before the first turn on every stack, which is H2.1 measured rather than argued.
+
+### Post-M9: a tool's images reach the model through a gateway — re-homed into a user message (done)
+
+Stage H1 of [gateway-images-and-continue.md](../gateway-images-and-continue.md), on
+the user's decision of 2026-09-15 (H1 (b), with the switch inside the client,
+H1.1 (i)) — the second half of F6.
+
+**What was broken.** The OpenAI-compatible client puts a tool's images on the
+`role:"tool"` message as content parts, a shape measured good on llama.cpp and on
+xAI and outside the OpenAI spec's letter. Through OpenRouter the routed provider
+decides what it means: of 29 route-and-model pairs 20 saw the image, 6 refused the
+request (DeepInfra's `422` names the tool message's content "should be a valid
+string"; ModelRun's `400` counts no media marker in its template; CoreWeave a
+`502`) and **3 answered confidently about a picture they never received** —
+while the app, having sent it, had no way to say otherwise.
+
+**What it does now.** `wire::rehome_tool_images` takes the conversation and moves
+the images of every run of tool results into one user message right after the run
+— one per run, because a round's tool messages must stay contiguous after its
+`tool_calls` — in call order, behind the labels they already carry. The client
+applies it first thing in `chat_stream`, and only when the request carries a tool
+image **and** the endpoint's catalogue answered for the model; a request without
+one does not even look the catalogue up, and a llama.cpp, which publishes nothing,
+is sent the body `build_chat_request` always produced. The builder itself is
+unchanged, which is why the seventeen tests calling it are too.
+
+**Two sub-decisions taken at implementation, recorded in the plan.** The label: the
+plan had said "a label naming the call", and the labels the images already carry
+name the file the tool's own result names — adding a call name would need the
+profile's language, which the wire layer does not have, for nothing the file name
+does not already tie together (Gemini's F1-A fallback made the same call). And the
+memo: reading the plan's H1.1 against the code found that `catalogue_entry` issued
+a fresh `GET /v1/models` on every call — harmless for a once-per-engine question, a
+request per turn on the chat path. It now sits behind a `OnceCell` filled by a
+fetch that *answered*; a transport failure, `5xx` or `429` stays unremembered, so a
+gateway briefly unavailable is asked again rather than filed as having no
+catalogue.
+
+**Tests**: 3240 green, 181 ignored (3236 / 180 before) on the tracked count. Four
+new unit tests — two on the wire (runs and order, labels kept, the
+tool results bare strings; a user's own image left alone) and two on the client (the
+memo, including "not now"; the re-homed body for a gateway, the unchanged body for a
+llama.cpp-shaped catalogue, no catalogue request for a turn without tool images) —
+and one smoke that replays the **client builder's own** body pinned to a route.
+
+**Live — GO**, 2026-09-15. The builder's re-homed body replayed pinned to the routes
+that failed today's shape, blind arm beside each: on `google/gemma-4-31b-it`
+Chutes (silently blind before), DeepInfra (`422`) and ModelRun (`400`) all see the
+image; on `qwen/qwen3.6-27b` Venice (silently blind) and DeepInfra (`422`) too.
+Through the client on default routing `tool_result_image_is_seen_live` is green on
+Gemma 4, Qwen 3.6, gpt-4.1-mini and Haiku 4.5; and on the LAN `llama-server`
+(Gemma 4 31B with its projector, no catalogue) green on the unchanged shape.
 
 **Forks open, nothing built** — H1 (re-home a tool's images when the catalogue
 answered), H2 (refuse `/continue` on a gateway except the slugs whose direct mode

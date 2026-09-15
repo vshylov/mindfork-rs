@@ -50,6 +50,14 @@ pub struct OpenAiClient {
     /// configured: nothing at construction time can know it
     /// (docs/research/openrouter-external.md §5, F2(a)).
     reasoning_off_refused: std::sync::atomic::AtomicBool,
+    /// The endpoint's catalogue entry for the configured model, remembered once a
+    /// fetch **succeeded** — an entry, or a list without the model — for the
+    /// client's lifetime (a new engine gets a new client). A transport failure or a
+    /// "not now" status leaves it unset, so a gateway that was briefly unreachable is
+    /// asked again rather than filed as having no catalogue. One value for the
+    /// background question and the request builder alike
+    /// (docs/gateway-images-and-continue.md §4, H1.1).
+    catalogue: tokio::sync::OnceCell<Option<wire::ModelEntry>>,
 }
 
 impl OpenAiClient {
@@ -64,6 +72,7 @@ impl OpenAiClient {
             model: None,
             omit_effort_none: false,
             reasoning_off_refused: std::sync::atomic::AtomicBool::new(false),
+            catalogue: tokio::sync::OnceCell::new(),
         }
     }
 
@@ -168,23 +177,69 @@ impl OpenAiClient {
     /// ([external-model-name.md](../../../../docs/research/external-model-name.md) §3
     /// makes the same call about the model's name).
     async fn catalogue_entry(&self) -> Option<wire::ModelEntry> {
-        let wanted = self.model.as_deref()?;
+        self.catalogue
+            .get_or_try_init(|| self.fetch_catalogue_entry())
+            .await
+            .ok()
+            .cloned()
+            .flatten()
+    }
+
+    /// One look at the catalogue. `Err` — nothing that should be remembered: no
+    /// answer at all, or a status that means "not now" (`5xx`, `429`). Anything
+    /// else is the endpoint's answer, kept for the client's lifetime: an entry, a
+    /// list without the model, a status that means the route is not served, or a
+    /// body that is not a catalogue.
+    async fn fetch_catalogue_entry(&self) -> Result<Option<wire::ModelEntry>, ()> {
+        let Some(wanted) = self.model.as_deref() else {
+            return Ok(None);
+        };
         let url = format!("{}/models", self.base_url);
         let resp = match self.auth(self.http.get(&url)).send().await {
             Ok(r) if r.status().is_success() => r,
-            other => {
-                tracing::debug!(%url, ok = other.is_ok(), "no answer from /models");
-                return None;
+            Ok(r)
+                if r.status().is_server_error()
+                    || r.status() == reqwest::StatusCode::TOO_MANY_REQUESTS =>
+            {
+                tracing::debug!(%url, status = %r.status(), "/models is unavailable for now");
+                return Err(());
+            }
+            Ok(r) => {
+                tracing::debug!(%url, status = %r.status(), "/models is not served here");
+                return Ok(None);
+            }
+            Err(err) => {
+                tracing::debug!(%url, error = %err, "no answer from /models");
+                return Err(());
             }
         };
         let list: wire::ModelList = match resp.json().await {
             Ok(list) => list,
             Err(err) => {
                 tracing::debug!(%url, error = %err, "/models did not parse");
-                return None;
+                return Ok(None);
             }
         };
-        list.data.into_iter().find(|m| m.id == wanted)
+        Ok(list.data.into_iter().find(|m| m.id == wanted))
+    }
+
+    /// The request as this endpoint should receive it. Only a conversation whose
+    /// tool results carry images can differ, and only on an endpoint whose
+    /// catalogue answered for the model — a gateway, where those images are
+    /// re-homed into a user message ([`wire::rehome_tool_images`], fork H1 of
+    /// docs/gateway-images-and-continue.md). Every other request, and every request
+    /// to an endpoint that publishes nothing (each llama.cpp), goes out as it came.
+    async fn shaped_for_endpoint(&self, req: ChatRequest) -> ChatRequest {
+        if !wire::carries_tool_images(&req.messages) || self.model_capabilities().await.is_none() {
+            return req;
+        }
+        match wire::rehome_tool_images(&req.messages) {
+            Some(messages) => {
+                tracing::debug!("a tool's images re-homed into a user message for a gateway");
+                ChatRequest { messages, ..req }
+            }
+            None => req,
+        }
     }
 
     /// Fetches `GET /v1/models` and returns the ids it lists.
@@ -291,6 +346,7 @@ impl OpenAiClient {
 #[async_trait::async_trait]
 impl EngineBackend for OpenAiClient {
     async fn chat_stream(&self, req: ChatRequest, cancel: CancellationToken) -> Result<ChatStream> {
+        let req = self.shaped_for_endpoint(req).await;
         let response = match self.send_chat(&req, self.omit_effort_none(), &cancel).await {
             Ok(Some(response)) => response,
             Ok(None) => return Ok(http::cancelled_stream()),
@@ -1204,6 +1260,108 @@ mod tests {
         (format!("http://{addr}/v1"), handle)
     }
 
+    /// Fork H1.1 (docs/gateway-images-and-continue.md §4): the catalogue is asked once
+    /// per client once it has answered, and **not** remembered from a "not now" — a
+    /// gateway that was briefly unavailable is asked again instead of being filed as
+    /// having no catalogue. The stub serves two connections; a third request would be
+    /// refused by the OS and read as silence, so the last assertion is the memo's.
+    #[tokio::test]
+    async fn the_catalogue_is_remembered_once_it_has_answered() {
+        let (url, seen) = scripted_server(&[(503, "{}"), (200, CATALOGUE_BODY)]);
+        let client = OpenAiClient::new(url).with_model(Some("deepseek/deepseek-r1".into()));
+        assert!(
+            client.model_capabilities().await.is_none(),
+            "an outage says nothing"
+        );
+        assert!(
+            client.model_capabilities().await.is_some(),
+            "so the next question asks again"
+        );
+        assert_eq!(seen.join().unwrap().len(), 2);
+        assert!(
+            client.model_capabilities().await.is_some(),
+            "and the answer is kept, not fetched a third time"
+        );
+    }
+
+    /// A round whose tool result carries an image, the way the orchestrator builds one.
+    fn screenshot_round() -> ChatRequest {
+        use crate::shared::api::contract::{ApiImage, ApiMessage, ApiToolCall};
+        ChatRequest {
+            continue_final: false,
+            system: None,
+            messages: vec![
+                ApiMessage::user("what is on the screen?"),
+                ApiMessage::assistant_tool_calls(
+                    "",
+                    vec![ApiToolCall {
+                        id: "call-1".into(),
+                        name: "take_screenshot".into(),
+                        arguments: "{}".into(),
+                        thought_signature: None,
+                    }],
+                ),
+                ApiMessage::tool("call-1", "Screenshot taken.").with_images(vec![ApiImage {
+                    mime: "image/png".into(),
+                    data: std::sync::Arc::from("QUJD"),
+                    label: Some("#1".into()),
+                }]),
+            ],
+            sampling: Default::default(),
+            tools: Vec::new(),
+        }
+    }
+
+    /// Fork H1 on the wire: a gateway — its catalogue answers for the model — receives
+    /// the tool result text-only and the image in a user message after it; a
+    /// llama.cpp, whose catalogue lists the model and nothing else, receives exactly
+    /// the body it always did; and a turn with no tool image does not even ask the
+    /// catalogue, so its first request is the turn itself.
+    #[tokio::test]
+    async fn a_gateway_receives_a_tools_image_in_a_user_message() {
+        let body_of = |raw: &str| serde_json::from_str::<serde_json::Value>(raw).unwrap();
+
+        let (url, seen) = scripted_server(&[(200, CATALOGUE_BODY), (200, ONE_CHUNK_SSE)]);
+        let client = OpenAiClient::new(url).with_model(Some("deepseek/deepseek-r1".into()));
+        collect_turn(&client, screenshot_round()).await;
+        let sent = body_of(&seen.join().unwrap()[1]);
+        let messages = sent["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 4, "{messages:?}");
+        assert_eq!(messages[2]["role"], "tool");
+        assert_eq!(messages[2]["content"], "Screenshot taken.");
+        assert_eq!(messages[3]["role"], "user");
+        assert_eq!(
+            messages[3]["content"][1]["image_url"]["url"],
+            "data:image/png;base64,QUJD"
+        );
+
+        let (url, seen) = scripted_server(&[
+            (200, r#"{"data":[{"id":"gemma-4"}]}"#),
+            (200, ONE_CHUNK_SSE),
+        ]);
+        let client = OpenAiClient::new(url).with_model(Some("gemma-4".into()));
+        collect_turn(&client, screenshot_round()).await;
+        assert_eq!(
+            body_of(&seen.join().unwrap()[1]),
+            serde_json::to_value(wire::build_chat_request(
+                &screenshot_round(),
+                true,
+                Some("gemma-4"),
+                false
+            ))
+            .unwrap(),
+            "an endpoint that publishes nothing gets the body it always got"
+        );
+
+        let (url, seen) = scripted_server(&[(200, ONE_CHUNK_SSE)]);
+        let client = OpenAiClient::new(url).with_model(Some("gemma-4".into()));
+        collect_turn(&client, muted_turn()).await;
+        assert!(
+            seen.join().unwrap()[0].contains("\"messages\""),
+            "the first request is the turn itself, not a catalogue lookup"
+        );
+    }
+
     /// A catalogue in the shape OpenRouter actually answers, trimmed to the two
     /// keys this reads and carrying a neighbour so the lookup has something to
     /// get wrong ([openrouter-external.md](../../../../docs/research/openrouter-external.md) §8.1, M5).
@@ -1758,6 +1916,71 @@ mod ignored_smoke {
         .await;
         eprintln!("tool-result image: {answer}");
         crate::shared::api::assert_sees_green_circle(&answer, true, "with the image");
+    }
+
+    /// Fork H1's live gate (docs/gateway-images-and-continue.md §5): the body this
+    /// client builds for a gateway — the tool's image re-homed into a user message —
+    /// **serialized by the client's own builder** and replayed pinned to the routes
+    /// that failed today's shape, one of each failure kind, blind arm beside it. The
+    /// client has no routing knob and must not grow one (§3), so the pin is the one
+    /// field added to its bytes. Replaying the builder's output rather than a probe's
+    /// reconstruction is what keeps this measuring the shipped shape (lessons §3).
+    #[tokio::test]
+    #[ignore = "requires MINDFORK_ENGINE_URL + MINDFORK_ENGINE_KEY + MINDFORK_ENGINE_MODEL on OpenRouter, and MINDFORK_LIVE_PINNED_ROUTES"]
+    async fn a_re_homed_tool_image_is_seen_on_the_routes_that_failed_live() {
+        let (Ok(url), Ok(key), Ok(model), Ok(routes)) = (
+            std::env::var("MINDFORK_ENGINE_URL"),
+            std::env::var("MINDFORK_ENGINE_KEY"),
+            std::env::var("MINDFORK_ENGINE_MODEL"),
+            std::env::var("MINDFORK_LIVE_PINNED_ROUTES"),
+        ) else {
+            eprintln!(
+                "skip: the gateway, its key, the model and MINDFORK_LIVE_PINNED_ROUTES are all needed"
+            );
+            return;
+        };
+        let http = reqwest::Client::new();
+        for route in routes.split(',').map(str::trim).filter(|r| !r.is_empty()) {
+            for with_image in [false, true] {
+                let mut req = screenshot_turn(with_image);
+                if let Some(messages) = wire::rehome_tool_images(&req.messages) {
+                    req.messages = messages;
+                }
+                let mut body =
+                    serde_json::to_value(wire::build_chat_request(&req, true, Some(&model), false))
+                        .unwrap();
+                body["provider"] = serde_json::json!({ "only": [route], "allow_fallbacks": false });
+                let resp = http
+                    .post(format!("{}/chat/completions", url.trim_end_matches('/')))
+                    .bearer_auth(&key)
+                    .json(&body)
+                    .send()
+                    .await
+                    .expect("the gateway answers");
+                let status = resp.status();
+                let raw = resp.text().await.unwrap_or_default();
+                assert!(status.is_success(), "{route}: HTTP {status}: {raw}");
+                let answer: String = raw
+                    .lines()
+                    .filter_map(|l| l.strip_prefix("data:"))
+                    .filter_map(|d| serde_json::from_str::<serde_json::Value>(d.trim()).ok())
+                    .filter_map(|v| {
+                        v["choices"][0]["delta"]["content"]
+                            .as_str()
+                            .map(str::to_string)
+                    })
+                    .collect();
+                eprintln!("{route}, image={with_image}: {answer}");
+                if answer.is_empty() {
+                    eprintln!("{route}: the stream carried no text: {raw:.400}");
+                }
+                crate::shared::api::assert_sees_green_circle(
+                    &answer,
+                    with_image,
+                    &format!("{route}, image={with_image}"),
+                );
+            }
+        }
     }
 
     /// The blind arm once more, this time carrying the sentence the MCP adapter appends

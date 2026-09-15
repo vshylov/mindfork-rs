@@ -1,6 +1,8 @@
 # Track plan: through a gateway, a tool's image and `/continue` belong to the route
 
-**Status:** design complete, **all forks decided** (the user, 2026-09-15).
+**Status:** design complete, **all forks decided** (the user, 2026-09-15), and
+**both stages implemented and live GO** — H2 (§7) and H1 (§8); F5 measured and
+closed (§9).
 **M3 measured — GO for the app** (§1.1). The two items the OpenRouter review left
 as "worth knowing, not worth a blind change" (F6) are now measured, and both
 **harden into real limits** (§1.2, §1.3).
@@ -209,7 +211,11 @@ wrong.
   for Gemma, which makes the failure rare and does nothing to make it visible.
 - **(b) re-home a tool's images when the catalogue answered.** The tool message
   goes out text-only and its images follow in one `user` message after the
-  round's last tool result, each behind a label naming the call it came from.
+  round's last tool result, in call order, each behind the label it already
+  carries — the file name the tool's own result names (*decided at
+  implementation*: a label naming the call would need the profile's language,
+  which the wire layer does not have, and it would add nothing the file name does
+  not already tie together — the same call Gemini's F1-A fallback made).
   **Recommended**: 28 of 28 answering pairs saw the image in that shape,
   including all three silent routes and all six refusals, with every repeated
   pair's blind arm well below its seeing one; it is the fallback Gemini's builder has taken since
@@ -351,7 +357,47 @@ continues exactly as before. In every run the engine's facts landed before the
 first turn. The gate on the wire is unchanged for a local server by construction,
 and this is the run that shows it.
 
-## 8. F5 — measured beside H2, closed with nothing to build
+## 8. Stage H1 — what was implemented
+
+- **`wire::rehome_tool_images`** ([wire.rs](../src/shared/api/openai/wire.rs)) — a
+  pure function over the conversation: every tool result text-only, the images of
+  a run of tool results appended to one `user` message after the run, in call
+  order, behind their existing labels; `None` when no tool result carries an
+  image, so the caller sends the request it has rather than a copy. The request
+  builder itself is untouched, so every body it produced before is still the body
+  it produces.
+- **`OpenAiClient::shaped_for_endpoint`**
+  ([client.rs](../src/shared/api/openai/client.rs)) — the first thing
+  `chat_stream` does: a request with no tool image goes out as it came, without
+  so much as a catalogue lookup; one with a tool image is re-homed only when the
+  catalogue answered for the model (`model_capabilities` is `Some`), which is the
+  same positive signal H2 reads.
+- **The catalogue memo** (H1.1) — `catalogue_entry` behind a `tokio::sync::OnceCell`
+  filled by a fetch that *answered*; a transport failure, `5xx` or `429` leaves it
+  empty and the next question asks again.
+
+**Tests** — two wire tests (a round of two tool results and a later round, each
+run getting one user message, the tool results bare strings on the wire, labels
+and order kept; a conversation with only a user's image left alone) and two client
+tests (the memo, including "not now" not being remembered; and on the wire — a
+gateway gets the re-homed body, a llama.cpp-shaped catalogue gets exactly the body
+`build_chat_request` always produced, and a turn with no tool image makes no
+catalogue request). One `#[ignore]` smoke,
+`a_re_homed_tool_image_is_seen_on_the_routes_that_failed_live`, which serializes the
+request with the client's own builder and adds nothing but the route pin.
+
+**Live** — pinned to the three routes that failed today's shape on
+`google/gemma-4-31b-it`, the builder's re-homed body is seen on each: Chutes
+(silently blind before), DeepInfra (`422` before), ModelRun (`400` before), every
+blind arm describing some other picture; on `qwen/qwen3.6-27b` the same on Venice
+(silently blind before) and DeepInfra (`422` before). Through the client itself, on
+the gateway's default routing, `tool_result_image_is_seen_live` stays green on
+`google/gemma-4-31b-it`, `qwen/qwen3.6-27b`, `openai/gpt-4.1-mini` and
+`anthropic/claude-haiku-4.5`, each against its blind arm; and on the LAN
+`llama-server` (Gemma 4 31B with its projector, no catalogue) the smoke is green on
+the unchanged shape — the regression half, 2026-09-15.
+
+## 9. F5 — measured beside H2, closed with nothing to build
 
 `reasoning_details` across tool rounds, the review's third item. Its precondition
 was a thinking Anthropic-family model through the gateway with signed blocks, and

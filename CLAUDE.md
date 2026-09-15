@@ -171,8 +171,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-15, version 0.9.9)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3236 unit tests
-green, 180 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **3240 unit tests
+green, 181 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -188,8 +188,8 @@ being recent is dropped, not shortened.
   the app itself through OpenRouter (GO on Bedrock-routed Haiku: a chart only the
   image could answer for, the `/file` round trip), and per pinned route with blind
   controls both halves of F6 turned out real: of 29 route-and-model pairs 3 answer
-  about a tool image they never received (re-homed into a user message, 28 of 28
-  see it — stage H1, next), and `/continue` restarts on OpenAI and every
+  about a tool image they never received (in a user message 28 of 28 see it, so
+  stage H1 re-homes them there on a gateway), and `/continue` restarts on OpenAI and every
   open-weight route, which the echo filter stored glued onto the partial. Stage H2
   gates it: on an `external` endpoint whose catalogue answered, the slug's vendor
   is read against the spec §6.4 table (Anthropic ≤ 4.5, Gemini continue; the rest

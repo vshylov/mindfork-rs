@@ -315,13 +315,16 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   (`llama-server --router` or a LiteLLM container): the request body is pinned by
   a unit test, the gateway's side of it has only been read, not exercised. See
   [plugin research §6](research/plugin-system.md). A full review of that side —
-  [openrouter-external.md](research/openrouter-external.md) — closed the one
-  defect it found (a gateway's "thoughts" were dropped, F1) and left three
-  proposals resting on the same unrun measurement: reading the context window
-  and the per-model `supported_parameters` off the catalogue instead of leaving
-  both to the user (F3(b), F4(c) — one request serves both), and echoing
-  `reasoning_details` back across tool rounds (F5). Its §8 lists what a live
-  account has to measure before any of the three is worth building.
+  [openrouter-external.md](research/openrouter-external.md) — is now closed
+  on measurements from a live account: the dropped "thoughts" (F1), the silent
+  turns' refusal (F2), the catalogue's window and parameter list (F3(b), F4(c),
+  [gateway-capabilities.md](gateway-capabilities.md)), and a tool's images and
+  `/continue` answered per route (F6,
+  [gateway-images-and-continue.md](gateway-images-and-continue.md)); echoing
+  `reasoning_details` across tool rounds (F5) was measured and left unbuilt, since
+  sending no blocks cannot meet the signature rejection an echo can. What the
+  gateway side still owes is the thinking switch: `thinking: true` alone turns
+  reasoning on at no route measured, only with `reasoning_effort` set.
 - **API keys: storage extensions** (ADR 0008) — an OS keychain as an
   additional `scheme`; UI management of other machines' entries ("forget this
   computer") — also where an explicit cleanup of MCP secrets orphaned by a rename

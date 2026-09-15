@@ -1593,8 +1593,19 @@ append-only shape keeps the prefix cache intact across an image turn
   measured, llama.cpp, Anthropic, OpenAI Responses and xAI all accept it there.
   **Gemini is the exception**: a multimodal `functionResponse` is a hard `400`
   ("Multimodal function responses are not supported for this model"), so its
-  builder emits the image as user parts immediately after the response. The
-  choice is made **per provider, statically** — never by sending and catching the
+  builder emits the image as user parts immediately after the response. **An
+  `external` gateway** is the second exception, answered per route rather than
+  per protocol: measured through OpenRouter, of 29 route-and-model pairs 6 refused
+  a tool message carrying an image and 3 silently dropped it — the model then
+  describing a picture it never received — while in a user message every route
+  that answered saw it. So when the endpoint's catalogue answers for the
+  configured model (a llama.cpp never does), the OpenAI-compatible client sends
+  each tool result text-only and the images of a run of tool results in **one**
+  user message right after the run (a round's tool messages must stay contiguous),
+  in call order, behind the labels they already carry; an endpoint that publishes
+  no catalogue is sent the body it always was
+  ([docs/gateway-images-and-continue.md](docs/gateway-images-and-continue.md)
+  §1.2, fork H1). The choice is made **per provider, statically** — never by sending and catching the
   error, since a mid-turn retry after a hard failure is exactly what the retry
   decorator refuses (§6.8). Limits are the ones above plus a **cap of 4 images
   per tool result** (`MAX_TOOL_RESULT_IMAGES`, one constant for every producer),
