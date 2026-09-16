@@ -2828,15 +2828,12 @@ impl TurnLoop<'_> {
         let is_control = control::is_control_tool(&call.name);
         // Nothing the model cannot take is sent, and nothing withheld goes unsaid
         // (docs/history/sandbox-file-exchange.md §11 S8): a result that promised an image the
-        // model never receives gets a chart described that it has not seen (§10).
+        // model never receives gets a chart described that it has not seen (§10). What
+        // became of each image is said here and only here, since only here is it known.
         let offered = images.len();
-        let images = if offered > 0 && self.vision().await == VisionSupport::Unsupported {
-            let note = self
-                .ctx
-                .loc
-                .tf("loop.images_no_vision", &[("n", &offered.to_string())]);
-            push_note(&mut result, &note);
-            Vec::new()
+        let entries: Vec<Option<String>> = images.iter().map(|i| i.entry.clone()).collect();
+        let (images, fates) = if offered > 0 && self.vision().await == VisionSupport::Unsupported {
+            (Vec::new(), vec![ImageFate::NoVision; offered])
         } else {
             // Decoded and downscaled here, once, so the same prepared bytes go into the
             // request and into the stored message — the object the model sees and the
@@ -2848,13 +2845,16 @@ impl TurnLoop<'_> {
             )
             .await;
             self.image_names = taken;
-            if prepared.len() < offered {
-                let dropped = (offered - prepared.len()).to_string();
-                let note = self.ctx.loc.tf("loop.images_dropped", &[("n", &dropped)]);
-                push_note(&mut result, &note);
-            }
-            prepared
+            let fates = prepared
+                .iter()
+                .map(|p| match p {
+                    Some(_) => ImageFate::Shown,
+                    None => ImageFate::Dropped,
+                })
+                .collect();
+            (prepared.into_iter().flatten().collect(), fates)
         };
+        say_image_fates(&mut result, self.ctx.loc, &entries, &fates);
         // A UI tool block — only for regular executed calls (the internal
         // followup/rewrite ones, and ones skipped during a rewrite, don't get one).
         if !is_control && !rewrite && !announced {
@@ -4869,7 +4869,8 @@ impl ToolImageNames {
 /// third-party pixels must not cost more than the user's own, and a provider that takes
 /// only png/jpeg must not be handed a webp. An image that fails to decode, or is over
 /// `images.max_bytes`, is **dropped** — a half-broken picture is not something the model
-/// can act on — and the caller says how many were (docs/history/sandbox-file-exchange.md §11 S8).
+/// can act on — as a `None` in its place, so the caller can say which one it was
+/// (docs/history/sandbox-file-exchange.md §11 S8).
 ///
 /// Names come from `taken`, which is handed back so the turn keeps them: naming happens
 /// **after** the drop, so a result whose first image failed to decode does not hand the
@@ -4879,18 +4880,20 @@ async fn prepare_tool_images(
     cfg: crate::shared::config::ImageSettings,
     mut taken: ToolImageNames,
 ) -> (
-    Vec<crate::entities::message_image::MessageImage>,
+    Vec<Option<crate::entities::message_image::MessageImage>>,
     ToolImageNames,
 ) {
     if images.is_empty() {
         return (Vec::new(), taken);
     }
+    // A task that never came back prepared nothing, and every image is said as dropped.
+    let offered = images.len();
     tokio::task::spawn_blocking(move || {
         use base64::Engine as _;
         let b64 = base64::engine::general_purpose::STANDARD;
         let prepared = images
             .into_iter()
-            .filter_map(|image| {
+            .map(|image| {
                 let raw = b64.decode(&image.data).ok()?;
                 if raw.len() as u64 > cfg.max_bytes {
                     tracing::warn!(bytes = raw.len(), "tool image over the size cap, dropped");
@@ -4911,7 +4914,12 @@ async fn prepare_tool_images(
         (prepared, taken)
     })
     .await
-    .unwrap_or_default()
+    .unwrap_or_else(|_| {
+        (
+            std::iter::repeat_with(|| None).take(offered).collect(),
+            ToolImageNames::default(),
+        )
+    })
 }
 
 /// Appends a note to a tool's result, a blank line after what the tool said.
@@ -4920,6 +4928,79 @@ fn push_note(result: &mut String, note: &str) {
         result.push_str("\n\n");
     }
     result.push_str(note);
+}
+
+/// What became of one image a tool offered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ImageFate {
+    /// It goes to the model with the result.
+    Shown,
+    /// The engine reports it takes no images, so none of the result's went.
+    NoVision,
+    /// The preparation dropped it: over `images.max_bytes`, or undecodable.
+    Dropped,
+}
+
+/// Says what became of each image a call offered, in the result the model reads — the one
+/// place that says it, because only the loop knows (spec §9.10).
+///
+/// An image the tool named on a line of its result (`ToolImage::entry`) is said at the end
+/// of that line: " — shown to you below", or not shown and why. The tool used to write
+/// "shown" itself, and on an engine without vision the loop's note below then contradicted
+/// it in the same result. An image no line names — MCP's — is counted into one note per
+/// reason, as before; a shown one needs no note, the image itself follows.
+pub(super) fn say_image_fates(
+    result: &mut String,
+    loc: &crate::shared::i18n::Locale,
+    entries: &[Option<String>],
+    fates: &[ImageFate],
+) {
+    let (mut no_vision, mut dropped) = (0usize, 0usize);
+    for (entry, fate) in entries.iter().zip(fates) {
+        let suffix = match fate {
+            ImageFate::Shown => "loop.image_shown",
+            ImageFate::NoVision => "loop.image_not_shown_no_vision",
+            ImageFate::Dropped => "loop.image_not_shown_dropped",
+        };
+        if let Some(line) = entry {
+            if end_line(result, line, loc.t(suffix)) {
+                continue;
+            }
+            tracing::warn!(line = %line, "a tool image's line is not in its result");
+        }
+        match fate {
+            ImageFate::Shown => {}
+            ImageFate::NoVision => no_vision += 1,
+            ImageFate::Dropped => dropped += 1,
+        }
+    }
+    for (n, key) in [
+        (no_vision, "loop.images_no_vision"),
+        (dropped, "loop.images_dropped"),
+    ] {
+        if n > 0 {
+            push_note(result, &loc.tf(key, &[("n", &n.to_string())]));
+        }
+    }
+}
+
+/// Appends `suffix` to the **last** line of `text` that is exactly `line`, and says whether
+/// there was one. The last, because a tool lists its files after the console output: code
+/// that printed the same words must not have them claimed for its chart.
+pub(super) fn end_line(text: &mut String, line: &str, suffix: &str) -> bool {
+    let mut start = 0;
+    let mut found = None;
+    for piece in text.split_inclusive('\n') {
+        if piece.strip_suffix('\n').unwrap_or(piece) == line {
+            found = Some(start + line.len());
+        }
+        start += piece.len();
+    }
+    let Some(end) = found else {
+        return false;
+    };
+    text.insert_str(end, suffix);
+    true
 }
 
 /// The file extension matching a prepared image's MIME type.

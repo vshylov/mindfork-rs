@@ -558,6 +558,16 @@ pub struct ToolOutcome {
 pub struct ToolImage {
     pub mime: String,
     pub data: String,
+    /// The line of the result that names this image's file, exactly as the tool wrote it
+    /// — `python_exec`'s `files:` entry — or `None` for an image no line names (MCP's).
+    ///
+    /// **The tool does not say whether the image is shown**: only the loop knows that,
+    /// once it has asked the engine whether it takes images and prepared the pixels, so
+    /// the loop ends this line with what became of the image, and says it in a note of its
+    /// own for an image without one. A tool that wrote "shown to you below" itself was
+    /// contradicted by the loop's "not shown to you" on an engine without vision, in the
+    /// same result (spec §9.10).
+    pub entry: Option<String>,
 }
 
 impl ToolOutcome {

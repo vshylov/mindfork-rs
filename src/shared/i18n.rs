@@ -859,6 +859,8 @@ mod tests {
         const FAMILY: &[&str] = &[
             "loop.images_no_vision",
             "loop.images_dropped",
+            "loop.image_not_shown_no_vision",
+            "loop.image_not_shown_dropped",
             "tool.mcp.images_off",
             "tool.python_exec.files.not_shown_off",
             "tool.python_exec.files.not_shown_cap",

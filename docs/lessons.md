@@ -1079,6 +1079,16 @@ loud: a check that silently stops matching is indistinguishable from a check tha
 matches nothing, which is why this one took two rounds to find.
 — *`web_search` said "no results" while it was blocked, again*.
 
+**A claim about an outcome belongs to the stage that decides it.** `python_exec` ended a
+chart's line with "shown to you below" when it *offered* the image; the loop, which later
+learns whether the engine takes images and whether the pixels survive preparation, withheld
+it and said so in a note — and the model got both claims in one result. Each half was
+correct where it was written. When a producer's text states what a downstream stage will
+do, that stage can make it false: hand it the anchor (here, the line that names the image)
+and let the one place that knows write the claim, rather than teaching the producer to
+predict it or the consumer to edit the producer's words.
+— *a chart's line no longer says it was shown to a model that takes no images*.
+
 ## 5. Terminal and ratatui rendering
 
 **One wide label in an aligned table re-wraps every description in it.** The help

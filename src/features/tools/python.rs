@@ -391,12 +391,15 @@ impl PythonExec {
                     &[("max", &MAX_TOOL_RESULT_IMAGES.to_string())],
                 ));
             } else {
+                // Offered, not yet shown: whether it is shown is the loop's to say, on
+                // this line — it alone knows whether the engine takes images and whether
+                // the pixels survive preparation (`ToolImage::entry`).
                 use base64::Engine as _;
                 kept.images.push(ToolImage {
                     mime: mime.to_string(),
                     data: base64::engine::general_purpose::STANDARD.encode(&file.bytes),
+                    entry: Some(entry.clone()),
                 });
-                entry.push_str(loc.t("tool.python_exec.files.shown"));
             }
         } else if stored.mime == "image/svg+xml" {
             entry.push_str(loc.t("tool.python_exec.files.svg"));
@@ -1483,12 +1486,20 @@ mod tests {
         assert!(r.starts_with("stdout (1 line):\ndone"), "{r}");
         assert!(r.contains("\n\nfiles:\n"), "{r}");
         assert!(r.contains(&folder.path().display().to_string()), "{r}");
-        assert!(r.contains("image/png — shown to you below"), "{r}");
         assert!(r.contains("  | month,total\n  | 2024-01,7"), "{r}");
         assert!(r.contains("- charts/ — not kept: a folder"), "{r}");
         assert_eq!(stored_names(&out), ["chart.png", "totals.csv"]);
         assert_eq!(out.images.len(), 1);
         assert_eq!(out.images[0].mime, "image/png");
+        // The chart is offered on its line, and the line does not say it is shown: only
+        // the loop knows whether it will be (spec §9.10).
+        let entry = out.images[0].entry.as_deref().expect("the chart's line");
+        assert!(
+            entry.starts_with("- chart.png — ") && entry.ends_with("image/png"),
+            "{entry}"
+        );
+        assert!(r.lines().any(|l| l == entry), "{r}");
+        assert!(!r.contains("shown to you below"), "{r}");
         assert_eq!(std::fs::read(folder.path().join("chart.png")).unwrap(), PNG);
     }
 
@@ -1517,6 +1528,17 @@ mod tests {
             .collect();
         let out = run_mock(wasmer(saved(files), false), &ctx).await;
         assert_eq!(out.images.len(), MAX_TOOL_RESULT_IMAGES);
+        let entries: Vec<_> = out
+            .images
+            .iter()
+            .filter_map(|i| i.entry.as_deref())
+            .collect();
+        assert_eq!(
+            entries.len(),
+            MAX_TOOL_RESULT_IMAGES,
+            "each offered on its own line"
+        );
+        assert!(entries[3].starts_with("- 4.png — "), "{entries:?}");
         assert_eq!(
             out.result
                 .matches("at most 4 images are shown per call")

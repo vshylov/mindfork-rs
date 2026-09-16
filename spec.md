@@ -1675,7 +1675,15 @@ append-only shape keeps the prefix cache intact across an image turn
   note went 3/5 → 0/5 and the dropped-image note 5/5 → 1/5. The `python_exec` notes are
   a suffix on a file's line rather than a line of their own, and there the shipped form
   was not inert but wasteful: the model mostly answered by calling the tool again, whose
-  image is withheld for the same reason. One test holds the whole family to the clause
+  image is withheld for the same reason. **Whether a line says "shown to you below" is the
+  loop's to write, not the tool's**: `python_exec` offers each image with the line that
+  names it and no claim on it, and the orchestrator — the one place that has both the
+  engine's answer and the prepared pixels — ends that line with "shown", or "not shown"
+  and why (no vision, dropped). A tool that wrote "shown" itself was contradicted, in the
+  same result, by the no-vision note beneath it. The tool's own reasons (the switch off,
+  past the cap) it still writes, those images never being offered; an image no line names
+  (MCP's) is counted into the note instead, so each image's fate is said exactly once
+  ([docs/journal/tools.md](docs/journal/tools.md)). One test holds the whole family to the clause
   ([docs/journal/tools.md](docs/journal/tools.md)). `tools.python_images` (**on** by
   default, the Python group, shown in **both** Python modes — the local interpreter
   collects `out/` under the same contract) is `python_exec`'s own switch, separate

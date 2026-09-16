@@ -195,4 +195,6 @@ Two things the run turned up, neither this stage's:
   file's entry says `shown to you below`, and the loop's note beneath it says no image
   was shown. The tool writes its entry before the loop knows the answer. It predates
   this work (a local server without a projector says the same thing) and is filed as a
-  separate task.
+  separate task — since fixed: the loop, which alone knows, writes the claim on the line
+  ([docs/journal/tools.md](../journal/tools.md), "a chart's line no longer says it was
+  shown to a model that takes no images").

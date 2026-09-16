@@ -29,6 +29,11 @@ split by subsystem.
 
 ### Fixed
 
+- **A chart from `python_exec` is no longer described to the model as shown when it was
+  not.** On a model that cannot see images — a local server without its projector, or a
+  text-only model behind a gateway — the chart's line in the result said it was shown
+  while a note below said it was not. The line now says it was not shown and why; on a
+  model that sees, it reads as before.
 - **A chat with images keeps working after a switch to a model that cannot see them.**
   An image stays in the chat's history and was sent again on every turn, so once the
   model changed to one without vision — a local server started without its projector,
