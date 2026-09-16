@@ -226,7 +226,11 @@ envelope inside an open `200` stream; `usage` (+ llama.cpp's `timings`);
 - **`finish_reason`** — `from_wire` ([contract.rs:247](../../src/shared/api/contract.rs))
   maps everything it does not know to `Stop`, so a reply cut by a content
   filter or by the gateway's own `error` reason reads as a complete one.
-  Pre-existing and not specific to OpenRouter.
+  Pre-existing and not specific to OpenRouter. **The content filter is fixed**,
+  on all four wires — [content-filter-finish.md](content-filter-finish.md). The
+  `error` reason is still read as `Stop`; OpenRouter documents it as arriving in
+  the same chunk as the `{"error":…}` envelope, which is recognised first (§4.1),
+  and that pairing is unmeasured.
 
 ### 4.3 What was outright broken
 

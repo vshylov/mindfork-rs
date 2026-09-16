@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (67)
+## Entries (68)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -79,6 +79,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: `/continue` follows the route table through a gateway — and F5 closes on a measurement (done)
 - Post-M9: a tool's images reach the model through a gateway — re-homed into a user message (done)
 - Post-M9: the thinking switch reaches a gateway in its own field (done)
+- Post-M9: a reply the content filter stopped says so (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -4401,3 +4402,56 @@ unreachable, so the CPU `llama-server` build with `gemma-4-12b-it-qat-q4_0` ran
 asked the catalogue, got ids alone, and streamed thoughts through
 `reasoning_content` to `Stop` as **one** task in the server log (166 s). The probes
 cost cents.
+
+### Post-M9: a reply the content filter stopped says so (done)
+
+Written down in the OpenRouter review as "pre-existing and not specific to
+OpenRouter" ([openrouter-external.md](../research/openrouter-external.md) §4.2), and
+taken up once that review closed. Plan, table and forks:
+[content-filter-finish.md](../research/content-filter-finish.md).
+
+**What reading found**: every provider reports a moderation stop, and no client
+passed it on — the domain `FinishReason` had no value for it, so each wire fell to
+its wildcard. The OpenAI-compatible client read `content_filter` (OpenAI's value,
+and one of the five OpenRouter normalises every route into) as `Stop`; Anthropic's
+`refusal` likewise; Responses read an `incomplete` response as a length cut whatever
+its `incomplete_details.reason`, so a filtered reply got the "hit the limit" note
+and an offer of `/continue` into the same filter; and Gemini yielded an English
+"did not produce a response" sentence **as reply text** — stored in the chat and
+sent back to the model as its own words on the next turn.
+
+**Decided with the user, 2026-09-16**, every fork at its recommendation: C1(a) all
+four wires in one PR; C2(a) store the reply as `stop` — `/continue` refuses it, which
+is right, and a `MessageFinish::Filtered` would have been a `CHAT_SCHEMA` bump for a
+record nothing reads; C3(a) Gemini's six filter reasons and a refused prompt move to
+the shared note, while `MALFORMED_FUNCTION_CALL` and `OTHER` keep theirs.
+
+**What reading the call sites added**: `RunOutcome` is persisted too, so a filtered
+subagent stays `Completed` — but Gemini's in-text note had been the only way a parent
+model learned its child was cut, and moving it would have taken that away; the
+status line the parent reads now names the filter. Impersonation gets a note of its
+own under the draft it leaves in the box, and the compaction roll a log line, as a
+truncated roll has. Tool calls win over a filter reason that follows them, as they
+already did for Gemini's note.
+
+**Code**: `FinishReason::Filtered`; `from_wire`, `RespIncomplete::finish_reason`
+(the Responses wire now keeps `incomplete_details`), Anthropic's map, and Gemini's
+`is_filter_reason` split out of `is_block_reason`. The feed's match gains one arm;
+`continuable` is untouched and simply does not list the new value. Anthropic's
+private SSE stub moved to `shared::api::sse_stub` rather than being copied twice more
+into Responses and Gemini, which had no stream tests.
+
+**Tests**: 3263 green, 184 ignored (3251 / 184 before). Twelve new — a stream test per
+wire through the real client and SSE framing (OpenRouter's `content_filter` with its
+`native_finish_reason`; Responses' filter, and a token limit and a reasonless
+`incomplete` still `Length`; Anthropic's `refusal`; Gemini's `SAFETY` finish, a
+refused prompt, and the malformed call keeping its note); the Gemini reason split;
+the feed's and impersonation's notes; a whole turn on a mock engine, announced not
+continuable and stored as `stop`; a filtered subagent whose parent is told.
+**Eleven mutations, all caught**, each by a named failing test — every wire's mapping, Gemini's prompt block and its note kept for `SAFETY`, the feed's and impersonation's notes, the reply stored as an error, announced as continuable, and the subagent's status line; the harness restored every file byte-identical and counted a catch only on a failing test.
+
+**Live — the regression half, GO**, 2026-09-16. The positive case needs a prompt the
+provider refuses, which this project does not write to order, so the gate is that an
+ordinary reply still ends as it did: `simple_generation` through all four changed
+clients — OpenRouter on `google/gemma-4-31b-it`, OpenAI Responses, Anthropic and
+Gemini — each asserting a non-empty reply ending in `Stop` or `Length`, none skipped.

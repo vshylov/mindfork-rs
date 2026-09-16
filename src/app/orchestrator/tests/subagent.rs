@@ -425,6 +425,43 @@ async fn subagent_timeout_lands_a_partial_run_and_tells_the_parent() {
     assert_eq!(backend.requests().len(), 3);
 }
 
+/// A child the provider's filter stopped lands as `Completed` — the stored outcome
+/// has no value of its own (docs/research/content-filter-finish.md, fork C2) — but
+/// the parent model's result says so instead of presenting the fragment as the
+/// answer.
+#[tokio::test]
+async fn a_filtered_subagent_tells_the_parent_why_its_reply_is_short() {
+    let (dir, _backend, _events, chat_id) = run_turn(
+        vec![
+            call("c1", "call_subagent", DELEGATE),
+            Script {
+                chunks: vec![
+                    ChatChunk::Text("It is".into()),
+                    ChatChunk::Finished(FinishReason::Filtered),
+                ],
+                hang: false,
+            },
+            text("the critic was cut off, so:"),
+        ],
+        no_auto_cfg(),
+    )
+    .await;
+    let chat = load(dir.path(), chat_id);
+    let run = chat.messages[1].tool_calls[0].subagent.as_deref().unwrap();
+    assert_eq!(run.outcome, Some(RunOutcome::Completed));
+    let result = &chat.messages[2].text;
+    assert!(result.starts_with("It is"), "the fragment stays: {result}");
+    let said_filtered = [crate::shared::i18n::Lang::En, crate::shared::i18n::Lang::Ru]
+        .iter()
+        .any(|&lang| {
+            let status = crate::shared::i18n::locale(lang).t("tool.call_subagent.result.filtered");
+            let head = status.split("{address}").next().unwrap();
+            result.contains(head)
+        });
+    assert!(said_filtered, "the parent must be told: {result}");
+    assert_eq!(chat.messages[3].text, "the critic was cut off, so:");
+}
+
 #[tokio::test]
 async fn subagent_cancel_lands_the_run_as_cancelled() {
     let backend = ScriptRecorder::new(vec![

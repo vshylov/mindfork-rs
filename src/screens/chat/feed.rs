@@ -630,12 +630,15 @@ impl ChatScreen {
         // work (`continuable` — fork F9); `Length` gets a note at all only
         // since the command existed to make one actionable (spec §6.4). A
         // cancelled turn always answers; a length-cut reply used to stop
-        // mid-sentence with nothing on screen saying why.
+        // mid-sentence with nothing on screen saying why. So did a reply the
+        // provider's content filter stopped, which is never continuable
+        // (docs/research/content-filter-finish.md).
         let note = match (reason, continuable) {
             (FinishReason::Cancelled, true) => Some("ui.chat.gen_cancelled_continuable"),
             (FinishReason::Cancelled, false) => Some("ui.chat.gen_cancelled"),
             (FinishReason::Length, true) => Some("ui.err.reply_truncated_continuable"),
             (FinishReason::Length, false) => Some("ui.err.reply_truncated"),
+            (FinishReason::Filtered, _) => Some("ui.err.reply_filtered"),
             _ => None,
         };
         if let Some(key) = note {

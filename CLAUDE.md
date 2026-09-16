@@ -169,9 +169,9 @@ Backend selection: `MINDFORK_ENGINE_URL` (external, any OpenAI server) OR
 rented instead of hosted — `python tools/e2e_hf.py run`, see
 `docs/history/remote-e2e-hf.md`.
 
-## Status (2026-09-15, version 0.9.9)
+## Status (2026-09-16, version 0.9.9)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3251 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **3263 unit tests
 green, 184 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
@@ -184,6 +184,13 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **A reply the content filter stopped says so** — every provider reports it and
+  every client's fallback arm read it as a finished answer; Responses read it as a
+  length cut and offered `/continue` into the filter, and Gemini wrote an English
+  note into the reply. One `FinishReason::Filtered` now, a localised note, stored as
+  `stop` so the chat format holds
+  ([docs/research/content-filter-finish.md](docs/research/content-filter-finish.md),
+  spec §6.4, [docs/journal/engine.md](docs/journal/engine.md)).
 - **The thinking switch reaches a gateway** — a gateway never reads `thinking` (a
   wrong type in it is a `200`), so "on" left Haiku 4.5 at 0 reasoning tokens and
   "off" left Qwen 3.6 reasoning. Where the catalogue lists `reasoning`, a request
@@ -379,27 +386,6 @@ being recent is dropped, not shortened.
   `charset` feature would not have been the fix
   ([docs/research/page-charset.md](docs/research/page-charset.md),
   spec §9.3.1, [docs/journal/tools.md](docs/journal/tools.md)).
-- **Spellcheck reads a stress mark as part of the word** — reported from
-  the input box: `И́стинно так` typed, `стинно` underlined. One predicate:
-  the segmenter grows a word while `is_alphabetic`, and `U+0301` — the
-  sign every Russian source uses, what `Alt+0769` types and what a paste
-  carries — is `Mn`, so a word ended at its stress and the halves were
-  judged apart. Measured first, that is wrong in **both** directions:
-  `чуде́сный ве́чер` drew three underlines under correct text, while
-  `за́мок` passed as `за` + `мок` — not noisy on stressed text, off for
-  it. Now `U+0300–U+036F` counts as in-word and a word that fails as
-  typed is looked up once more stripped; safe because the three bundled
-  `.dic` files hold **zero** combining marks, so the second lookup can
-  only accept what the first rejected, and as-typed-first keeps `en_GB`'s
-  precomposed `café` answering for itself. The mark is ignored, never the
-  spelling under it (`харашо́` still flagged, whole, once); suggestions
-  come from the unmarked word, and "add to dictionary" stores it unmarked
-  so one add covers every placement. `е`/`ё` needed nothing, and that is
-  a count, not a guess: **0 of 7347** `ё` stems in `ru_RU` lack an
-  accepted `е` spelling, while `афёра` and `опёка` are still flagged — a
-  fallback of our own would only have broken the second half
-  ([docs/research/spellcheck-stress-marks.md](docs/research/spellcheck-stress-marks.md),
-  spec §11.5, [docs/journal/ui-input.md](docs/journal/ui-input.md)).
 <!-- cyrillic-ok:end -->
 - **The TUI "hangs" on a headless launch** (no TTY) — this is expected; clean
   exit via `Esc`/`Ctrl+Q` is covered by unit tests. Live verification needs a

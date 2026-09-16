@@ -665,6 +665,14 @@ fn spawn_compact(
                             "the summary hit the token ceiling and was cut; raise the ceiling or lower the word limit"
                         );
                     }
+                    if c.filtered {
+                        // The same rule for the provider's filter: what arrived is
+                        // kept, and the cut is said (content-filter-finish.md §3).
+                        tracing::warn!(
+                            chat = %chat_id,
+                            "the provider's content filter stopped the summary; what arrived is used"
+                        );
+                    }
                     break (
                         Ok(salvage_title_source(c.text, c.thoughts)),
                         c.usage.and_then(|u| u.prefill),
@@ -707,6 +715,8 @@ pub(super) struct Collected {
     pub(super) thoughts: String,
     /// The reply hit `max_tokens`.
     pub(super) truncated: bool,
+    /// The provider's content filter stopped the reply.
+    pub(super) filtered: bool,
     /// Ended by the token — the app's own, or the lane's displacement.
     pub(super) cancelled: bool,
     /// The stream's usage chunk, when the stream reached it: the exact
@@ -742,6 +752,7 @@ pub(super) async fn collect_roll(
             ChatChunk::Finished(reason) => {
                 c.truncated = matches!(reason, crate::shared::api::FinishReason::Length);
                 c.cancelled = matches!(reason, crate::shared::api::FinishReason::Cancelled);
+                c.filtered = matches!(reason, crate::shared::api::FinishReason::Filtered);
                 break;
             }
             // A background turn: the retry is worth a log line (a flaky provider is

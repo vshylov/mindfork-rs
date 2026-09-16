@@ -3724,6 +3724,11 @@ async fn run_child(
     // Boxed: `run` → `tool_round` → here → `run` is a recursive async chain,
     // and the compiler needs one indirection in it.
     let finished = tokio::time::timeout(limits.run_timeout, Box::pin(child.run())).await;
+    // A child the provider's filter stopped is stored as `Completed` — `RunOutcome`
+    // is persisted, and a value of its own would be the chat-format change fork C2
+    // declined — but its status line tells the parent model, which used to learn it
+    // only from Gemini's in-text note (docs/research/content-filter-finish.md §3).
+    let filtered = matches!(finished, Ok(FinishReason::Filtered));
     let outcome = match finished {
         Err(_) => {
             // The run's own token, so the parent's turn goes on.
@@ -3792,6 +3797,10 @@ async fn run_child(
         .map(str::to_string)
         .unwrap_or_else(|| loc.t("tool.call_subagent.result.empty").to_string());
     let status = match outcome {
+        RunOutcome::Completed if filtered => loc.tf(
+            "tool.call_subagent.result.filtered",
+            &[("address", &address)],
+        ),
         RunOutcome::Completed => loc.tf(
             "tool.call_subagent.result.transcript",
             &[("address", &address)],
@@ -5409,7 +5418,13 @@ fn finalize_message(
             FinishReason::Error => MessageFinish::Error,
             // `ToolCalls` reaches here only with an empty call list (a claim
             // with nothing behind it) — the round ended like a plain stop.
-            FinishReason::Stop | FinishReason::ToolCalls => MessageFinish::Stop,
+            // `Filtered` is stored as a stop too: `/continue` refuses it, which is
+            // right, since resuming meets the same filter, and a value of its own
+            // would be a chat-format change for a record nothing reads
+            // (docs/research/content-filter-finish.md, fork C2).
+            FinishReason::Stop | FinishReason::ToolCalls | FinishReason::Filtered => {
+                MessageFinish::Stop
+            }
         }),
     });
     Some(m)

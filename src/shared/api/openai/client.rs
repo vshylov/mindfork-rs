@@ -1039,6 +1039,32 @@ mod tests {
         );
     }
 
+    /// A reply the content filter stopped, in the shape OpenRouter normalises every
+    /// route's reason into (`native_finish_reason` beside it): the fragment stays, and
+    /// the turn ends as filtered rather than as a complete answer
+    /// (docs/research/content-filter-finish.md).
+    #[tokio::test]
+    async fn a_content_filter_stop_ends_the_turn_as_filtered() {
+        let url = sse_server(&[
+            r#"{"choices":[{"index":0,"delta":{"content":"The first"},"finish_reason":null}]}"#,
+            r#"{"choices":[{"index":0,"delta":{},"finish_reason":"content_filter","native_finish_reason":"SAFETY"}]}"#,
+            r#"{"choices":[],"usage":{"prompt_tokens":9,"completion_tokens":2,"total_tokens":11}}"#,
+            "[DONE]",
+        ]);
+        let chunks = collect(url).await;
+        assert!(
+            chunks.contains(&ChatChunk::Text("The first".into())),
+            "{chunks:?}"
+        );
+        assert!(
+            matches!(
+                chunks.last(),
+                Some(ChatChunk::Finished(FinishReason::Filtered))
+            ),
+            "{chunks:?}"
+        );
+    }
+
     /// The defect this recovery exists for, end to end: a server that refuses to
     /// disable reasoning answers the silent turns' request with a `400`
     /// (measured on `deepseek/deepseek-r1`, research §8.1 M4), so the title, the
