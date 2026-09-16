@@ -112,7 +112,7 @@ pub(super) struct RollPlan {
 /// What one background question about the engine brings back. Both answers ride
 /// one landing because they are one round trip's worth of asking: a gateway would
 /// otherwise be asked twice for the same thing, by two tasks racing to fill two
-/// memos (docs/gateway-capabilities.md §3).
+/// memos (docs/history/gateway-capabilities.md §3).
 #[derive(Default)]
 pub(super) struct EngineFacts {
     /// llama.cpp's `/props` window.
@@ -136,7 +136,7 @@ pub(super) struct ContextDiscovery {
     /// What the endpoint's catalogue said about the configured model, when it
     /// said anything: the window it publishes and the sampling fields it takes.
     /// Learned by the same background question, in the same epoch — one fetch,
-    /// one landing (docs/gateway-capabilities.md §3).
+    /// one landing (docs/history/gateway-capabilities.md §3).
     caps: Option<crate::shared::api::contract::ModelCapabilities>,
 }
 
@@ -304,7 +304,7 @@ impl Orchestrator {
         }
         // Last: what the endpoint's catalogue publishes for the configured model
         // — the only source a gateway has, since it serves no `/props`
-        // (docs/gateway-capabilities.md §1). After `/props` rather than before,
+        // (docs/history/gateway-capabilities.md §1). After `/props` rather than before,
         // because a running server's own report beats a catalogue's description
         // of the model it is running.
         if let Some(published) = self
@@ -324,7 +324,7 @@ impl Orchestrator {
 
     /// The sampling fields the endpoint published for the configured model, when
     /// it published any — what narrows the settings screen, the `set_sampling`
-    /// schema and the metadata snapshot (spec §8, docs/gateway-capabilities.md).
+    /// schema and the metadata snapshot (spec §8, docs/history/gateway-capabilities.md).
     /// `None` on silence, which is every local server and every cloud.
     pub(super) fn endpoint_sampling_fields(&self) -> Option<std::sync::Arc<[String]>> {
         self.context
@@ -335,7 +335,7 @@ impl Orchestrator {
 
     /// Whether the endpoint's catalogue answered for the configured model — the
     /// positive sign of a gateway, since a llama.cpp publishes neither key
-    /// (docs/gateway-images-and-continue.md §2). `false` on silence, which keeps
+    /// (docs/history/gateway-images-and-continue.md §2). `false` on silence, which keeps
     /// every capability that reads it exactly as it shipped.
     pub(super) fn endpoint_catalogued(&self) -> bool {
         self.context.caps.is_some()
@@ -346,7 +346,7 @@ impl Orchestrator {
     /// any turn runs — `/continue` as the first command after a restart, which is
     /// that command's main case — would otherwise meet an unanswered question and
     /// fall back to the behaviour a gateway does not have
-    /// (docs/gateway-images-and-continue.md §4, H2). The same rule
+    /// (docs/history/gateway-images-and-continue.md §4, H2). The same rule
     /// [`Self::refresh_model_name`] already follows for the model's name.
     pub(super) fn refresh_engine_facts(&mut self) {
         self.context.invalidate();
@@ -399,7 +399,7 @@ impl Orchestrator {
         // The `set_sampling` schema is baked into the registry, so a catalogue
         // that lands after startup has to rebuild it — otherwise the model keeps
         // being offered fields the endpoint drops, which is half of what this
-        // discovery is for (docs/gateway-capabilities.md §4, G3).
+        // discovery is for (docs/history/gateway-capabilities.md §4, G3).
         if narrowed {
             self.rebuild_registry();
         }

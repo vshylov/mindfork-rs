@@ -757,7 +757,7 @@ mod tests {
     /// that fell through to the trait's `None` would switch the compaction
     /// trigger off and re-offer every dropped field — invisibly, since "did not
     /// say" and "was not asked" are one value (lessons §9,
-    /// docs/gateway-capabilities.md §3).
+    /// docs/history/gateway-capabilities.md §3).
     #[tokio::test]
     async fn the_model_capabilities_are_delegated() {
         let mut scripted = Scripted::new(vec![]);

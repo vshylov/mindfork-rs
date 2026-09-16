@@ -239,7 +239,7 @@ fn apply_server_status(screen: &mut ChatScreen, active: &mut ActiveScreen, statu
 /// The `EngineSamplingFields` arm of [`apply_event`], on the shape of its
 /// neighbour below: the chat keeps what the endpoint published for the next
 /// settings screen it builds, and an open one narrows its sampling group at once
-/// (spec §8, docs/gateway-capabilities.md).
+/// (spec §8, docs/history/gateway-capabilities.md).
 fn apply_engine_sampling_fields(
     screen: &mut ChatScreen,
     active: &mut ActiveScreen,

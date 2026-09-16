@@ -4060,7 +4060,7 @@ recovery failed.
 
 F3(b) and F4(c) of the OpenRouter review, built as one track because they are one
 HTTP request. Plan, forks and the decisions:
-[gateway-capabilities.md](../gateway-capabilities.md).
+[gateway-capabilities.md](../history/gateway-capabilities.md).
 
 **Both defects were silent, and both are measured.** A gateway serves no
 `/props`, so `context_budget` had no source and automatic compaction simply never
@@ -4136,13 +4136,13 @@ exactly where `catalogue_entry` returns before the request. The residual worth
 naming is the other half of that condition — with the model field *filled in*
 against a local server, `model_capabilities` does make one `GET /v1/models` per
 applied engine that did not happen before, and still answers `None`, since
-llama.cpp's catalogue carries neither key ([gateway-capabilities.md](../gateway-capabilities.md) §5).
+llama.cpp's catalogue carries neither key ([gateway-capabilities.md](../history/gateway-capabilities.md) §5).
 
 ### Post-M9: through a gateway, a tool's image and `/continue` belong to the route — M3 measured (done)
 
 The last measurement the OpenRouter review owed, and the one that decided what
 F6 is. Plan, tables and forks:
-[gateway-images-and-continue.md](../gateway-images-and-continue.md).
+[gateway-images-and-continue.md](../history/gateway-images-and-continue.md).
 
 **M3 — GO for the app.** Run by the author in a real terminal, 2026-09-15:
 `anthropic/claude-haiku-4.5` through OpenRouter (served by Amazon Bedrock — the
@@ -4189,7 +4189,7 @@ single seeing run on that family would have proved nothing, and the table reads
 
 ### Post-M9: `/continue` follows the route table through a gateway — and F5 closes on a measurement (done)
 
-Stage H2 of [gateway-images-and-continue.md](../gateway-images-and-continue.md),
+Stage H2 of [gateway-images-and-continue.md](../history/gateway-images-and-continue.md),
 on the user's decisions of 2026-09-15 (H2 (b), H3 (ii): this first, the images
 second), with the review's last item measured beside it.
 
@@ -4258,7 +4258,7 @@ before the first turn on every stack, which is H2.1 measured rather than argued.
 
 ### Post-M9: a tool's images reach the model through a gateway — re-homed into a user message (done)
 
-Stage H1 of [gateway-images-and-continue.md](../gateway-images-and-continue.md), on
+Stage H1 of [gateway-images-and-continue.md](../history/gateway-images-and-continue.md), on
 the user's decision of 2026-09-15 (H1 (b), with the switch inside the client,
 H1.1 (i)) — the second half of F6.
 
@@ -4329,7 +4329,7 @@ changed** — tests untouched (3232 / 179 on the tracked count).
 
 ### Post-M9: the thinking switch reaches a gateway in its own field (done)
 
-Found beside F5 ([gateway-images-and-continue.md](../gateway-images-and-continue.md)
+Found beside F5 ([gateway-images-and-continue.md](../history/gateway-images-and-continue.md)
 §9): through OpenRouter the settings' thinking switch did nothing. The
 OpenAI-compatible wire sends it as a top-level `thinking` — a llama.cpp field — and
 `reasoning_effort` only when an effort is chosen. Plan, table and forks:

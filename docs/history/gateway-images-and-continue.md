@@ -13,7 +13,7 @@ as "worth knowing, not worth a blind change" (F6) are now measured, and both
   mode continues (Anthropic ≤ 4.5, Gemini).
 - **H3 — (ii):** H2 first, H1 second; F5 is measured beside H2.
 
-F6 of [openrouter-external.md](research/openrouter-external.md) §5 said of both
+F6 of [openrouter-external.md](../research/openrouter-external.md) §5 said of both
 halves that the answer lives one hop downstream — in the provider the gateway
 routes to, not in the gateway and not in this client. M3 was the run that could
 turn that from a prediction into a fact. It did, in opposite directions:
@@ -24,13 +24,13 @@ turn that from a prediction into a fact. It did, in opposite directions:
   the restart glued onto the partial, in the same message, with no error.
 
 **Related:** spec §6.4 (continuation), §9.10 (images in a message),
-[mcp-tool-images.md](research/mcp-tool-images.md) §2.2 and fork F1 (the
+[mcp-tool-images.md](../research/mcp-tool-images.md) §2.2 and fork F1 (the
 user-part fallback Gemini already takes),
-[continue-generation.md](research/continue-generation.md) §2, §7.1 (the
+[continue-generation.md](../research/continue-generation.md) §2, §7.1 (the
 per-provider continuation table this extends),
 [gateway-capabilities.md](gateway-capabilities.md) (the positive signal every
-fork below keys on), [ADR 0004](decisions/0004-engine-contract-multi-provider.md),
-[docs/journal/engine.md](journal/engine.md).
+fork below keys on), [ADR 0004](../decisions/0004-engine-contract-multi-provider.md),
+[docs/journal/engine.md](../journal/engine.md).
 
 ## 1. What was measured
 
@@ -155,7 +155,7 @@ reasoning and spends the cap on it — the same starvation lessons §3 records,
 arriving through a field the gateway drops.
 
 **What the app does with a restart [code].** `EchoFilter`
-([generation.rs:207](../src/app/orchestrator/generation.rs)) withholds bytes
+([generation.rs:207](../../src/app/orchestrator/generation.rs)) withholds bytes
 only while they match the seed; a restart diverges at the first byte and flows
 straight into the same message. The stored reply becomes
 
@@ -171,11 +171,11 @@ wrong.
 ## 2. Why the existing gates cannot see it [code]
 
 - **`ServerMode::supports_continuation`**
-  ([config.rs:186](../src/shared/config.rs)) answers `true` for `External`,
+  ([config.rs:186](../../src/shared/config.rs)) answers `true` for `External`,
   because `external` meant llama.cpp when the table was written (spec §6.4,
   continue-generation §2). Through a gateway the answer is a property of the
   route, and the mode cannot know it.
-- **`wire_content`** ([wire.rs:169](../src/shared/api/openai/wire.rs)) puts a
+- **`wire_content`** ([wire.rs:169](../../src/shared/api/openai/wire.rs)) puts a
   tool's images on the `role:"tool"` message as content parts — measured good on
   llama.cpp and on xAI directly, and outside the OpenAI spec's letter, which
   gives a tool message text parts only.
@@ -243,7 +243,7 @@ wrong.
   field it must ignore.
 
 **Found while preparing H1 [code]: there is no memo to await.**
-`OpenAiClient::catalogue_entry` ([client.rs](../src/shared/api/openai/client.rs))
+`OpenAiClient::catalogue_entry` ([client.rs](../../src/shared/api/openai/client.rs))
 issues a fresh `GET /v1/models` on every call — harmless while its only caller
 was the once-per-engine background question, and a request per turn the moment
 the chat path reads it. So H1.1 (i) needs the memo it was written as if it had:
@@ -322,7 +322,7 @@ Nothing above is built yet; this is the gate each stage owes before its PR.
 ## 7. Stage H2 — what was implemented
 
 - **`ServerMode::supports_continuation(model, catalogued)`**
-  ([config.rs](../src/shared/config.rs)) — `External` with a catalogue answers
+  ([config.rs](../../src/shared/config.rs)) — `External` with a catalogue answers
   through `gateway_model_continues`: the slug's vendor against the spec §6.4
   table (`anthropic/…` through the existing version allowlist, `google/gemini-…`),
   a `:variant` suffix dropped first so `4.6:batch` cannot read as 4.0, and every
@@ -359,7 +359,7 @@ and this is the run that shows it.
 
 ## 8. Stage H1 — what was implemented
 
-- **`wire::rehome_tool_images`** ([wire.rs](../src/shared/api/openai/wire.rs)) — a
+- **`wire::rehome_tool_images`** ([wire.rs](../../src/shared/api/openai/wire.rs)) — a
   pure function over the conversation: every tool result text-only, the images of
   a run of tool results appended to one `user` message after the run, in call
   order, behind their existing labels; `None` when no tool result carries an
@@ -367,7 +367,7 @@ and this is the run that shows it.
   builder itself is untouched, so every body it produced before is still the body
   it produces.
 - **`OpenAiClient::shaped_for_endpoint`**
-  ([client.rs](../src/shared/api/openai/client.rs)) — the first thing
+  ([client.rs](../../src/shared/api/openai/client.rs)) — the first thing
   `chat_stream` does: a request with no tool image goes out as it came, without
   so much as a catalogue lookup; one with a tool image is re-homed only when the
   catalogue answered for the model (`model_capabilities` is `Some`), which is the
@@ -426,4 +426,4 @@ gateway drops the field; only with `reasoning_effort` set did any route reason
 (81 reasoning tokens on the same prompt). On a gateway the settings' thinking
 toggle is therefore inert unless an effort is chosen too — the same class of
 defect as `repeat_penalty` under its other name. A separate task — taken up, and
-measured in both directions, in [gateway-thinking-switch.md](history/gateway-thinking-switch.md).
+measured in both directions, in [gateway-thinking-switch.md](gateway-thinking-switch.md).

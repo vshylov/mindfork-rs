@@ -250,7 +250,7 @@ pub const SETTABLE_SAMPLING_FIELDS: &[&str] = &[
 /// See ADR 0004.
 /// The catalogue spelling(s) that would mean "this endpoint takes our field", for
 /// the fields where an endpoint publishes a `supported_parameters` list
-/// ([docs/gateway-capabilities.md](../../docs/gateway-capabilities.md)).
+/// ([docs/history/gateway-capabilities.md](../../docs/history/gateway-capabilities.md)).
 ///
 /// Two vocabularies, and they are not the same one: their `repetition_penalty` is
 /// our `repeat_penalty` — the very mismatch that made that knob look set and do

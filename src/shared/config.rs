@@ -189,7 +189,7 @@ impl ServerMode {
     /// gateway the answer belongs to the route it picks, and measured per route
     /// only Anthropic ≤ 4.5 and Gemini continue — every open-weight route and
     /// OpenAI restart, which the echo filter would glue onto the partial
-    /// (docs/gateway-images-and-continue.md §1.3, fork H2). Without a catalogue
+    /// (docs/history/gateway-images-and-continue.md §1.3, fork H2). Without a catalogue
     /// `external` answers as it always did.
     pub fn supports_continuation(self, model: Option<&str>, catalogued: bool) -> bool {
         match self {
@@ -2232,7 +2232,7 @@ mod tests {
     }
 
     /// Through a gateway (`external` with a catalogue) `/continue` follows the
-    /// route table measured in docs/gateway-images-and-continue.md §1.3: the
+    /// route table measured in docs/history/gateway-images-and-continue.md §1.3: the
     /// slugs whose direct mode continues do, everything else refuses — and the
     /// same slugs on an `external` endpoint that published nothing keep the
     /// behaviour that shipped, since silence is not a claim.

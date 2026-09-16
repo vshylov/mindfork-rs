@@ -13,7 +13,7 @@ The two proposals the OpenRouter review left buildable, and measured as
 buildable: F3(b) — fill the compaction window from the catalogue — and F4(c) —
 stop offering sampling fields the endpoint will drop. They are one track because
 they are **one HTTP request**:
-[openrouter-external.md](research/openrouter-external.md) §5, §8.1 (M5).
+[openrouter-external.md](../research/openrouter-external.md) §5, §8.1 (M5).
 
 Measured, `GET /v1/models` on OpenRouter carries, per model:
 
@@ -26,9 +26,9 @@ deepseek/deepseek-r1         64000   frequency_penalty, include_reasoning, max_t
 ```
 
 **Related:** spec §6.7 (the context window), §8 (sampling), §3.4 (the engine's
-lifecycle), [ADR 0004](decisions/0004-engine-contract-multi-provider.md),
-[docs/journal/engine.md](journal/engine.md),
-[external-model-name.md](research/external-model-name.md) (why `/v1/models` is
+lifecycle), [ADR 0004](../decisions/0004-engine-contract-multi-provider.md),
+[docs/journal/engine.md](../journal/engine.md),
+[external-model-name.md](../research/external-model-name.md) (why `/v1/models` is
 already fetched, and why a many-model catalogue is not guessed at).
 
 ## 1. What is broken, precisely
@@ -36,14 +36,14 @@ already fetched, and why a many-model catalogue is not guessed at).
 Both are **silent** degradations on a gateway, measured live:
 
 - **the window.** `Orchestrator::context_budget`
-  ([compaction.rs:259](../src/app/orchestrator/compaction.rs)) resolves an
+  ([compaction.rs:259](../../src/app/orchestrator/compaction.rs)) resolves an
   explicit setting → a managed server's `-c` → what the engine reports
   (llama.cpp's `/props`). A gateway has no `/props`, so there is no source and
   the automatic trigger stays inactive: measured, a conversation reached 22 567
   tokens with nothing folded, and the next step is the provider's "context length
   exceeded" rather than a roll (spec §6.7);
 - **the sampling set.** `supported_sampling_fields(None)`
-  ([sampling.rs:247](../src/entities/sampling.rs)) returns *every* field for
+  ([sampling.rs:247](../../src/entities/sampling.rs)) returns *every* field for
   `external`, because `external` means llama.cpp there. Through a gateway,
   `min_p`, `typical_p`, `top_n_sigma`, dynatemp, adaptive, mirostat, DRY, XTC and
   `samplers` are dropped on the way — and `repeat_penalty` is worse than dropped,
@@ -53,7 +53,7 @@ Both are **silent** degradations on a gateway, measured live:
 
 ## 2. What the answer costs to get **[code]**
 
-`OpenAiClient::listed_models` ([client.rs:153](../src/shared/api/openai/client.rs))
+`OpenAiClient::listed_models` ([client.rs:153](../../src/shared/api/openai/client.rs))
 already fetches `GET /v1/models` — for the model's *name*, and it reads only
 `id`. The two fields this track wants ride the same response, so the marginal
 cost of the whole track is **parsing two more keys**, plus the plumbing to carry
@@ -63,7 +63,7 @@ the answer to three consumers.
 
 - **One fetch, one landing.** The budget question is already asked in the
   background once per applied engine (`ContextDiscovery`,
-  [compaction.rs:113](../src/app/orchestrator/compaction.rs)). This track does
+  [compaction.rs:113](../../src/app/orchestrator/compaction.rs)). This track does
   not add a second background task: the same task learns both, and lands one
   answer. Two tasks against one endpoint, racing to fill two memos, is how a
   future reader gets a heisenbug.
@@ -105,8 +105,8 @@ the answer to three consumers.
 - **(a) a second discovery in the orchestrator**, symmetric to
   `ContextDiscovery`, feeding the compaction trigger *and* the two gates that
   today read `supported_sampling_fields(provider)` — the settings screen
-  ([helpers.rs:19](../src/screens/settings/helpers.rs)) and the sampling tools
-  ([introspection.rs:103](../src/features/tools/introspection.rs),
+  ([helpers.rs:19](../../src/screens/settings/helpers.rs)) and the sampling tools
+  ([introspection.rs:103](../../src/features/tools/introspection.rs),
   `ToolGates::sampling_provider`). FSD holds: the orchestrator owns the engine
   and hands screens and features a value, as it already does for the tool gates.
 - (b) put the discovered set in `AppConfig` — rejected above.

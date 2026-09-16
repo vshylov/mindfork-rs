@@ -796,7 +796,7 @@ fn an_engine_that_cannot_say_leaves_the_budget_unknown() {
 
 /// A gateway serves no `/props`, so the catalogue is the only source it has — and
 /// with it the automatic trigger works where it used to stay inactive for good
-/// (docs/gateway-capabilities.md §1; measured: 22 567 tokens and nothing folded).
+/// (docs/history/gateway-capabilities.md §1; measured: 22 567 tokens and nothing folded).
 #[test]
 fn a_gateway_is_measured_against_the_catalogue_it_publishes() {
     let (_d, mut orch, _rx, _chat_id, _backend) = orch_with_history(1);
@@ -848,7 +848,7 @@ fn a_reported_window_wins_over_the_catalogues() {
 
 /// The other half of the same landing: the fields the endpoint published reach
 /// the turn's gates, so the `set_sampling` schema and the metadata snapshot stop
-/// naming what a gateway drops (docs/gateway-capabilities.md §4, G3(ii)).
+/// naming what a gateway drops (docs/history/gateway-capabilities.md §4, G3(ii)).
 #[test]
 fn the_published_sampling_fields_reach_the_gates() {
     let (_d, mut orch, _rx, _chat_id, _backend) = orch_with_history(1);
@@ -924,7 +924,7 @@ async fn an_answer_about_a_replaced_engine_is_dropped() {
     );
 }
 
-/// H2.1 (docs/gateway-images-and-continue.md §4): a readiness flip asks the
+/// H2.1 (docs/history/gateway-images-and-continue.md §4): a readiness flip asks the
 /// engine's facts again **at once**. A gateway that was unreachable at startup and
 /// came up later must not leave `/continue` answering from an unasked question
 /// until some turn happens to ask it — the startup path is covered by the running

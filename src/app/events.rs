@@ -730,7 +730,7 @@ pub enum AppEvent {
     EngineSlots(Option<u32>),
     /// The sampling fields the **endpoint's catalogue** publishes for the
     /// configured model, when it publishes any (spec §8,
-    /// [docs/gateway-capabilities.md](../../docs/gateway-capabilities.md)).
+    /// [docs/history/gateway-capabilities.md](../../docs/history/gateway-capabilities.md)).
     /// `None` — it said nothing, which is every local server and every cloud, and
     /// nothing narrows. Discovered once per applied engine and pushed like
     /// [`AppEvent::EngineSlots`]: the UI is told, it never asks.

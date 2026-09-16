@@ -1486,7 +1486,7 @@ async fn continue_refusals_answer_with_the_route_that_works() {
 }
 
 /// Through a gateway `/continue` follows the route table measured in
-/// docs/gateway-images-and-continue.md §1.3 (fork H2): a refusing slug answers with
+/// docs/history/gateway-images-and-continue.md §1.3 (fork H2): a refusing slug answers with
 /// the gateway's own note — not the generic one, which says external engines
 /// continue — while the same slug on an endpoint that published no catalogue keeps
 /// the behaviour that shipped, and a family the table allows starts the turn.
@@ -1601,7 +1601,7 @@ impl EngineBackend for CataloguedBackend {
 /// command's main case, and it must not meet an unanswered question — and then
 /// it governs all three readers: a length-cut reply is announced as *not*
 /// continuable, and the command refuses with the gateway's note
-/// (docs/gateway-images-and-continue.md §4, H2).
+/// (docs/history/gateway-images-and-continue.md §4, H2).
 #[tokio::test]
 async fn a_gateways_catalogue_lands_before_the_first_turn_and_governs_continue() {
     use crate::shared::config::ServerMode;

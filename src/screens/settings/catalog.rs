@@ -61,7 +61,7 @@ impl SettingsScreen {
     /// What the endpoint's catalogue published about the configured model's
     /// sampling fields (`AppEvent::EngineSamplingFields`). `None` — it said
     /// nothing, and the sampling group shows what it always did
-    /// (docs/gateway-capabilities.md §4, G3).
+    /// (docs/history/gateway-capabilities.md §4, G3).
     pub fn set_engine_sampling_fields(&mut self, fields: Option<std::sync::Arc<[String]>>) {
         self.engine_sampling_fields = fields;
     }
@@ -704,7 +704,7 @@ impl SettingsScreen {
         // catalogue lists for the configured model, when it lists any: a gateway
         // drops the llama.cpp extensions on the way, and `repeat_penalty` worst
         // of all — it is spelled `repetition_penalty` there, so the knob looked
-        // set and did nothing (docs/gateway-capabilities.md §1).
+        // set and did nothing (docs/history/gateway-capabilities.md §1).
         let available = crate::entities::sampling::available_sampling_fields(
             provider,
             self.engine_sampling_fields.as_deref(),

@@ -58,7 +58,7 @@ pub struct OpenAiClient {
     /// "not now" status leaves it unset, so a gateway that was briefly unreachable is
     /// asked again rather than filed as having no catalogue. One value for the
     /// background question and the request builder alike
-    /// (docs/gateway-images-and-continue.md §4, H1.1).
+    /// (docs/history/gateway-images-and-continue.md §4, H1.1).
     catalogue: tokio::sync::OnceCell<Option<wire::ModelEntry>>,
 }
 
@@ -229,7 +229,7 @@ impl OpenAiClient {
     /// tool results carry images can differ, and only on an endpoint whose
     /// catalogue answered for the model — a gateway, where those images are
     /// re-homed into a user message ([`wire::rehome_tool_images`], fork H1 of
-    /// docs/gateway-images-and-continue.md). Every other request, and every request
+    /// docs/history/gateway-images-and-continue.md). Every other request, and every request
     /// to an endpoint that publishes nothing (each llama.cpp), goes out as it came.
     async fn shaped_for_endpoint(&self, req: ChatRequest) -> ChatRequest {
         if !wire::carries_tool_images(&req.messages) || self.model_capabilities().await.is_none() {
@@ -1495,7 +1495,7 @@ mod tests {
         (format!("http://{addr}/v1"), handle)
     }
 
-    /// Fork H1.1 (docs/gateway-images-and-continue.md §4): the catalogue is asked once
+    /// Fork H1.1 (docs/history/gateway-images-and-continue.md §4): the catalogue is asked once
     /// per client once it has answered, and **not** remembered from a "not now" — a
     /// gateway that was briefly unavailable is asked again instead of being filed as
     /// having no catalogue. The stub serves two connections; a third request would be
@@ -1609,7 +1609,7 @@ mod tests {
     /// The catalogue answers for **the configured model**, and for no other: the
     /// window and the field list come back off the entry whose id matches, which
     /// is what the compaction trigger and the sampling offer are then built on
-    /// (docs/gateway-capabilities.md §3).
+    /// (docs/history/gateway-capabilities.md §3).
     #[tokio::test]
     async fn the_catalogue_answers_for_the_configured_model() {
         let (url, seen) = one_shot_server("200 OK", CATALOGUE_BODY);
@@ -2153,7 +2153,7 @@ mod ignored_smoke {
         crate::shared::api::assert_sees_green_circle(&answer, true, "with the image");
     }
 
-    /// Fork H1's live gate (docs/gateway-images-and-continue.md §5): the body this
+    /// Fork H1's live gate (docs/history/gateway-images-and-continue.md §5): the body this
     /// client builds for a gateway — the tool's image re-homed into a user message —
     /// **serialized by the client's own builder** and replayed pinned to the routes
     /// that failed today's shape, one of each failure kind, blind arm beside it. The
@@ -2785,7 +2785,7 @@ mod ignored_smoke {
 
     /// The catalogue, live: what a gateway publishes for the configured model is
     /// what the compaction trigger measures against and what the sampling offer
-    /// is narrowed to (docs/gateway-capabilities.md §5, N1–N2).
+    /// is narrowed to (docs/history/gateway-capabilities.md §5, N1–N2).
     ///
     /// Declared rather than guessed, on the `MINDFORK_LIVE_TEXT_ONLY` pattern:
     /// `MINDFORK_LIVE_CATALOGUE=1` says "this endpoint publishes a catalogue with

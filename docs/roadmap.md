@@ -304,27 +304,27 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
 
 ## Engine and reliability
 - **Provider bridges** — the "any OpenAI-compatible endpoint" pattern
-  (external + LiteLLM/OpenRouter) is now documented in install.md §3, together
-  with the key such a gateway needs
-  ([external-api-key.md](history/external-api-key.md)), and the request now
-  actually carries the configured model name, without which none of those
-  gateways would route at all
-  ([external-model-name.md](research/external-model-name.md)); what remains is the
-  optional managed-custom-command (supervisor launches an arbitrary sidecar
-  proxy) — on demand, and a **live run against a real multi-model endpoint**
-  (`llama-server --router` or a LiteLLM container): the request body is pinned by
-  a unit test, the gateway's side of it has only been read, not exercised. See
-  [plugin research §6](research/plugin-system.md). A full review of that side —
-  [openrouter-external.md](research/openrouter-external.md) — is now closed
-  on measurements from a live account: the dropped "thoughts" (F1), the silent
-  turns' refusal (F2), the catalogue's window and parameter list (F3(b), F4(c),
-  [gateway-capabilities.md](gateway-capabilities.md)), and a tool's images and
-  `/continue` answered per route (F6,
-  [gateway-images-and-continue.md](gateway-images-and-continue.md)); echoing
-  `reasoning_details` across tool rounds (F5) was measured and left unbuilt, since
-  sending no blocks cannot meet the signature rejection an echo can. What the
-  gateway side still owes is the thinking switch: `thinking: true` alone turns
-  reasoning on at no route measured, only with `reasoning_effort` set.
+  (external + LiteLLM/OpenRouter) is documented in install.md §3, together with
+  the key such a gateway needs
+  ([external-api-key.md](history/external-api-key.md)) and the model name it
+  routes on ([external-model-name.md](research/external-model-name.md)); the
+  OpenRouter review is closed (see "Recently closed"). What remains:
+  - the optional **managed-custom-command** (the supervisor launches an arbitrary
+    sidecar proxy) — on demand. See [plugin research §6](research/plugin-system.md).
+  - **vision from the catalogue.** On a gateway `vision()` is always `Unknown` —
+    it reads llama.cpp's `/props` and nothing else — so an image for a text-only
+    model is sent and refused by the route rather than refused up front. OpenRouter
+    documents `architecture.input_modalities` on the catalogue entry the window
+    and the sampling list already come from; unmeasured, so what a text-only route
+    answers comes first (lessons §3).
+  - **embeddings through a gateway.** The `Embedder` half sends `model`, so the
+    "Embeddings" tab can point at one, but no run has
+    ([openrouter-external.md](research/openrouter-external.md) §4.1).
+  - OpenRouter's **own request knobs** — `provider` routing, the `models`
+    fallback, `transforms`, attribution headers, `usage.cost` — deliberately not
+    exposed (research §6). `provider` routing is the one with a measured use: a
+    routed provider that misses its model's tool template, whose special tokens
+    then end the turn as reply text (research §8.1). On demand.
 - **API keys: storage extensions** (ADR 0008) — an OS keychain as an
   additional `scheme`; UI management of other machines' entries ("forget this
   computer") — also where an explicit cleanup of MCP secrets orphaned by a rename
@@ -550,6 +550,20 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
 ---
 
 ## Recently closed
+- **`external` against OpenRouter** (complete, a review and three tracks,
+  #551–#559): the gateway's "thoughts" read under its own `reasoning` field; the
+  silent turns recover from a model that must reason, the refusal remembered per
+  server; the context window and the honest sampling list taken from the
+  catalogue; a tool's images re-homed into a user message and `/continue` gated
+  by the routed vendor; the thinking switch sent as the gateway's own
+  `reasoning` field. Echoing `reasoning_details` was measured and left unbuilt —
+  sending no blocks cannot meet the signature rejection an echo can. Every run
+  carried the request's `model`, so the multi-model live run this list owed is
+  done too. Design: [openrouter-external.md](research/openrouter-external.md),
+  [gateway-capabilities.md](history/gateway-capabilities.md),
+  [gateway-images-and-continue.md](history/gateway-images-and-continue.md),
+  [gateway-thinking-switch.md](history/gateway-thinking-switch.md). What stays
+  open: the sub-items of "Provider bridges" above.
 - **Concurrent ordinary tools** (complete, one PR): the round's consecutive
   read-only calls run at once — `Tool::concurrent()` (default off; the file,
   project, attachment, chat, history and introspection readers, and

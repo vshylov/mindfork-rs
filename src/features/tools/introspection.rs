@@ -29,7 +29,7 @@ pub struct GetSampling {
     provider: Option<CloudProvider>,
     /// What the endpoint published about the configured model, when it published
     /// anything: it narrows the same offer the provider does, so a gateway's
-    /// schema stops naming fields it drops (docs/gateway-capabilities.md).
+    /// schema stops naming fields it drops (docs/history/gateway-capabilities.md).
     endpoint: Option<std::sync::Arc<[String]>>,
 }
 
@@ -87,7 +87,7 @@ pub struct SetSampling {
     provider: Option<CloudProvider>,
     /// What the endpoint published about the configured model, when it published
     /// anything: it narrows the same offer the provider does, so a gateway's
-    /// schema stops naming fields it drops (docs/gateway-capabilities.md).
+    /// schema stops naming fields it drops (docs/history/gateway-capabilities.md).
     endpoint: Option<std::sync::Arc<[String]>>,
 }
 
