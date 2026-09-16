@@ -29,6 +29,15 @@ split by subsystem.
 
 ### Fixed
 
+- **A text-only model behind a gateway no longer breaks a chat with an image.** In
+  `external` mode against a service that publishes a catalogue (OpenRouter and the
+  like), an image sent to a model that cannot see one was refused with "No endpoints
+  found that support image input" — and, since the image stays in the chat's history,
+  so was every later message in that chat. That includes a chart from `python_exec`,
+  with nothing attached by hand. The app now reads from the catalogue whether the model
+  takes images: `/image attach` refuses up front and says to pick a vision model, and a
+  tool's picture is kept back with a note telling the model it has not seen it. For a
+  model that does take images, attaching one no longer warns that the engine cannot say.
 - **A reply the provider's content filter stopped now says so.** OpenAI, Anthropic,
   Gemini, OpenRouter and other OpenAI-compatible servers each report when their
   moderation cut a reply short, and the app showed the fragment as a finished answer

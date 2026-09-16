@@ -655,9 +655,35 @@ pub struct ModelEntry {
     /// must not fail the whole list, which carries the window and the parameters.
     #[serde(default)]
     pub reasoning: Option<serde_json::Value>,
+    /// The endpoint's description of the model's shape (OpenRouter:
+    /// `{"input_modalities": ["text", "image"], "modality": "text+image->text", …}`).
+    /// Raw JSON for the same reason as `reasoning`, read by [`Self::takes_images`].
+    #[serde(default)]
+    pub architecture: Option<serde_json::Value>,
 }
 
 impl ModelEntry {
+    /// Whether the model takes images, from `architecture.input_modalities`: `image`
+    /// listed → `Some(true)`, a list without it → `Some(false)`. `None` — the catalogue
+    /// did not say: no key, an empty list, or anything but a list of strings.
+    ///
+    /// The "no" is as certain as the "yes" on OpenRouter, measured: its router refuses
+    /// a text-only model's image with `404 "No endpoints found that support image
+    /// input"` at a step named "Filter by Image Support", 24 of 24 across six models
+    /// and four request shapes
+    /// ([docs/research/gateway-vision-catalogue.md](../../../../docs/research/gateway-vision-catalogue.md) §2.2).
+    pub fn takes_images(&self) -> Option<bool> {
+        let listed = self
+            .architecture
+            .as_ref()?
+            .get("input_modalities")?
+            .as_array()?
+            .iter()
+            .map(serde_json::Value::as_str)
+            .collect::<Option<Vec<_>>>()?;
+        (!listed.is_empty()).then(|| listed.contains(&"image"))
+    }
+
     /// Whether `supported_parameters` names `name`. An absent list names nothing.
     pub fn lists_parameter(&self, name: &str) -> bool {
         self.supported_parameters
@@ -1436,5 +1462,37 @@ mod gateway_reasoning_tests {
         assert_eq!(list.data[0].context_length, Some(8192));
         assert_eq!(list.data[0].reasoning_mandatory(), None);
         assert_eq!(list.data[1].reasoning_mandatory(), None);
+    }
+
+    /// `architecture.input_modalities` in the shape OpenRouter publishes (measured on
+    /// 444 models, docs/research/gateway-vision-catalogue.md §2.1) answers both ways,
+    /// and every other shape is silence — never a "no" a vision setup would be refused on.
+    #[test]
+    fn input_modalities_say_whether_the_model_takes_images() {
+        let list: ModelList = serde_json::from_str(
+            r#"{"data":[
+                {"id":"deepseek/deepseek-r1","architecture":{"modality":"text->text",
+                    "input_modalities":["text"],"output_modalities":["text"]}},
+                {"id":"google/gemma-4-31b-it","architecture":{"modality":"text+image+video->text",
+                    "input_modalities":["image","text","video"]}},
+                {"id":"llama.cpp-shaped"},
+                {"id":"no-list","architecture":{"modality":"text+image->text"}},
+                {"id":"empty","architecture":{"input_modalities":[]}},
+                {"id":"not-strings","architecture":{"input_modalities":["text",{"image":true}]}},
+                {"id":"not-a-list","architecture":{"input_modalities":"text+image"}},
+                {"id":"odd","architecture":"text->text","context_length":4096}
+            ]}"#,
+        )
+        .unwrap();
+        let answers: Vec<_> = list.data.iter().map(ModelEntry::takes_images).collect();
+        assert_eq!(
+            answers,
+            [Some(false), Some(true), None, None, None, None, None, None]
+        );
+        assert_eq!(
+            list.data[7].context_length,
+            Some(4096),
+            "an odd key must not cost the entry"
+        );
     }
 }

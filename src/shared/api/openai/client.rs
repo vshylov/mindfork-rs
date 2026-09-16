@@ -601,8 +601,21 @@ impl EngineBackend for OpenAiClient {
     /// llama.cpp (vLLM, LM Studio, a proxy) omits the key, and answering "no" there
     /// would refuse a working vision setup on the strength of a field the server
     /// never claimed to speak.
+    ///
+    /// Where `/props` says nothing, the catalogue entry for the configured model is
+    /// asked next — the order the context window follows: a running server describes
+    /// this process, a catalogue the model in the abstract. A gateway serves no
+    /// `/props`, and OpenRouter's `architecture.input_modalities` answers both ways
+    /// ([`wire::ModelEntry::takes_images`]); an entry without it, and every llama.cpp
+    /// `/v1/models`, is silence and stays `Unknown`
+    /// ([docs/research/gateway-vision-catalogue.md](../../../../docs/research/gateway-vision-catalogue.md)).
     async fn vision(&self) -> VisionSupport {
-        match self.props().await.and_then(|p| p.modalities?.vision) {
+        let props = self.props().await.and_then(|p| p.modalities?.vision);
+        let answer = match props {
+            Some(said) => Some(said),
+            None => self.catalogue_entry().await.and_then(|e| e.takes_images()),
+        };
+        match answer {
             Some(true) => VisionSupport::Supported,
             Some(false) => VisionSupport::Unsupported,
             None => VisionSupport::Unknown,
@@ -852,28 +865,14 @@ mod tests {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let handle = std::thread::spawn(move || {
-            // A deadline on the whole script: a regression that never makes a
-            // scripted request must end this thread, so the test joining it fails
-            // on what it saw instead of hanging (docs/lessons.md §2). The bound has
-            // to live here — a timeout around the join cannot help, because the
-            // test's runtime waits at shutdown for a blocking task still running.
+            // A deadline on the whole script (see [`accept_before`]).
             listener.set_nonblocking(true).unwrap();
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            let deadline = stub_deadline();
             let mut seen = Vec::new();
             for (status, payload) in replies {
-                let mut sock = loop {
-                    match listener.accept() {
-                        Ok((sock, _)) => break sock,
-                        Err(e)
-                            if e.kind() == std::io::ErrorKind::WouldBlock
-                                && std::time::Instant::now() < deadline =>
-                        {
-                            std::thread::sleep(std::time::Duration::from_millis(5));
-                        }
-                        Err(_) => return seen,
-                    }
+                let Some(mut sock) = accept_before(&listener, deadline) else {
+                    return seen;
                 };
-                sock.set_nonblocking(false).unwrap();
                 seen.push(read_request_body(&mut sock));
                 let (reason, kind) = match status {
                     200 => ("OK", "text/event-stream"),
@@ -1506,7 +1505,10 @@ mod tests {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let handle = std::thread::spawn(move || {
-            let (mut sock, _) = listener.accept().unwrap();
+            listener.set_nonblocking(true).unwrap();
+            let Some(mut sock) = accept_before(&listener, stub_deadline()) else {
+                return String::new();
+            };
             let mut buf = [0u8; 2048];
             // Drain before answering: writing first turns the close into an RST
             // that discards the response.
@@ -1519,6 +1521,39 @@ mod tests {
             String::from_utf8_lossy(&buf[..n]).to_string()
         });
         (format!("http://{addr}/v1"), handle)
+    }
+
+    /// How long a stub waits for the client under test to connect.
+    fn stub_deadline() -> std::time::Instant {
+        std::time::Instant::now() + std::time::Duration::from_secs(10)
+    }
+
+    /// One connection accepted on a **non-blocking** listener before `deadline`, handed
+    /// back blocking; `None` once the deadline passes. A stub's thread must end on its own
+    /// when the client never makes the request it was set up for, so the test joining it
+    /// fails on what it saw instead of hanging (docs/lessons.md §2) — measured three times
+    /// now, the last a mutant that skipped `/props` holding a mutation run for half an
+    /// hour. The bound has to live in the thread: a timeout around the join cannot help,
+    /// because the test's runtime waits at shutdown for a blocking task still running.
+    fn accept_before(
+        listener: &std::net::TcpListener,
+        deadline: std::time::Instant,
+    ) -> Option<std::net::TcpStream> {
+        loop {
+            match listener.accept() {
+                Ok((sock, _)) => {
+                    sock.set_nonblocking(false).unwrap();
+                    return Some(sock);
+                }
+                Err(e)
+                    if e.kind() == std::io::ErrorKind::WouldBlock
+                        && std::time::Instant::now() < deadline =>
+                {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                Err(_) => return None,
+            }
+        }
     }
 
     /// Fork H1.1 (docs/history/gateway-images-and-continue.md §4): the catalogue is asked once
@@ -1814,6 +1849,62 @@ mod tests {
         }
     }
 
+    /// A gateway serves no `/props`, and its catalogue answers for the configured
+    /// model in both directions (docs/research/gateway-vision-catalogue.md, V1(a)):
+    /// a text-only listing is `Unsupported` — its router refuses the image outright —
+    /// and a listing with `image` is `Supported`. `/props` is asked first.
+    #[tokio::test]
+    async fn a_gateways_catalogue_says_whether_the_model_takes_images() {
+        const CATALOGUE: &str = r#"{"data":[
+            {"id":"deepseek/deepseek-r1","architecture":{"input_modalities":["text"]}},
+            {"id":"google/gemma-4-31b-it","architecture":{"input_modalities":["image","text","video"]}},
+            {"id":"vendor/unsaid","context_length":8192}
+        ]}"#;
+        for (model, expected) in [
+            ("deepseek/deepseek-r1", VisionSupport::Unsupported),
+            ("google/gemma-4-31b-it", VisionSupport::Supported),
+            ("vendor/unsaid", VisionSupport::Unknown),
+            ("vendor/absent", VisionSupport::Unknown),
+        ] {
+            let (url, server) = path_server(2, &[("/v1/models", "200 OK", CATALOGUE)]);
+            let answer = OpenAiClient::new(url)
+                .with_model(Some(model.into()))
+                .vision()
+                .await;
+            assert_eq!(answer, expected, "{model}");
+            assert_eq!(
+                server.join().unwrap(),
+                ["/props", "/v1/models"],
+                "{model}: `/props` first, then the catalogue"
+            );
+        }
+    }
+
+    /// A running llama.cpp's own answer outranks a catalogue row: `/props` says
+    /// `vision: false` (no projector loaded) and that stands, with no second request.
+    #[tokio::test]
+    async fn props_outranks_the_catalogue_on_vision() {
+        let (url, server) = path_server(
+            1,
+            &[
+                ("/props", "200 OK", r#"{"modalities":{"vision":false}}"#),
+                (
+                    "/v1/models",
+                    "200 OK",
+                    r#"{"data":[{"id":"m","architecture":{"input_modalities":["text","image"]}}]}"#,
+                ),
+            ],
+        );
+        assert_eq!(
+            OpenAiClient::new(url)
+                .with_model(Some("m".into()))
+                .vision()
+                .await,
+            VisionSupport::Unsupported
+        );
+        assert_eq!(server.join().unwrap(), ["/props"]);
+    }
+
     /// The projector question must not disturb the context-window answer: both are
     /// read from the same body, and `context_budget` keeps its old behaviour on a
     /// `/props` that now also carries `modalities`.
@@ -1858,6 +1949,9 @@ mod tests {
     ///
     /// Each response closes its connection, so the two requests `model_id` can
     /// make arrive as two accepts rather than one pooled pipeline.
+    ///
+    /// Bounded ([`accept_before`]): a client that makes fewer than `n` requests
+    /// ends the thread at the deadline, and the join returns the paths it saw.
     fn path_server(
         n: usize,
         routes: &'static [(&'static str, &'static str, &'static str)],
@@ -1866,9 +1960,13 @@ mod tests {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let handle = std::thread::spawn(move || {
+            listener.set_nonblocking(true).unwrap();
+            let deadline = stub_deadline();
             let mut asked = Vec::new();
             for _ in 0..n {
-                let (mut sock, _) = listener.accept().unwrap();
+                let Some(mut sock) = accept_before(&listener, deadline) else {
+                    return asked;
+                };
                 let mut buf = [0u8; 2048];
                 let read = sock.read(&mut buf).unwrap();
                 let req = String::from_utf8_lossy(&buf[..read]).to_string();

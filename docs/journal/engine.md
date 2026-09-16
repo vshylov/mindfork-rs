@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (68)
+## Entries (69)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -80,6 +80,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a tool's images reach the model through a gateway — re-homed into a user message (done)
 - Post-M9: the thinking switch reaches a gateway in its own field (done)
 - Post-M9: a reply the content filter stopped says so (done)
+- Post-M9: whether a gateway's model takes images comes from its catalogue (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -4455,3 +4456,53 @@ provider refuses, which this project does not write to order, so the gate is tha
 ordinary reply still ends as it did: `simple_generation` through all four changed
 clients — OpenRouter on `google/gemma-4-31b-it`, OpenAI Responses, Anthropic and
 Gemini — each asserting a non-empty reply ending in `Stop` or `Length`, none skipped.
+
+### Post-M9: whether a gateway's model takes images comes from its catalogue (done)
+
+The last buildable item the OpenRouter review left: on a gateway `vision()` was always
+`Unknown`, because it read llama.cpp's `/props` and nothing else. The roadmap said to
+measure what a text-only route does with an image before building anything. Plan,
+measurements and forks:
+[gateway-vision-catalogue.md](../research/gateway-vision-catalogue.md).
+
+**What was measured**, on OpenRouter, 2026-09-16: all 444 catalogue entries carry
+`architecture.input_modalities` (273 list `image`), and the older `modality` string
+agrees on every one; `/endpoints` has no per-route modality. Six models listed as
+text-only, each given the image four ways — a new message, an earlier message, a tool
+result's parts, the H1 re-homed shape — answered `404 "No endpoints found that
+support image input"` **24 of 24**, the router's trace naming the step "Filter by Image
+Support". The blind arms called the colour `Gray`, `Black`, `Blue`; the two
+image-listing controls said `Orange`. So the refusal is the gateway's own, a missing
+`image` is a certain no, and because an image is replayed as history, one image was
+enough to have **every later turn** of a chat refused — a `python_exec` chart
+included, with nothing attached by hand.
+
+**Decided with the user, 2026-09-16**: V1(a), the listing read in both directions
+(`image` → `Supported`, which also retires the "does not report" note that would now
+be untrue); V2(b), a chat whose history already carries images is a stage of its own,
+measured on a local server without a projector first, since that path is shared.
+
+**Code**: `ModelEntry::takes_images` over a raw `architecture` value (the `reasoning`
+precedent: an odd spelling must not cost the entry its window). `OpenAiClient::vision`
+asks `/props` first and the memoised catalogue entry second — the window's order. A
+client with no model asks no catalogue. Nothing downstream changed: `/image attach` and
+a tool's images already acted on `Unsupported`.
+
+**Tests**: 3266 green, 185 ignored (3263 / 184 before). The listing in its measured
+shape and seven kinds of silence; on the wire, the four rows after `/props`, and
+`/props`' `vision: false` standing against a catalogue that lists images with no second
+request.
+**Five mutations, all caught**, each by a named failing test: the catalogue never asked, the catalogue asked before `/props`, a text-only listing read as silence, an empty list read as a no, a list with odd items still answering. The second first *hung* the run for half an hour on an unbounded test stub, lessons §2's recorded trap a third time; the client's stubs now share one bounded accept (`accept_before`), and rerun, it fails in seconds.
+
+**Live — GO**, 2026-09-16, `a_gateways_catalogue_decides_whether_images_are_sent_live`
+declared by `MINDFORK_LIVE_VISION_EXPECT`, run as `external`. OpenRouter, text-only
+`qwen/qwen3-235b-a22b-2507`: the attach refused with the way out; in the sandbox the
+`python_exec` chart sent 0 images with the note, no error, and the reply said it could
+not view the chart. OpenRouter, `google/gemma-4-31b-it`: attached with no caveat, and
+`image_attachment_e2e_live` green (`blue` + `square`, `White` a turn later). The LAN
+Gemma 4 31B with its projector: both green, `/props` answering and no catalogue asked.
+Two findings beside it: `deepseek/deepseek-chat-v3.1`, the first text-only model tried,
+returned its whole answer inside the reasoning field with reasoning on — `Stop`, empty
+content — so the smoke uses a non-hybrid model; and `python_exec`'s result says a chart
+is `shown to you below` right above the loop's note that no image was shown. The second
+predates the gateway work and is filed separately. The probes cost cents.

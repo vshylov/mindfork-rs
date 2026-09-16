@@ -666,6 +666,156 @@ async fn image_attachment_e2e_live() {
     );
 }
 
+/// Whether a gateway's model takes images now comes from its catalogue
+/// (docs/research/gateway-vision-catalogue.md, V1(a)) — checked on the app's own paths,
+/// through the retry decorator the application wraps the client in.
+///
+/// Declared, not guessed: `MINDFORK_LIVE_VISION_EXPECT` names the model behind
+/// `MINDFORK_ENGINE_MODEL` — `unsupported` for one the catalogue lists as text-only,
+/// `supported` for one that lists `image`. Text-only: `/image attach` is refused with the
+/// message that names the way out, and with a provisioned `MINDFORK_SANDBOX_DIR` a
+/// `python_exec` chart is withheld and said, and the turn completes — where, measured, the
+/// chart turned the next round into the gateway's `404` (research §2.2). Vision: the image
+/// attaches without the "this engine does not report" note, which would now be untrue.
+#[tokio::test]
+#[ignore = "requires MINDFORK_ENGINE_URL + MINDFORK_ENGINE_MODEL on a gateway with a catalogue, and MINDFORK_LIVE_VISION_EXPECT"]
+async fn a_gateways_catalogue_decides_whether_images_are_sent_live() {
+    use crate::app::events::ImageProgress;
+    let Ok(expect) = std::env::var("MINDFORK_LIVE_VISION_EXPECT") else {
+        eprintln!("skip: MINDFORK_LIVE_VISION_EXPECT not set");
+        return;
+    };
+    let supported = match expect.as_str() {
+        "supported" => true,
+        "unsupported" => false,
+        other => {
+            panic!("MINDFORK_LIVE_VISION_EXPECT is `supported` or `unsupported`, not {other:?}")
+        }
+    };
+    // As the application runs on a gateway: `external`, with the model named. The mode
+    // also picks the refusal's wording — a managed server is told about its projector.
+    let gateway = |cfg: &mut AppConfig| {
+        cfg.engine.mode = crate::shared::config::ServerMode::External;
+        cfg.engine.external.model_name = std::env::var("MINDFORK_ENGINE_MODEL").ok();
+    };
+    let mut cfg = no_auto_cfg();
+    gateway(&mut cfg);
+    let Some((dir, cmd_tx, mut evt_rx, handle)) = spawn_orch_live_cfg(cfg) else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+    let path = dir.path().join("figure.png");
+    std::fs::write(&path, figure_png([20, 60, 200])).unwrap();
+    cmd_tx
+        .send(AppCommand::ImageAttach {
+            path: path.to_string_lossy().into_owned(),
+        })
+        .unwrap();
+    // The "could not say" note follows `Attached`, and the staged list follows both.
+    let mut attached = None;
+    let mut refused = None;
+    let mut unknown_note = false;
+    loop {
+        match evt_rx.recv().await.expect("the attach's events") {
+            AppEvent::ImageProgress(ImageProgress::Attached { info, .. }) => attached = Some(info),
+            AppEvent::ImageProgress(ImageProgress::VisionUnknown) => unknown_note = true,
+            AppEvent::ImageProgress(ImageProgress::Failed(msg)) => {
+                refused = Some(msg);
+                break;
+            }
+            AppEvent::StagedImages(_) if attached.is_some() => break,
+            _ => {}
+        }
+    }
+    eprintln!("[{expect}] attached={attached:?} refused={refused:?} unknown_note={unknown_note}");
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    if supported {
+        assert!(attached.is_some(), "a vision model's image must attach");
+        assert!(
+            !unknown_note,
+            "the catalogue vouched for the model, so the caveat would be untrue"
+        );
+        return;
+    }
+    let told: Vec<String> = crate::shared::i18n::Lang::ALL
+        .iter()
+        .map(|l| {
+            crate::shared::i18n::locale(*l)
+                .t("ui.err.image_no_vision")
+                .to_string()
+        })
+        .collect();
+    assert!(
+        refused
+            .as_deref()
+            .is_some_and(|m| told.iter().any(|t| m.contains(t.as_str()))),
+        "a text-only model's attach must be refused with the way out: {refused:?}"
+    );
+
+    // The tool half: a chart the model's own code draws.
+    let Some((_dir, cmd_tx, mut evt_rx, handle)) = spawn_python_chat_with(gateway).await else {
+        return;
+    };
+    cmd_tx
+        .send(AppCommand::SendMessage(
+            "Plot these monthly sales as a bar chart and save it as a PNG: Jan 120, Feb 95, \
+             Mar 180, Apr 130, May 160. Then tell me in one sentence what the chart shows."
+                .into(),
+        ))
+        .unwrap();
+    let mut reply = String::new();
+    let mut thoughts = String::new();
+    let mut calls: Vec<(String, usize)> = Vec::new();
+    let mut errors: Vec<String> = Vec::new();
+    while let Some(ev) = evt_rx.recv().await {
+        match ev {
+            AppEvent::Chunk { text, .. } => reply.push_str(&text),
+            AppEvent::Thoughts { text, .. } => thoughts.push_str(&text),
+            AppEvent::ToolCall {
+                name,
+                result,
+                images,
+                ..
+            } if name == crate::features::tools::PYTHON_EXEC_ID => calls.push((result, images)),
+            AppEvent::Error(e) => errors.push(e),
+            AppEvent::Finished { reason, .. } => {
+                eprintln!("finished: {reason:?}, thoughts: {thoughts}");
+                break;
+            }
+            _ => {}
+        }
+    }
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+    for (result, images) in &calls {
+        eprintln!("python_exec → {images} image(s) sent:\n{result}");
+    }
+    eprintln!("reply: {reply}\nerrors: {errors:?}");
+    assert!(errors.is_empty(), "the turn must not fail: {errors:?}");
+    assert!(!calls.is_empty(), "the model never ran python_exec");
+    assert_eq!(
+        calls.iter().map(|(_, n)| n).sum::<usize>(),
+        0,
+        "no image may reach a text-only model"
+    );
+    let note: Vec<String> = crate::shared::i18n::Lang::ALL
+        .iter()
+        .map(|l| crate::shared::i18n::locale(*l).tf("loop.images_no_vision", &[("n", "1")]))
+        .collect();
+    assert!(
+        calls
+            .iter()
+            .any(|(r, _)| note.iter().any(|t| r.contains(t.as_str()))),
+        "the result must say the chart was not shown"
+    );
+    assert!(!reply.trim().is_empty(), "the turn must end with a reply");
+}
+
 /// Sandbox file exchange, stage 2 (docs/history/sandbox-file-exchange.md §8): a chart the model's
 /// code saves to `/w/out` lands in the chat's folder, is listed in the chat — `/file list`
 /// finds its bytes on disk — and is shown to the model; with `tools.python_images` off the
@@ -795,6 +945,19 @@ async fn spawn_python_chat() -> Option<(
     UnboundedReceiver<AppEvent>,
     tokio::task::JoinHandle<()>,
 )> {
+    spawn_python_chat_with(|_| {}).await
+}
+
+/// [`spawn_python_chat`] with the configuration adjusted before the spawn — the engine
+/// mode, above all, when a smoke is about what a gateway answers.
+async fn spawn_python_chat_with(
+    adjust: impl FnOnce(&mut AppConfig),
+) -> Option<(
+    tempfile::TempDir,
+    UnboundedSender<AppCommand>,
+    UnboundedReceiver<AppEvent>,
+    tokio::task::JoinHandle<()>,
+)> {
     let sandbox = match std::env::var_os("MINDFORK_SANDBOX_DIR").map(std::path::PathBuf::from) {
         Some(dir) => dir,
         None => {
@@ -807,6 +970,7 @@ async fn spawn_python_chat() -> Option<(
     cfg.tools.python_mode = crate::shared::config::PythonMode::Wasmer;
     cfg.tools.python_net_enabled = false;
     cfg.default_sampling.max_tokens = Some(4096);
+    adjust(&mut cfg);
     let (dir, cmd_tx, mut evt_rx, handle) =
         spawn_orch_live_sandbox(cfg, sandbox).or_else(|| {
             eprintln!("skip: MINDFORK_ENGINE_URL not set");

@@ -171,8 +171,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-16, version 0.9.9)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3263 unit tests
-green, 184 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **3266 unit tests
+green, 185 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -184,6 +184,14 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **A gateway's catalogue says whether the model takes images** — a text-only
+  model's image was a `404` from the gateway itself (24/24), and every later turn
+  of that chat too, since images replay as history. `vision()` reads
+  `architecture.input_modalities` after `/props`, both ways, so attach refuses and
+  a tool's picture is withheld and said; live **GO**, and a chat already holding an
+  image is stage 2
+  ([docs/research/gateway-vision-catalogue.md](docs/research/gateway-vision-catalogue.md),
+  spec §9.10, [docs/journal/engine.md](docs/journal/engine.md)).
 - **A reply the content filter stopped says so** — every provider reports it and
   every client's fallback arm read it as a finished answer; Responses read it as a
   length cut and offered `/continue` into the filter, and Gemini wrote an English
