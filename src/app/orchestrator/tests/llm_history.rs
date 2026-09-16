@@ -33,6 +33,7 @@ fn land_turn(orch: &mut Orchestrator, chat_id: Uuid, messages: Vec<Message>) {
         deleted: vec![],
         usage: None,
         continuation: None,
+        images_withheld: 0,
     });
 }
 

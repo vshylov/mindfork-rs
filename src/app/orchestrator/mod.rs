@@ -219,6 +219,7 @@ pub async fn run(deps: OrchestratorDeps) {
         compact_tx,
         budget_tx,
         context: ContextDiscovery::default(),
+        images_withheld_noted: std::collections::HashSet::new(),
         model_tx,
         model: model_name::ModelDiscovery::default(),
         slots_tx,
@@ -631,6 +632,10 @@ struct Orchestrator {
     /// What is known about the engine's context window — the budget the automatic
     /// compaction measures itself against.
     context: ContextDiscovery,
+    /// The chats already told that their images were not sent to this engine
+    /// (docs/research/history-images-no-vision.md, fork W1(a)): once per chat, until the
+    /// engine's facts are asked again.
+    images_withheld_noted: std::collections::HashSet<Uuid>,
     /// Channel for the engine's answer about the model it is running: `(epoch, name)`.
     model_tx: UnboundedSender<(u64, Option<String>)>,
     /// What the engine said it is running, when the configuration does not say

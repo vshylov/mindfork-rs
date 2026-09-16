@@ -1594,6 +1594,22 @@ append-only shape keeps the prefix cache intact across an image turn
   replayed as history, the chat was refused on every later turn too. An entry
   without the key, and every llama.cpp `/v1/models`, is silence and stays "cannot
   say" ([docs/research/gateway-vision-catalogue.md](docs/research/gateway-vision-catalogue.md)).
+- **An image already in the history, on an engine that says no.** The "no" keeps new
+  images out, but a chat that got one while a vision model was selected replays it
+  every turn, and such an engine refuses the whole request for it — llama.cpp without a
+  projector with `500 "image input is not supported"`, a gateway with its `404` —
+  every turn. So when the engine answers **no**, the turn's request carries each image
+  as a marker in the profile language that names it by its label: `[Image #1 —
+  "figure.png" is not included: the current model does not accept images. You have not
+  seen it — do not describe what it shows; say that you cannot see it.]`. A marker and
+  not a silent drop, measured: with the image simply gone, 10 of 10 replies on two model
+  families took their own earlier description for the whole picture and denied a
+  detail that was there; with the marker, 10 of 10 said they could not see it. Only the
+  request's copy changes — the stored message keeps its pixels, and a vision model sees
+  them again. The turn asks the engine only when its request carries an image. The user
+  is told **once per chat** (a note under the reply), again after the engine's facts
+  are asked anew — the settings applied, the server's readiness flipped, a restart
+  ([docs/research/history-images-no-vision.md](docs/research/history-images-no-vision.md)).
 - **The managed server** gains `--mmproj` (settings, or `MINDFORK_MMPROJ`), with
   the same missing-file preflight the draft model has: a typo'd projector must
   fail loudly rather than start a server that is silently blind.

@@ -171,8 +171,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-16, version 0.9.9)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3266 unit tests
-green, 185 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **3269 unit tests
+green, 186 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -184,6 +184,13 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **A chat's history images, on an engine that takes none** — replayed every turn,
+  they got each turn refused (`500` from llama.cpp without a projector, `404` from a
+  gateway). On the engine's "no" the request carries a marker per image instead —
+  a silent drop made models deny what was there, 10/10; the marker, 10/10 "I cannot
+  see it" — and the chat is told once. Live **GO**, control red
+  ([docs/research/history-images-no-vision.md](docs/research/history-images-no-vision.md),
+  spec §9.10, [docs/journal/engine.md](docs/journal/engine.md)).
 - **A gateway's catalogue says whether the model takes images** — a text-only
   model's image was a `404` from the gateway itself (24/24), and every later turn
   of that chat too, since images replay as history. `vision()` reads
@@ -382,18 +389,6 @@ being recent is dropped, not shortened.
   when a byte would not come back
   ([docs/research/local-file-encoding.md](docs/research/local-file-encoding.md),
   spec §9.7, §9.12, [docs/journal/tools.md](docs/journal/tools.md)).
-- **A fetched page is read in its own encoding** — reported from a chat: a
-  windows-1251 article became an attachment of `U+FFFD`, because `reqwest`
-  runs without its default features and `Response::text()` is then
-  `from_utf8_lossy` whatever the page declares. Now `shared::http_text::read`
-  serves `fetch_url` and `web_search`'s result fetches: an unasked
-  `gzip`/`deflate` undone (www.163.com sends one), then BOM → the bytes when
-  UTF-8 by majority → a declaration they do not refute (the header, or
-  `<meta>` up to `<body>`) → `chardetng` with the TLD. Measured on fourteen
-  real pages first: four declare only in `<meta>`, so the header-only
-  `charset` feature would not have been the fix
-  ([docs/research/page-charset.md](docs/research/page-charset.md),
-  spec §9.3.1, [docs/journal/tools.md](docs/journal/tools.md)).
 <!-- cyrillic-ok:end -->
 - **The TUI "hangs" on a headless launch** (no TTY) — this is expected; clean
   exit via `Esc`/`Ctrl+Q` is covered by unit tests. Live verification needs a

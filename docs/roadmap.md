@@ -311,15 +311,6 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   OpenRouter review is closed (see "Recently closed"). What remains:
   - the optional **managed-custom-command** (the supervisor launches an arbitrary
     sidecar proxy) — on demand. See [plugin research §6](research/plugin-system.md).
-  - **a chat whose history already carries images, on a model that takes none.**
-    Whether a gateway's model takes images now comes from its catalogue (stage 1 of
-    [gateway-vision-catalogue.md](research/gateway-vision-catalogue.md)), which keeps
-    *new* images away from a text-only model. An image already in the history —
-    sent while a vision model was selected — is still replayed on every turn, and a
-    text-only route refuses each one with a `404` (measured, research §2.2). Stage 2
-    (fork V2(b)): send such images as a text marker when the engine says no,
-    measured first on a local `llama-server` without a projector too, since that
-    path is shared.
   - **embeddings through a gateway.** The `Embedder` half sends `model`, so the
     "Embeddings" tab can point at one, but no run has
     ([openrouter-external.md](research/openrouter-external.md) §4.1).
@@ -553,6 +544,17 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
 ---
 
 ## Recently closed
+- **Images on an engine that takes none** (complete, two stages): whether a gateway's
+  model sees images comes from its catalogue's `architecture.input_modalities` after
+  `/props`, so a text-only model's `/image attach` refuses and a tool's picture is
+  withheld and said; and a chat whose history already holds an image goes on working
+  after a switch to such an engine — llama.cpp without a projector as well as a
+  gateway — with each image sent as a marker the model reads as "you cannot see this",
+  and the chat told once. Before, each such turn was a `500` or a `404`, for good.
+  Design and measurements:
+  [gateway-vision-catalogue.md](research/gateway-vision-catalogue.md),
+  [history-images-no-vision.md](research/history-images-no-vision.md). What stays
+  open: nothing recorded.
 - **`external` against OpenRouter** (complete, a review and three tracks,
   #551–#559): the gateway's "thoughts" read under its own `reasoning` field; the
   silent turns recover from a model that must reason, the refusal remembered per

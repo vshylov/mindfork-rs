@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (69)
+## Entries (70)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -81,6 +81,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the thinking switch reaches a gateway in its own field (done)
 - Post-M9: a reply the content filter stopped says so (done)
 - Post-M9: whether a gateway's model takes images comes from its catalogue (done)
+- Post-M9: a chat whose history carries images, on an engine that takes none (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -4506,3 +4507,47 @@ returned its whole answer inside the reasoning field with reasoning on — `Stop
 content — so the smoke uses a non-hybrid model; and `python_exec`'s result says a chart
 is `shown to you below` right above the loop's note that no image was shown. The second
 predates the gateway work and is filed separately. The probes cost cents.
+
+### Post-M9: a chat whose history carries images, on an engine that takes none (done)
+
+Stage 2 of the gateway-vision track (fork V2(b)). Stage 1 kept *new* images away from a
+model that cannot see them, but an image already in a chat's history is replayed on
+every turn. After a switch to such a model, every turn of that chat was refused. Plan,
+measurements and fork: [history-images-no-vision.md](../research/history-images-no-vision.md).
+
+**What was measured**, 2026-09-16. The local side first, as V2(b) asked: a CPU
+`llama-server` b10936 with `gemma-4-E4B` and no `--mmproj` (`/props` `vision: false`)
+answered `500 "image input is not supported"` to an image in the new message, in history
+and in a tool result alike, and `200` to a text marker in its place. So the stuck chat
+was never a gateway's alone. Then what the model does without the image: history with
+the image and an earlier reply naming only the blue field and the white square, and a
+question about the red corner square it never mentioned. **Dropped silently**, Qwen3
+235B and Gemma 4 31B each said "there is no small square in the top-left corner",
+10/10 — their own description taken for the whole picture. **With a marker** in the
+directive shape `loop.images_no_vision` was measured into, 10/10 "I cannot see the
+image".
+
+**Decided**: a marker, never a drop; only on the engine's "no"; the request's copy only;
+asked in the turn through the memo it already has. With the user, 2026-09-16: W1(a), the
+note once per chat until the engine's facts are asked anew.
+
+**Code**: `request::withhold_images` (a pure function over the request's messages, the
+marker naming each image by its label, after the text); `TurnLoop::run` calls it before
+the first round when the request carries an image and the engine says `Unsupported`, and
+the count rides `GenResult.images_withheld`; `Orchestrator::note_withheld_images` shows
+`ui.chat.images_withheld` once per chat, the set cleared in `refresh_engine_facts`.
+
+**Tests**: 3269 green, 186 ignored (3266 / 185 before) — the markers in every message
+shape with the measured wording pinned; a chat on a mock engine switched mid-chat from
+seeing to not; the once-per-chat rule on a bare orchestrator.
+**Seven mutations, all caught**, each by a named failing test, every run under a wall-clock cap: the turn never withholding, a silent drop instead of the marker, the marker before the text, the note on every turn, the note never again after the engine changes, the note when nothing was withheld, the count not carried to the result.
+
+**Live — GO**, `a_history_image_on_an_engine_without_vision_live`: two starts of the app
+on one data root, a vision engine attaching and seeing the image, then an engine without
+vision asked about the corner square. LAN Gemma 4 31B → the CPU E4B without a projector:
+"I cannot see the image you sent.", no error, told once, not told again, the image still
+stored. OpenRouter `google/gemma-4-31b-it` → `qwen/qwen3-235b-a22b-2507`: the same.
+**Control**: the local pair with the rewrite switched off was red in 18 s, both turns the
+`500`. `image_attachment_e2e_live` on the LAN stack with its projector stayed green. The
+control first **hung** for ten minutes on the smoke's unbounded wait for the note it
+could never get — lessons §2, a fourth time; every such wait is bounded now.

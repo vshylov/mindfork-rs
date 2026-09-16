@@ -34,6 +34,7 @@ use crate::shared::tokens::estimate_prompt;
 use super::Orchestrator;
 use super::request::{
     PromptContext, RequestEnv, build_request, build_request_in, last_user_message_at,
+    withhold_images,
 };
 
 /// How long the turn waits to learn whether the engine takes images
@@ -160,6 +161,9 @@ pub(super) struct GenResult {
     /// The message this turn **continues** (`/continue`, spec §6.4): the turn's
     /// first assistant message is folded into it in place rather than pushed.
     pub(super) continuation: Option<Uuid>,
+    /// How many of the chat's images the request carried as markers, because the engine
+    /// takes none — the orchestrator's once-per-chat note reads it.
+    pub(super) images_withheld: usize,
 }
 
 /// The exact size of one round, as reported by the server's `usage`.
@@ -996,6 +1000,7 @@ impl Orchestrator {
         // is gone with the task — but a field that outlives what it describes is
         // an invitation to reason wrongly about it later.
         self.confirm = None;
+        self.note_withheld_images(res.chat_id, res.images_withheld);
         let mut res = res;
         self.carry_inflight_rename(&mut res);
         if res.messages.is_empty() && res.effects.is_empty() && res.deleted.is_empty() {
@@ -1628,6 +1633,7 @@ fn spawn_generation(spawn: GenSpawn) {
             cancel,
             // Asked on the first result that carries an image, and not again.
             vision: None,
+            images_withheld: 0,
             image_names,
             allowed,
             messages: Vec::new(),
@@ -1678,6 +1684,7 @@ fn spawn_generation(spawn: GenSpawn) {
             deleted: turn.deleted,
             usage: turn.last_usage,
             continuation: continuation.map(|c| c.message_id),
+            images_withheld: turn.images_withheld,
         }));
     });
 }
@@ -1796,6 +1803,10 @@ struct TurnLoop<'a> {
     /// What the engine answered about images, asked at most once per loop
     /// ([`TurnLoop::vision`]).
     vision: Option<VisionSupport>,
+    /// How many images the request carried that the engine takes none of, and so went as
+    /// markers instead ([`withhold_images`]). The orchestrator tells the user once
+    /// per chat (docs/research/history-images-no-vision.md, fork W1(a)).
+    images_withheld: usize,
     /// The `tool-image-N` numbers this chat has spent — seeded from the images it already
     /// carries and grown as the turn produces more. See [`ToolImageNames`].
     image_names: ToolImageNames,
@@ -2159,6 +2170,16 @@ impl TurnLoop<'_> {
     }
 
     async fn run(&mut self) -> FinishReason {
+        // A chat that got an image while a model that sees was selected replays it on every
+        // turn, and an engine that takes none refuses the whole request for it — a `500`
+        // from llama.cpp without a projector, a `404` from a gateway's router, every turn
+        // (docs/research/history-images-no-vision.md §2.1). So on the engine's "no" the
+        // request's images go as markers. A request without images asks nothing.
+        if self.request.messages.iter().any(|m| !m.images.is_empty())
+            && self.vision().await == VisionSupport::Unsupported
+        {
+            self.images_withheld += withhold_images(&mut self.request.messages, self.ctx.loc);
+        }
         let mut muted_retry_left = self.woken;
         loop {
             self.report_progress(None);
@@ -3700,6 +3721,7 @@ async fn run_child(
         cancel: cancel.clone(),
         // A child asks the same engine, and asks it for itself: its loop is its own.
         vision: None,
+        images_withheld: 0,
         // A child's chat opens with the one user message, so that is all it can have spent.
         image_names: ToolImageNames::seeded(user.images.iter().map(|i| i.name.as_str())),
         allowed,
