@@ -244,8 +244,13 @@ met from the other side — so the run hung past its cap exactly as before. Boun
 **thread itself**: the stub accepts under a deadline and returns what it saw, and a
 plain `join` then fails on the missing request. Give a mutation harness its own
 wall-clock cap as well, so a hang is reported as a finding rather than waited out.
+**A third time**, with this entry unread: a new test joined `path_server`, a stub that
+had never been bounded, and a mutant that skipped `/props` held the run for half an
+hour with no cap on the harness either. Bounding one stub fixes one test — when you
+touch a test file, bound **every** stub a test joins, through one shared accept
+(`accept_before` in `openai/client.rs`).
 — *engine failures stop being silent*, *a tool's images reach the model through a
-gateway*.
+gateway*, *whether a gateway's model takes images comes from its catalogue*.
 
 **On a path built to degrade gracefully, `is_ok()` can never be the assertion.** A test
 asserted `is_ok()` on a tool that turns an index failure into a normal answer, so

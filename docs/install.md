@@ -473,6 +473,12 @@ you point the app at one (the full compatibility review:
   the 4.5 generation and on Gemini; every other model there starts the answer
   over, so the command refuses and points at `/regen` instead of storing the new
   answer glued onto the old fragment. A local server is unaffected by both;
+- **whether the model takes images comes from that catalogue too.** For a model
+  it lists as text-only, `/image attach` refuses and says to pick a vision model,
+  and a tool's picture is kept back with a note telling the model it has not seen
+  it — where before the gateway refused the whole request, and kept refusing every
+  later turn of that chat, since an image stays in its history. For a model it
+  lists with images, the attach no longer adds the "does not report" caveat;
 - **"Parallel sessions" and "Parallel tool calls" default to 1** here, as for a
   local server. A gateway is a cloud in practice: raising both (4 is the cloud
   modes' default for tool calls) is what makes a reply's reads overlap.

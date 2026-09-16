@@ -311,12 +311,15 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   OpenRouter review is closed (see "Recently closed"). What remains:
   - the optional **managed-custom-command** (the supervisor launches an arbitrary
     sidecar proxy) — on demand. See [plugin research §6](research/plugin-system.md).
-  - **vision from the catalogue.** On a gateway `vision()` is always `Unknown` —
-    it reads llama.cpp's `/props` and nothing else — so an image for a text-only
-    model is sent and refused by the route rather than refused up front. OpenRouter
-    documents `architecture.input_modalities` on the catalogue entry the window
-    and the sampling list already come from; unmeasured, so what a text-only route
-    answers comes first (lessons §3).
+  - **a chat whose history already carries images, on a model that takes none.**
+    Whether a gateway's model takes images now comes from its catalogue (stage 1 of
+    [gateway-vision-catalogue.md](research/gateway-vision-catalogue.md)), which keeps
+    *new* images away from a text-only model. An image already in the history —
+    sent while a vision model was selected — is still replayed on every turn, and a
+    text-only route refuses each one with a `404` (measured, research §2.2). Stage 2
+    (fork V2(b)): send such images as a text marker when the engine says no,
+    measured first on a local `llama-server` without a projector too, since that
+    path is shared.
   - **embeddings through a gateway.** The `Embedder` half sends `model`, so the
     "Embeddings" tab can point at one, but no run has
     ([openrouter-external.md](research/openrouter-external.md) §4.1).

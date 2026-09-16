@@ -1584,6 +1584,16 @@ append-only shape keeps the prefix cache intact across an image turn
   **yes** attaches silently; **cannot say** (any server without `/props`)
   attaches with a neutral note, because refusing there would break every vLLM or
   LM Studio user running a vision model.
+  Where `/props` says nothing, the **catalogue entry for the configured model** is
+  asked next — the order the context window follows (§6.7). A gateway publishes
+  one: OpenRouter's `architecture.input_modalities` answers in both directions,
+  `image` listed → yes, a list without it → no. The "no" is as firm as llama.cpp's:
+  measured, OpenRouter's router refuses a text-only model's image with `404 "No
+  endpoints found that support image input"` before any provider sees it — in a new
+  message, in history and from a tool alike, 24 of 24 — and since an image is
+  replayed as history, the chat was refused on every later turn too. An entry
+  without the key, and every llama.cpp `/v1/models`, is silence and stays "cannot
+  say" ([docs/research/gateway-vision-catalogue.md](docs/research/gateway-vision-catalogue.md)).
 - **The managed server** gains `--mmproj` (settings, or `MINDFORK_MMPROJ`), with
   the same missing-file preflight the draft model has: a typo'd projector must
   fail loudly rather than start a server that is silently blind.
