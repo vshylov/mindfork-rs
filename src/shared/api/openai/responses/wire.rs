@@ -14,7 +14,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::shared::api::contract::{ApiImage, ApiMessage, ApiRole, ChatRequest};
+use crate::shared::api::contract::{ApiImage, ApiMessage, ApiRole, ChatRequest, FinishReason};
 
 // ---------- request ----------
 
@@ -365,6 +365,30 @@ pub struct RespBody {
     /// Populated on `response.failed` — why the response died mid-stream.
     #[serde(default)]
     pub error: Option<RespError>,
+    /// Populated on `response.incomplete` — which limit cut the response.
+    #[serde(default)]
+    pub incomplete_details: Option<RespIncomplete>,
+}
+
+/// The `incomplete_details` object of an incomplete response: `reason` is
+/// `max_output_tokens` or `content_filter`.
+#[derive(Debug, Default, Deserialize)]
+pub struct RespIncomplete {
+    #[serde(default)]
+    pub reason: String,
+}
+
+impl RespIncomplete {
+    /// The domain reason for an incomplete response. Anything but the filter is a
+    /// limit, which is what every incomplete response was read as before the
+    /// reason was looked at
+    /// ([docs/research/content-filter-finish.md](../../../../docs/research/content-filter-finish.md)).
+    pub fn finish_reason(details: Option<&Self>) -> FinishReason {
+        match details.map(|d| d.reason.as_str()) {
+            Some("content_filter") => FinishReason::Filtered,
+            _ => FinishReason::Length,
+        }
+    }
 }
 
 /// The `error` object of a failed response: a string `code`

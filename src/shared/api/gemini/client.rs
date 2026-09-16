@@ -56,31 +56,36 @@ impl GeminiClient {
 
 /// Gemini's string `finishReason` → the domain reason. The presence of tool calls
 /// (`saw_tool_call`) gives `ToolCalls` even on `STOP` (Gemini returns `STOP` with
-/// `functionCall` parts). `MAX_TOKENS` → `Length`; anything else — `Stop`, so as not to fail
-/// ([`is_block_reason`] recognizes blocking reasons separately and surfaces a note).
+/// `functionCall` parts), and over a filter reason too — the calls are what the model
+/// asked for. `MAX_TOKENS` → `Length`; a filter reason ([`is_filter_reason`]) →
+/// `Filtered`; anything else — `Stop`, so as not to fail ([`is_block_reason`]
+/// recognizes the other blocking reasons and surfaces a note).
 fn map_finish(reason: &str, saw_tool_call: bool) -> FinishReason {
     match reason {
         "MAX_TOKENS" => FinishReason::Length,
         _ if saw_tool_call => FinishReason::ToolCalls,
+        _ if is_filter_reason(reason) => FinishReason::Filtered,
         _ => FinishReason::Stop,
     }
 }
 
-/// A "blocking" finish/rejection reason: a safety filter, recitation,
-/// a malformed call, etc. Such a reply arrives empty — without an explanation the user would see
-/// a silently empty turn, so it's surfaced as a note (see [`block_note`]).
-fn is_block_reason(reason: &str) -> bool {
+/// A finish reason saying the provider's content filter stopped the reply. It ends
+/// the turn as [`FinishReason::Filtered`], whose note the feed shows in the
+/// interface's language — it used to be an English sentence yielded as reply text,
+/// stored in the chat and sent back to the model as its own words
+/// ([docs/research/content-filter-finish.md](../../../../docs/research/content-filter-finish.md), fork C3).
+fn is_filter_reason(reason: &str) -> bool {
     matches!(
         reason,
-        "SAFETY"
-            | "RECITATION"
-            | "BLOCKLIST"
-            | "PROHIBITED_CONTENT"
-            | "SPII"
-            | "IMAGE_SAFETY"
-            | "MALFORMED_FUNCTION_CALL"
-            | "OTHER"
+        "SAFETY" | "RECITATION" | "BLOCKLIST" | "PROHIBITED_CONTENT" | "SPII" | "IMAGE_SAFETY"
     )
+}
+
+/// A blocking finish reason that is **not** a filter: a malformed call, or `OTHER`.
+/// Such a reply arrives empty — without an explanation the user would see a silently
+/// empty turn, so it's surfaced as a note (see [`block_note`]).
+fn is_block_reason(reason: &str) -> bool {
+    matches!(reason, "MALFORMED_FUNCTION_CALL" | "OTHER")
 }
 
 /// A note to the user about the block (goes into the feed as reply text, so an empty turn
@@ -164,15 +169,14 @@ impl EngineBackend for GeminiClient {
                                     break;
                                 }
                                 // The prompt was blocked by the filter (candidates is empty) —
-                                // explain via a note, otherwise it would look like an empty STOP.
+                                // ended as filtered, otherwise it would look like an empty STOP.
                                 if let Some(reason) = resp
                                     .prompt_feedback
                                     .and_then(|f| f.block_reason)
                                     .filter(|r| !r.is_empty())
                                 {
                                     tracing::warn!(reason = %reason, "gemini blocked the prompt");
-                                    yield ChatChunk::Text(block_note(&reason));
-                                    yield ChatChunk::Finished(FinishReason::Stop);
+                                    yield ChatChunk::Finished(FinishReason::Filtered);
                                     break;
                                 }
                                 let candidate = resp.candidates.into_iter().next();
@@ -212,8 +216,12 @@ impl EngineBackend for GeminiClient {
                                     });
                                 }
                                 if let Some(reason) = candidate.and_then(|c| c.finish_reason) {
-                                    // A blocking reason (SAFETY/RECITATION/…) — surfaced as
-                                    // a note, otherwise an empty turn would go unexplained.
+                                    // A blocking reason that is not a filter (a malformed call,
+                                    // OTHER) — surfaced as a note, otherwise an empty turn would
+                                    // go unexplained. A filter reason ends as `Filtered` below.
+                                    if is_filter_reason(&reason) {
+                                        tracing::warn!(reason = %reason, "gemini stopped the reply with a filter reason");
+                                    }
                                     if is_block_reason(&reason) && !saw_tool_call {
                                         tracing::warn!(reason = %reason, "gemini stopped with a block reason");
                                         yield ChatChunk::Text(block_note(&reason));
@@ -246,13 +254,18 @@ impl EngineBackend for GeminiClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::shared::api::sse_stub::{self, collect, serve};
 
     #[test]
     fn finish_mapping() {
         assert_eq!(map_finish("STOP", false), FinishReason::Stop);
         assert_eq!(map_finish("STOP", true), FinishReason::ToolCalls);
         assert_eq!(map_finish("MAX_TOKENS", false), FinishReason::Length);
-        assert_eq!(map_finish("SAFETY", false), FinishReason::Stop);
+        assert_eq!(map_finish("SAFETY", false), FinishReason::Filtered);
+        assert_eq!(map_finish("RECITATION", false), FinishReason::Filtered);
+        // The calls the model produced win over a filter reason after them.
+        assert_eq!(map_finish("SAFETY", true), FinishReason::ToolCalls);
+        assert_eq!(map_finish("OTHER", false), FinishReason::Stop);
     }
 
     #[test]
@@ -263,13 +276,105 @@ mod tests {
 
     #[test]
     fn block_reasons_recognized_and_noted() {
-        assert!(is_block_reason("SAFETY"));
-        assert!(is_block_reason("RECITATION"));
         assert!(is_block_reason("MALFORMED_FUNCTION_CALL"));
+        assert!(is_block_reason("OTHER"));
+        // A filter reason is not a block reason: it has a finish reason of its own.
+        assert!(!is_block_reason("SAFETY"));
         assert!(!is_block_reason("STOP"));
         assert!(!is_block_reason("MAX_TOKENS"));
         // The note carries the reason.
-        assert!(block_note("SAFETY").contains("SAFETY"));
+        assert!(block_note("OTHER").contains("OTHER"));
+    }
+
+    #[test]
+    fn filter_reasons_are_told_from_the_other_blocks() {
+        for r in [
+            "SAFETY",
+            "RECITATION",
+            "BLOCKLIST",
+            "PROHIBITED_CONTENT",
+            "SPII",
+            "IMAGE_SAFETY",
+        ] {
+            assert!(is_filter_reason(r), "{r}");
+            assert!(!is_block_reason(r), "{r}");
+        }
+        for r in ["STOP", "MAX_TOKENS", "MALFORMED_FUNCTION_CALL", "OTHER"] {
+            assert!(!is_filter_reason(r), "{r}");
+        }
+    }
+
+    /// A reply the filter stopped keeps what arrived, gains no text of ours, and ends
+    /// as filtered — the note is the feed's, in the interface's language.
+    #[tokio::test]
+    async fn a_safety_stop_ends_the_turn_as_filtered_with_no_text_of_ours() {
+        let base = serve(&[
+            r#"{"candidates":[{"content":{"parts":[{"text":"Once upon"}],"role":"model"}}]}"#,
+            r#"{"candidates":[{"content":{"parts":[],"role":"model"},"finishReason":"SAFETY"}]}"#,
+        ]);
+        let client = GeminiClient::new(base, "k", "gemini-x");
+        let chunks = collect(
+            client
+                .chat_stream(sse_stub::hello(), Default::default())
+                .await
+                .unwrap(),
+        )
+        .await;
+        let texts: Vec<_> = chunks
+            .iter()
+            .filter_map(|c| match c {
+                ChatChunk::Text(t) => Some(t.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts, ["Once upon"], "{chunks:?}");
+        assert_eq!(
+            chunks.last(),
+            Some(&ChatChunk::Finished(FinishReason::Filtered))
+        );
+    }
+
+    /// A refused prompt — no candidates, a `blockReason` — ends the same way.
+    #[tokio::test]
+    async fn a_blocked_prompt_ends_the_turn_as_filtered() {
+        let base = serve(&[r#"{"promptFeedback":{"blockReason":"PROHIBITED_CONTENT"}}"#]);
+        let client = GeminiClient::new(base, "k", "gemini-x");
+        let chunks = collect(
+            client
+                .chat_stream(sse_stub::hello(), Default::default())
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(
+            chunks,
+            [ChatChunk::Finished(FinishReason::Filtered)],
+            "no reply text, only the reason"
+        );
+    }
+
+    /// A block that is not a filter keeps the note it had.
+    #[tokio::test]
+    async fn a_malformed_call_still_gets_its_note() {
+        let base = serve(&[
+            r#"{"candidates":[{"content":{"parts":[],"role":"model"},"finishReason":"MALFORMED_FUNCTION_CALL"}]}"#,
+        ]);
+        let client = GeminiClient::new(base, "k", "gemini-x");
+        let chunks = collect(
+            client
+                .chat_stream(sse_stub::hello(), Default::default())
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert!(
+            chunks.contains(&ChatChunk::Text(block_note("MALFORMED_FUNCTION_CALL"))),
+            "{chunks:?}"
+        );
+        assert_eq!(
+            chunks.last(),
+            Some(&ChatChunk::Finished(FinishReason::Stop))
+        );
     }
 }
 

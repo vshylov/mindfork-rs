@@ -28,6 +28,10 @@ mod continue_probe;
 #[cfg(test)]
 mod dialogue_probe;
 
+// The one-shot SSE server the clients' stream tests share.
+#[cfg(test)]
+pub(crate) mod sse_stub;
+
 pub use anthropic::AnthropicClient;
 pub use contract::{
     ApiImage, ApiMessage, ApiToolCall, ChatChunk, ChatRequest, EmbedRole, Embedder, EngineBackend,

@@ -54,6 +54,8 @@ fn map_stop_reason(s: &str) -> FinishReason {
         "end_turn" | "stop_sequence" => FinishReason::Stop,
         "max_tokens" => FinishReason::Length,
         "tool_use" => FinishReason::ToolCalls,
+        // The streaming classifiers stopped the reply.
+        "refusal" => FinishReason::Filtered,
         _ => FinishReason::Stop,
     }
 }
@@ -205,54 +207,7 @@ impl EngineBackend for AnthropicClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Serves one canned `text/event-stream` response on a local port and returns its
-    /// base URL.
-    ///
-    /// A real socket and a real SSE body, so the whole client is exercised —
-    /// `eventsource` framing, the wire enum, the chunks that come out — rather than
-    /// serde alone. The alternative (asserting on `AntStreamEvent` only) is what let
-    /// the swallowed `error` event survive: the type parsed fine, it was the client
-    /// that dropped it.
-    fn serve_sse(events: &'static [&'static str]) -> String {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
-        std::thread::spawn(move || {
-            use std::io::{Read, Write};
-            let Ok((mut sock, _)) = listener.accept() else {
-                return;
-            };
-            // Read the request head so the client's write completes.
-            let mut buf = [0u8; 4096];
-            let _ = sock.read(&mut buf);
-            let mut body = String::new();
-            for e in events {
-                body.push_str(&format!("data: {e}\n\n"));
-            }
-            let _ = sock.write_all(
-                format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len()
-                )
-                .as_bytes(),
-            );
-            let _ = sock.flush();
-        });
-        format!("http://127.0.0.1:{port}")
-    }
-
-    async fn collect(stream: ChatStream) -> Vec<ChatChunk> {
-        let mut out = Vec::new();
-        let mut stream = stream;
-        while let Some(c) = stream.next().await {
-            let last = matches!(c, ChatChunk::Finished(_));
-            out.push(c);
-            if last {
-                break;
-            }
-        }
-        out
-    }
+    use crate::shared::api::sse_stub::{self, collect, serve as serve_sse};
 
     /// The headline defect: Anthropic sheds load *after* accepting the stream, and
     /// that event used to fall into `AntStreamEvent::Other` — so the connection then
@@ -322,12 +277,40 @@ mod tests {
         );
     }
 
+    /// The streaming classifiers stop a reply with `stop_reason: "refusal"`: what
+    /// arrived before it stays, and the turn ends as filtered rather than as a
+    /// complete answer (docs/research/content-filter-finish.md).
+    #[tokio::test]
+    async fn a_refusal_ends_the_turn_as_filtered() {
+        let base = serve_sse(&[
+            r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Here is how"}}"#,
+            r#"{"type":"message_delta","delta":{"stop_reason":"refusal"},"usage":{"output_tokens":3}}"#,
+        ]);
+        let client = AnthropicClient::new(base, "k", "claude-x");
+        let chunks = collect(
+            client
+                .chat_stream(sse_stub::hello(), Default::default())
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert!(
+            chunks.contains(&ChatChunk::Text("Here is how".into())),
+            "{chunks:?}"
+        );
+        assert_eq!(
+            chunks.last(),
+            Some(&ChatChunk::Finished(FinishReason::Filtered))
+        );
+    }
+
     #[test]
     fn stop_reason_mapping() {
         assert_eq!(map_stop_reason("end_turn"), FinishReason::Stop);
         assert_eq!(map_stop_reason("stop_sequence"), FinishReason::Stop);
         assert_eq!(map_stop_reason("max_tokens"), FinishReason::Length);
         assert_eq!(map_stop_reason("tool_use"), FinishReason::ToolCalls);
+        assert_eq!(map_stop_reason("refusal"), FinishReason::Filtered);
         assert_eq!(map_stop_reason("weird"), FinishReason::Stop);
     }
 }

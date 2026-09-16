@@ -1326,6 +1326,42 @@ async fn a_length_cut_reply_is_recorded_and_announced_as_continuable() {
     );
 }
 
+/// A reply the provider's filter stopped keeps its fragment, is announced as
+/// filtered and never as continuable — resuming meets the same filter — and is
+/// stored as a stop, so `/continue` refuses it the way it refuses any finished
+/// reply (docs/research/content-filter-finish.md, fork C2). The mock supervisor runs
+/// as managed, where a length cut *would* be continuable.
+#[tokio::test]
+async fn a_filtered_reply_is_announced_and_stored_as_a_stop() {
+    use crate::entities::message::MessageFinish;
+
+    let (dir, cmd_tx, _evt_rx, handle, finished) = interrupted_turn(vec![vec![
+        ChatChunk::Text("Half of it".into()),
+        ChatChunk::Finished(FinishReason::Filtered),
+    ]])
+    .await;
+    assert!(
+        matches!(
+            finished,
+            AppEvent::Finished {
+                reason: FinishReason::Filtered,
+                continuable: false,
+                ..
+            }
+        ),
+        "a filtered reply must not offer /continue: {finished:?}"
+    );
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    let chat = reload_chat(dir.path());
+    assert_eq!(chat.messages[1].text, "Half of it");
+    assert_eq!(
+        chat.messages[1].metadata.as_ref().and_then(|m| m.finish),
+        Some(MessageFinish::Stop)
+    );
+}
+
 /// A turn interrupted between tool rounds leaves a tool-result tail;
 /// `/continue` then resumes the agentic loop as an ordinary round — a **new**
 /// assistant message, no prefill, no bubble re-opening.

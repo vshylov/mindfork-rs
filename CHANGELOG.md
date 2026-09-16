@@ -29,6 +29,14 @@ split by subsystem.
 
 ### Fixed
 
+- **A reply the provider's content filter stopped now says so.** OpenAI, Anthropic,
+  Gemini, OpenRouter and other OpenAI-compatible servers each report when their
+  moderation cut a reply short, and the app showed the fragment as a finished answer
+  — or, with OpenAI, as a reply that hit the length limit, suggesting `/continue`,
+  which only meets the same filter again. The fragment is kept with a note saying
+  why it ends there; impersonation says the same under the draft, and a subagent
+  tells the assistant that delegated to it. Gemini's English "did not produce a
+  response" line no longer lands inside the reply itself.
 - **The thinking switch works through a gateway.** In `external` mode against a
   service that publishes a catalogue (OpenRouter and the like), turning thinking on
   did nothing unless a reasoning effort was also chosen, and turning it off did not

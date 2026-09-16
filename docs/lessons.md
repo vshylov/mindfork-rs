@@ -868,6 +868,18 @@ python/python@=3.13.5 in the registry". An offline claim needs a cold cache that
 online run has touched, the same shape as a negative needing both ends of its channel.
 — *Python sandbox — the starter set grows*, *the sandbox's packages, packed read-only*.
 
+**A provider's value the domain has no name for lands on the arm that means "fine".**
+Every reason map had a wildcard to its success value — `_ => Stop` "so as not to
+fail" — and every provider reports a content-filter stop, under four spellings. So a
+moderated fragment read as a finished answer on three wires, and on Responses as a
+length cut that offered `/continue` into the filter. The same class, earlier: an
+Anthropic in-stream `error` event parsed as `Other` and ended as `Stop`, and a
+gateway's `delta.reasoning` deserialized away. When a provider has a word for a fact
+the user must see, give the domain a value for it and walk **every** client's map in
+the same change — the wildcard stays for what is truly unknown, and a test per wire
+drives the real stream to the new value.
+— *a reply the content filter stopped says so*.
+
 ## 4. The recurring defect class: a message must close the door
 
 **Never let a message describe a situation without saying what is and is not possible

@@ -148,8 +148,15 @@ impl EngineBackend for ResponsesClient {
                                         break;
                                     }
                                     Ok(RespEvent::Incomplete { response }) => {
-                                        // Cut off by a limit (max_output_tokens etc.).
-                                        if let Some(u) = response.and_then(|r| r.usage) {
+                                        // Cut off by a limit (`max_output_tokens`) or by the
+                                        // content filter — the same event, told apart by
+                                        // `incomplete_details.reason`. Read as a limit whatever
+                                        // the reason once, it offered `/continue` into the
+                                        // filter that had just stopped the reply.
+                                        let (usage, details) = response
+                                            .map(|r| (r.usage, r.incomplete_details))
+                                            .unwrap_or_default();
+                                        if let Some(u) = usage {
                                             yield ChatChunk::Usage(TokenUsage {
                                                 prompt_tokens: u.input_tokens,
                                                 completion_tokens: u.output_tokens,
@@ -157,7 +164,7 @@ impl EngineBackend for ResponsesClient {
                                                 prefill: None,
                                             });
                                         }
-                                        yield ChatChunk::Finished(FinishReason::Length);
+                                        yield ChatChunk::Finished(wire::RespIncomplete::finish_reason(details.as_ref()));
                                         break;
                                     }
                                     Ok(RespEvent::Failed { response }) => {
@@ -219,6 +226,68 @@ impl EngineBackend for ResponsesClient {
 
 /// A manual smoke against the real OpenAI Responses API. Marked `#[ignore]` — not in CI.
 /// Run: `MINDFORK_OPENAI_KEY=sk-... cargo test responses -- --ignored --nocapture`.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::shared::api::sse_stub::{self, collect, serve};
+
+    async fn turn(events: &'static [&'static str]) -> Vec<ChatChunk> {
+        let client = ResponsesClient::new(serve(events), "k", "gpt-x");
+        collect(
+            client
+                .chat_stream(sse_stub::hello(), CancellationToken::new())
+                .await
+                .unwrap(),
+        )
+        .await
+    }
+
+    /// The defect: an incomplete response was a length cut whatever its reason, so a
+    /// reply the filter stopped was announced as hitting the limit and offered
+    /// `/continue` — into the same filter (docs/research/content-filter-finish.md).
+    #[tokio::test]
+    async fn an_incomplete_response_the_filter_stopped_ends_as_filtered() {
+        let chunks = turn(&[
+            r#"{"type":"response.output_text.delta","delta":"Step one"}"#,
+            r#"{"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"content_filter"},"usage":{"input_tokens":5,"output_tokens":2}}}"#,
+        ])
+        .await;
+        assert!(
+            chunks.contains(&ChatChunk::Text("Step one".into())),
+            "{chunks:?}"
+        );
+        assert!(
+            chunks
+                .iter()
+                .any(|c| matches!(c, ChatChunk::Usage(u) if u.completion_tokens == 2)),
+            "the usage still lands: {chunks:?}"
+        );
+        assert_eq!(
+            chunks.last(),
+            Some(&ChatChunk::Finished(FinishReason::Filtered))
+        );
+    }
+
+    /// The limit it was always read as stays a limit — and so does an incomplete
+    /// response that names no reason at all.
+    #[tokio::test]
+    async fn an_incomplete_response_at_the_token_limit_is_still_a_length_cut() {
+        for events in [
+            &[
+                r#"{"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}}"#,
+            ] as &'static [&'static str],
+            &[r#"{"type":"response.incomplete"}"#],
+        ] {
+            let chunks = turn(events).await;
+            assert_eq!(
+                chunks.last(),
+                Some(&ChatChunk::Finished(FinishReason::Length)),
+                "{events:?}"
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod ignored_smoke {
     use super::*;

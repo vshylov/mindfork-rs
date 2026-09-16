@@ -723,6 +723,24 @@ fn impersonation_timeout_keeps_partial_text() {
     assert_eq!(s.input.text(), "Я хочу узнать про");
 }
 
+/// A draft the provider's filter stopped is kept like a length-cut one, and the
+/// feed says why it is a fragment (docs/research/content-filter-finish.md).
+#[test]
+fn impersonation_stopped_by_the_filter_keeps_the_draft_and_says_why() {
+    let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::default());
+    let mut s = ChatScreen::new();
+    type_str(&mut s, "I ");
+    let id = gen_id();
+    s.begin_impersonation(id);
+    s.push_impersonation_chunk(id, "want to ask about");
+    s.finish_impersonation(id, FinishReason::Filtered);
+    assert!(!s.is_impersonating());
+    assert_eq!(s.input.text(), "I want to ask about");
+    let last = s.feed.last().expect("a note");
+    assert_eq!(last.role, FeedRole::Note);
+    assert_eq!(last.text, loc.t("ui.err.impersonation_filtered"));
+}
+
 #[test]
 fn keys_ignored_during_impersonation_except_cancel_quit() {
     let mut s = ChatScreen::new();
@@ -5324,6 +5342,31 @@ fn a_length_cut_gets_the_note_its_mode_deserves() {
         let last = s.feed.last().unwrap();
         assert_eq!(last.role, FeedRole::Note);
         assert_eq!(last.text, loc.t(key), "continuable={continuable}");
+    }
+}
+
+/// A reply the provider's content filter stopped used to end with nothing on screen
+/// saying so — the fragment read as a complete answer. It keeps the fragment and
+/// gains one note, whatever `continuable` claims: resuming meets the same filter
+/// (docs/research/content-filter-finish.md).
+#[test]
+fn a_filtered_reply_keeps_its_fragment_and_says_why() {
+    let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::default());
+    for continuable in [false, true] {
+        let mut s = ChatScreen::new();
+        let g = gen_id();
+        s.begin_generation(g, None);
+        s.push_chunk(g, "The first half");
+        s.finish_generation(g, FinishReason::Filtered, continuable);
+        let n = s.feed.len();
+        assert_eq!(s.feed[n - 1].role, FeedRole::Note);
+        assert_eq!(
+            s.feed[n - 1].text,
+            loc.t("ui.err.reply_filtered"),
+            "continuable={continuable}"
+        );
+        assert_eq!(s.feed[n - 2].role, FeedRole::Assistant);
+        assert_eq!(s.feed[n - 2].text, "The first half");
     }
 }
 

@@ -240,6 +240,11 @@ pub enum FinishReason {
     ToolCalls,
     Cancelled,
     Error,
+    /// The provider's content filter stopped the reply (or refused the prompt).
+    /// Not a failure — what arrived before it is kept — and not continuable, since
+    /// resuming meets the same filter. Each client maps its own spelling here
+    /// ([docs/research/content-filter-finish.md](../../../docs/research/content-filter-finish.md)).
+    Filtered,
 }
 
 impl FinishReason {
@@ -249,6 +254,9 @@ impl FinishReason {
             "stop" => FinishReason::Stop,
             "length" => FinishReason::Length,
             "tool_calls" => FinishReason::ToolCalls,
+            // OpenAI's own value, and one of the five OpenRouter normalises every
+            // routed provider's reason into.
+            "content_filter" => FinishReason::Filtered,
             _ => FinishReason::Stop,
         }
     }
@@ -679,6 +687,10 @@ mod tests {
         assert_eq!(
             FinishReason::from_wire("tool_calls"),
             FinishReason::ToolCalls
+        );
+        assert_eq!(
+            FinishReason::from_wire("content_filter"),
+            FinishReason::Filtered
         );
         assert_eq!(FinishReason::from_wire("weird"), FinishReason::Stop);
     }

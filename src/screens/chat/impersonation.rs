@@ -44,6 +44,12 @@ impl ChatScreen {
             self.input.set_text(&imp.text);
             self.mark_input_changed();
         }
+        // A draft the provider's filter stopped lands like a length-cut one, but
+        // a fragment in the box with nothing saying why reads as the whole draft
+        // (docs/research/content-filter-finish.md).
+        if reason == FinishReason::Filtered {
+            self.push_note(self.loc.t("ui.err.impersonation_filtered"));
+        }
     }
 
     /// Whether impersonation is in progress (the loop repaints frames for the
