@@ -29,6 +29,14 @@ split by subsystem.
 
 ### Fixed
 
+- **A chat with images keeps working after a switch to a model that cannot see them.**
+  An image stays in the chat's history and was sent again on every turn, so once the
+  model changed to one without vision — a local server started without its projector,
+  or a text-only model behind a gateway — every message in that chat failed with
+  "image input is not supported" or "No endpoints found that support image input". The
+  images now go as a note telling the model it cannot see them, so it says so instead
+  of guessing, and the chat mentions once that they were not sent. They are still in
+  the chat and reach the model again after switching back to one that sees.
 - **A text-only model behind a gateway no longer breaks a chat with an image.** In
   `external` mode against a service that publishes a catalogue (OpenRouter and the
   like), an image sent to a model that cannot see one was refused with "No endpoints

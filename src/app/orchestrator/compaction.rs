@@ -350,6 +350,9 @@ impl Orchestrator {
     /// [`Self::refresh_model_name`] already follows for the model's name.
     pub(super) fn refresh_engine_facts(&mut self) {
         self.context.invalidate();
+        // Another engine may take images: a chat whose images are left out again is told
+        // again (docs/research/history-images-no-vision.md, W1(a)).
+        self.images_withheld_noted.clear();
         self.ask_engine_for_budget();
     }
 

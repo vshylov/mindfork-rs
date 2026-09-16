@@ -559,3 +559,213 @@ async fn a_name_two_staged_images_share_unstages_neither() {
         other => panic!("the last chart.png was not unstaged: {other:?}"),
     }
 }
+
+/// An engine that captures the last request like [`CapturingBackend`], answers the image
+/// question with whatever the test sets — the user switching models mid-chat — and counts
+/// being asked.
+struct SwitchableSight {
+    inner: Arc<CapturingBackend>,
+    unsupported: std::sync::atomic::AtomicBool,
+    asked: std::sync::atomic::AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl EngineBackend for SwitchableSight {
+    async fn chat_stream(
+        &self,
+        req: crate::shared::api::ChatRequest,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> anyhow::Result<crate::shared::api::contract::ChatStream> {
+        self.inner.chat_stream(req, cancel).await
+    }
+    async fn vision(&self) -> crate::shared::api::VisionSupport {
+        self.asked
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if self.unsupported.load(std::sync::atomic::Ordering::Relaxed) {
+            crate::shared::api::VisionSupport::Unsupported
+        } else {
+            crate::shared::api::VisionSupport::Supported
+        }
+    }
+}
+
+/// Every language's rendering of the once-per-chat note for `n` images.
+fn withheld_notes(n: usize) -> Vec<String> {
+    crate::shared::i18n::Lang::ALL
+        .iter()
+        .map(|l| {
+            crate::shared::i18n::locale(*l).tf("ui.chat.images_withheld", &[("n", &n.to_string())])
+        })
+        .collect()
+}
+
+/// A chat that got an image while the engine could see it, then switched to one that
+/// cannot: the stored image went on every turn and the engine refused each — a `500` from
+/// llama.cpp without a projector, a `404` from a gateway (docs/research/history-images-no-vision.md
+/// §2.1). Now the request carries a marker naming it, the chat is told once, the next turn
+/// is not told again, and the stored message keeps its pixels. A turn in a chat without
+/// images does not ask the engine at all.
+#[tokio::test]
+async fn a_history_image_goes_as_a_marker_once_the_engine_takes_none() {
+    let capturing = CapturingBackend::new();
+    let backend = Arc::new(SwitchableSight {
+        inner: Arc::clone(&capturing),
+        unsupported: std::sync::atomic::AtomicBool::new(false),
+        asked: std::sync::atomic::AtomicUsize::new(0),
+    });
+    let (dir, cmd_tx, mut evt_rx, handle) = spawn_orch_cfg(
+        Some(backend.clone() as Arc<dyn EngineBackend>),
+        no_auto_cfg(),
+    );
+
+    // No images yet: the turn asks nothing.
+    cmd_tx
+        .send(AppCommand::SendMessage("hello".into()))
+        .unwrap();
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
+        .await
+        .unwrap();
+    let asked_before_attach = backend.asked.load(std::sync::atomic::Ordering::Relaxed);
+
+    // A vision engine: the image rides the message.
+    let path = write_png(&dir, "figure.png", 16, 16);
+    cmd_tx.send(AppCommand::ImageAttach { path }).unwrap();
+    wait_staged(&mut evt_rx).await;
+    cmd_tx
+        .send(AppCommand::SendMessage("what is this?".into()))
+        .unwrap();
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
+        .await
+        .unwrap();
+    let seen: usize = capturing
+        .last_request()
+        .messages
+        .iter()
+        .map(|m| m.images.len())
+        .sum();
+    assert_eq!(seen, 1, "a vision engine gets the image");
+
+    // The switch: the next turn replays the history to an engine that takes none.
+    backend
+        .unsupported
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    cmd_tx
+        .send(AppCommand::SendMessage("and the corner?".into()))
+        .unwrap();
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
+        .await
+        .unwrap();
+    let req = capturing.last_request();
+    assert!(
+        req.messages.iter().all(|m| m.images.is_empty()),
+        "no image may reach an engine that refuses them"
+    );
+    let carrier = req
+        .messages
+        .iter()
+        .find(|m| m.content.starts_with("what is this?"))
+        .expect("the message that carried the image");
+    let markers: Vec<String> = crate::shared::i18n::Lang::ALL
+        .iter()
+        .map(|l| {
+            let loc = crate::shared::i18n::locale(*l);
+            let label = loc.tf("prompt.images.label", &[("n", "1"), ("name", "figure.png")]);
+            loc.tf(
+                "prompt.images.withheld",
+                &[("image", label.trim_end_matches(':'))],
+            )
+        })
+        .collect();
+    assert!(
+        markers
+            .iter()
+            .any(|m| carrier.content.ends_with(m.as_str())),
+        "the image goes as a marker naming it: {:?}",
+        carrier.content
+    );
+    let notes = withheld_notes(1);
+    // Bounded (docs/lessons.md §2): a regression that never notes must fail, not hang.
+    let told = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Notice(_))),
+    )
+    .await
+    .ok()
+    .flatten()
+    .expect("the chat is told");
+    let AppEvent::Notice(text) = told else {
+        unreachable!()
+    };
+    assert!(notes.contains(&text), "{text}");
+
+    // The next turn of the same chat, same engine: not told again.
+    cmd_tx
+        .send(AppCommand::SendMessage("thanks".into()))
+        .unwrap();
+    let mut repeated = false;
+    while let Some(ev) = evt_rx.recv().await {
+        match ev {
+            AppEvent::Notice(t) if notes.contains(&t) => repeated = true,
+            AppEvent::Finished { .. } => break,
+            _ => {}
+        }
+    }
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+    while let Ok(ev) = evt_rx.try_recv() {
+        if matches!(&ev, AppEvent::Notice(t) if notes.contains(t)) {
+            repeated = true;
+        }
+    }
+    assert!(!repeated, "told once per chat, not on every turn");
+    assert_eq!(asked_before_attach, 0, "a chat without images asks nothing");
+
+    let chats = crate::shared::storage::Storage::open(Paths::with_root(dir.path()))
+        .unwrap()
+        .json()
+        .load_chats()
+        .unwrap();
+    let stored: usize = chats[0].messages.iter().map(|m| m.images.len()).sum();
+    assert_eq!(stored, 1, "the stored message keeps its image");
+}
+
+/// The note is once per chat, not once per app: another chat is told on its own, a turn
+/// that withheld nothing says nothing, and once the engine's facts are asked again — the
+/// settings applied, the server's readiness flipped — the chat is told again, since the
+/// new engine may be another model altogether.
+#[tokio::test]
+async fn the_withheld_note_is_once_a_chat_until_the_engine_is_asked_again() {
+    let (_dir, mut orch, mut rx) = bare_orch_rx();
+    let notices = |rx: &mut UnboundedReceiver<AppEvent>| {
+        let mut out = Vec::new();
+        while let Ok(ev) = rx.try_recv() {
+            if let AppEvent::Notice(t) = ev {
+                out.push(t);
+            }
+        }
+        out
+    };
+    let (first, second) = (Uuid::new_v4(), Uuid::new_v4());
+
+    orch.note_withheld_images(first, 2);
+    assert_eq!(notices(&mut rx).len(), 1);
+    orch.note_withheld_images(first, 2);
+    orch.note_withheld_images(first, 0);
+    orch.note_withheld_images(second, 0);
+    assert!(notices(&mut rx).is_empty());
+    orch.note_withheld_images(second, 1);
+    assert_eq!(
+        notices(&mut rx),
+        [orch
+            .ui_locale()
+            .tf("ui.chat.images_withheld", &[("n", "1")])]
+    );
+
+    orch.refresh_engine_facts();
+    orch.note_withheld_images(first, 2);
+    assert_eq!(
+        notices(&mut rx).len(),
+        1,
+        "told again after the engine changed"
+    );
+}

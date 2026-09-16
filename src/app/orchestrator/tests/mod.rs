@@ -274,6 +274,7 @@ fn bare_orch_rx() -> (tempfile::TempDir, Orchestrator, UnboundedReceiver<AppEven
         imp_done_tx,
         budget_tx: unbounded_channel().0,
         context: Default::default(),
+        images_withheld_noted: Default::default(),
         model_tx: unbounded_channel().0,
         model: Default::default(),
         slots_tx: unbounded_channel().0,

@@ -249,8 +249,14 @@ had never been bounded, and a mutant that skipped `/props` held the run for half
 hour with no cap on the harness either. Bounding one stub fixes one test — when you
 touch a test file, bound **every** stub a test joins, through one shared accept
 (`accept_before` in `openai/client.rs`).
+**And a fourth, the same day, on the event side**: a live smoke waited with bare
+`wait_for` for the note its fix emits, and its control arm — the fix switched off —
+emits no note, so the red run sat for ten minutes instead of failing in eighteen
+seconds. The event a change *produces* is exactly the one its control arm will not:
+bound every wait for it, in the unit test as well as in the smoke.
 — *engine failures stop being silent*, *a tool's images reach the model through a
-gateway*, *whether a gateway's model takes images comes from its catalogue*.
+gateway*, *whether a gateway's model takes images comes from its catalogue*, *a chat
+whose history carries images, on an engine that takes none*.
 
 **On a path built to degrade gracefully, `is_ok()` can never be the assertion.** A test
 asserted `is_ok()` on a tool that turns an index failure into a normal answer, so

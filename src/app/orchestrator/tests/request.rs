@@ -562,3 +562,62 @@ thanks"
     let req = request_of(&chat, &CompactionSettings::default(), false);
     assert_eq!(req.messages.len(), 4);
 }
+
+/// On an engine that takes no images, the request's copy of each image becomes a marker
+/// naming it, after the message's own text (docs/research/history-images-no-vision.md
+/// §2.2 — a silent drop made models deny what the picture held). A tool result is treated
+/// like a user message, an image-only message becomes the marker alone, an unlabelled
+/// image still gets one, and a message without images is left byte-for-byte alone.
+#[test]
+fn withheld_images_become_markers_that_name_them() {
+    use crate::app::orchestrator::request::withhold_images;
+    use crate::shared::api::{ApiImage, ApiMessage};
+
+    let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::En);
+    let label = |n: usize, name: &str| {
+        Some(loc.tf(
+            "prompt.images.label",
+            &[("n", &n.to_string()), ("name", name)],
+        ))
+    };
+    let image = |label: Option<String>| ApiImage::new("image/png", "AAAA", label);
+    let mut messages = vec![
+        ApiMessage::user("what is this?").with_images(vec![
+            image(label(1, "figure.png")),
+            image(label(2, "chart.png")),
+        ]),
+        ApiMessage::assistant("A blue field."),
+        ApiMessage::tool("c1", "rendered").with_images(vec![image(label(1, "tool-image-1.png"))]),
+        ApiMessage::user("").with_images(vec![image(None)]),
+        ApiMessage::user("no pictures here"),
+    ];
+
+    assert_eq!(withhold_images(&mut messages, loc), 4);
+
+    assert!(messages.iter().all(|m| m.images.is_empty()));
+    let marker = |name: &str| loc.tf("prompt.images.withheld", &[("image", name)]);
+    assert_eq!(
+        messages[0].content,
+        format!(
+            "what is this?\n\n{}\n{}",
+            marker("Image #1 — \"figure.png\""),
+            marker("Image #2 — \"chart.png\"")
+        )
+    );
+    assert_eq!(messages[1].content, "A blue field.");
+    assert_eq!(
+        messages[2].content,
+        format!("rendered\n\n{}", marker("Image #1 — \"tool-image-1.png\""))
+    );
+    assert_eq!(
+        messages[3].content,
+        marker(loc.t("prompt.images.withheld_unnamed"))
+    );
+    assert_eq!(messages[4].content, "no pictures here");
+    assert_eq!(
+        marker("Image #1 — \"figure.png\""),
+        "[Image #1 — \"figure.png\" is not included: the current model does not accept images. \
+         You have not seen it — do not describe what it shows; say that you cannot see it.]",
+        "the wording the measurement ran with"
+    );
+}

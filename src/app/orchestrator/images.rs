@@ -263,6 +263,20 @@ impl Orchestrator {
         self.emit_staged_images();
     }
 
+    /// Tells the user that a turn sent `count` of the chat's images as markers, because the
+    /// engine takes none — **once per chat** until the engine's facts are asked again
+    /// (docs/research/history-images-no-vision.md, fork W1(a)). The model says it cannot see
+    /// them when asked; this line is for the user, who still sees them in the feed.
+    pub(super) fn note_withheld_images(&mut self, chat_id: Uuid, count: usize) {
+        if count == 0 || !self.images_withheld_noted.insert(chat_id) {
+            return;
+        }
+        let note = self
+            .ui_locale()
+            .tf("ui.chat.images_withheld", &[("n", &count.to_string())]);
+        let _ = self.evt_tx.send(AppEvent::Notice(note));
+    }
+
     /// Unstages an image by name/path/`#N` (`/image remove <target>`). A name two staged
     /// images share unstages neither, exactly as `/file remove` refuses one
     /// (docs/research/remove-by-shared-name.md F3a).

@@ -75,6 +75,41 @@ fn api_messages(messages: &[Message], loc: &Locale) -> Vec<ApiMessage> {
     out
 }
 
+/// Replaces every image a request carries with a marker naming it, for an engine that
+/// says it takes none, and returns how many it replaced
+/// ([docs/research/history-images-no-vision.md](../../../docs/research/history-images-no-vision.md)).
+///
+/// A marker and not a silent drop, measured: with the image simply gone, 10 of 10 replies
+/// on two model families took their own earlier description for the whole picture and
+/// denied a detail that was there; with the marker, 10 of 10 said they could not see it.
+/// The marker names the image by its label, so "the image I sent" and `/image list` still
+/// mean the same thing. It follows the message's text, where the measured one sat. Only the
+/// request's copy changes — the stored messages keep their pixels for a model that can see.
+pub(super) fn withhold_images(messages: &mut [ApiMessage], loc: &Locale) -> usize {
+    let mut withheld = 0;
+    for message in messages.iter_mut().filter(|m| !m.images.is_empty()) {
+        let markers: Vec<String> = message
+            .images
+            .drain(..)
+            .map(|image| {
+                let name = match image.label.as_deref() {
+                    Some(label) => label.trim_end().trim_end_matches(':').to_string(),
+                    None => loc.t("prompt.images.withheld_unnamed").to_string(),
+                };
+                loc.tf("prompt.images.withheld", &[("image", &name)])
+            })
+            .collect();
+        withheld += markers.len();
+        let markers = markers.join("\n");
+        message.content = if message.content.is_empty() {
+            markers
+        } else {
+            format!("{}\n\n{markers}", message.content)
+        };
+    }
+    withheld
+}
+
 /// Domain images → the request form, each carrying the label part emitted just before it
 /// (spec §9.10, fork F5 of docs/research/multimodal-images.md).
 ///

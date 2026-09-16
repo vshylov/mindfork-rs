@@ -13,6 +13,8 @@
   "prompt.attachments.end_excerpt_search": "{open} to find a place in {name} by meaning, call attachment_search(query); to read a specific page, attachment_read(name, page) for pages 1..{pages}; this file is not reachable through any other tool {close}",
   "prompt.attachments.end": "{open} end: {name} {close}",
   "prompt.images.label": "Image #{n} — \"{name}\":",
+  "prompt.images.withheld": "[{image} is not included: the current model does not accept images. You have not seen it — do not describe what it shows; say that you cannot see it.]",
+  "prompt.images.withheld_unnamed": "An image",
   "prompt.title.system": [
     "You are inventing a short title for a conversation between a user and an assistant.",
     "Read the conversation and reply with ONLY a 2–6 word title in the language of the conversation:",
@@ -836,6 +838,7 @@
   "ui.image.chip": "images: {n} (~{tokens})",
   "ui.feed.tool_images": "# {n} image(s) returned",
   "ui.image.vision_unknown": "Images: this engine does not report whether it takes images, so it was attached anyway — if it does not, the send will say so.",
+  "ui.chat.images_withheld": "Images in this chat were not sent ({n}): the current model does not accept images. Switch to a vision-capable model or provider to use them.",
   "ui.help.title": "About",
   "ui.help.footer.tabs": " Tab/←→ tabs · ↑↓ scroll · Esc — close ",
   "ui.help.tab.about": "About",

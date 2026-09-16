@@ -427,12 +427,17 @@ async fn file_attachment_e2e_live() {
 /// and no pretrained knowledge can answer it — and parameterized by colour, so the two
 /// smokes cannot pass on each other's reply.
 fn figure_png(field: [u8; 3]) -> Vec<u8> {
-    let buf = image::ImageBuffer::from_fn(512, 512, |x, y| {
-        if (160..352).contains(&x) && (160..352).contains(&y) {
-            image::Rgb([255u8, 255, 255])
-        } else {
-            image::Rgb(field)
-        }
+    figure_png_with_corner(field, None)
+}
+
+/// [`figure_png`] with, optionally, a small square of `corner` in the top-left — a detail a
+/// model that never saw the picture cannot know, when the conversation mentions only the
+/// field and the white square.
+fn figure_png_with_corner(field: [u8; 3], corner: Option<[u8; 3]>) -> Vec<u8> {
+    let buf = image::ImageBuffer::from_fn(512, 512, |x, y| match corner {
+        Some(c) if x < 96 && y < 96 => image::Rgb(c),
+        _ if (160..352).contains(&x) && (160..352).contains(&y) => image::Rgb([255u8, 255, 255]),
+        _ => image::Rgb(field),
     });
     let mut bytes = Vec::new();
     image::DynamicImage::ImageRgb8(buf)
@@ -814,6 +819,180 @@ async fn a_gateways_catalogue_decides_whether_images_are_sent_live() {
         "the result must say the chart was not shown"
     );
     assert!(!reply.trim().is_empty(), "the turn must end with a reply");
+}
+
+/// A chat whose history already holds an image, after a switch to an engine that takes
+/// none (docs/research/history-images-no-vision.md) — the real sequence, on the app's own
+/// paths: the app runs on a vision engine (`MINDFORK_ENGINE_URL`, `…_MODEL`), the image is
+/// attached and seen; the app is restarted on the **same data** with an engine that takes
+/// no images (`MINDFORK_ENGINE_URL_BLIND`, `…_KEY_BLIND`, `…_MODEL_BLIND`) — a llama.cpp
+/// without `--mmproj`, or a gateway model the catalogue lists as text-only. There, before
+/// this stage, every turn was a `500` or a `404`. Now the turn completes, asked about a
+/// detail the conversation never mentioned the model says it cannot see the image rather
+/// than denying the detail, the user is told once, and the stored image survives.
+#[tokio::test]
+#[ignore = "requires MINDFORK_ENGINE_URL (a vision engine) and MINDFORK_ENGINE_URL_BLIND (one without)"]
+async fn a_history_image_on_an_engine_without_vision_live() {
+    let Some(blind) =
+        crate::shared::api::live_client("MINDFORK_ENGINE_URL_BLIND", "MINDFORK_ENGINE_KEY_BLIND")
+    else {
+        eprintln!("skip: MINDFORK_ENGINE_URL_BLIND not set");
+        return;
+    };
+    let Some(sighted) = live_backend() else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    let external = |model: Option<String>| {
+        let mut cfg = no_auto_cfg();
+        cfg.engine.mode = crate::shared::config::ServerMode::External;
+        cfg.engine.external.model_name = model;
+        cfg
+    };
+    let dir = tempfile::tempdir().unwrap();
+
+    // 1. A vision engine: the image is attached and seen.
+    let (cmd_tx, mut evt_rx, handle) = spawn_orch_at(
+        dir.path(),
+        Some(sighted),
+        external(std::env::var("MINDFORK_ENGINE_MODEL").ok()),
+    );
+    let Some(AppEvent::ChatActivated { id: chat, .. }) =
+        wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. })).await
+    else {
+        panic!("no chat");
+    };
+    let path = dir.path().join("figure.png");
+    std::fs::write(
+        &path,
+        figure_png_with_corner([20, 60, 200], Some([220, 30, 30])),
+    )
+    .unwrap();
+    attach_image_live(&cmd_tx, &mut evt_rx, path.to_string_lossy().into_owned()).await;
+    let (first, _) = run_turn_live(
+        &cmd_tx,
+        &mut evt_rx,
+        "What is the background colour of this image, and what large shape is in the centre? \
+         Mention only those two things, in a few words.",
+    )
+    .await;
+    eprintln!("sighted reply: {first}");
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+    assert!(
+        first.to_lowercase().contains("blue"),
+        "the vision engine must see the image before the switch: {first}"
+    );
+
+    // 2. The same data, an engine that takes no images.
+    let (cmd_tx, mut evt_rx, handle) = spawn_orch_at(
+        dir.path(),
+        Some(crate::shared::api::retry::RetryBackend::wrap(Arc::new(
+            blind,
+        ))),
+        external(std::env::var("MINDFORK_ENGINE_MODEL_BLIND").ok()),
+    );
+    let Some(AppEvent::ChatActivated { id, .. }) =
+        wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. })).await
+    else {
+        panic!("no chat after the restart");
+    };
+    assert_eq!(
+        id, chat,
+        "the restart reopens the chat that holds the image"
+    );
+    let notes: Vec<String> = crate::shared::i18n::Lang::ALL
+        .iter()
+        .map(|l| crate::shared::i18n::locale(*l).tf("ui.chat.images_withheld", &[("n", "1")]))
+        .collect();
+    let turn = |message: &'static str| {
+        cmd_tx
+            .send(AppCommand::SendMessage(message.into()))
+            .unwrap();
+    };
+    let collect = async |rx: &mut UnboundedReceiver<AppEvent>| {
+        let (mut reply, mut errors, mut told) = (String::new(), Vec::new(), 0usize);
+        while let Some(ev) = rx.recv().await {
+            match ev {
+                AppEvent::Chunk { text, .. } => reply.push_str(&text),
+                AppEvent::Error(e) => errors.push(e),
+                AppEvent::Notice(n) if notes.contains(&n) => told += 1,
+                AppEvent::Finished { .. } => break,
+                _ => {}
+            }
+        }
+        (reply, errors, told)
+    };
+    turn(
+        "What colour is the small square in the top-left corner of the image I sent? \
+         Answer in one short sentence.",
+    );
+    // Every wait bounded (docs/lessons.md §2): without the fix there is no note to wait
+    // for, and an unbounded wait turned that red run into a hang.
+    let turn_cap = std::time::Duration::from_secs(600);
+    let (second, errors, _) = tokio::time::timeout(turn_cap, collect(&mut evt_rx))
+        .await
+        .expect("the turn ends");
+    // The note follows the turn's result, so it lands after `Finished`.
+    let told = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        wait_for(
+            &mut evt_rx,
+            |e| matches!(e, AppEvent::Notice(n) if notes.contains(n)),
+        ),
+    )
+    .await
+    .is_ok_and(|ev| ev.is_some());
+    turn("Thanks, that is all.");
+    let (third, more_errors, told_again) = tokio::time::timeout(turn_cap, collect(&mut evt_rx))
+        .await
+        .expect("the turn ends");
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+    eprintln!(
+        "blind reply: {second}\nerrors: {errors:?}\nnext reply: {third}\nerrors: {more_errors:?}"
+    );
+
+    assert!(
+        errors.is_empty() && more_errors.is_empty(),
+        "no turn may be refused: {errors:?} {more_errors:?}"
+    );
+    assert!(told, "the chat is told its image was not sent");
+    assert_eq!(told_again, 0, "…once");
+    let low = second.to_lowercase();
+    const DECLINES: &[&str] = &[
+        "cannot see",
+        "can't see",
+        "can not see",
+        "unable to see",
+        "not able to see",
+        "cannot view",
+        "can't view",
+        "don't have access",
+        "do not have access",
+        "not included",
+        "wasn't included",
+        "was not included",
+        "не вижу",
+        "не могу увидеть",
+        "не могу видеть",
+        "не передан",
+    ];
+    assert!(
+        DECLINES.iter().any(|d| low.contains(d)),
+        "asked about a detail it never saw, the model must say it cannot see the image: {second}"
+    );
+    let stored: usize = Storage::open(Paths::with_root(dir.path()))
+        .unwrap()
+        .json()
+        .load_chat(chat)
+        .unwrap()
+        .unwrap()
+        .messages
+        .iter()
+        .map(|m| m.images.len())
+        .sum();
+    assert_eq!(stored, 1, "the stored image survives the switch");
 }
 
 /// Sandbox file exchange, stage 2 (docs/history/sandbox-file-exchange.md §8): a chart the model's
