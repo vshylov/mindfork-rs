@@ -975,9 +975,13 @@ fn real_png() -> Vec<u8> {
 }
 
 /// A tool that stores a chart the way `python_exec` does: the bytes in the chat's folder,
-/// a listing effect, and `image` for the model.
+/// a listing effect, and `image` for the model — offered on the result's `- chart.png` line,
+/// which says nothing about whether it is shown: the loop ends it with that (spec §9.10).
 struct Charting {
     image: Vec<u8>,
+    /// Whether a line of the result names the image (`python_exec`'s shape) or none does
+    /// (MCP's), which the loop can only count into a note.
+    named: bool,
     /// Draw a different chart each round — a trailing byte per call. Off, every round
     /// stores the same bytes, which is the dedupe case; on, each round has an image of its
     /// own, which is what a tool called three times normally produces.
@@ -1024,12 +1028,13 @@ impl Tool for Charting {
             }
         };
         Ok(ToolOutcome::with_effects(
-            "files:\n- chart.png — shown to you below",
+            "files:\n- chart.png",
             vec![ChatEffect::AddChatFile(Box::new(file))],
         )
         .with_images(vec![ToolImage {
             mime: "image/png".into(),
             data: base64::engine::general_purpose::STANDARD.encode(&image),
+            entry: self.named.then(|| "- chart.png".to_string()),
         }]))
     }
     fn group(&self) -> ToolGroup {
@@ -1091,6 +1096,18 @@ async fn charting_turn_drawing(
     rounds: usize,
     vary: bool,
 ) -> ChartingTurn {
+    charting_turn_with(vision, image, rounds, vary, true).await
+}
+
+/// [`charting_turn_drawing`], with `named` deciding whether a line of the result names the
+/// image (see [`Charting::named`]).
+async fn charting_turn_with(
+    vision: VisionSupport,
+    image: Vec<u8>,
+    rounds: usize,
+    vary: bool,
+    named: bool,
+) -> ChartingTurn {
     let mut scripts: Vec<Script> = (1..=rounds)
         .map(|round| Script {
             chunks: vec![
@@ -1119,6 +1136,7 @@ async fn charting_turn_drawing(
         no_auto_cfg(),
         vec![Arc::new(Charting {
             image,
+            named,
             vary,
             calls: std::sync::atomic::AtomicUsize::new(0),
         })],
@@ -1197,6 +1215,11 @@ async fn the_engine_is_asked_about_images_once_a_turn_however_many_rounds_return
     );
 }
 
+/// On an engine that takes no images the chart's own line says it was not shown, and why
+/// — and nothing in the result still says it was. The tool used to end the line with
+/// "shown to you below" before the loop knew, and the loop's note then contradicted it
+/// (measured through OpenRouter on a text-only model; a llama.cpp without `--mmproj`
+/// reads the same).
 #[tokio::test]
 async fn an_image_the_model_cannot_take_is_withheld_and_the_result_says_so() {
     let ChartingTurn {
@@ -1208,15 +1231,26 @@ async fn an_image_the_model_cannot_take_is_withheld_and_the_result_says_so() {
     } = charting_turn(VisionSupport::Unsupported, real_png(), 1).await;
     let result = record.result.unwrap_or_default();
     assert_eq!(record.images, 0, "{result}");
+    let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::default());
+    assert_eq!(
+        result,
+        format!(
+            "files:\n- chart.png{}",
+            loc.t("loop.image_not_shown_no_vision")
+        ),
+    );
+    assert!(!result.contains(loc.t("loop.image_shown")), "{result}");
     assert!(
-        result.contains(&profile_note("loop.images_no_vision", "1")),
-        "{result}"
+        !result.contains(&profile_note("loop.images_no_vision", "1")),
+        "said once, on its line: {result}"
     );
     // The file itself landed regardless: only the pixels are withheld.
     assert_eq!(files.len(), 1);
     assert!(folder.join("chart.png").exists());
 }
 
+/// The shown image's line is ended by the loop with the same words the tool used to write,
+/// so what the model reads when the image does arrive is unchanged.
 #[tokio::test]
 async fn an_image_a_seeing_model_takes_is_sent_without_a_note() {
     let ChartingTurn {
@@ -1227,7 +1261,11 @@ async fn an_image_a_seeing_model_takes_is_sent_without_a_note() {
     } = charting_turn(VisionSupport::Supported, real_png(), 1).await;
     let result = record.result.unwrap_or_default();
     assert_eq!(record.images, 1, "{result}");
-    assert_eq!(result, "files:\n- chart.png — shown to you below");
+    let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::default());
+    assert_eq!(
+        result,
+        format!("files:\n- chart.png{}", loc.t("loop.image_shown"))
+    );
     assert_eq!(files.len(), 1);
 }
 
@@ -1243,9 +1281,84 @@ async fn an_image_that_cannot_be_prepared_is_dropped_and_the_result_says_so() {
     .await;
     let result = record.result.unwrap_or_default();
     assert_eq!(record.images, 0, "{result}");
-    assert!(
-        result.contains(&profile_note("loop.images_dropped", "1")),
-        "{result}"
+    let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::default());
+    assert_eq!(
+        result,
+        format!(
+            "files:\n- chart.png{}",
+            loc.t("loop.image_not_shown_dropped")
+        ),
+    );
+}
+
+/// An image no line names — MCP's shape — has nowhere to be said but a note, one per
+/// reason, as before; and a shown one needs none.
+#[tokio::test]
+async fn an_unnamed_image_s_fate_is_said_in_a_note() {
+    let truncated = b"\x89PNG\r\n\x1a\ntruncated".to_vec();
+    for (vision, image, note) in [
+        (
+            VisionSupport::Unsupported,
+            real_png(),
+            Some("loop.images_no_vision"),
+        ),
+        (
+            VisionSupport::Unknown,
+            truncated,
+            Some("loop.images_dropped"),
+        ),
+        (VisionSupport::Supported, real_png(), None),
+    ] {
+        let ChartingTurn { _root, record, .. } =
+            charting_turn_with(vision, image, 1, false, false).await;
+        let result = record.result.unwrap_or_default();
+        let expected = match note {
+            Some(key) => format!("files:\n- chart.png\n\n{}", profile_note(key, "1")),
+            None => "files:\n- chart.png".to_string(),
+        };
+        assert_eq!(result, expected, "{vision:?}");
+    }
+}
+
+/// The line a fate is said on is the tool's **last** line of those words: `python_exec`
+/// lists its files after the console, and code that printed the same words must not have
+/// them claimed for its chart. A line the words only begin is not that line.
+#[test]
+fn a_fate_is_said_on_the_last_whole_line_that_names_the_image() {
+    use super::super::generation::end_line;
+    let mut text =
+        "stdout:\n- chart.png\n- chart.png (2)\n\nfiles:\n- chart.png\n  | head".to_string();
+    assert!(end_line(&mut text, "- chart.png", " — shown"));
+    assert_eq!(
+        text,
+        "stdout:\n- chart.png\n- chart.png (2)\n\nfiles:\n- chart.png — shown\n  | head"
+    );
+    let mut none = "files:\n- chart.png (2)".to_string();
+    assert!(!end_line(&mut none, "- chart.png", " — shown"));
+    assert_eq!(none, "files:\n- chart.png (2)");
+}
+
+/// One call, three fates: each named image is said on its own line, and only the unnamed
+/// one reaches a note.
+#[test]
+fn each_image_of_a_call_is_said_where_it_is_named() {
+    use super::super::generation::{ImageFate, say_image_fates};
+    let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::default());
+    let mut result = "files:\n- a.png\n- b.png".to_string();
+    say_image_fates(
+        &mut result,
+        loc,
+        &[Some("- a.png".into()), Some("- b.png".into()), None],
+        &[ImageFate::Shown, ImageFate::Dropped, ImageFate::Dropped],
+    );
+    assert_eq!(
+        result,
+        format!(
+            "files:\n- a.png{}\n- b.png{}\n\n{}",
+            loc.t("loop.image_shown"),
+            loc.t("loop.image_not_shown_dropped"),
+            profile_note("loop.images_dropped", "1"),
+        )
     );
 }
 

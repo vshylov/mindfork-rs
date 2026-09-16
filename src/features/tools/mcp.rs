@@ -214,6 +214,7 @@ impl Tool for McpTool {
                     .map(|i| ToolImage {
                         mime: i.mime,
                         data: i.data,
+                        entry: None,
                     })
                     .collect(),
                 0,
@@ -427,6 +428,7 @@ mod tests {
             vec![ToolImage {
                 mime: "image/png".into(),
                 data: "QUJD".into(),
+                entry: None,
             }]
         );
         assert_eq!(out.result, "Screenshot taken.");

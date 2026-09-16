@@ -171,7 +171,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-16, version 0.9.9)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3269 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **3272 unit tests
 green, 186 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
@@ -184,6 +184,12 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **A chart's line said "shown" to a model that takes no images** — `python_exec`
+  wrote the claim before the loop knew, and the loop's no-vision note contradicted it in
+  the same result. The loop, which alone has the vision answer and the prepared pixels,
+  now ends the image's line (`ToolImage.entry`) with its fate; the shown text is
+  byte-identical. Live **GO** on OpenRouter, both arms (spec §9.10,
+  [docs/journal/tools.md](docs/journal/tools.md)).
 - **A chat's history images, on an engine that takes none** — replayed every turn,
   they got each turn refused (`500` from llama.cpp without a projector, `404` from a
   gateway). On the engine's "no" the request carries a marker per image instead —
@@ -378,18 +384,6 @@ being recent is dropped, not shortened.
   `<title>` begins with, the `<title>` without its site segment — with no collision on
   the corpus ([docs/research/page-attachment-name.md](docs/research/page-attachment-name.md),
   spec §9.3.1, [docs/journal/tools.md](docs/journal/tools.md)).
-- **Local files are read in their own encoding, and edits written back in it**
-  — every path that read a user's file assumed UTF-8, and `code_edit` wrote the
-  lossy text back: an ASCII edit in a windows-1251 source left `EF BF BD` for
-  every letter while the changes screen showed one line. Now
-  `text_decode::decode_file` serves `fs_read`, the code tools' `TextFile`,
-  `/file attach`, `/rag` and the changes screen (a BOM'd UTF-16 file is text;
-  the interface language hints the detector), and an edit is written in the
-  file's own encoding behind a round-trip check, refused with nothing written
-  when a byte would not come back
-  ([docs/research/local-file-encoding.md](docs/research/local-file-encoding.md),
-  spec §9.7, §9.12, [docs/journal/tools.md](docs/journal/tools.md)).
-<!-- cyrillic-ok:end -->
 - **The TUI "hangs" on a headless launch** (no TTY) — this is expected; clean
   exit via `Esc`/`Ctrl+Q` is covered by unit tests. Live verification needs a
   real terminal.

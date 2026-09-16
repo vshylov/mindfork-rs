@@ -808,15 +808,29 @@ async fn a_gateways_catalogue_decides_whether_images_are_sent_live() {
         0,
         "no image may reach a text-only model"
     );
-    let note: Vec<String> = crate::shared::i18n::Lang::ALL
-        .iter()
-        .map(|l| crate::shared::i18n::locale(*l).tf("loop.images_no_vision", &[("n", "1")]))
-        .collect();
+    // Said on the chart's own line — and never also claimed as shown, which the line did
+    // until the loop, the one place that knows, wrote the claim (spec §9.10).
+    let said = |key: &'static str| -> Vec<&'static str> {
+        crate::shared::i18n::Lang::ALL
+            .iter()
+            .map(|l| crate::shared::i18n::locale(*l).t(key))
+            .collect()
+    };
+    let (withheld, shown) = (
+        said("loop.image_not_shown_no_vision"),
+        said("loop.image_shown"),
+    );
     assert!(
         calls
             .iter()
-            .any(|(r, _)| note.iter().any(|t| r.contains(t.as_str()))),
+            .any(|(r, _)| withheld.iter().any(|t| r.contains(t))),
         "the result must say the chart was not shown"
+    );
+    assert!(
+        !calls
+            .iter()
+            .any(|(r, _)| shown.iter().any(|t| r.contains(t))),
+        "no result may claim a chart was shown to a text-only model"
     );
     assert!(!reply.trim().is_empty(), "the turn must end with a reply");
 }

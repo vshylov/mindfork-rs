@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (80)
+## Entries (81)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -92,6 +92,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a file a call wrote carries the mark of a download — Protected View for workbooks and documents, not a CSV (done)
 - Post-M9: the confirmation popup says a call over the files cap will be refused (done)
 - Post-M9: the withheld-chart smoke sends the console a call returns, re-measured (done)
+- Post-M9: a chart's line no longer says it was shown to a model that takes no images (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -5362,3 +5363,75 @@ for the control. The clause does the same work on the shape a call returns — t
 the re-call gone from the note arm — and the control still invents, so the smoke keeps
 measuring the note rather than a model that happens to decline. The smoke passed 5/5; the
 control, as expected, failed its assertion on each invented answer.
+
+### Post-M9: a chart's line no longer says it was shown to a model that takes no images (done)
+
+Found by the gateway-vision-catalogue live run (docs/research/gateway-vision-catalogue.md),
+filed there as a separate task. On OpenRouter's text-only `qwen/qwen3-235b-a22b-2507`, a
+`python_exec` result (the `ru` profile) read `- sales_chart.png — 13.9 KB, image/png` ended with
+`tool.python_exec.files.shown` — "shown to you below" — and beneath it the loop's `loop.images_no_vision`: "[1 image(s) from this call were not shown to
+you …]". One result, both claims. It predates the gateway work — a llama.cpp without `--mmproj`
+answers `/props` `vision: false` and reads the same — the catalogue track only made it reachable
+on a gateway. That model coped ("I can't view the generated chart image"); the text was wrong
+all the same, and §10 of the sandbox file-exchange plan is the measurement of what models do
+with a claim of an image they never got.
+
+**Why it happened.** `keep_one` ended an image's entry with `tool.python_exec.files.shown`
+whenever the switch was on and the per-call cap not hit — before anyone knew whether the image
+would go. The two decisions that can still stop it are the loop's, in `record_call`: the
+engine's vision answer (asked lazily, once a turn, only when a result carries an image) and
+`prepare_tool_images` (over `images.max_bytes`, undecodable). So the drop had the same
+contradiction as the no-vision case — "shown to you below" over "could not be shown to you" —
+just rarer (the existing test's truncated PNG produced exactly that).
+
+**Where the fix belongs — the loop, because only it knows.** Two ways were on the table:
+
+- *The tool knows the vision answer before it composes the entry* (`ToolContext` carrying it).
+  Rejected: the answer is an HTTP round trip the loop deliberately asks only when a result
+  already holds an image, so the tool would need either a probe before every tool round — a
+  cost on turns with no image at all — or a lazy engine handle shared with the loop's memo. And
+  it still leaves the drop decided later, by the loop, so "shown" would have two authors again.
+- *The loop writes the claim* — taken. `ToolImage` gains `entry: Option<String>`: the line of
+  the result that names the image, exactly as the tool wrote it, **without** any claim.
+  `python_exec` fills it; MCP's images have no line (`None`). In `record_call`, once the vision
+  answer and the preparation are in, each image has an `ImageFate` — `Shown`, `NoVision`,
+  `Dropped` — and `say_image_fates` ends its line with `loop.image_shown`,
+  `loop.image_not_shown_no_vision` or `loop.image_not_shown_dropped`. An image without a line
+  (or whose line is not found — logged) is counted into the old per-reason note as before.
+  `prepare_tool_images` now returns one `Option` per image instead of the survivors, so the
+  loop knows *which* was dropped, not just how many.
+
+The line is found as the **last** whole line equal to the entry: the files section follows the
+console, so code that printed the same words is not claimed for its chart, and a line that
+merely begins with them (`- chart.png (2)`) is not the line.
+
+**What the model reads when the image does arrive is byte-identical**: `loop.image_shown` is the
+old `tool.python_exec.files.shown` text in both locales, moved to the one place that may say it.
+The tool's own reasons — the switch off, past the cap — stay the tool's, since those images are
+never offered. MCP stays consistent the same way: its `tool.mcp.images_off` is the tool's
+decision, said by the tool; no vision and dropped are the loop's, said by the loop in the note,
+because nothing in an MCP result names the image. Every image's fate is said exactly once: on
+its line when it has one, in a note when it does not. The per-line reasons follow
+`not_shown_off`'s form, directive clause and all (spec §9.10), and join the family
+`every_withheld_image_string_tells_the_model_not_to_describe_it` holds to it.
+
+**Tests.** The charting fixture offers its chart on a claimless `- chart.png` line, as
+`python_exec` now does, with a knob for MCP's unnamed shape. On `VisionSupport::Unsupported` the
+result is exactly the line plus the no-vision reason, contains no `loop.image_shown`, and no
+longer the count note; `Supported` ends the line with the shown text; a truncated PNG ends it
+with the dropped reason; the unnamed image gets the note per reason and none when shown; the
+last-whole-line rule and a mixed call (shown, dropped, unnamed dropped) are pinned directly.
+Python's unit tests assert the tool no longer says "shown" and offers each image on its own
+line. The live smoke's check moved from the count note to the line, and it now also asserts no
+result claims a chart was shown. **3272 unit tests green, 186 `#[ignore]`.**
+
+**Live — GO**, 2026-09-16, OpenRouter:
+
+| smoke | model | result |
+|---|---|---|
+| `a_gateways_catalogue_decides_whether_images_are_sent_live` (`unsupported`, sandbox) | `qwen/qwen3-235b-a22b-2507` (text-only) | 0 images sent; the line reads `- sales_chart.png — 13.9 KB, image/png` + `loop.image_not_shown_no_vision` (`ru`), and no `loop.image_shown` anywhere; the reply answered from the request's numbers and said it could not view the image |
+| `sandbox_outputs_e2e_live` (control) | `google/gemma-4-31b-it` (vision) | images on: 1 image sent, the line still ends with `loop.image_shown`, byte for byte the old text, reply correct; images off: 0 sent, the tool's own `not_shown_off` unchanged |
+
+One run per arm — a check of the text a live call now produces, not a re-measurement of the
+clause, which the per-line form shares with `not_shown_off` (measured in the withheld-image
+entries above).

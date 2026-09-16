@@ -1950,6 +1950,18 @@ through `insert_attachment` — the path `/file attach` takes. The loop still
 never touches `Chat`: the invariant is intact, the snapshot is its own. See
 spec §9.9, docs/history/youtube-transcript.md §3 F1.
 
+**A tool's images, and who says whether they were shown.** `ToolOutcome.images`
+are *offered*, not sent: in `record_call` the loop withholds them all when the
+engine reports no vision, and `prepare_tool_images` drops one it cannot prepare
+(one `Option` per image, so the loop knows which). So a tool never claims an
+image is shown. `ToolImage.entry` carries the result line that names the image
+(`python_exec`'s `files:` entry, written without a claim), and
+`generation::say_image_fates` ends the **last** whole line equal to it with the
+image's `ImageFate` — shown, no vision, dropped; an image with no line (MCP's)
+is counted into a per-reason note. A reason the tool itself decides (a switch
+off, the per-call cap) the tool writes, and never offers that image. See spec
+§9.10.
+
 The registry is built from `ToolConfig` (`standard_registry(&ToolConfig)`)
 and rebuilt on `config.tools` edits. The effective tool set =
 `Profile.enabled_tools` ∩ global toggles (`effective_tool_ids`); the agentic
