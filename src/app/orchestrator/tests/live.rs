@@ -470,7 +470,7 @@ async fn attach_image_live(
 }
 
 /// `/continue` through a gateway, on the app's own paths (fork H2 of
-/// docs/gateway-images-and-continue.md): the endpoint's catalogue lands before any
+/// docs/history/gateway-images-and-continue.md): the endpoint's catalogue lands before any
 /// turn, a reply cut by the length limit is announced as continuable exactly when
 /// the route table says the model continues, and `/continue` then either refuses
 /// with the gateway's note or resumes the reply **without** restarting it.

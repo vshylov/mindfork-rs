@@ -9,7 +9,7 @@ use crate::shared::config::WebProvider;
 // The sampling rows the screen offers come from
 // [`available_sampling_fields`](crate::entities::sampling::available_sampling_fields),
 // which is the one source for the mode's set *and* for the narrowing an
-// endpoint's own catalogue applies on top of it (docs/gateway-capabilities.md).
+// endpoint's own catalogue applies on top of it (docs/history/gateway-capabilities.md).
 // The per-provider predicate that used to live here was that function's first
 // half, and keeping a second spelling of it is how the two drift apart.
 

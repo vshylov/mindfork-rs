@@ -1,22 +1,21 @@
 # Research: `external` mode against OpenRouter
 
-**Status:** design complete; **stage 1 implemented** — F1 (thoughts under either
-field name) and the documentation half of F3/F4, see §7; merged as
-[#551](https://github.com/vshylov/mindfork-rs/pull/551).
+**Status: closed.** Every finding is answered — by code, or by a measurement that
+left nothing to build — here and in the three tracks that grew out of it. The
+body below is the review as it was written and then measured; this table is where
+each item ended up.
 
-**F2 was reopened by measurement and is now fixed** (§5, §8.1, §9): the "change
-nothing" conclusion had been drawn from reading, and the live run answers the
-silent turns' request with a `400`. The user chose (a) — recover from the refusal
-and remember it — on 2026-09-14; stage 2 implements exactly that and nothing
-else, and its smoke is **GO** on the model that refuses (§9). F3(b) and F4(c) are **confirmed buildable** by the same run (M5) and stay a
-separate track; F5, F6 and the rest stay proposals.
+| | outcome |
+|---|---|
+| **F1** — thoughts under the gateway's field name | stage 1 (§7, #551) — live **GO** |
+| **F2** — the silent turns' `400` | reopened by measurement; stage 2 (§9, #552) — live **GO** |
+| **F3(b), F4(c)** — the window and the sampling list | [gateway-capabilities.md](../history/gateway-capabilities.md) (#553, #554) — live **GO** |
+| **F5** — `reasoning_details` across tool rounds | measured and closed, nothing to build (§5) |
+| **F6** — a tool's images, `/continue` | M3 (§8.2); [gateway-images-and-continue.md](../history/gateway-images-and-continue.md) (#556, #557) — live **GO** |
+| found beside F5 — the thinking switch | [gateway-thinking-switch.md](../history/gateway-thinking-switch.md) (#559) — live **GO** |
 
-**M3 was run on 2026-09-15 and F6 is no longer a note** (§8.2): the app itself is
-GO through the gateway, and both halves of F6 measured as real limits that
-belong to the routed provider — a tool's images fail on a minority of routes,
-one of them silently, and `/continue` restarts on most routes and the app stores
-the restart glued onto the partial. The plan and its forks:
-[gateway-images-and-continue.md](../gateway-images-and-continue.md).
+What this review deliberately left out stays in §6; what remains open is listed
+under "Provider bridges" in [docs/roadmap.md](../roadmap.md).
 
 **Measured, on the second pass — by the author, not by this session.** What was
 written here came from reading: the session had no network route to
@@ -33,8 +32,8 @@ thoughts this review was written about arrived. So claims are tagged:
 
 A **[docs]** claim is exactly what [lessons.md](../lessons.md) §3 says not to
 build on without measuring, which is why stage 1 changed only what is safe under
-*either* answer — and why the three that are still `[docs]` (F2's cost, F3(b),
-F4(c)) remain proposals rather than code.
+*either* answer — and why F2, F3(b) and F4(c) waited for the run before any code
+was written for them.
 
 **Related:** [docs/install.md](../install.md) §3 (the `external` mode) and §3.2 (keys),
 spec §3.4 (the engine's lifecycle and settings), §6.5 (parsing "thoughts"),
@@ -387,7 +386,7 @@ it, and echoing them bought no observable continuity (the second round reasoned
 zero tokens in every arm, echo included). One thing the same run found beside
 F5: the app's `thinking: true` **alone** turns reasoning on at no route — only
 with `reasoning_effort` set does the gateway enable it. Recorded in
-[gateway-images-and-continue.md](../gateway-images-and-continue.md) §9, and fixed
+[gateway-images-and-continue.md](../history/gateway-images-and-continue.md) §9, and fixed
 in [gateway-thinking-switch.md](../history/gateway-thinking-switch.md).
 
 ### F6. `/continue` and tool-result images — **recommendation: note only**
@@ -413,7 +412,7 @@ tool result, every route that answered saw them. `/continue` continues only on
 Anthropic ≤ 4.5 and Gemini; every open-weight route and OpenAI restarts, and the
 app's echo filter lets the restart flow into the same stored message. Tables,
 the code path and the forks:
-[gateway-images-and-continue.md](../gateway-images-and-continue.md).
+[gateway-images-and-continue.md](../history/gateway-images-and-continue.md).
 
 ## 6. What this does **not** cover
 
@@ -520,7 +519,7 @@ controls (§6) are the lever we do not expose.
 | | what was run | outcome |
 |---|---|---|
 | **M3 — GO for the app** | the TUI through OpenRouter on `anthropic/claude-haiku-4.5` (routed to Amazon Bedrock): a chat, a `python_exec` chart whose answer only the image carried, `/file list`/`open`/`folder`/`remove` | the model named the tallest bar's colour and height from the chart alone; the catalogue gave `context_length` 200 000 and twelve fields; every `/file` step did what spec §9.7 says |
-| **F6 — hardened** | the tool-result-image smoke on six families, then per pinned route with blind controls; the `/continue` body per pinned route | both halves provider-dependent in ways that cost the user — the per-route tables are in [gateway-images-and-continue.md](../gateway-images-and-continue.md) §1 |
+| **F6 — hardened** | the tool-result-image smoke on six families, then per pinned route with blind controls; the `/continue` body per pinned route | both halves provider-dependent in ways that cost the user — the per-route tables are in [gateway-images-and-continue.md](../history/gateway-images-and-continue.md) §1 |
 
 The outcome is recorded in [docs/journal/engine.md](../journal/engine.md), per
 AGENTS.md §3.

@@ -818,7 +818,7 @@ impl ChatScreen {
     }
 
     /// What the endpoint published about the model's sampling fields, kept for the
-    /// same reason (`AppEvent::EngineSamplingFields`, docs/gateway-capabilities.md).
+    /// same reason (`AppEvent::EngineSamplingFields`, docs/history/gateway-capabilities.md).
     pub fn set_engine_sampling_fields(&mut self, fields: Option<std::sync::Arc<[String]>>) {
         self.engine_sampling_fields = fields;
     }

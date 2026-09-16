@@ -797,7 +797,7 @@ pub struct ToolGates {
     /// exist at all (ADR 0004).
     pub sampling_provider: Option<CloudProvider>,
     /// The sampling fields the **endpoint** published for the configured model,
-    /// when it published any (`external` only, docs/gateway-capabilities.md): it
+    /// when it published any (`external` only, docs/history/gateway-capabilities.md): it
     /// narrows the same offer, so the pair of tools is also withdrawn when a
     /// catalogue leaves nothing at all. `None` — silence, nothing narrows.
     pub sampling_endpoint: Option<std::sync::Arc<[String]>>,
@@ -893,7 +893,7 @@ pub struct ToolConfig {
     pub sampling_provider: Option<CloudProvider>,
     /// What the endpoint's catalogue published for the configured model, which
     /// narrows that same set one step further on a gateway
-    /// (docs/gateway-capabilities.md). `None` — it said nothing.
+    /// (docs/history/gateway-capabilities.md). `None` — it said nothing.
     pub sampling_endpoint: Option<std::sync::Arc<[String]>>,
 }
 

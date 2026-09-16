@@ -241,7 +241,7 @@ impl Orchestrator {
     /// the order it keeps can be tested where it lives (docs/lessons.md §2): the
     /// engine's facts are asked again **now**, not at the next turn — a gateway that
     /// was unreachable at startup and came up later must not leave `/continue`
-    /// answering from silence (docs/gateway-images-and-continue.md §4, H2.1).
+    /// answering from silence (docs/history/gateway-images-and-continue.md §4, H2.1).
     pub(super) fn handle_chat_status(&mut self, status: ServerStatus) {
         self.engines.set_chat_status(status);
         // Readiness flipped, so the engine may answer differently now: a server

@@ -255,7 +255,7 @@ impl FinishReason {
 }
 
 /// What an endpoint's catalogue says about one model
-/// ([docs/gateway-capabilities.md](../../../docs/gateway-capabilities.md)).
+/// ([docs/history/gateway-capabilities.md](../../../docs/history/gateway-capabilities.md)).
 ///
 /// Every field is `Option` and every `None` means **"the catalogue did not say"**,
 /// never "no" — a positive answer can narrow what the application offers, and
@@ -532,7 +532,7 @@ pub trait EngineBackend: Send + Sync {
     /// Asked on the same schedule as [`Self::context_budget`] — once per applied
     /// engine, in the background — and by the same background task, so a gateway
     /// is not asked the same question twice
-    /// ([docs/gateway-capabilities.md](../../../docs/gateway-capabilities.md) §3).
+    /// ([docs/history/gateway-capabilities.md](../../../docs/history/gateway-capabilities.md) §3).
     async fn model_capabilities(&self) -> Option<ModelCapabilities> {
         None
     }

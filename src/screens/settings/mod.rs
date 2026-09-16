@@ -950,7 +950,7 @@ pub struct SettingsScreen {
     /// The sampling fields the endpoint's catalogue published for the configured
     /// model (`AppEvent::EngineSamplingFields`): what the sampling group offers is
     /// narrowed to it, so a gateway stops showing knobs it drops on the way
-    /// (spec §8, docs/gateway-capabilities.md). `None` — the endpoint said
+    /// (spec §8, docs/history/gateway-capabilities.md). `None` — the endpoint said
     /// nothing, and nothing narrows.
     engine_sampling_fields: Option<std::sync::Arc<[String]>>,
     /// Ids of profiles with a locked scaffold language (the profile has data —

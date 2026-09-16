@@ -212,7 +212,7 @@ being recent is dropped, not shortened.
   claim**: no catalogue, no change. F5 closed on a measurement — a garbage
   signature is a `400` through the gateway and direct, sending no blocks never is,
   so there is nothing to build
-  ([docs/gateway-images-and-continue.md](docs/gateway-images-and-continue.md),
+  ([docs/history/gateway-images-and-continue.md](docs/history/gateway-images-and-continue.md),
   spec §6.4, [docs/journal/engine.md](docs/journal/engine.md)).
 - **The endpoint is asked what the model can do** — a gateway serves no `/props`,
   so automatic compaction had no window and never fired (measured: 22 567 tokens,
@@ -236,7 +236,7 @@ being recent is dropped, not shortened.
   `repeat_penalty` surviving under the catalogue's own `repetition_penalty`, which
   is the alias table earning its place. The local stack is measured unchanged:
   `/props` first, the catalogue not even asked
-  ([docs/gateway-capabilities.md](docs/gateway-capabilities.md), spec §6.7, §8.1,
+  ([docs/history/gateway-capabilities.md](docs/history/gateway-capabilities.md), spec §6.7, §8.1,
   [docs/journal/engine.md](docs/journal/engine.md)).
 - **`external` against a gateway — a thought under a second name** — the mode we
   recommend for OpenRouter dropped every thought it sent: the client read

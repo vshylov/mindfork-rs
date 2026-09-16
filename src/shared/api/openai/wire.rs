@@ -217,7 +217,7 @@ pub fn carries_tool_images(messages: &[ApiMessage]) -> bool {
 /// gateway the routed provider decides what an image there means — measured, 20 of 29
 /// route-and-model pairs saw it, 6 refused the request and 3 answered about a picture
 /// they never received, while in a `user` message all 28 that answered saw it
-/// (docs/gateway-images-and-continue.md §1.2, fork H1). It is the fallback Gemini's
+/// (docs/history/gateway-images-and-continue.md §1.2, fork H1). It is the fallback Gemini's
 /// builder already takes (docs/research/mcp-tool-images.md F1-A). **One** message per
 /// run rather than one per result, because a round's tool messages must follow its
 /// `tool_calls` contiguously.
@@ -893,7 +893,7 @@ mod tests {
         assert_eq!(parts[0]["image_url"]["url"], "data:image/jpeg;base64,QQ==");
     }
 
-    /// Fork H1 (docs/gateway-images-and-continue.md): a round's tool results go out
+    /// Fork H1 (docs/history/gateway-images-and-continue.md): a round's tool results go out
     /// text-only and their images follow in **one** user message after the whole run
     /// — never between two tool messages, which must stay contiguous after the
     /// `tool_calls` — in call order and behind their own labels; a later run gets a

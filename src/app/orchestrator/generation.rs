@@ -378,7 +378,7 @@ impl Orchestrator {
     /// the one answer the command's gate, a turn's `Finished.continuable` and its
     /// interruption notes all read (spec §6.4). The catalogue's answer is what
     /// tells an `external` gateway from a llama.cpp
-    /// (docs/gateway-images-and-continue.md, fork H2).
+    /// (docs/history/gateway-images-and-continue.md, fork H2).
     pub(super) fn continuation_supported(&self) -> bool {
         self.config.engine.mode.supports_continuation(
             self.effective_model_name().as_deref(),
@@ -1313,7 +1313,7 @@ struct GenSpawn {
     /// can name `/continue` where the command would refuse.
     continuation_supported: bool,
     /// What the endpoint published about the model's sampling fields, for the
-    /// same snapshot (docs/gateway-capabilities.md §4, G3(ii)).
+    /// same snapshot (docs/history/gateway-capabilities.md §4, G3(ii)).
     endpoint_sampling_fields: Option<std::sync::Arc<[String]>>,
     model_name: Option<String>,
     /// Interface language (axis B) — for error messages shown to a human.
@@ -1733,7 +1733,7 @@ struct TurnShared {
     continuation_supported: bool,
     /// What the endpoint published about the model's sampling fields, when it
     /// published anything: the turn's metadata snapshot must not record a field
-    /// the endpoint drops (docs/gateway-capabilities.md §4, G3(ii)).
+    /// the endpoint drops (docs/history/gateway-capabilities.md §4, G3(ii)).
     endpoint_sampling_fields: Option<std::sync::Arc<[String]>>,
     model_name: Option<String>,
     ui_loc: &'static crate::shared::i18n::Locale,
@@ -3402,7 +3402,7 @@ struct SharedParts {
     engine_mode: ServerMode,
     continuation_supported: bool,
     /// The endpoint's published sampling fields, carried for the snapshot the
-    /// dialogue's messages record (docs/gateway-capabilities.md §4, G3(ii)).
+    /// dialogue's messages record (docs/history/gateway-capabilities.md §4, G3(ii)).
     endpoint_sampling_fields: Option<std::sync::Arc<[String]>>,
     model_name: Option<String>,
     ui_loc: &'static crate::shared::i18n::Locale,
@@ -5399,7 +5399,7 @@ fn finalize_message(
         // G3(ii): the snapshot records what was *applied*, so it must not name a
         // field the endpoint drops — that is the same lie as the settings screen
         // showing it, and this is the copy that survives into the chat file
-        // (docs/gateway-capabilities.md §4).
+        // (docs/history/gateway-capabilities.md §4).
         sampling: sampling.retain_supported(mode.cloud_provider(), endpoint_fields),
         mode,
         model: model.clone(),

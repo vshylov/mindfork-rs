@@ -11,14 +11,14 @@ the track is **closed**.
 
 The settings' thinking switch goes out as a top-level `thinking` — a llama.cpp
 field — and a gateway drops it unread. Found beside F5
-([gateway-images-and-continue.md](../gateway-images-and-continue.md) §9) on the
+([gateway-images-and-continue.md](gateway-images-and-continue.md) §9) on the
 Anthropic half: `thinking: true` alone turned reasoning on at no route. Measured
 here on both directions and on three kinds of model, it is wider than that finding:
 the switch is inert **on** for a model that does not reason by default, and inert
 **off** for one that does.
 
 **Related:** spec §8.1 (the mapping onto the OpenAI-compatible API),
-[gateway-capabilities.md](../gateway-capabilities.md) (the catalogue, and why its
+[gateway-capabilities.md](gateway-capabilities.md) (the catalogue, and why its
 `reasoning` entry already stands for our `thinking` + `reasoning_effort`),
 [openrouter-external.md](../research/openrouter-external.md) §5 F2 and §9 (the
 refusal a model that must reason answers with, and the memo that recovers from it),

@@ -1131,13 +1131,16 @@ cargo test the_switch_off_completes_on_an_endpoint_that_must_reason -- --ignored
 smokes, 121 of them multi-round end-to-end conversations written for a local
 stack where a token costs nothing and a 20k-token ballast is free: against a
 metered endpoint that is hours of wall clock and a real bill. Name the smokes
-you need, as above. Two more things follow from "written for a local stack":
-several of those smokes assert **llama.cpp's** behaviour rather than an
+you need, as above. One more thing follows from "written for a local stack":
+some of those smokes assert **llama.cpp's** behaviour rather than an
 OpenAI-compatible server's — `accepts_creative_sampling_extensions` checks that
-the sampling *extensions* are accepted, which a gateway drops by design (§3),
-and `auto_compaction_fires_without_the_command_live` deliberately leaves the
-context window undiscovered, which on a gateway means the trigger cannot fire at
-all. A red result there is a statement about the stack, not necessarily a defect.
+the sampling *extensions* are accepted, which a gateway drops by design (§3).
+A red result there is a statement about the stack, not necessarily a defect.
+(`auto_compaction_fires_without_the_command_live` used to be the other one: it
+leaves the window for the engine to report, and a gateway reported none. The
+catalogue answers that now, §3 — so on a gateway whose catalogue lists
+`context_length` it is no longer red by construction, though no run has
+re-measured it there since.)
 
 `a_gateway_streams_thoughts_under_its_own_field_name` is the one that must be
 green: it runs only when `MINDFORK_LIVE_GATEWAY_MODEL` **declares** a model that

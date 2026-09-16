@@ -1489,7 +1489,7 @@ impl Orchestrator {
     pub(super) fn rebuild_registry(&mut self) {
         // The endpoint's published set is passed in rather than read inside:
         // `build_registry` is a free function, and this is discovered state the
-        // orchestrator owns (docs/gateway-capabilities.md §3).
+        // orchestrator owns (docs/history/gateway-capabilities.md §3).
         let mut reg = build_registry(
             &self.config,
             self.storage.json().sandbox_dir(),
