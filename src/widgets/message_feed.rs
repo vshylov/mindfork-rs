@@ -304,6 +304,12 @@ pub struct MessageFeed {
     /// which is why its fingerprint rides [`CacheKey`] — the same reason
     /// `role_names` does.
     known_chats: Vec<Uuid>,
+    /// No chat engine is configured at all (the server reports `NotConfigured`),
+    /// set by the screen from the status snapshot. An empty feed then says how to
+    /// connect a model instead of inviting a message that can only be refused —
+    /// the first thing a fresh install shows (docs/research/public-release-readiness.md
+    /// §3.2). The placeholder is never cached, so this rides no [`CacheKey`].
+    engine_missing: bool,
     /// Where the `chat://` references of the **last drawn frame** sit on screen
     /// (spec §11.3). Rebuilt by every [`MessageFeed::render`] and read by
     /// [`MessageFeed::chat_link_at`], so a click is answered against the frame
@@ -465,6 +471,9 @@ impl MessageFeed {
             role_names: CharacterNames::default(),
             compaction: None,
             known_chats: Vec::new(),
+            // The screen starts at `Connecting`, so nothing flashes before the
+            // orchestrator's first status arrives.
+            engine_missing: false,
             link_hits: Vec::new(),
             cache: Vec::new(),
             cache_key: None,
@@ -532,6 +541,12 @@ impl MessageFeed {
 
     pub fn set_known_chats(&mut self, ids: Vec<Uuid>) {
         self.known_chats = ids;
+    }
+
+    /// Whether no chat engine is configured — an empty feed then explains the
+    /// ways to connect one (see [`Self::engine_missing`]).
+    pub fn set_engine_missing(&mut self, missing: bool) {
+        self.engine_missing = missing;
     }
 
     /// Fingerprint of the address book for [`CacheKey`]. Order-sensitive on
@@ -942,6 +957,24 @@ impl MessageFeed {
         );
     }
 
+    /// What an empty feed says: an invitation to write, or — with no engine to
+    /// answer — the three ways to start. One logical line per route; `render`
+    /// wraps them to the panel like any other line.
+    fn empty_placeholder(&self, palette: &Palette, loc: &'static Locale) -> Vec<Line<'static>> {
+        let line =
+            |key: &str| Line::from(Span::styled(loc.t(key).to_string(), palette.muted_style()));
+        if !self.engine_missing {
+            return vec![line("ui.feed.empty")];
+        }
+        vec![
+            line("ui.feed.no_engine.title"),
+            Line::default(),
+            line("ui.feed.no_engine.cloud"),
+            line("ui.feed.no_engine.local"),
+            line("ui.feed.no_engine.demo"),
+        ]
+    }
+
     /// Builds the feed's lines: role headers, collapsed/expanded "thoughts",
     /// markdown-rendered body, separators. Every message line gets a colored
     /// gutter rail by role (see [`RAIL`]); content is built at width `width - 2`,
@@ -955,10 +988,7 @@ impl MessageFeed {
     ) -> Vec<Line<'static>> {
         if messages.is_empty() {
             // We don't cache the empty-feed placeholder.
-            return vec![Line::from(Span::styled(
-                loc.t("ui.feed.empty").to_string(),
-                palette.muted_style(),
-            ))];
+            return self.empty_placeholder(palette, loc);
         }
         // Reset the cache on a change to width/palette/collapse state/language (affects blocks).
         let key = CacheKey {
@@ -3497,6 +3527,49 @@ mod tests {
             "once the fence completes — a diagram: {}",
             joined(&done)
         );
+    }
+
+    // ---------- the empty feed (docs/research/public-release-readiness.md §3.2) ----------
+
+    /// With no engine configured, an empty feed names the three routes — the
+    /// settings by chord and by command, a local build, the demo — instead of
+    /// inviting a message that can only be refused; with one, the invitation
+    /// comes back. Wide enough that no route wraps mid-phrase.
+    #[test]
+    fn an_empty_feed_without_an_engine_explains_how_to_start() {
+        let mut feed = MessageFeed::new();
+        let routes = [
+            "Ctrl+P",
+            "/settings",
+            "mindfork llama setup",
+            "mindfork demo",
+        ];
+
+        let text = visible(&mut feed, &[], 240, 12).join("\n");
+        assert!(text.contains(ru().t("ui.feed.empty")), "{text}");
+        assert!(routes.iter().all(|r| !text.contains(r)), "{text}");
+
+        feed.set_engine_missing(true);
+        let text = visible(&mut feed, &[], 240, 12).join("\n");
+        assert!(!text.contains(ru().t("ui.feed.empty")), "{text}");
+        for route in routes {
+            assert!(text.contains(route), "{route} missing:\n{text}");
+        }
+
+        feed.set_engine_missing(false);
+        let text = visible(&mut feed, &[], 240, 12).join("\n");
+        assert!(text.contains(ru().t("ui.feed.empty")), "{text}");
+    }
+
+    /// The routes are for an empty chat only: a conversation already on screen
+    /// is not covered by them, whatever the engine's state.
+    #[test]
+    fn a_chat_with_messages_shows_no_setup_routes() {
+        let mut feed = MessageFeed::new();
+        feed.set_engine_missing(true);
+        let text = visible(&mut feed, &numbered(2), 240, 12).join("\n");
+        assert!(text.contains("сообщение-1"), "{text}");
+        assert!(!text.contains("mindfork demo"), "{text}");
     }
 
     // ---------- jump to a message (docs/history/chat-search-stage2.md, stage 2a) ----------

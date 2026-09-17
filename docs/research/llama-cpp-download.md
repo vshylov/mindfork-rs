@@ -558,7 +558,10 @@ resolves (`main.rs:31-55`).
   → **Recommendation: the API**, with the rate-limit error spelled out in
   words and an `Authorization` header when `GITHUB_TOKEN` is set. HTML
   scraping stays in §8 as the fallback to build only if the limit is ever hit
-  in practice. *(Chosen by the user, 2026-09-09.)*
+  in practice. *(Chosen by the user, 2026-09-09.)* **Amended 2026-09-17:** the
+  `GITHUB_TOKEN` header was removed — reading a credential from a variable the
+  user never named contradicts PRIVACY.md §3
+  ([public-release-readiness.md](public-release-readiness.md) §3.4, F3).
 - **F2 — which build, by default.** (a) the newest `bNNNNN`; (b) the tag named
   by `nightly-tag.txt` inside the newest semver release — upstream's own
   blessed nightly, five days behind at the time of writing; (c) a tag pinned

@@ -10,6 +10,7 @@ mod screens;
 mod shared;
 mod widgets;
 
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -101,6 +102,14 @@ fn real_main(
     loc: &Locale,
     locale_warnings: &[String],
 ) -> anyhow::Result<ExitCode> {
+    // A full-screen launch with nowhere to draw is refused before anything is
+    // created, the way `--help` touches nothing. Without this the app entered
+    // the alternate screen, wrote escape codes into a redirected stdout and waited
+    // for keys forever (docs/research/public-release-readiness.md §2.2 B8).
+    if refuses_tui_launch(&command, std::io::stdout().is_terminal()) {
+        eprintln!("{}", loc.t("cli.tui.no_terminal"));
+        return Ok(ExitCode::from(2));
+    }
     // The demo never touches the real data root — branch off before the real
     // root's directories or log file are even created. Its own root, logging
     // and cleanup live in `run_demo`.
@@ -171,6 +180,16 @@ fn real_main(
         CliCommand::Demo => unreachable!("handled above, before the real root is touched"),
         CliCommand::Help { .. } | CliCommand::Version => unreachable!("handled in main"),
     }
+}
+
+/// Whether `command` would start the full-screen interface with no terminal to
+/// draw it on. Only stdout is asked (docs/research/public-release-readiness.md
+/// §3.4, fork F1(a)): the
+/// screen goes there, while keys never come from stdin — crossterm opens the
+/// console itself (`CONIN$` on Windows, `/dev/tty` on unix), so a piped stdin is
+/// a launch that works and must not be refused.
+fn refuses_tui_launch(command: &CliCommand, stdout_is_terminal: bool) -> bool {
+    matches!(command, CliCommand::Run | CliCommand::Demo) && !stdout_is_terminal
 }
 
 /// Launches the main TUI (a command with no subcommand).
@@ -1194,6 +1213,24 @@ mod tests {
         // An explicitly empty argument overrides a stored password: that is how
         // one makes a deliberately unencrypted copy without clearing the setting.
         assert_eq!(effective_password(Some(String::new()), stored()), None);
+    }
+
+    /// Only the two full-screen commands need a terminal, and only a missing one
+    /// refuses them; every other command prints lines and works redirected.
+    #[test]
+    fn only_a_full_screen_launch_without_a_terminal_is_refused() {
+        for command in [CliCommand::Run, CliCommand::Demo] {
+            assert!(refuses_tui_launch(&command, false), "{command:?}");
+            assert!(!refuses_tui_launch(&command, true), "{command:?}");
+        }
+        for command in [
+            CliCommand::LlamaInstalled,
+            CliCommand::Import {
+                file: PathBuf::from("chats.json"),
+            },
+        ] {
+            assert!(!refuses_tui_launch(&command, false), "{command:?}");
+        }
     }
 
     #[test]

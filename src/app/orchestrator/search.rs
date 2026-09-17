@@ -55,7 +55,10 @@ impl Orchestrator {
             Some(fts) => match self.storage.cache().search_chats(&fts) {
                 Ok(ids) => Some(ids),
                 Err(err) => {
-                    tracing::warn!(query = %query, error = %format!("{err:#}"),
+                    // The length, not the text: what a user searched their
+                    // conversations for is message text, which PRIVACY.md §6
+                    // keeps out of the log.
+                    tracing::warn!(query_chars = query.chars().count(), error = %format!("{err:#}"),
                         "chat content search failed");
                     None
                 }
@@ -94,7 +97,8 @@ impl Orchestrator {
         let hits = match cache.search_messages(&fts, chat_search::HIT_CAP) {
             Ok(hits) => hits,
             Err(err) => {
-                tracing::warn!(query = %query, error = %format!("{err:#}"),
+                // The length, not the text — see `handle_search_chats`.
+                tracing::warn!(query_chars = query.chars().count(), error = %format!("{err:#}"),
                     "message content search failed");
                 return (Vec::new(), 0);
             }

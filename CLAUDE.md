@@ -169,9 +169,9 @@ Backend selection: `MINDFORK_ENGINE_URL` (external, any OpenAI server) OR
 rented instead of hosted — `python tools/e2e_hf.py run`, see
 `docs/history/remote-e2e-hf.md`.
 
-## Status (2026-09-16, version 0.9.9)
+## Status (2026-09-17, version 0.9.9)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3272 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **3276 unit tests
 green, 186 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
@@ -184,6 +184,12 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **Before the first public release** — an audit of the flip, the defaults and the
+  first run found twelve blockers and staged them; stage 1: a TUI launch without a
+  terminal refuses (it hung), an empty chat with no engine lists the ways to connect
+  one, and PRIVACY.md rewritten from the code (16 corrections; `llama setup` reads no
+  `GITHUB_TOKEN`) ([docs/research/public-release-readiness.md](docs/research/public-release-readiness.md),
+  [docs/journal/release.md](docs/journal/release.md)).
 - **A chart's line said "shown" to a model that takes no images** — `python_exec`
   wrote the claim before the loop knew, and the loop's no-vision note contradicted it in
   the same result. The loop, which alone has the vision answer and the prepared pixels,
@@ -384,9 +390,9 @@ being recent is dropped, not shortened.
   `<title>` begins with, the `<title>` without its site segment — with no collision on
   the corpus ([docs/research/page-attachment-name.md](docs/research/page-attachment-name.md),
   spec §9.3.1, [docs/journal/tools.md](docs/journal/tools.md)).
-- **The TUI "hangs" on a headless launch** (no TTY) — this is expected; clean
-  exit via `Esc`/`Ctrl+Q` is covered by unit tests. Live verification needs a
-  real terminal.
+- **A headless launch (no TTY) exits with code 2** and a one-line reason — the
+  TUI cannot be run from an agent's shell; live verification needs a real
+  terminal.
 - Pointwise `#[allow(dead_code)]` (with a comment) marks deliberate
   ahead-of-consumer API; there is no crate-wide allow, and adding one is not the
   fix.

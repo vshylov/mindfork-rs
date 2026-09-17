@@ -607,8 +607,9 @@ binary field resolves to now, since that answer changes when the build it was
 resolving to is the one that just went away.
 
 > Behind a shared address you can run into GitHub's unauthenticated API limit (60
-> requests an hour per address). The command says so in plain words; setting
-> `GITHUB_TOKEN` lifts it.
+> requests an hour per address). The command says so in plain words; the limit
+> resets within the hour. The command sends no credentials: a `GITHUB_TOKEN` in
+> the environment is not read.
 
 ### 3.2. Cloud providers and API keys
 
@@ -1045,10 +1046,12 @@ key needed —
 mindfork demo
 ```
 
-Needs a **real terminal** (TUI). In a headless environment the app "hangs" — that's
-normal. Basic keys: `F1` — help, `Ctrl+P` — settings, `Esc` — chat list
+Needs a **real terminal** (TUI): started with its output redirected or with no
+console, the app says so and exits with code 2. With no model connected yet, an
+empty chat lists the ways to connect one. Basic keys: `F1` — help, `Ctrl+P` —
+settings, `Esc` — chat list
 (open/close) and cancel generation, `Ctrl+N` — new chat,
-`Ctrl+U` — write a message as the user (impersonation), `Ctrl+C` — quit.
+`Ctrl+U` — write a message as the user (impersonation), `Ctrl+Q` — quit.
 Scrolling the feed — `PageUp`/`PageDown` or the mouse wheel; mouse capture for the
 wheel is a toggle, `Ctrl+W` (off by default, so native text selection works;
 with capture on, text is selected while holding `Shift`).

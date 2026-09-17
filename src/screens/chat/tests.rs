@@ -773,6 +773,39 @@ fn render_during_impersonation_does_not_panic() {
     term.draw(|f| s.render(f)).unwrap();
 }
 
+/// The screen threads the chat server's status into the feed: only a reported
+/// `NotConfigured` brings the setup routes, and the screen's own starting status
+/// (`Connecting`) does not — a configured install must not flash them on launch
+/// (docs/research/public-release-readiness.md §3.2).
+#[test]
+fn setup_routes_follow_the_reported_chat_status() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    let drawn = |s: &mut ChatScreen| {
+        let mut term = Terminal::new(TestBackend::new(240, 20)).unwrap();
+        term.draw(|f| s.render(f)).unwrap();
+        let buf = term.backend().buffer().clone();
+        buf.content().iter().map(|c| c.symbol()).collect::<String>()
+    };
+    let mut s = ChatScreen::new();
+    assert!(
+        !drawn(&mut s).contains("mindfork demo"),
+        "shown before any status"
+    );
+
+    s.set_server_status(ServerStatuses {
+        chat: ServerStatus::NotConfigured,
+        ..ready_statuses()
+    });
+    assert!(drawn(&mut s).contains("mindfork demo"));
+
+    s.set_server_status(ready_statuses());
+    assert!(
+        !drawn(&mut s).contains("mindfork demo"),
+        "kept after an engine was set"
+    );
+}
+
 #[test]
 fn ctrl_r_and_e_emit_intents_when_idle() {
     let mut s = ChatScreen::new();
