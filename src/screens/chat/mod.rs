@@ -897,6 +897,8 @@ impl ChatScreen {
     // ---------- orchestrator event projection (called by the `app` layer) ----------
 
     pub fn set_server_status(&mut self, statuses: ServerStatuses) {
+        self.feed_view
+            .set_engine_missing(statuses.chat == ServerStatus::NotConfigured);
         self.statuses = statuses;
     }
 

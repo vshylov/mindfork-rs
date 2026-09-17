@@ -346,27 +346,18 @@ pub fn parse_devices(stdout: &str) -> Vec<String> {
 
 // -------- Resolving a release --------
 
-/// The HTTP client: a User-Agent, real timeouts, and the user's `GITHUB_TOKEN`
-/// when they have one (the unauthenticated API allows 60 requests an hour per
-/// address — one per command invocation, so only a shared address can reach it).
+/// The HTTP client: a User-Agent and real timeouts, and **no credentials**. The
+/// unauthenticated API allows 60 requests an hour per address — one per command
+/// invocation, so only a shared address reaches it, and the refusal says so.
+/// A `GITHUB_TOKEN` found in the environment used to be sent; it no longer is,
+/// because PRIVACY.md promises that no environment variable is read for a
+/// credential the user did not name (docs/research/public-release-readiness.md
+/// §3.4, fork F3 — the user's decision).
 fn http_client(loc: &Locale) -> Result<reqwest::Client> {
-    let mut builder = reqwest::Client::builder()
+    reqwest::Client::builder()
         .user_agent(USER_AGENT)
         .connect_timeout(CONNECT_TIMEOUT)
-        .read_timeout(READ_TIMEOUT);
-    if let Ok(token) = std::env::var("GITHUB_TOKEN")
-        && !token.trim().is_empty()
-    {
-        let mut headers = reqwest::header::HeaderMap::new();
-        if let Ok(mut value) =
-            reqwest::header::HeaderValue::from_str(&format!("Bearer {}", token.trim()))
-        {
-            value.set_sensitive(true);
-            headers.insert(reqwest::header::AUTHORIZATION, value);
-            builder = builder.default_headers(headers);
-        }
-    }
-    builder
+        .read_timeout(READ_TIMEOUT)
         .build()
         .with_context(|| loc.t("llamacpp.setup.http_client").to_string())
 }

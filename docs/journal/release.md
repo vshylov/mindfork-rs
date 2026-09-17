@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (35)
+## Entries (36)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -47,6 +47,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: the dictionaries get a provenance record — and their licences (done)
 - Post-M9: en_GB updated to V 4.0.9 — the licence stated, in the file itself (done)
 - Release 0.9.9 (prepared)
+- Post-M9: public release readiness — the audit and stage 1 (done)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -1853,3 +1854,55 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   CLAUDE.md's "## Status" header moves to 2026-09-13 / 0.9.9 / 3217 / 176;
   README's project-status paragraph moves `v0.9.8` / 2616 / 109 → `v0.9.9`
   / 3217 / 176.
+
+### Post-M9: public release readiness — the audit and stage 1 (done)
+- **A read-only audit before the repository goes public**, in six parallel halves
+  (repository and history; public documents; CI, releases and supply chain; the
+  security of the shipped defaults; first run and code robustness; website and
+  branding) plus Sonar on `main`. Result, plan and forks:
+  [public-release-readiness.md](../research/public-release-readiness.md). The
+  headline: the code is not the problem (Sonar clean, no secret ever committed);
+  the twelve blockers sit around the flip itself (the owner's settings, the order,
+  old release assets shipped without the dictionaries' licences), a first minute
+  that dead-ends, and a whole disk one settings switch away. Stages 2–6 are listed
+  there, each to get its own forks.
+- **Stage 1 — three blockers in one PR** (fork F4(a)).
+  - **B8, a launch without a terminal (F1(a)).** Measured first: the debug binary
+    with stdin from `/dev/null` and stdout into a file entered the alternate
+    screen, wrote 4 677 bytes of escape codes, created `data/` next to itself and
+    ran until `timeout` killed it at 20 s. `real_main` now refuses `Run` and `Demo`
+    when stdout is not a terminal — before anything touches the disk — with one
+    localized line and exit code 2. Only stdout is asked: crossterm reads keys from
+    the console itself (`CONIN$` in crossterm_winapi 0.9.1, `/dev/tty` in crossterm
+    0.29 when stdin is not a tty — both read in the vendored sources), so a piped
+    stdin is a launch that works. Re-measured on the fixed binary: exit 2 in about a
+    second, 0 bytes on stdout, no `data/`; `llama installed` redirected still works.
+  - **B9, the first run (F2(a)).** While the chat server reports `NotConfigured`,
+    the feed's empty placeholder lists the routes — a cloud provider through
+    `Ctrl+P` or `/settings`, a local build through `mindfork llama setup` plus a
+    GGUF, `mindfork demo` — and the send error names the settings instead of "LLM
+    server is not configured". The screen starts at `Connecting`, so a configured
+    install never flashes the routes; a screen test pins that. README: the demo in
+    the first screen, a cloud model id stated as required, where a GGUF comes from.
+  - **B11, PRIVACY.md (F3(b) — the user's decision, against the recommendation).**
+    A line-by-line check against the code found 16 statements false, incomplete or
+    stale, each re-read in the code before the text changed: "Cloud providers are
+    never probed" (Grok runs on `OpenAiClient` and receives `/props` and
+    `/models`), thirteen wheels (34), the llama.cpp download missing from the
+    "complete list", `fetch_url`'s whole-page attachments, the environment an MCP
+    server inherits, what a backup holds, the Python working folder, among others.
+    `llama setup` stopped reading `GITHUB_TOKEN`, and its rate-limit message stopped
+    suggesting it. Same seam, folded in: a failed chat search logged its query text
+    against §6 — it now logs the length. English and Russian edited in step; the
+    site page and both installer RTFs regenerated.
+- **Left for a later stage, on purpose:** a managed engine that resolves a build
+  but has no GGUF may start `llama-server` in its model-less router mode rather than
+  fail, so what the user then sees is unmeasured — stage 4 measures it before its
+  message is touched.
+- **Gates**: `cargo fmt --check` / `cargo clippy --all-targets -- -D warnings` /
+  `cargo test` green — **3276 unit tests, 186 `#[ignore]`** (+4: the launch
+  decision, two feed placeholder tests, the screen threading the status);
+  `cyrillic_scan`, `link_check`, `doc_index_check`, `wizard_rtf --check` and
+  `site_legal_pages --check` green. No engine live run: startup, UI and documents
+  only; the headless re-measurement stands in for B8, and the empty state in a real
+  terminal is the owner's look before merge.

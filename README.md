@@ -18,6 +18,10 @@ engine contract, to the **OpenAI**, **Google Gemini**, **Anthropic (Claude)**
 and **xAI (Grok)** clouds. The UI is built on [ratatui](https://ratatui.rs);
 it runs on **Windows** and **Linux**.
 
+**No model yet?** `mindfork demo` opens the app with sample chats and a scripted
+model, in a throwaway folder; connecting a real one is under
+[Getting started](#getting-started).
+
 > mindfork is not trying to be yet another LLM client. The premise is that a
 > local Gemma or Qwen becomes **more self-aware and more interesting to talk
 > to** once it is given room to reflect: it keeps notes about you, maintains a
@@ -308,17 +312,19 @@ tar.gz. Or build from source with a recent stable Rust (edition 2024):
 cargo build --release          # binary lands in target/release/
 ```
 
-> mindfork is a TUI and needs a **real terminal**. In a headless environment
-> it will appear to hang — that is the missing TTY, not a bug.
+> mindfork is a TUI and needs a **real terminal**. Started with its output
+> redirected or with no console, it says so and exits; the line commands
+> (`backup`, `import`, `llama setup`, …) work anywhere.
 
 ### 2. Connect a model
 
 Three routes; all of them can stay configured side by side, and switching
 between them loses nothing.
 
-**A cloud provider.** Open settings (`Ctrl+P`), pick the mode — `openai` /
-`gemini` / `claude` / `grok` — and paste your API key right there: it is
-stored encrypted and machine-bound, and never shown back.
+**A cloud provider.** Open settings (`Ctrl+P`, or `/settings`), pick the mode —
+`openai` / `gemini` / `claude` / `grok` — paste your API key right there (it is
+stored encrypted and machine-bound, and never shown back), and enter the
+**model** — the provider's model id, which a cloud mode requires.
 
 **An external local server.** Run any OpenAI-compatible server and point the
 app at it — llama.cpp shown here; vLLM / LM Studio / Ollama work the same way:
@@ -364,6 +370,11 @@ it found. `--build <tag>` pins a build, and llama.cpp ships about a dozen a day.
 You need not point the settings at the result: an empty *llama-server binary*
 field resolves to the build installed last (`--set-binary` writes the path
 explicitly if you would rather pin it).
+
+The model itself is a **GGUF** file, which llama.cpp does not ship: Hugging Face
+hosts them — search for the model's name with `GGUF` (the project's own test
+stack uses `google_gemma-4-E2B-it-Q8_0.gguf` from
+[bartowski/google_gemma-4-E2B-it-GGUF](https://huggingface.co/bartowski/google_gemma-4-E2B-it-GGUF)).
 
 Then set the binary and the GGUF paths in settings (`Ctrl+P`), or via
 `MINDFORK_LLAMA_BIN` and `MINDFORK_MODEL` (plus optional `MINDFORK_NGL`,

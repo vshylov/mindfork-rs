@@ -26,9 +26,20 @@ split by subsystem.
   `set_sampling` and the per-message record of what was applied. A typed context
   window still wins, and nothing changes against a local server, which publishes
   no catalogue.
+- **A fresh install says how to connect a model.** An empty chat with no model
+  configured lists the ways to start — a cloud provider in the settings (`Ctrl+P` or
+  `/settings`), a local llama.cpp build through `mindfork llama setup`, or
+  `mindfork demo` to look around — and sending a message there points at the settings
+  instead of answering "LLM server is not configured".
 
 ### Fixed
 
+- **Starting mindfork without a terminal no longer hangs.** With its output redirected
+  to a file or a pipe, or with no console, the app filled that output with screen codes
+  and waited for keys forever. It now says it needs a terminal and exits with code 2,
+  creating nothing; `mindfork demo` the same.
+- **A failed chat search no longer writes what you searched for into the log**, which
+  the privacy policy says never holds message text.
 - **A chart from `python_exec` is no longer described to the model as shown when it was
   not.** On a model that cannot see images — a local server without its projector, or a
   text-only model behind a gateway — the chart's line in the result said it was shown
@@ -94,9 +105,6 @@ split by subsystem.
   `Ctrl+U` did nothing, while ordinary replies kept working and nothing said why.
   The app now asks again without that setting and remembers the answer for that
   server. Nothing changes against a local server, which accepts the request.
-
-### Fixed
-
 - **A gateway's "thoughts" reach the feed.** Connecting `external` mode to a
   cloud gateway (OpenRouter and the services that copy its API) meant a
   reasoning model answered with its thinking invisible: the app looked for the
@@ -110,6 +118,15 @@ split by subsystem.
   the model name a gateway requires, the context window you have to type in
   yourself — without it long chats are not compacted automatically — and which
   of the sampling settings actually survive the trip.
+- **`mindfork llama setup` sends no credentials.** A `GITHUB_TOKEN` in the environment
+  used to be sent to GitHub; it is no longer read, since the privacy policy promises no
+  variable is read for a key you did not name. Behind a shared address GitHub's limit of
+  60 requests an hour can refuse the command — it resets within the hour.
+- **The privacy policy now matches what the app does.** It was missing the llama.cpp
+  download, the `/props` and `/models` requests the Grok cloud receives, several things
+  sent to the embedding service, the pages `fetch_url` attaches whole, the environment an
+  MCP server inherits, what a backup contains and the working folder of a Python run —
+  each written from the code, in English and Russian, in the installer and on the site.
 
 ## [0.9.9] — 2026-09-13
 
