@@ -150,6 +150,11 @@ split by subsystem.
   says the network is off, where the setting is, and what to do instead.
 
 ### Security
+- **A TLS flaw in the library every network request goes through is fixed.** The TLS
+  stack accepted handshake messages sent at the wrong encryption level instead of
+  closing the connection, so a server could send in plain text what must be
+  encrypted. Nobody on the network could alter or complete a handshake with it, and
+  the fix is an updated dependency (rustls).
 - **Two flaws in the XML parser that reads DOCX files are fixed** (`/rag add` on a `.docx`),
   and a withdrawn version of a cryptography package no longer goes into the build.
 - **What builds a release is pinned and verified.** The package builder for the Linux

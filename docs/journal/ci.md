@@ -1405,6 +1405,15 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   and, tellingly, **not** the BLOCKER. It runs the rule engine, not the taint engine, so a
   path built from an argument is only ever seen by the whole-project analysis — the lesson
   is written down there.
+- **The audit's new trigger paid for itself on the pull request that added it.** Its
+  first run went red on RUSTSEC-2026-0285 — `rustls 0.23.40` accepted TLS 1.3 handshake
+  messages at the wrong encryption level instead of sending `unexpected_message`, the same
+  bug as Go's CVE-2025-61730. Not ours and not new to this branch, but it reached this
+  repository through a dependency change, which is exactly the moment the weekly schedule
+  would have missed by up to six days. `cargo update -p rustls` alone stops at 0.23.43 —
+  the MSRV-aware resolver holds the chain back — while the advisory is fixed from 0.23.45,
+  so the version is set precisely; it builds and tests green on the pinned 1.96.0
+  toolchain (aws-lc-rs 1.18.1 / aws-lc-sys 0.45.0 come with it).
 - Cost: the two gates are noise next to the job they sit in; the audit's pull-request
   trigger adds ~1 minute on dependency changes only; Dependabot is the one real line item,
   budgeted above.
