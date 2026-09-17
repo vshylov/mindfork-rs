@@ -28,7 +28,10 @@ out the highest-payoff tracks (real user pain / direct savings).
 repository public changes — the flip itself, the shipped defaults, the first
 minute of a stranger's run — found twelve blockers and staged them, from safe
 defaults for the file tools to the release pipeline, the public documents and the
-owner's flip checklist. Stage 1 is done; the rest, with evidence and forks:
+owner's flip checklist. Stages 1 (the first run), 2 (safe defaults,
+[safe-defaults.md](research/safe-defaults.md)) and 3 (the release pipeline,
+[release-pipeline.md](research/release-pipeline.md)) are done; the rest, with
+evidence and forks:
 [public-release-readiness.md](research/public-release-readiness.md).
 
 **Multimodality (images)** left this list on 2026-08-13 — **track complete**,
