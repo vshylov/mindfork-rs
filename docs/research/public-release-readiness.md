@@ -338,7 +338,7 @@ Each gets its forks written and confirmed before it starts.
 
 | Stage | Scope | Why this order |
 |---|---|---|
-| 2 — safe defaults | B10; the fetch byte ceiling; the sandbox network; Linux 0700/0600; child environments | The largest real risk once strangers switch tools on; needs its own forks and a live run (tools) |
+| 2 — safe defaults | B10; the fetch byte ceiling; the sandbox network; Linux 0700/0600; child environments — measured and forked in [safe-defaults.md](safe-defaults.md); 2a (the file tools) done | The largest real risk once strangers switch tools on; needs its own forks and a live run (tools) |
 | 3 — release pipeline | B5, B6, B12; third-party notices and grammar licences; SHA pins, `dependabot.yml`, provenance; `quick-xml`, `chacha20` | All in `.github/` and `packaging/`, validated by `packaging.yml` and a tag rehearsal |
 | 4 — robustness and defaults | the dead-orchestrator loop; installer `PATH`; fatal errors on a double-click; `REFERENCE = En`; model hints; the managed server with a build but no GGUF (§3.2, measure first) | Small independent fixes |
 | 5 — public documents | user manual and `docs/` index; README trim; CONTRIBUTING's path without a GPU; issue forms, CODE_OF_CONDUCT; `Cargo.toml` metadata; CHANGELOG highlights and the version decision; the website's install page, hero, Open Graph, legal pages, launch post | Describes the result of stages 1–4, so it goes last |

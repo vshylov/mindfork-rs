@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (81)
+## Entries (82)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -93,6 +93,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the confirmation popup says a call over the files cap will be refused (done)
 - Post-M9: the withheld-chart smoke sends the console a call returns, re-measured (done)
 - Post-M9: a chart's line no longer says it was shown to a model that takes no images (done)
+- Post-M9: safe defaults 2a — the file tools need a root and never reach the app's own folders (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -5435,3 +5436,46 @@ result claims a chart was shown. **3272 unit tests green, 186 `#[ignore]`.**
 One run per arm — a check of the text a live call now produces, not a re-measurement of the
 clause, which the per-line form shares with `not_shown_off` (measured in the withheld-image
 entries above).
+
+### Post-M9: safe defaults 2a — the file tools need a root and never reach the app's own folders (done)
+- **Stage 2a of the public-release track**
+  ([safe-defaults.md](../research/safe-defaults.md), every fork decided by the user on
+  2026-09-17 at its recommendation). The audit's B10: a pristine install is safe, and one
+  switch later a model could read and write the whole disk unconfirmed — including the
+  app's own `settings.json`, which is code execution at the next launch.
+- **Measured and read first.** A read-only contract review of every file, code and
+  execution tool found, beyond the audit: a **dangling symbolic link wrote through both
+  resolvers' containment check** (`exists()` is false for it, so the link's own name
+  passed and the write followed it out — a published-scope vulnerability in SECURITY.md's
+  terms), `code_write` reaching `.git/hooks/`, a background run acting on dangerous calls
+  although confirmation was on, and per-profile toggles that start on for every gated
+  tool, so SECURITY.md's "global switch plus per-profile toggles" was one gate.
+- **D1(a) — a root is required.** An empty `fs_root` refuses every `fs_*` call with a
+  message naming the setting and the `/file attach` route; the whole disk is a value
+  typed on purpose. An existing install with the switch on and the row empty loses the
+  tools until the row is filled — said in CHANGELOG and by the refusal.
+- **D2(a) — the app's directories are unreachable.** `Paths::app_dirs` (the data root,
+  the binary's directory) and `features/tools/reach.rs`, shared by `fs.rs` and `code.rs`:
+  after containment a path under either is refused for reads and writes, and the
+  project walker filters them out of `code_list`/`code_grep` whether the project ignores
+  them or not. The directories come from `ctx.storage`, not a global, so a test's
+  temporary root is protected exactly like the real one — which is what turned the four
+  confirmation tests red: they used the orchestrator's data root as the file tools' root,
+  the very arrangement now refused, and moved the data root to a subfolder.
+- **N1, N2** — the missing part of a path is checked for a symbolic link before it is
+  judged by its name; `code_edit`/`code_write` refuse a `.git` component (compared
+  case-insensitively), reading stays allowed.
+- **D3(b)** — confirmation stays opt-in (F2(b) of 2026-07-30 stands; D1/D2 bound what it
+  was protecting). **D7(a)** — a `start_subagent` run under `confirm_dangerous` is not
+  offered any `danger()` tool; with the setting off nothing changes.
+- **Gates**: `cargo fmt --check` / `cargo clippy --all-targets -- -D warnings` /
+  `cargo test` green — **3281 unit tests, 187 `#[ignore]`** (+5 unit, +1 live smoke);
+  `cyrillic_scan`, `link_check`, `doc_index_check`, `wizard_rtf --check`,
+  `site_legal_pages --check` green.
+- **Live run** — **GO** with the LAN stack down, on the documented fallback: `gemma-4-12b-it-qat-q4_0` on the local CPU
+  build of llama.cpp (b10788, `-c 16384 --jinja`). `file_tools_reach_e2e_live` (new, 622 s): with the
+  system temp folder as the root, `fs_read` on the data root's `profiles.json` came back with the
+  app-directory refusal and the reply quoted nothing of it; with no root, `fs_list` came back with the
+  no-root refusal, and the model relayed the route unprompted — `Ctrl+P` or `/settings` → Tools →
+  the sandbox directory, or `/file attach`. `tool_confirmation_e2e_live` re-run as the regression of
+  the file tools' path: asked, allowed, `note.txt` written.

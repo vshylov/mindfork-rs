@@ -67,7 +67,7 @@
 \pard\sa120 {\b Off until you say otherwise:}\par
 \pard\fi-280\li280\sa80 \bullet\tab the {\b web tools} \u8212? search, page fetching, YouTube (\u167?3.3);\par
 \pard\fi-280\li280\sa80 \bullet\tab {\b Python execution} ({\f1 tools.python_enabled});\par
-\pard\fi-280\li280\sa80 \bullet\tab the {\b file tools} ({\f1 tools.fs_enabled}) \u8212? and their jail, {\f1 fs_root}, is empty until you set it, so enabling them without a root leaves them unrestricted;\par
+\pard\fi-280\li280\sa80 \bullet\tab the {\b file tools} ({\f1 tools.fs_enabled}) \u8212? and they work only inside the folder you set as their root ({\f1 fs_root}): until you set one they refuse, and the app's own data and program folders stay out of their reach either way;\par
 \pard\fi-280\li280\sa80 \bullet\tab {\b MCP plugins} \u8212? the master switch and the per-profile one, both;\par
 \pard\fi-280\li280\sa80 \bullet\tab {\b cross-chat search} for the assistant ({\f1 chat_search}, {\f1 chat_read});\par
 \pard\fi-280\li280\sa80 \bullet\tab the {\b self-model tools} \u8212? and with them the injection of the self-model into the system prompt;\par
@@ -96,7 +96,7 @@
 \pard\sa120 For completeness, since "everything lives in {\f1 data/}" is true of the app's own storage but not of everything it can do at your request:\par
 \pard\fi-280\li280\sa80 \bullet\tab a Python run, in either mode, gets a working folder under the system temporary directory ({\f1 mindfork-sbx-<id>}) holding the model's code and copies of the chat files the call named; it is removed after the run, and one left behind by a crash is removed 24 hours later. The interpreter is given the script's path, not the code;\par
 \pard\fi-280\li280\sa80 \bullet\tab {\f1 /export} writes a conversation to the path you give, or to a generated file name in the current directory;\par
-\pard\fi-280\li280\sa80 \bullet\tab the file tools and the code-workspace tools write where the model asks, inside {\f1 fs_root} or the attached project directory;\par
+\pard\fi-280\li280\sa80 \bullet\tab the file tools and the code-workspace tools write where the model asks, inside {\f1 fs_root} or the attached project directory \u8212? never into the app's own folders or a project's {\f1 .git/};\par
 \pard\fi-280\li280\sa80 \bullet\tab {\f1 mindfork demo} provisions a throwaway data directory under the system temporary folder and removes it on exit;\par
 \pard\fi-280\li280\sa80 \bullet\tab copying puts text on the operating system clipboard, which other applications can read.\par
 \pard\sb200\sa100\b\fs22 9. The website, mindfork.io\b0\fs18\par

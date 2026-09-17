@@ -253,8 +253,9 @@ text passes through whatever is between you and the host.
 
 - the **web tools** — search, page fetching, YouTube (§3.3);
 - **Python execution** (`tools.python_enabled`);
-- the **file tools** (`tools.fs_enabled`) — and their jail, `fs_root`, is empty
-  until you set it, so enabling them without a root leaves them unrestricted;
+- the **file tools** (`tools.fs_enabled`) — and they work only inside the folder
+  you set as their root (`fs_root`): until you set one they refuse, and the app's
+  own data and program folders stay out of their reach either way;
 - **MCP plugins** — the master switch and the per-profile one, both;
 - **cross-chat search** for the assistant (`chat_search`, `chat_read`);
 - the **self-model tools** — and with them the injection of the self-model into
@@ -341,7 +342,8 @@ storage but not of everything it can do at your request:
 - `/export` writes a conversation to the path you give, or to a generated file
   name in the current directory;
 - the file tools and the code-workspace tools write where the model asks, inside
-  `fs_root` or the attached project directory;
+  `fs_root` or the attached project directory — never into the app's own folders
+  or a project's `.git/`;
 - `mindfork demo` provisions a throwaway data directory under the system
   temporary folder and removes it on exit;
 - copying puts text on the operating system clipboard, which other applications

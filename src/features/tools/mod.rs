@@ -28,6 +28,7 @@ pub mod notes;
 pub mod present;
 pub mod python;
 pub mod rag;
+mod reach;
 pub mod self_model;
 pub mod subagent;
 pub mod web;

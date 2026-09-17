@@ -44,8 +44,10 @@ fn fs_config(root: &std::path::Path, confirm: bool) -> AppConfig {
     config
 }
 
-/// Boots an orchestrator whose sandbox root is its own data root, with every
-/// tool enabled in the profile, and returns the id of the turn it starts.
+/// Boots an orchestrator with its data root at `dir/data` and the file tools'
+/// root at `dir` itself, with every tool enabled in the profile, and returns the
+/// id of the turn it starts. The two are apart because a root may contain the
+/// data root but never reach it (docs/research/safe-defaults.md D2).
 async fn start_turn(
     dir: &std::path::Path,
     backend: Arc<dyn EngineBackend>,
@@ -55,7 +57,9 @@ async fn start_turn(
     UnboundedReceiver<AppEvent>,
     tokio::task::JoinHandle<()>,
 ) {
-    let (cmd_tx, mut evt_rx, handle) = spawn_orch_at(dir, Some(backend), fs_config(dir, confirm));
+    let data = dir.join("data");
+    std::fs::create_dir_all(&data).unwrap();
+    let (cmd_tx, mut evt_rx, handle) = spawn_orch_at(&data, Some(backend), fs_config(dir, confirm));
     enable_all_tools(&cmd_tx, &mut evt_rx).await;
     wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
         .await

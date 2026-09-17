@@ -3184,10 +3184,23 @@ impl TurnLoop<'_> {
             return Err(loc.tf("loop.tool_disabled", &[("name", tool)]).into());
         }
         let limits = self.shared.subagent;
+        // A background run has no one to ask: while the user wants every
+        // dangerous call confirmed, it is not offered those tools at all, so it
+        // plans without them instead of acting unasked
+        // (docs/research/safe-defaults.md D7).
+        let unconfirmable = tool == START_SUBAGENT_ID && self.shared.confirm_dangerous;
         let allowed: Vec<ToolId> = self
             .allowed
             .iter()
             .filter(|t| !withheld_from_subagent(t))
+            .filter(|t| {
+                !(unconfirmable
+                    && self
+                        .shared
+                        .registry
+                        .get(t)
+                        .is_some_and(|tool| tool.danger()))
+            })
             .cloned()
             .collect();
         let schemas = self.shared.registry.schemas_for(&allowed, loc);

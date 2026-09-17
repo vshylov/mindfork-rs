@@ -1,10 +1,12 @@
 //! Local file-access tools (spec §9.3, §13.2): `fs_read`,
 //! `fs_write`, `fs_list`. Under the global switch `tools.fs_enabled` (off
-//! by default — the tool can read/overwrite any file).
+//! by default).
 //!
-//! An optional "sandbox" `tools.fs_root`: if set, all paths must lie
-//! inside it (protection against escaping via `..`/absolute paths). If unset —
-//! access to the whole file system (under the switch, like Python).
+//! They work only inside the folder `tools.fs_root` names: every path must lie
+//! inside it (protection against escaping via `..`/absolute paths), and with the
+//! row empty they refuse — a whole disk is one deliberate value away (`C:\`, `/`),
+//! never the default (docs/research/safe-defaults.md D1). Whatever the root, the
+//! app's own directories stay out of reach ([`super::reach`], D2).
 
 use std::path::{Path, PathBuf};
 
@@ -24,10 +26,11 @@ const MAX_READ_CHARS: usize = 50_000;
 /// Ceiling on the number of entries in a directory listing.
 const MAX_LIST_ENTRIES: usize = 500;
 
-/// The shared "sandbox" for file tools: an optional restricting root.
+/// The shared root of the file tools: the one folder they work in.
 #[derive(Clone)]
 struct FsRoot {
-    /// The canonical restricting directory (`None` → no restriction).
+    /// The folder from `tools.fs_root` (`None` → the row is empty, and every call
+    /// refuses).
     root: Option<PathBuf>,
 }
 
@@ -40,18 +43,19 @@ impl FsRoot {
         }
     }
 
-    /// Resolves the path from the argument and checks it's inside the sandbox (if set).
+    /// Resolves the path from the argument and checks it's inside the root.
     /// For existing paths, comparison uses the canonical form; for ones that don't
     /// yet exist (writing a new file), the parent directory is canonicalized.
-    /// `loc` — the scaffold language for error texts.
-    fn resolve(&self, raw: &str, loc: &crate::shared::i18n::Locale) -> Result<PathBuf> {
+    /// Error texts are in the turn's scaffold language (`ctx.loc`).
+    fn resolve(&self, raw: &str, ctx: &ToolContext) -> Result<PathBuf> {
+        let loc = ctx.loc;
         let raw = raw.trim();
         if raw.is_empty() {
             anyhow::bail!(loc.t("tool.fs.err.empty_path").to_string());
         }
         let requested = PathBuf::from(raw);
         let Some(root) = &self.root else {
-            return Ok(requested);
+            anyhow::bail!(loc.t("tool.fs.err.no_root").to_string());
         };
         let root = root.canonicalize().with_context(|| {
             loc.tf(
@@ -69,6 +73,7 @@ impl FsRoot {
         let canonical = match candidate.canonicalize() {
             Ok(c) => c,
             Err(_) => {
+                super::reach::refuse_dangling_link(&candidate, loc)?;
                 let parent = candidate
                     .parent()
                     .ok_or_else(|| anyhow::anyhow!(loc.t("tool.fs.err.no_parent").to_string()))?;
@@ -90,6 +95,7 @@ impl FsRoot {
                 &[("root", &root.display().to_string())]
             ));
         }
+        super::reach::refuse_app_dirs(ctx, &canonical)?;
         Ok(canonical)
     }
 }
@@ -158,7 +164,7 @@ impl Tool for FsRead {
         })
     }
     async fn invoke(&self, ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
-        let path = self.fs.resolve(&arg_path(&args, ctx.loc)?, ctx.loc)?;
+        let path = self.fs.resolve(&arg_path(&args, ctx.loc)?, ctx)?;
         let bytes = match tokio::fs::read(&path).await {
             Ok(b) => b,
             Err(err) => {
@@ -247,7 +253,7 @@ impl Tool for FsWrite {
         })
     }
     async fn invoke(&self, ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
-        let path = self.fs.resolve(&arg_path(&args, ctx.loc)?, ctx.loc)?;
+        let path = self.fs.resolve(&arg_path(&args, ctx.loc)?, ctx)?;
         let content = args
             .get("content")
             .and_then(|v| v.as_str())
@@ -348,7 +354,7 @@ impl Tool for FsList {
         })
     }
     async fn invoke(&self, ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
-        let path = self.fs.resolve(&arg_path(&args, ctx.loc)?, ctx.loc)?;
+        let path = self.fs.resolve(&arg_path(&args, ctx.loc)?, ctx)?;
         let mut rd = match tokio::fs::read_dir(&path).await {
             Ok(rd) => rd,
             Err(err) => {
@@ -411,14 +417,15 @@ mod tests {
     async fn write_then_read_roundtrip() {
         let (_d, _s, ctx) = ctx_with_storage(Uuid::new_v4());
         let dir = tempfile::tempdir().unwrap();
+        let root = Some(dir.path().to_string_lossy().to_string());
         let file = dir.path().join("note.txt");
         let path = file.to_string_lossy().to_string();
 
-        FsWrite::new(None)
+        FsWrite::new(root.clone())
             .invoke(&ctx, serde_json::json!({"path": path, "content": "привет"}))
             .await
             .unwrap();
-        let out = FsRead::new(None)
+        let out = FsRead::new(root)
             .invoke(&ctx, serde_json::json!({"path": path}))
             .await
             .unwrap();
@@ -433,7 +440,7 @@ mod tests {
         let (_d, _s, mut ctx) = ctx_with_storage(Uuid::new_v4());
         ctx.file_hint = Some("ru");
         let dir = tempfile::tempdir().unwrap();
-        let tool = FsRead::new(None);
+        let tool = FsRead::new(Some(dir.path().to_string_lossy().to_string()));
         let note = dir.path().join("report.txt");
         let prose = "Выручка за март составила сто двадцать тысяч, за апрель немного больше.";
         std::fs::write(&note, encoding_rs::WINDOWS_1251.encode(prose).0).unwrap();
@@ -457,8 +464,9 @@ mod tests {
     async fn append_adds_to_end() {
         let (_d, _s, ctx) = ctx_with_storage(Uuid::new_v4());
         let dir = tempfile::tempdir().unwrap();
+        let root = Some(dir.path().to_string_lossy().to_string());
         let path = dir.path().join("log.txt").to_string_lossy().to_string();
-        let w = FsWrite::new(None);
+        let w = FsWrite::new(root.clone());
         w.invoke(&ctx, serde_json::json!({"path": path, "content": "a"}))
             .await
             .unwrap();
@@ -468,7 +476,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let out = FsRead::new(None)
+        let out = FsRead::new(root.clone())
             .invoke(&ctx, serde_json::json!({"path": path}))
             .await
             .unwrap();
@@ -484,7 +492,7 @@ mod tests {
             .await
             .unwrap();
         }
-        let out = FsRead::new(None)
+        let out = FsRead::new(root)
             .invoke(&ctx, serde_json::json!({"path": path}))
             .await
             .unwrap();
@@ -498,7 +506,7 @@ mod tests {
         std::fs::write(dir.path().join("a.txt"), "x").unwrap();
         std::fs::create_dir(dir.path().join("sub")).unwrap();
         let path = dir.path().to_string_lossy().to_string();
-        let out = FsList::new(None)
+        let out = FsList::new(Some(path.clone()))
             .invoke(&ctx, serde_json::json!({"path": path}))
             .await
             .unwrap();
@@ -509,7 +517,8 @@ mod tests {
     #[tokio::test]
     async fn read_missing_file_reports_error_not_panic() {
         let (_d, _s, ctx) = ctx_with_storage(Uuid::new_v4());
-        let out = FsRead::new(None)
+        let root = tempfile::tempdir().unwrap();
+        let out = FsRead::new(Some(root.path().to_string_lossy().to_string()))
             .invoke(
                 &ctx,
                 serde_json::json!({"path": "definitely-not-a-real-file-xyz.txt"}),
@@ -571,6 +580,120 @@ mod tests {
                 .invoke(&ctx, serde_json::json!({"path": "  "}))
                 .await
                 .is_err()
+        );
+    }
+
+    // ---------- docs/research/safe-defaults.md D1, D2, N1 ----------
+
+    /// With the root row empty every tool refuses — an existing file is not read,
+    /// nothing is written — and the refusal is the one that names the setting.
+    #[tokio::test]
+    async fn an_empty_root_refuses_every_call() {
+        let (_d, _s, ctx) = ctx_with_storage(Uuid::new_v4());
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("note.txt");
+        std::fs::write(&file, "secret").unwrap();
+        let path = file.to_string_lossy().to_string();
+        let refusal = ctx.loc.t("tool.fs.err.no_root");
+
+        let read = FsRead::new(None)
+            .invoke(&ctx, serde_json::json!({"path": path}))
+            .await;
+        assert_eq!(read.unwrap_err().to_string(), refusal);
+        let write = FsWrite::new(Some("   ".into()))
+            .invoke(&ctx, serde_json::json!({"path": path, "content": "x"}))
+            .await;
+        assert_eq!(write.unwrap_err().to_string(), refusal);
+        let list = FsList::new(None)
+            .invoke(
+                &ctx,
+                serde_json::json!({"path": dir.path().to_string_lossy()}),
+            )
+            .await;
+        assert_eq!(list.unwrap_err().to_string(), refusal);
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "secret");
+    }
+
+    /// A root that contains the app's data root — a whole drive, a home folder —
+    /// still does not reach it: `settings.json` is neither read nor overwritten,
+    /// while a folder beside the data root is reachable as before.
+    #[tokio::test]
+    async fn the_data_root_is_out_of_reach_even_inside_the_root() {
+        let (data, _s, ctx) = ctx_with_storage(Uuid::new_v4());
+        let settings = data.path().join("settings.json");
+        std::fs::write(&settings, "{}").unwrap();
+        let beside = tempfile::tempdir_in(data.path().parent().unwrap()).unwrap();
+        std::fs::write(beside.path().join("ok.txt"), "ok").unwrap();
+        let root = Some(data.path().parent().unwrap().to_string_lossy().to_string());
+        let refusal = ctx.loc.t("tool.fs.err.app_dir");
+
+        let read = FsRead::new(root.clone())
+            .invoke(
+                &ctx,
+                serde_json::json!({"path": settings.to_string_lossy()}),
+            )
+            .await;
+        assert_eq!(read.unwrap_err().to_string(), refusal);
+        let write = FsWrite::new(root.clone())
+            .invoke(
+                &ctx,
+                serde_json::json!({"path": settings.to_string_lossy(), "content": "{\"mcp\":1}"}),
+            )
+            .await;
+        assert_eq!(write.unwrap_err().to_string(), refusal);
+        let fresh = FsWrite::new(root.clone())
+            .invoke(
+                &ctx,
+                serde_json::json!({"path": data.path().join("new.json").to_string_lossy(), "content": "x"}),
+            )
+            .await;
+        assert_eq!(fresh.unwrap_err().to_string(), refusal);
+        let list = FsList::new(root.clone())
+            .invoke(
+                &ctx,
+                serde_json::json!({"path": data.path().to_string_lossy()}),
+            )
+            .await;
+        assert_eq!(list.unwrap_err().to_string(), refusal);
+        assert_eq!(std::fs::read_to_string(&settings).unwrap(), "{}");
+        assert!(!data.path().join("new.json").exists());
+
+        let ok = FsRead::new(root)
+            .invoke(
+                &ctx,
+                serde_json::json!({"path": beside.path().join("ok.txt").to_string_lossy()}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(ok.result, "ok");
+    }
+
+    /// A link inside the root whose target is missing reads as absent, so it used
+    /// to pass the containment check by its own name while the write followed it
+    /// out. It is refused now, and nothing appears where it points.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_dangling_link_inside_the_root_is_not_written_through() {
+        let (_d, _s, ctx) = ctx_with_storage(Uuid::new_v4());
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let target = outside.path().join("escaped.txt");
+        std::os::unix::fs::symlink(&target, root.path().join("notes.md")).unwrap();
+        let fs_root = Some(root.path().to_string_lossy().to_string());
+
+        let write = FsWrite::new(fs_root)
+            .invoke(
+                &ctx,
+                serde_json::json!({"path": "notes.md", "content": "payload"}),
+            )
+            .await;
+        assert_eq!(
+            write.unwrap_err().to_string(),
+            ctx.loc.t("tool.fs.err.dangling_link")
+        );
+        assert!(
+            !target.exists(),
+            "the write followed the link out of the root"
         );
     }
 }
