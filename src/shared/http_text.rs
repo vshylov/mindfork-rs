@@ -20,11 +20,14 @@ use encoding_rs::Encoding;
 
 use crate::shared::text_decode::{self, EncodingSource};
 
-/// The most a compressed body may inflate to. The body itself is read whole, as it always
-/// was; this bounds what a small compressed one can become in memory — far above any page
-/// (extraction keeps 400 000 characters of text) and far below what a decompression bomb
-/// would take.
-const MAX_INFLATED_BYTES: usize = 32 * 1024 * 1024;
+/// The most a compressed body may inflate to — and, since
+/// docs/research/safe-defaults.md N3, the most a body may be **read** as: the bytes now
+/// arrive through the stream and the count is checked as they do, so a model-chosen
+/// address cannot pull gigabytes into memory in the twenty seconds the request has. Far
+/// above any page (extraction keeps 400 000 characters of text) and far below what a
+/// decompression bomb would take.
+pub const MAX_INFLATED_MB: usize = 32;
+const MAX_INFLATED_BYTES: usize = MAX_INFLATED_MB * 1024 * 1024;
 
 /// A response body as text, with what decided its encoding (for the log).
 #[derive(Debug)]
@@ -49,6 +52,11 @@ pub enum BodyError {
     },
     #[error("the `{coding}` body inflates past {limit} bytes")]
     TooLarge { coding: String, limit: usize },
+    /// The response itself is past the ceiling — counted as the bytes arrive, because a
+    /// server may send no `Content-Length` and one that does is not obliged to be honest
+    /// (the same reasoning as `features::image_fetch`).
+    #[error("the response is larger than {limit} bytes")]
+    BodyTooLarge { limit: usize },
 }
 
 impl BodyError {
@@ -59,7 +67,14 @@ impl BodyError {
             Self::Unsupported(coding)
             | Self::Corrupt { coding, .. }
             | Self::TooLarge { coding, .. } => Some(coding),
+            Self::BodyTooLarge { .. } => None,
         }
+    }
+
+    /// Whether this is the size ceiling rather than a transport or coding failure — the
+    /// caller says so in words instead of "the request failed".
+    pub fn too_large(&self) -> bool {
+        matches!(self, Self::BodyTooLarge { .. })
     }
 }
 
@@ -68,7 +83,8 @@ pub async fn read(resp: reqwest::Response) -> Result<BodyText, BodyError> {
     let content_type = header_value(&resp, reqwest::header::CONTENT_TYPE);
     let coding = header_value(&resp, reqwest::header::CONTENT_ENCODING);
     let tld = resp.url().domain().and_then(tld_label);
-    let body = undo_content_coding(&coding, resp.bytes().await?.into(), MAX_INFLATED_BYTES)?;
+    let raw = read_capped(resp, MAX_INFLATED_BYTES).await?;
+    let body = undo_content_coding(&coding, raw, MAX_INFLATED_BYTES)?;
     let (text, encoding, source) = text_decode::decode(&body, &content_type, tld.as_deref());
     Ok(BodyText {
         text,
@@ -76,6 +92,27 @@ pub async fn read(resp: reqwest::Response) -> Result<BodyText, BodyError> {
         encoding,
         source,
     })
+}
+
+/// Reads the body, refusing past `limit` **as the bytes arrive**. A `Content-Length`
+/// above the ceiling ends it before a byte is read; without one, or with a false one, the
+/// count in the loop is what bounds the memory (docs/research/safe-defaults.md N3).
+async fn read_capped(resp: reqwest::Response, limit: usize) -> Result<Vec<u8>, BodyError> {
+    use futures_util::StreamExt;
+
+    if resp.content_length().is_some_and(|len| len > limit as u64) {
+        return Err(BodyError::BodyTooLarge { limit });
+    }
+    let mut body: Vec<u8> = Vec::new();
+    let mut stream = resp.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk?;
+        if body.len() + chunk.len() > limit {
+            return Err(BodyError::BodyTooLarge { limit });
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
 }
 
 /// A response header as text, empty when absent or not visible ASCII.

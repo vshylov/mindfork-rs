@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (82)
+## Entries (83)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -94,6 +94,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the withheld-chart smoke sends the console a call returns, re-measured (done)
 - Post-M9: a chart's line no longer says it was shown to a model that takes no images (done)
 - Post-M9: safe defaults 2a — the file tools need a root and never reach the app's own folders (done)
+- Post-M9: safe defaults 2b — the sandbox's network is public-only, and model-driven children lose the keys (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -5479,3 +5480,60 @@ entries above).
   no-root refusal, and the model relayed the route unprompted — `Ctrl+P` or `/settings` → Tools →
   the sandbox directory, or `/file attach`. `tool_confirmation_e2e_live` re-run as the regression of
   the file tools' path: asked, allowed, `note.txt` written.
+
+### Post-M9: safe defaults 2b — the sandbox's network is public-only, and model-driven children lose the keys (done)
+- **Stage 2b of the public-release track**
+  ([safe-defaults.md](../research/safe-defaults.md) D4, D5, D6, N3, N4; forks decided by
+  the user on 2026-09-17 at their recommendations). Where 2a bounded the file tools, this
+  bounds what the model's code reaches: the local network, and the process environment.
+- **D4 — the sandbox had the host's network.** Measured before designing: a bare `--net`
+  let guest code connect to an HTTP server on the host's own loopback **and** on its LAN
+  address; the requests arrived. wasmer 7.2.0 takes a rule list
+  (`ipv4|ipv6|dns:allow|deny=<cidr>:<port>`), and the measured semantics decide the shape:
+  **deny beats allow** whatever the order, and **any** list turns the default to deny — so
+  `ipv4:allow=*:*`, `ipv6:allow=*:*` and `dns:allow=*:*` have to be stated or nothing
+  resolves at all. The rules are generated from the same ranges `shared::net::is_public`
+  refuses, now also published as `BLOCKED_V4`/`BLOCKED_V6`; `blocked_ranges_match_the_predicate`
+  probes both edges of every range and just outside them, in both directions, so a range
+  added to one spelling and forgotten in the other fails the build rather than the user.
+  `tools.web_allow_private` lifts it — one switch for "the model may reach private
+  addresses", not one per tool — and the tool's description has three states instead of
+  two, because a model told it can reach a LAN service that answers `EPERM` spends the
+  turn retrying.
+- **N4 — the runtime's prompt was the model's output.** With no `--net`, wasmer writes
+  "The current package is requesting networking access…" into the **guest's stdout**,
+  where the model reads it as its own program's print and as an instruction it cannot
+  act on. It is stripped, `SandboxOutput::net_refused` carries the fact, and the tool
+  says the network is off, where the setting is and what to do instead (lessons §4).
+- **D5 — the keys in the environment.** Two children run what the model wrote or edited:
+  the local interpreter, and a workspace command whose build script `code_write` can
+  change. Both inherited everything, so `OPENAI_API_KEY` and its neighbours were one
+  `os.environ` away. Measured first: an **empty** environment kills node and CPython at
+  startup and loses the MSVC linker, an eight-name allowlist ran every child class but
+  silently drops what nobody can list in advance (`CARGO_HOME`, `JAVA_HOME`,
+  `VIRTUAL_ENV`, proxies, certificates), and removing the credential-shaped names broke
+  nothing measured. So `shared::child_env` removes them by **name segment** — `HF_TOKEN`
+  yes, `TOKENIZERS_PARALLELISM` no — plus every variable the settings name as a key
+  source, which matches no pattern (`MY_OPENAI`). **D6**: `llama-server` and MCP servers
+  keep the whole environment; the user chose that software as they would from a shell,
+  spec §9.6 promises an MCP server exactly that, and filtering it would not stop the
+  server reading `~/.aws` anyway. The limits are written down rather than papered over:
+  a secret under an unrecognisable name still travels, and no filter stops a child
+  reading credential *files*.
+- **N3 — the page a model chooses is read under a ceiling.** `http_text::read` called
+  `resp.bytes()`, so the only bound on a fetch was the 20-second timeout times the link;
+  it now streams under the 32 MB ceiling the inflate path already had, counted as the
+  bytes arrive (a `Content-Length` may be absent, and one that is there may lie — the
+  shape `image_fetch` already used), and `fetch_url` says the page was too large instead
+  of failing as a transport error worth retrying.
+- **Live run** — **GO** on the LAN stack (Gemma 4 31B, b10807-class, `-c 16384`, one
+  slot) with the dev sandbox: `sandbox_network_is_public_only_e2e_live`, both arms in one
+  test. Default — `loopback: PermissionError`, `public: 200`, and the host listener
+  counted **zero** connections; control with `tools.web_allow_private` on — the same code,
+  `loopback: CONNECTED`. The count on the host is the assertion rather than the code's own
+  error text: a filter that refused *after* connecting would read identically from inside
+  the guest. The first run of the smoke failed for a reason worth keeping: the Python was
+  embedded with Rust line continuations, so every line arrived indented and CPython
+  answered `IndentationError` before reaching the network — a test that would have "passed"
+  a broken sandbox by never getting there.
+- **Gates**: fmt / clippy / test green — **3288 unit tests, 188 `#[ignore]`**.

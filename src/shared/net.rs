@@ -96,6 +96,60 @@ pub fn is_public(ip: IpAddr) -> bool {
     }
 }
 
+/// The same ranges [`is_public`] refuses, written as CIDR blocks, for a consumer that
+/// needs a **list** rather than a predicate — the Python sandbox, whose network is
+/// filtered by `wasmer`'s own rules (docs/research/safe-defaults.md D4). The predicate
+/// stays the authority: `blocked_ranges_match_the_predicate` compares the two on every
+/// boundary address, so a range added to one and forgotten in the other fails the build.
+pub const BLOCKED_V4: &[(&str, u8)] = &[
+    ("0.0.0.0", 8),       // "this network"
+    ("10.0.0.0", 8),      // private
+    ("100.64.0.0", 10),   // carrier-grade NAT
+    ("127.0.0.0", 8),     // loopback
+    ("169.254.0.0", 16),  // link-local, where the cloud metadata endpoint lives
+    ("172.16.0.0", 12),   // private
+    ("192.0.2.0", 24),    // documentation
+    ("192.168.0.0", 16),  // private
+    ("198.18.0.0", 15),   // benchmarking
+    ("198.51.100.0", 24), // documentation
+    ("203.0.113.0", 24),  // documentation
+    ("224.0.0.0", 4),     // multicast
+    ("240.0.0.0", 4),     // reserved, and the broadcast address with it
+];
+
+/// The IPv6 half of [`BLOCKED_V4`]. `::/96` and `::ffff:0:0/96` cover both spellings of
+/// an IPv4 address inside IPv6, which [`is_public`] unwraps rather than trusts.
+pub const BLOCKED_V6: &[(&str, u8)] = &[
+    ("::", 96),         // unspecified, loopback, and the IPv4-compatible form
+    ("::ffff:0:0", 96), // IPv4-mapped
+    ("2001:db8::", 32), // documentation
+    ("fc00::", 7),      // unique local
+    ("fe80::", 10),     // link-local
+    ("ff00::", 8),      // multicast
+];
+
+/// `wasmer`'s network filter for the Python sandbox: everything allowed, then every
+/// range above denied — measured semantics (docs/research/safe-defaults.md §2.3): a deny
+/// beats an allow whatever the order, and **any** rule list turns the default to deny, so
+/// the three allows have to be stated or nothing resolves or connects at all.
+pub fn sandbox_net_rules() -> String {
+    let mut rules = vec!["ipv4:allow=*:*".to_string(), "ipv6:allow=*:*".to_string()];
+    rules.extend(
+        BLOCKED_V4
+            .iter()
+            .map(|(net, bits)| format!("ipv4:deny={net}/{bits}:*")),
+    );
+    rules.extend(
+        BLOCKED_V6
+            .iter()
+            .map(|(net, bits)| format!("ipv6:deny={net}/{bits}:*")),
+    );
+    // Names still resolve: the rules are applied to the address at connect time, so a
+    // name that resolves into a denied range is refused there rather than here.
+    rules.push("dns:allow=*:*".to_string());
+    rules.join(",")
+}
+
 fn is_public_v4(ip: Ipv4Addr) -> bool {
     let [a, b, ..] = ip.octets();
     !(ip.is_unspecified()
@@ -320,6 +374,103 @@ mod tests {
 
     fn ip(s: &str) -> IpAddr {
         s.parse().unwrap()
+    }
+
+    /// The CIDR list and the predicate are two spellings of one policy, and the sandbox
+    /// uses the list where `fetch_url` uses the predicate. Every range is checked at both
+    /// edges and just outside them, in both directions: a range the list forgot shows up
+    /// as an address the predicate refuses and the list allows, and one the list invented
+    /// as the reverse.
+    #[test]
+    fn blocked_ranges_match_the_predicate() {
+        fn v4_range(net: &str, bits: u8) -> (u32, u32) {
+            let base = u32::from(net.parse::<Ipv4Addr>().unwrap());
+            let size = 1u64 << (32 - bits);
+            (base, (base as u64 | (size - 1)) as u32)
+        }
+        fn v6_range(net: &str, bits: u8) -> (u128, u128) {
+            let base = u128::from(net.parse::<Ipv6Addr>().unwrap());
+            let size = 1u128 << (128 - bits);
+            (base, base | (size - 1))
+        }
+        let listed_v4 = |a: Ipv4Addr| {
+            BLOCKED_V4.iter().any(|(net, bits)| {
+                let (lo, hi) = v4_range(net, *bits);
+                (lo..=hi).contains(&u32::from(a))
+            })
+        };
+        let listed_v6 = |a: Ipv6Addr| {
+            BLOCKED_V6.iter().any(|(net, bits)| {
+                let (lo, hi) = v6_range(net, *bits);
+                (lo..=hi).contains(&u128::from(a))
+            })
+        };
+
+        for (net, bits) in BLOCKED_V4 {
+            let (lo, hi) = v4_range(net, *bits);
+            for probe in [lo, lo + 1, hi - 1, hi] {
+                let a = Ipv4Addr::from(probe);
+                assert!(!is_public(IpAddr::V4(a)), "{a} is listed but public");
+            }
+            for outside in [lo.checked_sub(1), hi.checked_add(1)] {
+                let Some(a) = outside.map(Ipv4Addr::from) else {
+                    continue;
+                };
+                assert_eq!(
+                    listed_v4(a),
+                    !is_public(IpAddr::V4(a)),
+                    "{a}, just outside {net}/{bits}, is judged differently by the two"
+                );
+            }
+        }
+        for (net, bits) in BLOCKED_V6 {
+            let (lo, hi) = v6_range(net, *bits);
+            for probe in [lo, lo + 1, hi - 1, hi] {
+                let a = Ipv6Addr::from(probe);
+                assert!(!is_public(IpAddr::V6(a)), "{a} is listed but public");
+            }
+            for outside in [lo.checked_sub(1), hi.checked_add(1)] {
+                let Some(a) = outside.map(Ipv6Addr::from) else {
+                    continue;
+                };
+                assert_eq!(
+                    listed_v6(a),
+                    !is_public(IpAddr::V6(a)),
+                    "{a}, just outside {net}/{bits}, is judged differently by the two"
+                );
+            }
+        }
+        // A handful of ordinary public addresses, so a list that blocked everything
+        // would fail here rather than pass by agreeing with nothing.
+        for a in [
+            "1.1.1.1",
+            "93.184.216.34",
+            "2606:2800:220:1::",
+            "2a00:1450::1",
+        ] {
+            let a = ip(a);
+            assert!(is_public(a), "{a}");
+            match a {
+                IpAddr::V4(v4) => assert!(!listed_v4(v4)),
+                IpAddr::V6(v6) => assert!(!listed_v6(v6)),
+            }
+        }
+    }
+
+    /// The rule string wasmer is given: the three allows the measurement showed to be
+    /// mandatory (a rule list is default-deny), and one deny per listed range.
+    #[test]
+    fn sandbox_rules_allow_then_deny_every_range() {
+        let rules = sandbox_net_rules();
+        for required in ["ipv4:allow=*:*", "ipv6:allow=*:*", "dns:allow=*:*"] {
+            assert!(rules.contains(required), "{required} missing: {rules}");
+        }
+        assert!(rules.contains("ipv4:deny=127.0.0.0/8:*"), "{rules}");
+        assert!(rules.contains("ipv6:deny=fe80::/10:*"), "{rules}");
+        assert_eq!(
+            rules.split(',').filter(|r| r.contains("deny")).count(),
+            BLOCKED_V4.len() + BLOCKED_V6.len()
+        );
     }
 
     /// Both directions in one table: a classifier that always says "not public" would pass

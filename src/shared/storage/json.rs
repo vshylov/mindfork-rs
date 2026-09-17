@@ -245,6 +245,27 @@ pub(crate) fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<O
     }
 }
 
+/// Writes a file the owner alone can read (`0600` on unix, the umask's `0644` before —
+/// `settings.json` holds the machine-bound secrets, and chats hold the conversations;
+/// docs/research/safe-defaults.md D8). On Windows the profile's ACL is the boundary and
+/// there is no mode to set.
+fn write_private(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)?;
+        f.write_all(data)
+    }
+    #[cfg(not(unix))]
+    fs::write(path, data)
+}
+
 /// Atomically writes a value to JSON: backing up the existing file → temp → rename.
 /// `pub(crate)` — migrations write the migrated `serde_json::Value` through the same
 /// atomic path (with a `.bak` of the previous version).
@@ -258,7 +279,7 @@ pub(crate) fn write_json<T: serde::Serialize>(path: &Path, value: &T) -> Result<
     }
     let data = serde_json::to_vec_pretty(value).context("serializing to JSON")?;
     let tmp = path.with_extension("tmp");
-    fs::write(&tmp, &data).with_context(|| format!("writing {}", tmp.display()))?;
+    write_private(&tmp, &data).with_context(|| format!("writing {}", tmp.display()))?;
     // std::fs::rename replaces an existing file on both Windows and Unix.
     fs::rename(&tmp, path).with_context(|| format!("renaming into {}", path.display()))?;
     Ok(())
@@ -409,5 +430,23 @@ mod tests {
         // The backup holds the previous (empty) version, not the current one.
         let backed: Chat = serde_json::from_slice(&fs::read(&bak).unwrap()).unwrap();
         assert!(backed.messages.is_empty());
+    }
+
+    /// A file this writes holds either the machine-bound secrets (`settings.json`) or a
+    /// conversation, and the umask's `0644` made both readable to anyone who can reach
+    /// the folder (docs/research/safe-defaults.md D8).
+    #[cfg(unix)]
+    #[test]
+    fn a_written_file_is_readable_by_its_owner_alone() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        write_json(
+            &path,
+            &serde_json::json!({"api_keys": {"openai": "secret"}}),
+        )
+        .unwrap();
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "{mode:o}");
     }
 }

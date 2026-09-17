@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (13)
+## Entries (14)
 
 - Post-M9: persisting the input-box draft in the chat file (done)
 - Post-M9: persisting deleted exchanges in the chat file (`Ctrl+E`/`Ctrl+R`) (done)
@@ -25,6 +25,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: sub-agent chats, PR 3 — `CHAT_SCHEMA` 1→2, a transcript for every old call (done)
 - Post-M9: a launch that finds chats but no `data.db` says so (done)
 - Post-M9: `workspace/` joins the backup (done)
+- Post-M9: safe defaults 2b — the data root is the owner's alone on unix (done)
 
 ### Post-M9: persisting the input-box draft in the chat file (done)
 - **Unsaved input-box text is stored on the chat and restored on
@@ -811,3 +812,22 @@ discards is recoverable from `backups/`.
 **Still open, and deliberate**: the directories of a soft-deleted chat are not purged
 (`files/<id>`, `workspace/<id>`), so a restore of a hidden chat brings its files with it
 (F10 (a)).
+
+### Post-M9: safe defaults 2b — the data root is the owner's alone on unix (done)
+- **D8 of [safe-defaults.md](../research/safe-defaults.md)** (the user's decision,
+  2026-09-17). Measured in the project's own lab image (Ubuntu 24.04): the default umask
+  is `022`, so `Paths::ensure_dirs` left the data root at `0755` and `write_json` left
+  `settings.json` at `0644`. A modern home directory is `0750`, which hides them on a
+  single-user machine — but not everywhere: that same image's `/home/jovyan` is `2770`
+  for the `users` group, where every member could read the chats and the encrypted keys,
+  whose derivation inputs (`/etc/machine-id`, the user name) are world-readable anyway
+  (ADR 0008 is explicit that other-user protection is Windows-only).
+- **The root is `chmod 0700` at every start**, not only at creation: what needs tightening
+  is precisely what an older version already created. One mode on the root covers every
+  file beneath it, since reaching one needs `x` there — and `write_json` now creates its
+  file `0600` as well, so a root someone widens later does not expose the files. A failure
+  is logged at debug and ignored: a data root on a filesystem without unix modes (a
+  mounted share) has to keep working. Windows has nothing to set — a per-user root is the
+  profile's ACL, and DPAPI binds the secrets to the user.
+- Tests are `#[cfg(unix)]` and run on CI's Linux job: a `0755` root created before the
+  app starts comes back `0700`, and a written `settings.json` is `0600`.

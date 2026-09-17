@@ -42,7 +42,10 @@ the executable, not in a hidden per-user location, unless a `defaults.json` next
 to the binary selects a system location or another path
 ([docs/install.md](docs/install.md)). In a development build that is
 `target/debug/data/`. So everything the app knows is in one place you can open,
-copy, back up and delete.
+copy, back up and delete. On Linux that directory is made readable **to your user
+alone** (`0700`) every time the app starts, and the files it writes are `0600`:
+before, the system's default left both open to anyone else with an account on the
+machine. On Windows the profile's own permissions do that.
 
 | What | Where | Holds your conversations? |
 |---|---|---|
@@ -226,9 +229,19 @@ make `wasmer` fetch the plain Python package from the Wasmer registry itself.
 
 Once Python execution is enabled, the sandbox's own network access is on by
 default (`tools.python_net_enabled`), which means code the model runs can reach
-the internet from inside the sandbox. In the **local** Python mode the code runs
-with your own interpreter and has whatever network access your computer has; that
-switch does not apply to it.
+the internet from inside the sandbox — **public addresses only**: this machine's
+own services, your local network, the link-local range where cloud metadata lives
+and the other non-routable ranges are refused, the same list the web tools use,
+unless you set `tools.web_allow_private`. In the **local** Python mode the code
+runs with your own interpreter and has whatever network access your computer has;
+that switch does not apply to it.
+
+The code the model writes also runs **without the credentials in the app's
+environment**: variables whose names look like keys (`*_KEY`, `*TOKEN*`,
+`*SECRET*`, `*PASSWORD*`, …) and whatever your settings name as a key source are
+removed before the local interpreter — or a command of the code workspace — is
+started. It is a narrowing, not a boundary: a secret under an unrecognisable name
+still travels, and any code running as you can read your credential *files*.
 
 ### 3.8 The llama.cpp download
 

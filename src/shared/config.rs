@@ -547,6 +547,47 @@ impl Default for CloudSettings {
 /// (managed/external/openai/gemini/claude/grok), so switching modes doesn't lose
 /// the other's values. Transport — OpenAI-compatible HTTP (except Claude —
 /// Messages API). See docs/install.md §3, ADR 0004.
+/// Every environment variable the settings name as the source of a key — whatever it is
+/// called. Model-driven children have these removed along with the credential-shaped names
+/// ([`crate::shared::child_env`], docs/research/safe-defaults.md D5): a user who pointed a
+/// slot at `MY_OPENAI` named a secret, and no pattern would know.
+pub fn named_key_env_vars(cfg: &AppConfig) -> Vec<String> {
+    let engine = |e: &EngineSettings| {
+        [
+            e.external.api_key_env.clone(),
+            e.openai.api_key_env.clone(),
+            e.gemini.api_key_env.clone(),
+            e.claude.api_key_env.clone(),
+            e.grok.api_key_env.clone(),
+        ]
+    };
+    let imp = &cfg.impersonation_engine;
+    let embed = &cfg.embed;
+    engine(&cfg.engine)
+        .into_iter()
+        .chain([
+            imp.external.api_key_env.clone(),
+            imp.openai.api_key_env.clone(),
+            imp.gemini.api_key_env.clone(),
+            imp.claude.api_key_env.clone(),
+            imp.grok.api_key_env.clone(),
+            embed.external.api_key_env.clone(),
+            embed.openai.api_key_env.clone(),
+            embed.gemini.api_key_env.clone(),
+            embed.claude.api_key_env.clone(),
+            embed.grok.api_key_env.clone(),
+            cfg.tts.openai.api_key_env.clone(),
+            cfg.tts.gemini.api_key_env.clone(),
+            cfg.tts.external.api_key_env.clone(),
+            cfg.tools.web_tavily_key_env.clone(),
+            cfg.video.api_key_env.clone(),
+        ])
+        .flatten()
+        .map(|n| n.trim().to_string())
+        .filter(|n| !n.is_empty())
+        .collect()
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct EngineSettings {
