@@ -1976,6 +1976,19 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   call sites in `doc_extract.rs`, its six tests green. `chacha20` 0.10.1 was **yanked** and
   sat in the lock through pdf-extract → lopdf → rand; updated to 0.10.2, and `yanked` in
   `deny.toml` is now `deny` rather than `warn`.
-- **Rehearsal** — see the outcome recorded in [release-pipeline.md](../research/release-pipeline.md) §8.
+- **The rehearsal earned its keep on the first try.** `v0.9.9-rc1` proved the parts that
+  matter from the run's own artifacts — the CI-built `mindfork.exe` imports neither
+  `VCRUNTIME140.dll` nor any `api-ms-win-crt-*`; the notices came out 359 KB / 215 licence
+  sections and byte-identical inside the `.deb`; `/usr/share/doc/mindfork-rs/` carries the
+  privacy policy and `licenses/syntaxes/`; nfpm installed as `2.47.0` with its hash
+  verified — and then **the Windows installer job failed**: Inno Setup takes digits and
+  dots in `VersionInfoVersion`, and the script handed it `AppVersion` = `0.9.9-rc1`. The
+  prerelease mechanism meant to exercise this workflow could therefore never have reached
+  the installer, which is the one artifact whose payload cannot be checked from outside.
+  Fixed by deriving a numeric `NumericVersion` for the two `VersionInfo*` fields while
+  `AppVersion` keeps the suffix for the user and the file name; the gate test pins both the
+  fields and the derivation, and the compile was verified locally against the pinned Inno
+  Setup 7.1.0 for `0.9.9-rc2` and `0.9.9` alike. The full outcome, including the second
+  rehearsal, is in [release-pipeline.md](../research/release-pipeline.md) §8.
 - **Gates**: fmt / clippy / test green — 3288 unit tests, 188 `#[ignore]` — plus the six
   documentation gates and the two new ones (`actions_pin_check`, `release_guard --self-test`).

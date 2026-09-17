@@ -296,4 +296,36 @@ One branch, `feat/release-pipeline`, one pull request (R5a).
 
 ## 8. Outcome
 
-Filled in after the rehearsal.
+**Rehearsal 1 — `v0.9.9-rc1`, 2026-09-17.** The guard accepted the tag, both
+builds, the Linux packages and the notices came out right, and **the Windows
+installer job failed** — which is the whole reason a rehearsal exists.
+
+What it proved, from the run's own artifacts:
+
+- **B12 on a real release artifact**: the `mindfork.exe` CI built imports neither
+  `VCRUNTIME140.dll` nor any `api-ms-win-crt-*` — fourteen system DLLs, 26 796 KB.
+- **The notices**: 359 KB, 215 licence sections, generated on the runner from the
+  tag's own `Cargo.lock`, byte-identical to the copy inside the `.deb`.
+- **The packages**: `/usr/share/doc/mindfork-rs/` carries `PRIVACY.md`,
+  `PRIVACY.ru.md`, `THIRD-PARTY-NOTICES.md` (367 812 bytes) and
+  `licenses/syntaxes/` — the three gaps of §2.3 closed in the artifact a stranger
+  installs.
+- **The pinned builder**: `Downloading nfpm 2.47.0 / SHA-256 verified /
+  nfpm 2.47.0 at /usr/local/bin/nfpm`, in place of an unsigned repository.
+
+**What broke, and why it is a real finding rather than a rehearsal artefact.**
+Inno Setup aborted with `Value of [Setup] section directive "VersionInfoVersion"
+is invalid`: Windows file metadata takes digits and dots, and the script fed it
+`AppVersion` — `0.9.9-rc1`. So the prerelease mechanism §6 defines as *the* way to
+exercise this workflow could never have reached the installer, the one artifact
+whose payload is otherwise unverifiable from outside. The fix derives a numeric
+`NumericVersion` for the two `VersionInfo*` fields while `AppVersion` keeps the
+suffix for what the user sees and what names the file; the gate test
+`credits::the_installer_and_the_binary_declare_the_same_product` now pins both the
+fields and the derivation. Verified locally against the pinned Inno Setup 7.1.0,
+compiling both `0.9.9-rc2` and `0.9.9`, with `PRIVACY.md`,
+`THIRD-PARTY-NOTICES.md` and the 22 grammar licences in the payload.
+
+Because the installer job failed, `release` was skipped and no draft was created —
+the archives, the checksums, the draft flag and the skipped attestation are
+unverified, so a second rehearsal follows.

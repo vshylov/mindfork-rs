@@ -23,6 +23,19 @@
   #define BinDir SourcePath + "..\..\target\release"
 #endif
 
+; The numeric version for the VersionInfo* fields below. A rehearsal tag carries a
+; prerelease suffix (`v0.9.9-rc1`, docs/research/release-pipeline.md §6) and Windows
+; file metadata takes digits and dots only — Inno answers a suffix with
+; `Value of [Setup] section directive "VersionInfoVersion" is invalid` and aborts,
+; which is exactly how the first rehearsal failed. AppVersion keeps the suffix (it is
+; what the user sees and what names the artifact); this drops it for the metadata.
+#define Dash Pos("-", AppVersion)
+#if Dash > 0
+  #define NumericVersion Copy(AppVersion, 1, Dash - 1)
+#else
+  #define NumericVersion AppVersion
+#endif
+
 [Setup]
 AppId={{A7E3F1C2-9B84-4D6E-8F1A-2C5B7D9E0463}
 ; Naming: the app presents as the brand `mindfork` — AppName, the shortcuts,
@@ -97,8 +110,8 @@ OutputBaseFilename=mindfork-rs-v{#AppVersion}-x86_64-setup
 ; good enough. VersionInfoCopyright is the copyright line from LICENSE: build.rs
 ; reads that file directly, this one cannot, so the gate test
 ; credits::the_installer_and_the_binary_declare_the_same_product holds them together.
-VersionInfoVersion={#AppVersion}
-VersionInfoProductVersion={#AppVersion}
+VersionInfoVersion={#NumericVersion}
+VersionInfoProductVersion={#NumericVersion}
 VersionInfoProductName=mindfork
 VersionInfoDescription=mindfork Setup
 VersionInfoCompany=Vladimir Shylov
