@@ -1969,6 +1969,8 @@
   "backup.progress.entries": "  {done} of {total}",
   "backup.warn.newer_manifest": "Warning: this backup was created by a newer version of mindfork ({version}). After restoring, the current app version may refuse to open the data — update the app.",
   "cli.err.prefix": "Error",
+  "cli.console.press_enter": "Press Enter to close this window.",
+  "cli.err.backend_gone": "The part of mindfork that answers stopped, so the session could not continue. Your chats are saved; the reason is in the log ({path}).",
   "cli.help.about": "Terminal (TUI) AI chat",
   "cli.help.usage": "Usage:",
   "cli.help.commands": "Commands:",

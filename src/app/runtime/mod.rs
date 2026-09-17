@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{
     self, DisableBracketedPaste, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent,
@@ -27,6 +27,7 @@ use ratatui::crossterm::execute;
 #[cfg(unix)]
 use ratatui::crossterm::terminal::supports_keyboard_enhancement;
 use ratatui::crossterm::terminal::{BeginSynchronizedUpdate, EndSynchronizedUpdate};
+use tokio::sync::mpsc::error::TryRecvError;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use uuid::Uuid;
 
@@ -295,6 +296,9 @@ pub fn run(
     dict_dir: PathBuf,
     bundled_dict_dir: Option<PathBuf>,
     personal: PathBuf,
+    // Named in the message a dead backend ends the session with (D1) — the loop
+    // has no `Paths` of its own, and the caller does.
+    log_dir: PathBuf,
     background_query: Option<crate::shared::osc11::Pending>,
 ) -> Result<()> {
     let mut terminal = ratatui::init();
@@ -387,6 +391,7 @@ pub fn run(
         dict_dir,
         bundled_dict_dir,
         personal,
+        log_dir,
     );
     // Lift the modes on exit (harmless if already off).
     let _ = execute!(
@@ -478,6 +483,44 @@ impl SpellLoader {
     }
 }
 
+/// What one pass over the orchestrator's event queue found.
+enum Drain {
+    /// Nothing waiting — the ordinary idle tick, which deliberately does not repaint.
+    Idle,
+    /// At least one event was applied, so the screen is dirty.
+    Applied,
+    /// The channel is **closed**: the orchestrator task has ended, and a panic is
+    /// the case that matters — the hook restores the terminal and the task dies.
+    ///
+    /// Until this existed the loop read a closed channel exactly as an empty one
+    /// (`while let Ok(event) = rx.try_recv()`), so the UI kept running and
+    /// repainting with nothing on the other end: every command went into a channel
+    /// with no reader, nothing ever answered, and the session could only be quit
+    /// (docs/research/robustness-and-defaults.md D1).
+    BackendGone,
+}
+
+/// Drains the queue, handing each event to `apply`, and says which of the three
+/// things happened. Separated from [`run_loop`] because that loop needs a real
+/// terminal and this decision is the part worth a test.
+fn drain_events(rx: &mut UnboundedReceiver<AppEvent>, mut apply: impl FnMut(AppEvent)) -> Drain {
+    let mut applied = false;
+    loop {
+        match rx.try_recv() {
+            Ok(event) => {
+                apply(event);
+                applied = true;
+            }
+            Err(TryRecvError::Empty) => {
+                return if applied { Drain::Applied } else { Drain::Idle };
+            }
+            // A closed channel wins over anything drained in the same pass: the
+            // events are applied (the screen is correct), and the session ends.
+            Err(TryRecvError::Disconnected) => return Drain::BackendGone,
+        }
+    }
+}
+
 fn run_loop(
     terminal: &mut DefaultTerminal,
     cmd_tx: &UnboundedSender<AppCommand>,
@@ -485,6 +528,7 @@ fn run_loop(
     dict_dir: PathBuf,
     bundled_dict_dir: Option<PathBuf>,
     personal: PathBuf,
+    log_dir: PathBuf,
 ) -> Result<()> {
     let mut screen = ChatScreen::new();
     // The chat list (Esc) or settings (Ctrl+P) can be open on top of the chat.
@@ -517,8 +561,11 @@ fn run_loop(
     // a screen switch for repaint purposes (the dialog's arrows/keycaps are
     // exactly the wide-glyph risk group a cell diff leaves artifacts of).
     let mut last_overlay = false;
+    // Set when the event channel turns out to be **closed** rather than empty (see
+    // [`Drain`]).
+    let mut backend_gone = false;
     while !quit {
-        while let Ok(event) = evt_rx.try_recv() {
+        let drained = drain_events(&mut evt_rx, |event| {
             apply_event(
                 &mut screen,
                 &mut active,
@@ -527,7 +574,14 @@ fn run_loop(
                 cmd_tx,
                 event,
             );
-            dirty = true;
+        });
+        match drained {
+            Drain::Idle => {}
+            Drain::Applied => dirty = true,
+            Drain::BackendGone => {
+                backend_gone = true;
+                break;
+            }
         }
         if spellcheck_upkeep(&mut spell, &mut screen, &mut active) {
             dirty = true;
@@ -576,6 +630,21 @@ fn run_loop(
     // this reaches disk. See spec §11.7.
     if let Some(draft) = screen.take_dirty_draft() {
         let _ = cmd_tx.send(AppCommand::SetDraft(draft));
+    }
+    if backend_gone {
+        // The terminal is restored by `ratatui::init`'s hook on the way out of
+        // this function, so the message belongs to the caller: `main` prints it
+        // with the usual CLI prefix and exits non-zero. What is on disk is what
+        // the orchestrator wrote before it died — it is the sole writer of a
+        // chat (spec §4.4.2), so nothing half-written is left behind.
+        let loc = screen.loc();
+        bail!(
+            "{}",
+            loc.tf(
+                "cli.err.backend_gone",
+                &[("path", &log_dir.display().to_string())]
+            )
+        );
     }
     Ok(())
 }

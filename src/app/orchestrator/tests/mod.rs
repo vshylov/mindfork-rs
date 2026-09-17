@@ -32,6 +32,14 @@ fn test_embedder() -> Arc<dyn Embedder> {
 fn no_auto_cfg() -> AppConfig {
     let mut cfg = AppConfig::default();
     cfg.interface.auto_title = crate::shared::config::AutoTitleMode::Off;
+    // The reply cap is **pinned** here rather than inherited from the shipped
+    // default. It is not cosmetic: every stream reserves its cap in the managed
+    // server's shared KV pool (admission-by-budget §4.2), so the admission suites
+    // measure concurrency in units of this number — and when the shipped default
+    // rose to 16384 to stop reasoning models truncating their answers
+    // (docs/research/robustness-and-defaults.md F5), two of them changed verdict
+    // for a reason that had nothing to do with what they test.
+    cfg.default_sampling.max_tokens = Some(2048);
     cfg
 }
 

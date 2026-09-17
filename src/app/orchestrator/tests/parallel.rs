@@ -218,8 +218,8 @@ fn cfg(parallel: u32, sessions: u32) -> AppConfig {
     cfg.tools.subagent_parallel = parallel;
     cfg.engine.managed.sessions = sessions;
     // A managed server above one session has a shared KV pool of `-c`, and
-    // every child reserves at least its reply cap in it — 2048 here, the
-    // default profile's `max_tokens`, below `subagent_max_tokens`
+    // every child reserves at least its reply cap in it — 2048 here, which
+    // `no_auto_cfg` pins for exactly this reason, below `subagent_max_tokens`
     // (admission-by-budget §4.2). A roomy pool keeps the permit count the
     // only bound the group's tests measure; the pool tests at the end of the
     // file size it on purpose.

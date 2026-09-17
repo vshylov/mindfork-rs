@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (37)
+## Entries (38)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -49,6 +49,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Release 0.9.9 (prepared)
 - Post-M9: public release readiness — the audit and stage 1 (done)
 - Post-M9: public release readiness — stage 3, the release pipeline (done)
+- Post-M9: public release readiness — stage 4a, the ways a first run ends badly (done)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -2000,3 +2001,56 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   itself. Full table in [release-pipeline.md](../research/release-pipeline.md) §8.
 - **Gates**: fmt / clippy / test green — 3288 unit tests, 188 `#[ignore]` — plus the six
   documentation gates and the two new ones (`actions_pin_check`, `release_guard --self-test`).
+
+### Post-M9: public release readiness — stage 4a, the ways a first run ends badly (done)
+
+- **Stage 4a of the track** ([robustness-and-defaults.md](../research/robustness-and-defaults.md);
+  forks decided by the user on 2026-09-18 — F1(a), F2(a), F5(a) at the recommendation,
+  **F3(b)** and **F4(c)** against it, and the stage split into two pull requests). Stage 3
+  was about what a stranger downloads; this one is about the ways the first ten minutes
+  end badly that are nobody's fault but ours. The engine half — a server started without a
+  model, and the reply budget — is in [engine.md](engine.md); here the rest.
+- **D1 — a dead core left a live interface.** `runtime.spawn(orchestrator::run(..))`
+  dropped the `JoinHandle` and the UI drained events with
+  `while let Ok(event) = rx.try_recv()`, which reads a **closed** channel exactly as an
+  empty one. So a panic in the orchestrator restored the terminal, killed the task, and
+  left the interface running and repainting with nothing behind it: every command went
+  into a channel with no reader, nothing answered, and the only way out was to quit. The
+  drain is now `drain_events` → `Idle | Applied | BackendGone` — a named function because
+  the loop itself needs a real terminal and this decision is the part worth a test (two:
+  a queue drained in one pass, and a closed channel that still applies what was queued
+  before the death). The session then ends with a localized line naming the log file and
+  a non-zero exit; `main` keeps the handle, so the panic reaches the log rather than the
+  alternate screen that ate it.
+- **D3 — a fatal error vanished with its window.** Double-clicked from Explorer, a console
+  application gets a console of its own that Windows destroys at exit, so every refusal
+  printed before the interface opens flashed by unread — indistinguishable from "it does
+  nothing when I click it". `GetConsoleProcessList` answers whether that is the case, and
+  it was measured rather than assumed: **3** processes attached when started from a shell,
+  **1** in its own console. `shared/console.rs` waits for Enter when the count is 1 **and**
+  stdout is a terminal — the second condition is not a formality, since a redirected
+  launch would otherwise hang a script. Verified both ways on the built binary: launched
+  with a wrong flag in its own console it was still alive after four seconds; from a shell
+  the same refusal printed and exited 2 immediately.
+- **D4 — "already running" exited 0**, telling whatever started it that the app had run
+  and finished cleanly. It is 2 now, the code the CLI already answers a wrong invocation
+  and a launch without a terminal with. It is also the likeliest double-click of all — the
+  user clicks the shortcut again because the first window is behind something — so it is
+  one of the places D3 holds the window.
+- **D5 — an external locale fell back to Russian.** `REFERENCE` was `Lang::Ru` from the
+  days when the sources were Russian; with `en`/`ru` at full key parity under test it was
+  invisible for the built-ins and decided exactly one thing: what a `data/locales/de.json`
+  shows for a key it is missing. English now — and with it the translation template
+  `mindfork locales export` writes, which is the other thing the reference decides. The
+  two tests that pinned the old answer were rewritten to assert the new one, including
+  that it is **not** the Russian string.
+- **D6 — the installer never touched `PATH`** while the app's own guidance says to run
+  `mindfork llama setup`. An optional task adds `{app}` to the user's environment (the
+  machine's on an "all users" install), **unchecked by default** — the user's choice
+  against the recommendation, and the cautious one: an installer that edits the
+  environment unasked is a surprise. `NeedsAddPath` keeps an upgrade from appending the
+  same directory twice, and an uninstall takes the entry back out by hand, because
+  `uninsdeletevalue` would delete the whole `Path`. Compiled against the pinned Inno Setup
+  7.1.0; the install itself is the owner's check.
+- **Gates**: fmt / clippy / test green — **3294 unit tests, 188 `#[ignore]`** (+6 unit
+  tests, +1 live smoke).

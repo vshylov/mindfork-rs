@@ -2029,3 +2029,39 @@ fn a_typed_stop_of_several_tasks_fans_out_into_one_command_each() {
     assert!(h.next_command().is_none());
     assert!(matches!(h.active, ActiveScreen::Chat));
 }
+
+// ------- A dead orchestrator ends the session (robustness-and-defaults.md D1) -------
+
+#[test]
+fn an_empty_queue_is_an_idle_tick_and_a_full_one_is_dirty() {
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<AppEvent>();
+    let mut seen = 0;
+    assert!(matches!(drain_events(&mut rx, |_| seen += 1), Drain::Idle));
+    assert_eq!(seen, 0, "an empty queue applies nothing");
+
+    tx.send(AppEvent::Error("one".into())).unwrap();
+    tx.send(AppEvent::Error("two".into())).unwrap();
+    assert!(matches!(
+        drain_events(&mut rx, |_| seen += 1),
+        Drain::Applied
+    ));
+    assert_eq!(seen, 2, "the whole queue is drained in one pass");
+}
+
+#[test]
+fn a_closed_queue_reports_the_backend_gone_after_applying_what_is_left() {
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<AppEvent>();
+    tx.send(AppEvent::Error("the last word".into())).unwrap();
+    // The sender is what the orchestrator task owns; dropping it is what its death
+    // looks like from here.
+    drop(tx);
+    let mut seen = 0;
+    assert!(matches!(
+        drain_events(&mut rx, |_| seen += 1),
+        Drain::BackendGone
+    ));
+    assert_eq!(
+        seen, 1,
+        "an event queued before the task died is still applied — the screen stays correct"
+    );
+}

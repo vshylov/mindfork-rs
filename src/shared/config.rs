@@ -9,7 +9,7 @@ use crate::shared::gguf::display_name;
 use crate::shared::secrets::{ExternalSlot, SecretKey};
 
 /// Current config schema version.
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 
 /// Inference-engine connection mode. Local (`Managed`/`External`) and cloud
 /// providers (`OpenAi`/`Gemini`) are equal-footing variants of a single selector
@@ -2176,8 +2176,18 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             schema_version: SCHEMA_VERSION,
+            // The budget covers the **reasoning** as well, on every provider that
+            // charges for it that way — which the shipped 2048 predated. Measured
+            // on `gemini-2.5-pro` with thinking on, a school arithmetic question:
+            // 1697 tokens of thinking left 347 for the answer and the reply came
+            // back `MAX_TOKENS`, cut mid-explanation; the same question at 16384
+            // finished at 1444 + 750 and stopped on its own
+            // (docs/research/robustness-and-defaults.md F5). A cap is not a target,
+            // so the wider one generates nothing extra — it only stops taking the
+            // end off. Anthropic, where the field is required, keeps its own 4096
+            // fallback for sampling that names no limit.
             default_sampling: SamplingConfig {
-                max_tokens: Some(2048),
+                max_tokens: Some(16384),
                 thinking: Some(true),
                 ..Default::default()
             },

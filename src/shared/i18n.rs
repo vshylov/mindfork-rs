@@ -18,7 +18,7 @@
 //! new code adds a **new language** ([`Lang::Ext`]) without a rebuild. Missing
 //! keys resolve via a chain: own bundle → the fallback declared by the `_fallback`
 //! meta-key (e.g. `"_fallback":"en"` for a language translated from English) →
-//! reference `ru` → the key itself. A broken/unreadable file or an invalid name — a
+//! reference `en` → the key itself. A broken/unreadable file or an invalid name — a
 //! warning in the log + skip (graceful degradation: the built-in stays intact); the
 //! content is additionally validated against the reference (unknown keys, a
 //! placeholder mismatch → warn, not rejection). Exhausting the chain (the key is
@@ -60,7 +60,15 @@ pub enum Lang {
 
 /// The reference language: if a key is missing from the selected bundle, it's taken
 /// from here, then — the key itself (a prompt shouldn't panic over a bundle typo).
-const REFERENCE: Lang = Lang::Ru;
+///
+/// **English**, since the source language is English (CLAUDE.md §Conventions). It was
+/// `Ru` from the days when the sources were Russian, and with `en`/`ru` at full key
+/// parity under test that was invisible for the built-ins — it decided one thing only:
+/// what an **external** `data/locales/<code>.json` shows for a key it is missing, and
+/// a German locale falling back to Russian helps nobody. It also decides the language
+/// of the translation template `export_bundle` writes
+/// (docs/research/robustness-and-defaults.md D5).
+const REFERENCE: Lang = Lang::En;
 
 /// Interner for external-language codes: a runtime `String` → `&'static str` (`Box::leak`).
 /// There are finitely many languages — a bounded one-time leak (a precedent — the
@@ -218,8 +226,8 @@ pub struct Locale {
     map: HashMap<String, String>,
     /// The fallback language declared by the external file's `_fallback` meta-key
     /// (e.g. a German locale translated from English sets `"_fallback": "en"` —
-    /// missing keys are taken from en, not the Russian reference). `None` for
-    /// built-ins. Resolution chain: own bundle → this fallback → reference (`ru`) → the key itself.
+    /// missing keys are taken from en explicitly rather than by default). `None` for
+    /// built-ins. Resolution chain: own bundle → this fallback → reference (`en`) → the key itself.
     fallback: Option<Lang>,
 }
 
@@ -249,7 +257,7 @@ impl Locale {
     }
 
     /// A key's value. Fallback: this language → the declared `_fallback` →
-    /// reference (`ru`) → the key itself. Never panics — a missing key degrades
+    /// reference (`en`) → the key itself. Never panics — a missing key degrades
     /// gracefully instead of crashing a prompt. The routine fallback of an incomplete
     /// bundle (the key exists in the reference) stays quiet; **exhausting** the chain
     /// (the key is nowhere → a slug reaches the output) is logged once
@@ -450,7 +458,7 @@ fn overlay_external(maps: &mut HashMap<Lang, HashMap<String, String>>, dir: &Pat
         Ok(e) => e,
         Err(_) => return warnings,
     };
-    // A snapshot of the reference (ru) for substantive validation of external files:
+    // A snapshot of the reference (en) for substantive validation of external files:
     // the key set + each one's placeholders. Taken before the loop (`maps` is mutated inside it).
     let ref_placeholders: HashMap<String, std::collections::BTreeSet<String>> = maps
         .get(&REFERENCE)
@@ -598,13 +606,13 @@ fn registry() -> &'static HashMap<Lang, &'static Locale> {
 
 /// Returns a language's bundle (`&'static` — convenient to put into task/round
 /// snapshots). An unknown language (an external code with no file) → the reference
-/// locale (`ru`) — graceful degradation.
+/// locale (`en`) — graceful degradation.
 pub fn locale(lang: Lang) -> &'static Locale {
     let reg = registry();
     reg.get(&lang)
         .or_else(|| reg.get(&REFERENCE))
         .copied()
-        .expect("the reference locale (ru) is always present in the registry")
+        .expect("the reference locale (en) is always present in the registry")
 }
 
 /// Exactly this language's bundle **without** falling back to the reference: `None`
@@ -1143,13 +1151,15 @@ mod tests {
 
     #[test]
     fn export_unknown_code_yields_reference_template() {
-        // An unregistered code → a template: the reference's full key set with
-        // ru values (a valid JSON object, all keys present).
+        // An unregistered code → a template: the reference's full key set with its
+        // values (a valid JSON object, all keys present). The reference is English
+        // (the source language), so a translator starts from the text the code was
+        // written in rather than from its Russian translation.
         let json = export_bundle(Lang::Ext("zz"));
         let obj: HashMap<String, String> = serde_json::from_str(&json).unwrap();
-        let ru = locale(Lang::Ru);
-        assert_eq!(obj.len(), ru.map.len());
-        assert_eq!(obj.get("ui.lang.name"), ru.map.get("ui.lang.name"));
+        let en = locale(Lang::En);
+        assert_eq!(obj.len(), en.map.len());
+        assert_eq!(obj.get("ui.lang.name"), en.map.get("ui.lang.name"));
     }
 
     #[test]
@@ -1207,8 +1217,14 @@ mod tests {
         assert_eq!(reg[&de].get("ui.lang.name"), Some("Deutsch"));
         // Its own key from the file.
         assert_eq!(reg[&de].t("ui.feed.role.user"), "DU");
-        // A key outside the file → falls back to the ru reference (not empty, not the key itself).
+        // A key outside the file → falls back to the **en** reference (not empty, not
+        // the key itself, and not Russian — a German locale missing a key used to show
+        // Russian, which is what D5 of robustness-and-defaults.md fixed).
         assert_eq!(
+            reg[&de].t("ui.feed.role.assistant"),
+            reg[&Lang::En].t("ui.feed.role.assistant")
+        );
+        assert_ne!(
             reg[&de].t("ui.feed.role.assistant"),
             reg[&Lang::Ru].t("ui.feed.role.assistant")
         );

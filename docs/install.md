@@ -63,8 +63,16 @@ steps: **application language**
 (Russian/English) and **data location** — the standard OS folder
 (`%APPDATA%\mindfork-rs\data`, recommended), portable (next to the app), or a custom
 folder. The choice is written to `defaults.json` next to the binary and **is not
-overwritten on upgrade**. Silent install:
-`setup.exe /VERYSILENT /NORESTART`.
+overwritten on upgrade**.
+
+On the "Additional tasks" page, three optional boxes, all **off** by default: a
+desktop shortcut, downloading the Python sandbox, and **adding the install folder
+to `PATH`** — which is what makes `mindfork llama setup` and the other commands
+the app suggests work from any terminal rather than only from the install folder.
+The entry goes into the user's own environment (the machine's for an "all users"
+install), is added once however many times you upgrade, and is removed when you
+uninstall. Silent install:
+`setup.exe /VERYSILENT /NORESTART` (add `/TASKS="addtopath"` to take that box).
 
 The installer is **unsigned** — on first run Windows SmartScreen will show a warning
 ("Windows protected your PC" → "More info" → "Run anyway"). File integrity can be
