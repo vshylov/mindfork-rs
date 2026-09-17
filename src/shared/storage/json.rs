@@ -51,6 +51,12 @@ impl JsonStore {
         Self { paths }
     }
 
+    /// The app's own directories, out of every file and code tool's reach
+    /// ([`Paths::app_dirs`]).
+    pub fn app_dirs(&self) -> Vec<std::path::PathBuf> {
+        self.paths.app_dirs()
+    }
+
     /// Python sandbox directory (`sandbox/`) — for the tool registry
     /// (`python_exec`, Wasmer mode). See [`Paths::sandbox_dir`].
     pub fn sandbox_dir(&self) -> std::path::PathBuf {

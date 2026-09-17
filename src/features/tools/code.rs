@@ -33,6 +33,7 @@ use anyhow::Result;
 use crate::entities::profile::ToolId;
 use crate::entities::workspace::CommandSlot;
 
+use super::reach::strip_verbatim;
 use super::{Tool, ToolContext, ToolOutcome};
 
 pub const CODE_LIST_ID: &str = "code_list";
@@ -152,11 +153,20 @@ fn workspace_root(ctx: &ToolContext) -> Result<PathBuf> {
     let canonical = root
         .canonicalize()
         .map_err(|e| anyhow::anyhow!(format!("{}: {e}", ws.root)))?;
-    Ok(strip_verbatim(&canonical))
+    // Windows canonicalization yields a verbatim path; that form would travel into
+    // the system prompt and every tool result, and come back from the model as a
+    // path we would then have to accept. Strip it once, at the boundary.
+    let root = strip_verbatim(&canonical);
+    // A project that *contains* the app's directories is fine — their paths are
+    // refused one by one — but one inside them has nothing it may reach.
+    super::reach::refuse_app_dirs(ctx, &root)?;
+    Ok(root)
 }
 
-/// Resolves an argument path inside `root` (relative to it, or absolute within).
-fn resolve(root: &Path, raw: &str, loc: &crate::shared::i18n::Locale) -> Result<PathBuf> {
+/// Resolves an argument path inside `root` (relative to it, or absolute within),
+/// refusing what no file or code tool may reach ([`super::reach`]).
+fn resolve(ctx: &ToolContext, root: &Path, raw: &str) -> Result<PathBuf> {
+    let loc = ctx.loc;
     let raw = raw.trim();
     if raw.is_empty() {
         anyhow::bail!(loc.t("tool.code.err.path_required").to_string());
@@ -181,6 +191,10 @@ fn resolve(root: &Path, raw: &str, loc: &crate::shared::i18n::Locale) -> Result<
             let mut existing = candidate.as_path();
             let mut tail: Vec<std::ffi::OsString> = Vec::new();
             while !existing.exists() {
+                // A link whose target is missing reads as absent too; judged by
+                // its own name it would pass the check below while a write
+                // followed it out (docs/research/safe-defaults.md N1).
+                super::reach::refuse_dangling_link(existing, loc)?;
                 let name = existing.file_name().ok_or_else(|| {
                     anyhow::anyhow!(loc.t("tool.code.err.path_required").to_string())
                 })?;
@@ -206,18 +220,24 @@ fn resolve(root: &Path, raw: &str, loc: &crate::shared::i18n::Locale) -> Result<
             &[("root", &root.display().to_string())]
         ));
     }
+    super::reach::refuse_app_dirs(ctx, &canonical)?;
     Ok(canonical)
 }
 
-/// Windows canonicalization yields `\\?\C:\…`; that form would travel into the
-/// system prompt and every tool result, and come back from the model as a path
-/// we would then have to accept. Strip it once, at the boundary.
-fn strip_verbatim(p: &Path) -> PathBuf {
-    let s = p.display().to_string();
-    match s.strip_prefix(r"\\?\") {
-        Some(rest) => PathBuf::from(rest),
-        None => p.to_path_buf(),
+/// Refuses a write under the project's `.git/` (docs/research/safe-defaults.md N2).
+///
+/// Editing git's internals is never the task, and a hook written there is code
+/// the user runs at their next commit — outside every tool and every
+/// confirmation. Reading stays allowed: `code_read` may still look at a hook.
+fn refuse_git_internals(ctx: &ToolContext, root: &Path, path: &Path) -> Result<()> {
+    let inside = path.strip_prefix(root).unwrap_or(path);
+    if inside
+        .components()
+        .any(|c| c.as_os_str().eq_ignore_ascii_case(".git"))
+    {
+        anyhow::bail!(ctx.loc.t("tool.code.err.git_dir").to_string());
     }
+    Ok(())
 }
 
 /// Path as the model should see it: relative to the root, forward slashes. The
@@ -347,12 +367,18 @@ fn numbered(lines: &[&str], from: usize, to: usize) -> String {
 /// Not following links matters twice: a link out of the project would escape the
 /// root check every *path* argument passes, and a link back into it is an
 /// endless walk.
+///
+/// `skip` — the app's own directories ([`super::reach::app_dirs`]), left out of
+/// the walk whether or not the project ignores them: a project may contain the
+/// data root, and a listing or a search is a read of it.
 fn walker(
     dir: &Path,
     max_depth: Option<usize>,
     overrides: Option<ignore::overrides::Override>,
+    skip: Vec<PathBuf>,
 ) -> ignore::Walk {
     let mut builder = ignore::WalkBuilder::new(dir);
+    builder.filter_entry(move |entry| !skip.iter().any(|d| entry.path().starts_with(d)));
     builder
         .hidden(true)
         .git_ignore(true)
@@ -576,10 +602,10 @@ impl Tool for CodeTool {
 
 /// The blocking half of [`list`]: the project-relative names under `base`,
 /// sorted, and whether [`MAX_LIST_ENTRIES`] cut them short.
-fn collect_entries(base: &Path, depth: usize) -> (Vec<String>, bool) {
+fn collect_entries(base: &Path, depth: usize, skip: Vec<PathBuf>) -> (Vec<String>, bool) {
     let mut entries = Vec::new();
     let mut truncated = false;
-    for entry in walker(base, Some(depth), None).flatten() {
+    for entry in walker(base, Some(depth), None, skip).flatten() {
         if entry.depth() == 0 {
             continue; // the directory itself
         }
@@ -599,15 +625,16 @@ fn collect_entries(base: &Path, depth: usize) -> (Vec<String>, bool) {
 async fn list(ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
     let root = workspace_root(ctx)?;
     let dir = match arg_str(&args, "path").filter(|s| !s.trim().is_empty()) {
-        Some(raw) => resolve(&root, &raw, ctx.loc)?,
+        Some(raw) => resolve(ctx, &root, &raw)?,
         None => root.clone(),
     };
     let depth = arg_usize(&args, "depth")
         .unwrap_or(DEFAULT_LIST_DEPTH)
         .clamp(1, 16);
     let base = dir.clone();
+    let skip = super::reach::app_dirs(ctx);
     let (entries, truncated) =
-        tokio::task::spawn_blocking(move || collect_entries(&base, depth)).await?;
+        tokio::task::spawn_blocking(move || collect_entries(&base, depth, skip)).await?;
 
     let shown = display_rel(&dir, &root);
     let shown = if shown.is_empty() {
@@ -641,7 +668,7 @@ async fn read(ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome>
     let root = workspace_root(ctx)?;
     let raw = arg_str(&args, "path")
         .ok_or_else(|| anyhow::anyhow!(ctx.loc.t("tool.code.err.path_required").to_string()))?;
-    let path = resolve(&root, &raw, ctx.loc)?;
+    let path = resolve(ctx, &root, &raw)?;
     let file = read_text(&path, ctx.loc, ctx.file_hint).await?;
     let lines: Vec<&str> = file.text.lines().collect();
     let total = lines.len();
@@ -769,11 +796,12 @@ fn search_files(
     re: &regex::Regex,
     root: &Path,
     hint: Option<&str>,
+    skip: Vec<PathBuf>,
 ) -> (Vec<String>, bool, usize) {
     let mut hits: Vec<String> = Vec::new();
     let mut truncated = false;
     let mut files = 0usize;
-    for entry in walker(dir, None, overrides).flatten() {
+    for entry in walker(dir, None, overrides, skip).flatten() {
         let Some(file) = searchable(&entry, hint) else {
             continue;
         };
@@ -794,7 +822,7 @@ async fn grep(ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome>
         .filter(|s| !s.trim().is_empty())
         .ok_or_else(|| anyhow::anyhow!(ctx.loc.t("tool.code.err.pattern_required").to_string()))?;
     let dir = match arg_str(&args, "path").filter(|s| !s.trim().is_empty()) {
-        Some(raw) => resolve(&root, &raw, ctx.loc)?,
+        Some(raw) => resolve(ctx, &root, &raw)?,
         None => root.clone(),
     };
     // Smart case, as a developer's grep does it: an all-lowercase pattern is
@@ -833,8 +861,9 @@ async fn grep(ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome>
 
     let root_for_walk = root.clone();
     let hint = ctx.file_hint;
+    let skip = super::reach::app_dirs(ctx);
     let (hits, truncated, files) = tokio::task::spawn_blocking(move || {
-        search_files(&dir, overrides, &re, &root_for_walk, hint)
+        search_files(&dir, overrides, &re, &root_for_walk, hint, skip)
     })
     .await?;
 
@@ -934,7 +963,8 @@ async fn edit(ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome>
     let root = workspace_root(ctx)?;
     let raw = arg_str(&args, "path")
         .ok_or_else(|| anyhow::anyhow!(ctx.loc.t("tool.code.err.path_required").to_string()))?;
-    let path = resolve(&root, &raw, ctx.loc)?;
+    let path = resolve(ctx, &root, &raw)?;
+    refuse_git_internals(ctx, &root, &path)?;
     let old = arg_str(&args, "old_string")
         .ok_or_else(|| anyhow::anyhow!(ctx.loc.t("tool.code.err.edit_args").to_string()))?;
     let new = arg_str(&args, "new_string")
@@ -1022,7 +1052,8 @@ async fn write(ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome
     let root = workspace_root(ctx)?;
     let raw = arg_str(&args, "path")
         .ok_or_else(|| anyhow::anyhow!(ctx.loc.t("tool.code.err.path_required").to_string()))?;
-    let path = resolve(&root, &raw, ctx.loc)?;
+    let path = resolve(ctx, &root, &raw)?;
+    refuse_git_internals(ctx, &root, &path)?;
     let content = arg_str(&args, "content")
         .ok_or_else(|| anyhow::anyhow!(ctx.loc.t("tool.code.err.write_args").to_string()))?;
 
@@ -2304,5 +2335,133 @@ mod tests {
         let clipped = clip_hit(&long);
         assert_eq!(clipped.chars().count(), MAX_GREP_LINE + 1, "the … is extra");
         assert!(clipped.ends_with('…'));
+    }
+
+    // ---------- docs/research/safe-defaults.md D2, N1, N2 ----------
+
+    /// A project that contains the app's data root — this repository and its
+    /// `target/debug/data/`, say — does not reach it: its files are neither read
+    /// nor written, a listing and a search do not enter it, and the rest of the
+    /// project works as before. A project *inside* the data root reaches nothing.
+    #[tokio::test]
+    async fn a_project_containing_the_data_root_does_not_reach_it() {
+        let mut f = fixture(&[
+            ("src/main.rs", "fn main() {} // marker-xyz\n"),
+            ("appdata/settings.json", "{\"marker-xyz\": true}\n"),
+        ]);
+        let data_root = f.dir.path().join("appdata");
+        f.ctx.storage = std::sync::Arc::new(
+            crate::shared::storage::Storage::open_in_memory(
+                crate::shared::paths::Paths::with_root(&data_root),
+            )
+            .unwrap(),
+        );
+        let refusal = f.ctx.loc.t("tool.fs.err.app_dir");
+
+        let read = CodeTool::Read
+            .invoke(&f.ctx, serde_json::json!({"path": "appdata/settings.json"}))
+            .await;
+        assert_eq!(read.unwrap_err().to_string(), refusal);
+        let write = CodeTool::Write
+            .invoke(
+                &f.ctx,
+                serde_json::json!({"path": "appdata/settings.json", "content": "{}"}),
+            )
+            .await;
+        assert_eq!(write.unwrap_err().to_string(), refusal);
+        assert!(
+            std::fs::read_to_string(data_root.join("settings.json"))
+                .unwrap()
+                .contains("marker-xyz")
+        );
+
+        let list = CodeTool::List
+            .invoke(&f.ctx, serde_json::json!({}))
+            .await
+            .unwrap()
+            .result;
+        assert!(
+            list.contains("src/main.rs") && !list.contains("appdata"),
+            "{list}"
+        );
+        let grep = CodeTool::Grep
+            .invoke(&f.ctx, serde_json::json!({"pattern": "marker-xyz"}))
+            .await
+            .unwrap()
+            .result;
+        assert!(
+            grep.contains("main.rs") && !grep.contains("settings.json"),
+            "{grep}"
+        );
+
+        f.ctx.workspace = Some(Workspace::new(data_root.to_string_lossy().into_owned()));
+        let inside = CodeTool::List.invoke(&f.ctx, serde_json::json!({})).await;
+        assert_eq!(inside.unwrap_err().to_string(), refusal);
+    }
+
+    /// `.git/` is read, never written: a hook created there would run at the
+    /// user's next commit, outside every tool and every confirmation.
+    #[tokio::test]
+    async fn git_internals_are_readable_but_not_written() {
+        let f = fixture(&[
+            (".git/config", "[core]\n"),
+            (".git/hooks/pre-commit.sample", "#!/bin/sh\n"),
+        ]);
+        let refusal = f.ctx.loc.t("tool.code.err.git_dir");
+
+        let hook = CodeTool::Write
+            .invoke(
+                &f.ctx,
+                serde_json::json!({"path": ".git/hooks/pre-commit", "content": "#!/bin/sh\ncurl x\n"}),
+            )
+            .await;
+        assert_eq!(hook.unwrap_err().to_string(), refusal);
+        assert!(!f.dir.path().join(".git/hooks/pre-commit").exists());
+        let edit = CodeTool::Edit
+            .invoke(
+                &f.ctx,
+                serde_json::json!({"path": ".GIT/config", "old_string": "[core]", "new_string": "[alias]"}),
+            )
+            .await;
+        assert_eq!(edit.unwrap_err().to_string(), refusal);
+
+        let read = CodeTool::Read
+            .invoke(
+                &f.ctx,
+                serde_json::json!({"path": ".git/hooks/pre-commit.sample"}),
+            )
+            .await
+            .unwrap();
+        assert!(read.result.contains("#!/bin/sh"), "{}", read.result);
+    }
+
+    /// A link whose target is missing reads as absent, so a write judged by the
+    /// link's own name followed it out of the project — as a file, and as a
+    /// directory `code_write` would create beneath it. Both are refused.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_dangling_link_in_the_project_is_not_written_through() {
+        let f = fixture(&[("src/lib.rs", "\n")]);
+        let outside = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(
+            outside.path().join("escaped.txt"),
+            f.dir.path().join("notes.md"),
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(
+            outside.path().join("missing-dir"),
+            f.dir.path().join("linked"),
+        )
+        .unwrap();
+        let refusal = f.ctx.loc.t("tool.fs.err.dangling_link");
+
+        for path in ["notes.md", "linked/new.rs"] {
+            let write = CodeTool::Write
+                .invoke(&f.ctx, serde_json::json!({"path": path, "content": "x"}))
+                .await;
+            assert_eq!(write.unwrap_err().to_string(), refusal, "{path}");
+        }
+        assert!(!outside.path().join("escaped.txt").exists());
+        assert!(!outside.path().join("missing-dir").exists());
     }
 }

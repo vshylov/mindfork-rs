@@ -214,8 +214,9 @@ build the moment they drift from what the app actually renders
   networkx / requests / lxml / openpyxl / pypdf / matplotlib and more
   preinstalled, no Python needed on the host (`mindfork sandbox setup` — one
   command). A local-interpreter mode exists for those who want it.
-- **Files** — `fs_read` / `fs_write` / `fs_list`, optionally jailed to one
-  directory (escaping via `..` is blocked).
+- **Files** — `fs_read` / `fs_write` / `fs_list`, jailed to the one directory
+  you set (escaping via `..` or a symbolic link is blocked); mindfork's own
+  data and program folders stay out of reach whatever the directory.
 - **`call_subagent`** — delegate a task to a subagent: the same model under a
   persona the assistant composes, with the assistant's own tools (minus
   subagents, history read-back and the self-model), no history of the chat,

@@ -3416,6 +3416,104 @@ async fn tool_confirmation_e2e_live() {
     assert!(written.contains("ZARYA-5150"));
 }
 
+/// The file tools' reach against a real model (docs/research/safe-defaults.md
+/// §4, D1–D2). The mocked tests prove each refusal; this proves they reach a
+/// model through a real provider as the answer to its call. Two turns:
+///
+/// 1. a root that **contains** the data root (the system temp folder), and the
+///    model asked to read the data root's `profiles.json` — GO: an `fs_read` call
+///    answered with the app-directory refusal, and the reply quotes nothing of
+///    the file;
+/// 2. no root at all, and the model asked to list a folder — GO: an `fs_list`
+///    call answered with the no-root refusal.
+///
+/// What the model then tells the user is printed, not asserted (lessons §9).
+#[tokio::test]
+#[ignore]
+async fn file_tools_reach_e2e_live() {
+    let refusals = |key: &str| -> Vec<String> {
+        [crate::shared::i18n::Lang::Ru, crate::shared::i18n::Lang::En]
+            .into_iter()
+            .map(|l| crate::shared::i18n::locale(l).t(key).to_string())
+            .collect()
+    };
+
+    let mut config = AppConfig::default();
+    config.tools.fs_enabled = true;
+    config.tools.fs_root = Some(std::env::temp_dir().display().to_string());
+    let Some((dir, cmd_tx, mut evt_rx, handle)) = spawn_orch_live_cfg(config) else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    enable_all_tools(&cmd_tx, &mut evt_rx).await;
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+    let profiles = dir.path().join("profiles.json");
+    assert!(
+        profiles.exists(),
+        "the data root has no profiles.json to aim at"
+    );
+    let (reply, calls) = run_turn_capture(
+        &cmd_tx,
+        &mut evt_rx,
+        &format!(
+            "Call fs_read on the file {} and quote its first three lines. Only call the tool once.",
+            profiles.display()
+        ),
+    )
+    .await;
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+    eprintln!("turn 1 calls: {calls:?}\nturn 1 reply: {reply}");
+    let app_dir = refusals("tool.fs.err.app_dir");
+    assert!(
+        calls
+            .iter()
+            .any(|(name, result)| name == "fs_read" && app_dir.iter().any(|r| result.contains(r))),
+        "no fs_read answered with the app-directory refusal: {calls:?}"
+    );
+    assert!(
+        !reply.contains("enabled_tools") && !reply.contains("known_tools"),
+        "the reply quotes the profile file: {reply}"
+    );
+
+    let listed = tempfile::tempdir().unwrap();
+    std::fs::write(listed.path().join("visible.txt"), "x").unwrap();
+    let mut config = AppConfig::default();
+    config.tools.fs_enabled = true;
+    let Some((_dir, cmd_tx, mut evt_rx, handle)) = spawn_orch_live_cfg(config) else {
+        return;
+    };
+    enable_all_tools(&cmd_tx, &mut evt_rx).await;
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+    let (reply, calls) = run_turn_capture(
+        &cmd_tx,
+        &mut evt_rx,
+        &format!(
+            "Call fs_list on the folder {} and tell me what is in it. Only call the tool once.",
+            listed.path().display()
+        ),
+    )
+    .await;
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+    eprintln!("turn 2 calls: {calls:?}\nturn 2 reply: {reply}");
+    let no_root = refusals("tool.fs.err.no_root");
+    assert!(
+        calls
+            .iter()
+            .any(|(name, result)| name == "fs_list" && no_root.iter().any(|r| result.contains(r))),
+        "no fs_list answered with the no-root refusal: {calls:?}"
+    );
+    assert!(
+        !reply.contains("visible.txt"),
+        "the reply lists the folder: {reply}"
+    );
+}
+
 /// History compression end to end (spec §6.7): a fact stated early must survive
 /// being folded into the rolling summary and still be answerable once those
 /// messages are no longer sent verbatim.

@@ -171,8 +171,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-17, version 0.9.9)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3276 unit tests
-green, 186 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **3281 unit tests
+green, 187 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -184,6 +184,12 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **Safe defaults 2a — the file tools need a root** — an empty `fs_root` refuses (it
+  meant the whole disk), no file or code tool reaches the data root or the binary's
+  directory (`tools/reach.rs`), a dangling link no longer writes through the root check,
+  `.git/` is not written, and a background run under confirmation gets no dangerous
+  tools. Live **GO** ([docs/research/safe-defaults.md](docs/research/safe-defaults.md),
+  [docs/journal/tools.md](docs/journal/tools.md)).
 - **Before the first public release** — an audit of the flip, the defaults and the
   first run found twelve blockers and staged them; stage 1: a TUI launch without a
   terminal refuses (it hung), an empty chat with no engine lists the ways to connect
@@ -381,15 +387,6 @@ being recent is dropped, not shortened.
   where a name is shared
   ([docs/research/remove-by-shared-name.md](docs/research/remove-by-shared-name.md),
   spec §9.7, §9.10, [docs/journal/rag.md](docs/journal/rag.md)).
-- **A fetched page's attachment is named after the page, not its site** —
-  `fetch_url` named an attachment `<h1>`-first, because docs.vlang.io repeats one
-  `<title>`; sector.biz.ua repeats one banner `<h1>`, so its articles were named after
-  the archive. Measured on 43 sites first: the `<h1>`-first rule named every page of six
-  after the site, and `og:title` first would still have left three. Now
-  `NameFields::name` takes what a second field confirms — `og:title`, an `<h1>` the
-  `<title>` begins with, the `<title>` without its site segment — with no collision on
-  the corpus ([docs/research/page-attachment-name.md](docs/research/page-attachment-name.md),
-  spec §9.3.1, [docs/journal/tools.md](docs/journal/tools.md)).
 - **A headless launch (no TTY) exits with code 2** and a one-line reason — the
   TUI cannot be run from an agent's shell; live verification needs a real
   terminal.

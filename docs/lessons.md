@@ -1540,6 +1540,17 @@ user's source on disk. Ask which half, done alone, cannot be retried — that on
 goes second.
 — *the code workspace — stage 4*.
 
+**A containment check judges the path; the write follows the link.** Both path
+resolvers canonicalized what existed and, for a path that did not, joined a canonical
+parent with the missing name — and `exists()` is `false` for a symbolic link whose
+target is missing, so such a link was judged by its own name, passed the root check,
+and `fs::write` created the file wherever it pointed. Nothing here creates links; a
+cloned repository does. Any resolver that falls back to "parent + name" must first ask
+`symlink_metadata` whether that name is a link. And a root may **contain** what no tool
+should reach (a whole drive, a project holding the data root): refuse by the resolved
+path, not by the root.
+— *safe defaults 2a*.
+
 ## 9. Live runs and model behaviour
 
 **Through a gateway, a model's raw tool template in the reply text is the

@@ -46,15 +46,22 @@ there are no backport branches.
   `machine-id`-derived key on Linux, so a copied settings file does not carry
   usable secrets ([ADR 0008](docs/decisions/0008-api-key-storage.md)).
 - **Dangerous tools are off by default and gated**: Python execution, file
-  access and MCP plugins each sit behind a global switch plus per-profile
-  toggles (MCP is a double opt-in), with an optional confirmation prompt
-  before every dangerous call.
+  access and MCP plugins each sit behind a global switch that starts off. A
+  profile's own tool toggles follow the switch — they start on for everything
+  but MCP, which needs its own per-profile opt-in as well. An optional
+  confirmation prompt can ask before every dangerous call; while it is on, a
+  background run is not offered dangerous tools at all, since no one could be
+  asked.
 - **The Python sandbox is isolated**: `python_exec` runs in a Wasmer/WASIX
   sidecar with no host filesystem access and network behind a toggle
   ([ADR 0005](docs/decisions/0005-python-sandbox-wasmer.md)).
-- **The file tools can be jailed**: an optional `fs_root` confines
-  `fs_read` / `fs_write` / `fs_list` to one directory, and escaping via `..`
-  is blocked.
+- **The file tools are jailed**: `fs_read` / `fs_write` / `fs_list` work only
+  inside the `fs_root` directory you set, and refuse while it is empty; escaping
+  it via `..`, an absolute path or a symbolic link is blocked.
+- **The app's own folders are out of every tool's reach**: no file tool and no
+  code-workspace tool reads or writes mindfork's data folder (settings, stored
+  keys, conversations) or its program folder, whatever root or project they were
+  given, and the workspace tools never write under a project's `.git/`.
 - **MCP tool catalogs are TOFU-pinned**: a server changing its tool set or
   descriptions after you approved it requires re-confirmation
   ([ADR 0007](docs/decisions/0007-plugins-mcp-host-import-format.md)).
@@ -72,7 +79,8 @@ destination it can contact and the setting that has to be on first — is
 
 - escaping the Python sandbox to the host's files or network while the
   toggles say otherwise;
-- escaping the `fs_root` jail (path traversal or any other route);
+- escaping the `fs_root` jail (path traversal or any other route), or reaching
+  the app's own folders through a file or workspace tool;
 - recovering API keys, MCP tokens or backup passwords from the settings file
   in usable form on another machine, or finding them written to disk or logs
   in plaintext;

@@ -365,6 +365,18 @@ impl Paths {
         self.exe_dir.as_deref()
     }
 
+    /// The directories no file or code tool may read or write: the data root and
+    /// the binary's own directory, where `defaults.json` decides the data root.
+    /// Writing either is code execution at the next launch (an MCP server in
+    /// `settings.json`, a replaced binary); reading the data root reaches every
+    /// stored key and every other conversation past the opt-ins that guard them
+    /// (docs/research/safe-defaults.md D2).
+    pub fn app_dirs(&self) -> Vec<PathBuf> {
+        let mut dirs = vec![self.root.clone()];
+        dirs.extend(self.exe_dir.clone());
+        dirs
+    }
+
     /// External-locales directory (`locales/`): `<code>.json` overrides the
     /// built-in bundle of the same language or adds a new language without
     /// rebuilding (axis A/B, Tier 3 — docs/history/i18n-external-locales.md).

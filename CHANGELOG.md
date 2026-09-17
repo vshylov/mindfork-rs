@@ -127,6 +127,25 @@ split by subsystem.
   sent to the embedding service, the pages `fetch_url` attaches whole, the environment an
   MCP server inherits, what a backup contains and the working folder of a Python run —
   each written from the code, in English and Russian, in the installer and on the site.
+- **The file tools need a folder to work in.** `fs_read`, `fs_write` and `fs_list` used
+  to reach the whole disk while the sandbox directory was empty; now they refuse until it
+  is set, and tell the assistant which setting that is. If you had them on with the row
+  empty, set it (Ctrl+P → Tools → Sandbox directory); `C:\` or `/` still gives the whole
+  disk, as a choice rather than a default.
+- **With confirmation on, a background sub-agent is not given dangerous tools.** It used
+  to run them without asking, since no one is there to ask; now it plans without them.
+
+### Security
+
+- **The assistant's file and project tools can no longer reach mindfork's own folders.**
+  A file tool given a whole drive, or a project that contains the data folder, could read
+  every stored key and conversation, or rewrite the settings so that something would run
+  at the next start. Those folders are now refused whatever the tools were given.
+- **A symbolic link can no longer carry a write out of the allowed folder.** A link whose
+  target did not exist passed the folder check by its own name, and the write followed it
+  outside — say, a cloned repository's link into an autostart folder.
+- **The project tools no longer write under `.git/`**, where a hook would run at your
+  next commit. Reading there still works.
 
 ## [0.9.9] — 2026-09-13
 

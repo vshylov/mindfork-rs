@@ -715,3 +715,54 @@ fn start_subagent_is_gated_by_the_setting() {
             .any(|t| t == "start_subagent")
     );
 }
+
+/// While every dangerous call is to be confirmed, a background run — which has
+/// no one to ask — is not offered the dangerous tools at all, while the
+/// parent's own turn still is; with confirmation off the run gets them as
+/// before (docs/research/safe-defaults.md D7).
+#[tokio::test]
+async fn a_background_run_is_not_offered_what_no_one_could_confirm() {
+    for confirm in [true, false] {
+        let backend = KeyedRecorder::new(
+            vec![
+                ("", vec![start("c1"), text("started it")]),
+                ("be harsh", vec![text("harsh view")]),
+            ],
+            10,
+        );
+        let mut cfg = cfg(2);
+        cfg.tools.subagent_background_wake = false;
+        cfg.tools.confirm_dangerous = confirm;
+        cfg.tools.python_enabled = true;
+        let (_dir, cmd_tx, mut rx, handle, _chat_id) = begin(backend.clone(), cfg).await;
+        next(&mut rx, finished).await;
+        next(&mut rx, runs_out(0)).await;
+        cmd_tx.send(AppCommand::Quit).unwrap();
+        handle.await.unwrap();
+
+        let requests = backend.requests();
+        let offers_python = |req: &crate::shared::api::contract::ChatRequest| {
+            req.tools.iter().any(|t| t.name == "python_exec")
+        };
+        let is_child = |req: &crate::shared::api::contract::ChatRequest| {
+            req.system
+                .as_deref()
+                .is_some_and(|s| s.contains("be harsh"))
+        };
+        let parent = requests.iter().find(|r| !is_child(r)).unwrap();
+        let child = requests
+            .iter()
+            .find(|r| is_child(r))
+            .expect("the run's request");
+        assert!(
+            offers_python(parent),
+            "confirm={confirm}: the turn lost the tool"
+        );
+        assert_eq!(
+            offers_python(child),
+            !confirm,
+            "confirm={confirm}: the run's tools were {:?}",
+            child.tools.iter().map(|t| &t.name).collect::<Vec<_>>()
+        );
+    }
+}
