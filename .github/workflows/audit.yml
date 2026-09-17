@@ -1,12 +1,27 @@
 # Dependency audit (cargo-deny): vulnerabilities (advisories), licenses, duplicate versions,
-# sources. Runs on a schedule (weekly) and manually — NOT on pull_request,
-# so it doesn't block merges (advisory mode, release-engineering.md F6). Configuration —
-# deny.toml at the repo root.
+# sources. Weekly, manually, and — since docs/research/release-pipeline.md N5 —
+# on a pull request that changes the dependency graph. It used to run on no pull
+# request at all (advisory mode, release-engineering.md F6); what changed is the
+# audience, not the tool: a graph changed by someone without write access is
+# exactly the case the weekly run learns about too late. A pull request that
+# touches no dependency is unaffected. Configuration — deny.toml at the repo root.
 name: Audit
 
 on:
   schedule:
     - cron: "0 6 * * 1" # Monday 06:00 UTC
+  # ...and on a pull request that changes the dependency graph. The weekly run
+  # was the whole of it while the repository was private and every dependency was
+  # added by its owner; on a public one the first thing a stranger's pull request
+  # can do is add a crate, and finding out on Monday is finding out after the
+  # merge. Roughly a minute, and only on these paths
+  # (docs/research/release-pipeline.md N5).
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "deny.toml"
+      - ".github/workflows/audit.yml"
   workflow_dispatch: {}
 
 env:
@@ -20,7 +35,7 @@ jobs:
     # network part. Why every job has a ceiling: the header of ci.yml.
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v5
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25  # v2.1.1
         with:
           command: check advisories licenses bans sources

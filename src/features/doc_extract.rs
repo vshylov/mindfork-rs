@@ -43,34 +43,34 @@ pub fn extract_docx(bytes: &[u8]) -> anyhow::Result<String> {
             .read_event_into(&mut buf)
             .context("DOCX: XML parse error")?
         {
-            // Matched by **local** name (without the `w:` prefix).
+            // Matched by **local** name (without the `w:` prefix). Since
+            // quick-xml 0.40 a name is a `str`, not bytes — the reader decodes.
             Event::Start(e) => {
-                if e.local_name().as_ref() == b"t" {
+                if e.local_name().as_ref() == "t" {
                     in_text = true;
                 }
             }
             Event::End(e) => match e.local_name().as_ref() {
-                b"t" => in_text = false,
-                b"p" => out.push('\n'), // end of a paragraph
+                "t" => in_text = false,
+                "p" => out.push('\n'), // end of a paragraph
                 _ => {}
             },
             Event::Empty(e) => match e.local_name().as_ref() {
-                b"tab" => out.push('\t'),
-                b"br" => out.push('\n'),
+                "tab" => out.push('\t'),
+                "br" => out.push('\n'),
                 _ => {}
             },
             Event::Text(e) if in_text => {
-                // The text decodes as UTF-8 (quick-xml emits escapes as separate
-                // GeneralRef events, see below — none are present here anymore).
-                let decoded = e.decode().context("DOCX: failed to decode text")?;
-                out.push_str(&decoded);
+                // Already decoded; `xml10_content` is the text with XML 1.0 line-end
+                // normalization applied (escapes arrive as separate GeneralRef
+                // events, see below — none are left in here).
+                out.push_str(&e.xml10_content());
             }
-            // quick-xml 0.39 emits entity references (`&amp;`, `&#38;`) as a separate
+            // quick-xml emits entity references (`&amp;`, `&#38;`) as a separate
             // event — `BytesRef` holds the name without `&`/`;`. We reconstruct and
             // unescape it (`unescape` understands both named and numeric references).
             Event::GeneralRef(e) if in_text => {
-                let name = e.decode().context("DOCX: failed to decode an entity")?;
-                let entity = format!("&{name};");
+                let entity = format!("&{};", e.xml10_content());
                 let text = quick_xml::escape::unescape(&entity)
                     .context("DOCX: failed to unescape an entity")?;
                 out.push_str(&text);

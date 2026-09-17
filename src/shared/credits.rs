@@ -191,7 +191,7 @@ pub const COMPONENTS: &[(&str, &str, &str)] = &[
     ("pdf-extract", "0.12.0", "MIT"),
     ("percent-encoding", "2.3.2", "MIT OR Apache-2.0"),
     ("pulldown-cmark", "0.13.4", "MIT"),
-    ("quick-xml", "0.39.4", "MIT"),
+    ("quick-xml", "0.42.0", "MIT"),
     ("ratatui", "0.30.1", "MIT"),
     ("regex", "1.12.4", "MIT OR Apache-2.0"),
     ("reqwest", "0.13.4", "MIT OR Apache-2.0"),
@@ -672,8 +672,18 @@ mod tests {
         );
 
         // Both version fields come from the tag, never from Inno's 0.0.0.0 default.
+        // They take `NumericVersion` rather than `AppVersion` because Windows file
+        // metadata accepts digits and dots only, and a rehearsal tag carries a
+        // prerelease suffix — with `{#AppVersion}` there, the first rehearsal
+        // aborted the compile (docs/research/release-pipeline.md §8). The define
+        // is asserted too, so the pair cannot quietly become a literal.
         for name in ["VersionInfoVersion", "VersionInfoProductVersion"] {
-            assert_eq!(directive(&iss, name), "{#AppVersion}", "{name}");
+            assert_eq!(directive(&iss, name), "{#NumericVersion}", "{name}");
         }
+        assert!(
+            iss.contains("#define NumericVersion Copy(AppVersion, 1, Dash - 1)")
+                && iss.contains("#define NumericVersion AppVersion"),
+            "mindfork.iss must derive NumericVersion from AppVersion, both ways",
+        );
     }
 }

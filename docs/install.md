@@ -792,7 +792,12 @@ The three bundled dictionaries are third-party work: where each came from, the
 exact upstream commit, its licence and the digest of the file as shipped are
 recorded in [dictionaries/SOURCES.md](../dictionaries/SOURCES.md), and the
 licence texts travel with them — `data/dictionaries/licenses/` in every archive,
-package and install.
+package and install. Beside them every artifact carries `THIRD-PARTY-NOTICES.md`
+(the licence text of every Rust package that release was built from, generated
+from its own `Cargo.lock`) and `licenses/syntaxes/` (the vendored syntax
+grammars, which are compiled into the binary and so have no file of their own to
+sit beside — [syntaxes/SOURCES.md](../syntaxes/SOURCES.md)). In the Linux
+packages both live under `/usr/share/doc/mindfork-rs/`.
 
 **Adding your own.** Drop a Hunspell pair `<name>.aff` + `<name>.dic` into the data
 directory's `dictionaries/` and restart — ready-made dictionaries for most languages

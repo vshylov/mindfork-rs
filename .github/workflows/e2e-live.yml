@@ -78,11 +78,11 @@ jobs:
     # scale-to-zero window is what bounds the cost if even that fails.
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
 
       - name: Install the toolchain (from rust-toolchain.toml)
         run: rustup show
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # v2.9.2
       # Bounded (timeout + apt options) — see the comment on ci.yml's `lint` job.
       # Runs before any endpoint exists, so a failure here bills no GPU.
       - name: System dependencies (ALSA — speech playback /tts)

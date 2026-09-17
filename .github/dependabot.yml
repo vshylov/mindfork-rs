@@ -1,0 +1,46 @@
+# Dependabot — the maintenance half of keeping this repository's inputs current.
+# The security half is separate and unscheduled: Dependabot *alerts* raise a pull
+# request for an advisory whatever the cadence below says, once they are enabled
+# on the repository (public-release-readiness.md B3).
+#
+# Cadence is a spending decision, not a taste one: every pull request Dependabot
+# opens runs this repository's CI, and a Rust one costs roughly 20 billable
+# minutes on a matrix that bills Windows at 2x (docs/journal/ci.md). Hence
+# weekly for the actions, which are small and security-relevant, and monthly and
+# **grouped** for the crates — one pull request a month rather than a stream of
+# them (fork R4 of docs/research/release-pipeline.md).
+version: 2
+updates:
+  # Every `uses:` in .github/workflows/ is pinned to a commit SHA
+  # (tools/actions_pin_check.py). Dependabot understands that pin: it rewrites
+  # the SHA and the `# vX.Y.Z` comment together, which is what keeps the pins
+  # from becoming the thing nobody updates. Without this entry, pinning would
+  # trade a moving tag for a frozen one — including on the two actions that
+  # receive credentials.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"
+    labels: ["dependencies"]
+
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: monthly
+      time: "06:00"
+      timezone: Etc/UTC
+    # One pull request for the routine moves. A major bump stays on its own,
+    # because that is the one that needs reading rather than merging.
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "deps"
+    labels: ["dependencies"]

@@ -891,6 +891,14 @@ the same change — the wildcard stays for what is truly unknown, and a test per
 drives the real stream to the new value.
 — *a reply the content filter stopped says so*.
 
+**A tool's `--version` output is a measurement, not a guess.** A pinned installer asserted
+the version it had just installed by looking for a `version:` line; nfpm prints an ASCII
+banner and then `GitVersion:    2.47.0`, so the script rejected the copy it had correctly
+downloaded and hash-verified. The assertion was right to exist — it is what stops a stale
+copy already on PATH being used silently — and it cost one container run to get right,
+which is one release run saved.
+— *public release readiness — stage 3, the release pipeline*.
+
 ## 4. The recurring defect class: a message must close the door
 
 **Never let a message describe a situation without saying what is and is not possible
@@ -1867,10 +1875,17 @@ watched by eye, and the PR analysis is the first real measurement. The shape tha
 caught one out: a **dispatch `match` with nineteen arms** scored S3776 complexity
 16 against a bar of 15 on the strength of five short `if`s inside it, no single
 arm looking remotely complex. Delegating each precondition-carrying arm to a
-named method fixed it and read better — a table of one-liners.
+named method fixed it and read better — a table of one-liners. **And the snippet
+analyzer runs the rule engine, not the taint engine**: two new `tools/*.py` came
+back clean from it *after* the PR analysis had flagged one of them BLOCKER for
+path traversal — a file written to a path built from a CLI argument, which only
+the whole-project analysis sees. The taint findings are also the ones that move
+`new_security_rating` to E and redden the gate outright, so for a script that
+opens, writes or executes anything, expect the PR to be the first place that is
+measured — and prefer a fixed path over an argument nobody needed.
 — *SonarQube follow-up — the doc gate's regexes and one test's complexity*,
 *SonarQube follow-up — the screenshots SVG writer*, *command-only control —
-stage 2*.
+stage 2*, *public release readiness — stage 3, the release pipeline*.
 
 **An invariant enforced only where data is *written* is not enforced.** The code
 workspace's journal reset lived inside `Journal::record` — correct, and useless for the
@@ -1932,3 +1947,14 @@ history (p50/max, with room for a cold cache), and write the figure next to the 
 And when a job does hang, read the *step* timestamps before blaming the machine: four
 jobs stopping on the same line is a dependency, not a runner.
 — *a ceiling on every job, and two orphaned workflows*.
+
+**A workflow's refusal paths are only ever reached by the thing it guards going wrong.**
+A release runs once per version; a guard written inline in its YAML — the tag against
+`Cargo.toml`, the CHANGELOG section that becomes the notes — is first exercised by a
+release that fails, which is the most expensive place to discover a typo in it. Put the
+logic in a script the workflow calls, give the script a `--self-test` that drives every arm
+against fixtures, and run that in the ordinary lint job: the arms are then checked on every
+pull request, for a tenth of a second. The same reasoning as extracting a `run:` block and
+executing it against stubs, one step further — the extraction becomes the shipped shape.
+— *public release readiness — stage 3, the release pipeline*, *the workflows before
+strangers can open a pull request*.

@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (16)
+## Entries (17)
 
 - Post-M9: cutting GitHub Actions minutes (done)
 - Post-M9: skipping the test job for docs-only pull requests (done)
@@ -29,6 +29,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: the lab stack's chat context raised to 16384 (done)
 - Post-M9: a third chat model on the live gate — gpt-oss-120b, split across two files (done)
 
+- Post-M9: the workflows before strangers can open a pull request (done)
 ### Post-M9: cutting GitHub Actions minutes (done)
 - **Trigger**: the `v0.9.4` release run was refused by GitHub with *"The job was
   not started because recent account payments have failed or your spending limit
@@ -1349,3 +1350,70 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   re-verifications and the CI dispatch, across eleven throwaway endpoints, none
   left running. A routine dispatch on this model is ~$2.00 against ~$1.00 for a
   Gemma or Qwen run.
+
+### Post-M9: the workflows before strangers can open a pull request (done)
+
+- **Stage 3 of the public-release track**, the half that lives in CI
+  ([release-pipeline.md](../research/release-pipeline.md); the pipeline half is in
+  [release.md](release.md)). Making the repository public changes who can start a workflow
+  run and who can change the dependency graph, and two of these were already wrong for the
+  audience we have.
+- **B5 — the Sonar job failed every fork and Dependabot pull request.** Its only guard was
+  `docs_only`, and the step passes `secrets.SONAR_TOKEN` with `sonar.qualitygate.wait=true`.
+  A run from a fork receives no repository secrets, and a Dependabot pull request runs
+  against Dependabot's own secret store — in both the token is empty, and the scanner
+  *fails* rather than skipping, holding the job open until it does. So the first thing a
+  stranger's contribution would have met is a red check it could do nothing about, and
+  turning on `dependabot.yml` (below) would have made every bot pull request red too. The
+  job is now guarded on the head repository **and** on the actor; everything else —
+  lints, both test matrices — still runs, so such a pull request is gated by exactly what
+  it can be gated by. GitHub counts a skipped job as a passing required check, which is
+  what lets this job stay required once branch protection exists (B3, the owner's).
+- **Every action is pinned to a commit.** A `uses: owner/repo@v5` is a pointer its owner
+  can move, and two of ours receive credentials: the Sonar action takes `SONAR_TOKEN`, and
+  `aws-actions/configure-aws-credentials` assumes the role that deploys mindfork.io with
+  `id-token: write`. A repointed tag on either is a credential leak that no review of this
+  repository would show, because nothing here changed. All 40 references now carry a
+  40-character SHA and a `# vX.Y.Z` comment, held by `tools/actions_pin_check.py` in the
+  `lint` job. `taiki-e/install-action@cargo-llvm-cov` was the odd one — the *tag* was the
+  tool name — and now names the tool in `with:` instead.
+- **A pin nobody updates is its own problem**, so `.github/dependabot.yml` arrives with it:
+  `github-actions` weekly (Dependabot rewrites the SHA and its comment together), `cargo`
+  monthly and grouped by minor/patch. The cadence is a spending decision — every bot pull
+  request runs this CI, and a Rust one costs roughly 20 billable minutes on a matrix that
+  bills Windows at 2x — so one Rust pull request a month rather than a stream of them.
+  Security advisories are unaffected by the schedule: Dependabot *alerts* open their own,
+  once the repository setting is on (B3).
+- **`cargo-deny` also runs on a pull request that changes the graph** (`Cargo.toml`,
+  `Cargo.lock`, `deny.toml`), about a minute. Weekly-only was right while every dependency
+  was added by the owner; on a public repository the first thing an outside pull request
+  can do is add a crate, and Monday is after the merge.
+- **Two new gates in `lint`**, both needing no toolchain and running in well under a second:
+  `actions_pin_check.py` above, and `release_guard.py --self-test`, which exercises the tag
+  guard's refusals against fixtures — a release workflow's error paths are otherwise only
+  ever reached by a release that fails (lessons §10).
+- **What the first PR analysis said about the new gates.** Ten findings, and the quality
+  gate red on `new_security_rating` **E**: a BLOCKER `pythonsecurity:S2083` — the tag
+  guard wrote its notes to a path taken from a CLI argument — plus a backtracking regex,
+  cognitive complexity 21, chained `startswith`, four `[`-instead-of-`[[` in the shell
+  script and a `curl -L` without `--proto '=https'`. All fixed: the notes file is a fixed
+  name in the working directory (an argument nobody needed), the line parser splits the
+  comment off with `partition`, the per-line judgement moved into a named function, and
+  the download cannot be redirected off https. The pre-check that lessons §10 prescribes
+  for a new `tools/*.py` — the Sonar MCP snippet analyzer — was skipped before this push
+  and run after it: it reports both files clean, which would have caught seven of the ten
+  and, tellingly, **not** the BLOCKER. It runs the rule engine, not the taint engine, so a
+  path built from an argument is only ever seen by the whole-project analysis — the lesson
+  is written down there.
+- **The audit's new trigger paid for itself on the pull request that added it.** Its
+  first run went red on RUSTSEC-2026-0285 — `rustls 0.23.40` accepted TLS 1.3 handshake
+  messages at the wrong encryption level instead of sending `unexpected_message`, the same
+  bug as Go's CVE-2025-61730. Not ours and not new to this branch, but it reached this
+  repository through a dependency change, which is exactly the moment the weekly schedule
+  would have missed by up to six days. `cargo update -p rustls` alone stops at 0.23.43 —
+  the MSRV-aware resolver holds the chain back — while the advisory is fixed from 0.23.45,
+  so the version is set precisely; it builds and tests green on the pinned 1.96.0
+  toolchain (aws-lc-rs 1.18.1 / aws-lc-sys 0.45.0 come with it).
+- Cost: the two gates are noise next to the job they sit in; the audit's pull-request
+  trigger adds ~1 minute on dependency changes only; Dependabot is the one real line item,
+  budgeted above.

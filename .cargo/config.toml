@@ -1,0 +1,28 @@
+# Cargo configuration for this repository.
+#
+# Windows: link the C runtime **statically**.
+#
+# Without this the binary imports `VCRUNTIME140.dll` and the eleven
+# `api-ms-win-crt-*` stubs. The latter are the Universal CRT, a Windows component
+# since Windows 10; `VCRUNTIME140.dll` belongs to the Visual C++ redistributable,
+# which a clean Windows does not carry and our installer does not ship — so on a
+# machine that has never installed a C++ application, mindfork.exe failed to
+# start before printing anything, with the dialog Windows shows for a missing
+# DLL. Measured on the 0.9.9 release binary
+# (docs/research/release-pipeline.md §2.1, B12 of public-release-readiness.md).
+#
+# Measured with the flag: it links, the graph's C dependencies (`onig`,
+# `libsqlite3-sys`, `sqlite-vec`) pick up the static runtime through the `cc`
+# crate's reading of the target feature, the binary imports neither
+# `VCRUNTIME140.dll` nor any `api-ms-win-crt-*`, and it costs 365 KB (+1.4 %).
+#
+# Here rather than in `release.yml` (fork R1) so that every build links the way
+# the release does — a developer's `cargo run`, CI's test matrix and the shipped
+# artifact alike. A linkage nobody tests is a linkage nobody has tried.
+#
+# **Caveat worth knowing:** cargo does not merge these with the `RUSTFLAGS`
+# environment variable — if `RUSTFLAGS` is set in a shell, it replaces this
+# wholesale and the build comes out dynamically linked again. Anything that sets
+# `RUSTFLAGS` for a Windows build has to repeat `-C target-feature=+crt-static`.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

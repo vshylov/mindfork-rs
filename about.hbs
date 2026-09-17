@@ -1,0 +1,33 @@
+{{!
+  The template for THIRD-PARTY-NOTICES.md (see about.toml). Markdown rather than
+  cargo-about's default HTML: the file sits next to README.md and LICENSE in
+  every artifact, and those are read in a terminal as often as in a browser.
+}}# Third-party notices
+
+mindfork-rs is distributed under the MIT licence (see `LICENSE`). It links
+third-party Rust packages whose own licences are reproduced below, one section
+per licence, listing the packages it covers.
+
+This file is generated from the exact `Cargo.lock` of this release
+(`cargo about`); the application's About dialog (`F1` → Components) lists the
+direct dependencies and the vendored syntax grammars, whose licence texts are in
+`licenses/syntaxes/`. Spellcheck dictionaries carry theirs in
+`data/dictionaries/licenses/`.
+
+{{!
+  Triple-stash throughout: handlebars HTML-escapes by default, and a licence text
+  is not HTML — `"` would reach the file as `&quot;`, which is not the text the
+  copyright holder wrote.
+}}{{#each licenses}}
+## {{{name}}}
+
+Applies to:
+{{#each used_by}}
+- {{{crate.name}}} {{{crate.version}}}{{#if crate.repository}} — {{{crate.repository}}}{{/if}}
+{{/each}}
+
+```
+{{{text}}}
+```
+
+{{/each}}

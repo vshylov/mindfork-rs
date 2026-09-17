@@ -41,10 +41,10 @@ jobs:
     # usually from a warm cache; cold adds several minutes.
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
       - name: Install the toolchain (from rust-toolchain.toml)
         run: rustup show
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # v2.9.2
       # ALSA is needed by the Linux build (rodio/cpal — speech playback /tts).
       - name: System dependencies (ALSA)
         timeout-minutes: 5
@@ -53,18 +53,29 @@ jobs:
           && sudo apt-get install -y libasound2-dev
       - name: Release build
         run: cargo build --release --locked
+      # The same pinned, hash-verified nfpm release.yml builds the real packages
+      # with — one script, so this gate cannot pass on a different builder
+      # (tools/install_nfpm.sh).
       - name: Install nfpm
         timeout-minutes: 5
-        run: |
-          echo 'deb [trusted=yes] https://repo.goreleaser.com/apt/ /' \
-            | sudo tee /etc/apt/sources.list.d/goreleaser.list
-          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
-          sudo apt-get install -y nfpm
+        run: bash tools/install_nfpm.sh
+      # The packages carry the third-party notices, and this workflow triggers on
+      # `Cargo.toml`/`Cargo.lock` — so the generation that a release depends on is
+      # exercised by the pull request that changes the graph. A dependency whose
+      # licence the list cannot account for fails here, not on the tag
+      # (docs/research/release-pipeline.md R2).
+      - name: Install cargo-about
+        uses: taiki-e/install-action@76c2e6406e52637deed7160d77bded76bd83e06e  # v2.87.14
+        with:
+          tool: cargo-about
+      - name: Third-party notices
+        timeout-minutes: 10
+        run: cargo about generate about.hbs -o THIRD-PARTY-NOTICES.md
       - name: Build deb/rpm/archlinux
         run: |
           VERSION="$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
           bash packaging/linux/build-packages.sh target/release/mindfork "$VERSION" dist
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5.0.0
         with:
           name: linux-packages
           path: |
@@ -89,7 +100,7 @@ jobs:
           - archlinux:latest
     container: ${{ matrix.image }}
     steps:
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0  # v5.0.0
         with:
           name: linux-packages
           path: dist
@@ -166,7 +177,7 @@ jobs:
     # part, and it replaced a `choco install` of comparable weight.
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
       # The same pinned compiler release.yml compiles the real artifact with — shared
       # through one script so the gate cannot drift onto a different Inno Setup than
       # the release (docs/research/inno-setup-7.md §4).
@@ -177,11 +188,15 @@ jobs:
         shell: pwsh
         run: |
           # We don't build a real binary here — we only check that the .iss (and its
-          # Pascal code) compiles. The stub satisfies [Files].
+          # Pascal code) compiles. The stubs satisfy [Files]: the binary, and the
+          # notice file that the release generates from its own Cargo.lock (the
+          # `build` job above does generate the real one, but this job runs on a
+          # different machine and the gate is about the script, not the text).
           New-Item -ItemType Directory -Force stage | Out-Null
           Set-Content -Path stage\mindfork.exe -Value "dummy"
+          Set-Content -Path THIRD-PARTY-NOTICES.md -Value "stub"
           & $env:ISCC "/DAppVersion=0.0.0" "/DBinDir=$PWD\stage" packaging\windows\mindfork.iss
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5.0.0
         with:
           name: windows-installer-ci
           path: dist\*.exe

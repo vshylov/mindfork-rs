@@ -155,3 +155,22 @@ contents:
     dst: /usr/share/doc/mindfork-rs/DISCLAIMER.ru.md
   - src: ./docs/install.md
     dst: /usr/share/doc/mindfork-rs/install.md
+  # The privacy policy, in both languages. It was the one document the archives
+  # and the Windows installer carried and the packages did not — so a `deb` user
+  # was the only one sent to the website to read what leaves their machine.
+  - src: ./PRIVACY.md
+    dst: /usr/share/doc/mindfork-rs/PRIVACY.md
+  - src: ./docs/legal/PRIVACY.ru.md
+    dst: /usr/share/doc/mindfork-rs/PRIVACY.ru.md
+  # The licence texts of every Rust package in the locked graph, generated for
+  # this exact build (`cargo about`, see about.toml). Staged by
+  # packaging/linux/build-packages.sh, which refuses to run without it.
+  - src: ./THIRD-PARTY-NOTICES.md
+    dst: /usr/share/doc/mindfork-rs/THIRD-PARTY-NOTICES.md
+  # ...and the licences of the vendored syntax grammars, which are compiled into
+  # the binary by build.rs and so have no file of their own to sit beside
+  # (syntaxes/SOURCES.md).
+  - src: ./syntaxes/licenses/*.txt
+    dst: /usr/share/doc/mindfork-rs/licenses/syntaxes/
+    file_info:
+      mode: 0644
