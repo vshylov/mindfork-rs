@@ -1875,10 +1875,17 @@ watched by eye, and the PR analysis is the first real measurement. The shape tha
 caught one out: a **dispatch `match` with nineteen arms** scored S3776 complexity
 16 against a bar of 15 on the strength of five short `if`s inside it, no single
 arm looking remotely complex. Delegating each precondition-carrying arm to a
-named method fixed it and read better — a table of one-liners.
+named method fixed it and read better — a table of one-liners. **And the snippet
+analyzer runs the rule engine, not the taint engine**: two new `tools/*.py` came
+back clean from it *after* the PR analysis had flagged one of them BLOCKER for
+path traversal — a file written to a path built from a CLI argument, which only
+the whole-project analysis sees. The taint findings are also the ones that move
+`new_security_rating` to E and redden the gate outright, so for a script that
+opens, writes or executes anything, expect the PR to be the first place that is
+measured — and prefer a fixed path over an argument nobody needed.
 — *SonarQube follow-up — the doc gate's regexes and one test's complexity*,
 *SonarQube follow-up — the screenshots SVG writer*, *command-only control —
-stage 2*.
+stage 2*, *public release readiness — stage 3, the release pipeline*.
 
 **An invariant enforced only where data is *written* is not enforced.** The code
 workspace's journal reset lived inside `Journal::record` — correct, and useless for the

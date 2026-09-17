@@ -42,7 +42,7 @@ installed_version() {
     nfpm --version 2>/dev/null | sed -n 's/^GitVersion: *v\{0,1\}\([0-9][^ ]*\).*/\1/p' | head -1
 }
 
-if [ "$(installed_version)" = "$VERSION" ]; then
+if [[ "$(installed_version)" == "$VERSION" ]]; then
     echo "nfpm $VERSION is already installed."
     exit 0
 fi
@@ -53,10 +53,13 @@ trap 'rm -rf "$tmp"' EXIT
 echo "Downloading nfpm $VERSION..."
 # Bounded like every other network step in these workflows (docs/lessons.md §10):
 # a dead connection fails and retries inside the step's own budget.
-curl -fsSL --retry 3 --connect-timeout 30 --max-time 300 -o "$tmp/nfpm.tar.gz" "$URL"
+# `--proto`/`--proto-redir` keep the whole exchange on https: `-L` otherwise lets
+# a redirect downgrade the download to plain http (SonarQube `shell:S6506`).
+curl -fsSL --proto '=https' --proto-redir '=https' \
+    --retry 3 --connect-timeout 30 --max-time 300 -o "$tmp/nfpm.tar.gz" "$URL"
 
 actual="$(sha256sum "$tmp/nfpm.tar.gz" | cut -d' ' -f1)"
-if [ "$actual" != "$SHA256" ]; then
+if [[ "$actual" != "$SHA256" ]]; then
     echo "nfpm $VERSION SHA-256 mismatch: expected $SHA256, got $actual" >&2
     exit 1
 fi
@@ -65,7 +68,7 @@ echo "SHA-256 verified. Installing into $DEST..."
 tar -xzf "$tmp/nfpm.tar.gz" -C "$tmp" nfpm
 # `sudo` where it is needed and not where it is not: the release and packaging
 # jobs run as a user with passwordless sudo, a container smoke runs as root.
-if [ -w "$DEST" ]; then
+if [[ -w "$DEST" ]]; then
     install -m 755 "$tmp/nfpm" "$DEST/nfpm"
 else
     sudo install -m 755 "$tmp/nfpm" "$DEST/nfpm"
@@ -75,7 +78,7 @@ fi
 # states: a silent fallback to another copy already on PATH would keep building
 # packages with a tool the log claims was replaced.
 found="$(installed_version)"
-if [ "$found" != "$VERSION" ]; then
+if [[ "$found" != "$VERSION" ]]; then
     echo "expected nfpm $VERSION on PATH, found '${found:-nothing}'" >&2
     exit 1
 fi

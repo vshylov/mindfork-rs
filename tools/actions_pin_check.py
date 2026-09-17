@@ -37,15 +37,41 @@ import sys
 from pathlib import Path
 
 WORKFLOWS = ".github/workflows"
-# `- uses: owner/repo@ref  # comment` in any indentation, with or without the dash.
-USES_RE = re.compile(
-    r"^\s*(?:-\s*)?uses:\s*(?P<ref>[^\s#]+)\s*(?:#\s*(?P<comment>.*?))?\s*$"
-)
+# `- uses: owner/repo@ref` in any indentation, with or without the dash. The
+# trailing `# comment` is split off by hand rather than matched here: an optional
+# lazy group before an anchored `\s*$` is the shape that backtracks
+# super-linearly (SonarQube `python:S8786`), and one `partition` is clearer.
+USES_RE = re.compile(r"^[-\s]*uses:\s*(?P<ref>\S+)")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+LOCAL_PREFIXES = ("./", "docker://")
 
 
 def repo_root() -> Path:
     return Path(__file__).resolve().parent.parent
+
+
+def parse_uses(line: str) -> tuple[str, str] | None:
+    """`(ref, comment)` for a `uses:` line, or `None` when it is not one."""
+    match = USES_RE.match(line)
+    if not match:
+        return None
+    ref = match.group("ref").strip("\"'")
+    _, _, comment = line.partition("#")
+    return ref, comment.strip()
+
+
+def judge(ref: str, comment: str) -> str | None:
+    """The violation this reference is, or `None` when it is properly pinned."""
+    if ref.startswith(LOCAL_PREFIXES):
+        return None  # this repository's own code, pinned by the commit being built
+    if "@" not in ref:
+        return f"`{ref}` names no ref at all"
+    action, _, version = ref.rpartition("@")
+    if not SHA_RE.match(version):
+        return f"`{ref}` is pinned to the movable ref `{version}`"
+    if not comment:
+        return f"`{action}` is pinned but no comment says which version"
+    return None
 
 
 def scan(root: Path) -> tuple[list[tuple[str, int, str, str]], list[tuple[str, str]]]:
@@ -63,29 +89,15 @@ def scan(root: Path) -> tuple[list[tuple[str, int, str, str]], list[tuple[str, s
     for path in files:
         rel = path.relative_to(root).as_posix()
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            match = USES_RE.match(line)
-            if not match:
+            parsed = parse_uses(line)
+            if parsed is None:
                 continue
-            ref = match.group("ref").strip("\"'")
-            comment = (match.group("comment") or "").strip()
-            if ref.startswith("./") or ref.startswith("docker://"):
-                continue
-            where = f"{rel}:{number}"
-            if "@" not in ref:
-                violations.append((where, f"`{ref}` names no ref at all"))
-                continue
-            action, _, version = ref.rpartition("@")
-            if not SHA_RE.match(version):
-                violations.append(
-                    (where, f"`{ref}` is pinned to the movable ref `{version}`")
-                )
-                continue
-            if not comment:
-                violations.append(
-                    (where, f"`{action}` is pinned but no comment says which version")
-                )
-                continue
-            entries.append((rel, number, ref, comment))
+            ref, comment = parsed
+            problem = judge(ref, comment)
+            if problem:
+                violations.append((f"{rel}:{number}", problem))
+            elif not ref.startswith(LOCAL_PREFIXES):
+                entries.append((rel, number, ref, comment))
     return entries, violations
 
 

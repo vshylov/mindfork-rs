@@ -24,16 +24,19 @@ What it checks, in order, before the first build starts:
    not, because an empty release page is exactly the failure this gate exists
    to stop.
 
-It then writes the notes file `gh release create --notes-file` is given, and
-reports `version` and `prerelease` on `$GITHUB_OUTPUT` for the steps that follow.
+It then writes the notes file and reports `version` and `prerelease` on
+`$GITHUB_OUTPUT` for the steps that follow.
 
 `--self-test` runs the arms above against in-memory fixtures. A workflow's error
 paths are otherwise only ever exercised by a release that fails, which is the
 one place where finding out costs the most (docs/lessons.md §10 — validate a
 `run:` block by executing it against stubs, not by reading it).
 
+It writes `notes.md` in the working directory — the file
+`gh release create --notes-file` is given.
+
 Usage:
-    python tools/release_guard.py --tag v0.9.9 [--notes notes.md]
+    python tools/release_guard.py --tag v0.9.9
     python tools/release_guard.py --self-test
 """
 
@@ -150,7 +153,14 @@ def emit_outputs(**values: str) -> None:
                 handle.write(f"{name}={value}\n")
 
 
-def run(tag: str, root: Path, notes_path: Path) -> int:
+# The notes file `gh release create --notes-file` is given. A fixed name in the
+# working directory rather than an argument: nothing a caller passes should be
+# able to decide where this writes, and the workflow only ever wanted `notes.md`
+# beside the checkout (SonarQube `pythonsecurity:S2083`).
+NOTES_FILE = "notes.md"
+
+
+def run(tag: str, root: Path) -> int:
     version, suffix = parse_tag(tag)
     manifest = (root / "Cargo.toml").read_text(encoding="utf-8")
     declared = cargo_version(manifest)
@@ -166,6 +176,7 @@ def run(tag: str, root: Path, notes_path: Path) -> int:
     body, source = build_notes(changelog, version, prerelease)
     server_url = os.environ.get("GITHUB_SERVER_URL", "https://github.com")
     repository = os.environ.get("GITHUB_REPOSITORY", "vshylov/mindfork-rs")
+    notes_path = Path.cwd() / NOTES_FILE
     notes_path.write_text(body + "\n" + footer(server_url, repository, tag), encoding="utf-8")
 
     print(f"tag {tag} matches Cargo.toml {declared}")
@@ -244,7 +255,6 @@ def self_test() -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--tag", default=os.environ.get("GITHUB_REF_NAME"))
-    parser.add_argument("--notes", default="notes.md", type=Path)
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
 
@@ -254,7 +264,7 @@ def main() -> int:
         print("error: --tag (or GITHUB_REF_NAME) is required", file=sys.stderr)
         return 2
     try:
-        return run(args.tag, Path(__file__).resolve().parent.parent, args.notes)
+        return run(args.tag, Path(__file__).resolve().parent.parent)
     except GuardError as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

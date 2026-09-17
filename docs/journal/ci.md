@@ -1392,6 +1392,19 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   `actions_pin_check.py` above, and `release_guard.py --self-test`, which exercises the tag
   guard's refusals against fixtures — a release workflow's error paths are otherwise only
   ever reached by a release that fails (lessons §10).
+- **What the first PR analysis said about the new gates.** Ten findings, and the quality
+  gate red on `new_security_rating` **E**: a BLOCKER `pythonsecurity:S2083` — the tag
+  guard wrote its notes to a path taken from a CLI argument — plus a backtracking regex,
+  cognitive complexity 21, chained `startswith`, four `[`-instead-of-`[[` in the shell
+  script and a `curl -L` without `--proto '=https'`. All fixed: the notes file is a fixed
+  name in the working directory (an argument nobody needed), the line parser splits the
+  comment off with `partition`, the per-line judgement moved into a named function, and
+  the download cannot be redirected off https. The pre-check that lessons §10 prescribes
+  for a new `tools/*.py` — the Sonar MCP snippet analyzer — was skipped before this push
+  and run after it: it reports both files clean, which would have caught seven of the ten
+  and, tellingly, **not** the BLOCKER. It runs the rule engine, not the taint engine, so a
+  path built from an argument is only ever seen by the whole-project analysis — the lesson
+  is written down there.
 - Cost: the two gates are noise next to the job they sit in; the audit's pull-request
   trigger adds ~1 minute on dependency changes only; Dependabot is the one real line item,
   budgeted above.

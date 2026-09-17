@@ -273,7 +273,7 @@ jobs:
       # the page cannot be assembled by a rule the gate never checked. It refuses
       # here too if the CHANGELOG lost its section between the two jobs.
       - name: Release notes
-        run: python3 tools/release_guard.py --tag "${GITHUB_REF_NAME}" --notes notes.md
+        run: python3 tools/release_guard.py --tag "${GITHUB_REF_NAME}"
       # Build provenance: a signed statement of which workflow, commit and runner
       # produced each asset, verifiable by anyone with
       # `gh attestation verify <file> --repo ${{ github.repository }}`.
