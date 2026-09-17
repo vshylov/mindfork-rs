@@ -891,6 +891,14 @@ the same change — the wildcard stays for what is truly unknown, and a test per
 drives the real stream to the new value.
 — *a reply the content filter stopped says so*.
 
+**A tool's `--version` output is a measurement, not a guess.** A pinned installer asserted
+the version it had just installed by looking for a `version:` line; nfpm prints an ASCII
+banner and then `GitVersion:    2.47.0`, so the script rejected the copy it had correctly
+downloaded and hash-verified. The assertion was right to exist — it is what stops a stale
+copy already on PATH being used silently — and it cost one container run to get right,
+which is one release run saved.
+— *public release readiness — stage 3, the release pipeline*.
+
 ## 4. The recurring defect class: a message must close the door
 
 **Never let a message describe a situation without saying what is and is not possible
@@ -1932,3 +1940,14 @@ history (p50/max, with room for a cold cache), and write the figure next to the 
 And when a job does hang, read the *step* timestamps before blaming the machine: four
 jobs stopping on the same line is a dependency, not a runner.
 — *a ceiling on every job, and two orphaned workflows*.
+
+**A workflow's refusal paths are only ever reached by the thing it guards going wrong.**
+A release runs once per version; a guard written inline in its YAML — the tag against
+`Cargo.toml`, the CHANGELOG section that becomes the notes — is first exercised by a
+release that fails, which is the most expensive place to discover a typo in it. Put the
+logic in a script the workflow calls, give the script a `--self-test` that drives every arm
+against fixtures, and run that in the ordinary lint job: the arms are then checked on every
+pull request, for a tenth of a second. The same reasoning as extracting a `run:` block and
+executing it against stubs, one step further — the extraction becomes the shipped shape.
+— *public release readiness — stage 3, the release pipeline*, *the workflows before
+strangers can open a pull request*.

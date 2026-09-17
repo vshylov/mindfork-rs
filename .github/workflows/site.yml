@@ -52,7 +52,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
       - name: Install Zola ${{ env.ZOLA_VERSION }} (verified release asset)
         env:
           GH_TOKEN: ${{ github.token }}
@@ -84,7 +84,7 @@ jobs:
       BUCKET: mindfork-website-sitebucket-ioafb7vyycso
       DISTRIBUTION: E8EC9ICZSRYKB
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
       - name: Install Zola ${{ env.ZOLA_VERSION }} (verified release asset)
         env:
           GH_TOKEN: ${{ github.token }}
@@ -101,7 +101,7 @@ jobs:
       - name: Build
         run: zola --root site build
       - name: Assume the deploy role
-        uses: aws-actions/configure-aws-credentials@v6
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd  # v6.3.0
         with:
           role-to-assume: arn:aws:iam::976877302614:role/mindfork-site-deploy
           aws-region: us-east-1

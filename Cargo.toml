@@ -103,9 +103,12 @@ pdf-extract = "0.12.0"
 percent-encoding = "2.3.2"
 pulldown-cmark = { version = "0.13.4", default-features = false }
 # Parsing `word/document.xml` inside a DOCX for indexing into RAG (`/rag add`, stage B1b).
-# Already in the graph transitively (via syntect → plist); the version is pinned to the one in
-# Cargo.lock, so as not to spawn a duplicate. See features/doc_extract.rs.
-quick-xml = "0.39.4"
+# Ours alone now: syntect is taken with `default-features = false`, so the plist
+# edge that once pinned this version is gone (`cargo tree --invert quick-xml`
+# prints one edge). Kept at the version that carries the fixes for
+# RUSTSEC-2026-0194 and -0195, which is why `deny.toml` no longer ignores them.
+# See features/doc_extract.rs.
+quick-xml = "0.42.0"
 # `unstable-rendered-line-info` is on for one call: `Paragraph::line_count`, which the
 # tool-confirmation popup sizes itself by. The alternative is a second implementation of
 # word wrapping whose only job is to agree with ratatui's own — and where it disagreed,

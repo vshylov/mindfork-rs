@@ -116,7 +116,7 @@ jobs:
     # clippy over all targets is a few minutes more, hence the room.
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
       # The source language is English (CLAUDE.md/AGENTS.md §Conventions); this
       # guard fails on Cyrillic outside its allowlist (the `ru` locale bundle,
       # dictionaries, in-test fixtures, intentional `[ru]`/`ru.` localization).
@@ -161,6 +161,18 @@ jobs:
       # the moment the policy is edited.
       - name: The website's privacy page matches PRIVACY.md
         run: python3 tools/site_legal_pages.py --check
+      # A `uses: owner/repo@v5` is a pointer its owner can move, and two of ours
+      # receive credentials (the Sonar token below, the site's deploy role). Every
+      # third-party action is therefore pinned to a commit with its version in a
+      # comment, and Dependabot keeps the pins current. Needs no toolchain.
+      - name: Third-party actions are pinned to commits
+        run: python3 tools/actions_pin_check.py --list
+      # The tag guard that release.yml runs is exercised here against fixtures:
+      # its refusals (a tag disagreeing with Cargo.toml, a CHANGELOG with no
+      # section for it) are otherwise only ever reached by a release that fails,
+      # which is the worst place to find out (docs/lessons.md §10).
+      - name: The release guard's own arms
+        run: python3 tools/release_guard.py --self-test
       - name: Install the toolchain (from rust-toolchain.toml)
         run: rustup show
       # A cache belongs to the branch that wrote it, so with the default
@@ -172,7 +184,7 @@ jobs:
       # Saving only from `main` keeps one copy per job; a pull request still
       # *restores* it, because GitHub lets a branch read its base branch's
       # caches.
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # v2.9.2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       # Bounded on both sides, after 2026-08-19. The runner image's apt mirror
@@ -230,7 +242,7 @@ jobs:
     # so Windows keeps the wider ceiling rather than the current-regime one.
     timeout-minutes: ${{ matrix.os == 'windows-latest' && 35 || 15 }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
       - name: Install the toolchain (from rust-toolchain.toml)
         run: rustup show
       # No Defender exclusions here, and that is a measured decision rather than
@@ -249,7 +261,7 @@ jobs:
       # branch read its *base*). Every PR therefore paid a full cold build and
       # then spent 1m51s saving 445 MB to its own `refs/pull/N/merge`, which no
       # other run could ever restore and which dies with the PR.
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # v2.9.2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       # ALSA is only needed for the Linux build (rodio/cpal); on Windows — pure windows-rs.
@@ -291,15 +303,29 @@ jobs:
   sonar:
     name: SonarQube Cloud
     needs: changes
-    # Same two guards as `test`, for the same reasons (see the comment there).
-    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
+    # Three guards. The first two are `test`'s, for the same reasons (see the
+    # comment there). The third is about who can read `SONAR_TOKEN`: a run from a
+    # **fork** receives no repository secrets, and a **Dependabot** pull request
+    # runs against Dependabot's own secret store — in both the token is empty and
+    # the scanner *fails* rather than skipping, with `sonar.qualitygate.wait=true`
+    # holding the job open until it does. Every other job still runs for both, so
+    # such a pull request is gated by the lints and the whole test matrix; what it
+    # cannot do is an analysis it has no credentials for. GitHub counts a skipped
+    # job as a passing required check, which is what lets this job stay required
+    # once the repository is public (public-release-readiness.md B3, B5).
+    if: >-
+      ${{ !cancelled()
+          && needs.changes.outputs.docs_only != 'true'
+          && (github.event_name != 'pull_request'
+              || github.event.pull_request.head.repo.full_name == github.repository)
+          && github.actor != 'dependabot[bot]' }}
     runs-on: ubuntu-latest
     # Measured over 199 runs: p50 4.0 min, max 8.1. Two builds, the analyzer's
     # own clippy, and up to five minutes of `sonar.qualitygate.wait` on top
     # when the server is slow — the widest Linux budget in this workflow.
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
         with:
           # Sonar needs the full history: a shallow clone breaks blame, and with
           # it the "new code" detection every quality-gate condition is based on.
@@ -313,7 +339,7 @@ jobs:
       # Save only from `main` (see the comment in `lint`). This job's cache is
       # the largest of the three — it holds both the instrumented and the plain
       # build — so it is also the one that most needs to exist exactly once.
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # v2.9.2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       # Bounded (timeout + apt options) — see the comment on the `lint` job's copy.
@@ -322,12 +348,17 @@ jobs:
         run: >-
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
           && sudo apt-get install -y libasound2-dev
-      - uses: taiki-e/install-action@cargo-llvm-cov
+      # The tool is named in `with:` rather than in the ref: `@cargo-llvm-cov` is
+      # a *tag* that upstream moves, and this workflow pins every action to a
+      # commit (tools/actions_pin_check.py).
+      - uses: taiki-e/install-action@76c2e6406e52637deed7160d77bded76bd83e06e  # v2.87.14
+        with:
+          tool: cargo-llvm-cov
       # #[ignore] smokes stay skipped, exactly as in the `test` job — no network,
       # no live server, no cloud keys.
       - name: Coverage (LCOV)
         run: cargo llvm-cov --workspace --lcov --output-path lcov.info
       - name: SonarQube scan
-        uses: SonarSource/sonarqube-scan-action@v8
+        uses: SonarSource/sonarqube-scan-action@ba9859eae8dd6bd29e412f25ddbbef3d032000f4  # v8.2.2
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

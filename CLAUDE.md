@@ -148,6 +148,8 @@ python tools/wizard_rtf.py         # regenerate the Windows installer's disclaim
 python tools/wizard_rtf.py --check # ...and the gate that it matches DISCLAIMER.md
 python tools/site_legal_pages.py    # regenerate the site's privacy page from PRIVACY.md
 python tools/site_legal_pages.py --check  # ...and its gate
+python tools/actions_pin_check.py  # every workflow action is pinned to a commit
+python tools/release_guard.py --self-test  # the tag guard release.yml runs, against fixtures
 ```
 
 Running against a real server (smoke test, llama.cpp):
@@ -184,6 +186,17 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **The release pipeline — what a stranger downloads, and what produced it** (stage 3).
+  The Windows binary needed a Visual C++ runtime nothing ships (`VCRUNTIME140.dll`,
+  measured) — the C runtime is now static, in `.cargo/config.toml` so the tests run on the
+  shipped linkage; a tag is checked against `Cargo.toml` and the CHANGELOG before anything
+  builds and the release comes out a **draft** (`tools/release_guard.py`, its refusals
+  self-tested in `lint`); the licences travel — `THIRD-PARTY-NOTICES.md` from the release's
+  own lock file, the grammar licences, the policy in the Linux packages; `nfpm` and every
+  action are pinned and hash- or SHA-verified with Dependabot keeping them current, and
+  Sonar no longer fails a fork's or Dependabot's pull request
+  ([docs/research/release-pipeline.md](docs/research/release-pipeline.md),
+  [docs/journal/release.md](docs/journal/release.md), [docs/journal/ci.md](docs/journal/ci.md)).
 - **Safe defaults — what an enabled tool may reach** (stages 2a and 2b, each live
   **GO**). 2a: an empty `fs_root` refuses (it meant the whole disk), no file or code tool
   reaches the data root or the binary's directory (`tools/reach.rs`), a dangling link no
@@ -374,15 +387,6 @@ being recent is dropped, not shortened.
   it. One package, because a dependency on `python/python` resolves through the
   registry and a fresh cache cannot start offline (ADR 0005 §5 amended, spec §13.2,
   [docs/journal/tools.md](docs/journal/tools.md)).
-- **The sandbox's starter set grows, and `site-packages` turned out writable** —
-  twenty wheels from a check of today's WASIX index: sympy (mpmath held below 1.4),
-  networkx, tabulate, lxml (in the index now), openpyxl, pypdf, pyyaml, regex,
-  feedparser (now on `feedparser-sgmllib`), pillow, matplotlib; the lock list became
-  one parsed string. matplotlib needed a wrapper shim — the guest has no `HOME`, and
-  its default `force_autohint` traps FreeType here — and the warmup `compileall`s
-  the bytecode, most of a cold call. Found on the way: one call can write
-  `/sp/sitecustomize.py` that the next call runs; its fix is a PR of its own
-  (spec §13.2, [docs/journal/tools.md](docs/journal/tools.md)).
 - **A headless launch (no TTY) exits with code 2** and a one-line reason — the
   TUI cannot be run from an agent's shell; live verification needs a real
   terminal.

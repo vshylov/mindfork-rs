@@ -191,7 +191,7 @@ pub const COMPONENTS: &[(&str, &str, &str)] = &[
     ("pdf-extract", "0.12.0", "MIT"),
     ("percent-encoding", "2.3.2", "MIT OR Apache-2.0"),
     ("pulldown-cmark", "0.13.4", "MIT"),
-    ("quick-xml", "0.39.4", "MIT"),
+    ("quick-xml", "0.42.0", "MIT"),
     ("ratatui", "0.30.1", "MIT"),
     ("regex", "1.12.4", "MIT OR Apache-2.0"),
     ("reqwest", "0.13.4", "MIT OR Apache-2.0"),

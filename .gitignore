@@ -13,6 +13,12 @@ site/static/brand/
 site/static/favicon.ico
 # Coverage report for SonarQube Cloud (`cargo llvm-cov`, .github/workflows/ci.yml).
 /lcov.info
+# The third-party licence texts of the locked graph (`cargo about`, about.toml).
+# Derived data, generated per build: the copy that matters is the one built from
+# the exact Cargo.lock of a release, and committing 360 KB of licence text would
+# put a regenerated blob in every dependency bump
+# (docs/research/release-pipeline.md R2).
+/THIRD-PARTY-NOTICES.md
 # Editor state. Written by VS Code / Cursor when the SonarQube IDE extension
 # binds the workspace; its `connectionId` names a connection local to one
 # machine, and the only shareable part -- the project key -- is already in

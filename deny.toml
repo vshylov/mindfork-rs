@@ -3,8 +3,13 @@
 # The license allowlist was verified by running `cargo deny check licenses` against the current graph.
 
 [advisories]
-# The RustSec database: vulnerabilities/unmaintained → an error (a signal to look into it), yanked → warn.
-yanked = "warn"
+# The RustSec database: vulnerabilities/unmaintained → an error (a signal to look
+# into it), and a **yanked** crate is one too. It was a warning while the lock
+# file held one (`chacha20 0.10.1`, pulled in by pdf-extract → lopdf → rand); the
+# lock is clean now, and a yank is the author saying this exact version should
+# not be used — on a public repository that is not a line to skim past in a
+# weekly log (docs/research/release-pipeline.md N5).
+yanked = "deny"
 # Known transitive advisories with no available fix — all come from `syntect`
 # (code highlighting): it parses **its own built-in** syntaxes/themes, not user input,
 # so the DoS risk doesn't materialize for us. Remove once syntect updates these dependencies
@@ -12,14 +17,12 @@ yanked = "warn"
 ignore = [
     "RUSTSEC-2024-0320", # yaml-rust unmaintained (syntect)
     "RUSTSEC-2025-0141", # bincode unmaintained (syntect)
-    # A quick-xml DoS advisory. The crate is in the graph via syntect (its own built-in
-    # themes/syntaxes, not input) AND directly — parsing `word/document.xml` when indexing a DOCX (`/rag add`,
-    # doc_extract.rs). The risk doesn't apply: the app is a local single-user
-    # tool, DOCX files are added by the user themselves from their own files; the worst case is
-    # slowed-down indexing of a document the same user deliberately crafted
-    # (best effort, one file's failure is simply skipped). Remove when quick-xml is updated.
-    "RUSTSEC-2026-0194", # quick-xml quadratic-time on duplicate attributes
-    "RUSTSEC-2026-0195", # quick-xml unbounded namespace-alloc DoS
+    # The two quick-xml advisories (RUSTSEC-2026-0194, -0195) were ignored here
+    # with the reasoning that the risk does not apply to a local single-user tool
+    # indexing its own DOCX files. They are gone rather than re-argued: the crate
+    # is now at a version that carries both fixes, and it turned out to be ours
+    # alone — syntect stopped pulling it when it was taken with
+    # `default-features = false`, so nothing held the old version in place.
     # ttf-parser is declared unmaintained by its author (RUSTSEC-2026-0192, no safe upgrade
     # available). This is an advisory about abandonment, not a vulnerability (not RCE/memory
     # corruption). Comes in transitively via pdf-extract → lopdf (reading fonts when extracting text from a PDF,

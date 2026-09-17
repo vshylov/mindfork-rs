@@ -15,10 +15,34 @@ env:
 # Every job has a `timeout-minutes` and every apt step is bounded — the reasons,
 # and the incident behind them, are in the header and the `lint` job of ci.yml.
 jobs:
+  # Everything a tag can get wrong, before a runner spends forty minutes on it:
+  # its shape, its agreement with `Cargo.toml` (the source of truth for what the
+  # binary answers to `--version`), and the `CHANGELOG.md` section that becomes
+  # the release page. A prerelease tag (`v0.9.9-rc1`) is allowed and may fall
+  # back to `[Unreleased]` — that is what makes a rehearsal of this whole
+  # workflow possible without inventing a version
+  # (docs/research/release-pipeline.md §6). The guard's own refusals are
+  # exercised on every pull request by ci.yml's `lint` job, so they are not first
+  # tried out on a release.
+  guard:
+    name: The tag is a release this repository can make
+    runs-on: ubuntu-latest
+    # Measured locally: well under a second. The budget is for the checkout.
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.guard.outputs.version }}
+      prerelease: ${{ steps.guard.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
+      - name: Check the tag against Cargo.toml and the CHANGELOG
+        id: guard
+        run: python3 tools/release_guard.py --tag "${GITHUB_REF_NAME}"
+
   # Builds the binary on each platform; packaging is centralized in the release job
   # (on Linux both tar and zip are available — avoiding Windows shell differences).
   build:
     name: Build (${{ matrix.artifact }})
+    needs: guard
     strategy:
       fail-fast: true
       matrix:
@@ -35,10 +59,10 @@ jobs:
     # own to count on. One budget for both, sized from the Windows figure.
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
       - name: Install the toolchain (from rust-toolchain.toml)
         run: rustup show
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # v2.9.2
       # ALSA is only needed by the Linux build (rodio/cpal — speech playback /tts).
       - name: System dependencies (ALSA)
         if: runner.os == 'Linux'
@@ -49,10 +73,38 @@ jobs:
       - name: Release build
         run: cargo build --release --locked
       - name: Upload the binary
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5.0.0
         with:
           name: bin-${{ matrix.artifact }}
           path: target/release/${{ matrix.bin }}
+          if-no-files-found: error
+      # The third-party notice file: the licence texts of every package in the
+      # locked graph, which MIT, BSD and Apache all require to travel with a
+      # redistribution (docs/research/release-pipeline.md §2.3, R2). Generated
+      # from *this* release's `Cargo.lock`, so it cannot describe a different
+      # build; every artifact below carries a copy, and packaging.yml runs the
+      # same two steps on any pull request that changes the graph, so a licence
+      # the list cannot account for fails there rather than here.
+      #
+      # In this job rather than one of its own: the toolchain and the registry
+      # are already warm here, and everything that needs the file already waits
+      # for this job. Linux only — the file is identical on both, and the config
+      # asks for both targets' graphs (about.toml).
+      - name: Install cargo-about
+        if: runner.os == 'Linux'
+        uses: taiki-e/install-action@76c2e6406e52637deed7160d77bded76bd83e06e  # v2.87.14
+        with:
+          tool: cargo-about
+      - name: Third-party notices
+        if: runner.os == 'Linux'
+        timeout-minutes: 10
+        run: cargo about generate about.hbs -o THIRD-PARTY-NOTICES.md
+      - name: Upload the notices
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5.0.0
+        with:
+          name: notices
+          path: THIRD-PARTY-NOTICES.md
           if-no-files-found: error
 
   # Linux packages from the already-built binary (bin-linux) via nfpm.
@@ -63,25 +115,31 @@ jobs:
     # Measured: 0.5 min on every release so far; the nfpm install is the network part.
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
       - name: Download the Linux binary
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0  # v5.0.0
         with:
           name: bin-linux
           path: bin
+      # The packages carry the notices too (`/usr/share/doc/mindfork-rs/`), so
+      # they wait for the file the build job generated.
+      - name: Download the third-party notices
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0  # v5.0.0
+        with:
+          name: notices
+      # The pinned nfpm, verified by hash — the same script packaging.yml's gate
+      # uses, so the two cannot drift onto different builders. It replaced an
+      # `apt-get install` from an *unsigned* third-party repository
+      # (`deb [trusted=yes]`) at an unnamed version (tools/install_nfpm.sh).
       - name: Install nfpm
         timeout-minutes: 5
-        run: |
-          echo 'deb [trusted=yes] https://repo.goreleaser.com/apt/ /' \
-            | sudo tee /etc/apt/sources.list.d/goreleaser.list
-          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
-          sudo apt-get install -y nfpm
+        run: bash tools/install_nfpm.sh
       - name: Build packages
         run: |
           VERSION="${GITHUB_REF_NAME#v}"   # e.g. v0.9.0 → 0.9.0
           chmod +x bin/mindfork
           bash packaging/linux/build-packages.sh bin/mindfork "$VERSION" dist
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5.0.0
         with:
           name: linux-packages
           path: |
@@ -99,12 +157,19 @@ jobs:
     # the network part, and it replaced a `choco install` of comparable weight.
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
       - name: Download the Windows binary
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0  # v5.0.0
         with:
           name: bin-windows
           path: bin
+      # The installer lays the notices down next to the program, so the file has
+      # to be at the repository root where mindfork.iss expects it. packaging.yml
+      # generates its own copy for the same reason.
+      - name: Download the third-party notices
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0  # v5.0.0
+        with:
+          name: notices
       # The pinned Inno Setup 7 (hash-verified), the same one packaging.yml's gate
       # uses. $env:ISCC is its absolute path: PATH here still carries the runner
       # image's chocolatey shim for Inno 6, so resolving by name would compile the
@@ -117,7 +182,7 @@ jobs:
         run: |
           $ver = "${env:GITHUB_REF_NAME}" -replace '^v', ''   # v0.9.0 → 0.9.0
           & $env:ISCC "/DAppVersion=$ver" "/DBinDir=$PWD\bin" packaging\windows\mindfork.iss
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5.0.0
         with:
           name: windows-installer
           path: dist\*.exe
@@ -125,23 +190,27 @@ jobs:
 
   release:
     name: Publish the release
-    needs: [build, linux-packages, windows-installer]
+    needs: [guard, build, linux-packages, windows-installer]
     runs-on: ubuntu-22.04
     # Measured: 0.3–0.4 min on every release so far; the asset upload is the network part.
     timeout-minutes: 10
     permissions:
       contents: write        # needed for gh release create
+      # Build provenance (the step at the end of this job): the OIDC token that
+      # identifies this workflow run to Sigstore, and the write access that
+      # records the attestation against the repository.
+      id-token: write
+      attestations: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
       - name: Download the binaries
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0  # v5.0.0
         with:
           path: artifacts
       - name: Build archives + sha256 + notes
         run: |
           set -euo pipefail
           TAG="${GITHUB_REF_NAME}"        # e.g. v0.9.0
-          VERSION="${TAG#v}"
           mkdir -p dist
 
           # A shared doc set for every archive.
@@ -150,20 +219,30 @@ jobs:
           # PRIVACY.md travels with them: the Windows installer shows it during
           # setup and leaves a copy next to the program, and an archive user
           # should not have to go to the website for the same text.
+          # The notices are generated per release from its own Cargo.lock (the
+          # `build` job), so they come out of the artifacts rather than the
+          # checkout.
           DOCS=(README.md CHANGELOG.md LICENSE DISCLAIMER.md PRIVACY.md docs/install.md
                 docs/legal/LICENSE.ru.txt docs/legal/DISCLAIMER.ru.md
-                docs/legal/PRIVACY.ru.md)
+                docs/legal/PRIVACY.ru.md
+                artifacts/notices/THIRD-PARTY-NOTICES.md)
 
           # Put spellcheck dictionaries into data/dictionaries/ — the portable layout
           # the app reads next to the binary (data/ next to the exe → spellcheck
           # out of the box). See build.rs / shared/paths.rs.
           stage_data() {
-            mkdir -p "$1/data/dictionaries/licenses"
+            mkdir -p "$1/data/dictionaries/licenses" "$1/licenses/syntaxes"
             cp dictionaries/*.aff dictionaries/*.dic "$1/data/dictionaries/"
             # The dictionaries are third-party work under BSD-style and LGPL
             # terms, and both require their notices to travel with what is
             # redistributed (dictionaries/SOURCES.md).
             cp dictionaries/licenses/*.txt "$1/data/dictionaries/licenses/"
+            # The vendored syntax grammars are compiled into the binary by
+            # build.rs, so unlike the dictionaries they have no file of their own
+            # to sit beside — and their licences (MIT, BSD, Apache; syntaxes/
+            # SOURCES.md) travelled nowhere at all until now. The About dialog
+            # names them; this is the text it names.
+            cp syntaxes/licenses/*.txt "$1/licenses/syntaxes/"
           }
 
           # Linux: tar.gz
@@ -189,30 +268,43 @@ jobs:
           # Checksums (over all artifacts: archives + packages + the installer).
           (cd dist && sha256sum ./* > sha256sums.txt)
 
-          # The release notes = the CHANGELOG section for this version (no heading).
-          awk -v ver="$VERSION" '
-            $0 ~ "^## \\[" ver "\\]" { found=1; next }
-            found && /^## \[/ { exit }
-            found { print }
-          ' CHANGELOG.md > notes.md
-          if [ ! -s notes.md ]; then
-            echo "Release ${TAG}." > notes.md
-          fi
-
-          # A footer on every release page (appended after the fallback above, so
-          # it is present either way). The install guide is pinned to this tag —
-          # the instructions travel with the release they describe, unlike a link
-          # to main.
-          printf '\n---\n\n[mindfork.io](https://mindfork.io) · [Install guide](%s/blob/%s/docs/install.md)\n' \
-            "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" "$TAG" >> notes.md
-
           echo "Artifacts:"; ls -l dist
-          echo "Notes:"; cat notes.md
-      - name: Create the GitHub Release
+      # The notes and the footer come from the same guard the `guard` job ran, so
+      # the page cannot be assembled by a rule the gate never checked. It refuses
+      # here too if the CHANGELOG lost its section between the two jobs.
+      - name: Release notes
+        run: python3 tools/release_guard.py --tag "${GITHUB_REF_NAME}" --notes notes.md
+      # Build provenance: a signed statement of which workflow, commit and runner
+      # produced each asset, verifiable by anyone with
+      # `gh attestation verify <file> --repo ${{ github.repository }}`.
+      # Attestations are free on a public repository and unavailable on a private
+      # one below Enterprise, so the step is guarded by the repository's own
+      # visibility — on the flip it starts working with nothing left to remember
+      # (docs/research/release-pipeline.md N3).
+      - name: Attest the artifacts
+        if: github.event.repository.visibility == 'public'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        with:
+          subject-path: dist/*
+      # A **draft**: the release page and its assets exist, and nobody outside
+      # this repository can see them until the owner presses Publish. That is
+      # what makes AGENTS.md §6 step 5 — download the archive, check `--version`,
+      # run it on a copy of the data — a check rather than a post-mortem. A tag
+      # with a prerelease suffix is additionally marked as one, which is how a
+      # rehearsal of this workflow stays distinguishable from a real release.
+      - name: Create the GitHub Release (draft)
         env:
           GH_TOKEN: ${{ github.token }}
+          PRERELEASE: ${{ needs.guard.outputs.prerelease }}
         run: |
+          set -euo pipefail
+          flags=(--draft)
+          if [ "$PRERELEASE" = "true" ]; then
+            flags+=(--prerelease)
+          fi
           gh release create "${GITHUB_REF_NAME}" dist/* \
             --title "mindfork-rs ${GITHUB_REF_NAME}" \
             --notes-file notes.md \
-            --verify-tag
+            --verify-tag "${flags[@]}"
+          echo "The release is a DRAFT. Check the artifacts (AGENTS.md §6 step 5)," \
+               "then publish it from the releases page."

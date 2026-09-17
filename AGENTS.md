@@ -222,20 +222,34 @@ data format change adds an item to `CHANGELOG.md` → `[Unreleased]` (§4).
 2. **Merge** the release PR (up to the user).
 3. **Tag**: the user sets `git tag vX.Y.Z <merge-commit>` and pushes
    (`git push origin vX.Y.Z`). The agent doesn't push tags/`main` itself (§5).
-4. The tag triggers **`.github/workflows/release.yml`**: `--release` build on
-   `windows-latest` + `ubuntu-22.04` → archives `mindfork-rs-vX.Y.Z-x86_64-{windows.zip,
-   linux.tar.gz}` (binary + README/CHANGELOG/LICENSE/install + dictionaries
-   `data/dictionaries/`) + **Linux packages** (`nfpm` from `packaging/nfpm.yaml`:
-   `mindfork-rs_X.Y.Z-1_amd64.deb`, `mindfork-rs-X.Y.Z-1.x86_64.rpm`,
-   `mindfork-rs-X.Y.Z-1-x86_64.pkg.tar.zst`) + **Windows installer**
-   (`mindfork-rs-vX.Y.Z-x86_64-setup.exe`, Inno Setup from `packaging/windows/mindfork.iss`)
-   + `sha256sums.txt` → `gh release create` with notes = the `[X.Y.Z]` section from the CHANGELOG.
+4. The tag triggers **`.github/workflows/release.yml`**. It **first** runs
+   `tools/release_guard.py`, which refuses before any build if the tag is not
+   `vX.Y.Z` (optionally with a prerelease suffix), if `X.Y.Z` disagrees with
+   `Cargo.toml`, or if `CHANGELOG.md` has no section for it. Then: `--release`
+   build on `windows-latest` + `ubuntu-22.04` → archives
+   `mindfork-rs-vX.Y.Z-x86_64-{windows.zip, linux.tar.gz}` (binary +
+   README/CHANGELOG/LICENSE/PRIVACY/install + `THIRD-PARTY-NOTICES.md` +
+   `licenses/syntaxes/` + dictionaries `data/dictionaries/`) + **Linux packages**
+   (`nfpm` from `packaging/nfpm.yaml`: `mindfork-rs_X.Y.Z-1_amd64.deb`,
+   `mindfork-rs-X.Y.Z-1.x86_64.rpm`, `mindfork-rs-X.Y.Z-1-x86_64.pkg.tar.zst`) +
+   **Windows installer** (`mindfork-rs-vX.Y.Z-x86_64-setup.exe`, Inno Setup from
+   `packaging/windows/mindfork.iss`) + `sha256sums.txt` → `gh release create
+   --draft` with notes = the `[X.Y.Z]` section from the CHANGELOG.
    Packaging changes (`packaging/**`) are validated on the PR by a separate `packaging.yml`
    (Linux: package build + install smoke in Ubuntu/Fedora/Arch containers; Windows:
    `.iss` compilation).
-5. **Artifact smoke test**: download the archive, `mindfork --version` (matches
-   the tag), run the TUI on a copy of the data; optionally — install the package/
-   installer in a VM.
+5. **Artifact smoke test — on the draft, before anyone else can see it**:
+   download the archive, `mindfork --version` (matches the tag), run the TUI on a
+   copy of the data; optionally — install the package/installer in a VM.
+6. **Publish** the draft from the releases page (the user; the agent publishes
+   nothing, §5).
+
+A **rehearsal** of the whole workflow, when it or the packaging changes, is a tag
+carrying a prerelease suffix on the branch head (`v<current version>-rc1`): the
+guard accepts it, the notes fall back to `[Unreleased]`, and what comes out is a
+**draft prerelease** to inspect and then delete along with the tag. That is what
+stands in for a live run on a release-pipeline change
+(docs/research/release-pipeline.md §6).
 
 Promotion to **`1.0.0`** — once the track is proven in production (CI green on
 both OSes + migration scaffolding merged + release pipeline has shipped ≥1

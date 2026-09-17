@@ -15,6 +15,12 @@ split by subsystem.
 ## [Unreleased]
 
 ### Added
+- **Every download now carries the licences of what it is built from.** The archives, the
+  Linux packages and the Windows installer include `THIRD-PARTY-NOTICES.md` — the licence
+  text of every Rust package the binary is built from, generated for that exact release —
+  and the licences of the vendored syntax grammars under `licenses/syntaxes/`. The `deb`,
+  `rpm` and Arch packages also carry the privacy policy, which until now only the archives
+  and the installer had.
 
 - **A gateway's own catalogue now configures the app.** Point `external` mode at a
   service that publishes one (OpenRouter and the like) and two things stop being
@@ -33,6 +39,11 @@ split by subsystem.
   instead of answering "LLM server is not configured".
 
 ### Fixed
+- **On a clean Windows the app now starts.** The binary needed `VCRUNTIME140.dll`, part of
+  the Visual C++ redistributable — a library Windows does not include and the installer
+  did not bring — so on a machine that had never installed a C++ application it failed
+  with a missing-DLL dialog before showing anything. The runtime is now built into the
+  binary, which costs it 365 KB.
 
 - **Starting mindfork without a terminal no longer hangs.** With its output redirected
   to a file or a pipe, or with no console, the app filled that output with screen codes
@@ -139,6 +150,14 @@ split by subsystem.
   says the network is off, where the setting is, and what to do instead.
 
 ### Security
+- **Two flaws in the XML parser that reads DOCX files are fixed** (`/rag add` on a `.docx`),
+  and a withdrawn version of a cryptography package no longer goes into the build.
+- **What builds a release is pinned and verified.** The package builder for the Linux
+  packages used to be downloaded from an unsigned repository at whatever version it served
+  that day, and every build step was named by a tag its author can repoint. Both are now
+  fixed versions checked against a hash, and a release is published as a draft after its
+  version has been checked against the source — so what you download is what this
+  repository's code says it is.
 
 - **The Python sandbox's network no longer reaches this machine.** Code the model runs
   could open connections to services on your own computer and to your local network — a

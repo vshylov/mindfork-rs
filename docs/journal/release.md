@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (36)
+## Entries (37)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -48,6 +48,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: en_GB updated to V 4.0.9 — the licence stated, in the file itself (done)
 - Release 0.9.9 (prepared)
 - Post-M9: public release readiness — the audit and stage 1 (done)
+- Post-M9: public release readiness — stage 3, the release pipeline (done)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -1906,3 +1907,75 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   `site_legal_pages --check` green. No engine live run: startup, UI and documents
   only; the headless re-measurement stands in for B8, and the empty state in a real
   terminal is the owner's look before merge.
+
+### Post-M9: public release readiness — stage 3, the release pipeline (done)
+
+- **Stage 3 of the track** ([release-pipeline.md](../research/release-pipeline.md); forks
+  R1–R5 decided by the user on 2026-09-17, each at its recommendation). Stages 1 and 2
+  were about the first minute of a stranger's run and what an enabled tool may reach;
+  this one is about **what a stranger downloads, and what produced it** — B5, B6 and B12
+  of the audit plus the licence, supply-chain and dependency lines under "Should".
+- **B12 — the Windows binary needed a runtime we do not ship.** Measured on the 0.9.9
+  release binary: it imports `VCRUNTIME140.dll` (the Visual C++ redistributable's; a clean
+  Windows does not carry it, and neither the archive nor the installer brings it) and
+  eleven `api-ms-win-crt-*` stubs (the Universal CRT — a Windows component since 10, so
+  those were never the problem). One DLL between a download and a machine that has never
+  installed a C++ application. With `-C target-feature=+crt-static` it links, the graph's C
+  dependencies (`onig`, `libsqlite3-sys`, `sqlite-vec`) pick the static runtime up through
+  the `cc` crate, **neither name is imported any more**, and it costs 365 KB (+1.4 %). The
+  flag lives in `.cargo/config.toml` for the msvc target rather than in the release
+  workflow (fork R1), so the 3288 tests run on the linkage the artifact ships — measured
+  green locally before the change was written down. The caveat is in the file: cargo does
+  not merge this with a `RUSTFLAGS` set in the environment, which replaces it wholesale.
+- **B6 — a tag published a live release with nothing checking it.** `gh release create`
+  ran without `--draft`, and the version came from the tag with nothing comparing it to
+  `Cargo.toml`; the notes came from an `awk` that silently wrote "Release vX.Y.Z." when it
+  found no section. So a tag one digit off shipped binaries whose `--version` contradicted
+  their own page, and a forgotten CHANGELOG rename shipped an empty one — both discovered
+  by whoever downloaded it. `tools/release_guard.py` now refuses **before the first build**
+  on the tag's shape, on a disagreement with `Cargo.toml`, and on a missing or empty
+  CHANGELOG section; the release is created as a **draft**, so AGENTS.md §6's artifact
+  smoke test happens before anyone else can see it, and publishing is the owner's click.
+  A tag with a prerelease suffix (`v0.9.9-rc1`) is accepted, marked `--prerelease` and
+  allowed to fall back to `[Unreleased]` — which is what makes a rehearsal of the whole
+  workflow possible without inventing a version.
+- **The guard's own refusals are exercised on every pull request** (`--self-test`, in
+  ci.yml's `lint` job): a workflow's error paths are otherwise only ever reached by a
+  release that fails, which is the worst place to find out (lessons §10).
+- **`nfpm` came from an unsigned repository at an unnamed version.** Both workflows added
+  `deb [trusted=yes] https://repo.goreleaser.com/apt/` — `trusted=yes` is apt being told
+  not to check the signature — and installed whatever was newest, into the job that builds
+  the `.deb`/`.rpm`/`.pkg.tar.zst` a stranger installs. `tools/install_nfpm.sh` pins 2.47.0
+  and verifies its SHA-256, shared by `release.yml` and `packaging.yml` exactly as
+  `install_inno.ps1` is, so the gate cannot validate packages built by a different tool.
+  Measured in an `ubuntu:24.04` container, both runs: installs, verifies, and is idempotent
+  — the first spelling looked for a `version:` line that nfpm does not print (it prints
+  `GitVersion:`), and the script then rejected the copy it had just installed. A tool's
+  `--version` output is a measurement, not a guess.
+- **The licences travel now.** Three gaps, one shape: the spellcheck dictionaries' licences
+  reached every artifact, the 22 vendored grammar licences reached none (the grammars are
+  compiled into the binary, so they had no file to sit beside), no artifact carried the
+  texts of the 558 locked packages, and `PRIVACY.md` was in the archives and the installer
+  but **not** in the Linux packages. Now: `THIRD-PARTY-NOTICES.md` generated by `cargo
+  about` from the release's own `Cargo.lock` (367 KB, 215 licence sections over 362
+  packages — measured), `licenses/syntaxes/` beside it, and the policy in
+  `/usr/share/doc/mindfork-rs/`. The notice file is **not committed** (`.gitignore`): it is
+  derived from a lock file, and the copy that matters is the one built with the release.
+  `packaging.yml` generates it too — that workflow already triggers on `Cargo.lock`, so a
+  dependency whose licence the list cannot account for fails on the pull request rather
+  than on the tag. `build-packages.sh` refuses to run without the file and prints the one
+  command that makes it.
+- **Verified in a container before the rehearsal**: the packages carry `PRIVACY.md`,
+  `PRIVACY.ru.md`, `THIRD-PARTY-NOTICES.md` and all 22 grammar licences under
+  `/usr/share/doc/mindfork-rs/`, and the missing-notices arm refuses with exit 1.
+- **Dependencies**: `quick-xml` 0.39.4 → 0.42.0, which drops both RUSTSEC ignores from
+  `deny.toml`. It turned out to be ours alone — syntect taken with `default-features =
+  false` no longer pulls it through plist, so the comment pinning it "to the version
+  syntect resolves" described a graph that no longer existed. The bump is a real API move
+  (names and text are `str` now, `decode()` is gone in favour of `xml10_content()`), three
+  call sites in `doc_extract.rs`, its six tests green. `chacha20` 0.10.1 was **yanked** and
+  sat in the lock through pdf-extract → lopdf → rand; updated to 0.10.2, and `yanked` in
+  `deny.toml` is now `deny` rather than `warn`.
+- **Rehearsal** — see the outcome recorded in [release-pipeline.md](../research/release-pipeline.md) §8.
+- **Gates**: fmt / clippy / test green — 3288 unit tests, 188 `#[ignore]` — plus the six
+  documentation gates and the two new ones (`actions_pin_check`, `release_guard --self-test`).

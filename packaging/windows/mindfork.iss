@@ -229,6 +229,15 @@ Source: "{#SourcePath}..\..\docs\legal\DISCLAIMER.ru.md"; DestDir: "{app}"; Flag
 Source: "{#SourcePath}..\..\PRIVACY.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourcePath}..\..\docs\legal\PRIVACY.ru.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourcePath}..\..\docs\install.md"; DestDir: "{app}"; Flags: ignoreversion
+; The licence texts of every Rust package in the locked graph, generated for this
+; exact build (cargo about, see about.toml) — MIT, BSD and Apache all require the
+; notice to travel with a redistribution. release.yml and packaging.yml generate
+; it before compiling this script; a local compile needs
+; `cargo about generate about.hbs -o THIRD-PARTY-NOTICES.md` first.
+Source: "{#SourcePath}..\..\THIRD-PARTY-NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
+; The vendored syntax grammars are compiled into the binary by build.rs, so their
+; licences have no file of their own to sit beside (syntaxes\SOURCES.md).
+Source: "{#SourcePath}..\..\syntaxes\licenses\*.txt"; DestDir: "{app}\licenses\syntaxes"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\mindfork"; Filename: "{app}\mindfork.exe"
