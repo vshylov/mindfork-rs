@@ -1988,7 +1988,15 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   Fixed by deriving a numeric `NumericVersion` for the two `VersionInfo*` fields while
   `AppVersion` keeps the suffix for the user and the file name; the gate test pins both the
   fields and the derivation, and the compile was verified locally against the pinned Inno
-  Setup 7.1.0 for `0.9.9-rc2` and `0.9.9` alike. The full outcome, including the second
-  rehearsal, is in [release-pipeline.md](../research/release-pipeline.md) §8.
+  Setup 7.1.0 for `0.9.9-rc2` and `0.9.9` alike.
+- **Rehearsal 2 — `v0.9.9-rc2`: GO.** Every job green and the page **draft and
+  prerelease**; checked on the published assets: `sha256sums.txt` recomputed and matching,
+  the Windows binary *inside the archive* importing neither `VCRUNTIME140.dll` nor any
+  `api-ms-win-crt-*`, `THIRD-PARTY-NOTICES.md` and `PRIVACY.md` and 22 grammar licences in
+  both archives and in the `.deb`, the installer compiled from a prerelease version, and
+  the attestation step **skipped** because the repository is private — the guard behaving
+  as designed. Not exercised, and said so rather than implied: the `[Unreleased]` fallback
+  (a `## [0.9.9]` section exists, so the guard correctly preferred it) and the attestation
+  itself. Full table in [release-pipeline.md](../research/release-pipeline.md) §8.
 - **Gates**: fmt / clippy / test green — 3288 unit tests, 188 `#[ignore]` — plus the six
   documentation gates and the two new ones (`actions_pin_check`, `release_guard --self-test`).

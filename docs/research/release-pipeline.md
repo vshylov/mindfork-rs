@@ -327,5 +327,37 @@ compiling both `0.9.9-rc2` and `0.9.9`, with `PRIVACY.md`,
 `THIRD-PARTY-NOTICES.md` and the 22 grammar licences in the payload.
 
 Because the installer job failed, `release` was skipped and no draft was created —
-the archives, the checksums, the draft flag and the skipped attestation are
-unverified, so a second rehearsal follows.
+so a second rehearsal followed.
+
+**Rehearsal 2 — `v0.9.9-rc2`, 2026-09-18: GO.** Every job green, and the release
+page came out **draft and prerelease**, visible to nobody outside the repository.
+Checked on the published assets:
+
+| What | Result |
+|---|---|
+| the release's state | `draft=true`, `prerelease=true` — the suffix is read, not guessed |
+| assets | both archives, `.deb`/`.rpm`/`.pkg.tar.zst`, the installer, `sha256sums.txt` (7 lines) |
+| `sha256sums.txt` | recomputed locally for both archives — matches |
+| the Windows binary **in the archive** | imports neither `VCRUNTIME140.dll` nor any `api-ms-win-crt-*`; 26 796 KB |
+| the archives | `THIRD-PARTY-NOTICES.md`, `PRIVACY.md`, 22 files in `licenses/syntaxes/`, 4 in `data/dictionaries/licenses/`, both platforms |
+| the `.deb` | the same notice file byte for byte (367 812), the policy in both languages, the grammar licences |
+| the installer | compiled from the prerelease version, 12.2 MB |
+| the attestation step | **skipped** — the repository is private, which is the guard behaving as designed (N3) |
+| the notes | the CHANGELOG section for the version, with the footer's install guide pinned to this tag |
+
+Two things this did **not** exercise, stated so nobody reads more into it: the
+`[Unreleased]` fallback (a `## [0.9.9]` section exists, so the guard correctly
+preferred it — the fallback is covered by `--self-test`), and the attestation
+itself, which cannot run until the repository is public.
+
+**And the stage's other verification fired on its own.** The new `cargo-deny`
+trigger — an audit on any pull request that changes the dependency graph — went
+red on its first run with **RUSTSEC-2026-0285**: `rustls 0.23.40` accepted TLS 1.3
+handshake messages sent at the wrong encryption level, where RFC 8446 §5.1
+requires `unexpected_message` and a closed connection. The transcript stays
+authenticated, so a handshake cannot be altered or completed by a network
+attacker; the practical effect is a peer sending in plaintext what must be
+encrypted. Fixed from 0.23.45 — and `cargo update -p rustls` alone stops at
+0.23.43, because the MSRV-aware resolver holds the chain back, so the version is
+set precisely. Green on the pinned toolchain, 3288 tests. A weekly-only audit
+would have learned this up to six days after the merge.
