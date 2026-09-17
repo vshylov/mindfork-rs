@@ -2,8 +2,8 @@
 
 **Status:** measured and designed (§2–§4), 2026-09-17. **Every fork in §5 decided by
 the user on 2026-09-17 at its recommendation:** D1(a), D2(a), D3(b), D4(a), D5(b),
-D6(a), D7(a), D8(a), D9(a); N1–N5 not contested. **Stage 2a (the file tools)
-implemented, live GO** (§6); stage 2b (network and processes) next.
+D6(a), D7(a), D8(a), D9(a); N1–N5 not contested. **Stages 2a (the file tools, §6) and
+2b (network and processes, §7) implemented, each live GO.**
 
 Stage 2 of [public-release-readiness.md](public-release-readiness.md) (§2.2 B10,
 §2.3 "Security, beyond B10"). The audit's summary was that a pristine install is safe
@@ -352,3 +352,34 @@ and for `code_write` as a file and as a directory; a project containing the data
 (read, write, list, grep, and a project inside it); `.git/` written by neither
 `code_write` nor `code_edit` (`.GIT/`), read by `code_read`; a background run offered
 `python_exec` only with confirmation off, the parent turn offered it either way.
+
+## 7. Stage 2b — what was implemented
+
+D4, D5, D6 (no change), D8, N3, N4, and N5's remaining half.
+
+- **`shared::net`** publishes the ranges as `BLOCKED_V4`/`BLOCKED_V6` beside the
+  predicate, with `blocked_ranges_match_the_predicate` holding the two together, and
+  `sandbox_net_rules()` renders them as wasmer's filter. `shared::sandbox::net_arg` picks
+  one of three: no flag, a bare `--net` under `tools.web_allow_private`, or `--net=<rules>`.
+  `python_exec`'s description gained the third state.
+- **`SandboxOutput::net_refused`** carries what `strip_net_prompt` took out of the guest's
+  stdout, and the tool answers with a localized note naming the setting and the route.
+- **`shared::child_env`** removes credential-shaped names (by `_`-segment, so
+  `TOKENIZERS_PARALLELISM` survives) plus `config::named_key_env_vars` — the variables the
+  settings point at — from the local interpreter and the workspace commands.
+- **`http_text::read`** streams under the 32 MB ceiling; `fetch_url` refuses a larger page
+  in words.
+- **`Paths::ensure_dirs`** chmods the data root `0700` on unix at every start, and
+  `write_json` creates its files `0600`.
+
+Tests (+7): the CIDR list against the predicate; the rule string's mandatory allows; the
+three network flags; the runtime prompt stripped; credential names by segment and the
+named ones added once; a page past the ceiling refused while a small one still reads; the
+unix modes of the root and of a written file. Live **GO** (§4's first item), both arms:
+`loopback: PermissionError` with the host listener at zero connections, and
+`loopback: CONNECTED` in the control arm with `web_allow_private` on.
+
+**Left for later, recorded rather than fixed:** under `--net` a plain `http://` request to
+a host off this machine fails inside the sandbox whatever the rules (wasmer returns from
+`connect()` before the handshake, and the first send fails); HTTPS works. Measured on
+9 of 9 attempts, and independent of this stage.

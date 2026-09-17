@@ -630,12 +630,23 @@ src/
    │                       loopback/private/link-local/CGNAT/multicast/reserved and
    │                       their IPv4-mapped spellings. tools.web_allow_private
    │                       opens them; /image attach <url> is NOT affected (the
-   │                       user types that one). See spec §9.3
+   │                       user types that one). The same ranges are also published
+   │                       as a CIDR list (BLOCKED_V4/V6 + sandbox_net_rules), which
+   │                       the Python sandbox hands wasmer as its own filter — one
+   │                       test holds the list against the predicate. See spec §9.3,
+   │                       docs/research/safe-defaults.md D4
+   ├─ child_env.rs         what a child the MODEL drives does not inherit: the
+   │                       credential-shaped variable names and the ones settings
+   │                       name as key sources, removed from the local Python
+   │                       interpreter and the workspace commands. llama-server and
+   │                       MCP servers keep the whole environment (spec §9.6, D5/D6)
    ├─ http_text.rs         a fetched page's body → text, for both readers of
    │                       model-chosen pages (fetch_url, web_search's result
    │                       fetches): Content-Encoding undone (gzip/deflate — the
    │                       request advertises none, some servers compress anyway;
-   │                       inflated size bounded, an unknown coding an error),
+   │                       inflated size bounded, an unknown coding an error; the
+   │                       body itself read under the same ceiling as it arrives,
+   │                       so a model-chosen page cannot fill memory — N3),
    │                       then text_decode with the Content-Type and the host's
    │                       TLD as the hint. reqwest's text() is NOT used: built
    │                       without `charset`, it is from_utf8_lossy. See spec §9.3.1

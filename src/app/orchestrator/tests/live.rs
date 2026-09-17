@@ -1247,6 +1247,128 @@ fn first_number(s: &str, digits: usize) -> Option<String> {
 /// told not to print; turn 2 names that workbook in `files`, so it is copied into `/w/in`,
 /// and reads the total back with pandas.
 ///
+/// The sandbox's network reaches the public internet and **not this machine**
+/// (docs/research/safe-defaults.md D4). Measured before the change: a bare `--net` gave
+/// sandboxed code the host's own loopback and LAN, so a listener here was reachable from
+/// inside the guest.
+///
+/// The count on the host listener is the assertion rather than the code's own error text:
+/// a filter that refused *after* connecting would read the same from inside. The control
+/// arm — the same code with `tools.web_allow_private` on — must reach it, or the first
+/// arm proves only that the sandbox had no network at all.
+///
+/// `#[ignore]`, manual against a live stack.
+#[tokio::test]
+#[ignore = "requires a live model (MINDFORK_ENGINE_URL) and a provisioned sandbox (MINDFORK_SANDBOX_DIR)"]
+async fn sandbox_network_is_public_only_e2e_live() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn host_listener() -> (u16, std::sync::Arc<AtomicUsize>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let hits = std::sync::Arc::new(AtomicUsize::new(0));
+        let counter = std::sync::Arc::clone(&hits);
+        std::thread::spawn(move || {
+            while let Ok((stream, _)) = listener.accept() {
+                counter.fetch_add(1, Ordering::SeqCst);
+                drop(stream);
+            }
+        });
+        (port, hits)
+    }
+
+    // The code is a raw literal with real newlines: a Rust line continuation would
+    // indent every line of it, and Python answers that with an `IndentationError`
+    // before it ever reaches the network (measured the first time this ran).
+    let ask = |port: u16| {
+        let code = format!(
+            r#"import socket, urllib.request
+def probe(host, port):
+    try:
+        s = socket.create_connection((host, port), timeout=3)
+        s.close()
+        return 'CONNECTED'
+    except Exception as e:
+        return type(e).__name__
+print('loopback:', probe('127.0.0.1', {port}))
+try:
+    print('public:', urllib.request.urlopen('https://example.com', timeout=20).status)
+except Exception as e:
+    print('public:', type(e).__name__)"#
+        );
+        format!(
+            "Use python_exec exactly once, with this code verbatim and nothing added \
+             or reindented:\n\n{code}\n\nThen report what it printed."
+        )
+    };
+
+    // Arm 1: the default — public addresses only.
+    let (port, hits) = host_listener();
+    let Some((_dir, cmd_tx, mut evt_rx, handle)) =
+        spawn_python_chat_with(|cfg| cfg.tools.python_net_enabled = true).await
+    else {
+        return;
+    };
+    let (_reply, calls) = python_turn(&cmd_tx, &mut evt_rx, &ask(port)).await;
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+    let printed = calls
+        .iter()
+        .map(|c| c.result.as_str())
+        .collect::<Vec<_>>()
+        .join(
+            "
+",
+        );
+    eprintln!(
+        "public-only arm printed:
+{printed}"
+    );
+    assert!(
+        printed.contains("public: 200"),
+        "the public internet must still work: {printed}"
+    );
+    assert!(
+        !printed.contains("loopback: CONNECTED"),
+        "the host's loopback was reachable from the sandbox: {printed}"
+    );
+    assert_eq!(
+        hits.load(Ordering::SeqCst),
+        0,
+        "the sandbox connected to a service on this machine"
+    );
+
+    // Arm 2 (control): with private addresses allowed, the same code reaches it.
+    let (port, hits) = host_listener();
+    let Some((_dir, cmd_tx, mut evt_rx, handle)) = spawn_python_chat_with(|cfg| {
+        cfg.tools.python_net_enabled = true;
+        cfg.tools.web_allow_private = true;
+    })
+    .await
+    else {
+        return;
+    };
+    let (_reply, calls) = python_turn(&cmd_tx, &mut evt_rx, &ask(port)).await;
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+    let printed = calls
+        .iter()
+        .map(|c| c.result.as_str())
+        .collect::<Vec<_>>()
+        .join(
+            "
+",
+        );
+    eprintln!(
+        "allow-private arm printed:
+{printed}"
+    );
+    assert!(
+        printed.contains("loopback: CONNECTED") || hits.load(Ordering::SeqCst) > 0,
+        "the control arm reached nothing either — the arms prove nothing apart: {printed}"
+    );
+}
+
 /// A workbook rather than a CSV on purpose: its bytes have to survive being stored and
 /// staged **unchanged**, or openpyxl cannot open it at all. And the number is the
 /// sandbox's, not the conversation's — the peak-month probe of §10 showed how easily an

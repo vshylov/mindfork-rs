@@ -110,6 +110,32 @@ pub struct SandboxOutput {
     pub files: Vec<OutputFile>,
     /// What `/w/out` held that was not collected, each with its reason.
     pub skipped: Vec<SkippedOutput>,
+    /// The run asked for the network and had none: with no `--net`, `wasmer` writes a
+    /// prompt about the missing flag **into the guest's stdout**, which the model would
+    /// otherwise read as its own program's output and as an instruction it cannot follow.
+    /// The line is taken out of `stdout` and the fact carried here instead
+    /// (docs/research/safe-defaults.md N4).
+    pub net_refused: bool,
+}
+
+/// What `wasmer` prints into the guest's stdout when a job wants the network without
+/// `--net` (measured, wasmer 7.2.0). Matched loosely — on the two halves that carry the
+/// meaning — so a reworded release still lands in [`SandboxOutput::net_refused`] rather
+/// than in the model's reading of its own output.
+fn strip_net_prompt(stdout: &str) -> (String, bool) {
+    let is_prompt = |line: &str| {
+        let l = line.to_ascii_lowercase();
+        l.contains("networking access") || (l.contains("--net") && l.contains("flag"))
+    };
+    if !stdout.lines().any(is_prompt) {
+        return (stdout.to_string(), false);
+    }
+    let kept: Vec<&str> = stdout.lines().filter(|l| !is_prompt(l)).collect();
+    let mut kept = kept.join("\n");
+    if stdout.ends_with('\n') && !kept.is_empty() {
+        kept.push('\n');
+    }
+    (kept, true)
 }
 
 /// A file collected from `/w/out`: the name the guest gave it — not sanitized, storing it
@@ -310,6 +336,10 @@ pub struct WasmerSandbox {
     /// A hard process memory limit (MB; `None` — no limit). Applied only on
     /// Windows (a Job Object). See [`WasmerSandbox::with_memory_limit`].
     memory_mb: Option<u64>,
+    /// Whether a networked job may reach private addresses — `tools.web_allow_private`,
+    /// the one switch that already means "the model may reach what is not public"
+    /// (docs/research/safe-defaults.md D4). Off: the deny rules of [`net_arg`].
+    allow_private: bool,
 }
 
 impl WasmerSandbox {
@@ -340,6 +370,7 @@ impl WasmerSandbox {
             image: image.to_string(),
             gate: Arc::new(Semaphore::new(1)),
             memory_mb: None,
+            allow_private: false,
         }
     }
 
@@ -351,6 +382,13 @@ impl WasmerSandbox {
     /// See ADR 0005.
     pub fn with_memory_limit(mut self, mb: Option<u64>) -> Self {
         self.memory_mb = mb.filter(|&m| m > 0);
+        self
+    }
+
+    /// Lets a networked job reach private addresses too (`tools.web_allow_private`,
+    /// off by default). See [`Self::allow_private`].
+    pub fn with_private_network(mut self, allow: bool) -> Self {
+        self.allow_private = allow;
         self
     }
 
@@ -466,7 +504,8 @@ impl SandboxRunner for WasmerSandbox {
             envs.push(("PYTHONPATH", GUEST_SITE.into()));
         }
         let script_guest = format!("{GUEST_WORK}/{JOB_SCRIPT}");
-        let args = build_args(&plan.program, &mounts, &envs, spec.net, &script_guest);
+        let net = net_arg(spec.net, self.allow_private);
+        let args = build_args(&plan.program, &mounts, &envs, net.as_deref(), &script_guest);
 
         let mut cmd = tokio::process::Command::new(&wasmer);
         cmd.args(&args)
@@ -502,8 +541,10 @@ impl SandboxRunner for WasmerSandbox {
                 // walk; up to a call's worth of bytes is read on the blocking pool, while
                 // `job` keeps the directory alive.
                 let (files, skipped) = collected(out_dir, collect_outputs).await;
+                let (stdout, net_refused) = strip_net_prompt(&String::from_utf8_lossy(&out.stdout));
                 Ok(SandboxOutput {
-                    stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+                    net_refused,
+                    stdout,
                     stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
                     exit_code: out.status.code(),
                     timed_out: false,
@@ -538,6 +579,11 @@ pub struct LocalSandbox {
     /// A hard memory limit per interpreter process (MB; `None` — none). See
     /// [`LocalSandbox::with_memory_limit`].
     memory_mb: Option<u64>,
+    /// Variable names the settings point at for a key ([`crate::shared::child_env`]):
+    /// removed from the interpreter's environment along with every credential-shaped
+    /// name, because here the code the model wrote runs as the user
+    /// (docs/research/safe-defaults.md D5).
+    named_secrets: Vec<String>,
 }
 
 impl LocalSandbox {
@@ -545,7 +591,15 @@ impl LocalSandbox {
         Self {
             python,
             memory_mb: None,
+            named_secrets: Vec::new(),
         }
+    }
+
+    /// The variable names the user's settings name as key sources, so they are removed
+    /// from the interpreter's environment even though they match no pattern.
+    pub fn with_named_secrets(mut self, names: Vec<String>) -> Self {
+        self.named_secrets = names;
+        self
     }
 
     /// Sets a hard memory limit per process (MB; `Some(0)`/`None` — no limit;
@@ -613,6 +667,11 @@ impl SandboxRunner for LocalSandbox {
             .env("PYTHONUTF8", "1")
             // On a timeout the future is dropped → the process is killed.
             .kill_on_drop(true);
+        // The model wrote this code, and it runs as the user: the API keys in the
+        // environment are not part of what it was asked to do (safe-defaults.md D5).
+        for name in crate::shared::child_env::credential_vars(&self.named_secrets) {
+            cmd.env_remove(name);
+        }
         let mut child = cmd
             .spawn()
             .with_context(|| loc.tf("sandbox.err.spawn_python", &[("path", &python)]))?;
@@ -639,6 +698,9 @@ impl SandboxRunner for LocalSandbox {
                     timed_out: false,
                     files,
                     skipped,
+                    // Local mode has the host's network whatever the switch says
+                    // (§14 V5), so nothing is ever refused here.
+                    net_refused: false,
                 })
             }
             Ok(Err(e)) => Err(e).with_context(|| loc.t("sandbox.err.wait_python").to_string()),
@@ -733,6 +795,23 @@ fn apply_memory_limit(_child: &tokio::process::Child, _mb: u64) {
     tracing::debug!("sandbox: memory limit is supported only on Windows — skipping");
 }
 
+/// The `--net` flag a job runs with (pure, testable):
+///
+/// - no network — no flag at all;
+/// - network, and the user has said the model may reach private addresses
+///   (`tools.web_allow_private`) — a bare `--net`, the host network as before;
+/// - network otherwise — `--net=<rules>`, which denies exactly the ranges the web tools'
+///   address policy denies (`shared::net::sandbox_net_rules`). Measured: a bare `--net`
+///   gives sandboxed code the host's own loopback and LAN, which is what this closes
+///   (docs/research/safe-defaults.md D4).
+fn net_arg(net: bool, allow_private: bool) -> Option<OsString> {
+    match (net, allow_private) {
+        (false, _) => None,
+        (true, true) => Some("--net".into()),
+        (true, false) => Some(format!("--net={}", crate::shared::net::sandbox_net_rules()).into()),
+    }
+}
+
 /// Wraps the user's code with the WASIX compatibility shims — `setsockopt` and
 /// matplotlib (pure, testable).
 pub fn build_wrapper(code: &str) -> String {
@@ -747,12 +826,12 @@ fn build_args(
     python: &OsStr,
     mounts: &[(PathBuf, &str)],
     envs: &[(&str, String)],
-    net: bool,
+    net: Option<&OsStr>,
     script_guest: &str,
 ) -> Vec<OsString> {
     let mut a: Vec<OsString> = vec!["run".into(), "--v8".into()];
-    if net {
-        a.push("--net".into());
+    if let Some(net) = net {
+        a.push(net.to_os_string());
     }
     for (host, guest) in mounts {
         a.push("--volume".into());
@@ -1440,6 +1519,32 @@ mod tests {
         assert!(shim < w.find("print(1)").unwrap(), "{w}");
     }
 
+    /// wasmer answers a job that wants the network without `--net` by writing a prompt
+    /// into the **guest's stdout**, where the model reads it as its own program's output
+    /// and as an instruction it cannot act on. It is taken out, the rest of the output is
+    /// untouched, and the fact is carried separately (docs/research/safe-defaults.md N4).
+    #[test]
+    fn the_runtimes_network_prompt_leaves_the_output() {
+        let stdout = "first line
+The current package is requesting networking access. Run the package with `--net` flag to bypass the prompt.
+second line
+";
+        let (kept, refused) = strip_net_prompt(stdout);
+        assert!(refused);
+        assert_eq!(
+            kept,
+            "first line
+second line
+"
+        );
+
+        let ordinary = "result: 42
+";
+        let (kept, refused) = strip_net_prompt(ordinary);
+        assert!(!refused);
+        assert_eq!(kept, ordinary);
+    }
+
     #[test]
     fn build_args_without_net_omits_flag() {
         let mounts = [(PathBuf::from("/tmp/job"), GUEST_WORK)];
@@ -1448,7 +1553,7 @@ mod tests {
             OsStr::new("python/python"),
             &mounts,
             &envs,
-            false,
+            None,
             "/w/job.py",
         );
         let s: Vec<String> = a.iter().map(|x| x.to_string_lossy().into_owned()).collect();
@@ -1468,21 +1573,52 @@ mod tests {
     #[test]
     fn build_args_with_net_adds_flag_before_mounts() {
         let mounts = [(PathBuf::from("/tmp/job"), GUEST_WORK)];
-        let a = build_args(OsStr::new("python/python"), &mounts, &[], true, "/w/job.py");
+        let net = net_arg(true, true).unwrap();
+        let a = build_args(
+            OsStr::new("python/python"),
+            &mounts,
+            &[],
+            Some(&net),
+            "/w/job.py",
+        );
         let s: Vec<String> = a.iter().map(|x| x.to_string_lossy().into_owned()).collect();
         assert_eq!(s[2], "--net");
+    }
+
+    /// The network flag by switch (docs/research/safe-defaults.md D4): none at all with
+    /// the network off; a bare `--net` when the user has allowed private addresses; and
+    /// otherwise the rule list, which must both allow the public internet and deny what
+    /// the web tools' address policy denies — a rule list is default-deny, so an allow
+    /// dropped from it would silently take the network away instead of narrowing it.
+    #[test]
+    fn net_arg_carries_the_deny_rules_unless_private_is_allowed() {
+        assert_eq!(net_arg(false, false), None);
+        assert_eq!(net_arg(false, true), None);
+        assert_eq!(net_arg(true, true).unwrap(), OsStr::new("--net"));
+
+        let filtered = net_arg(true, false).unwrap();
+        let filtered = filtered.to_string_lossy().into_owned();
+        assert!(filtered.starts_with("--net="), "{filtered}");
+        for required in [
+            "ipv4:allow=*:*",
+            "dns:allow=*:*",
+            "ipv4:deny=127.0.0.0/8:*",
+            "ipv4:deny=192.168.0.0/16:*",
+            "ipv4:deny=169.254.0.0/16:*",
+            "ipv6:deny=::/96:*",
+            "ipv6:deny=fe80::/10:*",
+        ] {
+            assert!(
+                filtered.contains(required),
+                "{required} missing: {filtered}"
+            );
+        }
     }
 
     #[test]
     fn build_args_mount_is_host_colon_guest() {
         let mounts = [(PathBuf::from("/home/u/job"), GUEST_WORK)];
-        let a = build_args(
-            OsStr::new("python/python"),
-            &mounts,
-            &[],
-            false,
-            "/w/job.py",
-        );
+        let a = build_args(OsStr::new("python/python"), &mounts, &[], None, "/w/job.py");
         let vol = a
             .iter()
             .position(|x| x == OsStr::new("--volume"))

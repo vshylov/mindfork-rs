@@ -1162,8 +1162,15 @@ async fn run_command(ctx: &ToolContext, slot: CommandSlot) -> Result<ToolOutcome
     let cfg = ctx.workspace_cfg;
     let timeout = std::time::Duration::from_secs(cfg.command_timeout_secs.max(1));
     let started = std::time::Instant::now();
-    let (ended, stdout, stderr) =
-        spawn_and_wait(program, args, &root, timeout, &ctx.cancel).await?;
+    let (ended, stdout, stderr) = spawn_and_wait(
+        program,
+        args,
+        &root,
+        timeout,
+        &ctx.cancel,
+        &ctx.named_secrets,
+    )
+    .await?;
 
     let secs = format!("{:.1}", started.elapsed().as_secs_f64());
     let status = match &ended {
@@ -1213,6 +1220,7 @@ async fn spawn_and_wait(
     root: &Path,
     timeout: std::time::Duration,
     cancel: &tokio_util::sync::CancellationToken,
+    named_secrets: &[String],
 ) -> Result<(Ended, String, String)> {
     use tokio::io::AsyncReadExt;
 
@@ -1235,6 +1243,12 @@ async fn spawn_and_wait(
         .env("NO_COLOR", "1")
         .env("CLICOLOR", "0")
         .kill_on_drop(true);
+    // What this command runs is the project's own code, which the model may have just
+    // edited — so it starts without the API keys in the app's environment
+    // (docs/research/safe-defaults.md D5).
+    for name in crate::shared::child_env::credential_vars(named_secrets) {
+        cmd.env_remove(name);
+    }
     #[cfg(windows)]
     {
         // No console window (CREATE_NO_WINDOW): the TUI owns this terminal, and

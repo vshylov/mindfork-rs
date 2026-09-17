@@ -171,8 +171,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-17, version 0.9.9)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3281 unit tests
-green, 187 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **3288 unit tests
+green, 188 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -184,11 +184,16 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
-- **Safe defaults 2a — the file tools need a root** — an empty `fs_root` refuses (it
-  meant the whole disk), no file or code tool reaches the data root or the binary's
-  directory (`tools/reach.rs`), a dangling link no longer writes through the root check,
-  `.git/` is not written, and a background run under confirmation gets no dangerous
-  tools. Live **GO** ([docs/research/safe-defaults.md](docs/research/safe-defaults.md),
+- **Safe defaults — what an enabled tool may reach** (stages 2a and 2b, each live
+  **GO**). 2a: an empty `fs_root` refuses (it meant the whole disk), no file or code tool
+  reaches the data root or the binary's directory (`tools/reach.rs`), a dangling link no
+  longer writes through the root check, `.git/` is not written, and a background run under
+  confirmation gets no dangerous tools. 2b: the sandbox's network is public-only —
+  wasmer's own rule list, generated from `net.rs`'s ranges, measured to leave the host's
+  loopback and LAN reachable before — the local interpreter and workspace commands start
+  without the environment's keys (`shared/child_env.rs`), a fetched page is read under a
+  32 MB ceiling, and on unix the data root is `0700` with `0600` files
+  ([docs/research/safe-defaults.md](docs/research/safe-defaults.md),
   [docs/journal/tools.md](docs/journal/tools.md)).
 - **Before the first public release** — an audit of the flip, the defaults and the
   first run found twelve blockers and staged them; stage 1: a TUI launch without a
@@ -378,15 +383,6 @@ being recent is dropped, not shortened.
   the bytecode, most of a cold call. Found on the way: one call can write
   `/sp/sitecustomize.py` that the next call runs; its fix is a PR of its own
   (spec §13.2, [docs/journal/tools.md](docs/journal/tools.md)).
-- **`/file remove` and `/image remove` refuse a name two items share** — with
-  `a/notes.md` and `b/notes.md` attached, `/file remove notes.md` removed the first
-  and said only "notes.md", and `/file list` showed two identical lines (measured
-  through the orchestrator; `/image remove` the same). Now one `resolve_handle`
-  serves both: `#N` and a path reach one item, a shared name removes nothing and lists
-  each holder's `#N` and path, and the listings and the removal note show the source
-  where a name is shared
-  ([docs/research/remove-by-shared-name.md](docs/research/remove-by-shared-name.md),
-  spec §9.7, §9.10, [docs/journal/rag.md](docs/journal/rag.md)).
 - **A headless launch (no TTY) exits with code 2** and a one-line reason — the
   TUI cannot be run from an agent's shell; live verification needs a real
   terminal.

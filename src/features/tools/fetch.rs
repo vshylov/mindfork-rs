@@ -26,6 +26,7 @@ use crate::entities::profile::ToolId;
 use crate::entities::sampling::SamplingConfig;
 use crate::shared::api::contract::Prefill;
 use crate::shared::api::{ApiMessage, ChatChunk, ChatRequest};
+use crate::shared::http_text::MAX_INFLATED_MB;
 use crate::shared::net::{self, AddressPolicy, GuardedClient};
 
 use super::web::{ACCEPT_HTML, ACCEPT_LANGUAGE, USER_AGENT, extract_rich, truncate_chars};
@@ -109,6 +110,10 @@ impl FetchUrl {
             crate::shared::http_text::read(resp)
                 .await
                 .map_err(|err| match err.coding() {
+                    _ if err.too_large() => anyhow::anyhow!(loc.tf(
+                        "tool.fetch_url.err.too_large",
+                        &[("max", &format!("{} MB", MAX_INFLATED_MB))]
+                    )),
                     Some(coding) => {
                         anyhow::anyhow!(
                             loc.tf("tool.fetch_url.err.compressed", &[("coding", coding)])
@@ -1459,6 +1464,45 @@ mod tests {
             .unwrap();
         assert!(page.text.contains(prose), "{}", page.text);
         assert_eq!(page.title.as_deref(), Some("Архив статей"));
+    }
+
+    /// A body past the ceiling is refused **as it arrives** — the bound is the bytes
+    /// read, not the `Content-Length` a server may omit or misstate — and the refusal
+    /// says so rather than reading as a transport failure worth retrying
+    /// (docs/research/safe-defaults.md N3). The cap is 32 MB, so the stub lies about a
+    /// small body to exercise the header half, and sends more than it promised to
+    /// exercise the streaming half.
+    #[tokio::test]
+    async fn a_page_past_the_ceiling_is_refused_and_says_so() {
+        let (_d, ctx) = ctx_with_engine(Arc::new(MockBackend::scripted(vec![])));
+        let huge = 40 * 1024 * 1024usize;
+        let mut claimed = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {huge}\r\nConnection: close\r\n\r\n"
+        )
+        .into_bytes();
+        claimed.extend(std::iter::repeat_n(b'a', 64));
+        let (base, _h) = crate::features::image_fetch::stub::serve(vec![claimed]);
+        let refusal = FetchUrl::new(AddressPolicy::Unrestricted)
+            .fetch_text(&format!("{base}/huge.html"), ctx.loc)
+            .await
+            .err()
+            .expect("a body past the ceiling must be refused");
+        let refusal = format!("{refusal:#}");
+        assert!(refusal.contains("32 MB"), "{refusal}");
+
+        // The same page under the ceiling still reads, so the cap is what refused it.
+        let body = "<html><head><title>Small</title></head><body><h1>Small</h1><p>This page is small enough to be read whole, and long enough to be readable text rather than a fragment the extractor discards.</p></body></html>";
+        let ok = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+        .into_bytes();
+        let (base, _h) = crate::features::image_fetch::stub::serve(vec![ok]);
+        let page = FetchUrl::new(AddressPolicy::Unrestricted)
+            .fetch_text(&format!("{base}/small.html"), ctx.loc)
+            .await
+            .unwrap();
+        assert!(page.text.contains("small enough"), "{}", page.text);
     }
 
     /// The page from the chat that reported the defect (docs/research/page-charset.md

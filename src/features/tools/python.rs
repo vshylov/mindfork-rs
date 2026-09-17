@@ -53,6 +53,11 @@ pub struct PythonExec {
     sandbox: Arc<dyn SandboxRunner>,
     /// Allow network access in the sandbox (Wasmer; Local has none to switch, §14 V5).
     net: bool,
+    /// Whether that network reaches private addresses too (`tools.web_allow_private`).
+    /// Off, the sandbox is filtered down to public addresses, and the description says
+    /// so rather than promising a LAN service the code cannot reach
+    /// (docs/research/safe-defaults.md D4).
+    net_private: bool,
     /// Execution timeout in the sandbox (Wasmer).
     wasm_timeout: Duration,
     /// Whether an image the code saved to `/w/out` is shown to the model
@@ -72,9 +77,17 @@ impl PythonExec {
             mode,
             sandbox,
             net,
+            net_private: false,
             wasm_timeout,
             images: true,
         }
+    }
+
+    /// Says that the sandbox's network reaches private addresses as well
+    /// (`tools.web_allow_private`). The runner is configured from the same switch.
+    pub fn with_private_network(mut self, allow: bool) -> Self {
+        self.net_private = allow;
+        self
     }
 
     /// The timeout this mode's launch gets (§14 V6): the numbers are about what the two
@@ -152,6 +165,14 @@ impl PythonExec {
                 Some(section) => format!("{}\n\n{section}", console()),
                 None => console(),
             }
+        };
+        // The runtime's own prompt about the missing `--net` flag was taken out of the
+        // output (it is not the program's), and what it meant is said here instead, with
+        // the route: the switch is the user's (safe-defaults.md N4, lessons §4).
+        let result = if out.net_refused {
+            format!("{}\n\n{}", loc.t("tool.python_exec.result.net_off"), result)
+        } else {
+            result
         };
         ToolOutcome::with_effects(result, kept.effects).with_images(kept.images)
     }
@@ -463,7 +484,9 @@ impl Tool for PythonExec {
         let head = match self.mode {
             PythonMode::Local => loc.t("tool.python_exec.desc.local").to_string(),
             PythonMode::Wasmer => {
-                let net = if self.net {
+                let net = if self.net && self.net_private {
+                    loc.t("tool.python_exec.net.any")
+                } else if self.net {
                     loc.t("tool.python_exec.net.on")
                 } else {
                     loc.t("tool.python_exec.net.off")
@@ -841,16 +864,25 @@ mod tests {
         assert!(local.contains("in") && local.contains("out/"), "{local}");
         assert!(!local.contains("/w/"), "{local}");
         let sb: Arc<dyn SandboxRunner> = Arc::new(MockSandbox::missing("x"));
+        // Three states, not two: the sandbox's network is filtered down to public
+        // addresses unless the user allowed private ones, and the description has to say
+        // which — a model told it can reach a LAN service that answers EPERM would spend
+        // the turn retrying (docs/research/safe-defaults.md D4).
+        let described = |net: bool, private: bool| {
+            wasmer(sb.clone(), net)
+                .with_private_network(private)
+                .description(ru)
+        };
+        let public_only = described(true, false);
         assert!(
-            wasmer(sb.clone(), true)
-                .description(crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru))
-                .contains("есть доступ в сеть")
+            public_only.contains("только к публичным адресам"),
+            "{public_only}"
         );
-        assert!(
-            wasmer(sb, false)
-                .description(crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru))
-                .contains("без доступа в сеть")
-        );
+        let any = described(true, true);
+        assert!(any.contains("включая частные"), "{any}");
+        assert!(described(false, false).contains("без доступа в сеть"));
+        // The switch says nothing while the network itself is off.
+        assert!(described(false, true).contains("без доступа в сеть"));
     }
 
     /// Every call gets a fresh `JobDir` and the guest's `/tmp` dies with the

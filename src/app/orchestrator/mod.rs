@@ -444,6 +444,7 @@ fn build_registry(
         web_provider: config.tools.web_provider,
         web_search_keys: web_search_keys(config),
         fs_root: config.tools.fs_root.clone(),
+        named_secrets: crate::shared::config::named_key_env_vars(config),
         subagent_parallel: config.tools.subagent_parallel,
         // The video slot for `youtube_watch`: settings + the shared Gemini key
         // (ADR 0008). Independent of the chat engine — see `shared::video`.

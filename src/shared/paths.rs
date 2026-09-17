@@ -197,6 +197,7 @@ impl Paths {
     /// `dictionaries/` is written in ([`Paths::seed_dictionaries_dir`]).
     pub fn ensure_dirs(&self, loc: &Locale) -> Result<()> {
         std::fs::create_dir_all(&self.root)?;
+        Self::restrict_to_owner(&self.root);
         // The external-locales directory is created for discoverability (an
         // empty directory signals "put files here"); creation errors aren't
         // escalated — external locales are optional, built-in bundles work
@@ -364,6 +365,25 @@ impl Paths {
     pub fn exe_dir(&self) -> Option<&Path> {
         self.exe_dir.as_deref()
     }
+
+    /// The data root, for the owner only (`0700`), on **every** start rather than only at
+    /// creation: measured on Ubuntu 24.04, the default umask makes it `0755` and
+    /// `settings.json` `0644`, so what an older version created is what needs tightening
+    /// (docs/research/safe-defaults.md D8). One `chmod` on the root closes every file
+    /// beneath it, since reaching them needs `x` here. A failure is ignored — a root on a
+    /// filesystem without Unix modes (a mounted share) still has to work.
+    #[cfg(unix)]
+    fn restrict_to_owner(dir: &Path) {
+        use std::os::unix::fs::PermissionsExt;
+        if let Err(err) = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)) {
+            tracing::debug!(path = %dir.display(), %err, "could not restrict the data root");
+        }
+    }
+
+    /// Windows has no mode bits to set: a per-user data root there is already covered by
+    /// the profile's ACL, and DPAPI keeps the secrets machine- and user-bound (ADR 0008).
+    #[cfg(not(unix))]
+    fn restrict_to_owner(_dir: &Path) {}
 
     /// The directories no file or code tool may read or write: the data root and
     /// the binary's own directory, where `defaults.json` decides the data root.
@@ -655,6 +675,27 @@ mod tests {
     /// first launch under `system`/`path` storage actually sees.
     fn fresh_root(dir: &tempfile::TempDir) -> Paths {
         Paths::with_root(dir.path().join("data"))
+    }
+
+    /// The data root is the owner's alone, and **every** start tightens it: a root an
+    /// older version created under the default umask is `0755`, which on a shared home
+    /// (the project's own lab image has one at `2770`) is every group member's read of
+    /// the chats and the encrypted keys (docs/research/safe-defaults.md D8).
+    #[cfg(unix)]
+    #[test]
+    fn ensure_dirs_restricts_an_existing_root_to_its_owner() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("data");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        Paths::with_root(&root)
+            .ensure_dirs(crate::shared::i18n::locale(Lang::En))
+            .unwrap();
+
+        let mode = std::fs::metadata(&root).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700, "the root stayed readable to others: {mode:o}");
     }
 
     #[test]

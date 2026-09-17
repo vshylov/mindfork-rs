@@ -134,9 +134,30 @@ split by subsystem.
   disk, as a choice rather than a default.
 - **With confirmation on, a background sub-agent is not given dangerous tools.** It used
   to run them without asking, since no one is there to ask; now it plans without them.
+- **`python_exec` says when its network is off.** The runtime's own prompt about the
+  missing flag used to land in the output as if the script had printed it; the result now
+  says the network is off, where the setting is, and what to do instead.
 
 ### Security
 
+- **The Python sandbox's network no longer reaches this machine.** Code the model runs
+  could open connections to services on your own computer and to your local network — a
+  router's page, a database, a company wiki — because the sandbox was given the host's
+  network whole. It now reaches public addresses only, refusing the same ranges the web
+  tools refuse; `tools.web_allow_private` lifts both, as before. Downloading data from the
+  internet still works.
+- **Code the model writes runs without your API keys.** The local Python interpreter and
+  the code workspace's build and test commands started with the whole environment, so any
+  key exported in the shell that launched mindfork was readable by a script the model
+  wrote, or by a build script it had just edited. Those variables are now removed for
+  those two; `llama-server` and MCP servers, which you chose to run, are unchanged.
+- **On Linux your data folder is yours alone.** It was created with the system default,
+  which usually lets every other account on the machine read your chats and the encrypted
+  keys. The folder is set to owner-only at every start, including folders older versions
+  created, and new files are written the same way.
+- **A page `fetch_url` retrieves is read under a size ceiling** (32 MB), counted as it
+  arrives, so a model-chosen address cannot fill memory with a multi-gigabyte download. A
+  page past it is refused with a message saying so.
 - **The assistant's file and project tools can no longer reach mindfork's own folders.**
   A file tool given a whole drive, or a project that contains the data folder, could read
   every stored key and conversation, or rewrite the settings so that something would run

@@ -179,6 +179,9 @@ pub struct ToolContext {
     /// config here, so a settings edit mid-turn cannot change the timeout a
     /// running command was started with.
     pub workspace_cfg: crate::shared::config::WorkspaceSettings,
+    /// See [`ToolParams::named_secrets`]: the variables a workspace command does not
+    /// inherit, because the model may have edited what that command runs.
+    pub named_secrets: std::sync::Arc<[String]>,
     /// Cancellation token for the turn (user Esc / background-task timeout): a
     /// long-running tool (MCP `tools/call`, network) must break on it rather than
     /// block cancellation. The agentic loop additionally wraps `invoke` in a
@@ -253,6 +256,9 @@ pub struct ToolParams {
     pub workspace: crate::shared::config::WorkspaceSettings,
     /// The encoding detector's hint for local files. See [`ToolContext::file_hint`].
     pub file_hint: Option<&'static str>,
+    /// See [`ToolConfig::named_secrets`] — the workspace commands' half of it, since the
+    /// model may have edited the build script they run.
+    pub named_secrets: std::sync::Arc<[String]>,
 }
 
 impl ToolParams {
@@ -275,6 +281,7 @@ impl ToolParams {
             python_mode: cfg.tools.python_mode,
             workspace: cfg.workspace,
             file_hint: crate::shared::text_decode::tld_hint(cfg.interface.language),
+            named_secrets: crate::shared::config::named_key_env_vars(cfg).into(),
         }
     }
 }
@@ -355,6 +362,7 @@ impl ToolContext {
             images: turn.images,
             stages_files: turn.stages_files,
             workspace_cfg: params.workspace,
+            named_secrets: params.named_secrets,
             mcp_images: params.mcp_images,
             python_net: params.python_net,
             python_mode: params.python_mode,
@@ -891,6 +899,11 @@ pub struct ToolConfig {
     pub web_search_keys: Vec<(crate::shared::secrets::SearchSlot, String)>,
     /// "Sandbox" directory for file tools (`None` → no restriction).
     pub fs_root: Option<String>,
+    /// Environment variables the settings name as key sources
+    /// (`config::named_key_env_vars`): removed from the environment of the children the
+    /// model drives, along with the credential-shaped names
+    /// (docs/research/safe-defaults.md D5).
+    pub named_secrets: Vec<String>,
     /// `config.tools.subagent_parallel` — how many of one reply's sub-agents
     /// run at once; `call_subagent`'s description says so above 1.
     pub subagent_parallel: u32,
@@ -926,6 +939,7 @@ impl Default for ToolConfig {
             web_provider: crate::shared::config::WebProvider::default(),
             web_search_keys: Vec::new(),
             fs_root: None,
+            named_secrets: Vec::new(),
             subagent_parallel: 1,
             video: None,
             sampling_provider: None,
@@ -1009,11 +1023,15 @@ pub fn standard_registry(cfg: &ToolConfig) -> ToolRegistry {
     let runner: Arc<dyn crate::shared::sandbox::SandboxRunner> = match cfg.python_mode {
         crate::shared::config::PythonMode::Wasmer => Arc::new(
             WasmerSandbox::new(cfg.sandbox_dir.clone())
-                .with_memory_limit(cfg.python_wasm_memory_mb),
+                .with_memory_limit(cfg.python_wasm_memory_mb)
+                // The same switch the web tools read: "the model may reach private
+                // addresses" is one decision, not one per tool (safe-defaults.md D4).
+                .with_private_network(cfg.web_allow_private),
         ),
         crate::shared::config::PythonMode::Local => Arc::new(
             crate::shared::sandbox::LocalSandbox::new(cfg.python_path.clone())
-                .with_memory_limit(cfg.python_local_memory_mb),
+                .with_memory_limit(cfg.python_local_memory_mb)
+                .with_named_secrets(cfg.named_secrets.clone()),
         ),
     };
     reg.register(Arc::new(
@@ -1023,7 +1041,8 @@ pub fn standard_registry(cfg: &ToolConfig) -> ToolRegistry {
             cfg.python_net,
             cfg.python_wasm_timeout,
         )
-        .with_images(cfg.python_images),
+        .with_images(cfg.python_images)
+        .with_private_network(cfg.web_allow_private),
     ));
     reg.register(Arc::new(calc::Calculate));
     reg.register(Arc::new(datetime::CurrentTime));
@@ -1164,6 +1183,7 @@ pub(crate) mod testkit {
             python_mode: crate::shared::config::PythonMode::Wasmer,
             workspace: crate::shared::config::WorkspaceSettings::default(),
             file_hint: None,
+            named_secrets: Vec::new().into(),
         }
     }
 

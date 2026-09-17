@@ -53,8 +53,18 @@ there are no backport branches.
   background run is not offered dangerous tools at all, since no one could be
   asked.
 - **The Python sandbox is isolated**: `python_exec` runs in a Wasmer/WASIX
-  sidecar with no host filesystem access and network behind a toggle
-  ([ADR 0005](docs/decisions/0005-python-sandbox-wasmer.md)).
+  sidecar with no host filesystem access and network behind a toggle; that
+  network reaches **public addresses only** — this machine's own services, the
+  local network and the cloud metadata address are refused, unless you turn on
+  `tools.web_allow_private`
+  ([ADR 0005](docs/decisions/0005-python-sandbox-wasmer.md)). The optional
+  **local interpreter** mode is not a sandbox at all: it runs with your
+  permissions and reaches what you reach, which is why it is not the default.
+- **Code the model wrote runs without your keys**: the local interpreter and a
+  code-workspace command start with the credential-shaped variables removed from
+  their environment (`*_KEY`, `*TOKEN*`, `*SECRET*`, … and whatever your settings
+  name as a key source). `llama-server` and MCP servers — software you chose —
+  keep the whole environment.
 - **The file tools are jailed**: `fs_read` / `fs_write` / `fs_list` work only
   inside the `fs_root` directory you set, and refuse while it is empty; escaping
   it via `..`, an absolute path or a symbolic link is blocked.
