@@ -14,11 +14,12 @@ use std::sync::LazyLock;
 
 use crate::shared::i18n::Lang;
 
-/// App brand name (as in the wordmark logo and on crates.io). The binary is
-/// named after it (`[[bin]]` in `Cargo.toml`, held by the gate test
-/// [`tests::the_binary_is_named_after_the_brand`]); the package keeps the
-/// project name `mindfork-rs` (`CARGO_PKG_NAME`). See
-/// docs/research/binary-rename.md.
+/// App brand name (as in the wordmark logo and on crates.io). The binary and
+/// the crate are both named after it (`[[bin]]` and `package.name` in
+/// `Cargo.toml`, held by the gate test
+/// [`tests::the_binary_is_named_after_the_brand`]); what keeps the project name
+/// `mindfork-rs` is the repository, the Linux package and the files on disk.
+/// See docs/research/binary-rename.md.
 pub const APP_NAME: &str = "mindfork";
 
 /// Author (matches the copyright in `LICENSE`).
@@ -334,14 +335,15 @@ mod tests {
         );
     }
 
-    /// Gate: the binary target carries the brand name and the package keeps
-    /// the project name (docs/research/binary-rename.md). `[[bin]] name` is
-    /// read from the manifest the way [`cargo_runtime_deps`] reads it, so
-    /// [`APP_NAME`] and the command the user actually types cannot drift
-    /// apart.
+    /// Gate: the binary target and the package both carry the brand name
+    /// (docs/research/binary-rename.md §10 — the crate is published as
+    /// `mindfork`; the repository and the files on disk keep `mindfork-rs`).
+    /// `[[bin]] name` is read from the manifest the way [`cargo_runtime_deps`]
+    /// reads it, so [`APP_NAME`], the crate on crates.io and the command the
+    /// user actually types cannot drift apart.
     #[test]
     fn the_binary_is_named_after_the_brand() {
-        assert_eq!(env!("CARGO_PKG_NAME"), "mindfork-rs");
+        assert_eq!(env!("CARGO_PKG_NAME"), APP_NAME);
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml");
         let toml = std::fs::read_to_string(path).expect("Cargo.toml is present");
         let mut in_bin = false;

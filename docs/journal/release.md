@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (40)
+## Entries (41)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -52,6 +52,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: public release readiness — stage 4a, the ways a first run ends badly (done)
 - Post-M9: public release readiness — stage 5a, the documents a stranger meets (done)
 - Post-M9: public release readiness — stage 5c, the release pull request (done)
+- Post-M9: the Cargo package becomes `mindfork` (done)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -2147,3 +2148,43 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   manual).
 - **Gates**: fmt / clippy / test green — **3323 unit tests, 196 `#[ignore]`**; the tag
   guard run for real against the new version.
+
+### Post-M9: the Cargo package becomes `mindfork` (done)
+
+The crate is renamed for crates.io, where the About dialog has been pointing all
+along (`credits::CRATE_URL` → `crates.io/crates/mindfork`), and the repository
+keeps `mindfork-rs`. **This revises the decision of 2026-08-24**, which kept the
+package name too; the user's reason for the split is that the `-rs` is a
+repository name — it says the project is written in Rust and keeps it apart from
+an unrelated company of the same name — while a registry has no such ambiguity to
+resolve. Cargo offers no third way: it publishes strictly under `[package] name`,
+so the linked URL and the package name are the same decision. Recorded in
+[../research/binary-rename.md](../research/binary-rename.md) §10, where §1, §7 and
+§9 are amended rather than left to contradict it.
+
+- **Measured before deciding it was safe.** The three identifiers that name
+  something already on a user's disk — the data directory
+  (`ProjectDirs::from("", "", "mindfork-rs")`), the API-key crypto strings
+  (`ENTROPY`, `HKDF_INFO`, `CHECK_PLAINTEXT`) and the single-instance lock id —
+  are frozen literals, each with a comment saying why, and **none** is derived
+  from `package.name`. So the rename moves no data and invalidates no stored key.
+  The Linux package, `/usr/lib/mindfork-rs/`, the release assets and the Sonar
+  project key keep the repository's name as well.
+- **The one change that was not cosmetic**: `logging.rs` documents the
+  `MINDFORK_LOG` filter as `mindfork_rs=debug`, and an `EnvFilter` target is the
+  *crate* name — after the rename that spelling matches nothing. A stale comment
+  that would have sent a user to an empty log, rather than one that merely looks
+  old.
+- **The gate now ties three names instead of two**:
+  `assert_eq!(env!("CARGO_PKG_NAME"), APP_NAME)` in place of a literal, beside the
+  existing `[[bin]] name` check. `[[bin]]` is redundant now and stays: it is what
+  the gate reads, and it keeps the command from following a future package rename.
+- **Verification**: `cargo publish --dry-run` — 368 files, 15.4 MiB (3.8 MiB
+  compressed), the verification build of `mindfork v0.10.0` green, upload aborted
+  by the dry run; fmt, clippy, **3326 unit tests**. No live run applies: a package
+  name is read by Cargo and by nobody at runtime.
+- **Deliberately not done here**: the publish itself (the owner's, AGENTS.md §5),
+  and with it the CHANGELOG line, the README badge and `cargo install mindfork` in
+  install.md. They belong to the next version bump — `v0.10.0` already tags a tree
+  whose package was `mindfork-rs`, and until the crate is on the registry each of
+  those lines is a promise the registry does not keep.

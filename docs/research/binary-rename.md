@@ -166,6 +166,81 @@ and `OutputBaseFilename` stay (§3).
 ## 9. Out of scope
 
 - Publishing to crates.io as `mindfork` (package rename) — roadmap.
+  **Reopened and done in §10; the publish itself stays the user's.**
 - AUR groundwork keeps its `mindfork-rs-bin` working name (package-named,
   like the deb/rpm).
 - Any rename of data directories or secret/lock identifiers (§3) — never.
+
+## 10. 2026-09-18 — the package becomes `mindfork`
+
+**This revises §1 and §7**, where the user's 2026-08-24 decision was that the
+project, the repository *and the Cargo package* stay `mindfork-rs`, and closes
+the first line of §9. His decision of 2026-09-18: the crate on crates.io is
+`mindfork`, because the `-rs` is a **repository** name — it says the project is
+written in Rust and keeps it apart from an unrelated company of the same name —
+and a registry has no such ambiguity to resolve.
+
+Cargo leaves no third way: it publishes strictly under `[package] name`, with no
+alias, so `crates.io/crates/mindfork` — the URL the About dialog has pointed at
+since the brand was chosen (`credits::CRATE_URL`) — requires the package to be
+called that. Both names were free that day: the registry API answered 404 for
+`mindfork` **and** for `mindfork-rs` (measured 2026-09-18, four days after §1's
+"still free" was last checked).
+
+### What moved
+
+Everything Cargo derives from `package.name`, and nothing else:
+
+- `Cargo.toml` (`name`), `Cargo.lock` (one line);
+- `credits.rs` — the gate now reads `assert_eq!(env!("CARGO_PKG_NAME"), APP_NAME)`
+  instead of a literal, so the package, the `[[bin]]` target and the brand cannot
+  drift apart in any direction;
+- `logging.rs` — the documented `MINDFORK_LOG` example. The filter's target is the
+  **crate** name, so `mindfork_rs=debug` would have silently matched nothing after
+  the rename: the one place where the old spelling would have misled a user rather
+  than merely looked stale;
+- `build.rs` — the comments explaining why `PRODUCT_NAME` is spelled out rather
+  than taken from `package.name`. The reason changed (the default now happens to
+  agree) but the decision did not: a registry identity and the product name
+  Windows shows in the UAC dialog are different things, and code signing pins the
+  latter (§6.2 of code-signing.md);
+- `tools/release_guard.py` — the manifest fixture, so the self-test keeps testing
+  against a manifest that looks like ours.
+
+The `[[bin]]` section is now redundant — the roadmap predicted that — and stays
+anyway: it is what the gate above reads, and it keeps the command from following
+a future package rename by accident.
+
+### What did not move, and could not
+
+The three identifiers that name something already written to a user's disk are
+frozen literals with comments saying so, none of them derived from
+`package.name`: the data directory (`ProjectDirs::from("", "", "mindfork-rs")`),
+the API-key crypto strings (`ENTROPY`, `HKDF_INFO`, `CHECK_PLAINTEXT`) and the
+single-instance lock id. So this rename moves no user data and invalidates no
+stored key — which is what §3 promised, and the reason it was written down.
+`nfpm.yaml`'s package name, `/usr/lib/mindfork-rs/`, the release asset prefixes
+and the Sonar project key keep the repository's name too.
+
+### Verification
+
+- **`cargo publish --dry-run`** (and `cargo package` before it): 368 files,
+  15.4 MiB, 3.8 MiB compressed, the verification build of `mindfork v0.10.0`
+  green, upload aborted by the dry run. That is the publish itself, minus the
+  upload;
+- `cargo fmt --check`, `cargo clippy --all-targets -D warnings`, **3326 unit
+  tests**, 196 `#[ignore]`;
+- **no live run applies** — §8's reasoning holds unchanged: nothing here reaches
+  an engine, a file format or a protocol. A package name is read by Cargo and by
+  no one else at runtime.
+
+### What is left, and whose it is
+
+The publish. `cargo publish` is the user's (AGENTS.md §5 — the agent publishes
+nothing), and it belongs to the **next version bump**, not to 0.10.0: the tag
+`v0.10.0` already points at a tree whose package is `mindfork-rs`, so publishing
+`mindfork 0.10.0` from a later commit would put a version on the registry that no
+tag matches. The CHANGELOG line, the README badge and the `cargo install
+mindfork` line in `install.md` belong to that release too — until the crate is
+actually there, every one of them is a broken promise, which is exactly what the
+roadmap said.

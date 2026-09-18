@@ -1,5 +1,10 @@
 [package]
-name = "mindfork-rs"
+# The crate is published as `mindfork`. The GitHub repository stays
+# `mindfork-rs`, and so do the Linux package, `/usr/lib/mindfork-rs/`, the
+# release assets and the data directory: there the `-rs` says "written in
+# Rust" and keeps the project apart from an unrelated company of the same
+# name (docs/research/binary-rename.md §10).
+name = "mindfork"
 version = "0.10.0"
 edition = "2024"
 # The one sentence that describes the app. The same words are in site/zola.toml,

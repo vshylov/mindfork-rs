@@ -38,10 +38,12 @@ use std::{env, fs};
 
 /// The name the product presents under, in the `.exe`'s VERSIONINFO block.
 ///
-/// The brand, not the package id: `AppName` in the installer, the command, the
-/// shortcut and every user-facing surface say `mindfork`, while `mindfork-rs`
-/// stays the name of files and directories (docs/research/binary-rename.md).
-/// `winresource` would otherwise take `package.name` and stamp the wrong one.
+/// `AppName` in the installer, the command, the shortcut and every user-facing
+/// surface say `mindfork`, while `mindfork-rs` stays the name of files and
+/// directories (docs/research/binary-rename.md). Spelled out rather than left to
+/// `winresource`, which takes `package.name`: that says `mindfork` too since the
+/// crate was renamed for crates.io (§10), but a registry identity and the product
+/// name Windows shows are two different things and must not be tied by accident.
 ///
 /// Gated by host, like everything else the resource needs: on a Linux host the
 /// crate that would read it is not even a dependency (see [`embed_windows_icon`]).
@@ -162,9 +164,9 @@ fn embed_windows_icon() {
     let mut res = winresource::WindowsResource::new();
     res.set_icon(icon.to_string_lossy().as_ref());
     // The rest of the VERSIONINFO block. `winresource` fills it from Cargo
-    // metadata unless told otherwise, which spells the product `mindfork-rs`
-    // (`package.name`) and leaves company, copyright and original file name
-    // empty — measured on the built artifact, not assumed. Two consumers make
+    // metadata unless told otherwise: the product from `package.name`, and
+    // company, copyright and original file name left empty — measured on the
+    // built artifact, not assumed. Two consumers make
     // that more than cosmetic: Windows shows `FileDescription` as the program
     // name in the UAC dialog and Task Manager, and code signing pins these
     // strings through a file metadata restriction, so they must agree with the
