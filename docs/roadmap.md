@@ -24,22 +24,22 @@ Re-proposing it without one repeats a day of work whose answer is written down.
 The unprioritized list below is an idea bank of equal weight; this section calls
 out the highest-payoff tracks (real user pain / direct savings).
 
-**The first public release** (opened 2026-09-17): an audit of what making the
-repository public changes — the flip itself, the shipped defaults, the first
-minute of a stranger's run — found twelve blockers and staged them, from safe
-defaults for the file tools to the release pipeline, the public documents and the
-owner's flip checklist. Stages 1 (the first run), 2 (safe defaults,
-[safe-defaults.md](research/safe-defaults.md)), 3 (the release pipeline,
-[release-pipeline.md](research/release-pipeline.md)) and 4 (robustness and the
-shipped defaults, [robustness-and-defaults.md](research/robustness-and-defaults.md),
-with its model picker in [model-picker.md](research/model-picker.md)) and 5 (the
-documents a stranger meets, the website and the release pull request,
-[public-documents.md](research/public-documents.md)) are done. What remains is
-**stage 6 — the owner's flip checklist**, which is not a pull request: reserve the
-crates.io name, delete the pre-0.9.9 releases' assets, skim the run logs, flip the
-repository, turn on the settings the documents already assume, confirm
-`/releases` answers an anonymous visitor, and announce. Evidence and forks:
-[public-release-readiness.md](research/public-release-readiness.md).
+**The first public release** left this list on 2026-09-19 — **track complete**,
+all six stages. The audit of what making the repository public changes found
+twelve blockers and staged them: the first minute of a stranger's run, safe
+defaults for the file tools ([safe-defaults.md](research/safe-defaults.md)), the
+release pipeline ([release-pipeline.md](research/release-pipeline.md)),
+robustness and the shipped defaults
+([robustness-and-defaults.md](research/robustness-and-defaults.md), with the model
+picker in [model-picker.md](research/model-picker.md)), the documents a stranger
+meets ([public-documents.md](research/public-documents.md)) — and finally the
+flip itself, recorded in
+[public-release-readiness.md](research/public-release-readiness.md) §5: 9 229
+blobs and 582 pull requests scanned for credentials with **zero** found, 59
+release assets and 183 CI artifacts deleted for carrying dictionaries without
+their licences, v0.10.0 published and immutable, and the settings SECURITY.md had
+been promising. What is left of it is the owner's and is listed above under
+packaging: `cargo publish` at the next version bump.
 
 **Multimodality (images)** left this list on 2026-08-13 — **track complete**,
 both stages: `/image attach|remove|list` works against a local
