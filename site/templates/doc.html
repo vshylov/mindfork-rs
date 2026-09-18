@@ -1,3 +1,8 @@
+{# A document page: the install guide, the privacy policy, the licence, the
+   disclaimer, the code signing policy. `page.html` without its byline — none of
+   them has an author line, and "12 min read" over a legal text reads as a
+   warning rather than a service. Each states its own date where a reader wants
+   it: in the first paragraph. #}
 {% extends "base.html" %}
 
 {% block title %}<title>{{ page.title }} — mindfork</title>{% endblock %}
@@ -12,7 +17,6 @@
 <article class="prose-wrap">
   <div class="wrap narrow">
     <h1 class="post-h1">{{ page.title }}</h1>
-    <p class="post-meta mono">{% if page.date %}{{ page.date }} · {% endif %}{{ page.reading_time }} min read</p>
     <div class="prose">
       {{ page.content | safe }}
     </div>

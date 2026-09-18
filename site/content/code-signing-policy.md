@@ -1,7 +1,7 @@
 +++
 title = "Code signing policy"
 description = "Who builds and approves a mindfork release, how the Windows binaries are signed, and what the program does with your data."
-template = "legal.html"
+template = "doc.html"
 +++
 
 **Status, first, because it is the honest order.** mindfork's Windows binaries

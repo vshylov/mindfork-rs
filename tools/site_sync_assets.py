@@ -27,6 +27,9 @@ COPIES: list[tuple[str, str]] = [
     ("assets/mindfork-wordmark-light.svg", "site/static/brand/mindfork-wordmark-light.svg"),
     ("assets/mindfork-icon-transparent.svg", "site/static/brand/mindfork-icon-transparent.svg"),
     ("assets/mindfork-icon-256.png", "site/static/brand/mindfork-icon-256.png"),
+    # The social preview card (tools/og_card.py) — 1200x630, what a link to
+    # the site renders as anywhere social.
+    ("assets/og-card.png", "site/static/brand/og-card.png"),
 ]
 
 
