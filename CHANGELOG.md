@@ -21,8 +21,11 @@ split by subsystem.
   and `Ctrl+R` to ask again; the first row of the list is still "type a name by
   hand". Where a provider says what a model is for, the list is narrowed to it
   (Gemini, xAI and Anthropic do; the embedder's list then holds embedding models
-  only); where it says nothing, everything it lists is offered, newest first, with
-  the models it is retiring marked. Nothing is requested until you open the list,
+  only); where it says nothing, everything it lists is offered — ordered so that
+  the ones whose names look like image, audio or embedding models sit at the
+  bottom rather than the top, newest first within each group, with the models the
+  provider is retiring marked. Nothing is ever hidden: whatever the provider
+  lists can be chosen. Nothing is requested until you open the list,
   and if there is no list to show — no key yet, no answer, an address that serves
   no catalogue — the field works exactly as before and says why. The hint on those
   fields has stopped naming example models: it points at the list instead, which

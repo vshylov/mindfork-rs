@@ -287,7 +287,7 @@ The code: `shared/api/catalogue.rs` (four shapes → one `CatalogModel`),
 `AppCommand::ListModels` / `AppEvent::ModelCatalogue`, and
 `screens/settings/picker.rs` (the overlay, its filter, the "by hand" row).
 
-**Gates**: fmt / clippy / test green — **3320 unit tests, 195 `#[ignore]`** (+26
+**Gates**: fmt / clippy / test green — **3321 unit tests, 195 `#[ignore]`** (+27
 unit tests, +6 live smokes).
 
 **Live run — GO**, 2026-09-18, the owner's keys and the live stack: OpenAI 132
@@ -311,12 +311,23 @@ empty), xAI 7 (all chat, no `imagine` among them), a `llama-server` 1 (its own
   its `-m` path into the field can break nothing — while on a multi-model
   endpoint that same string is the selector.
 
-**The cost of F2(b), visible and accepted:** sorted newest-first by the
-endpoint's own `created`, OpenAI's list opens on this month's *image* models —
-`gpt-live-1`, `gpt-image-2.5-*` — because OpenAI publishes nothing that would
-tell them from a chat model. The filter line is what resolves it. The
-alternative was our own name patterns, which would be our claim about someone
-else's catalogue and would age exactly as D7's hint did.
+**The cost of F2(b) was real, and the owner's run made it visible:** sorted
+newest-first by the endpoint's own `created`, OpenAI's list opened on this
+month's *image* models — `gpt-live-1`, `gpt-image-2.5-*` — because OpenAI
+publishes nothing that would tell them from a chat model.
+
+**The user's decision of 2026-09-18, a third way past that fork: order, never
+hide.** A name that looks like another job (`tts`, `whisper`, `image`, `sora`,
+`realtime`, `transcribe`, `embedding`, …) sinks to the bottom of a list the
+endpoint said nothing about, and the embedder's row gets the mirror; the sort is
+stable, so the endpoint's own newest-first order survives inside each group, and
+a model whose role the endpoint *did* state is sorted by its word, not by our
+guess. This keeps what F2(c) was rejected for — a guess of ours that ages and
+hides a model nobody predicted — while fixing what the run found: a wrong guess
+now costs a scroll, not a model that cannot be chosen. Measured on the same 132
+entries: 49 sink, 83 stay, and none of the 83 is anything but a chat or
+completion model. Live: the list opens on `gpt-6-astra`, `gpt-5.6-luna`,
+`gpt-5.6-terra`, and the embedder's on `text-embedding-3-large`.
 
 **What the owner's run in the TUI found (2026-09-18), fixed in the same branch:**
 the catalogue was cached per **slot**, and N6's "one fetch per provider per

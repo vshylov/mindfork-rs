@@ -360,18 +360,80 @@ fn gemini_role(methods: &[String]) -> ModelRole {
     }
 }
 
-/// Narrows a catalogue to what the slot can use (fork F2/F3).
+/// Words in a model's **name** that suggest it does something other than chat.
 ///
-/// [`ModelRole::Unstated`] passes every filter — see [`ModelRole`].
+/// Read the guarantee before adding one: this list **only orders** a list the
+/// endpoint said nothing about, and never removes anything from it. That is the
+/// whole difference from the filter rejected in fork F2(c) — a name we guess
+/// wrong costs a scroll, not a model that cannot be chosen. Measured against
+/// OpenAI's 132 entries (2026-09-18): 49 sink, 83 stay, and none of the 83 is
+/// anything but a chat or completion model.
+const ANOTHER_JOB_IN_A_NAME: [&str; 17] = [
+    "tts",
+    "whisper",
+    "image",
+    "sora",
+    "embedding",
+    "realtime",
+    "transcribe",
+    "moderation",
+    "audio",
+    "dall-e",
+    "live",
+    "speech",
+    "video",
+    "imagine",
+    "veo",
+    "lyria",
+    "music",
+];
+
+/// The mirror of [`ANOTHER_JOB_IN_A_NAME`] for the embedder's row.
+const EMBEDDING_IN_A_NAME: [&str; 1] = ["embed"];
+
+/// Whether any of `needles` appears in the id, case-insensitively.
+fn name_hints(id: &str, needles: &[&str]) -> bool {
+    let id = id.to_ascii_lowercase();
+    needles.iter().any(|n| id.contains(n))
+}
+
+/// Where an entry sits in the list: `0` — what this slot is for, `1` — the rest.
+///
+/// A **guess about a name**, and only ever consulted for a model whose role the
+/// endpoint left [`ModelRole::Unstated`]: where it said what a model does, its
+/// word is what sorts.
+fn rank(m: &CatalogModel, slot: ModelSlot) -> u8 {
+    match slot {
+        ModelSlot::Assistant | ModelSlot::Impersonation => {
+            u8::from(m.role == ModelRole::Unstated && name_hints(&m.id, &ANOTHER_JOB_IN_A_NAME))
+        }
+        ModelSlot::Embedder => u8::from(
+            !(m.role == ModelRole::Embedding
+                || (m.role == ModelRole::Unstated && name_hints(&m.id, &EMBEDDING_IN_A_NAME))),
+        ),
+    }
+}
+
+/// Narrows a catalogue to what the slot can use, and puts first what the slot is
+/// for (forks F2/F3).
+///
+/// [`ModelRole::Unstated`] passes every filter — see [`ModelRole`] — which is
+/// what left OpenAI's list opening on this month's image models, since they are
+/// its newest entries (reported from a live run, 2026-09-18). So the list is
+/// **ordered** by [`rank`] and nothing is removed: the sort is stable, so the
+/// endpoint's own order — newest first where it publishes a date — survives
+/// inside each group.
 pub fn for_slot(models: Vec<CatalogModel>, slot: ModelSlot) -> Vec<CatalogModel> {
-    models
+    let mut kept: Vec<CatalogModel> = models
         .into_iter()
         .filter(|m| match (slot, m.role) {
             (_, ModelRole::Unstated) => true,
             (ModelSlot::Assistant | ModelSlot::Impersonation, role) => role == ModelRole::Chat,
             (ModelSlot::Embedder, role) => role == ModelRole::Embedding,
         })
-        .collect()
+        .collect();
+    kept.sort_by_key(|m| rank(m, slot));
+    kept
 }
 
 #[derive(Deserialize)]
@@ -499,6 +561,36 @@ mod tests {
         assert!(
             models.iter().filter(|m| m.retiring.is_some()).count() == 1,
             "a null shutdown_date is not a date"
+        );
+    }
+
+    /// The ordering the live run asked for: a name that looks like another job
+    /// goes **down**, never out — the whole difference from the filter F2(c)
+    /// rejected.
+    #[test]
+    fn a_silent_catalogue_is_ordered_not_filtered() {
+        let models = parse(CatalogueShape::OpenAi, OPENAI_BODY).expect("a catalogue");
+        let chat = for_slot(models.clone(), ModelSlot::Assistant);
+        assert_eq!(chat.len(), models.len(), "nothing is hidden, ever");
+        assert_eq!(
+            chat.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+            [
+                "gpt-6-astra",
+                "gpt-4",
+                "text-embedding-3-small",
+                "whisper-1"
+            ],
+            "the chat models first, each group still newest-first"
+        );
+        let embed = for_slot(models.clone(), ModelSlot::Embedder);
+        assert_eq!(embed.len(), models.len());
+        assert_eq!(
+            embed[0].id, "text-embedding-3-small",
+            "the embedder's row wants the mirror of the same guess"
+        );
+        assert!(
+            chat.iter().any(|m| m.id == "whisper-1"),
+            "a model we guessed about is still there to be chosen"
         );
     }
 
@@ -706,10 +798,26 @@ mod live_smoke {
             models.iter().any(|m| m.retiring.is_some()),
             "the shutdown dates are what the endpoint does publish"
         );
-        assert_eq!(
-            for_slot(models.clone(), ModelSlot::Assistant).len(),
-            models.len(),
-            "silence narrows nothing"
+        let chat = for_slot(models.clone(), ModelSlot::Assistant);
+        assert_eq!(chat.len(), models.len(), "silence narrows nothing");
+        eprintln!(
+            "openai, ordered for chat: {:?}",
+            chat.iter()
+                .take(5)
+                .map(|m| m.id.as_str())
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            !name_hints(&chat[0].id, &ANOTHER_JOB_IN_A_NAME),
+            "the list opens on a chat model, not on this month's image one: {}",
+            chat[0].id
+        );
+        let embed = for_slot(models, ModelSlot::Embedder);
+        eprintln!("openai, ordered for the embedder: {}", embed[0].id);
+        assert!(
+            name_hints(&embed[0].id, &EMBEDDING_IN_A_NAME),
+            "and the embedder's row opens on one that embeds: {}",
+            embed[0].id
         );
     }
 

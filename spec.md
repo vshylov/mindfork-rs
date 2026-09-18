@@ -3132,7 +3132,11 @@ section and subsection), `Esc` — cancel.
   capability field at all, nor does a `llama-server`), newest first where a
   creation date is published, with the entries the endpoint marks as retiring
   saying so: a claim the catalogue did not make is never invented, and a filter of
-  our own would age exactly as a hint naming `gpt-4o` did. A pick is written
+  our own would age exactly as a hint naming `gpt-4o` did. Where the endpoint said
+  nothing, the list is **ordered** by what a name suggests — the models that look
+  like image, audio or embedding ones sink to the bottom of a chat row's list, and
+  the embedder's row gets the mirror — but **nothing is removed**: a guess of ours
+  may cost a scroll, never a model that cannot be chosen. A pick is written
   **verbatim**, because on a multi-model endpoint that id is what selects the
   model; the one exception is Gemini's `models/` prefix, which the client appends
   itself. Managed mode has no picker — its row is a GGUF path on this machine — and

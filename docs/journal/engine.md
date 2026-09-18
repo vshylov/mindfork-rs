@@ -4651,12 +4651,20 @@ could never get — lessons §2, a fourth time; every such wait is bounded now.
   multi-model endpoint it is precisely the selector.
 - **Hence `ModelRole::Unstated`**, which is not "it does nothing": where a
   provider publishes no claim, none is invented and every model it lists is
-  offered for every slot (fork F2). The cost is visible and was accepted: sorted
-  newest-first by the endpoint's own `created`, OpenAI's list opens on this
-  month's **image** models, and the filter line is what resolves that. The
-  alternative — our own name patterns for `tts-*`, `whisper-*`, `sora-*` — would
-  be our claim about someone else's catalogue, and would age exactly as D7's
-  hint did.
+  offered for every slot (fork F2).
+- **And hence the ordering, which the owner's live run asked for.** Newest-first
+  by the endpoint's own `created`, OpenAI's list *opened* on this month's image
+  models (`gpt-live-1`, `gpt-image-2.5-*`) — correct and useless. The answer is
+  a third way past the fork (the user's decision, 2026-09-18): a name that looks
+  like another job sinks to the bottom of a list the endpoint said nothing
+  about, the embedder's row gets the mirror, and **nothing is ever removed**.
+  That keeps the reason F2(c)'s filter was rejected — a guess of ours ages, and
+  would hide a model nobody predicted — while fixing what the run found: a wrong
+  guess now costs a scroll. The sort is stable, so the endpoint's order survives
+  inside each group, and a role the endpoint *did* state always beats the guess.
+  Measured on the same 132: 49 sink, 83 stay, none of the 83 anything but a chat
+  or completion model; live, the list opens on `gpt-6-astra` and the embedder's
+  on `text-embedding-3-large`.
 - **Live run** — **GO**, 2026-09-18, all five catalogues with the owner's keys:
   OpenAI 132 (56 retiring, every role unstated), Gemini 58 (41 chat / 3
   embedding, no `models/` left in any id), Anthropic 11 (all chat, all named,
