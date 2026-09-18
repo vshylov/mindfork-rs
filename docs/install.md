@@ -320,15 +320,18 @@ vLLM, LM Studio, Ollama …). The recommended and verified backend is
 Two modes (configured on the settings screen, `Ctrl+P`, "Model/server" section):
 
 - **managed** — the app itself launches a child `llama-server` (path to the binary
-  + GGUF model `-m`, `-ngl`, `-c`, `--jinja`, `--no-mmap`, host/port). **The binary
+  + GGUF model `-m`, `-ngl`, `-c`, `--jinja`, no-mmap, host/port). **The binary
   field may be left empty**: the app then takes the build `mindfork llama setup`
   installed last (§3.1), or a `llama-server` sitting next to the application —
   so unpacking a llama.cpp archive beside `mindfork` is enough, with nothing to
   type. A bare name like `llama-server` is looked for beside the application and
   then in `PATH`; a path with a directory in it is used exactly as written.
-  `--no-mmap`
+  **No mmap**
   loads the weights fully into RAM instead of mapping the file from disk — helps on
-  network/slow drives, but needs more memory (off by default). Changing the model in
+  network/slow drives, but needs more memory (off by default). The flag behind it
+  is whichever the binary takes: llama.cpp folded `--no-mmap` into
+  `--load-mode none` in July 2026 and removed the old spelling in September, so
+  the app asks the binary before sending it. Changing the model in
   settings **restarts** the server.
   - **The batch on a CPU-only host.** `llama-server` looks at its queue between
     batches of `-b` prompt tokens (2048 by default), so a stream the app cancels

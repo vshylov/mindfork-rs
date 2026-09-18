@@ -214,12 +214,11 @@ pub(super) fn managed_rows(
                 FieldKind::Choice(m.flash_attn.label().to_string()),
             )
             .describe(loc.t("ui.settings.desc.flash_attn")),
-            row(
-                ids.no_mmap,
-                "No-mmap (--no-mmap)",
-                FieldKind::Toggle(m.no_mmap),
-            )
-            .describe(loc.t("ui.settings.desc.no_mmap")),
+            // No flag in the label: how a build spells it changed under us
+            // (`NoMmapSpelling`), and a label naming the wrong one is worse
+            // than a label naming none.
+            row(ids.no_mmap, "No mmap", FieldKind::Toggle(m.no_mmap))
+                .describe(loc.t("ui.settings.desc.no_mmap")),
         ],
     ));
     let mut spec = vec![

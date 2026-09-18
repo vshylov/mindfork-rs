@@ -1559,8 +1559,10 @@ its own — or named by `api_key_env`, resolved through the same
   `build_args` assembles the CLI (`-m`, `-ngl`, `-c`, `-b`/`-ub` on a CPU-only
   host — `CPU_BATCH` 256 when `gpu_layers` is 0 and no batch was typed, a
   typed one as is with `-ub` clamped at `SERVER_UBATCH`, nothing on a GPU
-  host: docs/research/cpu-batch.md §4.1 — `--jinja`, `--no-mmap`,
-  `--flash-attn`; speculative decoding `--spec-type` + draft `-md`/`-ngld`/
+  host: docs/research/cpu-batch.md §4.1 — `--jinja`, the no-mmap flag in
+  whichever spelling the binary takes (`--load-mode none` since llama.cpp
+  2026-07-23, `--no-mmap` before it; `no_mmap_spelling` reads the binary's own
+  `--help`, and only when the setting is on), `--flash-attn`; speculative decoding `--spec-type` + draft `-md`/`-ngld`/
   `--spec-draft-n-max`/`-n-min`; for embeddings — `--embeddings -ub <ctx> -b
   <ctx>`; `-np N --kv-unified` when `ManagedConfig.parallel` — the section's
   `sessions` — is above 1: an explicit `-np` alone would *split* the context

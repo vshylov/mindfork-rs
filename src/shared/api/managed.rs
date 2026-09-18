@@ -145,7 +145,81 @@ pub fn prefill_hold(batch: u32, prefill: crate::shared::api::contract::Prefill) 
     (hold > f64::from(PREFILL_HOLD_LIMIT_SECS)).then(|| hold.round() as u32)
 }
 
-pub fn build_args(cfg: &ManagedConfig) -> Vec<String> {
+/// How a `llama-server` build spells "do not memory-map the model".
+///
+/// Measured in llama.cpp's own history: `e6dd0e29a` (2026-07-23) folded
+/// `--no-mmap`/`--mlock`/`--direct-io` into `-lm, --load-mode MODE`, keeping the
+/// old flags as deprecated aliases, and `14a9d09f7` (2026-09-09) **removed**
+/// them. So a current binary answers `--no-mmap` with
+/// `error: invalid argument: --no-mmap` and refuses to start — including
+/// `b10883`, the build `mindfork llama setup` installs (checked), which is how
+/// this reached a user: ticking the box stopped the server from coming up at all.
+///
+/// Both spellings stay reachable because the app runs whatever binary it is
+/// pointed at, and a llama.cpp from June takes only the old one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoMmapSpelling {
+    /// `--load-mode none` — "no special loading mode", i.e. no mmap.
+    LoadMode,
+    /// `--no-mmap`, for a binary older than 2026-07-23.
+    NoMmap,
+}
+
+impl NoMmapSpelling {
+    /// The argument pair this spelling adds.
+    fn args(self) -> Vec<String> {
+        match self {
+            NoMmapSpelling::LoadMode => vec!["--load-mode".into(), "none".into()],
+            NoMmapSpelling::NoMmap => vec!["--no-mmap".into()],
+        }
+    }
+}
+
+/// What a binary's `--help` says it takes.
+///
+/// `--load-mode` first: a build that publishes it takes it, whether or not it
+/// still lists the deprecated alias. A help text mentioning neither is older
+/// than the rename, so the old spelling is the only one left.
+pub fn spelling_from_help(help: &str) -> NoMmapSpelling {
+    if help.contains("--load-mode") {
+        NoMmapSpelling::LoadMode
+    } else {
+        NoMmapSpelling::NoMmap
+    }
+}
+
+/// Asks the binary which spelling it takes, by running `--help`.
+///
+/// Only called when the setting is **on** — a launch that adds no such flag asks
+/// nothing and costs nothing. Deliberately not cached: a server start is rare and
+/// already seconds long, while a cache keyed by a path the user can replace
+/// underneath us is a staleness bug waiting to happen for a ~50 ms saving.
+///
+/// Blocking, like the rest of [`ServerHandle::launch`] around it — the file
+/// preflights above it stat the disk and the line below spawns a process, all on
+/// the same synchronous path — so this adds one more short blocking call rather
+/// than a new colour to the function.
+///
+/// A binary that cannot even print its help is about to fail its launch with a
+/// clearer message than this probe could give, so the answer there is the current
+/// spelling.
+pub fn no_mmap_spelling(binary: &std::path::Path) -> NoMmapSpelling {
+    match std::process::Command::new(binary).arg("--help").output() {
+        Ok(out) => {
+            let help = String::from_utf8_lossy(&out.stdout).into_owned()
+                + &String::from_utf8_lossy(&out.stderr);
+            let spelling = spelling_from_help(&help);
+            tracing::debug!(?spelling, "the binary was asked how it spells no-mmap");
+            spelling
+        }
+        Err(err) => {
+            tracing::debug!(%err, "the binary did not answer --help; assuming the current spelling");
+            NoMmapSpelling::LoadMode
+        }
+    }
+}
+
+pub fn build_args(cfg: &ManagedConfig, no_mmap: NoMmapSpelling) -> Vec<String> {
     let mut args = vec![
         "--host".to_string(),
         cfg.host.clone(),
@@ -214,7 +288,7 @@ pub fn build_args(cfg: &ManagedConfig) -> Vec<String> {
         args.push(cfg.context_size.to_string());
     }
     if cfg.no_mmap {
-        args.push("--no-mmap".into());
+        args.extend(no_mmap.args());
     }
     if let Some(fa) = &cfg.flash_attn {
         args.push("--flash-attn".into());
@@ -321,7 +395,14 @@ impl ServerHandle {
             );
         }
 
-        let args = build_args(cfg);
+        // Asked only when the setting is on (see `no_mmap_spelling`), so every
+        // other launch spawns exactly the one process it always did.
+        let no_mmap = if cfg.no_mmap {
+            no_mmap_spelling(&cfg.binary)
+        } else {
+            NoMmapSpelling::LoadMode
+        };
+        let args = build_args(cfg, no_mmap);
         tracing::info!(binary = %cfg.binary.display(), ?args, "launching managed llama-server");
 
         let mut child = Command::new(&cfg.binary)
@@ -526,7 +607,7 @@ mod tests {
             gpu_layers: 0,
             ..base_cfg()
         };
-        let args = build_args(&cfg);
+        let args = build_args(&cfg, NoMmapSpelling::LoadMode);
         let at = |flag: &str| {
             args.iter()
                 .position(|a| a == flag)
@@ -540,13 +621,17 @@ mod tests {
     /// `-b`, no `-ub`.
     #[test]
     fn a_gpu_line_is_byte_for_byte_what_it_was() {
-        let args = build_args(&base_cfg());
+        let args = build_args(&base_cfg(), NoMmapSpelling::LoadMode);
         assert!(!args.iter().any(|a| a == "-b" || a == "-ub"), "{args:?}");
         let partial = ManagedConfig {
             gpu_layers: 20,
             ..base_cfg()
         };
-        assert!(!build_args(&partial).iter().any(|a| a == "-b"));
+        assert!(
+            !build_args(&partial, NoMmapSpelling::LoadMode)
+                .iter()
+                .any(|a| a == "-b")
+        );
     }
 
     /// A typed batch is passed as is, whatever `-ngl` says, and the
@@ -554,7 +639,7 @@ mod tests {
     #[test]
     fn a_typed_batch_is_passed_as_is_with_the_micro_batch_clamped() {
         let at = |cfg: &ManagedConfig, flag: &str| {
-            let args = build_args(cfg);
+            let args = build_args(cfg, NoMmapSpelling::LoadMode);
             args.iter()
                 .position(|a| a == flag)
                 .map(|i| args[i + 1].clone())
@@ -592,7 +677,7 @@ mod tests {
             context_size: 8192,
             ..base_cfg()
         };
-        let args = build_args(&cfg);
+        let args = build_args(&cfg, NoMmapSpelling::LoadMode);
         let values: Vec<&String> = args
             .iter()
             .enumerate()
@@ -608,7 +693,7 @@ mod tests {
     /// would split the context between the slots.
     #[test]
     fn sessions_above_one_add_np_with_a_unified_pool() {
-        let one = build_args(&base_cfg());
+        let one = build_args(&base_cfg(), NoMmapSpelling::LoadMode);
         assert!(
             !one.iter().any(|a| a == "-np" || a == "--kv-unified"),
             "{one:?}"
@@ -618,7 +703,7 @@ mod tests {
             parallel: 3,
             ..base_cfg()
         };
-        let args = build_args(&cfg);
+        let args = build_args(&cfg, NoMmapSpelling::LoadMode);
         let np = args.iter().position(|a| a == "-np").expect("-np present");
         assert_eq!(args[np + 1], "3");
         assert!(args.contains(&"--kv-unified".to_string()), "{args:?}");
@@ -629,7 +714,7 @@ mod tests {
 
     #[test]
     fn args_include_host_port_ngl_ctx_jinja() {
-        let args = build_args(&base_cfg());
+        let args = build_args(&base_cfg(), NoMmapSpelling::LoadMode);
         let host = args.iter().position(|a| a == "--host").unwrap();
         assert_eq!(args[host + 1], "127.0.0.1");
         let p = args.iter().position(|a| a == "--port").unwrap();
@@ -648,7 +733,7 @@ mod tests {
             reasoning_format: Some("auto".into()),
             ..base_cfg()
         };
-        let args = build_args(&cfg);
+        let args = build_args(&cfg, NoMmapSpelling::LoadMode);
         let m = args.iter().position(|a| a == "-m").unwrap();
         assert_eq!(args[m + 1], "gemma.gguf");
         let rf = args.iter().position(|a| a == "--reasoning-format").unwrap();
@@ -663,7 +748,7 @@ mod tests {
             jinja: false,
             ..base_cfg()
         };
-        let args = build_args(&cfg);
+        let args = build_args(&cfg, NoMmapSpelling::LoadMode);
         assert!(args.contains(&"--embeddings".to_string()));
         assert!(!args.contains(&"--jinja".to_string()));
         // The physical/logical batch is raised to the context size, otherwise chunks
@@ -677,19 +762,22 @@ mod tests {
     #[test]
     fn no_batch_flags_for_non_embedding_server() {
         // The chat server doesn't get the embedder's batch flags.
-        let args = build_args(&base_cfg());
+        let args = build_args(&base_cfg(), NoMmapSpelling::LoadMode);
         assert!(!args.contains(&"-ub".to_string()));
     }
 
     #[test]
     fn flash_attn_flag_present_only_when_set() {
         // Auto (None) — the flag isn't passed.
-        assert!(!build_args(&base_cfg()).contains(&"--flash-attn".to_string()));
+        assert!(
+            !build_args(&base_cfg(), NoMmapSpelling::LoadMode)
+                .contains(&"--flash-attn".to_string())
+        );
         let cfg = ManagedConfig {
             flash_attn: Some("on".into()),
             ..base_cfg()
         };
-        let args = build_args(&cfg);
+        let args = build_args(&cfg, NoMmapSpelling::LoadMode);
         let fa = args.iter().position(|a| a == "--flash-attn").unwrap();
         assert_eq!(args[fa + 1], "on");
     }
@@ -705,7 +793,7 @@ mod tests {
             draft_n_min: Some(1),
             ..base_cfg()
         };
-        let args = build_args(&cfg);
+        let args = build_args(&cfg, NoMmapSpelling::LoadMode);
         let st = args.iter().position(|a| a == "--spec-type").unwrap();
         assert_eq!(args[st + 1], "draft-mtp");
         let md = args.iter().position(|a| a == "-md").unwrap();
@@ -720,7 +808,7 @@ mod tests {
 
     #[test]
     fn no_spec_args_by_default() {
-        let args = build_args(&base_cfg());
+        let args = build_args(&base_cfg(), NoMmapSpelling::LoadMode);
         assert!(!args.contains(&"--spec-type".to_string()));
         assert!(!args.contains(&"-md".to_string()));
         assert!(!args.contains(&"-ngld".to_string()));
@@ -745,13 +833,15 @@ mod tests {
     /// keep the exact command line it had before images existed.
     #[test]
     fn mmproj_flag_present_only_when_set() {
-        assert!(!build_args(&base_cfg()).contains(&"--mmproj".to_string()));
+        assert!(
+            !build_args(&base_cfg(), NoMmapSpelling::LoadMode).contains(&"--mmproj".to_string())
+        );
         let cfg = ManagedConfig {
             model_path: Some("gemma.gguf".into()),
             mmproj: Some("mmproj-gemma.gguf".into()),
             ..base_cfg()
         };
-        let args = build_args(&cfg);
+        let args = build_args(&cfg, NoMmapSpelling::LoadMode);
         let p = args
             .iter()
             .position(|a| a == "--mmproj")
@@ -783,12 +873,65 @@ mod tests {
 
     #[test]
     fn no_mmap_flag_present_only_when_enabled() {
-        assert!(!build_args(&base_cfg()).contains(&"--no-mmap".to_string()));
+        for spelling in [NoMmapSpelling::LoadMode, NoMmapSpelling::NoMmap] {
+            let off = build_args(&base_cfg(), spelling);
+            assert!(!off.iter().any(|a| a == "--no-mmap" || a == "--load-mode"));
+        }
         let cfg = ManagedConfig {
             no_mmap: true,
             ..base_cfg()
         };
-        assert!(build_args(&cfg).contains(&"--no-mmap".to_string()));
+        let load_mode = build_args(&cfg, NoMmapSpelling::LoadMode);
+        let at = load_mode
+            .iter()
+            .position(|a| a == "--load-mode")
+            .expect("the current spelling");
+        assert_eq!(
+            load_mode[at + 1],
+            "none",
+            "`none` is llama.cpp's own word for no special loading mode"
+        );
+        assert!(
+            !load_mode.iter().any(|a| a == "--no-mmap"),
+            "a build that takes --load-mode is refused by the old flag, not helped by it"
+        );
+        assert!(
+            build_args(&cfg, NoMmapSpelling::NoMmap).contains(&"--no-mmap".to_string()),
+            "and a binary from before the rename takes only the old one"
+        );
+    }
+
+    /// The two help texts this was measured against (2026-09-18): `b10936` built
+    /// from the local checkout, and `b10883` — the build `mindfork llama setup`
+    /// installs, which already lacks `--no-mmap` and is how the defect reached a
+    /// user.
+    #[test]
+    fn the_spelling_is_read_out_of_the_binarys_own_help() {
+        let current = "-lm,   --load-mode MODE                 model loading mode (default: auto)\n\
+                       - auto: mmap, unless a device does not support it\n\
+                       - none: no special loading mode\n";
+        assert_eq!(spelling_from_help(current), NoMmapSpelling::LoadMode);
+
+        let older = "       --no-mmap                         do not memory-map model (slower load but may reduce pageouts)\n\
+                            --mlock                           force system to keep model in RAM\n";
+        assert_eq!(spelling_from_help(older), NoMmapSpelling::NoMmap);
+
+        assert_eq!(
+            spelling_from_help(""),
+            NoMmapSpelling::NoMmap,
+            "a help text that mentions neither predates the rename"
+        );
+    }
+
+    /// The probe against a path that is not a program at all: the launch below it
+    /// is about to fail with a clearer message, so the answer is the spelling
+    /// every current build takes rather than a panic or a hang.
+    #[test]
+    fn a_binary_that_cannot_be_run_answers_the_current_spelling() {
+        assert_eq!(
+            no_mmap_spelling(std::path::Path::new("definitely/missing/llama-server-xyz")),
+            NoMmapSpelling::LoadMode
+        );
     }
 
     #[test]
@@ -985,7 +1128,7 @@ mod tests {
             port: 18124,
             ..base_cfg()
         };
-        let args = build_args(&cfg);
+        let args = build_args(&cfg, NoMmapSpelling::LoadMode);
         eprintln!("the line: {}", args.join(" "));
         let at = |flag: &str| {
             args.iter()
