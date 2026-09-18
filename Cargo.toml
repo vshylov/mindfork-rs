@@ -60,7 +60,7 @@ async-trait = "0.1.89"
 # Decoding audio from TTS-provider responses (Gemini returns PCM as base64
 # inside `inlineData.data`). Already in the graph transitively; the version is pinned to the one
 # in Cargo.lock, so as not to spawn a duplicate (precedent — quick-xml). See shared/tts.
-base64 = "0.22.1"
+base64 = "0.23.1"
 bytemuck = "1.25.0"
 # AEAD encryption of stored API keys on Linux (the `machine-key-v1` scheme: the key
 # is derived from /etc/machine-id via HKDF). RustCrypto, pure Rust. On Windows
