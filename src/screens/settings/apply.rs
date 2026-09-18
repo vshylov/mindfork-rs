@@ -190,6 +190,11 @@ impl SettingsScreen {
         if self.choice.is_some() {
             return self.handle_choice_key(key);
         }
+        // The model picker — a filter line and a list, so it takes every key it
+        // is given, exactly as the search overlay above does.
+        if self.picker.is_some() {
+            return self.handle_picker_key(key);
+        }
         if self.editor.is_some() {
             return self.handle_editor_key(key);
         }
@@ -411,33 +416,48 @@ impl SettingsScreen {
                 None
             }
             FieldKind::Text(value) => {
-                // The system message and greeting are multiline (wrapping +
-                // line breaks); other fields are single-line (horizontal
-                // scroll, no wrap onto an invisible row). See spec §11.6.
-                let multiline = matches!(
-                    f.id,
-                    FieldId::PSystem | FieldId::PGreeting | FieldId::IpSystem
-                );
-                let mut input = InputBox::new();
-                input.set_single_line(!multiline);
-                // Secret field: masking (`•`) + an **empty** seed — a stored
-                // key can't be shown (not even the screen has it); editing =
-                // entering it again. See docs/research/api-key-storage.md.
-                if is_secret_field(f.id) {
-                    input.set_mask(true);
+                // A model row offers the provider's catalogue first (fork F1(a)
+                // of docs/research/model-picker.md); it falls through to the
+                // editor below when there is no catalogue to offer — a slot
+                // whose provider already refused, and every other text field.
+                if crate::screens::settings::picker::model_slot(f.id).is_some()
+                    && !self.catalogue_refused(f.id)
+                {
+                    return self.open_model_picker(f.id);
                 }
-                // Don't show the "(all)"/"—" placeholders as a value.
-                let seed = self.field_seed(f.id, value);
-                input.set_text(&seed);
-                self.editor = Some(Editor {
-                    field: f.id,
-                    input,
-                    multiline,
-                    error: None,
-                });
+                self.open_text_editor(f.id, value);
                 None
             }
         }
+    }
+
+    /// Opens the text editor on a field — what `Enter` has always done, now also
+    /// reachable from the model picker's "type a name by hand" row.
+    pub(super) fn open_text_editor(&mut self, id: FieldId, value: &str) {
+        // The system message and greeting are multiline (wrapping + line
+        // breaks); other fields are single-line (horizontal scroll, no wrap
+        // onto an invisible row). See spec §11.6.
+        let multiline = matches!(
+            id,
+            FieldId::PSystem | FieldId::PGreeting | FieldId::IpSystem
+        );
+        let mut input = InputBox::new();
+        input.set_single_line(!multiline);
+        // Secret field: masking (`•`) + an **empty** seed — a stored key can't
+        // be shown (not even the screen has it); editing = entering it again.
+        // See docs/research/api-key-storage.md.
+        if is_secret_field(id) {
+            input.set_mask(true);
+        }
+        // Don't show the "(all)"/"—" placeholders as a value.
+        let seed = self.field_seed(id, value);
+        input.set_text(&seed);
+        self.editor = Some(Editor {
+            field: id,
+            input,
+            multiline,
+            error: None,
+        });
     }
 
     pub(super) fn handle_editor_key(&mut self, key: KeyEvent) -> Option<SettingsIntent> {

@@ -173,8 +173,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-18, version 0.9.9)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3294 unit tests
-green, 188 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **3321 unit tests
+green, 195 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -186,6 +186,22 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **The model row asks the provider** (stage 4b, the last of stage 4). The settings
+  hint recommended `gpt-4o` and `claude-opus-4-8` — a hint that names a model ages, so
+  `Enter` on a model row now asks the provider what it serves and offers the list,
+  filtered as you type, with **"type a name by hand" as its first row** so no failure
+  traps the user. The first question the UI has ever asked the network
+  (`AppCommand::ListModels`, carrying the slot and no key); measured, the four
+  catalogues agree on nothing — OpenAI lists **132** entries with **no** capability
+  field (chat mixed with `whisper-1` and `sora-2`) and 56 `shutdown_date`s, Gemini
+  publishes `supportedGenerationMethods` under a `models/` prefix and pages at 50 of
+  58, Anthropic lists 11 chat models and no embedder, and xAI's chat half is
+  `/v1/language-models`, not `/v1/models`. So the list narrows on the **provider's**
+  claim where there is one and shows everything where there is none — never ours, which
+  would age the same way. Live **GO** on all five catalogues
+  ([docs/research/model-picker.md](docs/research/model-picker.md),
+  [docs/journal/ui-screens.md](docs/journal/ui-screens.md),
+  [docs/journal/engine.md](docs/journal/engine.md)).
 - **Robustness and the shipped defaults** (stage 4a; the model picker is 4b). A panic in
   the orchestrator left a live interface with nothing behind it — the loop now tells a
   closed channel from an empty one and ends the session saying where the log is; a managed
@@ -380,17 +396,6 @@ being recent is dropped, not shortened.
   resolved names, sizes and the network — the compact view drops arrays, so `files` would
   otherwise be invisible there ([docs/history/sandbox-file-exchange.md](docs/history/sandbox-file-exchange.md)
   §12, spec §9.7, §9.8, §13.2, [docs/journal/tools.md](docs/journal/tools.md)).
-- **Files out of the Python sandbox — a chart reaches the user and the model** —
-  `python_exec` gains `/w/out`: once the process exits (any exit code, never after a
-  timeout) its regular files are collected under caps, stored in `data/files/<chat-id>/`
-  and listed in `Chat.files`, and a PNG or JPEG goes back to the model behind
-  `tools.python_images`. Measured first on Qwen 3.6 27B and Gemma 4 31B: a plot colour
-  only the image carries was named 4/5 and 5/5 with it, 0/5 blind — and blind, both
-  described a chart they had not seen, so every withheld image is now said in the
-  result, MCP's too. `/file list`/`remove` reach stored files, backups pack them, and an
-  unlisted file is adopted at startup, never swept
-  ([docs/history/sandbox-file-exchange.md](docs/history/sandbox-file-exchange.md) §10–§11, spec §9.7,
-  §9.10, §13.2, [docs/journal/tools.md](docs/journal/tools.md)).
 - **A headless launch (no TTY) exits with code 2** and a one-line reason — the
   TUI cannot be run from an agent's shell; live verification needs a real
   terminal.

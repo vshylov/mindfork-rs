@@ -324,8 +324,10 @@ between them loses nothing.
 
 **A cloud provider.** Open settings (`Ctrl+P`, or `/settings`), pick the mode —
 `openai` / `gemini` / `claude` / `grok` — paste your API key right there (it is
-stored encrypted and machine-bound, and never shown back), and enter the
-**model** — the provider's model id, which a cloud mode requires.
+stored encrypted and machine-bound, and never shown back), and choose the
+**model**: `Enter` on that field asks the provider what it serves and offers the
+list, filtered as you type. A cloud mode requires one, and typing the id by hand
+is still the first row of that list.
 
 **An external local server.** Run any OpenAI-compatible server and point the
 app at it — llama.cpp shown here; vLLM / LM Studio / Ollama work the same way:

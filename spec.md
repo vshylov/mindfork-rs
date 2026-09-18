@@ -3118,6 +3118,31 @@ section and subsection), `Esc` — cancel.
   right away. The restart is decided against what the server is **actually
   running**, not against the previous edit — so an edit and its undo (`Ctrl+Z`)
   cost nothing, while a genuine change still restarts.
+
+  **Picking a model from the provider's own catalogue.** `Enter` on a model row —
+  the assistant's, impersonation's or the embedder's — asks the provider what it
+  serves and offers the list, with a filter line; its **first row is always "type
+  a name by hand"**, the editor the field has always had, so no failure of the
+  catalogue can trap the user in a list. The request goes out on that keypress and
+  nowhere else (the app fetches no catalogue nobody asked for), the answer is kept
+  for the visit to the screen, and `Ctrl+R` asks again. What the list shows is the
+  **provider's own claim where it makes one** — Gemini's
+  `supportedGenerationMethods`, xAI's `/v1/language-models`, Anthropic's chat-only
+  catalogue — and **everything it lists where it makes none** (OpenAI publishes no
+  capability field at all, nor does a `llama-server`), newest first where a
+  creation date is published, with the entries the endpoint marks as retiring
+  saying so: a claim the catalogue did not make is never invented, and a filter of
+  our own would age exactly as a hint naming `gpt-4o` did. Where the endpoint said
+  nothing, the list is **ordered** by what a name suggests — the models that look
+  like image, audio or embedding ones sink to the bottom of a chat row's list, and
+  the embedder's row gets the mirror — but **nothing is removed**: a guess of ours
+  may cost a scroll, never a model that cannot be chosen. A pick is written
+  **verbatim**, because on a multi-model endpoint that id is what selects the
+  model; the one exception is Gemini's `models/` prefix, which the client appends
+  itself. Managed mode has no picker — its row is a GGUF path on this machine — and
+  where there is no list (no key, no answer, a body that is not a catalogue) the
+  row is exactly what it has always been and says why
+  ([docs/research/model-picker.md](docs/research/model-picker.md)).
 - **Sampling** (a tab strip Assistant/Impersonation): parameters by group —
   *Basics* (temperature, top-k/p, max_tokens, seed), *Dynamic temperature*,
   *Diversity* (min-p, top-n-sigma, typical-p, adaptive-p, XTC), *Repeat penalties*,

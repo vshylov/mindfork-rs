@@ -2081,8 +2081,12 @@ fn a_hint_clipped_by_the_cap_ends_with_an_ellipsis() {
 /// The regression a duplicated bundle key caused: the cloud "Model" field showed
 /// the show-model-name toggle's description (JSON parsing silently keeps the
 /// later of two duplicate keys; the bundle gate now bans them). The model field
-/// must name what its value is — a provider model id — and the two fields must
-/// not share one text.
+/// must describe what its value is, and the two fields must not share one text.
+///
+/// Since stage 4b it must also **not name a model**: the hint used to recommend
+/// `gpt-4o` and `claude-opus-4-8`, which is exactly the staleness D7 was about
+/// (docs/research/model-picker.md). It points at the key that opens the
+/// provider's own list instead — `Enter`, spelled the same in every locale.
 #[test]
 fn cloud_model_field_describes_the_model_not_the_toggle() {
     let mut s = screen();
@@ -2090,8 +2094,12 @@ fn cloud_model_field_describes_the_model_not_the_toggle() {
     let model = field_desc(&s, FieldId::XModelName).expect("cloud model is described");
     let toggle = field_desc(&s, FieldId::IModelName).expect("the toggle is described");
     assert!(
-        model.contains("gpt-4o"),
-        "expected the provider-model examples: {model}"
+        model.contains("Enter"),
+        "the hint should point at the picker: {model}"
+    );
+    assert!(
+        !model.contains("gpt-") && !model.contains("claude-") && !model.contains("grok-"),
+        "the hint names a model again, and a named model ages: {model}"
     );
     assert_ne!(
         model, toggle,
@@ -5120,4 +5128,300 @@ fn quit_settle_row_follows_the_dialogue_time_limit_and_stores_seconds() {
     assert_eq!(s.config.tools.quit_settle_secs, Some(0), "zero is a cap");
     edit(&mut s, "");
     assert_eq!(s.config.tools.quit_settle_secs, None, "emptied: no cap");
+}
+
+// ---------- the model picker (docs/research/model-picker.md, stage 4b) ----------
+
+use crate::shared::api::catalogue::{CatalogModel, CatalogueError, ModelRole, ModelSlot};
+
+/// A catalogue entry as a provider would publish it.
+fn cat(id: &str, display: Option<&str>, role: ModelRole) -> CatalogModel {
+    CatalogModel {
+        id: id.to_string(),
+        display: display.map(str::to_string),
+        role,
+        retiring: None,
+    }
+}
+
+/// A screen standing on the assistant's cloud model row, ready for `Enter`.
+fn on_the_model_row(mode: ServerMode) -> SettingsScreen {
+    let mut s = screen();
+    s.config.engine.mode = mode;
+    goto_section(&mut s, Section::Model);
+    goto_field(&mut s, FieldId::XModelName);
+    s
+}
+
+/// Fork F1(a): `Enter` on a model row asks the provider and opens the picker —
+/// and the asking happens **here**, not when the screen opened (fork F4).
+#[test]
+fn enter_on_a_model_row_asks_the_provider_and_opens_the_picker() {
+    let mut s = on_the_model_row(ServerMode::Claude);
+    assert!(
+        s.picker.is_none() && s.catalogues.is_empty(),
+        "opening the screen asks nothing"
+    );
+    let intent = s.handle_key(key(KeyCode::Enter));
+    assert_eq!(
+        intent,
+        Some(SettingsIntent::ListModels(ModelSlot::Assistant))
+    );
+    let st = s.picker.as_ref().expect("the picker is open");
+    assert_eq!(st.status, super::picker::PickerStatus::Fetching);
+    assert!(
+        s.editor.is_none(),
+        "the editor is the picker's first row, not what Enter opens"
+    );
+}
+
+/// Each row asks for its own slot — the filter differs (an embedder's list is
+/// not a chat list), and so does the provider it is configured with.
+#[test]
+fn every_model_row_asks_for_its_own_slot() {
+    for (tab, field, slot) in [
+        (
+            ModelTab::Assistant,
+            FieldId::XModelName,
+            ModelSlot::Assistant,
+        ),
+        (
+            ModelTab::Impersonation,
+            FieldId::IxModelName,
+            ModelSlot::Impersonation,
+        ),
+        (
+            ModelTab::Embeddings,
+            FieldId::EModelName,
+            ModelSlot::Embedder,
+        ),
+    ] {
+        let mut s = screen();
+        s.config.engine.mode = ServerMode::OpenAi;
+        s.config.impersonation_engine.mode = ImpersonationMode::OpenAi;
+        s.config.embed.mode = ServerMode::OpenAi;
+        goto_section(&mut s, Section::Model);
+        s.model_sub = tab;
+        goto_field(&mut s, field);
+        assert_eq!(
+            s.handle_key(key(KeyCode::Enter)),
+            Some(SettingsIntent::ListModels(slot)),
+            "{field:?}"
+        );
+    }
+}
+
+/// The answer lands in the open picker, and `Enter` writes the id **verbatim**
+/// (N3): on a multi-model endpoint that string is what selects the model, so a
+/// `llama-server`'s `-m` path goes in exactly as it was published.
+#[test]
+fn a_picked_id_is_written_verbatim() {
+    let mut s = on_the_model_row(ServerMode::External);
+    s.handle_key(key(KeyCode::Enter));
+    s.set_model_catalogue(
+        ModelSlot::Assistant,
+        Ok(vec![
+            cat(
+                r"D:\LLM\GGUF\gemma-4-31B_q4_0-it.gguf",
+                None,
+                ModelRole::Unstated,
+            ),
+            cat("qwen-3.6-27b", None, ModelRole::Unstated),
+        ]
+        .into()),
+    );
+    // Row 0 is "type a name by hand", so the first model is row 1 — where the
+    // highlight already is.
+    match s.handle_key(key(KeyCode::Enter)) {
+        Some(SettingsIntent::SaveConfig(c)) => assert_eq!(
+            c.engine.external.model_name.as_deref(),
+            Some(r"D:\LLM\GGUF\gemma-4-31B_q4_0-it.gguf")
+        ),
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+    assert!(s.picker.is_none(), "the picker closes on a pick");
+}
+
+/// The way out is always there: the first row opens the editor the field has
+/// always had — including when the catalogue failed, which is when it matters.
+#[test]
+fn the_first_row_is_typing_by_hand_even_after_a_failure() {
+    let mut s = on_the_model_row(ServerMode::Gemini);
+    s.handle_key(key(KeyCode::Enter));
+    s.set_model_catalogue(ModelSlot::Assistant, Err(CatalogueError::Unreachable));
+    assert_eq!(
+        s.picker.as_ref().map(|st| st.status.clone()),
+        Some(super::picker::PickerStatus::Failed(
+            CatalogueError::Unreachable
+        ))
+    );
+    s.handle_key(key(KeyCode::Up)); // onto the "by hand" row
+    assert_eq!(s.handle_key(key(KeyCode::Enter)), None, "no config write");
+    assert!(
+        s.editor.is_some() && s.picker.is_none(),
+        "the row's own editor opens"
+    );
+}
+
+/// A provider that has already refused is not asked again by the same keypress:
+/// the second `Enter` is the text field it always was (fork F1(a)).
+#[test]
+fn after_a_refusal_enter_opens_the_editor_directly() {
+    let mut s = on_the_model_row(ServerMode::Gemini);
+    s.handle_key(key(KeyCode::Enter));
+    s.set_model_catalogue(ModelSlot::Assistant, Err(CatalogueError::NoKey));
+    s.handle_key(key(KeyCode::Esc));
+    assert_eq!(s.handle_key(key(KeyCode::Enter)), None, "nothing is asked");
+    assert!(s.editor.is_some() && s.picker.is_none());
+}
+
+/// A catalogue that answered is kept for the visit (N6) — re-opening the picker
+/// asks nothing — and `Ctrl+R` is what asks again.
+#[test]
+fn the_answer_is_kept_for_the_visit_and_ctrl_r_asks_again() {
+    let mut s = on_the_model_row(ServerMode::Claude);
+    s.handle_key(key(KeyCode::Enter));
+    s.set_model_catalogue(
+        ModelSlot::Assistant,
+        Ok(vec![cat("claude-opus-5", Some("Claude Opus 5"), ModelRole::Chat)].into()),
+    );
+    s.handle_key(key(KeyCode::Esc));
+    assert_eq!(
+        s.handle_key(key(KeyCode::Enter)),
+        None,
+        "the list is already here"
+    );
+    assert_eq!(s.picker.as_ref().map(|st| st.all.len()), Some(1));
+    assert_eq!(
+        s.handle_key(ctrl('r')),
+        Some(SettingsIntent::ListModels(ModelSlot::Assistant)),
+        "Ctrl+R asks the provider again"
+    );
+    assert!(
+        s.catalogues.is_empty(),
+        "and drops what it had, so a late answer cannot be mistaken for the new one"
+    );
+}
+
+/// Typing filters the list — the answer to OpenAI's 132 entries — and the "by
+/// hand" row survives every filter, including one that matches nothing.
+#[test]
+fn the_filter_narrows_the_list_and_never_hides_the_way_out() {
+    let mut s = on_the_model_row(ServerMode::OpenAi);
+    s.handle_key(key(KeyCode::Enter));
+    s.set_model_catalogue(
+        ModelSlot::Assistant,
+        Ok(vec![
+            cat("gpt-6-astra", None, ModelRole::Unstated),
+            cat("whisper-1", None, ModelRole::Unstated),
+            cat("text-embedding-3-small", None, ModelRole::Unstated),
+        ]
+        .into()),
+    );
+    for c in "embed".chars() {
+        s.handle_key(key(KeyCode::Char(c)));
+    }
+    let st = s.picker.as_ref().expect("still open");
+    assert_eq!(st.results.len(), 1);
+    assert_eq!(st.rows(), 2, "the match plus the way out");
+    match s.handle_key(key(KeyCode::Enter)) {
+        Some(SettingsIntent::SaveConfig(c)) => assert_eq!(
+            c.engine.openai.model_name.as_deref(),
+            Some("text-embedding-3-small")
+        ),
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+
+    let mut s = on_the_model_row(ServerMode::OpenAi);
+    s.handle_key(key(KeyCode::Enter));
+    s.set_model_catalogue(
+        ModelSlot::Assistant,
+        Ok(vec![cat("gpt-6-astra", None, ModelRole::Unstated)].into()),
+    );
+    for c in "nothing-matches-this".chars() {
+        s.handle_key(key(KeyCode::Char(c)));
+    }
+    let st = s.picker.as_ref().expect("still open");
+    assert_eq!(st.rows(), 1, "only the way out is left");
+    assert_eq!(st.selected, 0, "and the highlight is on it");
+}
+
+/// The defect the owner's live run found: the catalogue was cached by **slot**,
+/// and a slot's provider changes inside one visit to the screen — so OpenAI's
+/// 132 models were offered under `gemini`, `claude` and `grok` in turn. The key
+/// is what the slot points at, so a mode switch is a different question.
+#[test]
+fn switching_the_provider_never_shows_the_previous_ones_models() {
+    let mut s = on_the_model_row(ServerMode::OpenAi);
+    s.handle_key(key(KeyCode::Enter));
+    s.set_model_catalogue(
+        ModelSlot::Assistant,
+        Ok(vec![cat("gpt-6-astra", None, ModelRole::Unstated)].into()),
+    );
+    s.handle_key(key(KeyCode::Esc));
+
+    s.config.engine.mode = ServerMode::Gemini;
+    goto_field_again(&mut s, FieldId::XModelName);
+    assert_eq!(
+        s.handle_key(key(KeyCode::Enter)),
+        Some(SettingsIntent::ListModels(ModelSlot::Assistant)),
+        "another provider is another question"
+    );
+    let st = s.picker.as_ref().expect("the picker is open");
+    assert!(
+        st.all.is_empty() && st.status == super::picker::PickerStatus::Fetching,
+        "and until it is answered, nothing is offered"
+    );
+}
+
+/// Bug 4 of the same run: with a mistyped variable name the answer is "no key",
+/// and correcting the name has to be a new question — otherwise the refusal
+/// outlives the mistake and `Enter` keeps opening the editor.
+#[test]
+fn correcting_the_key_source_asks_again_instead_of_repeating_the_refusal() {
+    let mut s = on_the_model_row(ServerMode::Claude);
+    s.config.engine.claude.api_key_env = Some("1ANTHROPIC_API_KEY".into());
+    goto_field_again(&mut s, FieldId::XModelName);
+    assert_eq!(
+        s.handle_key(key(KeyCode::Enter)),
+        Some(SettingsIntent::ListModels(ModelSlot::Assistant))
+    );
+    s.set_model_catalogue(ModelSlot::Assistant, Err(CatalogueError::NoKey));
+    s.handle_key(key(KeyCode::Esc));
+    assert_eq!(
+        s.handle_key(key(KeyCode::Enter)),
+        None,
+        "the same mistake is not asked about twice"
+    );
+    assert!(s.editor.is_some());
+    s.handle_key(key(KeyCode::Esc));
+
+    s.config.engine.claude.api_key_env = Some("ANTHROPIC_API_KEY".into());
+    assert_eq!(
+        s.handle_key(key(KeyCode::Enter)),
+        Some(SettingsIntent::ListModels(ModelSlot::Assistant)),
+        "a corrected key source is a new question"
+    );
+}
+
+/// The same defect's race: the mode is cycled while the question is in flight.
+/// The answer is filed under the provider it was **asked** about, so the new one
+/// is still unasked rather than inheriting a list that is not its own.
+#[test]
+fn a_late_answer_is_filed_under_the_provider_it_was_asked_about() {
+    let mut s = on_the_model_row(ServerMode::OpenAi);
+    s.handle_key(key(KeyCode::Enter));
+    s.handle_key(key(KeyCode::Esc));
+    s.config.engine.mode = ServerMode::Gemini;
+    s.set_model_catalogue(
+        ModelSlot::Assistant,
+        Ok(vec![cat("gpt-6-astra", None, ModelRole::Unstated)].into()),
+    );
+    goto_field_again(&mut s, FieldId::XModelName);
+    assert_eq!(
+        s.handle_key(key(KeyCode::Enter)),
+        Some(SettingsIntent::ListModels(ModelSlot::Assistant)),
+        "the answer belonged to openai, and gemini has not been asked"
+    );
+    assert!(s.picker.as_ref().expect("open").all.is_empty());
 }

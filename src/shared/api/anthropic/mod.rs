@@ -5,4 +5,5 @@
 pub mod client;
 mod wire;
 
+pub(crate) use client::ANTHROPIC_VERSION;
 pub use client::AnthropicClient;

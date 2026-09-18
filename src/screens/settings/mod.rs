@@ -58,6 +58,7 @@ pub(crate) static HELP_SECTION: HelpSection = HelpSection {
         ("Esc", "ui.help.set_back"),
         ("/", "ui.help.set_search"),
         ("Ctrl+Z / Ctrl+Y", "ui.help.set_undo"),
+        ("Ctrl+R", "ui.help.set_refresh_models"),
         ("Ctrl+N", "ui.help.set_new"),
         ("Ctrl+D", "ui.help.set_delete"),
     ],
@@ -104,6 +105,11 @@ pub enum SettingsIntent {
     /// literal secrets, which must not travel through `screens`. See
     /// docs/history/mcp-server-editor.md §9.
     ImportMcpServers(String),
+    /// Ask the provider for the models this slot could use — the answer comes
+    /// back as `AppEvent::ModelCatalogue`. Sent when the user opens the picker
+    /// and when they refresh it, never on its own (fork F4 of
+    /// docs/research/model-picker.md).
+    ListModels(crate::shared::api::catalogue::ModelSlot),
 }
 
 /// Settings sections (the left menu). See spec §11.6.
@@ -939,6 +945,23 @@ pub struct SettingsScreen {
     search: Option<SearchState>,
     /// The Choice-field value picker popup (Enter); `None` — closed.
     choice: Option<ChoiceState>,
+    /// The model picker (Enter on a model row); `None` — closed. See
+    /// [`picker`] and docs/research/model-picker.md.
+    picker: Option<picker::PickerState>,
+    /// What each slot's catalogue last answered, kept for this visit to the
+    /// screen (N6): re-opening the picker asks nothing, `Ctrl+R` inside it does.
+    ///
+    /// Keyed by the slot **and** what it pointed at
+    /// ([`SettingsScreen::slot_source`]) — a slot's provider changes while the
+    /// screen is open, and one list must never be shown under another provider.
+    catalogues: Vec<(
+        crate::shared::api::catalogue::ModelSlot,
+        String,
+        crate::shared::api::catalogue::CatalogueAnswer,
+    )>,
+    /// What each slot's in-flight question was asked for, so a late answer is
+    /// filed under the provider it was about rather than the one now selected.
+    asked: Vec<(crate::shared::api::catalogue::ModelSlot, String)>,
     /// A snapshot of server statuses (chat/embeddings/impersonation) — chips in the
     /// "Model/server" section. Updated by `app` from the `ServerStatus` event. See spec §11.6.
     statuses: ServerStatuses,
@@ -991,6 +1014,7 @@ mod apply;
 mod catalog;
 mod choice;
 mod helpers;
+mod picker;
 mod render;
 mod search;
 mod spec;

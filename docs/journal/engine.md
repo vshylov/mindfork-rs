@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (71)
+## Entries (72)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -84,6 +84,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a chat whose history carries images, on an engine that takes none (done)
 
 - Post-M9: a server with no model, and a budget that forgot about reasoning (done)
+- Post-M9: four catalogues, and what each of them will say about a model (done)
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
   a long time (up to the `MANAGED_READY_TIMEOUT=600s` timeout) in "server:
@@ -4602,3 +4603,72 @@ could never get — lessons §2, a fourth time; every such wait is bounded now.
   child owned, and **nothing listening on the port** two seconds later, which is the
   assertion the unit tests cannot make: a router would have been there answering
   `/health`. With the model — `Ready` and a server on the port, as before.
+
+### Post-M9: four catalogues, and what each of them will say about a model (done)
+
+- **The engine half of stage 4b** ([model-picker.md](../research/model-picker.md)
+  §2; the screen is in [ui-screens.md](ui-screens.md)). The app has always been
+  able to read `GET /v1/models` — `OpenAiClient::listed_models` — but only to
+  discover the name a running server reports. Offering that list to the user
+  meant asking four providers, and they agree on nothing: not the path, not the
+  auth header, not the key the list sits under, and least of all on whether they
+  say what a model is **for**. Measured 2026-09-18 against the real endpoints.
+- **OpenAI — 132 entries and no capability field at all.** An entry is `id`,
+  `object`, `created`, `owned_by`, `shutdown_date`, and the list mixes chat
+  (`gpt-6-astra`, `o3`), image (`gpt-image-2.5-flare`), video (`sora-2`), audio
+  (`tts-1`, `whisper-1`, `gpt-realtime-2.1`), embeddings and moderation.
+  Nothing in the body distinguishes them. What it *does* publish is retirement:
+  **56 of the 132** carry a `shutdown_date` (`gpt-4` → 2026-10-23), which is the
+  provider stating its own model is on the way out — the exact staleness D7 is
+  about, from the only party that knows. 1305 ms, the slowest of the four.
+- **Gemini — two catalogues, one of them with the answer.** The compat list
+  (`…/v1beta/openai/models`) carries `id` and `display_name` and nothing else;
+  the native one (`…/v1beta/models`, `x-goog-api-key`) carries
+  `supportedGenerationMethods`, and that is the endpoint's own partition: of 58
+  models **41** publish `generateContent`, **3** publish `embedContent`, and the
+  rest only `bidiGenerateContent`, `predictLongRunning`, `generateAnswer` or
+  `bidiGenerateMusic`. Both spell the id `models/gemini-2.5-pro`, and the client
+  builds `{base}/models/{model}:streamGenerateContent`, so the prefix is stripped
+  on the way into the field. The parser reads **both** bodies, so a slot pointed
+  at the compat path still gets a list (with every role unstated) instead of a
+  parse failure. Unpaged, Gemini answers 50 of its 58 — `pageSize` is not
+  cosmetic, and neither is Anthropic's `limit` (default 20).
+- **Anthropic — 11 entries, all of them chat**, each with a `display_name`,
+  `max_input_tokens` and a capability tree. The route is the claim: the Messages
+  API has no embedding or speech models, so the embedder's list for this provider
+  is legitimately **empty** — and an empty list is an answer, not a failure.
+- **xAI — the right route is not `/v1/models`.** That one lists 12, including
+  five `grok-imagine-*` image and video models; `/v1/language-models` lists the
+  7 text models, under a **`models`** key rather than `data`, with
+  `input_modalities`/`output_modalities` and the alias tables
+  (`grok-code-fast-1` → `grok-build-0.1`). The picker lists canonical ids.
+- **A local server** (the live stack, llama.cpp b11009) answers with one entry
+  whose id is the `-m` path, plus a second, Ollama-shaped `models` array that
+  *does* carry `capabilities` — not read, since it is not the standard body.
+  Measured on the way: a single-model `llama-server` **ignores the model field
+  entirely** — a request naming `no-such-model-xyz` answered `200` from the
+  loaded model — so a picked path can break nothing there, while on a
+  multi-model endpoint it is precisely the selector.
+- **Hence `ModelRole::Unstated`**, which is not "it does nothing": where a
+  provider publishes no claim, none is invented and every model it lists is
+  offered for every slot (fork F2).
+- **And hence the ordering, which the owner's live run asked for.** Newest-first
+  by the endpoint's own `created`, OpenAI's list *opened* on this month's image
+  models (`gpt-live-1`, `gpt-image-2.5-*`) — correct and useless. The answer is
+  a third way past the fork (the user's decision, 2026-09-18): a name that looks
+  like another job sinks to the bottom of a list the endpoint said nothing
+  about, the embedder's row gets the mirror, and **nothing is ever removed**.
+  That keeps the reason F2(c)'s filter was rejected — a guess of ours ages, and
+  would hide a model nobody predicted — while fixing what the run found: a wrong
+  guess now costs a scroll. The sort is stable, so the endpoint's order survives
+  inside each group, and a role the endpoint *did* state always beats the guess.
+  Measured on the same 132: 49 sink, 83 stay, none of the 83 anything but a chat
+  or completion model; live, the list opens on `gpt-6-astra` and the embedder's
+  on `text-embedding-3-large`.
+- **Live run** — **GO**, 2026-09-18, all five catalogues with the owner's keys:
+  OpenAI 132 (56 retiring, every role unstated), Gemini 58 (41 chat / 3
+  embedding, no `models/` left in any id), Anthropic 11 (all chat, all named,
+  the embedder's list empty), xAI 7 (all chat, no `imagine` among them), and the
+  live `llama-server` 1 (its own path, unstated). Plus the whole path end to end
+  through a real orchestrator — `ListModels` in, `ModelCatalogue` out with the
+  server's own id (`the_model_catalogue_reaches_the_ui_e2e_live`).

@@ -579,6 +579,24 @@ that does not depend on it running — here, the sweep of stale job directories.
 
 ## 3. Measure; do not assume
 
+**A catalogue endpoint pages, and the page is smaller than the catalogue.**
+Gemini's `GET /v1beta/models` answers **50** of its 58 models without
+`pageSize`, and Anthropic's `/v1/models` defaults to `limit=20`; both cap at
+1000. A list feature that never asks for a page size does not fail — it quietly
+shows fewer models than exist, which is indistinguishable from the provider not
+having them. Ask for the maximum, and count the answer against what the provider
+publishes elsewhere.
+— *the model picker, stage 4b*.
+
+**"The field is ignored" and "the field selects" can be the same field on two
+servers of the same kind.** A single-model `llama-server` ignores a request's
+`model` entirely — measured: `no-such-model-xyz` answered `200` from the loaded
+model — while the same build in router mode, LM Studio and every gateway route
+on exactly that string. So a value written there must be the endpoint's own id,
+verbatim, rather than anything prettified for display: the prettified form is
+harmless on the server that ignores it and wrong on the one that reads it.
+— *the model picker, stage 4b*.
+
 **A provider's "unsupported parameters are ignored" is not a promise that a
 request cannot be refused.** OpenRouter documents exactly that rule, and this
 project reasoned from it to a "change nothing" on `reasoning_effort: "none"`: the

@@ -29,9 +29,12 @@ repository public changes — the flip itself, the shipped defaults, the first
 minute of a stranger's run — found twelve blockers and staged them, from safe
 defaults for the file tools to the release pipeline, the public documents and the
 owner's flip checklist. Stages 1 (the first run), 2 (safe defaults,
-[safe-defaults.md](research/safe-defaults.md)) and 3 (the release pipeline,
-[release-pipeline.md](research/release-pipeline.md)) are done; the rest, with
-evidence and forks:
+[safe-defaults.md](research/safe-defaults.md)), 3 (the release pipeline,
+[release-pipeline.md](research/release-pipeline.md)) and 4 (robustness and the
+shipped defaults, [robustness-and-defaults.md](research/robustness-and-defaults.md),
+with its model picker in [model-picker.md](research/model-picker.md)) are done;
+what remains is stage 5 (the public documents and the website) and stage 6 (the
+owner's flip checklist) — with evidence and forks:
 [public-release-readiness.md](research/public-release-readiness.md).
 
 **Multimodality (images)** left this list on 2026-08-13 — **track complete**,

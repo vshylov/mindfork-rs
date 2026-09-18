@@ -300,6 +300,10 @@ src/
 │     ├─ apply.rs           key handling, field editor, toggles/cycles, saving
 │     ├─ spec.rs            field_spec: access table for a config field's value (get/set/cycle/num)
 │     ├─ choice.rs          Choice-field selection popup + reset field to default
+│     ├─ picker.rs          model picker: the provider's catalogue behind a model row
+│     │                     (Enter) with a filter line and "type a name by hand" first —
+│     │                     the one screen-initiated network question (AppCommand::ListModels
+│     │                     → AppEvent::ModelCatalogue), docs/research/model-picker.md
 │     ├─ search.rs          field search overlay (`/`): index/filter/jump
 │     ├─ render.rs          rendering: menu, tab strip, field list, popups
 │     └─ helpers.rs         free functions: row builders, descriptions, parsers
@@ -533,6 +537,10 @@ src/
    │  │  └─ responses/          Responses API: ResponsesClient + wire (OpenAI cloud, /v1/responses — reasoning summaries, effort, verbosity)
    │  ├─ gemini/            native Gemini: client.rs + wire.rs (generateContent, x-goog-api-key — thought summaries, thinkingLevel/Budget, per-tool-call thoughtSignature)
    │  ├─ anthropic/         Anthropic Messages API: client.rs + wire.rs (Claude, /v1/messages)
+   │  ├─ catalogue.rs       the provider's model catalogue behind the settings picker: four
+   │  │                     endpoint shapes (OpenAI-compatible / Gemini native / Anthropic /
+   │  │                     xAI language-models) into one CatalogModel carrying the role the
+   │  │                     endpoint claimed — Unstated where it claimed none
    │  ├─ managed.rs         ServerHandle (managed llama-server process), ManagedConfig, wait_until_ready
    │  ├─ thoughts.rs        streaming <think> parser (falls back to reasoning_content)
    │  └─ mock.rs            mock engine for tests (#[cfg(test)])
@@ -834,7 +842,10 @@ feed on one of its messages** — a jump from a search hit) and
 orchestrator resolves *which* message, since only it holds both the index and the
 chat and can therefore order the matches by real chat position),
 `Tts`/`TtsStop`, `Compact` (fold the earlier part of the active chat into a
-rolling summary — §6.7 of the spec), `Quit`.
+rolling summary — §6.7 of the spec), `ListModels` (**the only question the UI
+asks the network**: the settings screen's model picker asking a provider for its
+catalogue, and it carries the *slot*, not a key — the orchestrator holds the
+config and the secrets; docs/research/model-picker.md), `Quit`.
 
 `AppEvent` (orchestrator → UI) includes: `ServerStatus`, `ChatList`,
 `ChatRenamed`, `ChatSearchResults` (the reply to `SearchChats`: the chats with at
@@ -860,7 +871,9 @@ running and is completed in place by `call_id` — spec §11.3), `AssistantConti
 (the outcome of a `/file` command) and `Attachments` (the active chat's
 attachment cards for the status-bar chip — §9.7 of the spec), `SelfModelView`,
 `SelfModelChanged` (a lightweight "self-model changed" signal — an open `F3`
-screen re-requests the snapshot; §9.7), `BackgroundTask{kind,active}` (a quiet
+screen re-requests the snapshot; §9.7), `ModelCatalogue` (the answer to
+`ListModels`, already narrowed to what that slot can use; an `Err` leaves the row
+the text field it has always been, and an **empty** `Ok` is an answer too), `BackgroundTask{kind,active}` (a quiet
 status-bar indicator for background reflection/consolidation/compression),
 `SubagentProgress{generation_id, run, progress}` (where a subagent run stands —
 name, round, tool — for the status-bar chip while the parent's turn is inside
