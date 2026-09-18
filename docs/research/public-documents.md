@@ -261,4 +261,12 @@ guide has no byline either); the self-model moved to card 1 of the feature grid;
 and a launch post committed as a **draft** for the owner to date. Built with the
 pinned Zola 0.23.6 — 19 pages, 0 orphans — and the rendered `<head>` read back.
 
-**Stage 5c (the release pull request): pending.**
+**Stage 5c — done, 2026-09-18.** `0.10.0` in `Cargo.toml`, `Cargo.lock`,
+`site/zola.toml` and `CLAUDE.md`'s status header; `[Unreleased]` → `[0.10.0] —
+2026-09-18` with the highlights paragraph on top and a fresh empty
+`[Unreleased]`; the comparison links. Verified by running the gate the tag will
+run: `release_guard.py --tag v0.10.0` accepts it, matches `Cargo.toml`, and cuts
+**258 lines** of release notes opening with the highlights.
+
+**Stage 5 is complete.** What remains of the track is stage 6 — the owner's flip
+checklist, which is not a pull request.

@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (39)
+## Entries (40)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -51,6 +51,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: public release readiness — stage 3, the release pipeline (done)
 - Post-M9: public release readiness — stage 4a, the ways a first run ends badly (done)
 - Post-M9: public release readiness — stage 5a, the documents a stranger meets (done)
+- Post-M9: public release readiness — stage 5c, the release pull request (done)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -2116,3 +2117,33 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   is what caught both defects above.
 - **Gates**: fmt / clippy / test green — **3323 unit tests, 196 `#[ignore]`** (unchanged;
   this stage adds no code).
+
+### Post-M9: public release readiness — stage 5c, the release pull request (done)
+
+- **The release pull request for 0.10.0** (AGENTS.md §6 step 1;
+  [public-documents.md](../research/public-documents.md) fork F1(a)). The version
+  question was the one fork of stage 5 that was not about prose: the project's own
+  rule promotes to **1.0.0** *"once the track is proven in production (CI green on both
+  OSes + migration scaffolding merged + release pipeline has shipped ≥1 release)"*, and
+  the third condition is exactly the one this release satisfies rather than inherits —
+  the pipeline has been rehearsed twice (`v0.9.9-rc1`, `rc2`, both drafts, both deleted)
+  and has never published anything. So **0.10.0**, with 1.0.0 following once a release
+  has actually shipped and the promise is earned in public rather than announced.
+- **What the mechanical half changed**: `Cargo.toml` and `Cargo.lock`,
+  `site/zola.toml`'s `app_version` (the version the site's overview says it describes),
+  `CLAUDE.md`'s status header, `[Unreleased]` → `[0.10.0] — 2026-09-18` with a fresh
+  empty `[Unreleased]`, and the comparison links.
+- **The section opens with a highlights paragraph** (N8 of the design doc), because the
+  release body *is* that section verbatim — `tools/release_guard.py` cuts it out of the
+  file and hands it to `gh release create --notes-file`. Without one, the first public
+  release page would open on `### Added`. Measured after writing it: the guard accepts
+  `v0.10.0`, matches it against `Cargo.toml`, and produces **258 lines** of notes whose
+  first paragraph is the highlights.
+- **What the release page will say the release is**: the invisible half (a Windows binary
+  that starts on a clean machine, file tools that cannot leave the folder they are given,
+  a sandbox with no route to the LAN, every dependency's licence travelling with every
+  download, a tag checked against this changelog before anything builds) and the visible
+  half (the model picker, a thinking model's answer no longer cut in the middle, and a
+  manual).
+- **Gates**: fmt / clippy / test green — **3323 unit tests, 196 `#[ignore]`**; the tag
+  guard run for real against the new version.

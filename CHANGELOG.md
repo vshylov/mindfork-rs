@@ -14,6 +14,21 @@ split by subsystem.
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.10.0] — 2026-09-18
+
+**The first public release.** Everything before this shipped to a handful of
+people who knew where to look; this is the one a stranger downloads. Most of the
+work behind it is invisible on screen and only shows up when something would
+otherwise have gone wrong: a Windows binary that starts on a clean machine, file
+tools that cannot reach outside the folder you give them, a sandbox with no route
+to your own network, the licence of every dependency travelling with every
+download, and a release that is checked against this changelog before it is
+built. What you *will* notice: you now pick a model from the provider's own list
+instead of typing its name, a thinking model's answer is no longer cut off in the
+middle, and there is a manual.
+
 ### Added
 - **A manual.** [docs/manual.md](docs/manual.md) is the document the project did
   not have: how the app is actually used — the screens and how to move between
@@ -2478,7 +2493,8 @@ history is in the [docs/journal/](docs/journal/) log).
   (notes/RAG/self-model, sqlite-vec, per-profile isolation). Schema format is
   v1; schema versioning and migrations are formalized in later releases.
 
-[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.9.9...HEAD
+[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/vshylov/mindfork-rs/compare/v0.9.9...v0.10.0
 [0.9.9]: https://github.com/vshylov/mindfork-rs/compare/v0.9.8...v0.9.9
 [0.9.8]: https://github.com/vshylov/mindfork-rs/compare/v0.9.7...v0.9.8
 [0.9.7]: https://github.com/vshylov/mindfork-rs/compare/v0.9.6...v0.9.7

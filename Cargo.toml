@@ -1,6 +1,6 @@
 [package]
 name = "mindfork-rs"
-version = "0.9.9"
+version = "0.10.0"
 edition = "2024"
 # The one sentence that describes the app. The same words are in site/zola.toml,
 # packaging/nfpm.yaml and the README masthead — one description, four places that
