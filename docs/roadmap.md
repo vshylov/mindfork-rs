@@ -491,17 +491,16 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   `release.yml`), waiting only on the repository going public; winget manifest
   (portable-zip until signing — unblocked once the setup executable is signed);
   AUR `mindfork-rs-bin`; MSI for GPO/Intune on demand.
-- **Publishing to crates.io as `mindfork`** — the short name is **still free**
-  (checked 2026-07-26; the registry API 404s on it), and the "About" dialog
-  (`F1`) already lists `crates.io/crates/mindfork` as the future home. The
-  binary/command is already `mindfork`
-  ([docs/research/binary-rename.md](research/binary-rename.md)), so what
-  remains is the *package*: the crate name is the publish name, so claiming it
-  means `name = "mindfork"` in `Cargo.toml` (the `[[bin]]` override then
-  becomes redundant) — a metadata-only change now that every user-facing
-  surface carries the brand. Until it is actually published, the URL stays
-  informational: a `crates.io` version badge in the README or a
-  `cargo install mindfork` line in `install.md` would be visibly broken.
+- **Publishing to crates.io as `mindfork`** — the package **is** now called
+  `mindfork` ([docs/research/binary-rename.md](research/binary-rename.md) §10,
+  which revises the 2026-08-24 decision that it stays `mindfork-rs`: the `-rs`
+  is a repository name, and a registry has no such ambiguity to resolve). The
+  name was still free on 2026-09-18, and `cargo publish --dry-run` runs clean.
+  What remains is the publish, which is the owner's (AGENTS.md §5) and belongs
+  to the **next version bump**: `v0.10.0` already tags a tree whose package was
+  `mindfork-rs`. With it come the things that are broken promises until the
+  crate is really there — the CHANGELOG line, a `crates.io` version badge in
+  the README and a `cargo install mindfork` line in `install.md`.
 - **Auto-update** — self-update, musl-static and arm64 builds, an "a new
   version is available" notice in the TUI. Groundwork from the finished
   "release engineering" track

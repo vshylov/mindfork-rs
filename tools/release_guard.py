@@ -185,7 +185,7 @@ def run(tag: str, root: Path) -> int:
     return 0
 
 
-MANIFEST = '[package]\nname = "mindfork-rs"\nversion = "0.9.9"\nedition = "2024"\n'
+MANIFEST = '[package]\nname = "mindfork"\nversion = "0.9.9"\nedition = "2024"\n'
 CHANGELOG = (
     "# Changelog\n\n## [Unreleased]\n\n### Added\n\n- something new\n\n"
     "## [0.9.9] — 2026-09-01\n\n### Fixed\n\n- the released fix\n\n"

@@ -2134,7 +2134,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "mindfork-rs"
+name = "mindfork"
 version = "0.10.0"
 dependencies = [
  "ansi-to-tui",

@@ -2,7 +2,8 @@
 //!
 //! Logs are written to `logs/mindfork.log` next to the binary, with daily
 //! rotation. The level is set via the `MINDFORK_LOG` env variable (format:
-//! `tracing_subscriber::EnvFilter`, e.g. `mindfork_rs=debug`).
+//! `tracing_subscriber::EnvFilter`, e.g. `mindfork=debug` — the filter's target
+//! is the crate name, which is also the package name).
 
 use anyhow::{Context, Result};
 use tracing_appender::non_blocking::WorkerGuard;
