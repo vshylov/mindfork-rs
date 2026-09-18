@@ -59,6 +59,13 @@ split by subsystem.
   instead of answering "LLM server is not configured".
 
 ### Fixed
+- **A managed server would not start with "No mmap" ticked.** llama.cpp replaced
+  `--no-mmap` with `--load-mode` and then removed the old flag entirely, so any
+  current build — including the one `mindfork llama setup` installs — refused to
+  launch with `error: invalid argument: --no-mmap`. The app now asks the binary
+  which spelling it takes and sends that one, so the box works both on a current
+  llama.cpp and on an older one you already have. The setting's row is labelled
+  "No mmap" rather than by a flag name that depends on the build.
 - **A thinking model's answer is no longer cut off in the middle.** The reply limit
   counts the model's own reasoning on every provider that charges for it that way,
   and the shipped limit of 2048 tokens was set before any of them did: measured on

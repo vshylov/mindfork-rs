@@ -2332,6 +2332,68 @@ mod tests {
         assert!(pid_on_port(PORT).is_some(), "the server is listening");
     }
 
+    /// The reported defect, end to end: a managed server with **"No mmap" ticked**
+    /// must come up. It did not — `llama-server` answered
+    /// `error: invalid argument: --no-mmap` and exited, because llama.cpp removed
+    /// the flag on 2026-09-09 (`14a9d09f7`) in favour of `--load-mode`, and even
+    /// `b10883`, the build `mindfork llama setup` installs, no longer takes it.
+    ///
+    /// The arm that matters is the *first* one: the unit tests can pin which
+    /// spelling is chosen, but only a real binary can say whether it accepts it.
+    ///
+    ///     MINDFORK_LLAMA_BIN=.../llama-server.exe MINDFORK_MODEL=.../model.gguf \
+    ///       cargo test managed_without_mmap_starts_e2e_live -- --ignored --nocapture
+    #[tokio::test]
+    #[cfg(windows)]
+    #[ignore = "requires a local llama-server binary + model (MINDFORK_LLAMA_BIN, MINDFORK_MODEL)"]
+    async fn managed_without_mmap_starts_e2e_live() {
+        let (Ok(bin), Ok(model)) = (
+            std::env::var("MINDFORK_LLAMA_BIN"),
+            std::env::var("MINDFORK_MODEL"),
+        ) else {
+            eprintln!("skip: MINDFORK_LLAMA_BIN / MINDFORK_MODEL not set");
+            return;
+        };
+        const PORT: u16 = 18098;
+        // What the binary itself says it takes — printed, because this is the
+        // measurement the fix rests on.
+        let spelling = crate::shared::api::managed::no_mmap_spelling(std::path::Path::new(&bin));
+        println!("{bin} spells no-mmap as {spelling:?}");
+
+        let settings = EngineSettings {
+            mode: ServerMode::Managed,
+            managed: ManagedSettings {
+                binary: Some(bin),
+                model_path: Some(model),
+                port: PORT,
+                gpu_layers: 0,
+                context_size: 4096,
+                no_mmap: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let (tx, mut rx) = unbounded_channel();
+        let started = LlamaSupervisor::default().apply_chat(
+            &settings,
+            None,
+            CancellationToken::new(),
+            tx,
+            ru(),
+        );
+        let _handle = started
+            .handle
+            .expect("a managed server owns its child even with the box ticked");
+        let status = rx.recv().await;
+        println!("with no mmap: {status:?}");
+        assert_eq!(
+            status,
+            Some(ServerStatus::Ready),
+            "the server must come up with the setting on"
+        );
+        assert!(pid_on_port(PORT).is_some(), "and be listening");
+    }
+
     /// A **real** managed child that dies on its own must be noticed at once — from
     /// the exit signal, not by waiting out a probe. That's the entire reason the
     /// monitor watches `exited` alongside its timer.

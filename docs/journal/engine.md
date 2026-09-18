@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (72)
+## Entries (73)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -82,9 +82,9 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a reply the content filter stopped says so (done)
 - Post-M9: whether a gateway's model takes images comes from its catalogue (done)
 - Post-M9: a chat whose history carries images, on an engine that takes none (done)
-
 - Post-M9: a server with no model, and a budget that forgot about reasoning (done)
 - Post-M9: four catalogues, and what each of them will say about a model (done)
+- Post-M9: the flag llama.cpp took away (done)
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
   a long time (up to the `MANAGED_READY_TIMEOUT=600s` timeout) in "server:
@@ -4672,3 +4672,41 @@ could never get — lessons §2, a fourth time; every such wait is bounded now.
   live `llama-server` 1 (its own path, unstated). Plus the whole path end to end
   through a real orchestrator — `ListModels` in, `ModelCatalogue` out with the
   server's own id (`the_model_catalogue_reaches_the_ui_e2e_live`).
+
+### Post-M9: the flag llama.cpp took away (done)
+
+- **Reported from a live run**: in managed mode the server stopped coming up at
+  all when the **"No mmap"** box was ticked — the log had
+  `error: invalid argument: --no-mmap` and nothing else. Nothing in the app had
+  changed; llama.cpp had. Measured in its own history: `e6dd0e29a` (2026-07-23,
+  PR #20834) folded `--no-mmap`/`--mlock`/`--direct-io` into
+  `-lm, --load-mode MODE`, keeping the old flags as deprecated aliases, and
+  `14a9d09f7` (2026-09-09, PR #28334) **removed** them. The important part is the
+  second date: `b10883` — the build **`mindfork llama setup` installs** — is from
+  2026-09-09 and already takes only `--load-mode`. So the box was broken for
+  everyone on a current binary, not just on a self-built one. Control arm on that
+  very binary: `llama-server -m … --no-mmap` prints
+  `error: invalid argument: --no-mmap` and exits.
+- **The fix asks the binary rather than guessing** (the user's choice among three:
+  probe `--help`, read the build number from `--version`, or send the new flag
+  and declare a minimum build). `NoMmapSpelling` is `--load-mode none` or
+  `--no-mmap`, and `no_mmap_spelling` reads the binary's own `--help` — which
+  works for any build, any fork and the next rename, and needs no boundary
+  number to be right about. Two properties keep it cheap and honest: it is asked
+  **only when the setting is on**, so every other launch spawns exactly the one
+  process it always did; and it is **not cached**, because a server start is rare
+  and already seconds long while a cache keyed by a path the user can replace is
+  a staleness bug for a ~50 ms saving. A binary that cannot print its help gets
+  the current spelling — its launch is about to fail with a clearer message.
+- **The row lost the flag from its label** ("No-mmap (--no-mmap)" → "No mmap"):
+  which flag is sent now depends on the binary, and a label naming the wrong one
+  is worse than a label naming none. The description, which explains what the
+  setting does rather than how it is spelled, is unchanged.
+- **Live run** — **GO**, 2026-09-18, against the installed `cpu-b10883` and
+  `gemma-3-4b-it-q8_0`: the binary reports `LoadMode`, and with the box ticked
+  the server reaches `Ready` and listens
+  (`managed_without_mmap_starts_e2e_live`). The same binary with the old flag is
+  the control arm above.
+- **Gates**: fmt / clippy / test green — **3323 unit tests, 196 `#[ignore]`**
+  (+2 unit tests, +1 live smoke; the two settings dumps regenerated for the
+  label).
