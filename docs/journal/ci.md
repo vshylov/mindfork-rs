@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (17)
+## Entries (18)
 
 - Post-M9: cutting GitHub Actions minutes (done)
 - Post-M9: skipping the test job for docs-only pull requests (done)
@@ -30,6 +30,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: a third chat model on the live gate — gpt-oss-120b, split across two files (done)
 
 - Post-M9: the workflows before strangers can open a pull request (done)
+- Post-M9: one context the branch ruleset can require (done)
 ### Post-M9: cutting GitHub Actions minutes (done)
 - **Trigger**: the `v0.9.4` release run was refused by GitHub with *"The job was
   not started because recent account payments have failed or your spending limit
@@ -1417,3 +1418,32 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Cost: the two gates are noise next to the job they sit in; the audit's pull-request
   trigger adds ~1 minute on dependency changes only; Dependabot is the one real line item,
   budgeted above.
+
+### Post-M9: one context the branch ruleset can require (done)
+
+The `main` ruleset created in stage 6 asked for four checks by name, and the first
+documentation-only pull request after it was **green and unmergeable**: four checks
+passing, `mergeStateStatus: BLOCKED`. The cause is a GitHub detail with no warning
+attached — `test` is a matrix guarded at the *job* level, and a matrix skipped there
+never expands, so the check that appears is literally `Tests (${{ matrix.os }})` and
+the required `Tests (ubuntu-latest)` / `Tests (windows-latest)` never arrive. A
+context that never arrives is not "pending"; it is a merge that can never happen.
+`sonar`, an ordinary job, skipped under the same guard and reported under its own
+name, which satisfied its requirement — the difference is the matrix, not the skip.
+
+- **The fix is one job, not four exceptions**: `CI gate` runs with `if: always()`,
+  depends on `changes`, `lint`, `test` and `sonar`, and fails unless each ended as
+  `success` or `skipped`. "Skipped because the change is documentation" passes;
+  "skipped because a dependency failed" does not, since a failed `needs` skips the
+  dependent job and the failure itself is in the same list. `always()` rather than
+  `!cancelled()`: a cancelled run must not report a green gate for the commit it was
+  cancelled on.
+- **Cheaper than the alternative**: moving the docs-only guard into the steps would
+  make the matrix expand and both contexts appear, at the cost of starting an Ubuntu
+  *and* a Windows runner (billed 2x) for every documentation pull request. The gate is
+  one Ubuntu job of a few seconds.
+- **The verification that had said this was safe was wrong, and that is the lesson**
+  ([../lessons.md](../lessons.md) §10): the "documentation-only pull request where all
+  four names appeared" had touched `Cargo.toml`, which the `changes` allowlist
+  deliberately excludes — so its matrix had expanded and the guard under test never
+  ran.
