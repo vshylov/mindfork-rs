@@ -75,7 +75,7 @@ jobs:
         run: |
           VERSION="$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
           bash packaging/linux/build-packages.sh target/release/mindfork "$VERSION" dist
-      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5.0.0
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: linux-packages
           path: |
@@ -196,7 +196,7 @@ jobs:
           Set-Content -Path stage\mindfork.exe -Value "dummy"
           Set-Content -Path THIRD-PARTY-NOTICES.md -Value "stub"
           & $env:ISCC "/DAppVersion=0.0.0" "/DBinDir=$PWD\stage" packaging\windows\mindfork.iss
-      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5.0.0
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: windows-installer-ci
           path: dist\*.exe
