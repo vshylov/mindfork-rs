@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (41)
+## Entries (42)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -53,6 +53,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: public release readiness — stage 5a, the documents a stranger meets (done)
 - Post-M9: public release readiness — stage 5c, the release pull request (done)
 - Post-M9: the Cargo package becomes `mindfork` (done)
+- Post-M9: public release readiness — stage 6, the flip (done)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -2188,3 +2189,44 @@ so the linked URL and the package name are the same decision. Recorded in
   install.md. They belong to the next version bump — `v0.10.0` already tags a tree
   whose package was `mindfork-rs`, and until the crate is on the registry each of
   those lines is a promise the registry does not keep.
+
+### Post-M9: public release readiness — stage 6, the flip (done)
+
+The last stage of the track, and the only one that is a checklist rather than a
+pull request: irreversible, outward-facing actions, taken in an order that put
+every reversible check first. Full record —
+[../research/public-release-readiness.md](../research/public-release-readiness.md) §5.
+
+- **The audit came before the deletions, and both before the flip.** Every text
+  blob in the object database (**9 229**, over 1 776 commits) and every piece of
+  GitHub-side prose (**582** pull requests, 286 comments, 11 releases) was scanned
+  for nine credential shapes: **zero hits**. The blocker's named worry — the
+  Hugging Face namespace that `tools/hf_api.py` prints into every sweeper log —
+  turned out to be `vshylov`, the owner's own GitHub login, so the flip disclosed
+  nothing the repository URL did not. What the pass did surface was unasked for:
+  222 of 582 pull requests are in Russian, and the notes of v0.9.0–v0.9.2 entirely
+  so.
+- **B2 was wider than B2 said.** The pre-0.9.9 release assets carried the
+  spellcheck dictionaries without their licence texts — measured in the files, not
+  inferred from the commit date: at v0.9.8 `en_GB.aff` had a one-line "Released
+  under LGPL" and `en_US.aff`/`ru_RU.aff` had nothing. The same payload sat in
+  **183 Actions artifacts** (2.8 GiB) that the blocker never mentioned and that a
+  public repository serves to anyone until retention expires. Deleted: 59 assets
+  (484 MiB, 8 downloads ever) and those 183 artifacts. The residue is written
+  down rather than glossed: GitHub's generated source archives for those tags
+  still contain the dictionaries, and removing them would mean deleting the tags.
+- **Two measurements that are not in any document.** A draft release created
+  *before* immutability is enabled **does** become immutable when published
+  (v0.10.0: `draft=false, immutable=true`) — the docs are silent on it. And
+  enabling `secret_scanning_validity_checks` or
+  `secret_scanning_non_provider_patterns` returns 200 while leaving both
+  `disabled`: paid features, refused without an error.
+- **A new rule collided with the project's own procedure.** The `v*` tag ruleset
+  forbids deleting a tag, while AGENTS.md §6 rehearses the release pipeline with a
+  `v<version>-rc1` tag that is inspected and then deleted. Excluded `v*-rc*`,
+  `v*-alpha*`, `v*-beta*`: release tags untouchable, rehearsals disposable.
+- **B1 closed with a stranger's view**: no token, and the repository, `/releases`,
+  `/releases/latest`, the API and the manual all answer; the asset downloads and
+  `sha256sums.txt` names exactly the six binaries.
+- **Not done here**: `cargo publish` (the owner's, at the next bump) and the
+  announcement, which is its own pull request because merging it deploys the site.

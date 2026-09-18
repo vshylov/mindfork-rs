@@ -172,7 +172,7 @@ Backend selection: `MINDFORK_ENGINE_URL` (external, any OpenAI server) OR
 rented instead of hosted — `python tools/e2e_hf.py run`, see
 `docs/history/remote-e2e-hf.md`.
 
-## Status (2026-09-18, version 0.10.0)
+## Status (2026-09-19, version 0.10.0)
 
 The **M0–M9** plan is done, plus extensive post-M9 work — **3326 unit tests
 green, 196 `#[ignore]`** (live smokes + a real-clipboard round trip + the
@@ -237,11 +237,20 @@ being recent is dropped, not shortened.
   32 MB ceiling, and on unix the data root is `0700` with `0600` files
   ([docs/research/safe-defaults.md](docs/research/safe-defaults.md),
   [docs/journal/tools.md](docs/journal/tools.md)).
-- **Before the first public release** — an audit of the flip, the defaults and the
-  first run found twelve blockers and staged them; stage 1: a TUI launch without a
-  terminal refuses (it hung), an empty chat with no engine lists the ways to connect
-  one, and PRIVACY.md rewritten from the code (16 corrections; `llama setup` reads no
-  `GITHUB_TOKEN`) ([docs/research/public-release-readiness.md](docs/research/public-release-readiness.md),
+- **Before the first public release — the track is closed** (stage 6, 2026-09-19).
+  An audit of the flip, the defaults and the first run found twelve blockers and
+  staged them; stage 1 made a terminal-less launch refuse (it hung), gave an engineless
+  chat the ways to connect one, and rewrote PRIVACY.md from the code (16 corrections;
+  `llama setup` reads no `GITHUB_TOKEN`). The flip itself was measured before it was
+  taken: **9 229** blobs and **582** pull requests scanned for nine credential shapes,
+  **zero** hits, and the Hugging Face namespace the audit feared is the owner's own
+  GitHub login; 59 release assets and **183 CI artifacts** deleted for carrying the
+  spellcheck dictionaries without their licences; v0.10.0 published and **immutable**
+  (a draft created before the setting still becomes immutable at publish — measured,
+  the documentation is silent); the settings SECURITY.md had been promising, minus the
+  two paid secret-scanning options GitHub refuses in silence. What is left is the
+  owner's: `cargo publish` at the next bump
+  ([docs/research/public-release-readiness.md](docs/research/public-release-readiness.md) §5,
   [docs/journal/release.md](docs/journal/release.md)).
 - **A chart's line said "shown" to a model that takes no images** — `python_exec`
   wrote the claim before the loop knew, and the loop's no-vision note contradicted it in

@@ -343,4 +343,122 @@ Each gets its forks written and confirmed before it starts.
 | 3 — release pipeline | B5, B6, B12; third-party notices and grammar licences; SHA pins, `dependabot.yml`, provenance; `quick-xml`, `chacha20` — measured and forked in [release-pipeline.md](release-pipeline.md); **done** | All in `.github/` and `packaging/`, validated by `packaging.yml` and a tag rehearsal |
 | 4 — robustness and defaults | the dead-orchestrator loop; installer `PATH`; fatal errors on a double-click; `REFERENCE = En`; model hints; the managed server with a build but no GGUF (§3.2, measure first) | Small independent fixes |
 | 5 — public documents | user manual and `docs/` index; README trim; CONTRIBUTING's path without a GPU; issue forms, CODE_OF_CONDUCT; `Cargo.toml` metadata; CHANGELOG highlights and the version decision; the website's install page, hero, Open Graph, legal pages, launch post | Describes the result of stages 1–4, so it goes last |
-| 6 — the flip (owner) | B4 → B2 → B7 → repository leftovers → flip → B3 → B1's anonymous check → announce | Irreversible and outward-facing; a checklist, not a PR |
+| 6 — the flip (owner) | B4 → B2 → B7 → repository leftovers → flip → B3 → B1's anonymous check → announce; **done 2026-09-19**, §5 | Irreversible and outward-facing; a checklist, not a PR |
+
+
+## 5. Stage 6 — the flip, as it went (2026-09-18/19)
+
+A checklist rather than a pull request, so its outcome is recorded here. The
+order held: audit first, deletions while nobody could look, the flip, then the
+settings that only a public repository can have.
+
+### B7 — what becomes readable, measured instead of feared
+
+Two passes, both read-only, before anything was made public:
+
+| Surface | Scanned | Credential-shaped strings found |
+|---|---|---|
+| every blob in the object database | **9 229** text blobs, 1 776 commits | **0** |
+| pull requests, comments, issues, releases | **582** PRs, 286 comments, 0 issues, 11 releases | **0** |
+
+Nine patterns each (OpenAI, Anthropic, xAI, Google, Hugging Face, GitHub, AWS,
+`BEGIN … PRIVATE KEY`, bearer tokens). The named worry — the Hugging Face
+namespace printed by `tools/hf_api.py` into every sweeper log — resolved to
+`namespace: vshylov`, **the repository owner's own GitHub login**, so the flip
+revealed nothing the URL did not already say.
+
+What is public and was accepted rather than removed: the maintainer's address
+(it is PRIVACY.md's contact), `192.168.1.20:8000/8001` in 16 pull-request bodies
+(an RFC 1918 address, meaningless off that LAN), a handful of `D:\LLM\…` paths,
+and ~40 mentions of what a rented GPU hour cost. The pass also found something
+the audit had not asked about: **222 of 582 pull requests are in Russian**, and
+the release notes of v0.9.0–v0.9.2 entirely so — not a privacy question, but the
+first thing a curious visitor meets in the history.
+
+### B2 — the dictionaries without their licences
+
+`dictionaries/licenses/` first appears in `4f37e3d1` (2026-09-02 02:17 +0300).
+Measured against the files themselves rather than the commit date: at v0.9.8
+`en_GB.aff` carried one line — "Released under LGPL" — and `en_US.aff` and
+`ru_RU.aff` carried nothing at all, while both BSD-style notices and the LGPL
+require the text to travel with a redistribution.
+
+Deleted: **59 release assets** across v0.9.0–v0.9.8 (484 MiB; 8 downloads in
+total, ever) and **183 Actions artifacts** created before that commit (2.8 GiB) —
+a second channel the blocker had not named, and one that after the flip would
+have been downloadable by anyone until its 90-day retention expired. The tags,
+names and release notes stayed; v0.9.9 kept its assets, being the first release
+built with the licences in place.
+
+**The residue, stated rather than hidden:** GitHub generates source archives for
+every tag, and the trees of those tags still have the dictionaries without
+`dictionaries/licenses/`. Removing them means deleting the tags, which would take
+the releases and the changelog's comparison links with them. That is history
+rather than a distribution someone installs, and it was left.
+
+### B4 — the crates.io name
+
+Resolved by renaming the Cargo package to `mindfork`
+([binary-rename.md](binary-rename.md) §10), which revises the 2026-08-24 decision
+that it stays `mindfork-rs`: the `-rs` is a repository name, and Cargo publishes
+strictly under `[package] name`. Both names were free on 2026-09-18. The publish
+itself is the owner's and belongs to the next version bump.
+
+### The flip, and B3
+
+The repository went public on 2026-09-19. Nine settings followed; three of them
+(Dependabot alerts, its security fixes, and required SHA pinning for actions —
+which `tools/actions_pin_check.py` already enforced in CI) had worked while it
+was still private, the rest needed the flip:
+
+- private vulnerability reporting — SECURITY.md's only channel, and it now exists;
+- secret scanning and push protection;
+- fork workflows wait for approval (`all_external_contributors`);
+- **immutable releases**, enabled *before* publishing v0.10.0;
+- a `main` ruleset (deletion, non-fast-forward, four required checks) and a `v*`
+  tag ruleset (deletion, update, non-fast-forward), both with an empty
+  `bypass_actors` — the owner included.
+
+**Two things the run measured that no document states.** GitHub's own
+documentation does not say whether a draft created *before* immutability is
+enabled becomes immutable when published; this one did — v0.10.0 reads
+`draft=false, immutable=true`. And a `PATCH` enabling
+`secret_scanning_validity_checks` or `secret_scanning_non_provider_patterns`
+returns 200 and leaves both `disabled`: they are the paid tier, refused in
+silence rather than with an error.
+
+**One collision, found and fixed:** the tag ruleset forbids deleting a `v*` tag,
+while AGENTS.md §6's rehearsal of the release pipeline is a `v<version>-rc1` tag
+that is inspected and then *deleted*. The new rule would have broken the
+project's own procedure at the next pipeline change, so `v*-rc*`, `v*-alpha*` and
+`v*-beta*` are excluded: real release tags are untouchable, rehearsals stay
+disposable. A leftover disabled ruleset ("Main branch", from before rulesets were
+available on this plan) was removed.
+
+**And a second collision, found by the first pull request that met the rule.**
+Requiring `Tests (ubuntu-latest)` and `Tests (windows-latest)` by name makes every
+documentation-only pull request unmergeable: `test` is a matrix guarded at the job
+level, and a matrix skipped there never expands, so those contexts never arrive —
+green checks, `mergeStateStatus: BLOCKED`, permanently. The ruleset now requires a
+single `CI gate` job that always runs and reads its dependencies' results
+([../journal/ci.md](../journal/ci.md)), and the false verification behind the
+original choice — a "documentation-only" pull request that had in fact touched
+`Cargo.toml` — is in [../lessons.md](../lessons.md) §10. Both collisions have the
+same shape: a rule written from what the checks are *called* rather than from when
+they actually report.
+
+Left alone deliberately: the two `probe/*` tags (they record measurement runs)
+and the empty topic list.
+
+### B1 — the anonymous check
+
+Run without a token, as a stranger: the repository, `/releases`,
+`/releases/latest`, the API and `docs/manual.md` all answer 200 or 302; the asset
+URL redirects to the CDN and downloads; and `sha256sums.txt` names exactly the
+six binaries of the release, so every download can be verified by the person who
+made it.
+
+### What stage 6 did not do
+
+Publish the crate (the owner's, at the next bump), and announce — the launch post
+is its own pull request, because merging it deploys mindfork.io.
