@@ -243,6 +243,17 @@ data format change adds an item to `CHANGELOG.md` → `[Unreleased]` (§4).
    copy of the data; optionally — install the package/installer in a VM.
 6. **Publish** the draft from the releases page (the user; the agent publishes
    nothing, §5).
+7. **crates.io.** Publishing the release also starts
+   **`.github/workflows/crates-io.yml`**, which publishes the crate
+   `mindfork` from the same tag: `release_guard.py` again, then a check that
+   the version is not on the registry already, then `cargo publish --locked`
+   with the repository's `CRATES_API_TOKEN` secret. A prerelease never
+   reaches it. Nothing here happens on the tag push: the registry has no
+   drafts and no deletes — an uploaded version can only be yanked and its
+   number never becomes free again — so the upload waits for step 5 to have
+   happened. The workflow also runs by hand (`workflow_dispatch`), where it
+   is a rehearsal by default (`dry_run: true`, everything but the upload)
+   and a publish when that box is cleared.
 
 A **rehearsal** of the whole workflow, when it or the packaging changes, is a tag
 carrying a prerelease suffix on the branch head (`v<current version>-rc1`): the

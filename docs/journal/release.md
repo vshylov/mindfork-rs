@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (42)
+## Entries (43)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -54,6 +54,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: public release readiness — stage 5c, the release pull request (done)
 - Post-M9: the Cargo package becomes `mindfork` (done)
 - Post-M9: public release readiness — stage 6, the flip (done)
+- Post-M9: crates.io — the publish becomes a button the owner presses (done)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -2230,3 +2231,74 @@ every reversible check first. Full record —
   `sha256sums.txt` names exactly the six binaries.
 - **Not done here**: `cargo publish` (the owner's, at the next bump) and the
   announcement, which is its own pull request because merging it deploys the site.
+
+### Post-M9: crates.io — the publish becomes a button the owner presses (done)
+
+- **The registry is the one channel this project cannot take back.** A GitHub
+  release is built as a draft, smoke-tested and published when it looks right,
+  and a bad one can be deleted; a crate version that has been uploaded can only
+  be **yanked** — the files stay downloadable, and the number never becomes free
+  again. That asymmetry is the whole design of
+  `.github/workflows/crates-io.yml`: it does **not** run on the `v*` tag push
+  that starts `release.yml`, because between that tag and a release anyone
+  should trust sits AGENTS.md §6 step 5, the artifact smoke test. It runs on
+  `release: published` — the owner's own act, the one that ends that step — so
+  what reaches the registry is the tree the published binaries were built from,
+  and one action feeds both channels. A prerelease (the `v<version>-rc1`
+  rehearsal of §6, whose tag is deleted afterwards) is excluded by the job's
+  `if`.
+- **And a rehearsal of its own.** `workflow_dispatch` defaults to
+  `dry_run: true`: every step, including cargo's verification build of the
+  packaged sources, stopping short of the upload. Turning it off publishes the
+  checked-out ref — the way to put on the registry a version that has no release
+  of its own to hang off. Both are the owner's press; the agent publishes
+  nothing (AGENTS.md §5), which is why this stage delivers the button and not
+  the crate.
+- **Measured before any of it was written.** The name `mindfork` was still free
+  on 2026-09-19 (`crates.io/api/v1/crates/mindfork` → 404), and
+  `cargo publish --dry-run` is clean: **368 files, 15.4 MiB (3.8 MiB
+  compressed)**, well inside the registry's 10 MiB limit, with the verification
+  build finishing. What is in those 368 files matters more than their size:
+  `dictionaries/licenses/*.txt` and `syntaxes/licenses/*.txt` are among them.
+  Stage 6 deleted 59 release assets and 183 Actions artifacts precisely for
+  carrying the dictionaries **without** those texts, and a crate is
+  redistribution like any other — the `include` list written for the package
+  rename already carried them, and this is the check that it did.
+- **Three refusals before the build, not after it.** The same
+  `tools/release_guard.py --tag` the release pipeline runs (on a release event
+  with the release's own tag, so a tag disagreeing with `Cargo.toml` is caught
+  here too; on a dispatch with a tag synthesized from the manifest, where what
+  is left to check is that the CHANGELOG has a section for the version). Then a
+  `404`-or-refuse question to crates.io about the exact version — placed
+  *before* the toolchain and the build, so a re-run over an already-published
+  version answers in seconds instead of spending the build and being refused by
+  the upload. Then an empty-token check on the real path only, since the
+  rehearsal needs no credential. The version itself is read by importing the
+  guard's own `cargo_version`, rather than by a second parser that could drift.
+- **Two small measurements behind the step bodies.** `release_guard.py --tag`
+  always writes `notes.md` into the working directory — the file
+  `gh release create --notes-file` is given — and this job wants the verdict,
+  not the notes; it removes it. That turned out not to be load-bearing: with an
+  untracked `notes.md` present, `cargo package` still packaged, because
+  `Cargo.toml`'s `include` is an explicit list and `notes.md` is not in it. The
+  second: the verification build needs `libasound2-dev` like every other Linux
+  job here, since the package it compiles is the whole application, TTS
+  playback included.
+- **Every arm driven locally** before the workflow could ever run: the version
+  step on a release event and on a dispatch; the guard on a matching tag and on
+  `v0.9.1` (refused, naming both versions); the registry question against
+  `mindfork 0.10.0` (404 → pass) and against `serde 1.0.0` (200 → refused); the
+  publish step as a rehearsal, with a token, and with the token missing. The
+  workflow parses, and `actions_pin_check.py` sees 41 references, all pinned.
+- **Why the first publish is not 0.10.0 from `main`, and this is the
+  measurement that says so.** `v0.10.0` tags a tree whose package was still
+  called `mindfork-rs`; `main` is that tree plus the rename and a batch of
+  Dependabot merges. Between the two locks **42 dependency versions differ**, 10
+  packages appear and 3 disappear (`digest` 0.10 → 0.11, `base64` 0.22 → 0.23,
+  `sha2`/`hkdf` a generation up). Publishing `0.10.0` from `main` would put on
+  the registry a version that no tag matches and that no released binary was
+  built from — and, unlike everything else in this pipeline, it could never be
+  corrected afterwards. So the first published version rides the next release,
+  and with it the things that are broken promises until the crate is really
+  there: the CHANGELOG line, the README's version badge and
+  `cargo install mindfork` in install.md.
