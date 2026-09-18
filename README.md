@@ -8,6 +8,7 @@
 [![Website](https://img.shields.io/badge/web-mindfork.io-c25a27.svg)](https://mindfork.io)
 [![CI](https://github.com/vshylov/mindfork-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/vshylov/mindfork-rs/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/vshylov/mindfork-rs)](https://github.com/vshylov/mindfork-rs/releases)
+[![crates.io](https://img.shields.io/crates/v/mindfork.svg)](https://crates.io/crates/mindfork)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 **A terminal AI chat written in Rust: local models via llama.cpp or OpenAI,

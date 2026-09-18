@@ -79,6 +79,28 @@ The installer is **unsigned** — on first run Windows SmartScreen will show a w
 verified against the release's `sha256sums.txt`. As an alternative — the portable
 `windows.zip` (no install).
 
+### From crates.io (`cargo install`)
+
+```bash
+cargo install mindfork
+```
+
+The same prerequisites as "Building from source" below — a Rust toolchain, and
+on Linux the ALSA headers. Two consequences are worth knowing before choosing
+this way in, because `cargo install` keeps **only the executable**:
+
+- **no spellcheck dictionaries.** They are copied next to the binary at build
+  time (§4), and that copy is not what gets installed — so spellcheck starts
+  off. Dropping the Hunspell pairs into the data directory's `dictionaries/`
+  turns it on.
+- **the data directory lands next to the installed binary** —
+  `~/.cargo/bin/data/` — because the default layout is portable (§2). A
+  `defaults.json` beside the binary moves it (§2.1).
+
+The prebuilt archives, the Linux packages and the Windows installer carry the
+dictionaries and every licence text and are the recommended way in; this one is
+for a machine that already builds Rust.
+
 ### Building from source
 
 You need **Rust** (edition 2024, a recent stable toolchain). On **Linux** you also

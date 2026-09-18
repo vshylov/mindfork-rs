@@ -125,16 +125,20 @@ jobs:
           DRY_RUN: ${{ inputs.dry_run }}
         run: |
           set -euo pipefail
-          if [ "${DRY_RUN:-false}" = "true" ]; then
+          # The upload happens on a published release, or on a dispatch that
+          # *says* `dry_run: false`. Everything else — including a `dry_run`
+          # that somehow arrives empty — is a rehearsal: the default has to fall
+          # on the side that can be taken back, because this one cannot.
+          if [ "${GITHUB_EVENT_NAME}" = "release" ] || [ "${DRY_RUN:-}" = "false" ]; then
+            if [ -z "${CARGO_REGISTRY_TOKEN}" ]; then
+              echo "::error::the CRATES_API_TOKEN secret is empty or not available to this run."
+              exit 1
+            fi
+            cargo publish --locked
+          else
             echo "Rehearsal: everything the real run does, except the upload."
             cargo publish --locked --dry-run
-            exit 0
           fi
-          if [ -z "${CARGO_REGISTRY_TOKEN}" ]; then
-            echo "::error::the CRATES_API_TOKEN secret is empty or not available to this run."
-            exit 1
-          fi
-          cargo publish --locked
       - name: Where it landed
-        if: ${{ success() && inputs.dry_run != true }}
+        if: ${{ success() && (github.event_name == 'release' || inputs.dry_run == false) }}
         run: echo "https://crates.io/crates/mindfork/${{ steps.what.outputs.version }}"

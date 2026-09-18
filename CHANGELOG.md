@@ -16,6 +16,33 @@ split by subsystem.
 
 Nothing yet.
 
+## [0.10.1] — 2026-09-19
+
+**The first release that also goes to a package registry.** Nothing on screen
+changed; what did is where the program can be installed from, and one line in
+your shell profile if you read its logs.
+
+### Added
+- **`cargo install mindfork`.** The package is published to
+  [crates.io](https://crates.io/crates/mindfork) as `mindfork` — the repository
+  keeps its `-rs`, which says "written in Rust". It builds from source and
+  installs the binary alone, so the spellcheck dictionaries are not part of it
+  and the portable data directory lands next to the installed executable;
+  [docs/install.md](docs/install.md) §1 says what that means and how to change
+  it. The prebuilt archives, the Linux packages and the Windows installer carry
+  the dictionaries and every licence text, and remain the recommended way in.
+
+### Changed
+- **The log filter is `mindfork`, not `mindfork_rs`.** `MINDFORK_LOG` takes
+  crate names, and the crate was renamed for the registry — so a filter written
+  as `MINDFORK_LOG=mindfork_rs=debug` no longer names anything in this program,
+  and the lines it used to turn on stay off. Write
+  `MINDFORK_LOG=mindfork=debug`.
+- **The crypto stack that encrypts stored API keys moved up a generation**
+  (`sha2` 0.10 → 0.11 with `hkdf`/`hmac` to match, on Linux). The derived key is
+  byte-for-byte the one the old crates produced — pinned by a test against a
+  vector measured on them — so keys stored by an earlier version keep opening.
+
 ## [0.10.0] — 2026-09-18
 
 **The first public release.** Everything before this shipped to a handful of
@@ -2493,7 +2520,8 @@ history is in the [docs/journal/](docs/journal/) log).
   (notes/RAG/self-model, sqlite-vec, per-profile isolation). Schema format is
   v1; schema versioning and migrations are formalized in later releases.
 
-[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.10.1...HEAD
+[0.10.1]: https://github.com/vshylov/mindfork-rs/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/vshylov/mindfork-rs/compare/v0.9.9...v0.10.0
 [0.9.9]: https://github.com/vshylov/mindfork-rs/compare/v0.9.8...v0.9.9
 [0.9.8]: https://github.com/vshylov/mindfork-rs/compare/v0.9.7...v0.9.8
