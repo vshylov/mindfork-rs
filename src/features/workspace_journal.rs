@@ -275,8 +275,18 @@ fn same_root(owner: &str, root: &str) -> bool {
 /// mapping only has to be stable and collision-free, which is what a digest is.
 fn baseline_name(rel: &str) -> String {
     use sha2::{Digest, Sha256};
+    use std::fmt::Write as _;
+    // The first 16 bytes, 32 hex characters — the name this has always written.
+    // Spelled out a byte at a time because `digest` 0.11 answers with a
+    // `hybrid_array::Array`, which, unlike the `GenericArray` it replaced, has no
+    // `LowerHex`; `the_baseline_name_does_not_move_between_builds` pins the result.
     let digest = Sha256::digest(rel.as_bytes());
-    format!("{digest:x}")[..32].to_string()
+    digest[..16]
+        .iter()
+        .fold(String::with_capacity(32), |mut name, b| {
+            let _ = write!(name, "{b:02x}");
+            name
+        })
 }
 
 #[cfg(test)]
@@ -450,6 +460,18 @@ mod tests {
         assert!(
             !name.contains('/') && !name.contains('\\') && !name.contains('.'),
             "got: {name}"
+        );
+    }
+
+    /// The name is on disk. A baseline written by an earlier build has to be
+    /// found by a later one, so the mapping is pinned rather than merely stable
+    /// within a run — a digest crate that changed its output would otherwise
+    /// orphan every baseline in silence.
+    #[test]
+    fn the_baseline_name_does_not_move_between_builds() {
+        assert_eq!(
+            baseline_name("src/a.rs"),
+            "bdfc5619650b795d1ffec5e8af3154a9"
         );
     }
 

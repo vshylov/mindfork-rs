@@ -88,8 +88,10 @@ eventsource-stream = "0.2.3"
 flate2 = "1.0"
 futures-util = "0.3.32"
 # Deriving the API-key encryption key from machine-id (HKDF-SHA256; `sha2` is already present).
+# 0.13 is the generation built on `digest` 0.11 — the one `sha2` 0.11 speaks; 0.12 is
+# `digest` 0.10 and will not type-check against it.
 # The pattern is prescribed by systemd's documentation — machine-id isn't used raw.
-hkdf = "0.12.4"
+hkdf = "0.13.0"
 # Decoding, downscaling and re-encoding images attached with `/image attach`
 # (spec §9.10). `default-features = false` keeps only the decoders users actually
 # drop into a chat; the encoders we emit are png and jpeg alone, because xAI accepts
@@ -169,7 +171,7 @@ scraper = "0.27.0"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 # Integrity check (sha256) of downloaded sandbox assets (Phase 2). Pure Rust.
-sha2 = "0.10"
+sha2 = "0.11"
 single-instance = "0.3.3"
 spellbook = "0.4.2"
 sqlite-vec = "0.1.9"

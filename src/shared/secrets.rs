@@ -617,6 +617,20 @@ mod tests {
         assert_ne!(derive_key(b"m", "u"), derive_key(b"n", "u"));
     }
 
+    /// HKDF-SHA256 is a specification (RFC 5869), not an implementation detail,
+    /// and the key derived here decrypts every API key already stored on this
+    /// machine. So the vector is pinned: an upgrade of `hkdf` or `sha2` that
+    /// moved it would lock the user out of their own keys, and the round-trip
+    /// tests above — which derive and use the key in the same process — would
+    /// all still pass.
+    #[test]
+    fn derive_key_matches_a_pinned_vector() {
+        assert_eq!(
+            hex_encode(&derive_key(b"machine-id-abc", "user1")),
+            "f2b76bdb73f60eed5e07d306d47e73cff8643c35720f89146167ea37e855f1e4"
+        );
+    }
+
     /// Full round trip over a config entry — on this machine's platform scheme
     /// (Windows: DPAPI; Linux: machine-id if present — otherwise the test is
     /// skipped).
