@@ -435,6 +435,18 @@ project's own procedure at the next pipeline change, so `v*-rc*`, `v*-alpha*` an
 disposable. A leftover disabled ruleset ("Main branch", from before rulesets were
 available on this plan) was removed.
 
+**And a second collision, found by the first pull request that met the rule.**
+Requiring `Tests (ubuntu-latest)` and `Tests (windows-latest)` by name makes every
+documentation-only pull request unmergeable: `test` is a matrix guarded at the job
+level, and a matrix skipped there never expands, so those contexts never arrive —
+green checks, `mergeStateStatus: BLOCKED`, permanently. The ruleset now requires a
+single `CI gate` job that always runs and reads its dependencies' results
+([../journal/ci.md](../journal/ci.md)), and the false verification behind the
+original choice — a "documentation-only" pull request that had in fact touched
+`Cargo.toml` — is in [../lessons.md](../lessons.md) §10. Both collisions have the
+same shape: a rule written from what the checks are *called* rather than from when
+they actually report.
+
 Left alone deliberately: the two `probe/*` tags (they record measurement runs)
 and the empty topic list.
 
