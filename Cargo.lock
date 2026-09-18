@@ -2073,7 +2073,7 @@ dependencies = [
  "arboard",
  "async-stream",
  "async-trait",
- "base64 0.22.1",
+ "base64 0.23.1",
  "bytemuck",
  "chacha20poly1305",
  "chardetng",
