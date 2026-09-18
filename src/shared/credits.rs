@@ -169,7 +169,7 @@ pub const COMPONENTS: &[(&str, &str, &str)] = &[
     ("arboard", "3.6.1", "MIT OR Apache-2.0"),
     ("async-stream", "0.3.6", "MIT"),
     ("async-trait", "0.1.92", "MIT OR Apache-2.0"),
-    ("base64", "0.22.1", "MIT OR Apache-2.0"),
+    ("base64", "0.23.1", "MIT OR Apache-2.0"),
     ("bytemuck", "1.25.2", "Zlib OR Apache-2.0 OR MIT"),
     ("chacha20poly1305", "0.10.1", "Apache-2.0 OR MIT"),
     ("chardetng", "1.0.0", "Apache-2.0 OR MIT"),
@@ -419,6 +419,44 @@ mod tests {
                 versions.contains(*version),
                 "version {name} {version} not found in Cargo.lock: {versions:?}"
             );
+        }
+    }
+
+    /// Gate: for a crate the lock file holds twice, [`COMPONENTS`] names the
+    /// version *this* crate uses.
+    ///
+    /// The test above asks only whether the listed version is somewhere in the
+    /// lock, and a transitive copy answers yes: base64 stayed listed at 0.22.1,
+    /// green, for as long as anything else still pulled 0.22.1 — while this
+    /// crate had moved to 0.23.1 and the dialog was naming a version the binary
+    /// does not contain. Cargo writes the version into a dependency line exactly
+    /// when the name is ambiguous, so that line is the authority.
+    #[test]
+    fn a_duplicated_crate_is_listed_at_the_version_this_crate_uses() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.lock");
+        let lock = std::fs::read_to_string(path).expect("Cargo.lock is present");
+        let ours = lock
+            .split("[[package]]")
+            .find(|block| block.contains(concat!("name = \"", env!("CARGO_PKG_NAME"), "\"")))
+            .expect("this crate is a package in its own lock file");
+        let listed: std::collections::BTreeMap<&str, &str> =
+            COMPONENTS.iter().map(|(n, v, _)| (*n, *v)).collect();
+        for line in ours.lines() {
+            // `"name version",` — a dependency Cargo had to disambiguate.
+            let Some((name, version)) = line
+                .trim()
+                .trim_matches(|c| c == '"' || c == ',')
+                .split_once(' ')
+            else {
+                continue;
+            };
+            if let Some(shown) = listed.get(name) {
+                assert_eq!(
+                    *shown, version,
+                    "{name} is in Cargo.lock more than once and this crate uses \
+                     {version}, but the About dialog names {shown}"
+                );
+            }
         }
     }
 
