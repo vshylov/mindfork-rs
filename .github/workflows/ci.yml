@@ -362,3 +362,41 @@ jobs:
         uses: SonarSource/sonarqube-scan-action@ba9859eae8dd6bd29e412f25ddbbef3d032000f4  # v8.2.2
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+  # The single context the `main` ruleset requires, and the reason it exists:
+  # every other job's check name is either conditional or generated. The `test`
+  # job is a matrix, and a matrix skipped at the job level never expands — on a
+  # documentation-only pull request GitHub reports one check literally named
+  # `Tests (${{ matrix.os }})`, so a ruleset asking for `Tests (ubuntu-latest)`
+  # waits for a context that will never arrive and the pull request is green and
+  # unmergeable (measured: PR #585). This job always runs, reports one stable
+  # name, and fails unless every job it covers either passed or was deliberately
+  # skipped — so "skipped because the change is documentation" passes, while
+  # "skipped because a dependency failed" does not: a failed `needs` skips the
+  # dependent job, and the failure itself is right here in the list.
+  gate:
+    name: CI gate
+    needs: [changes, lint, test, sonar]
+    # `always()` and not `!cancelled()`: a cancelled run must not report a green
+    # gate on the commit it was cancelled for.
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Every job passed or was deliberately skipped
+        run: |
+          echo "changes=${{ needs.changes.result }}"
+          echo "lint=${{ needs.lint.result }}"
+          echo "test=${{ needs.test.result }}"
+          echo "sonar=${{ needs.sonar.result }}"
+          bad=0
+          for r in "${{ needs.changes.result }}" "${{ needs.lint.result }}" \
+                   "${{ needs.test.result }}" "${{ needs.sonar.result }}"; do
+            case "$r" in
+              success|skipped) ;;
+              *) echo "::error::a job this gate covers ended as '$r'"; bad=1 ;;
+            esac
+          done
+          exit "$bad"

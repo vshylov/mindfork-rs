@@ -2002,3 +2002,17 @@ pull request, for a tenth of a second. The same reasoning as extracting a `run:`
 executing it against stubs, one step further — the extraction becomes the shipped shape.
 — *public release readiness — stage 3, the release pipeline*, *the workflows before
 strangers can open a pull request*.
+
+**A required status check must have a name that exists even when the job does not run.**
+A branch ruleset waits for a *context*, not a job. A skipped ordinary job still reports
+under its own name, and GitHub counts that as satisfied — but a skipped **matrix** job
+never expands: the check that arrives is literally named `Tests (${{ matrix.os }})`, and
+the contexts the rule asks for (`Tests (ubuntu-latest)`, `Tests (windows-latest)`) never
+appear at all. The pull request is then green and permanently unmergeable — all checks
+passing, `mergeStateStatus: BLOCKED` — and no amount of re-running helps, because nothing
+will ever produce that name. Require a single aggregate job that always runs and reads
+`needs.*.result` instead. And check the evidence before trusting it: the "documentation-only
+pull request where all four required checks appeared" that this rule was verified against
+had touched `Cargo.toml`, so its matrix *had* expanded — the guard it was meant to exercise
+never ran.
+— *public release readiness — stage 6, the flip*, *one context the ruleset can require*.
