@@ -5345,3 +5345,83 @@ fn the_filter_narrows_the_list_and_never_hides_the_way_out() {
     assert_eq!(st.rows(), 1, "only the way out is left");
     assert_eq!(st.selected, 0, "and the highlight is on it");
 }
+
+/// The defect the owner's live run found: the catalogue was cached by **slot**,
+/// and a slot's provider changes inside one visit to the screen — so OpenAI's
+/// 132 models were offered under `gemini`, `claude` and `grok` in turn. The key
+/// is what the slot points at, so a mode switch is a different question.
+#[test]
+fn switching_the_provider_never_shows_the_previous_ones_models() {
+    let mut s = on_the_model_row(ServerMode::OpenAi);
+    s.handle_key(key(KeyCode::Enter));
+    s.set_model_catalogue(
+        ModelSlot::Assistant,
+        Ok(vec![cat("gpt-6-astra", None, ModelRole::Unstated)].into()),
+    );
+    s.handle_key(key(KeyCode::Esc));
+
+    s.config.engine.mode = ServerMode::Gemini;
+    goto_field_again(&mut s, FieldId::XModelName);
+    assert_eq!(
+        s.handle_key(key(KeyCode::Enter)),
+        Some(SettingsIntent::ListModels(ModelSlot::Assistant)),
+        "another provider is another question"
+    );
+    let st = s.picker.as_ref().expect("the picker is open");
+    assert!(
+        st.all.is_empty() && st.status == super::picker::PickerStatus::Fetching,
+        "and until it is answered, nothing is offered"
+    );
+}
+
+/// Bug 4 of the same run: with a mistyped variable name the answer is "no key",
+/// and correcting the name has to be a new question — otherwise the refusal
+/// outlives the mistake and `Enter` keeps opening the editor.
+#[test]
+fn correcting_the_key_source_asks_again_instead_of_repeating_the_refusal() {
+    let mut s = on_the_model_row(ServerMode::Claude);
+    s.config.engine.claude.api_key_env = Some("1ANTHROPIC_API_KEY".into());
+    goto_field_again(&mut s, FieldId::XModelName);
+    assert_eq!(
+        s.handle_key(key(KeyCode::Enter)),
+        Some(SettingsIntent::ListModels(ModelSlot::Assistant))
+    );
+    s.set_model_catalogue(ModelSlot::Assistant, Err(CatalogueError::NoKey));
+    s.handle_key(key(KeyCode::Esc));
+    assert_eq!(
+        s.handle_key(key(KeyCode::Enter)),
+        None,
+        "the same mistake is not asked about twice"
+    );
+    assert!(s.editor.is_some());
+    s.handle_key(key(KeyCode::Esc));
+
+    s.config.engine.claude.api_key_env = Some("ANTHROPIC_API_KEY".into());
+    assert_eq!(
+        s.handle_key(key(KeyCode::Enter)),
+        Some(SettingsIntent::ListModels(ModelSlot::Assistant)),
+        "a corrected key source is a new question"
+    );
+}
+
+/// The same defect's race: the mode is cycled while the question is in flight.
+/// The answer is filed under the provider it was **asked** about, so the new one
+/// is still unasked rather than inheriting a list that is not its own.
+#[test]
+fn a_late_answer_is_filed_under_the_provider_it_was_asked_about() {
+    let mut s = on_the_model_row(ServerMode::OpenAi);
+    s.handle_key(key(KeyCode::Enter));
+    s.handle_key(key(KeyCode::Esc));
+    s.config.engine.mode = ServerMode::Gemini;
+    s.set_model_catalogue(
+        ModelSlot::Assistant,
+        Ok(vec![cat("gpt-6-astra", None, ModelRole::Unstated)].into()),
+    );
+    goto_field_again(&mut s, FieldId::XModelName);
+    assert_eq!(
+        s.handle_key(key(KeyCode::Enter)),
+        Some(SettingsIntent::ListModels(ModelSlot::Assistant)),
+        "the answer belonged to openai, and gemini has not been asked"
+    );
+    assert!(s.picker.as_ref().expect("open").all.is_empty());
+}

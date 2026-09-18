@@ -33,6 +33,10 @@ pub(super) struct PickerState {
     pub(super) field: FieldId,
     /// Which catalogue was asked for, and what it was narrowed to.
     pub(super) slot: ModelSlot,
+    /// What that slot pointed at when the picker opened
+    /// ([`SettingsScreen::slot_source`]): a late answer about another provider
+    /// must not land here.
+    pub(super) source: String,
     /// The filter line — a 132-entry list needs one.
     pub(super) input: InputBox,
     /// Everything the answer carried, in the order the provider published (or
@@ -79,24 +83,33 @@ impl SettingsScreen {
     /// open the editor as it always did.
     pub(super) fn open_model_picker(&mut self, id: FieldId) -> Option<SettingsIntent> {
         let slot = model_slot(id)?;
+        let source = self.slot_source(slot);
         let mut input = InputBox::new();
         input.set_single_line(true);
-        let cached = self.catalogues.iter().find(|(s, _)| *s == slot);
+        let cached = self
+            .catalogues
+            .iter()
+            .find(|(s, src, _)| *s == slot && *src == source);
         let (all, status, intent) = match cached {
-            Some((_, Ok(models))) => (models.to_vec(), PickerStatus::Listed, None),
-            Some((_, Err(err))) => (Vec::new(), PickerStatus::Failed(*err), None),
-            // Nothing asked yet — and the asking happens here, on the keypress,
-            // never when the screen opens (fork F4).
-            None => (
-                Vec::new(),
-                PickerStatus::Fetching,
-                Some(SettingsIntent::ListModels(slot)),
-            ),
+            Some((_, _, Ok(models))) => (models.to_vec(), PickerStatus::Listed, None),
+            Some((_, _, Err(err))) => (Vec::new(), PickerStatus::Failed(*err), None),
+            // Nothing asked for *this* provider yet — and the asking happens
+            // here, on the keypress, never when the screen opens (fork F4).
+            None => {
+                self.asked.retain(|(s, _)| *s != slot);
+                self.asked.push((slot, source.clone()));
+                (
+                    Vec::new(),
+                    PickerStatus::Fetching,
+                    Some(SettingsIntent::ListModels(slot)),
+                )
+            }
         };
         let results = (0..all.len()).collect();
         self.picker = Some(PickerState {
             field: id,
             slot,
+            source,
             input,
             all,
             results,
@@ -110,14 +123,75 @@ impl SettingsScreen {
         intent
     }
 
+    /// What a slot points at right now — its mode, the address and where the key
+    /// comes from, as one string.
+    ///
+    /// This is the cache key, and the reason for it: a slot's **provider changes
+    /// inside one visit** to this screen. Keyed by the slot alone, the first
+    /// answer was shown under every mode cycled to afterwards — OpenAI's 132
+    /// models offered for `gemini`, `claude` and `grok` (reported from a live run,
+    /// 2026-09-18). Where the key comes from is in here too, so correcting a
+    /// mistyped variable name asks again instead of repeating "no key".
+    pub(super) fn slot_source(&self, slot: ModelSlot) -> String {
+        let cfg = &self.config;
+        let (mode, external, cloud, secret) = match slot {
+            ModelSlot::Assistant => (
+                format!("{:?}", cfg.engine.mode),
+                &cfg.engine.external,
+                cfg.engine.cloud(),
+                cfg.engine.secret_key(),
+            ),
+            ModelSlot::Impersonation => (
+                format!("{:?}", cfg.impersonation_engine.mode),
+                &cfg.impersonation_engine.external,
+                cfg.impersonation_engine.cloud(),
+                cfg.impersonation_engine.secret_key(),
+            ),
+            ModelSlot::Embedder => (
+                format!("{:?}", cfg.embed.mode),
+                &cfg.embed.external,
+                cfg.embed.cloud(),
+                cfg.embed.secret_key(),
+            ),
+        };
+        let (url, env) = match cloud {
+            Some(c) => (c.url.as_deref(), c.api_key_env.as_deref()),
+            None => (external.url.as_deref(), external.api_key_env.as_deref()),
+        };
+        let stored = secret
+            .as_ref()
+            .is_some_and(|k| self.secrets_present.contains(k));
+        format!(
+            "{mode}|{}|{}|{stored}",
+            url.unwrap_or_default(),
+            env.unwrap_or_default()
+        )
+    }
+
     /// The answer to [`SettingsIntent::ListModels`], from the orchestrator.
     ///
     /// Kept per slot while the screen is open (N6), so re-opening the picker
     /// costs nothing; `Ctrl+R` inside it is what asks again.
     pub fn set_model_catalogue(&mut self, slot: ModelSlot, models: CatalogueAnswer) {
-        self.catalogues.retain(|(s, _)| *s != slot);
-        self.catalogues.push((slot, models.clone()));
-        let Some(st) = self.picker.as_mut().filter(|st| st.slot == slot) else {
+        // Filed under what was **asked**, not under what the slot points at now:
+        // the two differ when the mode was cycled while the answer was in flight,
+        // and filing it under the new provider is the defect this key exists to
+        // prevent.
+        let asked = self
+            .asked
+            .iter()
+            .find(|(s, _)| *s == slot)
+            .map(|(_, src)| src.clone())
+            .unwrap_or_else(|| self.slot_source(slot));
+        self.asked.retain(|(s, _)| *s != slot);
+        self.catalogues
+            .retain(|(s, src, _)| !(*s == slot && *src == asked));
+        self.catalogues.push((slot, asked.clone(), models.clone()));
+        let Some(st) = self
+            .picker
+            .as_mut()
+            .filter(|st| st.slot == slot && st.source == asked)
+        else {
             return;
         };
         match models {
@@ -219,11 +293,14 @@ impl SettingsScreen {
             (KeyCode::Char(_), KeyModifiers::CONTROL) => {
                 match keys::hotkey_char(&key) {
                     Some('r') => {
-                        let slot = st.slot;
+                        let (slot, source) = (st.slot, st.source.clone());
                         st.all.clear();
                         st.results.clear();
                         st.status = PickerStatus::Fetching;
-                        self.catalogues.retain(|(s, _)| *s != slot);
+                        self.catalogues
+                            .retain(|(s, src, _)| !(*s == slot && *src == source));
+                        self.asked.retain(|(s, _)| *s != slot);
+                        self.asked.push((slot, source));
                         Some(SettingsIntent::ListModels(slot))
                     }
                     // Every other Ctrl combination belongs to the filter's own
@@ -250,9 +327,10 @@ impl SettingsScreen {
         let Some(slot) = model_slot(id) else {
             return false;
         };
+        let source = self.slot_source(slot);
         self.catalogues
             .iter()
-            .any(|(s, answer)| *s == slot && answer.is_err())
+            .any(|(s, src, answer)| *s == slot && *src == source && answer.is_err())
     }
 
     /// One rendered row of the picker: what the user reads.

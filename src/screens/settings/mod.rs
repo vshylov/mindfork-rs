@@ -950,10 +950,18 @@ pub struct SettingsScreen {
     picker: Option<picker::PickerState>,
     /// What each slot's catalogue last answered, kept for this visit to the
     /// screen (N6): re-opening the picker asks nothing, `Ctrl+R` inside it does.
+    ///
+    /// Keyed by the slot **and** what it pointed at
+    /// ([`SettingsScreen::slot_source`]) — a slot's provider changes while the
+    /// screen is open, and one list must never be shown under another provider.
     catalogues: Vec<(
         crate::shared::api::catalogue::ModelSlot,
+        String,
         crate::shared::api::catalogue::CatalogueAnswer,
     )>,
+    /// What each slot's in-flight question was asked for, so a late answer is
+    /// filed under the provider it was about rather than the one now selected.
+    asked: Vec<(crate::shared::api::catalogue::ModelSlot, String)>,
     /// A snapshot of server statuses (chat/embeddings/impersonation) — chips in the
     /// "Model/server" section. Updated by `app` from the `ServerStatus` event. See spec §11.6.
     statuses: ServerStatuses,

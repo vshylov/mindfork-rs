@@ -3572,14 +3572,28 @@ line apart, is exactly the drift the template removes.
   model, so a `llama-server`'s `D:\LLM\GGUF\gemma-4-31B_q4_0-it.gguf` goes in as
   published, backslashes and all. The one exception is Gemini's `models/`
   prefix, which the client appends itself and would otherwise be sent twice.
+- **The cache is keyed by what the slot points at, not by the slot** — the one
+  defect the owner's live run found, and it was in the design, not in a detail.
+  "One answer per slot for the visit" (N6) reads as true until you remember that
+  a slot's *provider* changes inside a visit: the user cycled `openai` →
+  `gemini` → `claude` → `grok` and was offered OpenAI's 132 models every time,
+  because the row that asked was the same row. The key is now the mode, the
+  address and where the key comes from
+  (`SettingsScreen::slot_source`), so switching the provider is a new question —
+  and so is **correcting a mistyped variable name**, which would otherwise have
+  left the "no key" refusal outliving the mistake that caused it. The
+  in-flight question records what it was asked for, so an answer that arrives
+  after a mode switch is filed under the provider it was about rather than the
+  one now selected.
 - **`Ctrl+R` asks again**; otherwise the answer is kept for the visit, so
   reopening the picker costs nothing. A refresh also **drops** what it had, so a
   late answer to the previous question cannot be mistaken for the new one.
 - **The hint stops naming models** (D7 closed). It now says what the field takes
   and which key shows the provider's own list — text that cannot go stale,
   which was the whole complaint.
-- **Gates**: fmt / clippy / test green — **3317 unit tests, 195 `#[ignore]`**
-  (+23 unit tests, +6 live smokes).
+- **Gates**: fmt / clippy / test green — **3320 unit tests, 195 `#[ignore]`**
+  (+26 unit tests, +6 live smokes; the last three pin the three ways one
+  provider's list must not reach another).
 - **Live**: the catalogue fetch and the whole command→event path were run
   against the real endpoints (see [engine.md](engine.md)); the pick itself is
   covered by the screen's own tests, since the TUI needs a real terminal.

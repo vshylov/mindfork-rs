@@ -171,9 +171,10 @@ is also the longest list.
   serve the route, a body that does not parse — the row is exactly what it is
   today, a text field, with one line saying why the list is not there. Nothing is
   cleared and nothing is guessed.
-- **N6. One fetch per provider per session**, kept while the settings screen is
-  open and re-fetched on an explicit refresh — not on every keystroke, and never
-  behind the user's back (see F4).
+- **N6. One fetch per provider per session** — per *provider*, which is not the
+  same as per row: the mode above the model row changes it. Kept while the
+  settings screen is open and re-fetched on an explicit refresh — not on every
+  keystroke, and never behind the user's back (see F4).
 - **N7. The picker is its own overlay, not the existing choice popup.**
   `apply_choice` reaches an option by cycling to it, one config write per step
   (`choice.rs:106`), which is wrong for a list of 132; and a filter box on a
@@ -286,7 +287,7 @@ The code: `shared/api/catalogue.rs` (four shapes → one `CatalogModel`),
 `AppCommand::ListModels` / `AppEvent::ModelCatalogue`, and
 `screens/settings/picker.rs` (the overlay, its filter, the "by hand" row).
 
-**Gates**: fmt / clippy / test green — **3317 unit tests, 195 `#[ignore]`** (+23
+**Gates**: fmt / clippy / test green — **3320 unit tests, 195 `#[ignore]`** (+26
 unit tests, +6 live smokes).
 
 **Live run — GO**, 2026-09-18, the owner's keys and the live stack: OpenAI 132
@@ -316,6 +317,17 @@ endpoint's own `created`, OpenAI's list opens on this month's *image* models —
 tell them from a chat model. The filter line is what resolves it. The
 alternative was our own name patterns, which would be our claim about someone
 else's catalogue and would age exactly as D7's hint did.
+
+**What the owner's run in the TUI found (2026-09-18), fixed in the same branch:**
+the catalogue was cached per **slot**, and N6's "one fetch per provider per
+session" quietly assumed a slot's provider is fixed for the session. It is not —
+cycling the mode is one keypress on the row above — so after the first list was
+fetched for `openai`, the same 132 models were offered under `gemini`, `claude`
+and `grok`. The cache key is now what the slot actually points at (mode, address,
+and where the key comes from), which also fixes the second report: a refusal
+caused by a mistyped `api_key_env` no longer outlives the correction. Three
+regression tests, one per way the wrong list could arrive — a mode switch, a
+corrected key source, and an answer landing after the mode changed.
 
 **Not verified here, and left to the owner:** picking a model in the running TUI
 and sending a message with it. The fetch, the filter, the write and the whole
