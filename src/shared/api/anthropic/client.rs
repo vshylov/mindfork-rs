@@ -19,8 +19,10 @@ use crate::shared::api::contract::{
 use crate::shared::api::error::{self, SUBJECT_ANTHROPIC};
 use crate::shared::api::http;
 
-/// The Anthropic API version (the mandatory `anthropic-version` header).
-const ANTHROPIC_VERSION: &str = "2023-06-01";
+/// The Anthropic API version (the mandatory `anthropic-version` header). Shared
+/// with the model catalogue ([`super::super::catalogue`]), which sends the same
+/// header — one spelling for the whole provider.
+pub(crate) const ANTHROPIC_VERSION: &str = "2023-06-01";
 
 /// A client to the Anthropic Messages API.
 pub struct AnthropicClient {

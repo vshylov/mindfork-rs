@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (66)
+## Entries (67)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -78,6 +78,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: `/tasks stop <kind>` — the typed route to stopping a silent task (done)
 - Post-M9: `/tasks stop all` — every running silent task, in one word (done)
 - Post-M9: an API-key row names whose key it is (done)
+- Post-M9: the model row asks the provider (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -3533,3 +3534,52 @@ with the env variants, and a fifth provider would add three more); keeping
 `ui.settings.field.tavily_api_key` ("Tavily key") beside the generated
 "Tavily API key (env, opt.)" — two spellings of one provider's name, one
 line apart, is exactly the drift the template removes.
+
+### Post-M9: the model row asks the provider (done)
+
+- **Stage 4b of the public-release track**
+  ([model-picker.md](../research/model-picker.md); forks decided by the user on
+  2026-09-18, all four at the recommendation). D7 of stage 4a was "the settings
+  hint names models that are one or two generations old" — `gpt-4o`,
+  `claude-opus-4-8`, `grok-4.5`. The user chose a **picker over a string edit**:
+  a hint that names a model ages, a list that is fetched cannot. What the
+  catalogues actually contain is measured in
+  [engine.md](engine.md); here the screen.
+- **`Enter` on a model row opens the provider's list** (F1(a)), and the list's
+  **first row is always "type a name by hand"** — the editor the field has
+  always had. That ordering is the whole safety of the design: every failure
+  path (no key, no answer, a body that is not a catalogue, a provider that lists
+  nothing) leaves the user one keypress from what they could do before. A slot
+  whose provider has already refused skips the picker entirely on the next
+  `Enter` — asking again would only repeat the refusal.
+- **The request goes out on the keypress, never before** (F4). The settings
+  screen had never asked the network for anything: `EngineSlots` and
+  `EngineSamplingFields` are *pushed* to it ("the UI is told, it never asks",
+  `app/events.rs`). `AppCommand::ListModels` is the first question it asks, and
+  it carries only the **slot** — the orchestrator holds the config and the
+  secrets, so no key travels on the channel, and the key is resolved by exactly
+  the rule a real request follows (a stored key, then the named variable), or
+  the picker would claim "no key" for a setup that chats perfectly well.
+- **A new overlay, not the Choice popup.** `apply_choice` reaches an option by
+  cycling to it — one `SaveConfig` per step, which for OpenAI's 132 entries
+  would be 132 writes to pick the last one — and it has no filter, which the
+  same list needs for the same reason. `picker.rs` is its own overlay with a
+  filter line (the search overlay's rule: every word must appear, case
+  insensitive) over the one `ListScroll` the repo allows
+  (`tools/list_scroll_check.py`).
+- **What the picked value is.** The id, verbatim — on a multi-model endpoint
+  (router mode, LM Studio, LiteLLM, a gateway) that string is what selects the
+  model, so a `llama-server`'s `D:\LLM\GGUF\gemma-4-31B_q4_0-it.gguf` goes in as
+  published, backslashes and all. The one exception is Gemini's `models/`
+  prefix, which the client appends itself and would otherwise be sent twice.
+- **`Ctrl+R` asks again**; otherwise the answer is kept for the visit, so
+  reopening the picker costs nothing. A refresh also **drops** what it had, so a
+  late answer to the previous question cannot be mistaken for the new one.
+- **The hint stops naming models** (D7 closed). It now says what the field takes
+  and which key shows the provider's own list — text that cannot go stale,
+  which was the whole complaint.
+- **Gates**: fmt / clippy / test green — **3317 unit tests, 195 `#[ignore]`**
+  (+23 unit tests, +6 live smokes).
+- **Live**: the catalogue fetch and the whole command→event path were run
+  against the real endpoints (see [engine.md](engine.md)); the pick itself is
+  covered by the screen's own tests, since the TUI needs a real terminal.

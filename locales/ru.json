@@ -936,6 +936,7 @@
   "ui.help.set_search": "найти настройку по имени",
   "ui.help.set_undo": "отмена / повтор изменения настроек",
   "ui.help.set_new": "создать: профиль, персону, MCP-сервер (Профили/Плагины)",
+  "ui.help.set_refresh_models": "Обновить список моделей (в выборе)",
   "ui.help.set_delete": "удалить выбранное (Профили/Плагины)",
   "ui.help.sm_select": "выбор строки",
   "ui.help.sm_edit": "править строку (сводка, цели, черты…)",
@@ -1494,10 +1495,10 @@
     "только имя — сам ключ читается из окружения и на диск не пишется."
   ],
   "ui.settings.desc.model_name": [
-    "Имя модели у провайдера (например gpt-4o, gemini-2.5-pro,",
-    "claude-opus-4-8, grok-4.5, text-embedding-3-small). Для облака обязательно."
+    "Имя модели у провайдера. Enter показывает то, что провайдер перечисляет сам,",
+    "а первая строка этого списка — ввести имя вручную. Для облака обязательно."
   ],
-  "ui.settings.desc.model_name_external": ["Имя модели на внешнем сервере. Необязательно: одномодельный llama-server", "его игнорирует, а если поле пустое — приложение спросит у сервера, что у него", "загружено, и покажет это. Обязательно для мультимодельного эндпойнта (router-режим", "llama-server, LM Studio, LiteLLM, OpenRouter) — именно оно выбирает модель."],
+  "ui.settings.desc.model_name_external": ["Имя модели на внешнем сервере. Необязательно: одномодельный llama-server", "его игнорирует, а если поле пустое — приложение спросит у сервера, что у него", "загружено, и покажет это. Обязательно для мультимодельного эндпойнта (router-режим", "llama-server, LM Studio, LiteLLM, OpenRouter) — именно оно выбирает модель.", "Enter показывает, что сервер перечисляет на /v1/models."],
   "ui.settings.desc.ext_api_key": [
     "Bearer-ключ этого external-сервера: вводится здесь, хранится зашифрованным и",
     "привязан к этому компьютеру; показать сохранённый ключ нельзя. Не обязателен —",
@@ -2036,6 +2037,18 @@
   "ui.settings.ui.editor_single": "правка · Enter ок · Esc отмена",
   "ui.settings.ui.esc_cancel": "· Esc отмена",
   "ui.settings.ui.choice_title": "выбор · Enter · Esc",
+  "ui.settings.models.by_hand": "Ввести имя вручную…",
+  "ui.settings.models.fetching": "спрашиваем провайдера…",
+  "ui.settings.models.none": "провайдер ничего не перечислил для этого поля",
+  "ui.settings.models.count": "{shown} из {total}",
+  "ui.settings.models.retiring": "отключается {date}",
+  "ui.settings.models.err.no_key": "для этого провайдера ещё нет ключа",
+  "ui.settings.models.err.unreachable": "провайдер не ответил",
+  "ui.settings.models.err.refused": "провайдер отклонил запрос ({status})",
+  "ui.settings.models.err.unreadable": "ответ оказался не каталогом",
+  "ui.settings.models.err.not_configured": "спрашивать некого: этот режим берёт файл на этой машине, а адрес ещё не указан",
+  "ui.settings.ui.models_title": "фильтр · Enter · Ctrl+R обновить · Esc",
+  "ui.settings.ui.models_list": "модели провайдера",
   "ui.settings.ui.search_title": "Поиск полей ({found}/{total})",
   "ui.settings.ui.nothing_found": "  ничего не найдено",
   "ui.settings.ui.search_footer": "Enter — перейти · ↑↓ — выбор · Esc — отмена",

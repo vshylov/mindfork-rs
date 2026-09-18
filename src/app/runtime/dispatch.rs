@@ -109,6 +109,13 @@ pub(super) fn apply_event(
         AppEvent::TranscriptReset { id, messages } => screen.reset_transcript(id, &messages),
         AppEvent::EngineModel(model) => screen.set_engine_model(model),
         AppEvent::EngineSlots(slots) => apply_engine_slots(screen, active, slots),
+        // The catalogue was asked for by a settings screen; a screen that has
+        // since been closed simply drops it (the next visit asks again).
+        AppEvent::ModelCatalogue { slot, models } => {
+            if let ActiveScreen::Settings(settings) = active {
+                settings.set_model_catalogue(slot, models);
+            }
+        }
         AppEvent::EngineSamplingFields(fields) => {
             apply_engine_sampling_fields(screen, active, fields)
         }
@@ -989,6 +996,7 @@ pub(super) fn dispatch_settings(
         SettingsIntent::ReconnectMcpServer(server) => AppCommand::ReconnectMcpServer(server),
         SettingsIntent::SetSecret { key, value } => AppCommand::SetSecret { key, value },
         SettingsIntent::ImportMcpServers(path) => AppCommand::ImportMcpServers(path),
+        SettingsIntent::ListModels(slot) => AppCommand::ListModels(slot),
     };
     let _ = cmd_tx.send(command);
     false

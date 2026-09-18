@@ -6,6 +6,7 @@
 //! See spec §6 and [ADR 0004](../../../docs/decisions/0004-engine-contract-multi-provider.md).
 
 pub mod anthropic;
+pub mod catalogue;
 pub mod contract;
 pub mod error;
 pub mod gemini;

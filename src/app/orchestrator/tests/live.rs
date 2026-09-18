@@ -8165,3 +8165,59 @@ async fn title_prefill_e2e_live() {
     );
     assert_note(expect_note, note, "title");
 }
+
+/// The settings screen's one question, end to end: `ListModels` for the
+/// assistant's slot, the orchestrator resolving the address and key from the
+/// config it already holds, and the answer landing on the UI channel as
+/// `ModelCatalogue` (docs/research/model-picker.md, stage 4b).
+///
+/// Against `MINDFORK_ENGINE_URL` — a `llama-server` lists the model it loaded,
+/// and that id is what a multi-model endpoint would route on, so it is what the
+/// picker writes into the field.
+#[tokio::test]
+#[ignore = "requires MINDFORK_ENGINE_URL (a live OpenAI-compatible server)"]
+async fn the_model_catalogue_reaches_the_ui_e2e_live() {
+    let Ok(url) = std::env::var("MINDFORK_ENGINE_URL") else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    let mut cfg = no_auto_cfg();
+    cfg.engine.mode = crate::shared::config::ServerMode::External;
+    cfg.engine.external.url = Some(url.clone());
+    let Some((_dir, cmd_tx, mut evt_rx, handle)) = spawn_orch_live_cfg(cfg) else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    cmd_tx
+        .send(AppCommand::ListModels(
+            crate::shared::api::catalogue::ModelSlot::Assistant,
+        ))
+        .unwrap();
+    let landed = tokio::time::timeout(
+        Duration::from_secs(30),
+        wait_for(&mut evt_rx, |e| {
+            matches!(e, AppEvent::ModelCatalogue { .. })
+        }),
+    )
+    .await
+    .expect("the catalogue must answer the screen that asked")
+    .expect("the event stream");
+    match landed {
+        AppEvent::ModelCatalogue { slot, models } => {
+            assert_eq!(slot, crate::shared::api::catalogue::ModelSlot::Assistant);
+            let list = models.expect("the server answered its catalogue");
+            eprintln!("{url} listed {} model(s):", list.len());
+            for m in list.iter().take(5) {
+                eprintln!("    {} {:?}", m.id, m.role);
+            }
+            assert!(!list.is_empty(), "a server with a model loaded lists it");
+            assert!(
+                list.iter().all(|m| !m.id.is_empty()),
+                "an empty id could not be written into the field"
+            );
+        }
+        other => panic!("expected a catalogue, got {other:?}"),
+    }
+    drop(cmd_tx);
+    let _ = tokio::time::timeout(Duration::from_secs(5), handle).await;
+}

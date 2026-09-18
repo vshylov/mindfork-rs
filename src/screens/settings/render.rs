@@ -65,6 +65,12 @@ impl SettingsScreen {
             self.render_choice(frame, area, &palette);
         }
 
+        // The model picker — above the fields, below the search overlay, like the
+        // Choice popup it sits next to.
+        if self.picker.is_some() {
+            self.render_picker(frame, area, &palette);
+        }
+
         // The field-search overlay — on top of everything (the editor is closed while
         // searching).
         if self.search.is_some() {
@@ -242,6 +248,95 @@ impl SettingsScreen {
             popup,
             len,
             popup.height.saturating_sub(2) as usize, // the panel's borders
+            Some(selected),
+        );
+    }
+
+    /// Draws the model picker: the filter line, then the provider's models —
+    /// with "type a name by hand" always the first row, so no failure of the
+    /// catalogue can trap the user in a list
+    /// ([docs/research/model-picker.md](../../../docs/research/model-picker.md) F1).
+    pub(super) fn render_picker(&mut self, frame: &mut Frame, area: Rect, palette: &Palette) {
+        let loc = self.loc();
+        let popup = centered_rect(72, 50, (area.height * 3 / 4).max(8), area);
+        dim_background(frame, palette);
+        frame.render_widget(Clear, popup);
+
+        let [input_area, list_area] =
+            Layout::vertical([Constraint::Length(3), Constraint::Min(1)]).areas(popup);
+
+        // The rows, and the note under the filter — built before the input takes
+        // a mutable borrow.
+        let st = self.picker.as_ref().unwrap();
+        let (status, selected, shown, total) = (
+            st.status.clone(),
+            st.selected,
+            st.results.len(),
+            st.all.len(),
+        );
+        let mut rows: Vec<String> = vec![loc.t("ui.settings.models.by_hand").to_string()];
+        rows.extend(
+            st.results
+                .iter()
+                .filter_map(|&i| st.all.get(i))
+                .map(|m| self.picker_label(m)),
+        );
+        let note = match &status {
+            super::picker::PickerStatus::Fetching => {
+                loc.t("ui.settings.models.fetching").to_string()
+            }
+            super::picker::PickerStatus::Failed(err) => match err {
+                crate::shared::api::catalogue::CatalogueError::Refused(status) => {
+                    loc.tf(err.message_key(), &[("status", &status.to_string())])
+                }
+                _ => loc.t(err.message_key()).to_string(),
+            },
+            super::picker::PickerStatus::Listed if total == 0 => {
+                loc.t("ui.settings.models.none").to_string()
+            }
+            // The count is the honest answer to "is this everything?" — a filter
+            // that hides 120 of 132 should say so.
+            super::picker::PickerStatus::Listed => loc.tf(
+                "ui.settings.models.count",
+                &[("shown", &shown.to_string()), ("total", &total.to_string())],
+            ),
+        };
+
+        let title = format!("{} · {}", loc.t("ui.settings.ui.models_title"), note);
+        self.picker.as_mut().unwrap().input.render(
+            frame,
+            input_area,
+            RenderOpts::focused(&title),
+            palette,
+        );
+
+        let items: Vec<ListItem> = rows
+            .iter()
+            .enumerate()
+            .map(|(i, row)| {
+                let mark = if i == selected { "› " } else { "  " };
+                // The "by hand" row is the way out, not a model — it reads as a
+                // command, in the accent the rest of the screen uses for those.
+                let colour = if i == 0 { palette.accent } else { palette.text };
+                ListItem::new(Line::from(vec![
+                    Span::styled(mark, Style::new().fg(palette.accent)),
+                    Span::styled(row.clone(), Style::new().fg(colour)),
+                ]))
+            })
+            .collect();
+        let block = palette
+            .panel(loc.t("ui.settings.ui.models_list"), true)
+            .border_style(palette.border_style(true));
+        let list = List::new(items)
+            .block(block)
+            .highlight_style(Style::new().reversed());
+        let len = rows.len();
+        self.picker.as_mut().unwrap().scroll.render(
+            frame,
+            list,
+            list_area,
+            len,
+            list_area.height.saturating_sub(2) as usize,
             Some(selected),
         );
     }

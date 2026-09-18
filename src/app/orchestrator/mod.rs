@@ -30,6 +30,7 @@
 mod attachments;
 mod background;
 mod background_runs;
+mod catalogue;
 mod chats;
 mod compaction;
 mod consolidation;
@@ -923,6 +924,7 @@ impl Orchestrator {
             AppCommand::ReconnectMcpServer(server) => self.handle_reconnect_mcp_server(server),
             AppCommand::SetSecret { key, value } => self.handle_set_secret(key, value),
             AppCommand::ImportMcpServers(path) => self.handle_import_mcp_servers(path),
+            AppCommand::ListModels(slot) => self.handle_list_models(slot),
         }
         false
     }

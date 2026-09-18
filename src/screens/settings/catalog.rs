@@ -31,6 +31,8 @@ impl SettingsScreen {
             editor: None,
             search: None,
             choice: None,
+            picker: None,
+            catalogues: Vec::new(),
             statuses: ServerStatuses {
                 chat: ServerStatus::NotConfigured,
                 embed: ServerStatus::NotConfigured,

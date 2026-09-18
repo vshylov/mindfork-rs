@@ -276,5 +276,7 @@ admitted alone. The suites now pin their own cap instead of inheriting the shipp
 script compiles against the pinned Inno Setup 7.1.0; installing is a system change), and
 a real double-click from Explorer, which `Start-Process` stands in for.
 
-**Stage 4b — the model picker.** Not started; D7's stale hint text (`gpt-4o`,
-`claude-opus-4-8`) is its to replace.
+**Stage 4b — the model picker. Done, 2026-09-18, live GO**
+([model-picker.md](model-picker.md)): `Enter` on a model row asks the provider
+what it serves and offers the list, with "type a name by hand" as its first row;
+D7's hint names no model any more, so it cannot age.

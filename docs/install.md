@@ -450,7 +450,9 @@ you point the app at one (the full compatibility review:
   `https://openrouter.ai/api/v1` and a slug such as `deepseek/deepseek-r1` in
   "Model (opt.)". The key goes into the same "API key (opt.)" field described in
   §3.2. A gateway routes on the request's `model` and refuses a request without
-  one, so the field is only "optional" against a single-model server;
+  one, so the field is only "optional" against a single-model server. `Enter` on
+  that field lists what the gateway itself publishes on `GET /v1/models`, so the
+  slug can be picked rather than transcribed;
 - **the context window is taken from the endpoint's catalogue**, when it
   publishes one. Automatic compaction measures against a window, and a gateway
   serves no `/props` (that is llama.cpp's own endpoint) — so the app reads
@@ -623,9 +625,13 @@ resolving to is the one that just went away.
 
 Besides a local server, the engine can be a cloud: **OpenAI**, **Google Gemini**,
 **Claude** (Anthropic), or **Grok** (xAI). The mode is chosen in settings
-(`Ctrl+P` → "Model/server" → "Mode" field), where the model name is also set
-(e.g. `gpt-4o`, `gemini-2.5-pro`, `claude-opus-4-8`, `grok-4.5` — keys are
-issued at `console.x.ai` for the last one).
+(`Ctrl+P` → "Model/server" → "Mode" field), where the model name is also set.
+**`Enter` on the model field asks the provider what it serves** and offers that
+list — type to filter it, `Ctrl+R` asks again, and the list's first row is the
+old way, typing a name by hand. What it shows is the provider's own catalogue,
+narrowed to chat models where the provider says which those are; so this page
+names no model, and cannot recommend one that has since been retired. (For xAI,
+keys are issued at `console.x.ai`.)
 
 Neither Anthropic nor xAI offers embeddings, so under a `claude`/`grok` engine
 RAG needs a separate embedder (a local `llama-server --embeddings`, OpenAI, or

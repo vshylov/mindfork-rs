@@ -292,6 +292,17 @@ pub enum AppCommand {
     /// writer of `settings.json` and the only layer allowed to touch the literal
     /// secrets such a file carries. See docs/history/mcp-server-editor.md §9.
     ImportMcpServers(String),
+    /// Ask the provider for its model catalogue, for one settings row
+    /// ([docs/research/model-picker.md](../../docs/research/model-picker.md)).
+    ///
+    /// **The only thing the UI asks the network for.** Every other fact about an
+    /// engine reaches the screens as an event they never requested
+    /// ([`AppEvent::EngineSlots`], [`AppEvent::EngineSamplingFields`]); this one
+    /// is a keypress, and it is sent only when the user opens the picker (fork
+    /// F4) — the app makes no catalogue request nobody asked for. The answer is
+    /// [`AppEvent::ModelCatalogue`]; no key travels on this channel, since the
+    /// orchestrator resolves the slot's own from the config it already holds.
+    ListModels(crate::shared::api::catalogue::ModelSlot),
     /// Shut down (the orchestrator stops).
     Quit,
 }
@@ -373,6 +384,9 @@ impl AppCommand {
             | AppCommand::CreateProfile { .. }
             | AppCommand::DeleteProfile(_)
             | AppCommand::UpdateConfig(_)
+            // Asking a provider what models it serves is a settings-screen
+            // question about an engine, not work in any conversation.
+            | AppCommand::ListModels(_)
             | AppCommand::UpdateProfile { .. }
             | AppCommand::RagAdd { .. }
             | AppCommand::RagDelete { .. }
@@ -728,6 +742,18 @@ pub enum AppEvent {
     /// the settings screen, never a value written into it (spec §11.6). `None`
     /// — it cannot say, or the engine was just replaced.
     EngineSlots(Option<u32>),
+    /// The provider's model catalogue, for the row that asked
+    /// ([`AppCommand::ListModels`]), already narrowed to what that slot can use
+    /// ([`for_slot`](crate::shared::api::catalogue::for_slot)).
+    ///
+    /// `Err` is never a reason to change the row: it stays the text field it has
+    /// always been and says this much (N5 of the research). An `Ok` that is
+    /// **empty** is an answer too — Anthropic publishes no embedding model, and
+    /// a router with nothing loaded lists nothing.
+    ModelCatalogue {
+        slot: crate::shared::api::catalogue::ModelSlot,
+        models: crate::shared::api::catalogue::CatalogueAnswer,
+    },
     /// The sampling fields the **endpoint's catalogue** publishes for the
     /// configured model, when it publishes any (spec §8,
     /// [docs/history/gateway-capabilities.md](../../docs/history/gateway-capabilities.md)).

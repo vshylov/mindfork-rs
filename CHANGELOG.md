@@ -15,6 +15,18 @@ split by subsystem.
 ## [Unreleased]
 
 ### Added
+- **Pick the model from a list, instead of typing its name.** `Enter` on a model
+  field in settings — the assistant's, impersonation's or the embedder's — asks
+  the provider what it serves and shows the list, with a filter line to type into
+  and `Ctrl+R` to ask again; the first row of the list is still "type a name by
+  hand". Where a provider says what a model is for, the list is narrowed to it
+  (Gemini, xAI and Anthropic do; the embedder's list then holds embedding models
+  only); where it says nothing, everything it lists is offered, newest first, with
+  the models it is retiring marked. Nothing is requested until you open the list,
+  and if there is no list to show — no key yet, no answer, an address that serves
+  no catalogue — the field works exactly as before and says why. The hint on those
+  fields has stopped naming example models: it points at the list instead, which
+  cannot go out of date.
 - **The Windows installer can put `mindfork` on `PATH`.** A box on the "Additional
   tasks" page, **off** by default: with it, `mindfork llama setup` and the other
   commands the app suggests work from any terminal instead of only from the install

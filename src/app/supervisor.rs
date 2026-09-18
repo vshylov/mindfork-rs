@@ -533,7 +533,7 @@ fn managed_config(s: &ManagedSettings, lookup: &BinaryLookup) -> ManagedConfig {
 /// the env variable isn't set; `Missing` carries the name of a variable missing from
 /// the environment.
 #[derive(Debug)]
-pub(super) enum ApiKeyError {
+pub(crate) enum ApiKeyError {
     NoName,
     Missing(String),
 }
@@ -548,7 +548,10 @@ pub(super) enum ApiKeyError {
 ///
 /// The secret itself still doesn't sit on disk in plaintext: the saved key is
 /// encrypted with the machine key (`shared::secrets`), the config holds ciphertext.
-fn resolve_api_key(stored: Option<&str>, api_key_env: Option<&str>) -> Result<String, ApiKeyError> {
+pub(crate) fn resolve_api_key(
+    stored: Option<&str>,
+    api_key_env: Option<&str>,
+) -> Result<String, ApiKeyError> {
     if let Some(key) = stored.filter(|k| !k.is_empty()) {
         return Ok(key.to_string());
     }
