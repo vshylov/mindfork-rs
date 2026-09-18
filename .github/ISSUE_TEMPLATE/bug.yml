@@ -1,0 +1,73 @@
+name: Bug report
+description: Something in the app behaves wrong
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time. For a bug in a terminal application the
+        environment usually matters as much as the steps — the fields below are
+        the ones that turn "it does not work" into something reproducible.
+
+        **A security problem goes somewhere else**: please use private reporting
+        (Security → Report a vulnerability), see
+        [SECURITY.md](https://github.com/vshylov/mindfork-rs/blob/main/SECURITY.md).
+  - type: input
+    id: version
+    attributes:
+      label: App version
+      description: "`F1` → the About tab, or `mindfork --version`"
+      placeholder: "0.10.0"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS and terminal emulator
+      description: >
+        Rendering and keyboard behaviour differ a lot between terminals, so the
+        emulator is as useful as the OS.
+      placeholder: "Windows 11 + Windows Terminal · Ubuntu 24.04 + kitty · macOS + iTerm2"
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Engine mode
+      options:
+        - managed (the app launches llama-server)
+        - external (my own OpenAI-compatible server or a gateway)
+        - openai
+        - gemini
+        - claude
+        - grok
+        - not relevant / not configured
+    validations:
+      required: true
+  - type: input
+    id: model
+    attributes:
+      label: Model
+      description: For a local mode, which GGUF; for a cloud one, the model id.
+      placeholder: "gemma-4-31B_q4_0-it.gguf · gpt-5.6-sol · claude-opus-5"
+  - type: textarea
+    id: steps
+    attributes:
+      label: What you did, and what you expected instead
+      description: Steps to reproduce, then the expectation the app disappointed.
+      placeholder: |
+        1. …
+        2. …
+        What I expected:
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: The relevant part of the log
+      description: >
+        Logs are files under `logs/` next to the binary — the interface owns
+        stdout, so nothing useful is printed to the terminal. Paste the lines
+        around the failure; secrets are never written there, but do read what you
+        paste.
+      render: text

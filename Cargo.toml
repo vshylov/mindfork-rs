@@ -2,9 +2,43 @@
 name = "mindfork-rs"
 version = "0.9.9"
 edition = "2024"
+# The one sentence that describes the app. The same words are in site/zola.toml,
+# packaging/nfpm.yaml and the README masthead — one description, four places that
+# have to agree (docs/research/public-documents.md N4).
+description = "A terminal AI chat written in Rust: local models via llama.cpp or OpenAI, Anthropic, Gemini and Grok in the cloud, with persistent memory, notes, RAG and tools."
 license = "MIT"
+readme = "README.md"
 homepage = "https://mindfork.io"
 repository = "https://github.com/vshylov/mindfork-rs"
+documentation = "https://github.com/vshylov/mindfork-rs/blob/main/docs/manual.md"
+keywords = ["llm", "chat", "tui", "llama-cpp", "ai"]
+categories = ["command-line-utilities", "text-processing"]
+# The toolchain this is developed and gated on (rust-toolchain.toml pins the same
+# version): a pin, not a floor discovered by bisecting older compilers.
+rust-version = "1.96"
+# What a build actually needs, measured: without this the package is 700 files
+# and 26.8 MiB (9.0 MiB compressed) and carries docs/, assets/ and the website —
+# none of which takes part in compiling anything.
+include = [
+    "src/**/*",
+    "build.rs",
+    "locales/*.json",
+    "syntaxes/**/*",
+    "dictionaries/**/*",
+    # The Windows icon `build.rs` embeds into the .exe. Caught by the
+    # verification build, which warned "icon not found, .exe will ship without
+    # it" — a crate that installs a binary without its icon.
+    "assets/mindfork.ico",
+    "README.md",
+    "CHANGELOG.md",
+    # Compiled into the binary, not shipped beside it: the `F1` legal tabs read
+    # these through `include_str!` (`shared/credits.rs`), so leaving any of them
+    # out is a build failure rather than a missing document.
+    "LICENSE",
+    "DISCLAIMER.md",
+    "PRIVACY.md",
+    "docs/legal/*",
+]
 
 # The user-facing command is the brand name (`shared/credits.rs::APP_NAME`, held
 # by a gate test there); the package keeps the project name. See

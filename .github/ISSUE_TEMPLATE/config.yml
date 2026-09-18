@@ -1,0 +1,12 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/vshylov/mindfork-rs/security/advisories/new
+    about: >
+      Please do not open a public issue for a security problem — use private
+      reporting. SECURITY.md says what counts as one and what to expect.
+  - name: How to use it
+    url: https://github.com/vshylov/mindfork-rs/blob/main/docs/manual.md
+    about: >
+      The manual — the screens, the memory, the tools, the keys and commands.
+      Installing and connecting an engine is in docs/install.md.

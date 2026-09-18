@@ -7,8 +7,9 @@ like. It is deliberately short: the project's real process documentation is
 
 ## Bugs, questions, ideas
 
-Open a GitHub issue. For a bug in the TUI, the environment usually matters as
-much as the steps, so please include:
+Open a GitHub issue — the forms ask for exactly the fields below, so filling one
+in is the same thing as writing this out. For a bug in the TUI, the environment
+usually matters as much as the steps:
 
 - the app version (`F1` → the About tab, or `mindfork --version`);
 - your OS **and terminal emulator** (Windows Terminal, conhost, GNOME
@@ -28,7 +29,31 @@ is already on the list.
 
 ## Working on the code
 
-Orientation first — it will save you time:
+### Your first build, with nothing installed
+
+No GPU, no model, no API key:
+
+```bash
+git clone https://github.com/vshylov/mindfork-rs
+cd mindfork-rs
+cargo test                                 # 3300+ unit tests, none of them need a server
+cargo run -- demo                          # the app on sample data and a scripted engine
+```
+
+That is the whole loop for most changes — the UI, storage, the markdown
+renderer, the tools' logic, the CLI. A **live run against a real model** is
+required only for work touching the engine, memory or the tools' outward
+behaviour (AGENTS.md §3), and there are two routes without hardware: a CPU stack
+in `cd docker && docker compose up --build`, or rented Hugging Face endpoints via
+`python tools/e2e_hf.py run`. The `#[ignore]` smokes skip silently when no server
+is configured, so `cargo test` stays green either way.
+
+`cargo run` needs a **real terminal** — in a headless shell the app says so and
+exits with code 2 rather than hanging.
+
+### Orientation
+
+Read these first — it will save you time:
 
 1. **[CLAUDE.md](CLAUDE.md)** — the entry point: what this project is and the
    map of which document answers which question. The project's documentation
@@ -61,7 +86,7 @@ The short version of the workflow:
   [docker/README.md](docker/README.md).
 - **Documentation is part of the task**: AGENTS.md §4 has the "what changed →
   what to update" table (journal entry, CHANGELOG, spec/architecture sections,
-  README key tables).
+  the manual's keys and commands).
 
 ## Quality gates
 
