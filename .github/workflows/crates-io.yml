@@ -1,0 +1,140 @@
+# Publishing the crate to crates.io — the registry channel beside GitHub
+# Releases. What comes from here is `cargo install mindfork` (the package is
+# `mindfork`, the repository stays `mindfork-rs`:
+# docs/research/binary-rename.md §10); the binaries, installers and Linux
+# packages keep coming from release.yml.
+#
+# **The registry has no drafts and no deletes.** A GitHub release can be built,
+# inspected as a draft and published when it looks right; an uploaded crate
+# version can only be *yanked*, its number never becomes free again, and its
+# files stay downloadable forever. So this workflow never runs by itself on a
+# tag push. It runs on:
+#
+#   - `release: published` — the moment the owner publishes the draft that
+#     release.yml built, i.e. *after* the artifact smoke test of AGENTS.md §6
+#     step 5. One action, both channels, and what reaches the registry is the
+#     tree the published binaries were built from.
+#   - `workflow_dispatch` — a **rehearsal** by default (`dry_run: true`): every
+#     step including cargo's own verification build, stopping short of the
+#     upload. With `dry_run: false` it publishes the checked-out ref, which is
+#     the way to put a version on the registry that has no release of its own to
+#     hang off.
+#
+# Pressing either is the owner's; the agent publishes nothing (AGENTS.md §5).
+name: crates.io
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Rehearsal: run every step but the upload"
+        type: boolean
+        default: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+# Every job carries a `timeout-minutes` and every apt step is bounded — the
+# reason, and the incident behind it, are in the header of ci.yml.
+jobs:
+  publish:
+    name: Publish the crate
+    # A prerelease tag is a rehearsal of the release pipeline whose draft is
+    # inspected and then deleted along with its tag (AGENTS.md §6). Nothing
+    # about that is undoable on crates.io, so a prerelease never reaches it.
+    if: ${{ github.event_name == 'workflow_dispatch' || !github.event.release.prerelease }}
+    runs-on: ubuntu-latest
+    # Measured locally on a cold cache: the verification build cargo runs on the
+    # packaged sources is the whole cost. No `rust-cache` here — a publish is a
+    # handful of times a year, and a cache restored into a job that uploads is
+    # one more thing between the source and the registry.
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          # On a release event this is the tag the release names, not whatever
+          # `main` has moved on to; on a dispatch it is the ref that was chosen.
+          ref: ${{ github.event.release.tag_name || github.ref }}
+      - name: What this would publish
+        id: what
+        run: |
+          set -euo pipefail
+          # The manifest's version, read by the guard's own parser rather than
+          # by a second one that could drift from it.
+          VERSION="$(python3 -c 'import sys; sys.path.insert(0, "tools"); from pathlib import Path; from release_guard import cargo_version; print(cargo_version(Path("Cargo.toml").read_text(encoding="utf-8")))')"
+          # On a release event the tag is the release's own; on a dispatch there
+          # may be no tag, and the version's own name stands in. That is the
+          # difference the guard below then checks: given a real tag it catches
+          # a tag that disagrees with `Cargo.toml`, given the synthesized one it
+          # still refuses a version the CHANGELOG has no section for.
+          TAG="${RELEASE_TAG:-v$VERSION}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "mindfork $VERSION, tag $TAG, dry run ${DRY_RUN:-false}"
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          DRY_RUN: ${{ inputs.dry_run }}
+      - name: The tag, Cargo.toml and the CHANGELOG agree
+        run: |
+          set -euo pipefail
+          python3 tools/release_guard.py --tag "$TAG"
+          # The guard's by-product is the notes file `gh release create` is
+          # given; this job wants its verdict, not its notes.
+          rm -f notes.md
+        env:
+          TAG: ${{ steps.what.outputs.tag }}
+      - name: This version is not on crates.io yet
+        run: |
+          set -euo pipefail
+          # Before the verification build rather than after it: a second run of
+          # this workflow over a version already uploaded should say so in
+          # seconds, not spend the build and then be refused by the registry.
+          # 404 is both "no such version" and "no such crate" — the first
+          # publish claims the name.
+          CODE="$(curl -sS -o /dev/null -w '%{http_code}' --retry 3 --max-time 30 \
+                  -H 'User-Agent: mindfork-rs release workflow (https://github.com/vshylov/mindfork-rs)' \
+                  "https://crates.io/api/v1/crates/mindfork/$VERSION")"
+          case "$CODE" in
+            404) echo "crates.io does not have mindfork $VERSION — good" ;;
+            200) echo "::error::mindfork $VERSION is already on crates.io. A published version cannot be replaced, only yanked; publish a new version instead."; exit 1 ;;
+            *)   echo "::error::crates.io answered $CODE for mindfork $VERSION — neither a yes nor a no, so this stops here."; exit 1 ;;
+          esac
+        env:
+          VERSION: ${{ steps.what.outputs.version }}
+      - name: Install the toolchain (from rust-toolchain.toml)
+        run: rustup show
+      # `cargo publish` verifies by building the packaged sources, and this
+      # crate's build needs ALSA (speech playback, /tts). The bounded apt line is
+      # the one explained in ci.yml.
+      - name: System dependencies (ALSA — speech playback /tts)
+        timeout-minutes: 5
+        run: >-
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          && sudo apt-get install -y libasound2-dev
+      - name: cargo publish
+        env:
+          # The documented env var, so the token is never a command-line
+          # argument. `--locked` publishes the dependency versions in the
+          # committed Cargo.lock — the ones the release was built and tested
+          # against — rather than whatever resolves on the day.
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_API_TOKEN }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          if [ "${DRY_RUN:-false}" = "true" ]; then
+            echo "Rehearsal: everything the real run does, except the upload."
+            cargo publish --locked --dry-run
+            exit 0
+          fi
+          if [ -z "${CARGO_REGISTRY_TOKEN}" ]; then
+            echo "::error::the CRATES_API_TOKEN secret is empty or not available to this run."
+            exit 1
+          fi
+          cargo publish --locked
+      - name: Where it landed
+        if: ${{ success() && inputs.dry_run != true }}
+        run: echo "https://crates.io/crates/mindfork/${{ steps.what.outputs.version }}"
