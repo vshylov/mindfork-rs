@@ -37,6 +37,7 @@ Two rules that follow from that:
 | When you are… | Read |
 |---|---|
 | **starting any task** | [AGENTS.md](AGENTS.md) — the mandatory workflow (design doc → branch → live run → docs → PR) |
+| looking for the **documents a user reads** | [docs/README.md](docs/README.md) — the human index; [docs/manual.md](docs/manual.md) is how the app is used, [docs/install.md](docs/install.md) how it is set up |
 | **about to implement anything** | [docs/lessons.md](docs/lessons.md) — the traps that recur across areas; short, and it will save you a repeat |
 | working on the **engine**, a provider, generation, sampling, compaction | architecture §5–§6 · spec §3, §6–§8 · [docs/journal/engine.md](docs/journal/engine.md) |
 | working on **storage**, config, backup, migrations, secrets | architecture §7 · spec §5, §12 · [docs/journal/storage.md](docs/journal/storage.md) |
@@ -385,17 +386,6 @@ being recent is dropped, not shortened.
   whole argument it was handed
   ([docs/history/sandbox-file-exchange.md](docs/history/sandbox-file-exchange.md) §13, spec §9.7,
   [docs/journal/tools.md](docs/journal/tools.md)).
-- **Files into the Python sandbox — the chat's files reach the code** — a call names
-  them in `files`, by the `#N` `/file list` shows or by name, and each is copied into
-  `/w/in` under a name the pinned block states **before** the code is written; the
-  numbering is one list — attachments, stored files, the chat's images — so `#3` means the
-  same to the user and the model. `/file attach` stops refusing a binary (it is kept with
-  the chat, no attachment made) and keeps a pdf/docx/html original beside its extracted
-  text, the pair one item everywhere. An unknown handle, a shared name or a copy gone from
-  the folder refuses the call **before** it runs, and the confirmation popup states the
-  resolved names, sizes and the network — the compact view drops arrays, so `files` would
-  otherwise be invisible there ([docs/history/sandbox-file-exchange.md](docs/history/sandbox-file-exchange.md)
-  §12, spec §9.7, §9.8, §13.2, [docs/journal/tools.md](docs/journal/tools.md)).
 - **A headless launch (no TTY) exits with code 2** and a one-line reason — the
   TUI cannot be run from an agent's shell; live verification needs a real
   terminal.

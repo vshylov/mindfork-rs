@@ -31,6 +31,16 @@ so read the section that matches what you are touching.
 
 ## 1. Process and tooling traps
 
+**A crate's `include` list is a build input list, and only a verification build
+knows what is on it.** Trimming `cargo package` from 26.8 MiB to what "a build
+needs" dropped two things that a build did need: the Russian legal texts, which
+`shared/credits.rs` pulls in with `include_str!` (a missing file there is a
+compile error, not a missing document), and `assets/mindfork.ico`, which
+`build.rs` embeds into the Windows `.exe` — its absence is only a *warning*, and
+the consequence is a binary with no icon. `cargo package --no-verify` reports
+neither. Run the real one, and read its warnings.
+— *stage 5a of the public-release track*.
+
 **Never `git checkout -- <file>` to undo a scripted mutation.** It discards *all*
 uncommitted work in that file, not just the mutation. Commit first, back the file up,
 or apply the mutation as a reversible patch. **Recorded four times**: it cost a

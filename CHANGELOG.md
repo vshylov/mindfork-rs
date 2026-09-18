@@ -15,6 +15,13 @@ split by subsystem.
 ## [Unreleased]
 
 ### Added
+- **A manual.** [docs/manual.md](docs/manual.md) is the document the project did
+  not have: how the app is actually used — the screens and how to move between
+  them, what it remembers and where each memory lives, files and images and an
+  attached code project, the tools and what each switch opens, the settings worth
+  knowing early, the full list of keys and commands, and what to do when
+  something goes wrong. [docs/README.md](docs/README.md) is the index over it and
+  everything else.
 - **Pick the model from a list, instead of typing its name.** `Enter` on a model
   field in settings — the assistant's, impersonation's or the embedder's — asks
   the provider what it serves and shows the list, with a filter line to type into
@@ -171,6 +178,10 @@ split by subsystem.
   same. Both names are now read. Nothing changes for a local `llama-server`.
 
 ### Changed
+- **The README is a front page again** — a third of its former length: what the
+  app is, the screenshots, how to install it and connect a model, and links out.
+  The keys and commands moved into the manual, where they are no longer competing
+  with an introduction.
 - **A second copy of mindfork exits with an error code** (2, the code it already
   uses when it refuses to start) instead of reporting success.
 - **An interface language you add yourself falls back to English** for anything it

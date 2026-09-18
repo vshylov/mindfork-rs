@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (38)
+## Entries (39)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -50,6 +50,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: public release readiness — the audit and stage 1 (done)
 - Post-M9: public release readiness — stage 3, the release pipeline (done)
 - Post-M9: public release readiness — stage 4a, the ways a first run ends badly (done)
+- Post-M9: public release readiness — stage 5a, the documents a stranger meets (done)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -2054,3 +2055,64 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   7.1.0; the install itself is the owner's check.
 - **Gates**: fmt / clippy / test green — **3294 unit tests, 188 `#[ignore]`** (+6 unit
   tests, +1 live smoke).
+
+### Post-M9: public release readiness — stage 5a, the documents a stranger meets (done)
+
+- **Stage 5a of the track** ([public-documents.md](../research/public-documents.md);
+  forks decided by the user on 2026-09-18, all four at the recommendation: **0.10.0**
+  for the first public release, a manual **in the repository**, a **deep** README trim,
+  and everything on the website except a community channel). Stages 1–4 changed what the
+  app does; this one changes what someone finds when they arrive.
+- **There was no manual, and that was measured rather than assumed.** Three documents
+  hold manual-shaped content and none of them is one: the `F1` help (About / Hotkeys /
+  Commands / License / Legal / Components) is a *reference* that explains no screen; the
+  README's three keymap tables are the same kind of thing; and `spec.md` §11 — 1,832
+  lines — is the complete description of every screen written for implementers. The
+  website's nine articles cover the *concepts*. What was missing was the task-oriented
+  middle, so [manual.md](../manual.md) is that: the first five minutes, the screens, chats
+  and profiles, the four different memories, files and images and the code workspace, the
+  tools and what each switch opens, settings worth knowing, the keys and commands (moved
+  out of the README), and what to do when something goes wrong. Its labels were taken
+  from `locales/en.json` rather than from memory, so "Python execution" and "Background
+  runs (subagent/dialogue)" are what the screen actually says.
+- **The README is a front page again**: **43,386 → 12,278 bytes**, 691 → 256 lines. The
+  keymap went to the manual, "How it's built" shrank to the three decisions that shape
+  the code, Development to the gates and the two GPU-free routes, and the feature list
+  from 229 lines to seven bullets. [docs/README.md](../README.md) is the human index
+  `CLAUDE.md` deliberately is not — two tables, "using the app" and "working on the
+  code".
+- **`Cargo.toml` had six fields and needed twelve.** `description` (the one sentence,
+  now also in `nfpm.yaml`, which had been omitting Grok), `keywords`, `categories`,
+  `readme`, `documentation`, `rust-version` — and an `include` list, which is the part
+  that was measured: `cargo package` was **700 files, 26.8 MiB, 9.0 MiB compressed**,
+  carrying `docs/`, `assets/`, the website and `to_main.bat` into a crate nobody would
+  build them from. With the list: **367 files, 15.4 MiB, 3.8 MiB compressed**.
+- **The verification build earned its minutes twice.** `cargo package` (the real one,
+  not `--no-verify`) first failed to find `docs/legal/*` — the Russian legal texts are
+  `include_str!`-ed into the binary by `shared/credits.rs`, so an include list without
+  them is a *build* failure, not a missing document. Then it warned
+  `icon not found, .exe will ship without it`: `build.rs` embeds
+  `assets/mindfork.ico`, and an `include` that drops `assets/` ships a Windows binary
+  with no icon. Both are in the list now, and the lesson is in
+  [lessons.md](../lessons.md) §1: an `include` is a build input list, and only a
+  verification build knows what is on it.
+- **The rest of the audit's §2.3 documents row**: `CODE_OF_CONDUCT.md` (the Contributor
+  Covenant 2.1, downloaded rather than reconstructed, with the reporting address that
+  PRIVACY.md and 1160 commits already carry); `.github/ISSUE_TEMPLATE/` — a bug form
+  asking exactly what CONTRIBUTING says to include, a feature form, and a `config.yml`
+  routing security to the private channel; CONTRIBUTING's *"your first build, with
+  nothing installed"* — clone, `cargo test`, `cargo run -- demo`, and the statement that
+  a live run is required only for engine, memory and tool work; and the README's status
+  line, which had said **3217 unit tests / 176 smokes** since v0.9.9 and now says the
+  true 3323 / 196.
+- **Tracked leftovers gone**: `run_all_tests.bat` (it carried a LAN address),
+  `to_main.bat`, and `docs/ui-design/` — 7 files and ~850 KB of a design-tool export
+  with a generated third-party runtime and a Cyrillic-named HTML file. They were listed
+  under stage 6, the owner's flip checklist, but removing tracked files is a pull
+  request, not a checklist step.
+- **No live run, stated rather than skipped** (AGENTS.md §3): prose, metadata and a
+  package manifest, with no engine, memory or tool path touched. What stood in for one:
+  the eight repository gates, and **`cargo package` with its verification build**, which
+  is what caught both defects above.
+- **Gates**: fmt / clippy / test green — **3323 unit tests, 196 `#[ignore]`** (unchanged;
+  this stage adds no code).

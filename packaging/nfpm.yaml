@@ -27,9 +27,9 @@ vendor: "Vladimir Shylov"
 homepage: "https://mindfork.io"
 license: "MIT"
 description: |
-  Console (TUI) AI chat application.
-  Local models (Gemma/Qwen via llama.cpp) and cloud providers (OpenAI,
-  Gemini, Anthropic). Notes/RAG memory, client-side tools, multi-language UI.
+  A terminal AI chat written in Rust.
+  Local models via llama.cpp, or OpenAI, Anthropic, Gemini and Grok in the
+  cloud, with persistent memory, notes, RAG and tools.
 
 # Dependencies are set by hand — nfpm doesn't compute them. Stack: rustls (no OpenSSL) +
 # bundled SQLite + x11rb (clipboard) → from the system, only glibc and ALSA remain
