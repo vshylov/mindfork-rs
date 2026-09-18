@@ -116,7 +116,7 @@ jobs:
     # clippy over all targets is a few minutes more, hence the room.
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       # The source language is English (CLAUDE.md/AGENTS.md §Conventions); this
       # guard fails on Cyrillic outside its allowlist (the `ru` locale bundle,
       # dictionaries, in-test fixtures, intentional `[ru]`/`ru.` localization).
@@ -242,7 +242,7 @@ jobs:
     # so Windows keeps the wider ceiling rather than the current-regime one.
     timeout-minutes: ${{ matrix.os == 'windows-latest' && 35 || 15 }}
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - name: Install the toolchain (from rust-toolchain.toml)
         run: rustup show
       # No Defender exclusions here, and that is a measured decision rather than
@@ -325,7 +325,7 @@ jobs:
     # when the server is slow — the widest Linux budget in this workflow.
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           # Sonar needs the full history: a shallow clone breaks blame, and with
           # it the "new code" detection every quality-gate condition is based on.
