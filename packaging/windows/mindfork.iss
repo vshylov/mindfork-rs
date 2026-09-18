@@ -93,6 +93,9 @@ PrivilegesRequiredOverridesAllowed=dialog
 ; The Architectures* pair stays explicit even though SetupArchitecture=x64 now makes
 ; x64compatible their default: they state the *installation's* rule, not the compiler's,
 ; and neither should silently follow the other.
+; The optional PATH entry below writes to the environment; this is what makes Inno
+; broadcast WM_SETTINGCHANGE, so a shell opened afterwards sees it without a logout.
+ChangesEnvironment=yes
 SetupArchitecture=x64
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
@@ -163,6 +166,8 @@ ru.InfoBeforeLabel=Пожалуйста, прочитайте дисклейме
 ; continues, exactly like the disclaimer page (docs/research/code-signing.md
 ; §8.1). The prompt names the installed copy rather than the website, because at
 ; this point the user has no browser open and will have the file.
+en.AddToPathTask=Add mindfork to PATH (so `mindfork` works in any terminal)
+ru.AddToPathTask=Добавить mindfork в PATH (чтобы `mindfork` работал в любом терминале)
 en.PrivacyCaption=Privacy policy
 ru.PrivacyCaption=Политика конфиденциальности
 en.PrivacySub=What mindfork stores, and what it sends where.
@@ -259,6 +264,12 @@ Name: "{autodesktop}\mindfork"; Filename: "{app}\mindfork.exe"; Tasks: desktopic
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; Flags: unchecked
 Name: "installsandbox"; Description: "{cm:SandboxTask}"; Flags: unchecked
+; `mindfork llama setup`, `mindfork sandbox setup` and the first-run guidance all
+; name the command rather than a path, which is only true from a shell that can
+; find it. Off by default: an installer that edits the environment without being
+; asked is the kind of surprise this one avoids
+; (docs/research/robustness-and-defaults.md D6).
+Name: "addtopath"; Description: "{cm:AddToPathTask}"; Flags: unchecked
 
 ; The optional Python sandbox for the `python_exec` tool (ADR 0005): `sandbox setup`
 ; downloads wasmer + CPython + the wheels into `<data>/sandbox/` from the lock list.
@@ -288,6 +299,16 @@ Filename: "{app}\mindfork.exe"; Parameters: "sandbox setup --enable-python"; Wor
 ; data (chats/profiles in %APPDATA% or portable) is untouched by the uninstaller — that
 ; deliberately includes `<data>/sandbox/`, which sits next to the chats and is
 ; re-downloadable rather than being ours to delete.
+; The PATH entry for the `addtopath` task. Two entries, because the key depends on
+; the install mode: a per-user install writes the user's environment, an elevated
+; one the machine's. `{olddata}` keeps whatever is there; `expandsz` keeps other
+; entries' `%VARIABLES%` expandable, which a plain string value would destroy for
+; the whole value. The removal on uninstall is in [Code] — `uninsdeletevalue` here
+; would delete the entire Path.
+[Registry]
+Root: HKCU; Subkey: "Environment"; ValueType: expandsz; ValueName: "Path"; ValueData: "{olddata};{app}"; Tasks: addtopath; Check: not IsAdminInstallMode and NeedsAddPath(ExpandConstant('{app}'))
+Root: HKLM; Subkey: "SYSTEM\CurrentControlSet\Control\Session Manager\Environment"; ValueType: expandsz; ValueName: "Path"; ValueData: "{olddata};{app}"; Tasks: addtopath; Check: IsAdminInstallMode and NeedsAddPath(ExpandConstant('{app}'))
+
 [UninstallDelete]
 Type: files; Name: "{app}\defaults.json"
 
@@ -449,4 +470,72 @@ begin
 
     SaveJson(Path, Json);
   end;
+end;
+
+{ ---- The optional PATH entry (task `addtopath`) ---------------------------- }
+
+{ Which environment the install writes: the user's, or the machine's when the
+  wizard was elevated ("for everyone"). One place, so the [Registry] entries,
+  the check below and the uninstaller cannot disagree about where it went. }
+procedure PathKey(var RootKey: Integer; var SubKey: String);
+begin
+  if IsAdminInstallMode then
+  begin
+    RootKey := HKEY_LOCAL_MACHINE;
+    SubKey := 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment';
+  end
+  else
+  begin
+    RootKey := HKEY_CURRENT_USER;
+    SubKey := 'Environment';
+  end;
+end;
+
+{ Called from [Registry]: is this directory missing from PATH? Without it an
+  upgrade would append the same directory again, every time. The comparison pads
+  both sides with ';' so a directory that is merely a prefix of an existing entry
+  does not count as present. }
+function NeedsAddPath(Param: String): Boolean;
+var
+  RootKey: Integer;
+  SubKey, OrigPath: String;
+begin
+  PathKey(RootKey, SubKey);
+  if not RegQueryStringValue(RootKey, SubKey, 'Path', OrigPath) then
+  begin
+    Result := True;
+    exit;
+  end;
+  Result := Pos(';' + Uppercase(Param) + ';', ';' + Uppercase(OrigPath) + ';') = 0;
+end;
+
+{ The other half: an uninstall takes its own entry back out. [Registry]'s
+  `uninsdeletevalue` cannot be used for this — it would delete the whole Path
+  value, taking every other program's entry with it. }
+procedure RemoveFromPath(Dir: String);
+var
+  RootKey: Integer;
+  SubKey, Path: String;
+  P: Integer;
+begin
+  PathKey(RootKey, SubKey);
+  if not RegQueryStringValue(RootKey, SubKey, 'Path', Path) then
+    exit;
+  { Find the entry with its separators, then cut it and the ';' that joined it. }
+  P := Pos(';' + Uppercase(Dir) + ';', ';' + Uppercase(Path) + ';');
+  if P = 0 then
+    exit;
+  Delete(Path, P - 1, Length(Dir) + 1);
+  { A leading ';' is left when the entry was the first one. }
+  if (Length(Path) > 0) and (Path[1] = ';') then
+    Delete(Path, 1, 1);
+  RegWriteExpandStringValue(RootKey, SubKey, 'Path', Path);
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  { After the files are gone, so a failed uninstall does not leave PATH pointing
+    at a directory that is still there. }
+  if CurUninstallStep = usPostUninstall then
+    RemoveFromPath(ExpandConstant('{app}'));
 end;

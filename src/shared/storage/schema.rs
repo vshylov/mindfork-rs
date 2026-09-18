@@ -22,7 +22,7 @@ use serde_json::Value;
 /// Schema version of `settings.json`. Matches [`crate::shared::config::SCHEMA_VERSION`]
 /// (the default of the `AppConfig.schema_version` field) — the invariant is checked by
 /// a test.
-pub const SETTINGS_SCHEMA: u32 = 2;
+pub const SETTINGS_SCHEMA: u32 = 3;
 /// Schema version of `profiles.json`.
 pub const PROFILES_SCHEMA: u32 = 1;
 /// Schema version of a chat file `chats/<id>.json`.
@@ -149,14 +149,56 @@ fn settings_to_v2(mut v: Value) -> Result<Value> {
     Ok(v)
 }
 
-const SETTINGS_STEPS: &[Step] = &[Step {
-    to: 2,
-    summary: "the sub-agent's one-request timeout becomes a whole-run limit",
-    apply: settings_to_v2,
-}];
+/// The reply budget `settings.json` v2 wrote by default, and the one v3 writes —
+/// both frozen here for the same reason as the constants above: a migration step
+/// describes one transition, and must not move when today's defaults do.
+const V2_MAX_TOKENS: u64 = 2048;
+const V3_MAX_TOKENS: u64 = 16384;
 
-/// The registry of artifacts. `settings.json` and the chat files are at 2 (one
-/// step each); `profiles.json` is still at 1 with no steps.
+/// `settings.json` 2→3: the default reply budget rose from 2048 to 16384, because
+/// that number covers the model's **reasoning** as well on every provider that
+/// bills it that way, and 2048 was set before any of them did. Measured on
+/// `gemini-2.5-pro` with thinking on: 1697 tokens of thinking left 347 for the
+/// answer and the reply came back cut (`MAX_TOKENS`); the same question at 16384
+/// finished on its own (docs/research/robustness-and-defaults.md F5).
+///
+/// A value left at the old default is **rewritten** to the new one; a value the
+/// user typed is untouched, because a number somebody chose is a decision — the
+/// same rule the 1→2 step follows. Nothing else in the file changes.
+///
+/// Rewritten rather than dropped, which is what the 1→2 step does with its
+/// numbers, and the difference is not cosmetic: `ToolSettings::default()` carries
+/// its constant, so a removed key lands on the new default, while
+/// `SamplingConfig::default()` has `max_tokens: None` — the 16384 lives in
+/// `AppConfig::default()`, which serde never consults for a section that is
+/// present. Dropping the key here would therefore have meant *no limit at all*,
+/// which is a different decision than the one being made. A test asserts the
+/// parsed outcome, not the JSON, for exactly this reason.
+fn settings_to_v3(mut v: Value) -> Result<Value> {
+    if let Some(sampling) = v.get_mut("default_sampling").and_then(Value::as_object_mut)
+        && sampling.get("max_tokens").and_then(Value::as_u64) == Some(V2_MAX_TOKENS)
+    {
+        sampling.insert("max_tokens".into(), Value::from(V3_MAX_TOKENS));
+    }
+    v["schema_version"] = Value::from(3);
+    Ok(v)
+}
+
+const SETTINGS_STEPS: &[Step] = &[
+    Step {
+        to: 2,
+        summary: "the sub-agent's one-request timeout becomes a whole-run limit",
+        apply: settings_to_v2,
+    },
+    Step {
+        to: 3,
+        summary: "the default reply budget rises to cover a model's reasoning",
+        apply: settings_to_v3,
+    },
+];
+
+/// The registry of artifacts. `settings.json` is at 3 (two steps), the chat files
+/// at 4; `profiles.json` is still at 1 with no steps.
 pub fn settings_artifact() -> JsonArtifact {
     JsonArtifact {
         name: "settings.json",
@@ -295,13 +337,15 @@ mod tests {
 
     #[test]
     fn real_registry_versions_and_steps() {
-        // Settings took one real step; chats took three (the dialogue-run
+        // Settings took two real steps (the sub-agent's timeout, then the reply
+        // budget that has to cover reasoning); chats took three (the dialogue-run
         // stamp, spec §9.13, then the cut run titles, spec §11.2); profiles
         // are still dormant.
         let settings = settings_artifact();
-        assert_eq!(settings.current, 2);
-        assert_eq!(settings.steps.len(), 1);
+        assert_eq!(settings.current, 3);
+        assert_eq!(settings.steps.len(), 2);
         assert_eq!(settings.steps[0].to, 2);
+        assert_eq!(settings.steps[1].to, 3);
         let chats = chat_artifact();
         assert_eq!(chats.current, 4);
         assert_eq!(chats.steps.len(), 3);
@@ -334,7 +378,7 @@ mod tests {
         let out = settings_artifact()
             .apply_steps(v1_settings(60, 1024), 1)
             .unwrap();
-        assert_eq!(out["schema_version"], json!(2));
+        assert_eq!(out["schema_version"], json!(3));
         let tools = out["tools"].as_object().unwrap();
         assert!(!tools.contains_key("subagent_timeout_secs"));
         assert!(!tools.contains_key("subagent_run_timeout_secs"));
@@ -374,6 +418,53 @@ mod tests {
         let out = settings_artifact()
             .apply_steps(json!({"schema_version": 1}), 1)
             .unwrap();
-        assert_eq!(out["schema_version"], json!(2));
+        assert_eq!(out["schema_version"], json!(3));
+    }
+
+    /// 2→3: a reply budget left at the old default is dropped so the new one
+    /// applies, and one the user typed is kept — a number somebody chose is a
+    /// decision (docs/research/robustness-and-defaults.md F5).
+    #[test]
+    fn settings_step_lifts_the_untouched_reply_budget_and_keeps_a_chosen_one() {
+        let at_the_old_default = settings_artifact()
+            .apply_steps(
+                json!({"schema_version": 2, "default_sampling": {"max_tokens": 2048, "thinking": true}}),
+                2,
+            )
+            .unwrap();
+        assert_eq!(at_the_old_default["schema_version"], json!(3));
+        let sampling = at_the_old_default["default_sampling"].as_object().unwrap();
+        assert_eq!(sampling["max_tokens"], json!(16384), "{sampling:?}");
+        // The neighbour a user may well have turned off stays as it was.
+        assert_eq!(sampling["thinking"], json!(true));
+        let cfg: crate::shared::config::AppConfig =
+            serde_json::from_value(at_the_old_default).unwrap();
+        assert_eq!(
+            cfg.default_sampling.max_tokens,
+            crate::shared::config::AppConfig::default()
+                .default_sampling
+                .max_tokens
+        );
+
+        for chosen in [512u64, 4096, 65536] {
+            let out = settings_artifact()
+                .apply_steps(
+                    json!({"schema_version": 2, "default_sampling": {"max_tokens": chosen}}),
+                    2,
+                )
+                .unwrap();
+            assert_eq!(
+                out["default_sampling"]["max_tokens"],
+                json!(chosen),
+                "a typed {chosen} must survive"
+            );
+        }
+
+        // A file that never wrote the section at all migrates without inventing one.
+        let bare = settings_artifact()
+            .apply_steps(json!({"schema_version": 2}), 2)
+            .unwrap();
+        assert_eq!(bare["schema_version"], json!(3));
+        assert!(bare.get("default_sampling").is_none());
     }
 }

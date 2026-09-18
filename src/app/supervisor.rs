@@ -326,6 +326,14 @@ impl ServerSupervisor for LlamaSupervisor {
                         port: m.port,
                         extra_args: vec![],
                     };
+                    // The same refusal the chat server makes: without a model file
+                    // `llama-server` starts a *router* that answers `/health` and
+                    // refuses every embedding request (§2.1 of
+                    // docs/research/robustness-and-defaults.md). The chip is hidden
+                    // instead, exactly as for a binary that cannot be found.
+                    if !cfg.is_runnable() {
+                        return unavailable_embed();
+                    }
                     match ServerHandle::launch(&cfg, loc) {
                         Ok(handle) => {
                             let client = Arc::new(OpenAiClient::new(handle.base_url()));
@@ -450,14 +458,16 @@ fn external_chat_setup(
 }
 
 /// Managed chat setup: launch a child `llama-server`, a background probe (accounting
-/// for an early process exit). An empty binary → `NotConfigured`.
+/// for an early process exit). An empty binary **or an unset model** →
+/// `NotConfigured` ([`ManagedConfig::is_runnable`], which carries the measurement
+/// behind the model half).
 fn managed_chat_setup(
     cfg: ManagedConfig,
     cancel: CancellationToken,
     status_tx: UnboundedSender<ServerStatus>,
     loc: &'static Locale,
 ) -> ChatSetup {
-    if cfg.binary.as_os_str().is_empty() {
+    if !cfg.is_runnable() {
         return not_configured();
     }
     match ServerHandle::launch(&cfg, loc) {
@@ -1023,6 +1033,7 @@ impl ServerSupervisor for MockSupervisor {
 mod tests {
     use super::*;
     use crate::shared::api::EmbedRole;
+    use crate::shared::config::ManagedEmbedSettings;
     use std::sync::atomic::{AtomicBool, Ordering};
     use tokio::sync::mpsc::unbounded_channel;
 
@@ -1123,8 +1134,14 @@ mod tests {
             b"x",
         )
         .unwrap();
+        // As for the chat server, a model is what makes this a launch attempt at all.
+        let model = tempfile::NamedTempFile::new().unwrap();
         let settings = EmbedSettings {
             mode: ServerMode::Managed,
+            managed: ManagedEmbedSettings {
+                model_path: Some(model.path().display().to_string()),
+                ..Default::default()
+            },
             ..Default::default()
         };
 
@@ -1151,6 +1168,64 @@ mod tests {
             ServerStatus::NotConfigured,
             "a build was found, so this is a launch attempt, not a missing setting"
         );
+    }
+
+    /// A managed engine with a build but **no model** is "not configured", not a
+    /// server that is about to start: measured, `llama-server` without `-m` comes
+    /// up as a router whose `/health` says `ok` while every completion is a `400`,
+    /// and whose `models_autoload` would fetch a model from Hugging Face on a name
+    /// match (docs/research/robustness-and-defaults.md §2.1, D2).
+    #[tokio::test]
+    async fn managed_without_a_model_is_not_configured() {
+        for model in [None, Some(String::new()), Some("   ".to_string())] {
+            let (tx, _rx) = unbounded_channel();
+            let s = EngineSettings {
+                mode: ServerMode::Managed,
+                managed: ManagedSettings {
+                    binary: Some("llama-server".into()),
+                    model_path: model.clone(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let setup =
+                LlamaSupervisor::default().apply_chat(&s, None, CancellationToken::new(), tx, ru());
+            assert!(setup.backend.is_none(), "{model:?}");
+            assert!(
+                setup.handle.is_none(),
+                "no process is started for {model:?}"
+            );
+            assert_eq!(setup.status, ServerStatus::NotConfigured, "{model:?}");
+        }
+    }
+
+    /// The same refusal one screen further: the embedding server takes a model the
+    /// same way, and a router that answers `/health` and refuses every embedding
+    /// request is the same failure (N2).
+    #[tokio::test]
+    async fn the_embedder_without_a_model_is_unavailable() {
+        let data = tempfile::tempdir().unwrap();
+        let install = data.path().join("cpu-b10883");
+        std::fs::create_dir_all(&install).unwrap();
+        std::fs::write(
+            install.join(crate::features::llama_setup::server_binary_name()),
+            b"x",
+        )
+        .unwrap();
+        let settings = EmbedSettings {
+            mode: ServerMode::Managed,
+            ..Default::default()
+        };
+        let (tx, _rx) = unbounded_channel();
+        let setup = LlamaSupervisor {
+            lookup: BinaryLookup {
+                llama_dir: Some(data.path().to_path_buf()),
+                exe_dir: None,
+            },
+        }
+        .apply_embed(&settings, None, CancellationToken::new(), tx, ru());
+        assert!(setup.handle.is_none(), "no process is started");
+        assert_eq!(setup.status, ServerStatus::NotConfigured);
     }
 
     /// The reference (Russian) locale for displayed unavailability reasons:
@@ -1527,11 +1602,16 @@ mod tests {
 
     #[tokio::test]
     async fn managed_with_bogus_binary_is_disconnected() {
+        // A model file that exists: without one the answer would be
+        // `NotConfigured` (no model is nothing to run), and the binary — the thing
+        // this test is about — would never be reached.
+        let model = tempfile::NamedTempFile::new().unwrap();
         let (tx, _rx) = unbounded_channel();
         let s = EngineSettings {
             mode: ServerMode::Managed,
             managed: ManagedSettings {
                 binary: Some("definitely-not-a-real-binary-xyz".into()),
+                model_path: Some(model.path().display().to_string()),
                 ..Default::default()
             },
             ..Default::default()
@@ -1572,10 +1652,14 @@ mod tests {
     #[tokio::test]
     async fn managed_carries_the_projector_and_reports_a_missing_one() {
         const MISSING: &str = "no/such/mmproj.gguf";
-        // No `model_path`, so the model preflight is skipped and the projector's is
-        // the one under test.
+        // A model that exists, so the two refusals ahead of the projector's are out
+        // of the way: an unset model is `NotConfigured` (it starts a *router*, see
+        // `ManagedConfig::is_runnable`), and a model file that is named but absent
+        // is its own `Disconnected`.
+        let model = tempfile::NamedTempFile::new().unwrap();
         let managed = ManagedSettings {
             binary: Some("llama-server".into()),
+            model_path: Some(model.path().display().to_string()),
             mmproj: Some(MISSING.into()),
             ..Default::default()
         };
@@ -2173,6 +2257,76 @@ mod tests {
         text.lines()
             .filter(|l| l.contains("LISTENING") && l.contains(&format!(":{port} ")))
             .find_map(|l| l.split_whitespace().last()?.parse().ok())
+    }
+
+    /// A **real** `llama-server` and no model: nothing starts, and the port stays
+    /// free. The refusal exists because of what this binary does *without* `-m` —
+    /// it comes up as a router whose `/health` says `ok` while every completion is
+    /// a `400`, and whose `models_autoload` would fetch a model from Hugging Face
+    /// on a name match (docs/research/robustness-and-defaults.md §2.1). The unit
+    /// tests can only assert the decision; this asserts that no process appears.
+    ///
+    ///     MINDFORK_LLAMA_BIN=.../llama-server.exe MINDFORK_MODEL=.../model.gguf \
+    ///       cargo test managed_without_a_model_starts_nothing_e2e_live -- --ignored --nocapture
+    #[tokio::test]
+    #[cfg(windows)]
+    #[ignore = "requires a local llama-server binary + model (MINDFORK_LLAMA_BIN, MINDFORK_MODEL)"]
+    async fn managed_without_a_model_starts_nothing_e2e_live() {
+        let (Ok(bin), Ok(model)) = (
+            std::env::var("MINDFORK_LLAMA_BIN"),
+            std::env::var("MINDFORK_MODEL"),
+        ) else {
+            eprintln!("skip: MINDFORK_LLAMA_BIN / MINDFORK_MODEL not set");
+            return;
+        };
+        const PORT: u16 = 18097;
+        let settings = |model: Option<String>| EngineSettings {
+            mode: ServerMode::Managed,
+            managed: ManagedSettings {
+                binary: Some(bin.clone()),
+                model_path: model,
+                port: PORT,
+                gpu_layers: 0,
+                context_size: 4096,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        // Arm 1 — no model.
+        let (tx, _rx) = unbounded_channel();
+        let refused = LlamaSupervisor::default().apply_chat(
+            &settings(None),
+            None,
+            CancellationToken::new(),
+            tx,
+            ru(),
+        );
+        assert_eq!(refused.status, ServerStatus::NotConfigured);
+        assert!(refused.handle.is_none(), "no child is owned");
+        // The port is the assertion the unit tests cannot make: a router would be
+        // listening here, answering `/health` with `ok`.
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        assert_eq!(
+            pid_on_port(PORT),
+            None,
+            "nothing must be listening on {PORT}"
+        );
+
+        // Arm 2 — the same settings with the model: a server, as before.
+        let (tx, mut rx) = unbounded_channel();
+        let started = LlamaSupervisor::default().apply_chat(
+            &settings(Some(model)),
+            None,
+            CancellationToken::new(),
+            tx,
+            ru(),
+        );
+        let _handle = started.handle.expect("a managed server owns its child");
+        let status = rx.recv().await;
+        println!("with a model: {status:?}");
+        assert_eq!(status, Some(ServerStatus::Ready), "the model loaded");
+        assert!(pid_on_port(PORT).is_some(), "the server is listening");
     }
 
     /// A **real** managed child that dies on its own must be noticed at once — from

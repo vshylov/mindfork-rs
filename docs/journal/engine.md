@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (70)
+## Entries (71)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -83,6 +83,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: whether a gateway's model takes images comes from its catalogue (done)
 - Post-M9: a chat whose history carries images, on an engine that takes none (done)
 
+- Post-M9: a server with no model, and a budget that forgot about reasoning (done)
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
   a long time (up to the `MANAGED_READY_TIMEOUT=600s` timeout) in "server:
@@ -4551,3 +4552,53 @@ stored. OpenRouter `google/gemma-4-31b-it` → `qwen/qwen3-235b-a22b-2507`: the 
 `500`. `image_attachment_e2e_live` on the LAN stack with its projector stayed green. The
 control first **hung** for ten minutes on the smoke's unbounded wait for the note it
 could never get — lessons §2, a fourth time; every such wait is bounded now.
+
+### Post-M9: a server with no model, and a budget that forgot about reasoning (done)
+
+- **The engine half of stage 4a** ([robustness-and-defaults.md](../research/robustness-and-defaults.md)
+  D2 and F5; the rest is in [release.md](release.md)). Both items were "unverified" in the
+  public-release audit, and stage 1 deliberately left the first one with *measure before
+  changing the message*.
+- **D2 — a build with no model starts a router, not a failure.** Measured with the
+  installed `cpu-b10883` and exactly the arguments `build_args` produces minus `-m`:
+  `llama-server` does not exit. It prints `starting server in router mode` and listens;
+  `/health` answers `{"status":"ok"}`, so the **readiness probe passes and the app reports
+  the engine ready**; `/props` says `role: "router"` with `n_ctx: 0`, the number the app
+  reads for compaction; `/v1/models` lists whatever is in this machine's Hugging Face
+  cache; and a completion comes back `400 "model name is missing from the request"`. Worse
+  than the message is the mode: `models_autoload` is on, so a name that matched would have
+  the server **download a model from Hugging Face**. Managed mode offers router mode
+  nowhere in the UI and `llama-server` has no flag to refuse it (`--models-dir`,
+  `--models-preset`, `--models-autoload` configure it; nothing turns it off), so the
+  refusal is ours: `ManagedConfig::is_runnable` requires a binary **and** a model, and an
+  unset model reads as `NotConfigured` — the state stage 1 already wired to the empty
+  feed's "here is how to connect a model". The embedding server gets the same check.
+  Three unit tests changed verdict and were re-fixtured rather than adjusted: each had
+  left the model unset because it did not matter, and now has to name one to reach the
+  thing it actually tests.
+- **F5 — the reply budget counted the reasoning, and 2048 predates that.** Measured on
+  `gemini-2.5-pro` with thinking on, a school arithmetic question: **1697** tokens of
+  thinking left **347** for the answer and the reply came back `MAX_TOKENS`, cut
+  mid-explanation; the same question at 16384 finished on its own at 1444 + 750. The
+  shipped default is 16384 now. A cap is not a target, so nothing extra is generated — it
+  only stops taking the end off; Anthropic, where the field is required, keeps its own
+  4096 fallback for sampling that names no limit.
+- **What the tests caught on the way, twice.** First: dropping the key in the migration
+  would **not** have applied the new default — `ToolSettings::default()` carries its
+  constants, so the 1→2 step's "remove it and the new default applies" works there, while
+  `SamplingConfig::default()` has `max_tokens: None` and the 16384 lives in
+  `AppConfig::default()`, which serde never consults for a section that is present.
+  Dropping would have meant *no cap at all* — a different decision. The 2→3 step therefore
+  **writes** the number, and the test asserts the parsed outcome rather than the JSON.
+  Second: the reply cap is what a stream reserves in a managed server's shared KV pool
+  (admission-by-budget §4.2), so raising it changed how many children fit at once and two
+  admission tests failed. The verdict is honest — a stream that may generate 16k has to
+  reserve it — and it bites only **above one session**, which is not the default
+  (`DEFAULT_SESSIONS = 1` has no pool at all), and a single oversized stream is always
+  admitted alone (`*open == 0`). The suites now pin their own cap in `no_auto_cfg`, so
+  they measure admission rather than the shipped default.
+- **Live run** — **GO**, locally with the installed build and `gemma-3-4b-it-q8_0`:
+  `managed_without_a_model_starts_nothing_e2e_live`. With no model — `NotConfigured`, no
+  child owned, and **nothing listening on the port** two seconds later, which is the
+  assertion the unit tests cannot make: a router would have been there answering
+  `/health`. With the model — `Ready` and a server on the port, as before.

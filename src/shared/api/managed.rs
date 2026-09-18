@@ -73,6 +73,30 @@ impl ManagedConfig {
     pub fn base_url(&self) -> String {
         format!("http://127.0.0.1:{}/v1", self.port)
     }
+
+    /// Whether this configuration names a server we are prepared to start: a
+    /// binary **and** a model file.
+    ///
+    /// The model half is not obvious, and it was measured rather than assumed
+    /// (docs/research/robustness-and-defaults.md §2.1). Without `-m` a recent
+    /// `llama-server` does not fail — it starts in **router mode**: `/health`
+    /// answers `ok`, so the app reports the engine ready; `/props` says
+    /// `role: "router"` with a context window of `0`; `/v1/models` lists whatever
+    /// sits in the machine's Hugging Face cache; and every completion comes back
+    /// `400 "model name is missing from the request"`. Worse than the message is
+    /// the mode: `models_autoload` is on, so a matching name would have the
+    /// server **download a model from Hugging Face**. Managed mode offers router
+    /// mode nowhere in the UI, and `llama-server` has no flag to refuse it — so
+    /// the refusal is ours, before the process starts. An unset model then reads
+    /// as `NotConfigured`, exactly as an unset binary does, and the first-run
+    /// guidance already says where the setting is.
+    pub fn is_runnable(&self) -> bool {
+        !self.binary.as_os_str().is_empty()
+            && self
+                .model_path
+                .as_deref()
+                .is_some_and(|m| !m.trim().is_empty())
+    }
 }
 
 /// Builds `llama-server`'s command-line arguments from the config (a pure function).

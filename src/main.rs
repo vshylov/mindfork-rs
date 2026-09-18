@@ -44,6 +44,9 @@ fn main() -> ExitCode {
         // is unknown → total uncertainty → print in English (user's decision).
         Err(err) => {
             print_error(Lang::En, &err);
+            // Double-clicked, this window is about to vanish with the message in
+            // it (docs/research/robustness-and-defaults.md D3).
+            shared::console::hold_if_sole_owner(i18n::locale(Lang::En));
             return ExitCode::FAILURE;
         }
     };
@@ -61,6 +64,7 @@ fn main() -> ExitCode {
         // `Err` — an already print-ready localized message (§ features/cli).
         Err(msg) => {
             eprintln!("{msg}");
+            shared::console::hold_if_sole_owner(loc);
             return ExitCode::from(2);
         }
     };
@@ -88,6 +92,7 @@ fn main() -> ExitCode {
         Ok(code) => code,
         Err(err) => {
             print_error(lang, &err);
+            shared::console::hold_if_sole_owner(loc);
             ExitCode::FAILURE
         }
     }
@@ -201,7 +206,14 @@ fn run_tui(paths: &Paths, loc: &Locale) -> anyhow::Result<ExitCode> {
         Err(instance::InstanceError::AlreadyRunning) => {
             eprintln!("{}", loc.t("cli.instance.already_running"));
             tracing::warn!("startup refused: another instance of the app is already running");
-            return Ok(ExitCode::SUCCESS);
+            // The likeliest double-click of all: the user clicks the shortcut
+            // again because the first window is behind something.
+            shared::console::hold_if_sole_owner(loc);
+            // 2 — "refused to start", the code the CLI already answers a wrong
+            // invocation and a launch without a terminal (B8) with. It used to be
+            // 0, which told a script that the app had run and exited cleanly
+            // (docs/research/robustness-and-defaults.md D4).
+            return Ok(ExitCode::from(2));
         }
         // A structured error → localized here (the variant's Display isn't user-facing).
         Err(instance::InstanceError::Init(e)) => {
@@ -320,7 +332,11 @@ fn launch_tui(
         apply_env_overrides(&mut config);
     }
 
-    runtime.spawn(orchestrator::run(OrchestratorDeps {
+    // The handle is kept rather than dropped: when the UI loop ends because its
+    // event channel closed (D1), this is what holds the reason — a panic payload
+    // that would otherwise reach only the panic hook's output, which the
+    // alternate screen has already eaten.
+    let orchestrator = runtime.spawn(orchestrator::run(OrchestratorDeps {
         cmd_rx,
         evt_tx: evt_tx.clone(),
         storage,
@@ -346,8 +362,22 @@ fn launch_tui(
         dict_dir,
         bundled_dict_dir,
         personal,
+        paths.log_dir(),
         background_query,
     );
+
+    // A failed session with a finished orchestrator is the D1 case: take the
+    // task's own error into the log before anything else is printed. `is_finished`
+    // first, so a clean exit never waits on a task that is still shutting down.
+    if result.is_err() && orchestrator.is_finished() {
+        match runtime.block_on(orchestrator) {
+            Err(join) if join.is_panic() => {
+                tracing::error!(error = %join, "the orchestrator task panicked");
+            }
+            Err(join) => tracing::error!(error = %join, "the orchestrator task ended abnormally"),
+            Ok(()) => tracing::error!("the orchestrator task ended while the session was running"),
+        }
+    }
 
     // Stop the orchestrator; it tears down managed servers itself (kill_on_drop when
     // its task ends). Give background tasks a chance to finish.

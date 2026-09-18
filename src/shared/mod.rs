@@ -5,6 +5,7 @@ pub mod api;
 pub mod child_env;
 pub mod cmdline;
 pub mod config;
+pub mod console;
 pub mod credits;
 pub mod embed_calibration;
 pub mod embed_identity;

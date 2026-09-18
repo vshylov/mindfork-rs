@@ -15,6 +15,11 @@ split by subsystem.
 ## [Unreleased]
 
 ### Added
+- **The Windows installer can put `mindfork` on `PATH`.** A box on the "Additional
+  tasks" page, **off** by default: with it, `mindfork llama setup` and the other
+  commands the app suggests work from any terminal instead of only from the install
+  folder. It is added once however many times you upgrade, and removed when you
+  uninstall.
 - **Every download now carries the licences of what it is built from.** The archives, the
   Linux packages and the Windows installer include `THIRD-PARTY-NOTICES.md` — the licence
   text of every Rust package the binary is built from, generated for that exact release —
@@ -39,6 +44,26 @@ split by subsystem.
   instead of answering "LLM server is not configured".
 
 ### Fixed
+- **A thinking model's answer is no longer cut off in the middle.** The reply limit
+  counts the model's own reasoning on every provider that charges for it that way,
+  and the shipped limit of 2048 tokens was set before any of them did: measured on
+  Gemini 2.5 Pro, a school arithmetic question spent 1697 tokens thinking, left 347
+  for the answer, and the reply ended mid-explanation. The default is now 16384 —
+  a limit you typed yourself is kept as it is.
+- **A local model server is no longer started without a model.** With a llama.cpp
+  build installed and no GGUF chosen, the app started the server anyway; it came up
+  in a mode that answers "ready" while refusing every message, and could have
+  downloaded a model from the internet on its own. It now says the model is not
+  configured, and points at the setting — the same guidance an empty chat shows.
+- **The app no longer keeps running after the part that answers has stopped.** If
+  that part failed, the interface stayed up, accepted messages and answered none of
+  them, for as long as you kept trying. It now closes with one line saying so and
+  where the log is; what was written before the failure is saved.
+- **A startup error no longer disappears with its own window.** Double-clicked from
+  Explorer, mindfork gets a console that Windows closes the instant the program
+  exits — so "another copy is already running", a broken settings file or a data
+  folder that cannot be opened flashed by unread. In that window the program now
+  waits for Enter. Started from a terminal, nothing changes.
 - **On a clean Windows the app now starts.** The binary needed `VCRUNTIME140.dll`, part of
   the Visual C++ redistributable — a library Windows does not include and the installer
   did not bring — so on a machine that had never installed a C++ application it failed
@@ -124,6 +149,12 @@ split by subsystem.
   same. Both names are now read. Nothing changes for a local `llama-server`.
 
 ### Changed
+- **A second copy of mindfork exits with an error code** (2, the code it already
+  uses when it refuses to start) instead of reporting success.
+- **An interface language you add yourself falls back to English** for anything it
+  does not translate. It used to fall back to Russian, from the days when the
+  program's own texts were written in Russian; the translation template
+  `mindfork locales export` writes is English for the same reason.
 
 - **Setting up a gateway in `external` mode is written down** (install.md §3):
   the model name a gateway requires, the context window you have to type in
@@ -148,6 +179,12 @@ split by subsystem.
 - **`python_exec` says when its network is off.** The runtime's own prompt about the
   missing flag used to land in the output as if the script had printed it; the result now
   says the network is off, where the setting is, and what to do instead.
+
+### Data
+
+- **`settings.json` 2 → 3**: the default reply limit rises from 2048 to 16384
+  (above). A limit left at the old default is raised; one you set yourself is left
+  alone. As with every schema change, the file is backed up before it is migrated.
 
 ### Security
 - **A TLS flaw in the library every network request goes through is fixed.** The TLS

@@ -127,6 +127,18 @@ screen a `ChatListAction`), and `app/runtime.rs` translates it into an
 capture, clipboard writes) itself — it signals an intent, and `runtime` executes
 it.
 
+**The loop ends when its event channel does.** Draining is
+`drain_events` (`app/runtime/mod.rs`), which distinguishes an empty queue from a
+**closed** one: the sender belongs to the orchestrator task, so a closed channel
+means that task has ended — a panic being the case that matters, since the hook
+restores the terminal and the task dies while the UI carries on. The loop used to
+read the two states identically (`while let Ok(..) = rx.try_recv()`), so the
+interface kept running with nothing behind it: every command went into a channel
+with no reader and nothing ever answered. Now the session ends with a localized
+line naming the log, a non-zero exit code, and — since `main` keeps the task's
+`JoinHandle` — the panic itself in the log
+(docs/research/robustness-and-defaults.md D1).
+
 ### Layer mapping from attempt #1 (`lamellama-rs`)
 
 | lamellama-rs (crate) | mindfork-rs (layer/module)       |
@@ -635,6 +647,12 @@ src/
    │                       the Python sandbox hands wasmer as its own filter — one
    │                       test holds the list against the predicate. See spec §9.3,
    │                       docs/research/safe-defaults.md D4
+   ├─ console.rs           whether this process owns its console alone
+   │                       (GetConsoleProcessList = 1, what a double-click from
+   │                       Explorer gives) — and, when it does, waiting for Enter
+   │                       after a refusal, since Windows destroys that window with
+   │                       the process. Unix always answers "no". See
+   │                       docs/research/robustness-and-defaults.md D3
    ├─ child_env.rs         what a child the MODEL drives does not inherit: the
    │                       credential-shaped variable names and the ones settings
    │                       name as key sources, removed from the local Python
