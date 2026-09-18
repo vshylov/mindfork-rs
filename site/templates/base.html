@@ -8,9 +8,24 @@
 <link rel="icon" href="/favicon.ico" sizes="32x32">
 <link rel="icon" type="image/svg+xml" href="/brand/mindfork-icon-transparent.svg">
 <link rel="apple-touch-icon" href="/brand/mindfork-icon-256.png">
+{# Open Graph. The title and description are a block, so every template that
+   already overrides `title`/`desc` overrides these with the same words; the
+   card, the type and the canonical URL are the same on every page. Twitter
+   falls back to the `og:` pair when it finds no `twitter:title`, which is why
+   there is no second copy of them here. #}
+{% block og %}
+<meta property="og:type" content="website">
+<meta property="og:title" content="{{ config.title }} — an AI chat that lives in your terminal">
+<meta property="og:description" content="{{ config.description }}">
+{% endblock og %}
 <meta property="og:site_name" content="mindfork">
-<meta property="og:image" content="{{ get_url(path='brand/mindfork-icon-256.png') }}">
-<meta name="twitter:card" content="summary">
+<meta property="og:url" content="{{ current_url | default(value=config.base_url) }}">
+<meta property="og:image" content="{{ get_url(path='brand/og-card.png') }}">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="mindfork — an AI chat that lives in your terminal">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="canonical" href="{{ current_url | default(value=config.base_url) }}">
 <link rel="alternate" type="application/atom+xml" title="mindfork news" href="{{ get_url(path='atom.xml') }}">
 <link rel="preload" href="/fonts/JetBrainsMono-Regular.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/fonts/JetBrainsMono-ExtraBold.woff2" as="font" type="font/woff2" crossorigin>
@@ -48,6 +63,9 @@
     <div class="foot-links">
       <a href="{{ config.extra.github }}">GitHub</a>
       <a href="{{ get_url(path='atom.xml') }}">Atom feed</a>
+      <a href="{{ get_url(path='@/install.md') }}">Install</a>
+      <a href="{{ get_url(path='@/license.md') }}">License</a>
+      <a href="{{ get_url(path='@/disclaimer.md') }}">Disclaimer</a>
       <a href="{{ get_url(path='@/privacy.md') }}">Privacy policy</a>
       <a href="{{ get_url(path='@/code-signing-policy.md') }}">Code signing policy</a>
       <span>© 2026 Vladimir Shylov · MIT</span>

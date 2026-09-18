@@ -2,6 +2,11 @@
 
 {% block title %}<title>{{ section.title }} — mindfork</title>{% endblock %}
 {% block desc %}<meta name="description" content="{{ section.description }}">{% endblock %}
+{% block og %}
+<meta property="og:type" content="website">
+<meta property="og:title" content="{{ section.title }} — mindfork">
+<meta property="og:description" content="{% if section.description %}{{ section.description }}{% else %}{{ config.description }}{% endif %}">
+{% endblock og %}
 
 {% block content %}
 <section class="page-head">

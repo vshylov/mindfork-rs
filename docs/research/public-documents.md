@@ -250,4 +250,15 @@ of `include` is a compile error rather than a missing document; and dropping
 `assets/mindfork.ico`, and its absence is only a warning). Both are in the list,
 and the trap is in [lessons.md](../lessons.md) §1.
 
-**Stage 5b (the website) and 5c (the release pull request): pending.**
+**Stage 5b — done, 2026-09-18.** An install page (`/install/`) naming every
+artifact, the SmartScreen warning, the checksum commands and what `mindfork demo`
+is for, with the hero's primary button pointing at it; Open Graph as a
+`{% block og %}` every template overrides, plus `og:url`, `og:image:*`, a
+canonical link and `summary_large_image` over a **1200×630** card drawn by
+`tools/og_card.py`; the licence and disclaimer generated into pages by the tool
+that already made the privacy page (`legal.html` → `doc.html`, since an install
+guide has no byline either); the self-model moved to card 1 of the feature grid;
+and a launch post committed as a **draft** for the owner to date. Built with the
+pinned Zola 0.23.6 — 19 pages, 0 orphans — and the rendered `<head>` read back.
+
+**Stage 5c (the release pull request): pending.**

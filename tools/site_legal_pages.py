@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Generate the website's legal pages from the documents in the repository.
 
-Today that is one page: `PRIVACY.md` -> `site/content/privacy.md`. The policy
+Three pages: `PRIVACY.md` -> `/privacy/`, `DISCLAIMER.md` -> `/disclaimer/` and
+`LICENSE` -> `/license/`. The policy
 has to exist in three places at once — the repository (where it is edited and
 reviewed), the Windows installer (a wizard page, via `tools/wizard_rtf.py`) and
 the website (a reviewer of a code-signing application follows a link from the
@@ -26,6 +27,10 @@ What the transform does, and why each part is needed:
 * **Leaves everything else alone**, including the section numbering the text
   cross-references.
 
+`LICENSE` is the one source that is not Markdown: the MIT text is plain prose
+with hard-wrapped lines, so it is fenced rather than rendered, which keeps it
+byte-identical to the file a court would read.
+
 Usage:
     python tools/site_legal_pages.py            # (re)generate
     python tools/site_legal_pages.py --check    # verify it matches (CI)
@@ -42,14 +47,46 @@ ROOT = Path(__file__).resolve().parent.parent
 #: Where a repository-relative link points once the text is on the website.
 BLOB = "https://github.com/vshylov/mindfork-rs/blob/main/"
 
-#: Front matter for the generated page. `legal.html` is `page.html` without the
-#: reading-time line: a policy is not an article, and "12 min read" over a legal
-#: text reads as a warning rather than a service.
+#: One generated page: the source document, the page it becomes, its title and
+#: description. `doc.html` is `page.html` without the reading-time line — a
+#: policy is not an article, and "12 min read" over a legal text reads as a
+#: warning rather than a service.
+PAGES = [
+    {
+        "src": "PRIVACY.md",
+        "out": "privacy.md",
+        "title": "Privacy policy",
+        "description": (
+            "What mindfork keeps on your machine, what leaves it and only on "
+            "which setting of yours, and what reaches its author — which is nothing."
+        ),
+    },
+    {
+        "src": "DISCLAIMER.md",
+        "out": "disclaimer.md",
+        "title": "Disclaimer",
+        "description": (
+            "The app ships no model: what that means for the output you get, for "
+            "the tools a model may invoke on your machine, and for warranty and "
+            "liability."
+        ),
+    },
+    {
+        "src": "LICENSE",
+        "out": "license.md",
+        "title": "License",
+        "description": "mindfork is MIT-licensed — the standard text, unmodified.",
+        # Not Markdown: fenced verbatim, so the page carries the licence exactly
+        # as the file does.
+        "verbatim": True,
+    },
+]
+
 FRONT_MATTER = """+++
-# Generated from PRIVACY.md by tools/site_legal_pages.py - do not edit.
-title = "Privacy policy"
-description = "What mindfork keeps on your machine, what leaves it and only on which setting of yours, and what reaches its author — which is nothing."
-template = "legal.html"
+# Generated from {src} by tools/site_legal_pages.py - do not edit.
+title = "{title}"
+description = "{description}"
+template = "doc.html"
 +++
 
 """
@@ -58,39 +95,49 @@ template = "legal.html"
 RELATIVE_LINK = re.compile(r"\]\((?!https?://|#|/)([^)]+)\)")
 
 
-def render(markdown: str) -> str:
+def render(page: dict, text: str) -> str:
     """The repository document -> the page Zola builds."""
-    body = markdown.lstrip()
+    front = FRONT_MATTER.format(
+        src=page["src"], title=page["title"], description=page["description"]
+    )
+    if page.get("verbatim"):
+        return front + "```\n" + text.rstrip("\n") + "\n```\n"
+    body = text.lstrip()
     if body.startswith("# "):
         body = body.split("\n", 1)[1].lstrip("\n")
     body = RELATIVE_LINK.sub(lambda m: f"]({BLOB}{m.group(1)})", body)
-    return FRONT_MATTER + body
+    return front + body
 
 
 def main() -> int:
     check = "--check" in sys.argv
-    src, out = ROOT / "PRIVACY.md", ROOT / "site" / "content" / "privacy.md"
-    wanted = render(src.read_text(encoding="utf-8"))
-    current = out.read_text(encoding="utf-8") if out.exists() else None
+    stale = 0
+    for page in PAGES:
+        src = ROOT / page["src"]
+        out = ROOT / "site" / "content" / page["out"]
+        wanted = render(page, src.read_text(encoding="utf-8"))
+        current = out.read_text(encoding="utf-8") if out.exists() else None
+        name = out.relative_to(ROOT).as_posix()
 
-    if check:
+        if check:
+            if current == wanted:
+                print(f"OK: {name} matches {page['src']}")
+            else:
+                stale += 1
+                print(
+                    f"stale: {name} does not match {page['src']}\n"
+                    "regenerate: python tools/site_legal_pages.py",
+                    file=sys.stderr,
+                )
+            continue
+
         if current == wanted:
-            print(f"OK: {out.relative_to(ROOT).as_posix()} matches {src.name}")
-            return 0
-        print(
-            f"stale: {out.relative_to(ROOT).as_posix()} does not match {src.name}\n"
-            "regenerate: python tools/site_legal_pages.py",
-            file=sys.stderr,
-        )
-        return 1
-
-    if current == wanted:
-        print(f"unchanged: {out.relative_to(ROOT).as_posix()}")
-        return 0
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(wanted, encoding="utf-8")
-    print(f"written: {out.relative_to(ROOT).as_posix()} ({len(wanted)} chars from {src.name})")
-    return 0
+            print(f"unchanged: {name}")
+            continue
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(wanted, encoding="utf-8")
+        print(f"written: {name} ({len(wanted)} chars from {page['src']})")
+    return 1 if stale else 0
 
 
 if __name__ == "__main__":

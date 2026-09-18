@@ -2,6 +2,11 @@
 
 {% block title %}<title>{{ section.title }}</title>{% endblock %}
 {% block desc %}<meta name="description" content="{{ section.description }}">{% endblock %}
+{% block og %}
+<meta property="og:type" content="website">
+<meta property="og:title" content="{{ section.title }}">
+<meta property="og:description" content="{{ section.description }}">
+{% endblock og %}
 
 {% block content %}
 <section class="hero">
@@ -11,7 +16,7 @@
       <h1>{{ section.extra.hero_title }}</h1>
       <p class="lede">{{ section.extra.hero_sub }}</p>
       <div class="cta-row">
-        <a class="btn btn-primary" href="{{ config.extra.releases }}">Download</a>
+        <a class="btn btn-primary" href="{{ get_url(path='@/install.md') }}">Install</a>
         <a class="btn" href="{{ config.extra.github }}">Source on GitHub</a>
       </div>
       <p class="demo-hint"><code>$ mindfork demo</code> — try it in a minute: seeded data, a scripted engine, no model download, nothing written outside a temp folder.</p>

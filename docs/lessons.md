@@ -31,6 +31,22 @@ so read the section that matches what you are touching.
 
 ## 1. Process and tooling traps
 
+**A write that reads the same file inside its own argument list truncates it
+first.** `open(p, "w").write(open(p).read().replace(a, b))` — Python evaluates
+`open(p, "w")` before the inner read, so the file is already empty when it is
+read, and the result is a zero-byte file. It cost `site/templates/base.html`
+(restored from git). Read into a variable, then open for writing — or use a small
+`edit(path, old, new)` helper and never write the pattern again.
+— *stage 5b of the public-release track*.
+
+**A template engine reports a broken parent as broken children.** With
+`base.html` truncated to nothing, Zola/Tera said *"Block `title` is not defined
+in any parent template"* against `404.html`, `blog.html` and every other
+template — none of which had been touched. When a build suddenly fails in files
+you did not edit, check the file they all extend before reading a single one of
+them.
+— *stage 5b of the public-release track*.
+
 **A crate's `include` list is a build input list, and only a verification build
 knows what is on it.** Trimming `cargo package` from 26.8 MiB to what "a build
 needs" dropped two things that a build did need: the Russian legal texts, which
