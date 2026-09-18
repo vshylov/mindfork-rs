@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (43)
+## Entries (44)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -55,6 +55,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: the Cargo package becomes `mindfork` (done)
 - Post-M9: public release readiness — stage 6, the flip (done)
 - Post-M9: crates.io — the publish becomes a button the owner presses (done)
+- Release 0.10.1 (prepared)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -2302,3 +2303,60 @@ every reversible check first. Full record —
   and with it the things that are broken promises until the crate is really
   there: the CHANGELOG line, the README's version badge and
   `cargo install mindfork` in install.md.
+
+### Release 0.10.1 (prepared)
+
+- **A release PR** per the checklist in [AGENTS.md §6](../../AGENTS.md) (branch
+  `chore/release-0.10.1`): bumped `Cargo.toml` `0.10.0 → 0.10.1` (+ `Cargo.lock`),
+  `site/zola.toml` `app_version`, `CHANGELOG.md` — `[Unreleased]` → `[0.10.1] —
+  2026-09-19`, a fresh empty `[Unreleased]` opened, comparison links updated. The
+  `v0.10.1` tag is applied by the user after the merge (the agent doesn't push
+  tags/`main`). Gates green: 3326 unit tests, `clippy -D warnings`, `fmt`, and
+  `release_guard.py --tag v0.10.1` accepting the tag this release will carry.
+- **PATCH, and the reason is worth stating**: while at `0.x` a MINOR carries
+  features (§6), and this release adds none. What it adds is a **distribution
+  channel** — the first tag whose publication also puts the crate on crates.io
+  through `.github/workflows/crates-io.yml`. The order matters and is the whole
+  point of that workflow's trigger: merge → tag → `release.yml` builds the draft
+  → the artifact smoke test → the owner publishes → the crate goes up.
+- **This is the release that makes three sentences true.** The README's
+  `crates.io` badge, `docs/install.md` §1's `cargo install mindfork` section and
+  the CHANGELOG line were deliberately withheld until the version that actually
+  publishes (the `crates.io` pull request said so), because each of them is a
+  promise a reader can test in one command.
+- **And the install section says what `cargo install` does not give you**,
+  measured rather than assumed: the dictionaries are copied *next to the binary*
+  by `build.rs` at build time and `cargo install` keeps only the executable, so
+  spellcheck starts off; and the default layout is portable, so the data
+  directory lands in `~/.cargo/bin/data/`. Both are consequences of decisions
+  taken long before the registry existed for this project, and a reader who
+  meets them in the wild without warning would reasonably call them bugs.
+- **The publish step's default was moved to the reversible side** before this
+  release could use it. It read "rehearse when `dry_run` is `true`, otherwise
+  upload", which makes an empty or malformed input fall towards the one action
+  in this pipeline that cannot be taken back. It now reads "upload on a
+  published release, or on a dispatch that *says* `false`" — everything else
+  rehearses. Driven through all seven (event, input, token) combinations: the
+  two that upload are the two that mean it. GitHub does always deliver a
+  declared input's default, so this fixes no observed failure; it removes the
+  need to depend on that when the cost of being wrong is a permanent version.
+- **A detail confirmed from the other side.** The entry above recorded that an
+  untracked `notes.md` does not make `cargo package` refuse, because
+  `Cargo.toml`'s `include` is an explicit list and that file is not in it. This
+  release showed the same rule the other way round: run with the version bump
+  still uncommitted, `cargo publish --dry-run` stopped and named exactly
+  `Cargo.toml`, `Cargo.lock`, `CHANGELOG.md` and `README.md` — the four dirty
+  files that *are* in `include`. The dry run belongs after the commit, which is
+  where the workflow does it anyway (it publishes a checkout of a tag).
+- **One rubric was measured and then not written.** `quinn-proto` 0.11.14 →
+  0.11.18 arrived as a **security** release (three advisories), which is the kind
+  of thing a CHANGELOG's `Security` section exists for. But `cargo tree -i
+  quinn-proto` prints "nothing to print" — on every target and every edge kind:
+  the package is an optional dependency of `reqwest` that this build never
+  enables, so it sits in `Cargo.lock` and not in the binary. A `Security` line
+  would have claimed a fix no user of this program ever needed. The lock entry is
+  updated anyway, because a lock that lags is a lock nobody trusts.
+- **What else landed since v0.10.0 and is deliberately absent from the notes**:
+  the Dependabot batch as such, the `CI gate` job and the branch ruleset behind
+  it, the stage-6 record and the launch post. A changelog is what a user's
+  installation does differently, and none of those change it.
