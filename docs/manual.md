@@ -395,7 +395,8 @@ because a `llama-server` without a model comes up in a mode where every message
 fails.
 
 **A reply stops mid-sentence.** It hit the reply budget
-(`Ctrl+P → Sampling → max tokens`) or the context window. `/continue` resumes it
+(`Ctrl+P` → Sampling → `max_tokens`, where the rows are named after the wire
+fields) or the context window. `/continue` resumes it
 where the engine supports that.
 
 **The interface is still there but nothing answers.** That is a failed
