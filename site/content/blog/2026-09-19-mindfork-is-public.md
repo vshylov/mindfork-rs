@@ -1,17 +1,7 @@
 +++
 title = "mindfork is public"
 description = "The repository is open, the first public release is out, and this is what the project is — an AI chat that lives in your terminal, with memory that persists and tools that stay behind switches you set."
-draft = true
 +++
-
-<!--
-A DRAFT, deliberately: `draft = true` keeps it out of the build until you set
-the date in the filename and the front matter and remove this line. Two things
-to check before publishing (public-release-readiness.md B1): the repository is
-public and https://github.com/vshylov/mindfork-rs/releases answers 200 to an
-anonymous visitor, and the release itself is published rather than a draft —
-every link below points at both.
--->
 
 The repository is open, and the first public release is on the
 [releases page](https://github.com/vshylov/mindfork-rs/releases).
