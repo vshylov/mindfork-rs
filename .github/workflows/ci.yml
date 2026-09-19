@@ -180,6 +180,13 @@ jobs:
       # pull request, rather than by a deploy that pings and is refused; and
       # the submitter's own refusal arms run against fixtures for the same
       # reason the release guard's do.
+      # /llms.txt is generated from the same front matter the pages render
+      # from, so a new article that nobody regenerated for would otherwise
+      # leave the site telling a model about a shorter one than it has.
+      - name: The website's llms.txt matches its content
+        run: python3 tools/site_llms_txt.py --check
+      - name: The llms.txt generator's own arms
+        run: python3 tools/site_llms_txt.py --self-test
       - name: The IndexNow key file is well-formed
         run: python3 tools/indexnow.py --check
       - name: The IndexNow submitter's own arms
