@@ -2360,3 +2360,15 @@ every reversible check first. Full record —
   the Dependabot batch as such, the `CI gate` job and the branch ruleset behind
   it, the stage-6 record and the launch post. A changelog is what a user's
   installation does differently, and none of those change it.
+- **Published, and the numbers of it.** Publishing the GitHub release at
+  00:12:01Z started `crates-io.yml`, and `mindfork 0.10.1` was on the registry at
+  00:14:11Z: 3 941 402 bytes, MIT, one binary target, `rust-version` 1.96, not
+  yanked, the declared keywords and categories intact. That run was the first
+  execution of the branch no rehearsal can reach — `dry run false`, the upload
+  taken, the URL printed by the last step. `cargo info mindfork` resolves it from
+  the index, and the README's badge renders `v0.10.1`.
+- **What the registry does not show, written down so it is not mistaken for a
+  failure later**: docs.rs answers `doc_status: false`, because it builds
+  documentation for a library target and this crate has none. The
+  `documentation` field has always pointed at the manual, and that is the link
+  the crates.io page carries.
