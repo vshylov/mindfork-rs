@@ -10,7 +10,7 @@ the reasoning behind the site, not its current shape. For the current shape
 read the research/design doc above; for the traps that recur across areas
 read [lessons.md](../lessons.md).
 
-## Entries (19)
+## Entries (20)
 
 - Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 - Post-M9: website — S2 infra: one CloudFormation stack, mindfork.io live (done)
@@ -31,6 +31,7 @@ read [lessons.md](../lessons.md).
 - Post-M9: public release readiness — stage 5b, the site a stranger lands on (done)
 - Post-M9: website — mindfork.io in Google Search Console (done)
 - Post-M9: website — structured data, authorship and dates a crawler can read (done)
+- Post-M9: website — a Cache-Control the site never sent (done)
 
 ### Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 
@@ -909,3 +910,59 @@ templates, content and CI, no Rust touched.
 - Still open, and deliberately not in this pass: `Cache-Control` is absent on every
   response (Tier 2, a `s3 sync` change), the OG card is one image for the whole site,
   and Bing/Yandex/IndexNow are registrations rather than code.
+
+### Post-M9: website — a Cache-Control the site never sent (done)
+
+- **Tier 2 of the search-visibility pass**, after the structured data of the entry before
+  this one. The measurement that chose it: `curl -I` against the live site returned **no
+  `Cache-Control` at all** — not on the pages, not on `/style.css`, not on the woff2
+  fonts, not on the OG card — and `head-object` said the same at the source, `CacheControl:
+  null` on every key sampled. CloudFront was falling back to its own default TTL and the
+  browser was given no directive whatever, so a repeat visit re-fetched **2.5 MB** of fonts
+  and screenshots on nothing but a heuristic.
+- **Three answers, so three sync passes.** The site has **no fingerprinted filenames** to
+  lean on — `/style.css` is `/style.css` forever — so a single long TTL was never
+  available, and the split is by what the bytes at a URL actually do:
+  `fonts/` gets `max-age=31536000, immutable` (a released typeface); `brand/` and
+  `screenshots/` get `max-age=86400` and **not** `immutable`, because `tools/og_card.py`
+  and `tools/screenshots.py` regenerate them under the same names and a year would strand
+  a viewer on the old picture; everything else gets `max-age=300, s-maxage=86400`, which
+  lets the edge hold a page for a day while a browser rechecks in five minutes. The deploy
+  invalidates the edge on the very next step and cannot invalidate a browser, which is the
+  whole reason those two numbers differ.
+- **The trap that makes the workflow change insufficient on its own**: `aws s3 sync`
+  writes `--cache-control` **only onto the objects it uploads**, and it uploads only what
+  changed. Measured with `--dryrun` against the live bucket: the entire site was **2
+  uploads and 0 deletes**, and the fonts pass was **empty**. So the 2.5 MB that matters
+  most would have kept its missing header indefinitely — the assets that never change are
+  exactly the ones a content-based sync never touches. Hence a one-time backfill that
+  copies each object onto itself with the header added.
+- **The backfill restores each object's `Content-Type` explicitly**, read back per key
+  before the copy. `--metadata-directive REPLACE` replaces *all* metadata, so letting the
+  CLI re-guess the type would have been the one way this could break the live site — an
+  extensionless key becoming `binary/octet-stream` is a page that no longer renders. The
+  script refuses outright on any object whose type it cannot read back. Its dry run over
+  the live bucket found **59 objects, all 59 without a header** — the audit's `curl -I`
+  confirmed at the source — across eight content types (24 `text/html`, 13
+  `image/svg+xml`, 12 `image/png`, 4 `font/woff2`, 2 `application/xml`, 2 `text/plain`,
+  one stylesheet and one icon), every one of them readable and therefore restorable. The
+  shape of it, per object, is:
+
+  ```
+  aws s3 cp "s3://$BUCKET/$KEY" "s3://$BUCKET/$KEY"     --metadata-directive REPLACE --content-type "$ITS_OWN_TYPE"     --cache-control "$THE_RULE_FOR_ITS_PREFIX"
+  ```
+
+  It is deliberately not a committed tool: a bucket rebuilt from scratch gets the headers
+  from the first sync, so this is needed once, for the objects that predate the change.
+- **Filters and `--delete` were checked rather than assumed**, since a wrong answer here
+  empties a bucket: the documentation states that "files excluded by filters are excluded
+  from deletion", and the dry run agreed — a pass filtered to `fonts/*` proposed **0**
+  deletions against a bucket full of pages. The three passes therefore cover every prefix
+  exactly once for deletion, so nothing stale accumulates in the prefixes the catch-all
+  pass excludes.
+- No Rust touched: no live run, and the test count is unchanged. Gates
+  (`actions_pin_check` / `cyrillic_scan` / `link_check` / `doc_index_check`) green, and the
+  workflow was parsed to confirm the three steps replaced the one.
+- Still open from the audit, and deliberately not here: one OG card for the whole site
+  (`tools/og_card.py` can draw per-page ones), and Bing, Yandex and IndexNow, which are
+  registrations rather than code.
