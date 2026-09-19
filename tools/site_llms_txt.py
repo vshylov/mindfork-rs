@@ -53,6 +53,11 @@ SCALAR = re.compile(r'^(\w+)\s*=\s*"(.*)"\s*$')
 #: drops it from the URL, so the slug is what follows.
 DATED = re.compile(r"^\d{4}-\d{2}-\d{2}-(.+)$")
 
+#: Zola's name for a section's own page - the home page's, and the heading of
+#: `articles/` and `blog/`. It is front matter for the section, never an entry
+#: in one, so a listing skips it and the home page is read by name.
+INDEX_FILE = "_index.md"
+
 #: The pages that answer "may I", not "what is" - the convention's own bucket
 #: for links an agent can skip. Order is the footer's.
 OPTIONAL = ["privacy", "disclaimer", "license", "code-signing-policy"]
@@ -128,7 +133,7 @@ def entries(root: Path, folder: str, base: str, *, by: str) -> list[str]:
     directory = root / "site" / "content" / folder
     pages = []
     for md in sorted(directory.glob("*.md")):
-        if md.name == "_index.md":
+        if md.name == INDEX_FILE:
             continue
         meta = front_matter(md)
         # A draft is not built, so listing it would publish a 404.
@@ -161,7 +166,7 @@ def render(root: Path) -> str:
         return match.group(1)
 
     base = conf("base_url").rstrip("/")
-    home = front_matter(root / "site" / "content" / "_index.md")
+    home = front_matter(root / "site" / "content" / INDEX_FILE)
     install = front_matter(root / "site" / "content" / "install.md")
 
     out = [f"# {conf('title')}", "", f"> {conf('description')}", ""]
@@ -202,7 +207,7 @@ def self_test() -> int:
             'description = "a summary"\ngithub = "https://github.com/o/r"\n',
             encoding="utf-8",
         )
-        (content / "_index.md").write_text(
+        (content / INDEX_FILE).write_text(
             '+++\ntitle = "t"\n\n[extra]\nhero_sub = "the lede"\n+++\n', encoding="utf-8")
         (content / "install.md").write_text(
             '+++\ntitle = "Install"\ndescription = "how to get it"\n+++\n', encoding="utf-8")
