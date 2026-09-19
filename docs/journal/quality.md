@@ -1465,5 +1465,21 @@ structure (AGENTS.md §3).
   `sonarcloud.io`, `img.shields.io` and even `github.com`'s badge assets, so
   no badge URL in this README — including the five that were already there —
   could be fetched. First render on GitHub is the check.
-- **No CHANGELOG entry, no live run, no test change** — a README masthead and two
-  documents; nothing in `src/`. **3326 unit tests** unchanged.
+- **The README's test count was three behind, and finding out cost a measurement
+  worth keeping.** `CLAUDE.md` said 3326 / 196 and the README 3323 / 196 — the
+  README simply never got the 0.10.1-era bump (`docs/research/public-documents.md`
+  had already flagged the same line once, at 3217). The obvious repair is to copy
+  the larger number across, and it would have been wrong to do it on that
+  reasoning alone: `cargo test` **in this Linux container reports 3324 passed,
+  189 ignored** on the same commit, matching neither document. The suite does not
+  compile to the same size on the two targets — `src/shared/keys.rs` alone holds
+  three `cfg(windows)` tests, and some `#[ignore]` smokes (the real-clipboard
+  round trip, the screenshot regenerator) are Windows-only — so 3326 / 196 is the
+  author's Windows figure and 3324 / 189 is Linux's. The README is aligned to the
+  documented Windows figure, which is what `CLAUDE.md` and every recent journal
+  entry carry; the trap itself is now a rule in [lessons.md](../lessons.md) §6,
+  because an agent measuring on Linux would "fix" `CLAUDE.md` into a number that
+  is wrong on both platforms. (ALSA had to be installed before the suite would
+  build here at all — `libasound2-dev`, exactly as the `test` job does it.)
+- **No CHANGELOG entry and no live run** — a README masthead and three documents;
+  nothing in `src/`. Test totals unchanged by this branch.

@@ -1442,6 +1442,18 @@ machine has: `-ExecutionPolicy RemoteSigned` refuses an unsigned script carrying
 exact bytes and runs the same script without them.
 — *a file a call wrote carries the mark of a download*.
 
+**The test count is platform-dependent, so do not "correct" it from the platform you
+happen to be on.** Every journal entry ends with a count, `CLAUDE.md`'s Status header
+carries one, and so does the README — and the suite does not compile to the same size on
+both targets: the documented **3326 / 196** is the author's Windows machine, while a Linux
+container measures **3324 / 189** on the same commit (`cargo test`, 2026-09-19), because a
+handful of tests sit behind `cfg(windows)` and some `#[ignore]` smokes exist only there.
+An agent that runs the suite on Linux, sees the mismatch and "fixes" the documents has
+replaced one number that is right on Windows with one that is wrong on both. Treat the
+Windows figure as the documented one, state the platform when it matters, and remember
+that CI runs both — so neither runner reproduces the other's total either.
+— *the quality-gate badge, and the one Dependabot badge that is not a claim*.
+
 ---
 
 ## 7. i18n, gates and localization
