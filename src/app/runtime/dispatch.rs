@@ -9,6 +9,7 @@ use crate::entities::self_model::SelfModel;
 use crate::features::chat_search::SearchGroup;
 use crate::features::chat_search_sort::SortMode;
 use crate::features::tools::mcp::McpSnapshot;
+use crate::screens::awaited_chat::AwaitedChat;
 use crate::shared::config::AppConfig;
 use crate::shared::secrets::SecretKey;
 use crate::shared::server::ServerStatuses;
@@ -91,7 +92,9 @@ pub(super) fn apply_event(
             live_turn,
         } => {
             clear_back_if_left(back, id);
-            close_or_mark_chat_list(active, id);
+            // A screen that asked for this chat and stayed up for it gives
+            // way now; one with a way back is stashed as it goes.
+            hand_over_to_chat(active, back, id);
             // The child view goes first: `activate_chat` reads it while
             // building the feed (the persona bubble, the transcript's message
             // copy), so setting it after would build every feed with the
@@ -332,7 +335,13 @@ fn show_message_search_results(
 /// into the open list's status area, or as a note in the feed.
 fn report_chat_list_error(screen: &mut ChatScreen, active: &mut ActiveScreen, message: String) {
     match active {
-        ActiveScreen::ChatList(list) => list.set_error(message),
+        ActiveScreen::ChatList(list) => {
+            // A refused request (a clone of a transcript, a save that failed)
+            // is answered with this instead of an activation: the list stops
+            // waiting, or the next unrelated activation would close it.
+            list.stop_awaiting();
+            list.set_error(message);
+        }
         _ => screen.push_error(&message),
     }
 }
@@ -380,31 +389,72 @@ fn clear_back_if_left(back: &mut Option<Back>, id: Uuid) {
     // (regeneration, deleting an exchange, a repeat jump) rebuilds the
     // feed without leaving the chat, and must keep the way back.
     //
-    // Following a reference is the one route that **writes** the stash on
-    // its way through: it is set in `dispatch` before the command is sent,
-    // and the activation that follows names the chat it points out of, so
-    // this leaves it alone. Order is what makes that true, and it is the
-    // reason the push cannot move into `apply_event`.
+    // Following a reference **writes** the stash on its way through: it is
+    // set in `dispatch` before the command is sent, and the activation that
+    // follows names the chat it points out of, so this leaves it alone. Order
+    // is what makes that true, and it is the reason *that* push cannot move
+    // into `apply_event` — the origin is only known while the old chat is
+    // still the open one. The two screens that are a way back are stashed
+    // right after this, by the same activation (`hand_over_to_chat`), naming
+    // the chat that has just arrived.
     if back.as_ref().is_some_and(|ret| ret.chat() != id) {
         *back = None;
     }
 }
 
-/// The open chat list's reaction to a chat activation: close it for a
-/// just-created chat (`Ctrl+N` in the list), otherwise refresh its
-/// active-chat marker.
-fn close_or_mark_chat_list(active: &mut ActiveScreen, id: Uuid) {
-    if let ActiveScreen::ChatList(list) = active {
-        if list.take_pending_new_chat() {
-            // Activation of a just-created chat arrived (`Ctrl+N` in
-            // the list) — close the list and show the new chat. This makes
-            // the old→new transition atomic, with no intermediate flash.
-            *active = ActiveScreen::Chat;
-        } else {
-            // Deleting the active chat while the list is open changes the active one —
-            // refresh its marker in the list.
-            list.set_active(Some(id));
+/// The front screen's reaction to a chat activation: a screen that **asked for
+/// this chat** gives way to it now — the arrival half of [`AwaitedChat`].
+///
+/// Opening a chat is a round trip, and the loop applies the answer a tick after
+/// the key. A screen that left at once therefore showed the *previous* chat for
+/// that tick — a whole, fully repainted frame of the wrong conversation. So the
+/// chat list (`Enter`, `Ctrl+N`, `Ctrl+D`), the search results (`Enter` on a
+/// hit) and the tasks screen (`Enter`/`P`) stay up until the chat they asked for
+/// is on the chat screen, which makes the switch one frame (spec §11.2).
+///
+/// The two screens with a way back are **stashed here** rather than in
+/// `dispatch`: a stash written before the screen has left would describe a
+/// screen that is still in front.
+///
+/// Exhaustive by variant, like every match that may replace the active screen
+/// (docs/history/chat-search-stage2.md §1.6): a new screen has to say whether it
+/// can ask for a chat.
+fn hand_over_to_chat(active: &mut ActiveScreen, back: &mut Option<Back>, id: Uuid) {
+    let arrived = match active {
+        ActiveScreen::ChatList(list) => {
+            let arrived = list.take_awaited(id);
+            if !arrived {
+                // Deleting the active chat while the list is open changes the
+                // active one — refresh its marker in the list.
+                list.set_active(Some(id));
+            }
+            arrived
         }
+        ActiveScreen::Search(results) => results.take_awaited(id),
+        ActiveScreen::Tasks(tasks) => tasks.take_awaited(id),
+        ActiveScreen::Chat
+        | ActiveScreen::Settings(_)
+        | ActiveScreen::SelfModel(_)
+        | ActiveScreen::Changes(_) => false,
+    };
+    if arrived {
+        show_chat(active, back, id);
+    }
+}
+
+/// Puts the chat screen in front of a screen that opened `chat`, stashing the
+/// two that are a way back ([`Back`]) so `Esc` in that chat returns to them
+/// whole. The chat list is not one of them: `Esc` rebuilds it from the chat
+/// screen's snapshot anyway.
+fn show_chat(active: &mut ActiveScreen, back: &mut Option<Back>, chat: Uuid) {
+    match std::mem::replace(active, ActiveScreen::Chat) {
+        ActiveScreen::Search(screen) => *back = Some(Back::Search { screen, chat }),
+        ActiveScreen::Tasks(screen) => *back = Some(Back::Tasks { screen, chat }),
+        ActiveScreen::Chat
+        | ActiveScreen::ChatList(_)
+        | ActiveScreen::Settings(_)
+        | ActiveScreen::SelfModel(_)
+        | ActiveScreen::Changes(_) => {}
     }
 }
 
@@ -531,6 +581,7 @@ fn apply_task_list(active: &mut ActiveScreen, back: &mut Option<Back>, list: Tas
 pub(super) fn dispatch_tasks(
     intent: TasksIntent,
     cmd_tx: &UnboundedSender<AppCommand>,
+    screen: &ChatScreen,
     active: &mut ActiveScreen,
     back: &mut Option<Back>,
 ) -> bool {
@@ -548,9 +599,17 @@ pub(super) fn dispatch_tasks(
             let _ = cmd_tx.send(AppCommand::StopBackgroundTask { kind });
             false
         }
+        // The screen stays in front until the chat arrives, and is stashed as
+        // it goes (`hand_over_to_chat`) — so the previous chat is never shown
+        // in between. The chat **already open** is the exception the chat list
+        // makes too: a switch to it is a no-op the orchestrator does not
+        // answer, so the screen gives way, and is stashed, right here.
         TasksIntent::OpenRun(chat) | TasksIntent::OpenParent(chat) => {
-            if let ActiveScreen::Tasks(screen) = std::mem::replace(active, ActiveScreen::Chat) {
-                *back = Some(Back::Tasks { screen, chat });
+            match active {
+                ActiveScreen::Tasks(tasks) if screen.active_chat() != Some(chat) => {
+                    tasks.await_chat(chat)
+                }
+                _ => show_chat(active, back, chat),
             }
             let _ = cmd_tx.send(AppCommand::SwitchChat(chat));
             false
@@ -640,7 +699,7 @@ pub(super) fn dispatch_any(
         AnyIntent::SelfModel(i) => dispatch_self_model(i, cmd_tx, active),
         AnyIntent::Changes(i) => dispatch_changes(i, cmd_tx, active),
         AnyIntent::Search(i) => dispatch_search(i, cmd_tx, screen, active, back),
-        AnyIntent::Tasks(i) => dispatch_tasks(i, cmd_tx, active, back),
+        AnyIntent::Tasks(i) => dispatch_tasks(i, cmd_tx, screen, active, back),
     }
 }
 
@@ -903,14 +962,17 @@ pub(super) fn dispatch_chat_list(
     active: &mut ActiveScreen,
 ) -> bool {
     let command = match intent {
-        // Closing/switching to a chat returns to the base screen.
+        // Closing returns to the base screen.
         ChatListIntent::Close => {
             *active = ActiveScreen::Chat;
             return false;
         }
         ChatListIntent::Quit => return true,
+        // The list is KEPT open until the chat's `ChatActivated` arrives —
+        // otherwise the previous active chat would flash for the duration of
+        // the round-trip (`hand_over_to_chat`).
         ChatListIntent::Switch(id) => {
-            *active = ActiveScreen::Chat;
+            leave_list_for(active, screen, AwaitedChat::Chat(id));
             AppCommand::SwitchChat(id)
         }
         // Creating a chat starts the new-chat flow on the chat screen (that's where
@@ -918,13 +980,10 @@ pub(super) fn dispatch_chat_list(
         ChatListIntent::NewChat => {
             match screen.request_new_chat() {
                 // A single profile: the orchestrator creates the chat (round-trip). The list
-                // is KEPT open until the new chat's `ChatActivated` arrives —
-                // otherwise the previous active chat would flash for the duration of the round-trip. Once
-                // the activation arrives, `apply_event` switches to the new chat.
+                // is kept open until the new chat's `ChatActivated` arrives, like
+                // a switch — its id is just not known yet.
                 Some(ChatIntent::NewChat { profile_id }) => {
-                    if let ActiveScreen::ChatList(list) = active {
-                        list.set_pending_new_chat();
-                    }
+                    leave_list_for(active, screen, AwaitedChat::Created);
                     let _ = cmd_tx.send(AppCommand::NewChat { profile_id });
                 }
                 // >1 profile: `request_new_chat` opened the profile-picker overlay on
@@ -933,8 +992,11 @@ pub(super) fn dispatch_chat_list(
             }
             return false;
         }
+        // A clone is a created chat too. A refusal (a transcript cannot be
+        // cloned, the save failed) comes back as `ChatListError`, which now
+        // lands in the list's own status area instead of the feed behind it.
         ChatListIntent::Clone(id) => {
-            *active = ActiveScreen::Chat;
+            leave_list_for(active, screen, AwaitedChat::Created);
             AppCommand::CloneChat(id)
         }
         // Copy/delete/rename/auto-title don't close the list:
@@ -958,15 +1020,33 @@ pub(super) fn dispatch_chat_list(
         ChatListIntent::SearchMessages { query, sort } => {
             AppCommand::SearchMessages { query, sort }
         }
-        // Opening a chat at its first match closes the list, exactly as a plain
+        // Opening a chat at its first match leaves the list exactly as a plain
         // `Switch` does.
         ChatListIntent::OpenFirstMatch { chat, query } => {
-            *active = ActiveScreen::Chat;
+            leave_list_for(active, screen, AwaitedChat::Chat(chat));
             AppCommand::OpenChatAtFirstMatch { chat, query }
         }
     };
     let _ = cmd_tx.send(command);
     false
+}
+
+/// The chat list asked for a chat: it stays in front until that chat's
+/// `ChatActivated` arrives ([`hand_over_to_chat`]).
+///
+/// The one chat that is not waited for is the one **already open**: the
+/// orchestrator treats a switch to it as a no-op and answers nothing
+/// (`switch_to`), and what the chat screen holds is already the right
+/// conversation — so the list closes at once, as it always did.
+fn leave_list_for(active: &mut ActiveScreen, screen: &ChatScreen, awaited: AwaitedChat) {
+    let already_open = match awaited {
+        AwaitedChat::Chat(id) => screen.active_chat() == Some(id),
+        AwaitedChat::Created | AwaitedChat::Nothing => false,
+    };
+    match active {
+        ActiveScreen::ChatList(list) if !already_open => list.await_chat(awaited),
+        _ => *active = ActiveScreen::Chat,
+    }
 }
 
 /// Translates a settings-screen intent into a command (or closes it).
@@ -1042,19 +1122,20 @@ pub(super) fn dispatch_search(
             false
         }
         // The jump itself is stage 2a's; here it only leaves the results, the
-        // way `ChatListIntent::Switch` leaves the chat list — except that the
-        // screen is **stashed** rather than dropped, so `Esc` in the chat can
-        // come back to these exact hits (see [`Back`]).
+        // way `ChatListIntent::Switch` leaves the chat list: **when the chat
+        // arrives**, not before, so the previous chat is never shown in
+        // between — except that the screen is then **stashed** rather than
+        // dropped, so `Esc` in the chat can come back to these exact hits (see
+        // [`Back`] and `hand_over_to_chat`). A jump always gets an answer, the
+        // open chat included: the focus has to reach the feed (`switch_to`).
         SearchIntent::OpenHit {
             chat,
             message,
             query,
         } => {
-            if let ActiveScreen::Search(results) = std::mem::replace(active, ActiveScreen::Chat) {
-                *back = Some(Back::Search {
-                    screen: results,
-                    chat,
-                });
+            match active {
+                ActiveScreen::Search(results) => results.await_chat(chat),
+                _ => *active = ActiveScreen::Chat,
             }
             let _ = cmd_tx.send(AppCommand::OpenChatAt {
                 chat,

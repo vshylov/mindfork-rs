@@ -26,6 +26,7 @@ use uuid::Uuid;
 
 use crate::app::events::{AppTask, BackgroundKind, RunProgressKind, TaskList, TaskRun};
 use crate::entities::subagent::RunOutcome;
+use crate::screens::awaited_chat::AwaitedChat;
 use crate::shared::i18n::Locale;
 use crate::shared::keys;
 use crate::shared::theme::Palette;
@@ -121,6 +122,10 @@ pub struct TasksScreen {
     /// When the screen was last drawn, for the once-a-second repaint that
     /// moves the elapsed column ([`Self::needs_repaint`]).
     last_drawn: Instant,
+    /// The transcript or parent chat this screen asked for (`Enter`, `P`) and
+    /// stays up for, so the previous chat is never shown in between. See
+    /// spec §11.2.
+    awaited: AwaitedChat,
 }
 
 impl TasksScreen {
@@ -132,7 +137,19 @@ impl TasksScreen {
             selected: 0,
             scroll: 0,
             last_drawn: Instant::now(),
+            awaited: AwaitedChat::Nothing,
         }
+    }
+
+    /// The screen stays up until this chat's `ChatActivated` arrives
+    /// (`dispatch_tasks`); it is stashed as the way back at that moment.
+    pub fn await_chat(&mut self, chat: Uuid) {
+        self.awaited = AwaitedChat::Chat(chat);
+    }
+
+    /// Whether the activation that just arrived is the asked-for chat (consumed).
+    pub fn take_awaited(&mut self, id: Uuid) -> bool {
+        self.awaited.take_if_arrived(id)
     }
 
     /// Replaces the snapshot — the reply to the opening request, or a later
@@ -247,6 +264,9 @@ impl TasksScreen {
         if key.kind != KeyEventKind::Press {
             return None;
         }
+        // A key while waiting for a chat means the user has moved on (see
+        // `AwaitedChat::clear`); `app` sets the wait after this returns.
+        self.awaited.clear();
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         if key.code == KeyCode::F(10) || (ctrl && keys::hotkey_char(&key) == Some('q')) {
             return Some(TasksIntent::Quit);

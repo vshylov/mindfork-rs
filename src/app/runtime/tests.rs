@@ -433,7 +433,8 @@ fn ctrl_g_in_content_mode_opens_the_message_search_screen() {
 }
 
 /// `Enter` on a hit is stage 2a's jump: the chat opens on that message and the
-/// results close, exactly as `Switch` closes the chat list.
+/// results close, exactly as `Switch` closes the chat list — **when the chat
+/// arrives**, so the previous one is never shown in between.
 #[test]
 fn opening_a_hit_jumps_to_the_message_and_leaves_the_results() {
     use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -483,12 +484,24 @@ fn opening_a_hit_jumps_to_the_message_and_leaves_the_results() {
         _ => panic!("the screen must be open"),
     };
 
-    assert!(matches!(active, ActiveScreen::Chat), "the results close");
     assert!(matches!(
         cmd_rx.try_recv(),
         Ok(AppCommand::OpenChatAt { chat: c, message: m, query })
             if c == chat && m == message && query == "маркер"
     ));
+    assert!(
+        matches!(active, ActiveScreen::Search(_)),
+        "the chat screen still holds the previous chat — the results stay"
+    );
+    apply_event(
+        &mut screen,
+        &mut active,
+        &mut back,
+        &mut clip,
+        &cmd_tx,
+        chat_activated(chat),
+    );
+    assert!(matches!(active, ActiveScreen::Chat), "the results close");
 }
 
 /// `Esc` goes back to the chat list **still searching for the same query** —
@@ -770,7 +783,9 @@ fn chat_activated(id: uuid::Uuid) -> AppEvent {
 }
 
 /// Opens the results, moves the selection down one, and opens that hit — the
-/// real path, key presses included. Returns the chat it jumped into.
+/// real path, key presses included, **through the activation the jump asks
+/// for**: the results give way, and are stashed, when the chat arrives and not
+/// before. Returns the chat it jumped into.
 #[cfg(test)]
 fn jump_to_second_hit(
     screen: &mut ChatScreen,
@@ -807,6 +822,11 @@ fn jump_to_second_hit(
         active,
         back,
     );
+    assert!(
+        matches!(active, ActiveScreen::Search(_)),
+        "the results stay until the chat is there"
+    );
+    apply_event(screen, active, back, clip, cmd_tx, chat_activated(chat));
     chat
 }
 
@@ -1164,18 +1184,16 @@ impl Harness {
         while self.cmd_rx.try_recv().is_ok() {}
     }
 
-    /// Opens the results and jumps into the second hit, then applies the
+    /// Opens the results and jumps into the second hit, through the
     /// activation that jump asks for. Returns the chat it landed in.
     fn arrive_from_a_search_hit(&mut self) -> uuid::Uuid {
-        let chat = jump_to_second_hit(
+        jump_to_second_hit(
             &mut self.screen,
             &mut self.active,
             &mut self.back,
             &mut self.clip,
             &self.cmd_tx,
-        );
-        self.apply(chat_activated(chat));
-        chat
+        )
     }
 
     /// Reads `origin`, follows a `chat://` reference to `target`, and applies
@@ -1900,13 +1918,18 @@ fn esc_from_a_chat_opened_from_the_tasks_screen_returns_to_it() {
 
     h.feed(key(KeyCode::Enter));
     assert!(matches!(h.next_command(), Some(AppCommand::SwitchChat(id)) if id == run_id));
+    assert!(
+        matches!(h.active, ActiveScreen::Tasks(_)) && h.back.is_none(),
+        "the screen stays, unstashed, until the transcript is there"
+    );
+    h.apply(chat_activated(run_id));
     assert!(matches!(h.active, ActiveScreen::Chat));
     assert!(matches!(&h.back, Some(Back::Tasks { chat, .. }) if *chat == run_id));
     assert_eq!(esc_target(&h.back), EscTarget::Tasks, "and the bar says so");
     h.apply(chat_activated(run_id));
     assert!(
         h.back.is_some(),
-        "the switch's own activation is not leaving"
+        "a re-activation of the same chat is not leaving"
     );
     // A snapshot arriving meanwhile reaches the stashed screen too.
     h.apply(AppEvent::TaskList(Box::default()));
@@ -1929,9 +1952,28 @@ fn esc_from_a_chat_opened_from_the_tasks_screen_returns_to_it() {
     h.apply(task_list_with(run));
     h.feed(key(KeyCode::Char('p')));
     assert!(matches!(h.next_command(), Some(AppCommand::SwitchChat(id)) if id == parent));
+    h.apply(chat_activated(parent));
     assert!(matches!(&h.back, Some(Back::Tasks { chat, .. }) if *chat == parent));
     h.apply(chat_activated(uuid::Uuid::new_v4()));
     assert!(h.back.is_none(), "no longer where we came from");
+}
+
+/// The chat **already open** is the one switch the orchestrator does not
+/// answer (`switch_to` — a no-op), so waiting for it would wait forever: the
+/// tasks screen gives way, and is stashed, at once.
+#[test]
+fn the_tasks_screen_does_not_wait_for_the_chat_that_is_already_open() {
+    let mut h = Harness::new();
+    let run = crate::app::events::TaskRun::fixture("Критик");
+    let run_id = run.id;
+    h.apply(chat_activated(run_id));
+    h.dispatch(ChatIntent::OpenTasks);
+    h.apply(task_list_with(run));
+    h.drain_commands();
+
+    h.feed(key(KeyCode::Enter));
+    assert!(matches!(h.active, ActiveScreen::Chat));
+    assert!(matches!(&h.back, Some(Back::Tasks { chat, .. }) if *chat == run_id));
 }
 
 /// `F6` on a running background run sends the very command `/subagents
@@ -2028,6 +2070,172 @@ fn a_typed_stop_of_several_tasks_fans_out_into_one_command_each() {
     ));
     assert!(h.next_command().is_none());
     assert!(matches!(h.active, ActiveScreen::Chat));
+}
+
+// ---- a chat asked for from the list arrives in one frame (spec §11.2) ----
+
+impl Harness {
+    /// A chat is open and the list is in front of it, holding one **other**
+    /// chat with the selection on it. Returns `(open, other)`.
+    fn list_over_an_open_chat(&mut self) -> (uuid::Uuid, uuid::Uuid) {
+        let chats = vec![summary("Бета")];
+        let (open, other) = (uuid::Uuid::new_v4(), chats[0].id);
+        self.apply(AppEvent::ChatList(chats));
+        self.apply(chat_activated(open));
+        self.dispatch(ChatIntent::OpenChatList);
+        self.drain_commands();
+        (open, other)
+    }
+
+    fn list_dump(&mut self) -> String {
+        match &mut self.active {
+            ActiveScreen::ChatList(list) => list_dump(list),
+            other => panic!("not the chat list: {:?}", std::mem::discriminant(other)),
+        }
+    }
+}
+
+/// The defect: `Enter` in the list put the chat screen in front at once, while
+/// it still held the **previous** chat — the answer is applied a tick later, so
+/// a whole frame of the wrong conversation was drawn in between. The list now
+/// stays until the chat it asked for is on the chat screen.
+#[test]
+fn the_list_stays_in_front_until_the_chat_it_asked_for_arrives() {
+    let mut h = Harness::new();
+    let (open, other) = h.list_over_an_open_chat();
+
+    h.feed(key(KeyCode::Enter));
+    assert!(matches!(h.next_command(), Some(AppCommand::SwitchChat(id)) if id == other));
+    assert_eq!(
+        h.screen.active_chat(),
+        Some(open),
+        "what the chat screen would have drawn is the previous chat"
+    );
+    assert!(
+        matches!(h.active, ActiveScreen::ChatList(_)),
+        "so the list stays in front"
+    );
+
+    // Somebody else's activation in the meantime is not the answer.
+    h.apply(chat_activated(uuid::Uuid::new_v4()));
+    assert!(matches!(h.active, ActiveScreen::ChatList(_)));
+
+    h.apply(chat_activated(other));
+    assert!(matches!(h.active, ActiveScreen::Chat));
+    assert_eq!(h.screen.active_chat(), Some(other));
+}
+
+/// A switch to the chat **already open** is a no-op the orchestrator does not
+/// answer (`switch_to`), so there is nothing to wait for — and nothing wrong on
+/// the chat screen to hide. The list closes at once, as it always did; the same
+/// goes for opening that chat at its first match, whose answer is not promised
+/// (nothing may match).
+#[test]
+fn the_list_closes_at_once_for_the_chat_that_is_already_open() {
+    let mut h = Harness::new();
+    let chats = vec![summary("Альфа")];
+    let open = chats[0].id;
+    h.apply(AppEvent::ChatList(chats));
+    h.apply(chat_activated(open));
+
+    h.dispatch(ChatIntent::OpenChatList);
+    h.feed(key(KeyCode::Enter));
+    assert!(matches!(h.next_command(), Some(AppCommand::SwitchChat(id)) if id == open));
+    assert!(matches!(h.active, ActiveScreen::Chat));
+
+    h.dispatch(ChatIntent::OpenChatList);
+    dispatch_any(
+        AnyIntent::List(ChatListIntent::OpenFirstMatch {
+            chat: open,
+            query: "маркер".into(),
+        }),
+        &h.cmd_tx,
+        &mut h.screen,
+        &mut h.active,
+        &mut h.back,
+    );
+    assert!(matches!(h.active, ActiveScreen::Chat));
+}
+
+/// Opening a chat at its first match is the same round trip as a plain switch.
+#[test]
+fn opening_at_the_first_match_waits_for_the_chat_too() {
+    let mut h = Harness::new();
+    let (_, other) = h.list_over_an_open_chat();
+    dispatch_any(
+        AnyIntent::List(ChatListIntent::OpenFirstMatch {
+            chat: other,
+            query: "маркер".into(),
+        }),
+        &h.cmd_tx,
+        &mut h.screen,
+        &mut h.active,
+        &mut h.back,
+    );
+    assert!(matches!(
+        h.next_command(),
+        Some(AppCommand::OpenChatAtFirstMatch { chat, .. }) if chat == other
+    ));
+    assert!(matches!(h.active, ActiveScreen::ChatList(_)));
+    h.apply(chat_activated(other));
+    assert!(matches!(h.active, ActiveScreen::Chat));
+}
+
+/// `Ctrl+N` and `Ctrl+D` ask for a chat that does not exist yet, so its id
+/// cannot be waited for: whatever activates next is taken to be it.
+#[test]
+fn a_created_chat_is_waited_for_without_its_id() {
+    for ask in [KeyCode::Char('n'), KeyCode::Char('d')] {
+        let mut h = Harness::new();
+        h.list_over_an_open_chat();
+        h.feed(Event::Key(KeyEvent::new(ask, KeyModifiers::CONTROL)));
+        assert!(
+            matches!(
+                h.next_command(),
+                Some(AppCommand::NewChat { .. } | AppCommand::CloneChat(_))
+            ),
+            "{ask:?}"
+        );
+        assert!(matches!(h.active, ActiveScreen::ChatList(_)), "{ask:?}");
+        h.apply(chat_activated(uuid::Uuid::new_v4()));
+        assert!(matches!(h.active, ActiveScreen::Chat), "{ask:?}");
+    }
+}
+
+/// A refused clone is answered with `ChatListError`, not an activation. It
+/// lands in the list's own status area — the list is still in front — and ends
+/// the wait: left set, it would close the list on the next unrelated
+/// activation (deleting the active chat activates its neighbour).
+#[test]
+fn a_refusal_lands_in_the_list_and_ends_the_wait() {
+    let mut h = Harness::new();
+    h.list_over_an_open_chat();
+    h.feed(Event::Key(KeyEvent::new(
+        KeyCode::Char('d'),
+        KeyModifiers::CONTROL,
+    )));
+
+    h.apply(AppEvent::ChatListError("нельзя клонировать".into()));
+    assert!(h.list_dump().contains("нельзя клонировать"));
+
+    h.apply(chat_activated(uuid::Uuid::new_v4()));
+    assert!(
+        matches!(h.active, ActiveScreen::ChatList(_)),
+        "an unrelated activation closed a list that was no longer waiting"
+    );
+}
+
+/// A wait that is never answered (the chat vanished under a stale list) must
+/// not outlive the user's attention: any further key ends it, and the late
+/// answer then only moves the list's active marker.
+#[test]
+fn a_key_after_asking_ends_the_wait() {
+    let mut h = Harness::new();
+    let (_, other) = h.list_over_an_open_chat();
+    h.feed(key(KeyCode::Enter));
+    h.feed(key(KeyCode::Down));
+    h.apply(chat_activated(other));
+    assert!(matches!(h.active, ActiveScreen::ChatList(_)));
 }
 
 // ------- A dead orchestrator ends the session (robustness-and-defaults.md D1) -------

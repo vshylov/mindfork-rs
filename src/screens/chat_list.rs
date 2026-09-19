@@ -15,6 +15,7 @@ use uuid::Uuid;
 use crate::entities::chat::ChatSummary;
 use crate::features::chat_search_sort::SortMode;
 use crate::features::spellcheck::SpellChecker;
+use crate::screens::awaited_chat::AwaitedChat;
 use crate::shared::i18n::Locale;
 use crate::shared::theme::Palette;
 use crate::widgets::chat_list::{ChatListAction, ChatListState};
@@ -68,10 +69,10 @@ pub struct ChatListScreen {
     palette: Palette,
     /// Interface locale (updated on `Settings`). See docs/i18n-ui.md.
     loc: &'static Locale,
-    /// Waiting for the just-created chat's activation (`Ctrl+N`): the list stays on
-    /// screen until its `ChatActivated` arrives, so as not to flash the previous chat
-    /// before the new one. Cleared in `take_pending_new_chat`. See spec §11.2.
-    pending_new_chat: bool,
+    /// The chat this list asked for (`Enter`, `Ctrl+N`, `Ctrl+D`) and stays on
+    /// screen for: the list gives way when its `ChatActivated` arrives, so as not
+    /// to flash the previous chat before the asked-for one. See spec §11.2.
+    awaited: AwaitedChat,
 }
 
 impl ChatListScreen {
@@ -87,20 +88,27 @@ impl ChatListScreen {
             active,
             palette,
             loc,
-            pending_new_chat: false,
+            awaited: AwaitedChat::Nothing,
         }
     }
 
-    /// Marks that a new chat was created, waiting for its `ChatActivated`, so we can
-    /// switch to it atomically (without showing the previous chat). See `dispatch_chat_list`.
-    pub fn set_pending_new_chat(&mut self) {
-        self.pending_new_chat = true;
+    /// The list asked the orchestrator for this chat and stays up until its
+    /// `ChatActivated` arrives, so the switch is one frame (without showing the
+    /// previous chat in between). See `dispatch_chat_list`.
+    pub fn await_chat(&mut self, awaited: AwaitedChat) {
+        self.awaited = awaited;
     }
 
-    /// Takes the "waiting for a new chat" flag (resetting it). `true` means the
-    /// activation that just arrived belongs to the just-created chat — time to close the list.
-    pub fn take_pending_new_chat(&mut self) -> bool {
-        std::mem::take(&mut self.pending_new_chat)
+    /// Whether the activation that just arrived is the one the list was waiting
+    /// for (consumed) — time to close the list.
+    pub fn take_awaited(&mut self, id: Uuid) -> bool {
+        self.awaited.take_if_arrived(id)
+    }
+
+    /// The request was refused (`ChatListError`): the list is just open again,
+    /// and a later unrelated activation must not close it.
+    pub fn stop_awaiting(&mut self) {
+        self.awaited.clear();
     }
 
     /// Updates the list snapshot (after the chat set changes) — the
@@ -138,6 +146,11 @@ impl ChatListScreen {
     /// Handles a keypress, returning an intent for `app` (or `None` if the
     /// key was handled internally: navigation, search/rename input).
     pub fn handle_key(&mut self, key: KeyEvent) -> Option<ChatListIntent> {
+        // A key while the list waits for a chat means the user has moved on: an
+        // answer that never came (a vanished chat) must not leave the list set to
+        // close on whatever activates next. `app` sets the wait *after* this
+        // returns, so the key that asks does not clear its own request.
+        self.awaited.clear();
         match self.state.on_key(key) {
             ChatListAction::None => None,
             ChatListAction::Close => Some(ChatListIntent::Close),
@@ -269,13 +282,29 @@ mod tests {
     }
 
     #[test]
-    fn pending_new_chat_flag_set_and_taken_once() {
+    fn an_awaited_chat_is_taken_once() {
         let mut s = ChatListScreen::new(vec![chat("A")], None, Palette::default(), ru());
-        assert!(!s.take_pending_new_chat());
-        s.set_pending_new_chat();
+        let id = Uuid::new_v4();
+        assert!(!s.take_awaited(id));
+        s.await_chat(AwaitedChat::Created);
         // Taken exactly once (resets) — a second activation shouldn't close it.
-        assert!(s.take_pending_new_chat());
-        assert!(!s.take_pending_new_chat());
+        assert!(s.take_awaited(id));
+        assert!(!s.take_awaited(id));
+    }
+
+    /// A wait nobody answered must not outlive the user's attention: the next
+    /// key ends it, and so does a refusal.
+    #[test]
+    fn a_key_or_a_refusal_ends_the_wait() {
+        let mut s = ChatListScreen::new(vec![chat("A")], None, Palette::default(), ru());
+        let id = Uuid::new_v4();
+        s.await_chat(AwaitedChat::Chat(id));
+        s.handle_key(key(KeyCode::Down));
+        assert!(!s.take_awaited(id), "the user moved on");
+
+        s.await_chat(AwaitedChat::Created);
+        s.stop_awaiting();
+        assert!(!s.take_awaited(id), "the request was refused");
     }
 
     #[test]
