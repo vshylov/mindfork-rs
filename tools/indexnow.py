@@ -207,95 +207,123 @@ def submit(body: dict, dry_run: bool) -> int:
 
 
 # --------------------------------------------------------------------- tests
-def self_test() -> int:
-    """Drive every refusal against fixtures, so a deploy never discovers one."""
-    failures: list[str] = []
+#: The host the fixtures pretend to be, and the two pages they publish. Every
+#: fixture has to agree with what `base_url` reads back for a payload to build
+#: at all, so the spelling lives here rather than in each call below.
+FAKE_SITE = "https://mindfork.io"
+FAKE_HOME = f"{FAKE_SITE}/"
+FAKE_INSTALL = f"{FAKE_SITE}/install/"
 
-    def fixture(tmp: Path, *, keys: dict[str, str], urls: list[str] | None,
-                base: str = "https://mindfork.io") -> Path:
-        (tmp / "site" / "static").mkdir(parents=True, exist_ok=True)
-        (tmp / "site" / "zola.toml").write_text(
-            f'title = "x"\nbase_url = "{base}"\n', encoding="utf-8"
+
+def _fixture(tmp: Path, *, keys: dict[str, str], urls: list[str] | None,
+             base: str = FAKE_SITE) -> Path:
+    """A throwaway site root: a zola.toml, the key files, maybe a sitemap.
+
+    `urls=None` is the unbuilt site — no `public/` at all — which is a
+    different refusal from `urls=[]`, a sitemap that lists nothing.
+    """
+    (tmp / "site" / "static").mkdir(parents=True, exist_ok=True)
+    (tmp / "site" / "zola.toml").write_text(
+        f'title = "x"\nbase_url = "{base}"\n', encoding="utf-8"
+    )
+    for name, body in keys.items():
+        (tmp / "site" / "static" / name).write_text(body, encoding="utf-8")
+    if urls is not None:
+        (tmp / "site" / "public").mkdir(parents=True, exist_ok=True)
+        locs = "".join(f"<url><loc>{u}</loc></url>" for u in urls)
+        (tmp / "site" / "public" / "sitemap.xml").write_text(
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+            f"{locs}</urlset>",
+            encoding="utf-8",
         )
-        for name, body in keys.items():
-            (tmp / "site" / "static" / name).write_text(body, encoding="utf-8")
-        if urls is not None:
-            (tmp / "site" / "public").mkdir(parents=True, exist_ok=True)
-            locs = "".join(f"<url><loc>{u}</loc></url>" for u in urls)
-            (tmp / "site" / "public" / "sitemap.xml").write_text(
-                '<?xml version="1.0" encoding="UTF-8"?>'
-                '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
-                f"{locs}</urlset>",
-                encoding="utf-8",
-            )
-        return tmp
+    return tmp
 
-    def expect_refusal(label: str, root: Path, needle: str) -> None:
-        try:
-            payload(root)
-        except Refusal as exc:
-            if needle not in str(exc):
-                failures.append(f"{label}: refused, but not about {needle!r}: {exc}")
-        else:
-            failures.append(f"{label}: was accepted, and must not be")
 
+def _expect_refusal(failures: list[str], label: str, root: Path, needle: str) -> None:
+    """Record a failure unless `payload` refuses `root` for the stated reason."""
+    try:
+        payload(root)
+    except Refusal as exc:
+        if needle not in str(exc):
+            failures.append(f"{label}: refused, but not about {needle!r}: {exc}")
+    else:
+        failures.append(f"{label}: was accepted, and must not be")
+
+
+def _expect_key(failures: list[str], label: str, root: Path, want: str) -> None:
+    """Record a failure unless `payload` builds and picks `want` as the key."""
+    try:
+        if payload(root)["key"] != want:
+            failures.append(f"{label}: the wrong file was taken for the key")
+    except Refusal as exc:
+        failures.append(f"{label}: refused with a real key present: {exc}")
+
+
+def _check_refusals(failures: list[str]) -> None:
+    """Every refusal path of `payload`, and then the shape of a good request."""
     good = "abc123def456"
     with tempfile.TemporaryDirectory() as raw:
         tmp = Path(raw)
 
-        root = fixture(tmp / "none", keys={}, urls=["https://mindfork.io/"])
-        expect_refusal("no key file", root, "no IndexNow key file")
+        root = _fixture(tmp / "none", keys={}, urls=[FAKE_HOME])
+        _expect_refusal(failures, "no key file", root, "no IndexNow key file")
 
-        root = fixture(tmp / "two", keys={f"{good}.txt": good, "0123456789ab.txt": "0123456789ab"},
-                       urls=["https://mindfork.io/"])
-        expect_refusal("two key files", root, "more than one")
+        root = _fixture(tmp / "two",
+                        keys={f"{good}.txt": good, "0123456789ab.txt": "0123456789ab"},
+                        urls=[FAKE_HOME])
+        _expect_refusal(failures, "two key files", root, "more than one")
 
-        root = fixture(tmp / "mismatch", keys={f"{good}.txt": "something else"},
-                       urls=["https://mindfork.io/"])
-        expect_refusal("key file contents", root, "not its own name")
+        root = _fixture(tmp / "mismatch", keys={f"{good}.txt": "something else"},
+                        urls=[FAKE_HOME])
+        _expect_refusal(failures, "key file contents", root, "not its own name")
 
         # `security.txt` is eight legal characters; it must not read as a key,
         # nor stop the real one being found beside it.
-        root = fixture(tmp / "decoy", keys={"security.txt": "Contact: mailto:x@y",
-                                            f"{good}.txt": good},
-                       urls=["https://mindfork.io/"])
-        try:
-            if payload(root)["key"] != good:
-                failures.append("decoy: security.txt was taken for the key")
-        except Refusal as exc:
-            failures.append(f"decoy: refused with a real key present: {exc}")
+        root = _fixture(tmp / "decoy", keys={"security.txt": "Contact: mailto:x@y",
+                                             f"{good}.txt": good},
+                        urls=[FAKE_HOME])
+        _expect_key(failures, "decoy", root, good)
 
-        root = fixture(tmp / "nosite", keys={f"{good}.txt": good}, urls=None)
-        expect_refusal("unbuilt site", root, "does not exist")
+        root = _fixture(tmp / "nosite", keys={f"{good}.txt": good}, urls=None)
+        _expect_refusal(failures, "unbuilt site", root, "does not exist")
 
-        root = fixture(tmp / "empty", keys={f"{good}.txt": good}, urls=[])
-        expect_refusal("empty sitemap", root, "lists no URLs")
+        root = _fixture(tmp / "empty", keys={f"{good}.txt": good}, urls=[])
+        _expect_refusal(failures, "empty sitemap", root, "lists no URLs")
 
-        root = fixture(tmp / "stray", keys={f"{good}.txt": good},
-                       urls=["https://mindfork.io/", "https://example.com/x/"])
-        expect_refusal("URL off the host", root, "not under")
+        root = _fixture(tmp / "stray", keys={f"{good}.txt": good},
+                        urls=[FAKE_HOME, "https://example.com/x/"])
+        _expect_refusal(failures, "URL off the host", root, "not under")
 
         # ...and the shape of a good one.
-        root = fixture(tmp / "ok", keys={f"{good}.txt": good},
-                       urls=["https://mindfork.io/", "https://mindfork.io/install/"])
+        root = _fixture(tmp / "ok", keys={f"{good}.txt": good},
+                        urls=[FAKE_HOME, FAKE_INSTALL])
         body = payload(root)
         want = {
             "host": "mindfork.io",
             "key": good,
-            "keyLocation": f"https://mindfork.io/{good}.txt",
-            "urlList": ["https://mindfork.io/", "https://mindfork.io/install/"],
+            "keyLocation": f"{FAKE_SITE}/{good}.txt",
+            "urlList": [FAKE_HOME, FAKE_INSTALL],
         }
         if body != want:
             failures.append(f"payload: {body} != {want}")
 
-    # The response policy: a busy service must not redden a finished deploy,
-    # and a rejected key must not pass for success.
+
+def _check_classify(failures: list[str]) -> None:
+    """The response policy: a busy service must not redden a finished deploy,
+    and a rejected key must not pass for success."""
     for status, wanted in [(200, 0), (202, 0), (429, 0), (503, 0),
                            (400, 1), (403, 1), (422, 1), (418, 1)]:
         got, _ = classify(status)
         if got != wanted:
             failures.append(f"classify({status}) == {got}, wanted {wanted}")
 
+
+def self_test() -> int:
+    """Drive every refusal against fixtures, so a deploy never discovers one."""
+    failures: list[str] = []
+    _check_refusals(failures)
+    _check_classify(failures)
     for line in failures:
         print(f"self-test: {line}", file=sys.stderr)
     print(f"indexnow --self-test: {len(failures)} failure(s)")
