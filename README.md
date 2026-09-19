@@ -7,6 +7,8 @@
 
 [![Website](https://img.shields.io/badge/web-mindfork.io-c25a27.svg)](https://mindfork.io)
 [![CI](https://github.com/vshylov/mindfork-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/vshylov/mindfork-rs/actions/workflows/ci.yml)
+[![Quality Gate](https://sonarcloud.io/api/project_badges/measure?project=vshylov_mindfork-rs&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=vshylov_mindfork-rs)
+[![Dependabot](https://github.com/vshylov/mindfork-rs/actions/workflows/dependabot/dependabot-updates/badge.svg)](https://github.com/vshylov/mindfork-rs/actions/workflows/dependabot/dependabot-updates)
 [![Release](https://img.shields.io/github/v/release/vshylov/mindfork-rs)](https://github.com/vshylov/mindfork-rs/releases)
 [![crates.io](https://img.shields.io/crates/v/mindfork.svg)](https://crates.io/crates/mindfork)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -250,7 +252,7 @@ for convenience: the English originals are the texts with legal force.
 
 Actively developed, in small reviewed tracks; the original ten-milestone plan
 ([docs/history/plan.md](docs/history/plan.md)) is long finished. The suite stands
-at **3323 unit tests** plus **196 `#[ignore]` smoke tests** that are run against
+at **3326 unit tests** plus **196 `#[ignore]` smoke tests** that are run against
 real stacks — a local `llama-server` and the live cloud APIs — before
 provider-touching changes ship. See the [changelog](CHANGELOG.md) for what is new
 and the [roadmap](docs/roadmap.md) for what may come next.

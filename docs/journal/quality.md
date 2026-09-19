@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (25)
+## Entries (26)
 
 - Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - Post-M9: SonarQube Cloud analysis in CI (done)
@@ -37,6 +37,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: SonarQube follow-up — the round resolver's three arms (done)
 - Post-M9: SonarQube follow-up — blocking file calls in the two setup paths (done)
 - Post-M9: SonarQube follow-up — the file launcher's two closures (done)
+- Post-M9: the quality-gate badge, and the one Dependabot badge that is not a claim (done)
 
 ### Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - **28 relative links in the docs pointed at nothing**, and had for a while.
@@ -1414,3 +1415,80 @@ structure (AGENTS.md §3).
 - `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, `cargo test` —
   **3171 green, 169 `#[ignore]`, counts unchanged**; the repository gates green.
   No CHANGELOG entry — nothing the user sees changed (§4).
+
+### Post-M9: the quality-gate badge, and the one Dependabot badge that is not a claim (done)
+
+- **The badge item was never about the badge.** It has sat in the groundwork
+  since the analysis was set up (2026-08-05) and again in
+  [roadmap.md](../roadmap.md) with the same parenthesis each time: a **private**
+  SonarQube Cloud project's badge renders for nobody who does not hold a token,
+  so adding it would have put a broken image in the README masthead. The owner
+  made the Sonar project public on 2026-09-19 and the item unblocked itself;
+  asked for directly, together with a Dependabot badge.
+- **The Sonar half is the documented endpoint**, with the project key read from
+  `sonar-project.properties` rather than retyped —
+  `.../api/project_badges/measure?project=vshylov_mindfork-rs&metric=alert_status`,
+  linked to the project's New Code summary. `alert_status` and not `coverage`
+  deliberately: the gate is the **custom** "Sonar way without new-code coverage"
+  ("the quality gate stopped judging new-code coverage", above), so a coverage badge would advertise, in the masthead, the
+  one number the gate stopped judging — and the percentage is already read as a
+  verdict rather than a measurement, which is the misreading that entry exists to
+  prevent. The README's own "Project status" section carries the test counts.
+- **Dependabot has no status badge of its own, and this is the part worth
+  recording.** `api.dependabot.com/badges/status` belonged to *Dependabot
+  Preview*, the pre-acquisition service GitHub retired in 2021; shields.io has no
+  endpoint for the GitHub-native Dependabot; and the alert state — the thing a
+  reader would actually want a badge for — is repository-private data that no
+  public badge can expose. What does exist: since GitHub runs the update job as
+  an ordinary Actions workflow, `GET /repos/{owner}/{repo}/actions/workflows`
+  lists **Dependabot Updates** as `active` alongside the eight real ones, with
+  `path: dynamic/dependabot/dependabot-updates` and a `badge_url` GitHub hands
+  out itself. That answer came from the API rather than from a blog post, which
+  is why it is in the README and a guessed URL would not have been.
+- **What that badge claims, stated so it is not read as more.** It reports the
+  outcome of the last Dependabot *update run* — whether Dependabot managed to
+  look — not "dependencies are current" and not "no open advisories". The
+  advisory half is `audit.yml`'s and stays where it is.
+- **Rejected: `img.shields.io/badge/dependabot-enabled`.** It renders, it is what
+  most repositories use, and it measures nothing — a hand-written claim in the
+  masthead that keeps rendering green after the configuration it describes is
+  deleted. The lesson is already written down here for the licence badge
+  ([lessons.md](../lessons.md)): a badge whose subject drifts goes on rendering
+  the old claim, because nothing is measuring it.
+- **Verification, and its limit.** The repository is public
+  (`visibility: public`) and the Dependabot workflow is `active` — both read from
+  the GitHub API in-session; the Sonar project key matches
+  `sonar-project.properties`; `link_check` passes (it skips `http(s)` by design,
+  so no badge URL is checked by it either way) and `doc_index_check`
+  passes with the index at 26. **Not** verified in-session: that the two images
+  render — and the two reasons are different, which is worth separating because
+  the first reading of it was wrong. `sonarcloud.io` and `img.shields.io` are
+  refused by the container's **egress proxy**, which answers `403` to the
+  `CONNECT` itself (`connect_rejected`, organization policy), so those hosts are
+  simply unreachable. `github.com`'s badge asset also answers `403`, but not for
+  that reason: it is reached, and the session's **GitHub gateway** rejects the
+  path — *"sessions are bound to their configured repositories. Use
+  repository-scoped endpoints"* — because a `/<owner>/<repo>/actions/...` web URL
+  is not one. `api.github.com/rate_limit` answers `200` from the same container,
+  which is the control that tells the two apart. Net effect is the same (no badge
+  URL in this README could be fetched, the five older ones included) but "the
+  proxy blocks GitHub" would have been a false thing to leave written down.
+  First render on GitHub is the check.
+- **The README's test count was three behind, and finding out cost a measurement
+  worth keeping.** `CLAUDE.md` said 3326 / 196 and the README 3323 / 196 — the
+  README simply never got the 0.10.1-era bump (`docs/research/public-documents.md`
+  had already flagged the same line once, at 3217). The obvious repair is to copy
+  the larger number across, and it would have been wrong to do it on that
+  reasoning alone: `cargo test` **in this Linux container reports 3324 passed,
+  189 ignored** on the same commit, matching neither document. The suite does not
+  compile to the same size on the two targets — `src/shared/keys.rs` alone holds
+  three `cfg(windows)` tests, and some `#[ignore]` smokes (the real-clipboard
+  round trip, the screenshot regenerator) are Windows-only — so 3326 / 196 is the
+  author's Windows figure and 3324 / 189 is Linux's. The README is aligned to the
+  documented Windows figure, which is what `CLAUDE.md` and every recent journal
+  entry carry; the trap itself is now a rule in [lessons.md](../lessons.md) §6,
+  because an agent measuring on Linux would "fix" `CLAUDE.md` into a number that
+  is wrong on both platforms. (ALSA had to be installed before the suite would
+  build here at all — `libasound2-dev`, exactly as the `test` job does it.)
+- **No CHANGELOG entry and no live run** — a README masthead and three documents;
+  nothing in `src/`. Test totals unchanged by this branch.

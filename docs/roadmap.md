@@ -424,14 +424,15 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   sharding beats a warm single build.
 - **SonarQube Cloud leftovers** — the gate is blocking as of 2026-08-05
   (`sonar.qualitygate.wait`, see the journal) and since 2026-08-06 runs the
-  custom **"Sonar way without new-code coverage"**, so what remains is smaller: a
-  quality-gate badge in the README (a **private** project's badge needs a token
-  to render for anonymous readers), and — if the measurements say the duplicated
-  instrumented test run is the expensive half — folding the coverage run into the
-  Linux `test` job instead of a job of its own. On that last one there is now a
-  measurement: the whole `sonar` job runs in ~3.5 min against the Windows job's
-  19, so it was never on the critical path and merging it would buy wall clock
-  only once Windows drops below it. Also unreviewed: the project's
+  custom **"Sonar way without new-code coverage"**. The quality-gate badge landed
+  on 2026-09-19, once the Sonar project itself was made public — a **private**
+  project's badge renders for nobody who does not hold a token, which is the one
+  thing that item had been waiting on. What remains: folding the coverage run
+  into the Linux `test` job instead of a job of its own, if the measurements say
+  the duplicated instrumented test run is the expensive half. On that there is
+  now a measurement: the whole `sonar` job runs in ~3.5 min against the Windows
+  job's 19, so it was never on the critical path and merging it would buy wall
+  clock only once Windows drops below it. Also unreviewed: the project's
   **New Code definition**, which decides what the gate judges — less pressing now
   that coverage is not one of the conditions, but it still scopes the issue and
   duplication checks.
