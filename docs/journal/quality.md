@@ -1461,10 +1461,19 @@ structure (AGENTS.md §3).
   `sonar-project.properties`; `link_check` passes (it skips `http(s)` by design,
   so no badge URL is checked by it either way) and `doc_index_check`
   passes with the index at 26. **Not** verified in-session: that the two images
-  render. The container's egress proxy answers `403` to `CONNECT` for
-  `sonarcloud.io`, `img.shields.io` and even `github.com`'s badge assets, so
-  no badge URL in this README — including the five that were already there —
-  could be fetched. First render on GitHub is the check.
+  render — and the two reasons are different, which is worth separating because
+  the first reading of it was wrong. `sonarcloud.io` and `img.shields.io` are
+  refused by the container's **egress proxy**, which answers `403` to the
+  `CONNECT` itself (`connect_rejected`, organization policy), so those hosts are
+  simply unreachable. `github.com`'s badge asset also answers `403`, but not for
+  that reason: it is reached, and the session's **GitHub gateway** rejects the
+  path — *"sessions are bound to their configured repositories. Use
+  repository-scoped endpoints"* — because a `/<owner>/<repo>/actions/...` web URL
+  is not one. `api.github.com/rate_limit` answers `200` from the same container,
+  which is the control that tells the two apart. Net effect is the same (no badge
+  URL in this README could be fetched, the five older ones included) but "the
+  proxy blocks GitHub" would have been a false thing to leave written down.
+  First render on GitHub is the check.
 - **The README's test count was three behind, and finding out cost a measurement
   worth keeping.** `CLAUDE.md` said 3326 / 196 and the README 3323 / 196 — the
   README simply never got the 0.10.1-era bump (`docs/research/public-documents.md`
