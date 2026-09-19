@@ -25,6 +25,12 @@ theme = "catppuccin-mocha"
 
 [extra]
 tagline = "TUI · RUST · LOCAL LLM"
+# The author, as a person rather than a byline: this is what `<meta name=author>`
+# and the schema.org Person in every page's structured data carry. The name is
+# already public in LICENSE and on /code-signing-policy/, so it discloses
+# nothing new.
+author = "Vladimir Shylov"
+author_url = "https://github.com/vshylov"
 github = "https://github.com/vshylov/mindfork-rs"
 releases = "https://github.com/vshylov/mindfork-rs/releases"
 # The application version the prose describes — the overview reads it as

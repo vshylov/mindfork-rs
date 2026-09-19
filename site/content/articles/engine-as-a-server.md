@@ -1,7 +1,15 @@
 +++
 title = "Why the engine is a server, not a library"
 description = "mindfork nearly embedded an inference runtime. The contract that replaced it made a local GGUF and a cloud frontier model the same thing."
+updated = "2026-08-11"
 weight = 2
+
+[extra]
+# First published. Deliberately not a top-level `date`: that is what
+# Zola puts into the Atom feed, which carries release news, and an
+# explainer revised later must not arrive there as fresh. `page.html`
+# reads it for the byline and for schema.org `datePublished`.
+published = "2026-08-11"
 +++
 
 *The second in a short series on how mindfork is put together. The

@@ -943,6 +943,20 @@ copy already on PATH being used silently — and it cost one container run to ge
 which is one release run saved.
 — *public release readiness — stage 3, the release pipeline*.
 
+**A template is not verified by reading it.** Three defects in one small
+structured-data pass survived review and died on the first real build: a `json_encode`
+whose output the engine then HTML-escaped, so every page shipped `&quot;` and *all* of
+its JSON-LD was invalid; a `default` filter that fires on an undefined value and not on
+an empty one, so a field rendered as `""`; and a date field that, by being top-level,
+silently enrolled nine evergreen pages into a release-news feed. None of the three is
+visible in the template's text, and the middle one is invisible even to a check that
+only parses the output — `"dateModified": ""` is valid JSON and means nothing. Build the
+thing and read what a consumer would read. And where the generator is version-pinned,
+build with **that** version: the locally installed one was a major version behind and
+could not parse the site's own syntax at all, so it would have reported nothing either
+way — a green run from the wrong toolchain is not evidence.
+— *structured data, authorship and dates a crawler can read*.
+
 ## 4. The recurring defect class: a message must close the door
 
 **Never let a message describe a situation without saying what is and is not possible

@@ -13,6 +13,14 @@
 <meta property="og:description" content="{% if page.description %}{{ page.description }}{% else %}{{ config.description }}{% endif %}">
 {% endblock og %}
 
+{# The install guide is about the program; the licence, the privacy policy and
+   the disclaimer are not, and describing them as an application would be a
+   claim about the wrong thing. The front matter of the one page that is says
+   so, rather than this template matching on a slug. #}
+{% block jsonld %}{{ super() }}
+{% if page.extra.software %}{% include "schema-app.html" %}{% endif %}
+{% endblock jsonld %}
+
 {% block content %}
 <article class="prose-wrap">
   <div class="wrap narrow">

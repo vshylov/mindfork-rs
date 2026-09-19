@@ -1,7 +1,15 @@
 +++
 title = "Where the trust boundaries are"
 description = "An assistant that can browse, run code and edit your project needs edges, not promises: what leaves the machine, where the model may not point, what the code can touch, when the app asks — and what the author receives, which is nothing."
+updated = "2026-09-13"
 weight = 7
+
+[extra]
+# First published. Deliberately not a top-level `date`: that is what
+# Zola puts into the Atom feed, which carries release news, and an
+# explainer revised later must not arrive there as fresh. `page.html`
+# reads it for the byline and for schema.org `datePublished`.
+published = "2026-09-13"
 +++
 
 *The seventh in a short series on how mindfork is put together. Earlier:

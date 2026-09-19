@@ -1,7 +1,15 @@
 +++
 title = "Where vector search earns its keep"
 description = "One small embedding server powers the knowledge base, large attachments, notes and memory — and the app notices when you swap the model under it."
+updated = "2026-08-15"
 weight = 4
+
+[extra]
+# First published. Deliberately not a top-level `date`: that is what
+# Zola puts into the Atom feed, which carries release news, and an
+# explainer revised later must not arrive there as fresh. `page.html`
+# reads it for the byline and for schema.org `datePublished`.
+published = "2026-08-15"
 +++
 
 *The fourth in a short series on how mindfork is put together. Earlier:

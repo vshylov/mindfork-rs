@@ -10,7 +10,7 @@ the reasoning behind the site, not its current shape. For the current shape
 read the research/design doc above; for the traps that recur across areas
 read [lessons.md](../lessons.md).
 
-## Entries (18)
+## Entries (19)
 
 - Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 - Post-M9: website — S2 infra: one CloudFormation stack, mindfork.io live (done)
@@ -30,6 +30,7 @@ read [lessons.md](../lessons.md).
 - Post-M9: website — Zola 0.23: components, the config renamed, the pin verified (done)
 - Post-M9: public release readiness — stage 5b, the site a stranger lands on (done)
 - Post-M9: website — mindfork.io in Google Search Console (done)
+- Post-M9: website — structured data, authorship and dates a crawler can read (done)
 
 ### Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 
@@ -842,3 +843,69 @@ templates, content and CI, no Rust touched.
   unchanged. The one code change is the infrastructure template, and it is
   already applied to the live stack (`mindfork-website`, `UPDATE_COMPLETE`).
   Gates (`cyrillic_scan` / `link_check` / `doc_index_check`) green.
+
+### Post-M9: website — structured data, authorship and dates a crawler can read (done)
+
+- **Tier 1 of the search-visibility pass**, after mindfork.io was verified in Search
+  Console (the entry before this one).
+  The audit that chose it was measurement, not a checklist: four sampled pages carried
+  **zero** `application/ld+json` blocks and the templates held none either; the sitemap
+  published `lastmod` for **6 of 23** URLs; and no page named an author in any form. The
+  parts that were already right — a unique title and description per page, complete Open
+  Graph over a real 1200×630 card, `canonical`, `lang`, a true 404, `robots.txt` pointing
+  at the sitemap — were left alone.
+- **Structured data, as one inherited block.** `base.html` gains
+  `{% block jsonld %}` carrying a `WebSite` and the `Person` behind it, which every page
+  therefore has; a template that describes something more specific calls `super()` and
+  adds to it rather than replacing it. The home page and `/install/` add a
+  `SoftwareApplication` — one `schema-app.html` included by both, so the description of
+  the program lives once and reads `config.extra.app_version`, which the release PR
+  already bumps. `page.html` adds `BlogPosting` for a post and `Article` for an article,
+  plus a `BreadcrumbList` built from the page's own section. **`Article` and not the more
+  precise `TechArticle`** on purpose: Google documents support for Article, NewsArticle
+  and BlogPosting, and precision a consumer does not read buys nothing.
+- **Three defects that reading the template could not have found**, all dead on the first
+  real build:
+  1. **`json_encode` is autoescaped in a `.html` template.** Every block shipped
+     `&quot;mindfork&quot;` where it needed `"mindfork"` — *all* of the structured data
+     was invalid JSON, on every page. `| safe` after it. The filter was there for a good
+     reason (a title is content, and a stray quote in one must not be able to break the
+     JSON) and it was the filter itself that broke it.
+  2. **Tera's `default` fires on an undefined value, not on an empty one.** A post has no
+     `updated`, so `page.updated | default(value=page.date)` produced
+     `"dateModified": ""` on every post — valid JSON, meaningless data, and invisible to
+     a check that only parses. An explicit `if`/`elif` chain instead.
+  3. **A top-level `date` is what puts a page into Zola's feed.** Giving the articles one
+     took the Atom feed — which is release news, and is advertised in every page's
+     `<head>` — from **6 entries to 15**, so nine explainers written months ago would
+     have arrived at every subscriber as fresh. A section's `generate_feeds = false` does
+     **not** exclude it from the site feed (measured: still 15). So an article's
+     publication date lives in `extra.published`, where the feed does not look and
+     `page.html` still does.
+- **Where each date comes from, and why not from one place.** An article carries
+  `extra.published` (the commit that added the file) and `updated` (the last one to touch
+  it); the hand-written document pages carry `updated` the same way. The three generated
+  legal pages do **not**: `tools/site_legal_pages.py` now carries over the source
+  document's own `Effective **2026-09-17**` line instead. A git date would have been
+  wrong twice over — wrong in CI, where a shallow clone may not contain the commit that
+  last touched the file, and wrong in meaning, since a typo fix is not a change to a
+  privacy policy. `DISCLAIMER.md` and `LICENSE` state no such date and therefore get
+  none: inventing one would be a claim about when the text last changed.
+- **Result, measured on the built site**: every page's JSON-LD parses and carries the
+  types it should; `article:published_time` / `article:modified_time` / `article:author`
+  and `<meta name="author">` are present where they apply; a revised article shows
+  `2026-08-10 · updated 2026-09-14 · 8 min read` while an unrevised one still shows one
+  date; the feed is back to its 6 release posts; and the sitemap publishes `lastmod` for
+  **18 of 23** URLs. The five without are the three section indexes and the two policies
+  that state no date — each a deliberate absence rather than a gap.
+- **Verified with the pinned Zola 0.23.6**, because the locally installed **0.22.1 cannot
+  build this site at all** — it fails on `{% component %}`, which is 0.23 syntax, so it
+  would have reported nothing useful either way. The release asset was fetched and its
+  provenance checked exactly as `site.yml` does for Linux (`gh attestation verify --owner
+  getzola`, signer `release.yml@refs/tags/v0.23.6`), and kept out of `PATH` so the
+  installed 0.22.1 is untouched. Build: 20 pages, 0 orphans.
+- No Rust touched: no live run, and the test count is unchanged. Gates
+  (`cyrillic_scan` / `link_check` / `doc_index_check` / `site_legal_pages --check`) green.
+- Still open, and deliberately not in this pass: `Cache-Control` is absent on every
+  response (Tier 2, a `s3 sync` change), the OG card is one image for the whole site,
+  and Bing/Yandex/IndexNow are registrations rather than code.

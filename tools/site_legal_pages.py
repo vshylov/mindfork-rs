@@ -24,6 +24,9 @@ What the transform does, and why each part is needed:
   others — targets that resolve on GitHub and in a checkout, and resolve to
   nothing on a static site. This is the reason the page is generated rather
   than copied by hand: a copy would rot link by link.
+* **Carries over the document's own effective date**, where it states one, into
+  the page's `updated` field - which is what reaches the sitemap's `lastmod` and
+  the page's structured data. A source that states no date gets none.
 * **Leaves everything else alone**, including the section numbering the text
   cross-references.
 
@@ -86,10 +89,20 @@ FRONT_MATTER = """+++
 # Generated from {src} by tools/site_legal_pages.py - do not edit.
 title = "{title}"
 description = "{description}"
-template = "doc.html"
+{updated}template = "doc.html"
 +++
 
 """
+
+#: A document that carries its own effective date states it in the opening
+#: lines, as `Effective **2026-09-17**`. That date becomes the page's `updated`,
+#: which is what the sitemap publishes as `lastmod` and what the structured data
+#: reports as `dateModified`. It is deliberately not the file's mtime and not
+#: the last commit to touch the file: the author moves this line when the policy
+#: changes, and a typo fix must not tell a crawler the policy did. A source
+#: without such a line gets no `updated` at all - inventing one would be a claim
+#: about when the text last changed.
+EFFECTIVE = re.compile(r"^Effective \*\*(\d{4}-\d{2}-\d{2})\*\*", re.M)
 
 #: A Markdown link whose target is neither absolute nor an anchor.
 RELATIVE_LINK = re.compile(r"\]\((?!https?://|#|/)([^)]+)\)")
@@ -97,8 +110,12 @@ RELATIVE_LINK = re.compile(r"\]\((?!https?://|#|/)([^)]+)\)")
 
 def render(page: dict, text: str) -> str:
     """The repository document -> the page Zola builds."""
+    effective = EFFECTIVE.search(text)
     front = FRONT_MATTER.format(
-        src=page["src"], title=page["title"], description=page["description"]
+        src=page["src"],
+        title=page["title"],
+        description=page["description"],
+        updated=f'updated = "{effective.group(1)}"\n' if effective else "",
     )
     if page.get("verbatim"):
         return front + "```\n" + text.rstrip("\n") + "\n```\n"

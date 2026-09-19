@@ -1,7 +1,15 @@
 +++
 title = "Why the Python sandbox is WebAssembly, not Docker"
 description = "python_exec runs model-written code in a CPython compiled to WebAssembly — numpy, pandas and requests included — inside a box that ships with the app and, by default, cannot see your machine."
+updated = "2026-08-17"
 weight = 6
+
+[extra]
+# First published. Deliberately not a top-level `date`: that is what
+# Zola puts into the Atom feed, which carries release news, and an
+# explainer revised later must not arrive there as fresh. `page.html`
+# reads it for the byline and for schema.org `datePublished`.
+published = "2026-08-17"
 +++
 
 *The sixth in a short series on how mindfork is put together. Earlier:

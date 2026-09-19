@@ -1,7 +1,15 @@
 +++
 title = "The same answer, sooner"
 description = "FlashAttention and speculative decoding in managed mode: two llama.cpp levers that change how fast tokens arrive — without trading away the answer."
+updated = "2026-08-17"
 weight = 5
+
+[extra]
+# First published. Deliberately not a top-level `date`: that is what
+# Zola puts into the Atom feed, which carries release news, and an
+# explainer revised later must not arrive there as fresh. `page.html`
+# reads it for the byline and for schema.org `datePublished`.
+published = "2026-08-17"
 +++
 
 *The fifth in a short series on how mindfork is put together. Earlier:
