@@ -3654,4 +3654,5 @@ line apart, is exactly the drift the template removes.
   the list stays in front"; restored, it passes.
 - **Gates**: fmt / clippy / test green — **3337 unit tests, 196 `#[ignore]`**
   (+11). Pure UI — **no live run required**; the frame itself needs a real
-  terminal, so the visual check is the owner's.
+  terminal, so the visual check was the owner's: run on Windows on
+  2026-09-19, the previous chat no longer shows — **GO**.
