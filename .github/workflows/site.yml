@@ -121,10 +121,14 @@ jobs:
       # while a browser rechecks in five minutes - the deploy invalidates the
       # edge explicitly on the next step, and cannot invalidate a browser.
       #
-      # `sync` writes the header only onto objects it actually uploads, and it
-      # uploads only what changed, so an object already in the bucket keeps what
-      # it was stored with. The ones already there were backfilled once by hand;
-      # docs/journal/website.md records the command.
+      # `sync` writes the header only onto the objects it uploads - but from a
+      # runner that is every object, every time: a fresh checkout and build give
+      # every file a current mtime, and `sync` uploads whatever is newer than the
+      # destination whether its bytes changed or not. Measured on the deploy that
+      # introduced these passes - all 59 objects rewritten within the same minute,
+      # every one carrying its header, so the backfill this change was expected to
+      # need turned out unnecessary. docs/journal/website.md has the reasoning,
+      # including why a bucket populated some other way would still need one.
       - name: Sync to S3 - fonts
         run: |
           aws s3 sync site/public/ "s3://$BUCKET" --delete --no-progress \

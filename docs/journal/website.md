@@ -930,30 +930,27 @@ templates, content and CI, no Rust touched.
   lets the edge hold a page for a day while a browser rechecks in five minutes. The deploy
   invalidates the edge on the very next step and cannot invalidate a browser, which is the
   whole reason those two numbers differ.
-- **The trap that makes the workflow change insufficient on its own**: `aws s3 sync`
-  writes `--cache-control` **only onto the objects it uploads**, and it uploads only what
-  changed. Measured with `--dryrun` against the live bucket: the entire site was **2
-  uploads and 0 deletes**, and the fonts pass was **empty**. So the 2.5 MB that matters
-  most would have kept its missing header indefinitely — the assets that never change are
-  exactly the ones a content-based sync never touches. Hence a one-time backfill that
-  copies each object onto itself with the header added.
-- **The backfill restores each object's `Content-Type` explicitly**, read back per key
-  before the copy. `--metadata-directive REPLACE` replaces *all* metadata, so letting the
-  CLI re-guess the type would have been the one way this could break the live site — an
-  extensionless key becoming `binary/octet-stream` is a page that no longer renders. The
-  script refuses outright on any object whose type it cannot read back. Its dry run over
-  the live bucket found **59 objects, all 59 without a header** — the audit's `curl -I`
-  confirmed at the source — across eight content types (24 `text/html`, 13
-  `image/svg+xml`, 12 `image/png`, 4 `font/woff2`, 2 `application/xml`, 2 `text/plain`,
-  one stylesheet and one icon), every one of them readable and therefore restorable. The
-  shape of it, per object, is:
-
-  ```
-  aws s3 cp "s3://$BUCKET/$KEY" "s3://$BUCKET/$KEY"     --metadata-directive REPLACE --content-type "$ITS_OWN_TYPE"     --cache-control "$THE_RULE_FOR_ITS_PREFIX"
-  ```
-
-  It is deliberately not a committed tool: a bucket rebuilt from scratch gets the headers
-  from the first sync, so this is needed once, for the objects that predate the change.
+- **A backfill was built for this, and the measurement that followed said it had never
+  been needed.** The reasoning: `aws s3 sync` writes `--cache-control` **only onto the
+  objects it uploads**, and it uploads only what changed, so the fonts and screenshots —
+  which never change — would keep their missing header indefinitely. A `--dryrun` from a
+  development machine supported it: the whole site came to **2 uploads and 0 deletes**,
+  and the fonts pass was **empty**. The backfill was written carefully around the one
+  thing that could have broken the site — it read each object's `Content-Type` back and
+  restored it explicitly, since `--metadata-directive REPLACE` replaces *all* metadata and
+  a re-guessed type is a page that stops rendering — and its dry run found **59 objects,
+  all 59 without a header**, across eight content types.
+- **Then the merge deployed, and all 59 already carried the right header**: the same
+  script reported `0 to change, 59 already correct`, and every object's `LastModified` was
+  the same minute — the deploy had rewritten the entire site. **The premise was wrong
+  exactly where it mattered.** On a runner a fresh checkout and build give *every* file a
+  current mtime, and `sync` uploads whatever is **newer** than the destination whether its
+  bytes changed or not; so a deploy re-uploads everything and the header lands on all of
+  it the first time. The local dry run had measured the opposite situation — a working
+  copy older than a bucket that CI had just written — and the conclusion was generalised
+  from it. The backfill was never run and is not kept. What makes it unnecessary is a
+  property of how this site deploys, not of S3: **a bucket populated some other way, or a
+  deploy that preserved mtimes, would need one again.**
 - **Filters and `--delete` were checked rather than assumed**, since a wrong answer here
   empties a bucket: the documentation states that "files excluded by filters are excluded
   from deletion", and the dry run agreed — a pass filtered to `fonts/*` proposed **0**
