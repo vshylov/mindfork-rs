@@ -1968,6 +1968,34 @@ the whole-project analysis sees. The taint findings are also the ones that move
 `new_security_rating` to E and redden the gate outright, so for a script that
 opens, writes or executes anything, expect the PR to be the first place that is
 measured — and prefer a fixed path over an argument nobody needed.
+**A nested function's branches are scored in the function that holds it, and the
+MCP will not tell you which condition failed.** `tools/indexnow.py` shipped with
+`self_test` at S3776 complexity **18** while no piece of it looked tangled: its
+two helpers were `def`s inside the body, and Sonar folds their `for`/`if`/
+`except` into the enclosing score. Hoisting them to module level and splitting
+the body along the seams its own comments already drew took it to about 3 with
+not one scenario changed — so when a test driver is flagged and every visible
+branch is shallow, look for the closures before reaching for the logic. The same
+file re-taught the `python:S5332` shape a second time, and it is the
+security-class one that actually reddens a gate: it fires on an **XML namespace
+URI** (`http://www.sitemaps.org/schemas/sitemap/0.9`), an identifier that must
+match the document byte for byte, not a request — the first instance was
+`link_check.py`'s `SKIP_SCHEME`. When such a rule is switched off per file
+(`resourceKey` has no line granularity), it takes a real guarantee with it, so
+pair the entry with a check that asserts the thing by hand — here `--self-test`
+now refuses a non-https `ENDPOINT`, measured by flipping it. And **the Sonar MCP's
+PR calls do not agree on a parameter name**: `get_project_quality_gate_status`
+takes `pullRequest`, `search_sonar_issues_in_projects` takes `pullRequestId`,
+and handing the gate call the wrong one **does not error — it silently answers
+about `main`**. That reads as a green gate on a red PR, and the only tell is
+that the numbers come back byte-identical to the branch's. With the right name
+it names the failing condition exactly (`new_security_rating` 2 against a
+threshold of 1). `get_component_measures` is separately broken — it forwards
+neither `component` nor `componentKey`, so it answers 400 whatever is passed.
+The SonarCloud bot's comment on the pull request states the failed condition in
+one line and is the cheapest cross-check on all of it.
+— *SonarQube follow-up — the IndexNow tool's three findings*.
+
 — *SonarQube follow-up — the doc gate's regexes and one test's complexity*,
 *SonarQube follow-up — the screenshots SVG writer*, *command-only control —
 stage 2*, *public release readiness — stage 3, the release pipeline*.

@@ -319,11 +319,24 @@ def _check_classify(failures: list[str]) -> None:
             failures.append(f"classify({status}) == {got}, wanted {wanted}")
 
 
+def _check_endpoint(failures: list[str]) -> None:
+    """The endpoint must stay https.
+
+    `python:S5332` is switched off for this file (sonar-project.properties, the
+    `sitemap_ns` entry): the namespace URI it flagged is an identifier, not a
+    request. That suppression is per file, so this is the check that keeps the
+    one URL here that *is* a request honest. It runs in CI's lint job.
+    """
+    if not ENDPOINT.startswith("https://"):
+        failures.append(f"the endpoint must be https, not {ENDPOINT!r}")
+
+
 def self_test() -> int:
     """Drive every refusal against fixtures, so a deploy never discovers one."""
     failures: list[str] = []
     _check_refusals(failures)
     _check_classify(failures)
+    _check_endpoint(failures)
     for line in failures:
         print(f"self-test: {line}", file=sys.stderr)
     print(f"indexnow --self-test: {len(failures)} failure(s)")
