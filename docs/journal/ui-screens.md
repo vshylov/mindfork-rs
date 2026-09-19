@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (67)
+## Entries (68)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -79,6 +79,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: `/tasks stop all` — every running silent task, in one word (done)
 - Post-M9: an API-key row names whose key it is (done)
 - Post-M9: the model row asks the provider (done)
+- Post-M9: a chat asked for from another screen arrives in one frame (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -3597,3 +3598,61 @@ line apart, is exactly the drift the template removes.
 - **Live**: the catalogue fetch and the whole command→event path were run
   against the real endpoints (see [engine.md](engine.md)); the pick itself is
   covered by the screen's own tests, since the TUI needs a real terminal.
+
+### Post-M9: a chat asked for from another screen arrives in one frame (done)
+- **The report.** Going to the chat list and opening another chat showed the
+  **previous** chat on the chat screen for a fraction of a second before the
+  one asked for.
+- **What it was.** Opening a chat is a round trip — `SwitchChat` up,
+  `ChatActivated` down — and `dispatch_chat_list` set `active = Chat` on the
+  key. `run_loop` then drew the frame the key had made dirty (the chat screen,
+  still holding the old conversation, and **fully repainted**, since a screen
+  switch primes one), waited in `event::poll(TICK)` — 50 ms — and only on the
+  next pass drained the answer and drew the right chat. So the wrong frame was
+  not a race the orchestrator could win: the draw sits between the key and the
+  first chance to read the reply.
+- **The precedent was already in the code, for one route of six.** `Ctrl+N` in
+  the list kept the list open behind a `pending_new_chat` flag "so as not to
+  flash the previous chat before the new one". `Enter`, the first-match `Enter`
+  and `Ctrl+D` did not — nor did `Enter` on a search hit, nor `Enter`/`P` on the
+  tasks screen, which left in the same way and flashed the same way.
+- **The fix — one rule for all six.** A screen that asks for a chat **stays the
+  active screen until that chat is on the chat screen**
+  (`screens/awaited_chat.rs`): `dispatch` records an `AwaitedChat` on it, and
+  the `ChatActivated` arm's `hand_over_to_chat` puts the chat in front in the
+  same `apply_event` call that hands `activate_chat` its data — no frame is
+  drawn between the two. An existing chat is awaited **by id**, so an
+  unrelated activation in the meantime closes nothing — the old flag was a
+  `bool` and would have; a created chat (`Ctrl+N`, `Ctrl+D`) has no id yet and
+  takes the next activation, as before.
+- **Rejected: holding the frame.** Keeping `active = Chat` as it was and
+  skipping the draw until the activation (or a deadline) would have touched
+  nothing but the loop — and left a window where the screen on display is not
+  the screen receiving keys, released by a timer. Staying on the asking screen
+  needs no timer: an answer that never comes leaves a screen that is simply
+  open.
+- **The wait is never a trap** — each of these is a test. The chat **already
+  open** is not waited for: `switch_to` treats it as a no-op and answers
+  nothing, so the list (and the tasks screen) hands over on the key, as it
+  always did. `ChatListError` ends the wait, and a side effect is that a
+  refused clone (`Ctrl+D` on a transcript, a failed save) is now reported **in
+  the list**, which is still in front, rather than as a note in the feed behind
+  it. And any further key ends it (`handle_key` clears it first; `app` sets it
+  after `handle_key` returns, so the asking key does not clear its own
+  request) — a stale list naming a vanished chat cannot leave the list armed to
+  close on whatever activates next, which the old `bool` could.
+- **The back-stack moved with it, by one step.** The results and the tasks
+  screen used to be stashed (`Back::Search`/`Back::Tasks`) on the key; a stash
+  written while the screen is still in front would describe a way back to a
+  screen nobody has left, so `show_chat` stashes them at the moment they give
+  way. `Back::Link` stays in `dispatch` — its origin is only known while the
+  old chat is still the open one. Two existing tests asserted the old order
+  and were rewritten; the rest of the back-stack tests moved with the one
+  helper they share (`jump_to_second_hit` now runs through the activation).
+- **Control red**: with `leave_list_for` forced back to the old behaviour,
+  `the_list_stays_in_front_until_the_chat_it_asked_for_arrives` fails on "so
+  the list stays in front"; restored, it passes.
+- **Gates**: fmt / clippy / test green — **3337 unit tests, 196 `#[ignore]`**
+  (+11). Pure UI — **no live run required**; the frame itself needs a real
+  terminal, so the visual check was the owner's: run on Windows on
+  2026-09-19, the previous chat no longer shows — **GO**.

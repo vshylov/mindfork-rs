@@ -14,7 +14,13 @@ split by subsystem.
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+- **Opening a chat no longer flashes the previous one.** Picking a chat in the
+  chat list showed the conversation you were leaving for a fraction of a second
+  before the one you asked for. The list now stays on screen until the chat is
+  ready, so the switch is a single step — and the same goes for a new chat, a
+  clone, a search hit and a run opened from the tasks screen. A clone that is
+  refused now says so in the list instead of in the chat behind it.
 
 ## [0.10.1] — 2026-09-19
 

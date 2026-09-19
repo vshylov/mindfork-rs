@@ -279,6 +279,9 @@ src/
 │  │  │                     fitted to the row at render time — location dropped, name elided)
 │  │  └─ render.rs          screen rendering
 │  ├─ chat_list.rs          ChatListScreen: full-screen chat list (Esc), → ChatListIntent
+│  ├─ awaited_chat.rs       AwaitedChat: the chat a screen asked for and stays in front for
+│  │                        (the list, the results, the tasks screen) — so the previous
+│  │                        chat is never drawn in between; spec §11.2, §10 below
 │  ├─ search.rs             SearchScreen: message-level content search results (Ctrl+G in
 │  │                        the list's content mode), grouped by chat with a highlighted
 │  │                        snippet; Enter → a jump into the feed, → SearchIntent
@@ -2876,9 +2879,36 @@ match to the table. The overlay's open/close counts as a screen switch for the
 full-repaint rule (the dialog's keycaps and arrows are the wide-glyph risk
 group).
 
+**A screen that asks for a chat stays in front until the chat arrives**
+(`screens/awaited_chat.rs`, spec §11.2). Opening a chat is a round trip, and
+`run_loop` applies the orchestrator's answer on its **next** pass — after the
+frame the key made dirty has been drawn and `event::poll(TICK)` has waited. A
+screen that set `active = Chat` on the key therefore drew one whole frame of the
+**previous** conversation (a full repaint, since a screen switch primes one)
+before the right one. So the three screens a chat is opened from — the chat list
+(`Switch`, `OpenFirstMatch`, `NewChat`, `Clone`), the results (`OpenHit`) and the
+tasks screen (`OpenRun`/`OpenParent`) — record an `AwaitedChat` on themselves in
+`dispatch` and stay the active screen; the `ChatActivated` arm's
+`hand_over_to_chat` puts the chat screen in front when the awaited activation
+lands — in the same `apply_event` call that hands `activate_chat` its data, so no
+frame is drawn between the two — which makes the switch one frame. `AwaitedChat::Chat(id)` matches only its own activation (an unrelated one —
+the active chat deleted, a background landing — closes nothing);
+`AwaitedChat::Created` is for a chat with no id yet and takes the next one. The
+state lives **on the screen**, not beside `active`: closing the screen is then the
+end of waiting with nothing to clear. Three things keep the wait from becoming a
+trap: the chat **already open** is never waited for (`switch_to` treats it as a
+no-op and answers nothing — `leave_list_for` and `dispatch_tasks` hand over on the
+key), `ChatListError` ends it (`report_chat_list_error`; the refusal lands in the
+list, which is still in front), and every screen clears it at the top of
+`handle_key` — `app` sets the wait *after* `handle_key` returns, so the asking key
+does not clear its own request. `hand_over_to_chat` is an exhaustive match, like
+every site that may replace the active screen.
+
 **Going back from a jump — a one-deep back-stack** (`Back`, a local of
 `run_loop` beside `active` rather than a variant of it: it has to survive while
-another screen is in front). Two ways down write it, and they differ only in what
+another screen is in front). The two **screens** that are a way back are stashed
+by `show_chat` at the moment they give way — on the awaited activation, or on the
+key for the already-open chat — never while still in front. Two ways down write it, and they differ only in what
 "back" is. `Back::Search` — opening a hit stashes the **live `SearchScreen`**, not
 the query, since re-running the search would lose the selection and scroll, which
 is exactly what coming back is for. `Back::Link` — following a `chat://`

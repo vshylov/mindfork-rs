@@ -252,7 +252,7 @@ for convenience: the English originals are the texts with legal force.
 
 Actively developed, in small reviewed tracks; the original ten-milestone plan
 ([docs/history/plan.md](docs/history/plan.md)) is long finished. The suite stands
-at **3326 unit tests** plus **196 `#[ignore]` smoke tests** that are run against
+at **3337 unit tests** plus **196 `#[ignore]` smoke tests** that are run against
 real stacks — a local `llama-server` and the live cloud APIs — before
 provider-touching changes ship. See the [changelog](CHANGELOG.md) for what is new
 and the [roadmap](docs/roadmap.md) for what may come next.

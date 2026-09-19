@@ -23,6 +23,7 @@ use ratatui::widgets::Paragraph;
 use uuid::Uuid;
 
 use crate::features::chat_search::{SearchGroup, Snippet};
+use crate::screens::awaited_chat::AwaitedChat;
 use crate::shared::i18n::Locale;
 use crate::shared::keys;
 use crate::shared::theme::Palette;
@@ -95,6 +96,9 @@ pub struct SearchScreen {
     /// First visible visual row; recomputed in [`Self::render`] so the selected
     /// hit stays visible even when its snippet wraps over several rows.
     scroll: usize,
+    /// The hit's chat this screen asked for (`Enter`) and stays up for, so the
+    /// previous chat is never shown in between. See spec §11.2.
+    awaited: AwaitedChat,
 }
 
 impl SearchScreen {
@@ -114,7 +118,19 @@ impl SearchScreen {
             loc,
             selected: 0,
             scroll: 0,
+            awaited: AwaitedChat::Nothing,
         }
+    }
+
+    /// The results stay on screen until this chat's `ChatActivated` arrives
+    /// (`dispatch_search`); they are stashed as the way back at that moment.
+    pub fn await_chat(&mut self, chat: Uuid) {
+        self.awaited = AwaitedChat::Chat(chat);
+    }
+
+    /// Whether the activation that just arrived is the hit's chat (consumed).
+    pub fn take_awaited(&mut self, id: Uuid) -> bool {
+        self.awaited.take_if_arrived(id)
     }
 
     /// Replaces the results (a later `MessageSearchResults` for the same
@@ -175,6 +191,9 @@ impl SearchScreen {
         if key.kind != KeyEventKind::Press {
             return None;
         }
+        // A key while waiting for a chat means the user has moved on (see
+        // `AwaitedChat::clear`); `app` sets the wait after this returns.
+        self.awaited.clear();
         // Ctrl shortcuts go by "physical" Latin key, so they work under any
         // keyboard layout (see shared::keys).
         if key.modifiers.contains(KeyModifiers::CONTROL) {
