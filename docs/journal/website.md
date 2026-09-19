@@ -10,7 +10,7 @@ the reasoning behind the site, not its current shape. For the current shape
 read the research/design doc above; for the traps that recur across areas
 read [lessons.md](../lessons.md).
 
-## Entries (20)
+## Entries (21)
 
 - Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 - Post-M9: website — S2 infra: one CloudFormation stack, mindfork.io live (done)
@@ -32,6 +32,7 @@ read [lessons.md](../lessons.md).
 - Post-M9: website — mindfork.io in Google Search Console (done)
 - Post-M9: website — structured data, authorship and dates a crawler can read (done)
 - Post-M9: website — a Cache-Control the site never sent (done)
+- Post-M9: website — IndexNow, a knock rather than an invitation (done)
 
 ### Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 
@@ -963,3 +964,53 @@ templates, content and CI, no Rust touched.
 - Still open from the audit, and deliberately not here: one OG card for the whole site
   (`tools/og_card.py` can draw per-page ones), and Bing, Yandex and IndexNow, which are
   registrations rather than code.
+
+### Post-M9: website — IndexNow, a knock rather than an invitation (done)
+
+- **Tier 3's code half.** A sitemap invites a crawler back sometime; IndexNow tells it
+  now. One POST after a deploy names the URLs that may have changed, and the participating
+  engines fetch them on their own schedule instead of ours — **Bing above all**, which also
+  feeds DuckDuckGo and ChatGPT's search. **Google does not participate**, so this sits
+  beside Search Console rather than replacing any of it. The tier's other two items were
+  the owner's clicks, not code: Bing Webmaster Tools imported the Search Console property,
+  and Yandex's console was not taken up, being unavailable to the author.
+- **The key is not a secret, and is committed for the reason the Google token was.**
+  Ownership is proved by serving the key back from the host at `https://<host>/<key>.txt`,
+  so it is public by construction — anyone may fetch it — exactly like the DNS TXT record
+  that proves the domain to Google. The alternative is a value that lives only on a
+  deployed server, where nothing reviews it. The worst a stranger who reads it can do is
+  ask an engine to re-crawl pages that are already ours.
+- **The key file is the single source of truth**, with no copy in a config file to drift
+  from it. What identifies it is **not its name** — `security.txt` is eight legal
+  characters and would have passed that test, in a repository that already has a
+  `SECURITY.md` — but that **its contents are its own name**, which is precisely what an
+  engine fetches the file to check. A file that could be a key but is not one is reported
+  as a near miss, which is what an edited key file looks like; two real ones are a refusal,
+  because a rotation that left the old file behind leaves the host answering for both.
+  There is a fixture for the `security.txt` case.
+- **A script with `--self-test`, not a `run:` block** — the same reasoning that moved the
+  release guard out of `release.yml` (lessons §10): a workflow's refusal arms are only ever
+  reached by the thing they guard going wrong, and a deploy is the most expensive place to
+  find a typo in one. `tools/indexnow.py --check` and `--self-test` run in `lint`, on the
+  pull request, for a fraction of a second.
+- **What a response means is a decision, so it is written down and tested.** 200 and 202
+  are success — 202 is "received, key not validated yet", the ordinary first answer for a
+  new key. 429 and 5xx **warn and pass**: the service is busy, and the pages are already
+  published, so reddening a finished deploy would say something untrue about it. 400, 403
+  and 422 **fail**, because a refused key or a mismatched host means no submission will
+  ever land and silence would hide that forever.
+- **The URL list is the sitemap the site already publishes** — 23 URLs against the
+  protocol's ceiling of 10 000 — rather than an attempt to name only what changed. That
+  attempt is not available here and the entry before this one says why: a deploy from a
+  runner re-uploads the whole site, because a fresh checkout gives every file a current
+  mtime, so the sync output cannot tell a changed page from a rewritten one.
+- **Verified as far as it can be before the key is live**: `--self-test` reports 0
+  failures over seven refusal fixtures and the eight-code response policy, `--check` passes
+  against the real key file, and `--submit --dry-run` over a real build produces the right
+  body — host `mindfork.io`, the key, its `keyLocation`, and the 23 URLs. The real POST
+  **cannot** be tried first: the engines fetch the key file back from the host, and until
+  this deploys the host does not serve it, so an early attempt would be a `403` by
+  construction. The first deploy after the merge is the measurement.
+- No Rust touched: no live run, and the test count is unchanged. Gates
+  (`actions_pin_check` / `cyrillic_scan` / `link_check` / `doc_index_check`) green, and
+  both workflows were parsed to confirm the steps landed in `lint` and in `deploy`.

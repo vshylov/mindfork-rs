@@ -146,3 +146,14 @@ jobs:
             --cache-control "public, max-age=300, s-maxage=86400"
       - name: Invalidate CloudFront
         run: aws cloudfront create-invalidation --distribution-id "$DISTRIBUTION" --paths "/*"
+      # A sitemap invites a crawler back sometime; this tells it now. Bing takes
+      # the submission (and feeds DuckDuckGo and ChatGPT's search with it) while
+      # Google does not participate at all, so this sits beside Search Console
+      # rather than replacing it. It runs last on purpose: the engines fetch the
+      # key file back from the site to check ownership, so the site has to be the
+      # new one first. A busy or unreachable service does not fail the deploy -
+      # the pages are already published - but a refused key does, because that
+      # means no submission will ever land. tools/indexnow.py, whose arms are
+      # tested in ci.yml's lint job.
+      - name: Tell the IndexNow engines
+        run: python tools/indexnow.py --submit
