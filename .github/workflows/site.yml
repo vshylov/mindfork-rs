@@ -105,7 +105,40 @@ jobs:
         with:
           role-to-assume: arn:aws:iam::976877302614:role/mindfork-site-deploy
           aws-region: us-east-1
-      - name: Sync to S3
-        run: aws s3 sync site/public/ "s3://$BUCKET" --delete --no-progress
+      # `Cache-Control` travels with the object: S3 stores it, CloudFront passes
+      # it on, and the edge and the browser both obey it. Until this existed the
+      # site sent the header on nothing at all - measured on the live pages, the
+      # stylesheet, the woff2 fonts and the OG card alike - so every repeat visit
+      # re-fetched 2.5 MB of fonts and screenshots on nothing but a heuristic.
+      #
+      # Three passes because three answers are right, and because the site has no
+      # fingerprinted filenames to lean on: `/style.css` is `/style.css` forever,
+      # so it cannot be given the long life a hashed asset could. `immutable` is
+      # claimed only for the fonts, whose bytes are a released typeface; the
+      # brand images and screenshots are regenerated under their own names by
+      # `tools/og_card.py` and `tools/screenshots.py`, so a year would strand a
+      # viewer on the old one. `s-maxage` lets the edge hold a page for a day
+      # while a browser rechecks in five minutes - the deploy invalidates the
+      # edge explicitly on the next step, and cannot invalidate a browser.
+      #
+      # `sync` writes the header only onto objects it actually uploads, and it
+      # uploads only what changed, so an object already in the bucket keeps what
+      # it was stored with. The ones already there were backfilled once by hand;
+      # docs/journal/website.md records the command.
+      - name: Sync to S3 - fonts
+        run: |
+          aws s3 sync site/public/ "s3://$BUCKET" --delete --no-progress \
+            --exclude "*" --include "fonts/*" \
+            --cache-control "public, max-age=31536000, immutable"
+      - name: Sync to S3 - brand and screenshots
+        run: |
+          aws s3 sync site/public/ "s3://$BUCKET" --delete --no-progress \
+            --exclude "*" --include "brand/*" --include "screenshots/*" \
+            --cache-control "public, max-age=86400"
+      - name: Sync to S3 - pages, styles and feeds
+        run: |
+          aws s3 sync site/public/ "s3://$BUCKET" --delete --no-progress \
+            --exclude "fonts/*" --exclude "brand/*" --exclude "screenshots/*" \
+            --cache-control "public, max-age=300, s-maxage=86400"
       - name: Invalidate CloudFront
         run: aws cloudfront create-invalidation --distribution-id "$DISTRIBUTION" --paths "/*"
