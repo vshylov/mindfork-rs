@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (26)
+## Entries (27)
 
 - Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - Post-M9: SonarQube Cloud analysis in CI (done)
@@ -38,6 +38,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: SonarQube follow-up — blocking file calls in the two setup paths (done)
 - Post-M9: SonarQube follow-up — the file launcher's two closures (done)
 - Post-M9: the quality-gate badge, and the one Dependabot badge that is not a claim (done)
+- Post-M9: SonarQube follow-up — the IndexNow tool's three findings (done)
 
 ### Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - **28 relative links in the docs pointed at nothing**, and had for a while.
@@ -1492,3 +1493,69 @@ structure (AGENTS.md §3).
   build here at all — `libasound2-dev`, exactly as the `test` job does it.)
 - **No CHANGELOG entry and no live run** — a README masthead and three documents;
   nothing in `src/`. Test totals unchanged by this branch.
+
+### Post-M9: SonarQube follow-up — the IndexNow tool's three findings (done)
+
+- **The new `tools/indexnow.py` arrived with three findings, and exactly one of
+  them reddened the gate** (PR #597, branch `feat/site-indexnow`; the tool
+  itself is the website journal's IndexNow entry). The SonarCloud bot named a
+  single failed condition — **B Security Rating on New Code, required ≥ A** —
+  and the only security-class finding in the new code was `python:S5332`. The
+  two maintainability ones could not have flipped it, exactly as the
+  screenshots-writer entry above measured; they were fixed anyway, because they
+  were real.
+- **Reading which condition failed cost more than the fixes did, through an own
+  goal worth recording.** The MCP's PR calls do not agree on a parameter name:
+  `get_project_quality_gate_status` takes `pullRequest`,
+  `search_sonar_issues_in_projects` takes `pullRequestId` — and the gate call
+  handed the wrong one **does not error, it silently answers about `main`**.
+  That returned status OK for a PR whose gate was red, and the only tell was
+  that the numbers were byte-identical to the branch's (85.9 coverage, 0.3
+  duplication), which is what first read as "the MCP ignores the PR filter".
+  With `pullRequest` it is exact: `new_security_rating` **2** against a
+  threshold of 1, every other condition OK. `get_component_measures` is
+  separately unusable — it forwards neither `component` nor `componentKey` and
+  answers 400 either way. The **SonarCloud bot's comment on the pull request**
+  names the failed condition in one line and cost nothing; it is the right
+  first stop, and the cross-check that would have caught the silent fallback.
+- **`python:S5332` is a false positive of a shape this project has now seen
+  twice.** The flagged line is `SITEMAP_NS = {"sm":
+  "http://www.sitemaps.org/schemas/sitemap/0.9"}` — an XML namespace URI, an
+  identifier fixed by the sitemap 0.9 specification that has to match the
+  document byte for byte. Rewritten to `https` it stops matching,
+  `findall(".//sm:loc", SITEMAP_NS)` returns nothing, and a deploy submits an
+  empty URL list while reporting success. Nothing is fetched over it. The 2026-08-06
+  triage met the same rule on `link_check.py:49` (the `SKIP_SCHEME` tuple used
+  to *skip* external links) and marked it False Positive in the UI.
+- **Recorded in `sonar-project.properties` this time, not in the UI** (user's
+  decision, 2026-09-19, offered against marking it False Positive by hand). The
+  reason is the one the file's `rust:S2208` note already measured: a UI Accept
+  has to be re-applied by hand every time the line moves. The entry is
+  `sitemap_ns`, scoped to `python:S5332` × `tools/indexnow.py`, so every other
+  rule stays live in that file.
+- **The suppression is per file, so what it was guarding is now asserted by
+  hand.** `resourceKey` has no line granularity, and the one clear-text URL that
+  *would* matter in this file is `ENDPOINT`, the single address the tool posts
+  to. `_check_endpoint` in `--self-test` refuses a non-https endpoint, and
+  `--self-test` runs in the `lint` job on every pull request. Measured rather
+  than asserted: flipping `ENDPOINT` to `http://` in a copy makes the self-test
+  exit 1 with `the endpoint must be https`.
+- **`python:S3776` — complexity 18 against 15, and the reason it read as 18.**
+  Nothing in `self_test` looked tangled; the score came from its two helpers
+  being `def`s *inside* the body, whose branches Sonar folds into the enclosing
+  function. `_fixture` and `_expect_refusal` are module-level now (plus
+  `_expect_key`, for the decoy case that asserts rather than expects a refusal),
+  and the body split along the seam its own comments had already drawn —
+  `_check_refusals` for the fixture scenarios, `_check_classify` for the
+  response policy, `_check_endpoint` for the above, with `self_test` left
+  holding the failure list and the report. Every function lands near 3. **No
+  scenario gained, lost or changed**: the same eight fixtures and the same eight
+  status codes, `--self-test` still 0 failures.
+- **`python:S1192` — `"https://mindfork.io/"` spelled seven times** across those
+  fixtures, now `FAKE_SITE`/`FAKE_HOME`/`FAKE_INSTALL`. That is also the honest
+  shape: every fixture has to agree with what `base_url` reads back for a
+  payload to build at all, so the spelling was never free to vary.
+- No Rust touched — test totals unchanged; the tool's own gates (`--check`,
+  `--self-test`) and the three documentation gates green, and `--submit
+  --dry-run` builds the same body as before. No CHANGELOG entry: internal
+  tooling (§4).

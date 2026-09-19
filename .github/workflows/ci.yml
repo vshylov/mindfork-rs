@@ -173,6 +173,17 @@ jobs:
       # which is the worst place to find out (docs/lessons.md §10).
       - name: The release guard's own arms
         run: python3 tools/release_guard.py --self-test
+      # The IndexNow key proves the site's ownership by being served back from
+      # it, so the one thing that must never drift is the file's name against
+      # its contents - and a rotation that left the old file behind would have
+      # the host answering for two keys at once. Both are caught here, on the
+      # pull request, rather than by a deploy that pings and is refused; and
+      # the submitter's own refusal arms run against fixtures for the same
+      # reason the release guard's do.
+      - name: The IndexNow key file is well-formed
+        run: python3 tools/indexnow.py --check
+      - name: The IndexNow submitter's own arms
+        run: python3 tools/indexnow.py --self-test
       - name: Install the toolchain (from rust-toolchain.toml)
         run: rustup show
       # A cache belongs to the branch that wrote it, so with the default
