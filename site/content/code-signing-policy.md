@@ -1,6 +1,7 @@
 +++
 title = "Code signing policy"
 description = "Who builds and approves a mindfork release, how the Windows binaries are signed, and what the program does with your data."
+updated = "2026-09-18"
 template = "doc.html"
 +++
 

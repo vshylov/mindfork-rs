@@ -1,0 +1,30 @@
+{# The application itself, as schema.org sees it. Included by the home page
+   and by the install guide - the two pages that are *about* the program rather
+   than about something it does - so the description lives once. The version is
+   `config.extra.app_version`, which the release PR already bumps (AGENTS.md
+   section 6), so this cannot drift from what the prose says. `isAccessibleForFree`
+   plus a zero Offer is the pair Google's documentation asks for; stating only
+   one of them reads as an unpriced product rather than a free one. #}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "@id": "{{ config.base_url }}/#app",
+  "name": {{ config.title | json_encode | safe }},
+  "description": {{ config.description | json_encode | safe }},
+  "url": "{{ config.base_url }}/",
+  "downloadUrl": "{{ get_url(path='@/install.md') }}",
+  "softwareVersion": {{ config.extra.app_version | json_encode | safe }},
+  "applicationCategory": "DeveloperApplication",
+  "operatingSystem": "Windows, Linux",
+  "license": "{{ get_url(path='@/license.md') }}",
+  "isAccessibleForFree": true,
+  "offers": {
+    "@type": "Offer",
+    "price": "0",
+    "priceCurrency": "USD"
+  },
+  "author": { "@id": "{{ config.base_url }}/#author" },
+  "sameAs": {{ config.extra.github | json_encode | safe }}
+}
+</script>

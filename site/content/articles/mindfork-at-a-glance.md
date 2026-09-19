@@ -1,7 +1,15 @@
 +++
 title = "mindfork at a glance"
 description = "The shape of the app: an engine contract over OpenAI-compatible servers, a client-side agentic loop, one turn from start to finish, layered memory, boring durable storage — and where the trust boundaries are."
+updated = "2026-09-14"
 weight = 1
+
+[extra]
+# First published. Deliberately not a top-level `date`: that is what
+# Zola puts into the Atom feed, which carries release news, and an
+# explainer revised later must not arrive there as fresh. `page.html`
+# reads it for the byline and for schema.org `datePublished`.
+published = "2026-08-10"
 +++
 
 *A short architectural tour — the shape of the thing, not a manual. It

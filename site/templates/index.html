@@ -8,6 +8,10 @@
 <meta property="og:description" content="{{ section.description }}">
 {% endblock og %}
 
+{% block jsonld %}{{ super() }}
+{% include "schema-app.html" %}
+{% endblock jsonld %}
+
 {% block content %}
 <section class="hero">
   <div class="wrap hero-cols">

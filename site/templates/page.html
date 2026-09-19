@@ -6,13 +6,66 @@
 <meta property="og:type" content="article">
 <meta property="og:title" content="{{ page.title }} — mindfork">
 <meta property="og:description" content="{% if page.description %}{{ page.description }}{% else %}{{ config.description }}{% endif %}">
+{% if page.date %}<meta property="article:published_time" content="{{ page.date }}">{% elif page.extra.published %}<meta property="article:published_time" content="{{ page.extra.published }}">{% endif %}
+{% if page.updated %}<meta property="article:modified_time" content="{{ page.updated }}">{% endif %}
+<meta property="article:author" content="{{ config.extra.author }}">
 {% endblock og %}
+
+{# A post and an article are the same template and not the same thing: a post is
+   dated news, an article is an explainer that gets revised. `BlogPosting` and
+   `Article` say which. `Article` rather than the more precise `TechArticle`
+   deliberately - Google documents support for Article, NewsArticle and
+   BlogPosting, and precision that a consumer does not read buys nothing.
+   `dateModified` falls back to the publication date, since a post carries a
+   date and no `updated` while an article carries the reverse; the optional
+   fields sit in the middle so that a missing one cannot leave a trailing
+   comma. #}
+{% block jsonld %}{{ super() }}
+{% set section = get_section(path=page.ancestors | last) %}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "{% if page.components[0] == "blog" %}BlogPosting{% else %}Article{% endif %}",
+  "@id": "{{ page.permalink }}#article",
+  "mainEntityOfPage": { "@type": "WebPage", "@id": "{{ page.permalink }}" },
+  "headline": {{ page.title | json_encode | safe }},
+  "description": {{ page.description | default(value=config.description) | json_encode | safe }},
+  "url": "{{ page.permalink }}",
+  "image": "{{ get_url(path='brand/og-card.png') }}",
+  "inLanguage": {{ config.default_language | json_encode | safe }},
+  "wordCount": {{ page.word_count }},
+  {% if page.date %}"datePublished": "{{ page.date }}",{% elif page.extra.published %}"datePublished": "{{ page.extra.published }}",{% endif %}
+  {% if page.updated %}"dateModified": "{{ page.updated }}",{% elif page.date %}"dateModified": "{{ page.date }}",{% elif page.extra.published %}"dateModified": "{{ page.extra.published }}",{% endif %}
+  "author": { "@id": "{{ config.base_url }}/#author" },
+  "publisher": { "@id": "{{ config.base_url }}/#author" },
+  "isPartOf": { "@id": "{{ config.base_url }}/#website" }
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+    { "@type": "ListItem", "position": 1, "name": "Home", "item": "{{ config.base_url }}/" },
+    { "@type": "ListItem", "position": 2, "name": {{ section.title | json_encode | safe }}, "item": "{{ section.permalink }}" },
+    { "@type": "ListItem", "position": 3, "name": {{ page.title | json_encode | safe }} }
+  ]
+}
+</script>
+{% endblock jsonld %}
 
 {% block content %}
 <article class="prose-wrap">
   <div class="wrap narrow">
     <h1 class="post-h1">{{ page.title }}</h1>
-    <p class="post-meta mono">{% if page.date %}{{ page.date }} · {% endif %}{{ page.reading_time }} min read</p>
+    {# A date a crawler can read, not only a reader - and an article had none
+       shown at all until now. A post carries a top-level `date`, which is also
+       what Zola feeds the Atom feed from; an article carries `extra.published`
+       for exactly that reason, plus `updated` when it has been revised since.
+       The second half prints only when the two differ, so the usual case stays
+       one date. #}
+    {% if page.date %}{% set published = page.date %}{% else %}{% set published = page.extra.published | default(value="") %}{% endif %}
+    <p class="post-meta mono">{% if published %}<time datetime="{{ published }}">{{ published }}</time> · {% endif %}{% if page.updated and page.updated != published %}updated <time datetime="{{ page.updated }}">{{ page.updated }}</time> · {% endif %}{{ page.reading_time }} min read</p>
     <div class="prose">
       {{ page.content | safe }}
     </div>

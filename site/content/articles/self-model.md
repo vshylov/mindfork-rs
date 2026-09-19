@@ -1,7 +1,15 @@
 +++
 title = "The self-model: a memory that knows it changed"
 description = "Each companion keeps a model of itself and of you — a summary, goals, traits and dated observations — and maintains it with its own tools, on your disk."
+updated = "2026-08-15"
 weight = 3
+
+[extra]
+# First published. Deliberately not a top-level `date`: that is what
+# Zola puts into the Atom feed, which carries release news, and an
+# explainer revised later must not arrive there as fresh. `page.html`
+# reads it for the byline and for schema.org `datePublished`.
+published = "2026-08-15"
 +++
 
 *The third in a short series on how mindfork is put together. Earlier:

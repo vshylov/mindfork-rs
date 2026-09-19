@@ -1,7 +1,13 @@
 +++
 title = "Install"
 description = "Download mindfork for Windows or Linux: the installer, the packages, the portable archives — what each one is for, how to verify it, and what to do first."
+updated = "2026-09-18"
 template = "doc.html"
+
+[extra]
+# Include the schema.org SoftwareApplication here too: this is the page a search
+# engine should be able to answer "where do I get it" from. See doc.html.
+software = true
 +++
 
 Everything below is on the [releases page](https://github.com/vshylov/mindfork-rs/releases).

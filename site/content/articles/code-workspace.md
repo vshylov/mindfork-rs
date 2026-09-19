@@ -1,7 +1,15 @@
 +++
 title = "The code workspace: containment before capability"
 description = "A project attached to a chat: what the assistant can read, edit and run there, why the commands are only ever yours, how every change is a diff with a way back — and the semantic index that was measured and did not ship."
+updated = "2026-09-13"
 weight = 8
+
+[extra]
+# First published. Deliberately not a top-level `date`: that is what
+# Zola puts into the Atom feed, which carries release news, and an
+# explainer revised later must not arrive there as fresh. `page.html`
+# reads it for the byline and for schema.org `datePublished`.
+published = "2026-09-13"
 +++
 
 *The eighth in a short series on how mindfork is put together. Earlier:

@@ -1,7 +1,15 @@
 +++
 title = "Background runs, and the pool they share"
 description = "A subagent that outlives its round, the app's own quiet requests, and one local llama-server with one context pool under all of them: what the server does when the pool overflows, how the app keeps it from happening, and what parallel sessions actually buy on one GPU."
+updated = "2026-09-13"
 weight = 9
+
+[extra]
+# First published. Deliberately not a top-level `date`: that is what
+# Zola puts into the Atom feed, which carries release news, and an
+# explainer revised later must not arrive there as fresh. `page.html`
+# reads it for the byline and for schema.org `datePublished`.
+published = "2026-09-13"
 +++
 
 *The ninth in a short series on how mindfork is put together. Earlier:
