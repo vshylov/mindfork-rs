@@ -1012,6 +1012,18 @@ templates, content and CI, no Rust touched.
   **cannot** be tried first: the engines fetch the key file back from the host, and until
   this deploys the host does not serve it, so an early attempt would be a `403` by
   construction. The first deploy after the merge is the measurement.
+- **Measured, over the two deploys that followed** (2026-09-19). The first, on the merge
+  itself at 18:46 UTC, answered **`202 — received, key validation pending`** for the 23
+  URLs: the documented first answer for a key the service has not fetched yet, and the
+  response policy passed it, so a deploy that had already published its pages stayed
+  green — `ACCEPTED` holding **two** codes rather than one is what earned its place here,
+  on the very first live call, and a policy that had read 202 as anything else would have
+  reddened a deploy that in fact worked. The second, at 20:14 UTC, answered **`200 —
+  accepted`** for the same 23 URLs: between the two the service had fetched
+  `/<key>.txt` from the host and matched it against the key in the body. So the
+  ownership half of the protocol is measured here and not merely implemented, and the
+  `403` arm — the one that deliberately fails a deploy — is the only one still unexercised
+  against the live service, which is the right way round.
 - No Rust touched: no live run, and the test count is unchanged. Gates
   (`actions_pin_check` / `cyrillic_scan` / `link_check` / `doc_index_check`) green, and
   both workflows were parsed to confirm the steps landed in `lint` and in `deploy`.
