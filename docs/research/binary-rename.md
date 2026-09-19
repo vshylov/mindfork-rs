@@ -234,13 +234,23 @@ and the Sonar project key keep the repository's name too.
   an engine, a file format or a protocol. A package name is read by Cargo and by
   no one else at runtime.
 
-### What is left, and whose it is
+### What was left, and how it closed
 
 The publish. `cargo publish` is the user's (AGENTS.md §5 — the agent publishes
-nothing), and it belongs to the **next version bump**, not to 0.10.0: the tag
+nothing), and it belonged to the **next version bump**, not to 0.10.0: the tag
 `v0.10.0` already points at a tree whose package is `mindfork-rs`, so publishing
-`mindfork 0.10.0` from a later commit would put a version on the registry that no
-tag matches. The CHANGELOG line, the README badge and the `cargo install
-mindfork` line in `install.md` belong to that release too — until the crate is
+`mindfork 0.10.0` from a later commit would have put a version on the registry
+that no tag matches. The CHANGELOG line, the README badge and the `cargo install
+mindfork` line in `install.md` belonged to that release too — until the crate is
 actually there, every one of them is a broken promise, which is exactly what the
 roadmap said.
+
+**Closed on 2026-09-19 with 0.10.1**, and by a workflow rather than by a typed
+command: publishing the release starts `.github/workflows/crates-io.yml`
+(AGENTS.md §6 step 7), so the version on the registry is the tree the released
+binaries were built from. `mindfork 0.10.1` is live — 3 941 402 bytes, MIT, one
+binary target, `rust-version` 1.96 — and the three promises are kept in the same
+release that made them true. The only thing the registry does not show is
+documentation: docs.rs builds nothing for a crate without a library target, so
+the `documentation` field points at the manual, which is what the crates.io page
+links.

@@ -38,8 +38,8 @@ flip itself, recorded in
 blobs and 582 pull requests scanned for credentials with **zero** found, 59
 release assets and 183 CI artifacts deleted for carrying dictionaries without
 their licences, v0.10.0 published and immutable, and the settings SECURITY.md had
-been promising. What is left of it is the owner's and is listed above under
-packaging: `cargo publish` at the next version bump.
+been promising. Its last open item closed on 2026-09-19: `mindfork` **0.10.1**
+is on crates.io, published by the release rather than by hand.
 
 **Multimodality (images)** left this list on 2026-08-13 — **track complete**,
 both stages: `/image attach|remove|list` works against a local
@@ -491,22 +491,21 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   `release.yml`), waiting only on the repository going public; winget manifest
   (portable-zip until signing — unblocked once the setup executable is signed);
   AUR `mindfork-rs-bin`; MSI for GPO/Intune on demand.
-- **Publishing to crates.io as `mindfork`** — the package **is** now called
-  `mindfork` ([docs/research/binary-rename.md](research/binary-rename.md) §10,
-  which revises the 2026-08-24 decision that it stays `mindfork-rs`: the `-rs`
-  is a repository name, and a registry has no such ambiguity to resolve). The
-  name was still free on 2026-09-19, and `cargo publish --dry-run` runs clean —
-  368 files, 3.8 MiB compressed, the dictionary and grammar licences inside it.
-  The publish now has a workflow (`.github/workflows/crates-io.yml`: it runs
-  when a release is published, and by hand as a rehearsal — AGENTS.md §6 step
-  7), so what remains is the owner's press (§5) at the **next version bump**:
-  `v0.10.0` tags a tree whose package was `mindfork-rs` and whose lock differs
-  from `main` by 42 dependency versions, so `0.10.0` on the registry would match
-  no tag and no released binary — and a crate version, unlike a release, can
-  never be corrected. With the first published version come the things that are
-  broken promises until the crate is really there — the CHANGELOG line, a
-  `crates.io` version badge in the README and a `cargo install mindfork` line in
-  `install.md`.
+- **Publishing to crates.io as `mindfork`** — **done on 2026-09-19**:
+  `cargo install mindfork` installs **0.10.1**
+  ([crates.io/crates/mindfork](https://crates.io/crates/mindfork)). The package
+  was renamed for it ([docs/research/binary-rename.md](research/binary-rename.md)
+  §10, which revises the 2026-08-24 decision that it stays `mindfork-rs`: the
+  `-rs` is a repository name, and a registry has no such ambiguity to resolve),
+  and the upload is not a command anyone types — publishing the GitHub release
+  starts `.github/workflows/crates-io.yml` (AGENTS.md §6 step 7), which is why
+  what is on the registry is the tree the released binaries were built from.
+  Not 0.10.0: that tag points at a tree whose package was still `mindfork-rs`
+  and whose lock differs from the next commit by 42 dependency versions, and a
+  crate version — unlike a release — can never be corrected. Still open around
+  it: **docs.rs shows no documentation**, because the crate has no library
+  target; the `documentation` field points at the manual instead, which is what
+  the crates.io page links.
 - **Auto-update** — self-update, musl-static and arm64 builds, an "a new
   version is available" notice in the TUI. Groundwork from the finished
   "release engineering" track

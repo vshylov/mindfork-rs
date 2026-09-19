@@ -248,8 +248,8 @@ being recent is dropped, not shortened.
   spellcheck dictionaries without their licences; v0.10.0 published and **immutable**
   (a draft created before the setting still becomes immutable at publish — measured,
   the documentation is silent); the settings SECURITY.md had been promising, minus the
-  two paid secret-scanning options GitHub refuses in silence. What is left is the
-  owner's: one press of the `crates.io` workflow at the next bump
+  two paid secret-scanning options GitHub refuses in silence. The track's last
+  item closed with 0.10.1 — `cargo install mindfork`
   ([docs/research/public-release-readiness.md](docs/research/public-release-readiness.md) §5,
   [docs/journal/release.md](docs/journal/release.md)).
 - **A chart's line said "shown" to a model that takes no images** — `python_exec`
