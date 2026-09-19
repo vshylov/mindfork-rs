@@ -1317,6 +1317,21 @@ row — two here clipped silently (a ratatui `Block` title at the corner, a
 `List` row at the border), while the ones that wrap needed nothing.
 — *a title is cut where it is drawn, not where it is stored*.
 
+**A screen that leaves on the key shows one frame of whatever the next screen
+still holds.** The loop draws the frame a key made dirty *before* it can read the
+orchestrator's answer to that key — the draw sits between the dispatch and the
+next `drain_events`, with `event::poll(TICK)` after it — so any intent that both
+switches `active` and starts a round trip paints the destination's **stale**
+content once, fully repainted. Opening a chat did it on six routes out of three
+screens; one of them (`Ctrl+N`) had already been fixed by hand, which is how the
+other five stayed. When the destination's content comes from the reply, the
+asking screen stays in front until the reply lands (`AwaitedChat`), awaited by
+id where there is one so an unrelated event cannot release it — and every such
+wait needs its three exits written as tests: the request that is a no-op and is
+never answered, the refusal that answers with a different event, and the answer
+that never comes.
+— *a chat asked for from another screen arrives in one frame*.
+
 ---
 
 ## 6. Windows and cross-platform

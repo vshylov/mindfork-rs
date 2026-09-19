@@ -2401,6 +2401,26 @@ A direct requirement from the task:
   the interface — this one, the settings screen's two panes and its search, and
   the profile / reference / suggestion popups — and has one implementation,
   `shared::ui::ListScroll`, which is the only place a `ListState` is built.
+- **The chat you asked for arrives in one frame.** Opening a chat is a round
+  trip — the list says which one, the orchestrator (the owner of the chats)
+  answers with `ChatActivated` — and the interface applies that answer a tick
+  after the key. A list that closed on the key therefore showed the **previous**
+  conversation for that tick: a whole repainted frame of the wrong chat before
+  the right one. So the list **stays in front until the chat it asked for is on
+  the chat screen** — for `Enter` (a plain switch and the first-match opening
+  alike), `Ctrl+N` and `Ctrl+D` — and the same holds for the two other screens a
+  chat is opened from: a hit on the results screen
+  ([§11.2.1](#1121-the-message-level-search-screen)) and a run or its parent on
+  the tasks screen ([§11.10](#1110-the-tasks-screen-f7)), which become the way
+  back at the moment they give way, not before. An existing chat is waited for
+  **by id**, so an unrelated activation in the meantime (the active chat
+  deleted, a background landing) closes nothing; a created one has no id yet,
+  so the next activation is taken to be it. The wait is never a trap: the chat
+  **already open** is not waited for at all (a switch to it is a no-op the
+  orchestrator does not answer — the list closes on the key, as it always did),
+  a refusal (`Ctrl+D` on a transcript, a failed save) ends it and is reported
+  **in the list**, which is still in front, and any further key ends it too — an
+  answer that never comes leaves a list that is simply open.
 - **Renaming** a chat in place (`F2`) — in a **single-line `InputBox`**
   (`set_single_line`, see [11.5](#115-input-and-editing-spellcheck)/[11.6](#116-the-settings-screen)),
   which gives spellcheck (error underlining), word-wise navigation/deletion
