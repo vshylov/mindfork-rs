@@ -10,7 +10,7 @@ the reasoning behind the site, not its current shape. For the current shape
 read the research/design doc above; for the traps that recur across areas
 read [lessons.md](../lessons.md).
 
-## Entries (17)
+## Entries (18)
 
 - Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 - Post-M9: website — S2 infra: one CloudFormation stack, mindfork.io live (done)
@@ -29,6 +29,7 @@ read [lessons.md](../lessons.md).
 - Post-M9: website — two more articles: the code workspace, and background runs on the context pool (done)
 - Post-M9: website — Zola 0.23: components, the config renamed, the pin verified (done)
 - Post-M9: public release readiness — stage 5b, the site a stranger lands on (done)
+- Post-M9: website — mindfork.io in Google Search Console (done)
 
 ### Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 
@@ -774,3 +775,70 @@ templates, content and CI, no Rust touched.
   Tera then reported the damage as *"Block `title` is not defined in any parent
   template"* against **404.html** — a file nobody had touched. A parent that fails to
   parse takes its blocks with it, and the error names the children.
+
+### Post-M9: website — mindfork.io in Google Search Console (done)
+
+- **The site is registered for indexing** (2026-09-19, branch
+  `docs/site-search-console`). Search Console offers two shapes of property and
+  they are not equivalent: a **domain property**, proved by a DNS TXT record,
+  covers the apex, `www` and both protocols at once, while a URL-prefix property
+  — proved by an HTML file under `site/static/` or a `<meta>` tag — covers
+  exactly one prefix. The domain property is the one taken, so `www.mindfork.io`
+  and any future subdomain need no second verification.
+- **The record**, created in the existing Route53 zone `Z0725539OZLHCKB3LW5G`:
+  apex `mindfork.io.`, type TXT, TTL 300, value
+  `google-site-verification=YiOZMnawC8ecQaoMtjyZmAbqb9vLL2zjR0qSdt5vLlY`.
+  The apex held **no** TXT record before, so this was a `CREATE` and not an
+  `UPSERT` — worth checking first, because Route53 replaces a record set
+  wholesale and an `UPSERT` over an existing SPF or DMARC entry would have
+  dropped it in silence. The value is spelled out here on purpose: a TXT record
+  is public by construction — anyone can query it — so it is not a secret, and
+  the live zone was until now the only place it existed.
+- **Do not delete it.** Google re-checks the record and un-verifies the property
+  when it disappears, which costs the indexing data and, quietly, every
+  permission attached to the property. It is declared in
+  [`infra/website.cfn.yaml`](../../infra/website.cfn.yaml) as
+  `SearchConsoleVerification` with `DeletionPolicy: Retain`, so that deleting
+  the stack — or just that one resource — cannot take the verification with it,
+  and a zone rebuilt from the template comes up verified.
+- **Adopted into the stack by an ordinary update, because the designed path is
+  unusable.** A CloudFormation **resource import** is what adopts a resource
+  created out of band, and it refuses this one: the API demands the whole
+  primary identifier `[Name, HostedZoneId, Type, SetIdentifier]`, while the
+  client rejects an empty `SetIdentifier` (`min length: 1`) — and a simple,
+  non-weighted record set has no such value. Reported experience says a plain
+  update then fails with `Tried to create resource record set [...] but it
+  already exists`, so the attempt was made the measurement rather than guessed
+  at: a change set holding exactly **one** change (`Add
+  SearchConsoleVerification`) against a template otherwise byte-identical to
+  the deployed one, where a failure creates nothing and so rolls back nothing.
+  It **succeeded** — CloudFormation issues `UPSERT` for a record set, so a
+  byte-identical declaration took ownership without touching DNS: one TXT in
+  the zone before and after, same value and same TTL, `8.8.8.8` and `1.1.1.1`
+  answering throughout. The delete-and-recreate window the fallback would have
+  cost was never spent.
+- **Two limits found on the way**, both worth knowing before doubting one's own
+  work. `detect-stack-resource-drift` refuses `AWS::Route53::RecordSet`
+  outright — "Drift detection is not supported for ResourceType" — so the
+  evidence that template and zone agree is the zone listing, not a drift
+  report. And a comment-only template edit produces no change set at all ("The
+  submitted information didn't contain changes"), so the stack's stored
+  *Original* template keeps the earlier wording of this resource's comment
+  until the next real change: a diff of the repository against the deployed
+  template will show it and mean nothing.
+- **Measured before pressing Verify**, because a check that fails on propagation
+  looks exactly like a check that failed: all four authoritative nameservers
+  (`ns-1289.awsdns-33.org`, `ns-1902.awsdns-45.co.uk`, `ns-906.awsdns-49.net`,
+  `ns-260.awsdns-32.com`) and the public resolvers `8.8.8.8` and `1.1.1.1`
+  returned the record within a minute of the change. `aws route53 get-change`
+  still said `PENDING` at that moment — that status describes Route53's own
+  fan-out and is the wrong thing to wait on once the nameservers answer. Google
+  accepted the property the same day.
+- **Verification is not indexing.** `robots.txt` already says `Allow: /` and
+  advertises `https://mindfork.io/sitemap.xml`, which answers 200, so the
+  technical side needed nothing — but the sitemap still has to be submitted in
+  the Sitemaps panel for the crawl to begin promptly rather than eventually.
+- No Rust and no site content touched: no live run, and the test count is
+  unchanged. The one code change is the infrastructure template, and it is
+  already applied to the live stack (`mindfork-website`, `UPDATE_COMPLETE`).
+  Gates (`cyrillic_scan` / `link_check` / `doc_index_check`) green.

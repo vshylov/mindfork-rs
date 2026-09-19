@@ -2043,3 +2043,21 @@ pull request where all four required checks appeared" that this rule was verifie
 had touched `Cargo.toml`, so its matrix *had* expanded — the guard it was meant to exercise
 never ran.
 — *public release readiness — stage 6, the flip*, *one context the ruleset can require*.
+
+**Adopting a resource created by hand does not always need a resource import.** The
+designed path refuses a simple Route53 record set outright: the import API demands the
+whole primary identifier `[Name, HostedZoneId, Type, SetIdentifier]`, and the client
+rejects an empty `SetIdentifier` — the only value a non-weighted record has. Reported
+experience said the ordinary update then fails with `Tried to create resource record set
+[...] but it already exists`; it does not, because CloudFormation issues `UPSERT` for a
+record set, so a byte-identical declaration took ownership without touching DNS at all.
+The move that generalises is the cheap one: when a provider's create-on-existing
+behaviour is uncertain, a change set holding **exactly one `Add`** against a template
+otherwise identical to the deployed one is a free probe — a failure creates nothing and
+therefore rolls back nothing, so the attempt *is* the measurement, and no separate
+experiment is needed. Diff the deployed template against the repository first, or
+"otherwise identical" is one more assumption. Two things that will not help afterwards:
+`detect-stack-resource-drift` does not support `AWS::Route53::RecordSet`, and a
+comment-only edit produces no change set at all, so the stack's stored template keeps the
+older wording until the next real change.
+— *mindfork.io in Google Search Console*.
