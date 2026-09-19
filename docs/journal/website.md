@@ -796,12 +796,36 @@ templates, content and CI, no Rust touched.
   the live zone was until now the only place it existed.
 - **Do not delete it.** Google re-checks the record and un-verifies the property
   when it disappears, which costs the indexing data and, quietly, every
-  permission attached to the property. It is also **not in
-  `infra/website.cfn.yaml`**: the stack manages the four A/AAAA aliases and the
-  ACM validation CNAME, and this record was added out of band with
-  `aws route53 change-resource-record-sets`. CloudFormation does not touch what
-  it did not create, so there is no drift to repair today — but a zone rebuilt
-  from the template alone would come up unverified.
+  permission attached to the property. It is declared in
+  [`infra/website.cfn.yaml`](../../infra/website.cfn.yaml) as
+  `SearchConsoleVerification` with `DeletionPolicy: Retain`, so that deleting
+  the stack — or just that one resource — cannot take the verification with it,
+  and a zone rebuilt from the template comes up verified.
+- **Adopted into the stack by an ordinary update, because the designed path is
+  unusable.** A CloudFormation **resource import** is what adopts a resource
+  created out of band, and it refuses this one: the API demands the whole
+  primary identifier `[Name, HostedZoneId, Type, SetIdentifier]`, while the
+  client rejects an empty `SetIdentifier` (`min length: 1`) — and a simple,
+  non-weighted record set has no such value. Reported experience says a plain
+  update then fails with `Tried to create resource record set [...] but it
+  already exists`, so the attempt was made the measurement rather than guessed
+  at: a change set holding exactly **one** change (`Add
+  SearchConsoleVerification`) against a template otherwise byte-identical to
+  the deployed one, where a failure creates nothing and so rolls back nothing.
+  It **succeeded** — CloudFormation issues `UPSERT` for a record set, so a
+  byte-identical declaration took ownership without touching DNS: one TXT in
+  the zone before and after, same value and same TTL, `8.8.8.8` and `1.1.1.1`
+  answering throughout. The delete-and-recreate window the fallback would have
+  cost was never spent.
+- **Two limits found on the way**, both worth knowing before doubting one's own
+  work. `detect-stack-resource-drift` refuses `AWS::Route53::RecordSet`
+  outright — "Drift detection is not supported for ResourceType" — so the
+  evidence that template and zone agree is the zone listing, not a drift
+  report. And a comment-only template edit produces no change set at all ("The
+  submitted information didn't contain changes"), so the stack's stored
+  *Original* template keeps the earlier wording of this resource's comment
+  until the next real change: a diff of the repository against the deployed
+  template will show it and mean nothing.
 - **Measured before pressing Verify**, because a check that fails on propagation
   looks exactly like a check that failed: all four authoritative nameservers
   (`ns-1289.awsdns-33.org`, `ns-1902.awsdns-45.co.uk`, `ns-906.awsdns-49.net`,
@@ -814,6 +838,7 @@ templates, content and CI, no Rust touched.
   advertises `https://mindfork.io/sitemap.xml`, which answers 200, so the
   technical side needed nothing — but the sitemap still has to be submitted in
   the Sitemaps panel for the crawl to begin promptly rather than eventually.
-- No Rust, no site content and no template touched: no live run, and the test
-  count is unchanged. Gates (`cyrillic_scan` / `link_check` / `doc_index_check`)
-  green.
+- No Rust and no site content touched: no live run, and the test count is
+  unchanged. The one code change is the infrastructure template, and it is
+  already applied to the live stack (`mindfork-website`, `UPDATE_COMPLETE`).
+  Gates (`cyrillic_scan` / `link_check` / `doc_index_check`) green.
