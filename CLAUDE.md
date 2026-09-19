@@ -150,6 +150,7 @@ python tools/wizard_rtf.py --check # ...and the gate that it matches DISCLAIMER.
 python tools/site_legal_pages.py    # regenerate the site's privacy page from PRIVACY.md
 python tools/site_legal_pages.py --check  # ...and its gate
 python tools/indexnow.py --check   # the site's IndexNow key file (+ --self-test)
+python tools/site_llms_txt.py --check  # /llms.txt matches the site content
 python tools/actions_pin_check.py  # every workflow action is pinned to a commit
 python tools/release_guard.py --self-test  # the tag guard release.yml runs, against fixtures
 ```
@@ -368,34 +369,6 @@ being recent is dropped, not shortened.
   advice that costs hours and real money on a metered one (install.md §7.1)
   ([docs/research/openrouter-external.md](docs/research/openrouter-external.md),
   spec §6.5, [docs/journal/engine.md](docs/journal/engine.md)).
-- **The local interpreter joins the file exchange, and the track closes** — `python_exec`
-  in Local mode ran the code and nothing else: no files in, none out, and a schema without
-  `files`, because a model must never be offered an argument its mode cannot honour. Now
-  `LocalSandbox` answers the same `SandboxRunner` contract as the sandbox — one job
-  directory per call with the script beside `in/` and `out/`, the interpreter started with
-  that directory as its working directory, one collector under the same caps — so the tool
-  has no second code path and ADR 0005 §3's "the schema is mode-independent" holds again.
-  The folders are one source with two spellings (`/w/in`/`/w/out` in the guest, `in`/`out`
-  on the host), and the Wasmer prompt is byte-identical to the text the earlier gates
-  measured. Live GO on Gemma 4 31B with **no sandbox at all**: the chat's CSV named in
-  `files`, read from `in/`, summed to 4706 and written back to `out/`, stored with the chat
-  — and the sandbox's own smokes re-measured after the refactor
-  ([docs/history/sandbox-file-exchange.md](docs/history/sandbox-file-exchange.md) §14,
-  spec §13.2, [docs/journal/tools.md](docs/journal/tools.md)).
-- **A chat's file opens in the system** — `/file open <name|#N>` hands one of the files
-  `/file list` shows to the desktop's handler and `/file folder` opens the chat's folder,
-  on the handle and the refusals `/file remove` already had. What may be **launched** is an
-  allowlist of document types, and that is the point: the folder is written by
-  `python_exec`, so a name in it is the model's, and a `run.bat`, a `.lnk` or a scripted
-  `.html`/`.svg` would run under its handler — those open the folder they sit in instead,
-  with the reason in the note. The launch is our own three calls (`ShellExecuteW` /
-  `xdg-open` / `open`), one argument and no shell line, on the blocking pool; the path is
-  printed on success and on failure, so a desktop that will not open a type leaves the user
-  one copy-paste away. Gate manual by design — a viewer and a file manager opened on
-  Windows, while the Linux launch is covered in CI by a stub launcher that records the one
-  whole argument it was handed
-  ([docs/history/sandbox-file-exchange.md](docs/history/sandbox-file-exchange.md) §13, spec §9.7,
-  [docs/journal/tools.md](docs/journal/tools.md)).
 - **A headless launch (no TTY) exits with code 2** and a one-line reason — the
   TUI cannot be run from an agent's shell; live verification needs a real
   terminal.

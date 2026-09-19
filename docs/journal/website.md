@@ -10,7 +10,7 @@ the reasoning behind the site, not its current shape. For the current shape
 read the research/design doc above; for the traps that recur across areas
 read [lessons.md](../lessons.md).
 
-## Entries (21)
+## Entries (22)
 
 - Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 - Post-M9: website — S2 infra: one CloudFormation stack, mindfork.io live (done)
@@ -33,6 +33,7 @@ read [lessons.md](../lessons.md).
 - Post-M9: website — structured data, authorship and dates a crawler can read (done)
 - Post-M9: website — a Cache-Control the site never sent (done)
 - Post-M9: website — IndexNow, a knock rather than an invitation (done)
+- Post-M9: website — /llms.txt, generated from the site rather than written (done)
 
 ### Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 
@@ -1014,3 +1015,50 @@ templates, content and CI, no Rust touched.
 - No Rust touched: no live run, and the test count is unchanged. Gates
   (`actions_pin_check` / `cyrillic_scan` / `link_check` / `doc_index_check`) green, and
   both workflows were parsed to confirm the steps landed in `lint` and in `deploy`.
+
+### Post-M9: website — /llms.txt, generated from the site rather than written (done)
+
+- **The last item of the search-visibility audit**, and the one with the smallest claim.
+  `llms.txt` ([the convention](https://llmstxt.org/)) is one Markdown file at the site root
+  handing a language model a curated map of the site instead of leaving it to infer one
+  from navigation chrome: an H1 naming the project, a blockquote summarising it, prose,
+  then `## ` sections of `[name](url): notes`, with an `Optional` section for what an agent
+  may skip when it needs a shorter context. **No search engine documents consuming it and
+  there is no evidence it affects ranking anywhere** — it is read by the crawlers that have
+  started fetching it and by anyone who pastes the URL into a chat. It costs one generated
+  file, and that is the whole of the claim; it is recorded here so nobody later mistakes it
+  for an SEO measure that was measured.
+- **Generated, because a hand-kept list is wrong the day an article is added.** That is the
+  drift `site_legal_pages.py` exists to prevent, one surface further on, so this follows
+  the same shape: `tools/site_llms_txt.py` builds the file from the very front matter the
+  pages render from — titles, descriptions, and the sections' own orderings (`weight` for
+  the articles, newest-first for the posts) — the output is **committed** rather than
+  gitignored because it is prose that lands on a public URL and belongs in a diff a human
+  reads, and `--check` fails a pull request that edits a description without regenerating.
+- **The front matter is parsed by hand, on purpose.** `tomllib` arrived in Python 3.11 and
+  the development machines here are not all on it, so reaching for it would make the
+  *output* depend on the interpreter and the gate compare unequal between CI and a laptop —
+  worse than reading the handful of scalar shapes this needs. A key in a shape the tool
+  does not read is skipped rather than guessed at, and a value carrying a quote it cannot
+  parse is a refusal naming the line, because the failure it would otherwise cause is a
+  silently truncated description on a public file.
+- **Two refusals guard the URLs**, since a generated link is a published one: a page that
+  sets `path` or `slug` overrides the derivation this tool does from the filename, so any
+  such page is a refusal telling the author to teach it first; and a `draft = true` post is
+  left out, because Zola does not build one and the link would be a 404. Both have
+  fixtures.
+- **Verified against the built site, not just its own self-test.** `--self-test` reports 0
+  failures over the format (H1 first, the summary blockquote, the lede, weight order,
+  newest post first, the date stripped from a post's URL, `Optional` last, the repository
+  listed, the draft left out) and the `slug` refusal. Then the real file was built and
+  cross-checked: **all 20 site URLs it names appear in the published `sitemap.xml`, none
+  missing** — the three sitemap entries it does not name are the section indexes, whose
+  contents it lists instead.
+- No Rust touched: no live run, and the test count is unchanged. Gates
+  (`site_llms_txt --check` and `--self-test`, now in `lint`, plus `cyrillic_scan` /
+  `link_check` / `doc_index_check` / `actions_pin_check`) green.
+- **The audit that began with Search Console is now closed.** What it found and what
+  answered it: structured data and dates (two entries above), `Cache-Control` (the entry
+  above that), IndexNow, Bing Webmaster Tools by import, and this. Two items were declined
+  rather than done — Yandex's console, unavailable to the author, and a per-page Open Graph
+  card, which affects how a shared link looks and not how a page ranks.

@@ -1,0 +1,38 @@
+# mindfork
+
+> A terminal AI chat written in Rust: local models via llama.cpp or OpenAI, Anthropic, Gemini and Grok in the cloud — with persistent memory, notes, RAG and tools. Windows and Linux.
+
+Run local models through llama.cpp — or bring OpenAI, Anthropic, Gemini and Grok. Persistent memory, notes and RAG, an agentic tool loop that reaches your own code project: one fast native binary for Windows and Linux.
+
+## Start here
+
+- [Install](https://mindfork.io/install/): Download mindfork for Windows or Linux: the installer, the packages, the portable archives — what each one is for, how to verify it, and what to do first.
+- [Source on GitHub](https://github.com/vshylov/mindfork-rs): the source, the issue tracker and the releases
+
+## Articles
+
+- [mindfork at a glance](https://mindfork.io/articles/mindfork-at-a-glance/): The shape of the app: an engine contract over OpenAI-compatible servers, a client-side agentic loop, one turn from start to finish, layered memory, boring durable storage — and where the trust boundaries are.
+- [Why the engine is a server, not a library](https://mindfork.io/articles/engine-as-a-server/): mindfork nearly embedded an inference runtime. The contract that replaced it made a local GGUF and a cloud frontier model the same thing.
+- [The self-model: a memory that knows it changed](https://mindfork.io/articles/self-model/): Each companion keeps a model of itself and of you — a summary, goals, traits and dated observations — and maintains it with its own tools, on your disk.
+- [Where vector search earns its keep](https://mindfork.io/articles/vector-search/): One small embedding server powers the knowledge base, large attachments, notes and memory — and the app notices when you swap the model under it.
+- [The same answer, sooner](https://mindfork.io/articles/local-speed/): FlashAttention and speculative decoding in managed mode: two llama.cpp levers that change how fast tokens arrive — without trading away the answer.
+- [Why the Python sandbox is WebAssembly, not Docker](https://mindfork.io/articles/python-sandbox/): python_exec runs model-written code in a CPython compiled to WebAssembly — numpy, pandas and requests included — inside a box that ships with the app and, by default, cannot see your machine.
+- [Where the trust boundaries are](https://mindfork.io/articles/trust-boundaries/): An assistant that can browse, run code and edit your project needs edges, not promises: what leaves the machine, where the model may not point, what the code can touch, when the app asks — and what the author receives, which is nothing.
+- [The code workspace: containment before capability](https://mindfork.io/articles/code-workspace/): A project attached to a chat: what the assistant can read, edit and run there, why the commands are only ever yours, how every change is a diff with a way back — and the semantic index that was measured and did not ship.
+- [Background runs, and the pool they share](https://mindfork.io/articles/background-runs/): A subagent that outlives its round, the app's own quiet requests, and one local llama-server with one context pool under all of them: what the server does when the pool overflows, how the app keeps it from happening, and what parallel sessions actually buy on one GPU.
+
+## News
+
+- [mindfork is public](https://mindfork.io/blog/mindfork-is-public/): The repository is open, the first public release is out, and this is what the project is — an AI chat that lives in your terminal, with memory that persists and tools that stay behind switches you set.
+- [mindfork 0.9.9 — files in, charts out, work in the background](https://mindfork.io/blog/mindfork-0-9-9/): The assistant's Python code reads the chat's files and hands back what it saves. Subagents and staged dialogues run in the background while you keep talking, with a screen to watch them. The engine downloads itself — and the web tools wait for your say-so.
+- [mindfork 0.9.8 — give it real work](https://mindfork.io/blog/mindfork-0-9-8/): A code project attached to a chat — read, edit, build and test, every change reviewable and revertible. Subagents with real tools and live transcripts. And web search that can stop being rate-limited.
+- [mindfork 0.9.7 — wherever your terminal is](https://mindfork.io/blog/mindfork-0-9-7/): Every action has a typed command, copying works over SSH, a conversation exports to a file — and the assistant can find what you said in another chat.
+- [mindfork 0.9.6 — the model can see](https://mindfork.io/blog/mindfork-0-9-6/): Images in a message from a file, the clipboard or a URL; tool screenshots reach the model; the web tools stop at your front door; a cloud blip no longer costs the turn.
+- [Hello from mindfork 0.9.5](https://mindfork.io/blog/hello-mindfork/): The project gets a home on the web — and a status report: an interactive demo, a fourth cloud provider, history compression.
+
+## Optional
+
+- [Privacy policy](https://mindfork.io/privacy/): What mindfork keeps on your machine, what leaves it and only on which setting of yours, and what reaches its author — which is nothing.
+- [Disclaimer](https://mindfork.io/disclaimer/): The app ships no model: what that means for the output you get, for the tools a model may invoke on your machine, and for warranty and liability.
+- [License](https://mindfork.io/license/): mindfork is MIT-licensed — the standard text, unmodified.
+- [Code signing policy](https://mindfork.io/code-signing-policy/): Who builds and approves a mindfork release, how the Windows binaries are signed, and what the program does with your data.
