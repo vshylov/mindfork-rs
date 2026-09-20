@@ -1,7 +1,7 @@
 +++
 title = "mindfork at a glance"
 description = "The shape of the app: an engine contract over OpenAI-compatible servers, a client-side agentic loop, one turn from start to finish, layered memory, boring durable storage — and where the trust boundaries are."
-updated = "2026-09-14"
+updated = "2026-09-20"
 weight = 1
 
 [extra]
@@ -160,7 +160,10 @@ Every format carries a schema version. When a release changes one, the app
 backs the data up first, migrates, and stamps the new version; an older
 build refuses a newer file with a plain message rather than misreading it.
 Backups are one command, optionally AES-256 encrypted, and carry the
-stored files and the workspaces with the rest.
+stored files and the workspaces with the rest. With the data on more than
+one computer, `mindfork stats` reads a copy — the live data or a closed
+archive — and says when it was last written and what it holds, and
+`--compare` says what each of two copies has that the other lacks.
 
 ## Where the trust boundaries are
 

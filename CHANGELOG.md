@@ -14,6 +14,12 @@ split by subsystem.
 
 ## [Unreleased]
 
+## [0.10.2] — 2026-09-20
+
+**For data that lives on more than one computer.** A new command says which copy
+is the newest and what each one holds that the other lacks — without restoring or
+changing anything — and opening a chat no longer flashes the one you were leaving.
+
 ### Added
 - **`mindfork stats` — which copy of your data is the newest.** With the data on
   several computers, one command now prints when the last message was written,
@@ -2552,7 +2558,8 @@ history is in the [docs/journal/](docs/journal/) log).
   (notes/RAG/self-model, sqlite-vec, per-profile isolation). Schema format is
   v1; schema versioning and migrations are formalized in later releases.
 
-[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.10.1...HEAD
+[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.10.2...HEAD
+[0.10.2]: https://github.com/vshylov/mindfork-rs/compare/v0.10.1...v0.10.2
 [0.10.1]: https://github.com/vshylov/mindfork-rs/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/vshylov/mindfork-rs/compare/v0.9.9...v0.10.0
 [0.9.9]: https://github.com/vshylov/mindfork-rs/compare/v0.9.8...v0.9.9

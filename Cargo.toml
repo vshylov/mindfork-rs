@@ -5,7 +5,7 @@
 # Rust" and keeps the project apart from an unrelated company of the same
 # name (docs/research/binary-rename.md §10).
 name = "mindfork"
-version = "0.10.1"
+version = "0.10.2"
 edition = "2024"
 # The one sentence that describes the app. The same words are in site/zola.toml,
 # packaging/nfpm.yaml and the README masthead — one description, four places that

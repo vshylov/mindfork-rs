@@ -23,6 +23,7 @@ Run local models through llama.cpp — or bring OpenAI, Anthropic, Gemini and Gr
 
 ## News
 
+- [mindfork 0.10.2 — which copy of your data is the newest](https://mindfork.io/blog/mindfork-0-10-2/): One command says when each copy of your data was last written and what it holds — the data on this computer or a backup archive, without restoring anything — and a second says what each copy has that the other lacks. And opening a chat no longer flashes the one you were leaving.
 - [mindfork is public](https://mindfork.io/blog/mindfork-is-public/): The repository is open, the first public release is out, and this is what the project is — an AI chat that lives in your terminal, with memory that persists and tools that stay behind switches you set.
 - [mindfork 0.9.9 — files in, charts out, work in the background](https://mindfork.io/blog/mindfork-0-9-9/): The assistant's Python code reads the chat's files and hands back what it saves. Subagents and staged dialogues run in the background while you keep talking, with a screen to watch them. The engine downloads itself — and the web tools wait for your say-so.
 - [mindfork 0.9.8 — give it real work](https://mindfork.io/blog/mindfork-0-9-8/): A code project attached to a chat — read, edit, build and test, every change reviewable and revertible. Subagents with real tools and live transcripts. And web search that can stop being rate-limited.
