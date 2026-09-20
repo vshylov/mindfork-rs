@@ -1,5 +1,5 @@
 //! `mindfork stats` — a read-only summary of the user data, live or inside a
-//! backup archive (docs/data-stats.md, spec §12.4).
+//! backup archive (docs/history/data-stats.md, spec §12.4).
 //!
 //! The command answers "which of my copies is the newest?" for data that lives
 //! on several machines, so two properties carry the design:
@@ -24,7 +24,7 @@
 //! return a [`DataStats`], and [`render_text`]/[`render_json`] turn it into the
 //! string the CLI writes.
 //!
-//! **Stage 2** (docs/data-stats.md §5): a `DataStats` also carries what two
+//! **Stage 2** (docs/history/data-stats.md §5): a `DataStats` also carries what two
 //! copies are lined up by — per chat the ids of its messages, per note a key
 //! and a digest — so that [`compare`] can tell a copy that is *ahead* from one
 //! that has *diverged*. The `--json` form is such a `DataStats` written out, and
@@ -710,7 +710,7 @@ pub fn render_json(stats: &DataStats) -> String {
     serde_json::to_string_pretty(stats).unwrap_or_default()
 }
 
-/// Times are printed in UTC (docs/data-stats.md F9): the outputs of several
+/// Times are printed in UTC (docs/history/data-stats.md F9): the outputs of several
 /// machines are laid side by side, and one zone makes that a string comparison.
 fn utc(at: Option<DateTime<Utc>>, loc: &Locale) -> String {
     match at {

@@ -1,4 +1,4 @@
-//! Tests of `mindfork stats --compare` (docs/data-stats.md §5.4). The other
+//! Tests of `mindfork stats --compare` (docs/history/data-stats.md §5.4). The other
 //! copy is a byte copy of the data root, changed by the **real** writers — one
 //! change per test — so each test says what that change must move: one counter,
 //! the verdict, and the fingerprint.

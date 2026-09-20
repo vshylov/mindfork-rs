@@ -173,7 +173,7 @@ rodio = { version = "0.22.0", default-features = false, features = ["playback", 
 reqwest = { version = "0.13.4", default-features = false, features = ["json", "stream", "rustls", "form"] }
 # `serialize` — `Connection::deserialize_read_exact`: `mindfork stats <archive>` reads a
 # backup's `data.db` from the zip entry straight into memory, so no decrypted copy of an
-# encrypted backup's database ever lands on disk (docs/data-stats.md F5). A module of
+# encrypted backup's database ever lands on disk (docs/history/data-stats.md F5). A module of
 # rusqlite itself; it adds no crate.
 rusqlite = { version = "0.40.1", features = ["bundled", "serialize"] }
 scraper = "0.27.0"

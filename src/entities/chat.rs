@@ -441,7 +441,7 @@ pub fn visible_message_count(messages: &[Message]) -> usize {
 /// [`visible_message_count`] over bare `(role, new_bubble)` pairs — the rule
 /// itself, for a reader that does not hold [`Message`]s. `mindfork stats`
 /// counts chats through a tolerant projection of the chat file
-/// (docs/data-stats.md F7) and must agree with the list's cards, so it feeds
+/// (docs/history/data-stats.md F7) and must agree with the list's cards, so it feeds
 /// the same rule rather than restating it.
 pub fn visible_row_count(rows: impl IntoIterator<Item = (MessageRole, bool)>) -> usize {
     let mut count = 0;

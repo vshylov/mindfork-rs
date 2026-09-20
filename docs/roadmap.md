@@ -288,7 +288,7 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
     vocabulary invented ahead of one is a vocabulary nobody speaks.
 ## Chat and profile management
 - **Merging two copies of the data.** `mindfork stats --compare`
-  ([data-stats.md](data-stats.md) §5, spec §12.4) says what each copy holds
+  ([history/data-stats.md](history/data-stats.md) §5, spec §12.4) says what each copy holds
   that the other lacks, and deliberately stops there (G8): a chat file names a
   profile and may own `files/` and `workspace/` directories and an attachment index,
   so carrying one by hand is not a promised path. A `merge` would be the track that

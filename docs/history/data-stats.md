@@ -1,7 +1,13 @@
 # `mindfork stats` — which copy of the data is the newest
 
-A design plan (AGENTS.md §1). Two stages: the summary (§4, done) and the
-comparison of two copies (§5).
+A design plan (AGENTS.md §1). Two stages: the summary (§4) and the comparison
+of two copies (§5).
+
+**Status:** the track is **closed**. Stage 1 merged as #600 and stage 2 as #601,
+both on 2026-09-20, each with a live run that was a GO (§4.5, §5.5). The top-level
+forks were the user's (F1–F3); the rest were decided at their recommendation and
+are recorded below (F4–F10, G1–G8). Merging two copies is not part of this track
+and sits on the roadmap.
 
 ## 1. The problem
 

@@ -1,4 +1,4 @@
-//! Read-only counts over a `data.db`, for `mindfork stats` (docs/data-stats.md,
+//! Read-only counts over a `data.db`, for `mindfork stats` (docs/history/data-stats.md,
 //! spec §12.4).
 //!
 //! Deliberately **not** a method of [`super::Db`]: opening a `Db` runs the
@@ -15,7 +15,7 @@
 //!
 //! Besides the counts, each note, knowledge-base source and self-model is listed
 //! as a [`KeyedRow`] — a key, its own timestamp and a digest of its content — which
-//! is what `mindfork stats --compare` lines two copies up by (docs/data-stats.md
+//! is what `mindfork stats --compare` lines two copies up by (docs/history/data-stats.md
 //! G5). A digest, never the text: the rows travel in a `--json` snapshot.
 //!
 //! Only ordinary tables are queried, never the `vec0` virtual ones, so the

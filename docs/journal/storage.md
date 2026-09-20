@@ -839,7 +839,7 @@ discards is recoverable from `backups/`.
   which copy is the newest, and a copy that is not the newest can still hold changes.
   Asked for: a command-line argument printing the last message's date, chats and deleted
   chats, messages and deleted messages, attached files, projects "and so on". Design,
-  forks and the measurement that preceded them — [data-stats.md](../data-stats.md);
+  forks and the measurement that preceded them — [data-stats.md](../history/data-stats.md);
   behaviour — spec §12.4. The user's decisions: the name `stats`, comparison as a second
   stage, archives summarized too and password-protected ones taken into account.
 - **Every figure already existed in the stored data**, so nothing new is recorded. What
@@ -884,7 +884,7 @@ discards is recoverable from `backups/`.
 - 3359 unit tests (+22), 196 `#[ignore]`. Stage 2 (`--compare`) is on the roadmap.
 
 ### Post-M9: `mindfork stats --compare` — what each copy holds that the other lacks (done)
-- **Stage 2 of [data-stats.md](../data-stats.md)** (§5; spec §12.4), on the user's
+- **Stage 2 of [data-stats.md](../history/data-stats.md)** (§5; spec §12.4), on the user's
   go-ahead after stage 1 merged. Stage 1 says which copy is the newest; this answers the
   other half of the original request — a copy that is not the newest can still hold
   changes. `mindfork stats --compare <OTHER>`, where `<OTHER>` is a `--json` snapshot or

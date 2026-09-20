@@ -1,4 +1,4 @@
-//! Reading **the other copy** for `mindfork stats --compare` (docs/data-stats.md
+//! Reading **the other copy** for `mindfork stats --compare` (docs/history/data-stats.md
 //! G2, G3): a `--json` snapshot, or a backup archive — told apart by the file's
 //! first bytes, never by its name.
 //!

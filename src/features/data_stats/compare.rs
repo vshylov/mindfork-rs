@@ -1,5 +1,5 @@
 //! `mindfork stats --compare` — what each of two copies holds that the other
-//! lacks (docs/data-stats.md §5, spec §12.4).
+//! lacks (docs/history/data-stats.md §5, spec §12.4).
 //!
 //! The one answer this must never give falsely is *"this copy has everything"*:
 //! it is the answer a user deletes the other copy on. So a chat is not compared
