@@ -1,7 +1,7 @@
 # `mindfork stats` — which copy of the data is the newest
 
-A design plan (AGENTS.md §1). Two stages; stage 1 is specified here in full,
-stage 2 in outline.
+A design plan (AGENTS.md §1). Two stages: the summary (§4, done) and the
+comparison of two copies (§5).
 
 ## 1. The problem
 
@@ -192,11 +192,125 @@ real data root and, to the digit, on an AES-256 backup of it, with the root and
   sub-agent count is one level deep; a recursion written for it was removed when
   its mutation survived every test.
 
-## 5. Stage 2 — comparison (outline)
+## 5. Stage 2 — comparison
 
-`mindfork stats --compare <OTHER>`, where `<OTHER>` is a `--json` snapshot or a
-backup archive from the other machine: chats only here, only there, newer here,
-newer there; the same for notes. Decided when it starts: what identifies
-"newer" for a chat (message count and last message time, not `modified_at`
-alone), whether notes get per-row entries in the snapshot, and whether a
-one-line fingerprint of the chat set belongs in the stage 1 summary.
+Stage 1 answers "which copy is the newest". This stage answers the second
+question of §1 — **does the other copy hold something this one lacks** — inside
+the app: `mindfork stats --compare <OTHER>`. The user's go-ahead: 2026-09-20,
+after stage 1 merged.
+
+### 5.1. What was read in the code before designing
+
+- **A message has a stable id, and the app never reuses or rewrites one.**
+  `Ctrl+R` (regenerate) and `rewrite_current_message` create a *new* message and
+  move the old one, id and all, into `Chat.deleted`; `Ctrl+E` moves the exchange
+  there too. **`Chat.deleted` is only ever pushed to** — nothing prunes it.
+- So for one chat on two machines, "the other copy is a continuation of mine" is
+  a **set** statement: every message id I hold — live or in the deleted archive —
+  is also held there. And "we diverged" is: each side holds an id the other
+  lacks. Counts and timestamps cannot tell these apart: `[m1 m2 m3a]` against
+  `[m1 m2 m3b m4b]` reads as "there is newer" by both, and loses `m3a`.
+- **One operation changes a message under the same id: `/continue`**, which
+  appends to the partial in place (spec §6.4). It only ever appends, so the
+  text's length orders the two versions.
+- `modified_at` moves only with a message (`push_message`, the turn's landing, a
+  background run's landing). A rename or a soft delete does not move it — so it
+  is a hint for the reader, never the identity.
+- A note is edited in place (`note_update` rewrites `content` and `updated_at`),
+  so a note has no history to take a set difference over: two versions of one
+  note are ordered by `updated_at`, and told apart by a digest of the content.
+
+### 5.2. Forks
+
+Decided at their recommendation, recorded so they can be challenged:
+
+- **G1 — the identity of a chat's content is its set of message ids**, live and
+  deleted together, each with the length of its text. Per chat that gives:
+  *only here* / *only there* (ids), and *grown here* / *grown there* (same id,
+  longer text — a `/continue`). A chat is then **the same**, **ahead here**,
+  **ahead there**, or **diverged** (each side has something). The same ids with
+  a different title, deleted flag, attachment or file count, or live/deleted
+  split are **details**: reported, with `modified_at` as the hint of which side
+  changed later. A false "this copy has everything" is the one answer this
+  command must never give, which is why the cheaper `(count, last message)`
+  pair was rejected.
+- **G2 — the other side is a `--json` snapshot or a backup archive**; which one
+  is read from the file itself (a zip's magic), not from its name. A snapshot is
+  the cheap way to carry a copy's shape between machines — kilobytes instead of
+  the archive, and it holds ids, titles and digests, never message text.
+- **G3 — the snapshot grows, and `format` becomes 2**: per chat the two id lists
+  and the attachment/file counts; per note, knowledge-base source and self-model
+  a row (key, time, content digest); `taken_at`; a fingerprint (G6). A format 1
+  snapshot is **refused by `--compare` with the way out** (re-create it with this
+  version) rather than compared coarsely — a coarse answer would be exactly the
+  false comfort G1 exists to prevent. A snapshot from a newer format is refused
+  the same way, pointing at the update.
+- **G4 — "here" is whatever stage 1 would summarize**: the live data, or the
+  positional archive. So two archives compare with no extra surface. One
+  `--password` is tried on both; an archive it does not open is prompted for by
+  name, through `restore`'s function as before.
+- **G5 — notes, knowledge-base sources and self-models are compared by key**:
+  only here, only there, newer here, newer there (by their own timestamp; equal
+  times with different digests count as *differing*, direction unknown).
+  Profiles are not compared: `profiles.json` carries no timestamps, and a
+  profile that exists on one side only shows up through its chats.
+- **G6 — a content fingerprint in the summary.** Sixteen hex digits over exactly
+  what the comparison treats as identity, so that *equal fingerprints* means
+  *`--compare` would say identical* — pinned by a test. Two machines can then be
+  checked by reading one line on each, with no file carried at all.
+- **G7 — the exit code stays 0 for any completed comparison.** `diff`'s "1 means
+  different" would collide with this CLI's "1 means the command failed".
+- **G8 — no merge.** The command ends by saying which copy is safe to keep and
+  what keeping only one would lose. Carrying a chat between data roots by hand
+  is not promised here: a chat file names a profile and may own `files/` and
+  `workspace/` directories and an attachment index, and a half-carried chat is
+  worse than a clearly missing one. A merge is its own track if it is wanted.
+
+### 5.3. Surface
+
+```
+mindfork stats [ARCHIVE] [--compare OTHER] [-p PASSWORD] [--json]
+
+  --compare <OTHER>   a --json snapshot or a backup archive of the other copy
+```
+
+The text output: what was compared, a **verdict** (identical · this copy holds
+everything the other has · the other copy holds everything this one has · each
+holds something the other lacks), one count line per family, then the lists
+behind every non-zero count — chats with their title, id and what differs,
+notes and sources by id and time. With `--json`, the same as one document.
+
+### 5.4. Verification
+
+Unit tests beside the code, on data written by the real writers: a root against
+its own archive and its own snapshot is *identical* and shares the fingerprint;
+then one change at a time on a copy — a new chat, a continued chat, a
+regenerated reply (ahead, **not** diverged), a message on each side (diverged),
+a `/continue` (grown), a rename (details), a note added / revised — each moves
+exactly its own counter, the verdict, and the fingerprint. Refusals: a format 1
+snapshot, a newer one, a file that is neither. The live run: the real data root
+against a snapshot and an encrypted archive of itself (identical), and against
+a copy changed by hand.
+
+### 5.5. Outcome (2026-09-20)
+
+Built as specified; the live run is **GO** (docs/journal/storage.md). Against the
+real data root: its own snapshot (300 KB for 233 chats) and an encrypted archive
+taken two days earlier by 0.9.9 — *identical*, fingerprints equal, although the
+chat files had since been migrated a schema step; an archive five days old —
+*this copy holds everything*, naming the four chats and the self-model that are
+newer here; a snapshot edited by hand to hold one of every difference — each
+landed in its own list, and the verdict became *each holds something*.
+
+What the work changed in the design:
+
+- **"The same chat" has one definition.** The first cut compared titles, marks
+  and counts in the comparison and hashed a separate identity for the
+  fingerprint — two statements of one rule. A mutation that dropped the title
+  from the identity survived every test, which is how it was seen; the
+  comparison now asks the identity, and `details` only names what differs.
+- **Two tests passed for the wrong reason** and were caught by mutation, not by
+  reading: the format 1 refusal was asserted by words the *other* refusal also
+  contains, and a rename was tested together with a deleted exchange, which hid
+  it. Each detail now has a test of its own.
+- The track is complete. A merge is not part of it (G8) and sits on the roadmap.

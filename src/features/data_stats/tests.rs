@@ -21,9 +21,9 @@ use crate::entities::workspace::Workspace;
 use crate::shared::i18n::{self, Lang};
 use crate::shared::storage::Storage;
 
-const PASSWORD: &str = "correct horse";
+pub(super) const PASSWORD: &str = "correct horse";
 
-fn en() -> &'static Locale {
+pub(super) fn en() -> &'static Locale {
     i18n::locale(Lang::En)
 }
 
@@ -88,16 +88,16 @@ fn hidden_chat(profile: &Profile) -> Chat {
     chat
 }
 
-struct Root {
-    dir: tempfile::TempDir,
-    paths: Paths,
-    note_at: DateTime<Utc>,
+pub(super) struct Root {
+    pub(super) dir: tempfile::TempDir,
+    pub(super) paths: Paths,
+    pub(super) note: Note,
 }
 
 /// A data root the app's own writers produced: two profiles (one
 /// soft-deleted), the two chats above, a corrupt chat file, two files that are
 /// not chats, and a database holding one note.
-fn root() -> Root {
+pub(super) fn root() -> Root {
     let dir = tempfile::tempdir().unwrap();
     let paths = Paths::with_root(dir.path().join("data"));
     fs::create_dir_all(paths.chats_dir()).unwrap();
@@ -120,11 +120,7 @@ fn root() -> Root {
 
     let note = Note::new(profile.id, "remember", Vec::new());
     storage.db().note_insert(&note).unwrap();
-    Root {
-        dir,
-        paths,
-        note_at: note.updated_at,
-    }
+    Root { dir, paths, note }
 }
 
 fn expected_chats() -> ChatTotals {
@@ -150,12 +146,16 @@ fn expected_chats() -> ChatTotals {
     }
 }
 
-fn expected_database(root: &Root) -> DatabaseStats {
-    DatabaseStats::Ok(DbStats {
-        notes: 1,
-        last_note_change: Some(root.note_at),
-        ..DbStats::default()
-    })
+/// The database half: the one note, counted and listed under its own id.
+fn assert_database(database: &DatabaseStats, root: &Root) {
+    let DatabaseStats::Ok(db) = database else {
+        panic!("the database was not read: {database:?}");
+    };
+    assert_eq!((db.notes, db.notes_superseded, db.note_links), (1, 0, 0));
+    assert_eq!(db.last_note_change, Some(root.note.updated_at));
+    let keys: Vec<&str> = db.note_list.iter().map(|row| row.key.as_str()).collect();
+    assert_eq!(keys, [root.note.id.to_string()]);
+    assert!(db.source_list.is_empty() && db.self_model_list.is_empty());
 }
 
 /// Every file under `dir`, with its size and content hash stand-in (the bytes
@@ -192,7 +192,7 @@ fn the_live_root_is_counted_and_left_exactly_as_it_was() {
             deleted: 1
         }
     );
-    assert_eq!(stats.database, expected_database(&root));
+    assert_database(&stats.database, &root);
     assert!(stats.sizes.chats_bytes > 0 && stats.sizes.database_bytes > 0);
     assert_eq!(snapshot(root.dir.path()), before);
 }
@@ -255,7 +255,7 @@ fn files_from_other_schema_versions_are_still_counted() {
     );
 }
 
-fn backup(root: &Root, password: Option<&str>) -> PathBuf {
+pub(super) fn backup(root: &Root, password: Option<&str>) -> PathBuf {
     let out = root.dir.path().join("copy.zip");
     backup::create_backup(&root.paths, Some(out), 1, None, password, en(), |_| {}).unwrap()
 }
@@ -274,7 +274,7 @@ fn an_archive_counts_the_same_as_the_root_it_was_made_from() {
         assert_eq!(stats.chats, expected_chats());
         assert_eq!(stats.chat_list, live.chat_list);
         assert_eq!(stats.profiles, live.profiles);
-        assert_eq!(stats.database, expected_database(&root));
+        assert_database(&stats.database, &root);
         assert_eq!(stats.sizes.chats_bytes, live.sizes.chats_bytes);
         assert!(matches!(
             &stats.source,

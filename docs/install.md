@@ -284,7 +284,9 @@ without opening each one:
 mindfork stats                          # the data on this computer
 mindfork stats D:\copy.zip              # a backup archive, without restoring it
 mindfork stats D:\copy.zip --password "a long passphrase"
-mindfork stats --json > this-pc.json    # a snapshot with a row per chat
+mindfork stats --json > this-pc.json    # a snapshot, to carry to another computer
+mindfork stats --compare laptop.json    # what each copy holds that the other lacks
+mindfork stats --compare D:\copy.zip    # the same, against a backup archive
 ```
 
 It prints when the last message was written and when anything last changed, how
@@ -300,11 +302,32 @@ is read in memory and never written out decrypted. The password is found the way
 asked. The password in the settings belongs to this computer, so for an archive
 made elsewhere with a different one, pass `--password`.
 
-The newest copy is not always the most complete one: a chat continued on a laptop
-after the desktop's backup was taken exists only on the laptop. To see that, take
-`--json` on both computers and compare the two files with any diff tool — each
-chat is one block, sorted by id, so a chat that exists on one side only, or has
-more messages there, stands out.
+The summary ends its first block with a **fingerprint**. If two computers print the
+same one, their chats, notes, knowledge base and self-models are identical, and there
+is nothing more to check.
+
+**The newest copy is not always the most complete one**: a chat continued on a laptop
+after the desktop's backup was taken exists only on the laptop. `--compare` answers
+that. Take a snapshot on the other computer (`mindfork stats --json > laptop.json` —
+a few hundred kilobytes, holding ids, titles and checksums but no message text), bring
+it over, and run `mindfork stats --compare laptop.json`; or point `--compare` straight
+at a backup archive of the other copy. It prints a verdict first:
+
+- *the copies are identical*, or *hold the same messages and differ in details* (a
+  rename, a deleted mark, an attachment);
+- *this copy holds everything the other has* — keeping this one loses nothing — or
+  the reverse;
+- *each copy holds something the other lacks* — keeping only one loses what is listed
+  for the other.
+
+Then the lists: chats only here, only there, with more messages here or there, and
+**diverged** — one chat continued on both computers, each side holding messages the
+other lacks. Chats are compared by the ids of their messages, not by counts or dates,
+which is what tells "continued there" from "continued on both". Notes, knowledge-base
+documents and self-models are listed the same way, by which side is newer.
+
+mindfork does not merge copies. When each side holds something, keep both until you
+have decided what to do with what is listed.
 
 ### 2.3. External locales (`data/locales/`) — editing text and new languages
 

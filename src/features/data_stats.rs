@@ -23,6 +23,13 @@
 //! The `features` layer prints nothing: [`collect_root`]/[`collect_archive`]
 //! return a [`DataStats`], and [`render_text`]/[`render_json`] turn it into the
 //! string the CLI writes.
+//!
+//! **Stage 2** (docs/data-stats.md §5): a `DataStats` also carries what two
+//! copies are lined up by — per chat the ids of its messages, per note a key
+//! and a digest — so that [`compare`] can tell a copy that is *ahead* from one
+//! that has *diverged*. The `--json` form is such a `DataStats` written out, and
+//! [`read_snapshot`] reads it back; [`DataStats::fingerprint`] is a digest of
+//! exactly that identity, so equal fingerprints mean an identical comparison.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -38,16 +45,23 @@ use uuid::Uuid;
 
 use crate::entities::attachment::format_bytes;
 use crate::entities::chat::visible_row_count;
+use crate::entities::chat_file::sha256_hex;
 use crate::entities::message::MessageRole;
 use crate::features::backup::{self, ArchiveReader, BackupManifest};
 use crate::shared::i18n::Locale;
 use crate::shared::paths::Paths;
-use crate::shared::storage::db::{self, DbStats};
+use crate::shared::storage::db::{self, DbStats, KeyedRow};
 use crate::shared::storage::schema::CHAT_SCHEMA;
 
 /// The version of the `--json` shape. Additive fields do not bump it; a
-/// renamed or re-defined one does (stage 2's comparison reads these files).
-pub const SNAPSHOT_FORMAT: u32 = 1;
+/// renamed or re-defined one does — and so does one `--compare` cannot work
+/// without: **2** added the per-chat message ids and the database rows, and a
+/// format 1 snapshot is refused rather than compared by counts, which is the
+/// comparison that reports a diverged chat as merely "newer there" (G1, G3).
+pub const SNAPSHOT_FORMAT: u32 = 2;
+
+/// How many hex digits of the SHA-256 the fingerprint shows.
+const FINGERPRINT_HEX: usize = 16;
 
 /// The entries of a backup archive this module reads (paths inside the
 /// archive are relative to the data root — `features/backup.rs`).
@@ -60,11 +74,16 @@ const BACKUP_MARKERS: &[&str] = &["manifest.json", "settings.json", PROFILES_ENT
 // ---------------------------------------------------------------- the result
 
 /// Everything `mindfork stats` reports. Serialized as-is by `--json`.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DataStats {
     pub format: u32,
     /// The version of the binary that produced the summary.
     pub app_version: String,
+    /// When the summary was taken — what tells two snapshots of one machine apart.
+    pub taken_at: DateTime<Utc>,
+    /// A digest of what `--compare` treats as the copy's identity
+    /// ([`DataStats::fingerprint`]).
+    pub fingerprint: String,
     pub source: Source,
     pub profiles: ProfileTotals,
     pub chats: ChatTotals,
@@ -76,7 +95,7 @@ pub struct DataStats {
 }
 
 /// What was summarized.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Source {
     DataRoot {
@@ -93,14 +112,14 @@ pub enum Source {
     },
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProfileTotals {
     pub total: usize,
     /// Soft-deleted (`is_hidden`).
     pub deleted: usize,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChatTotals {
     pub total: usize,
     /// Soft-deleted (`is_hidden`).
@@ -137,7 +156,7 @@ pub struct ChatTotals {
     pub newest_schema: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum DatabaseStats {
     /// There is no `data.db` — a copy that never stored a note.
@@ -148,14 +167,14 @@ pub enum DatabaseStats {
     },
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Sizes {
     /// The counted chat files, uncompressed.
     pub chats_bytes: u64,
     pub database_bytes: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChatRow {
     pub id: Uuid,
     pub profile_id: Option<Uuid>,
@@ -167,9 +186,82 @@ pub struct ChatRow {
     pub message_rows: usize,
     pub deleted_messages: usize,
     pub last_message_at: Option<DateTime<Utc>>,
+    pub attachments: usize,
+    pub stored_files: usize,
+    /// The chat's messages in stored order, each as `<id>:<length>` — the
+    /// identity a comparison works on (G1). The id is what tells "ahead" from
+    /// "diverged"; the length of the text (with the thoughts) is what orders
+    /// two versions of one message, since `/continue` is the one operation that
+    /// changes a message under its id, and it only appends.
+    pub message_index: Vec<String>,
+    /// The same for the `deleted[]` archive. A regenerated reply lives on
+    /// here, which is why regenerating reads as *ahead* and not as *diverged*.
+    pub deleted_index: Vec<String>,
+}
+
+/// What a comparison treats as one chat's identity — and therefore what the
+/// fingerprint hashes. Deliberately without the timestamps and the counts that
+/// follow from these: two copies holding the same things are the same copy,
+/// whenever each was last saved.
+#[derive(Debug, PartialEq, Eq, Serialize)]
+struct ChatIdentity<'a> {
+    id: Uuid,
+    title: &'a str,
+    deleted: bool,
+    attachments: usize,
+    stored_files: usize,
+    message_index: &'a [String],
+    deleted_index: &'a [String],
+}
+
+impl ChatRow {
+    fn identity(&self) -> ChatIdentity<'_> {
+        ChatIdentity {
+            id: self.id,
+            title: &self.title,
+            deleted: self.deleted,
+            attachments: self.attachments,
+            stored_files: self.stored_files,
+            message_index: &self.message_index,
+            deleted_index: &self.deleted_index,
+        }
+    }
+}
+
+/// The database's three lists, or `None` when the database could not be read —
+/// which is not "no notes". A copy with **no** `data.db` has none of them, and
+/// says so with three empty lists.
+fn keyed_lists(database: &DatabaseStats) -> Option<[&[KeyedRow]; 3]> {
+    match database {
+        DatabaseStats::Missing => Some([&[], &[], &[]]),
+        DatabaseStats::Ok(d) => Some([&d.note_list, &d.source_list, &d.self_model_list]),
+        DatabaseStats::Unreadable { .. } => None,
+    }
 }
 
 impl DataStats {
+    /// A digest of everything [`compare`] looks at to call two copies
+    /// identical: each chat's [`ChatIdentity`] and each database row's key and
+    /// content digest. So **equal fingerprints mean `--compare` would say
+    /// "identical"** — two machines can be checked by reading one line on each.
+    fn fingerprint(chat_list: &[ChatRow], database: &DatabaseStats) -> String {
+        let chats: Vec<_> = chat_list.iter().map(ChatRow::identity).collect();
+        let rows: Vec<Vec<(&str, &str)>> = keyed_lists(database)
+            .unwrap_or_default()
+            .iter()
+            .map(|list| {
+                list.iter()
+                    .map(|row| (row.key.as_str(), row.digest.as_str()))
+                    .collect()
+            })
+            .collect();
+        // Structs, strings and numbers: nothing in it can fail to serialize.
+        let material = serde_json::to_vec(&(chats, rows)).unwrap_or_default();
+        let mut digest = sha256_hex(&material);
+        digest.truncate(FINGERPRINT_HEX);
+        digest
+    }
+
     /// Nothing was found at all — the difference between "this copy is empty"
     /// and "every number happens to be zero" that the text output spells out.
     pub fn is_empty(&self) -> bool {
@@ -218,6 +310,12 @@ fn chat_schema_v1() -> u32 {
 #[derive(Deserialize)]
 struct MessageLite {
     #[serde(default)]
+    id: Option<Uuid>,
+    #[serde(default)]
+    text: Length,
+    #[serde(default)]
+    thoughts: Length,
+    #[serde(default)]
     role: RoleLite,
     #[serde(default)]
     new_bubble: bool,
@@ -227,6 +325,47 @@ struct MessageLite {
     images: Vec<IgnoredAny>,
     #[serde(default)]
     tool_calls: Vec<ToolCallLite>,
+}
+
+/// The length of a string, in characters, without keeping the string: a chat
+/// file is mostly message text, and the summary needs none of it. `null` and
+/// an absent field are zero.
+#[derive(Default, Clone, Copy)]
+struct Length(usize);
+
+impl<'de> Deserialize<'de> for Length {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Measure;
+        impl serde::de::Visitor<'_> for Measure {
+            type Value = Length;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a string or null")
+            }
+
+            fn visit_str<E>(self, text: &str) -> Result<Length, E> {
+                Ok(Length(text.chars().count()))
+            }
+
+            fn visit_unit<E>(self) -> Result<Length, E> {
+                Ok(Length(0))
+            }
+        }
+        deserializer.deserialize_any(Measure)
+    }
+}
+
+/// `<id>:<length>` for each message ([`ChatRow::message_index`]). A message
+/// without an id — no schema version ever wrote one — still gets a line, under
+/// the nil id, so that it is counted rather than dropped.
+fn index(messages: &[MessageLite]) -> Vec<String> {
+    messages
+        .iter()
+        .map(|m| {
+            let id = m.id.unwrap_or_default();
+            format!("{id}:{}", m.text.0 + m.thoughts.0)
+        })
+        .collect()
 }
 
 /// [`MessageRole`] with room for a role this binary does not know: a newer
@@ -361,6 +500,14 @@ impl Tally {
             message_rows: chat.messages.len(),
             deleted_messages,
             last_message_at,
+            attachments: chat.attachments.len(),
+            stored_files: chat.files.len(),
+            message_index: index(&chat.messages),
+            deleted_index: chat
+                .deleted
+                .iter()
+                .flat_map(|d| index(&d.messages))
+                .collect(),
         });
     }
 
@@ -410,6 +557,8 @@ fn assemble(
     DataStats {
         format: SNAPSHOT_FORMAT,
         app_version: env!("CARGO_PKG_VERSION").to_string(),
+        taken_at: Utc::now(),
+        fingerprint: DataStats::fingerprint(&chat_list, &database),
         source,
         profiles,
         chats,
@@ -648,6 +797,7 @@ fn table_rows(stats: &DataStats, loc: &Locale) -> Vec<(String, String)> {
     let mut rows = vec![
         ("cli.stats.label.last_message", utc(c.last_message_at, loc)),
         ("cli.stats.label.last_change", utc(c.last_change_at, loc)),
+        ("cli.stats.label.fingerprint", stats.fingerprint.clone()),
         (
             "cli.stats.label.profiles",
             with_deleted(loc, stats.profiles.total, stats.profiles.deleted),
@@ -766,6 +916,12 @@ fn with_deleted(loc: &Locale, total: usize, deleted: usize) -> String {
 fn size(bytes: u64) -> String {
     format_bytes(usize::try_from(bytes).unwrap_or(usize::MAX))
 }
+
+mod compare;
+mod snapshot;
+
+pub use compare::{compare, render_comparison_json, render_comparison_text};
+pub use snapshot::{OtherCopy, other_copy, read_snapshot};
 
 #[cfg(test)]
 mod tests;

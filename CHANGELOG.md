@@ -22,8 +22,17 @@ split by subsystem.
   computer, or for a backup archive without restoring it
   (`mindfork stats copy.zip`, with `--password` for an encrypted one). It only
   reads: nothing is created or unpacked, so it is safe while the app is open, and
-  an encrypted archive is never written out decrypted. `--json` adds a row per
-  chat, so two computers' snapshots can be compared with any diff tool.
+  an encrypted archive is never written out decrypted. The summary ends with a
+  fingerprint: two computers that print the same one hold identical data.
+- **`mindfork stats --compare` — what each copy holds that the other lacks.** The
+  newest copy is not always the most complete one. Take a snapshot on the other
+  computer (`mindfork stats --json > laptop.json`, a small file with no message
+  text in it) or use a backup archive of it, and `--compare` prints a verdict —
+  identical, this copy has everything, the other has everything, or each holds
+  something — and the lists behind it: chats only here, only there, continued
+  here or there, and **diverged** (one chat continued on both computers). Chats
+  are compared by the ids of their messages, not by counts or dates, so a chat
+  continued on two machines is never reported as merely "newer there".
 
 ### Changed
 - **`restore` asks for the password on stderr**, so redirecting a command's output

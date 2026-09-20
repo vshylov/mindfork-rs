@@ -4124,11 +4124,60 @@ Three rules carry it:
   the *stored* one, the refusal says so and names `--password`, instead of calling
   wrong a password the user never typed; `restore` says the same.
 
-`--json` prints the same figures plus **one row per chat** (id, profile, title,
-deleted, created/modified, message counts, last message), sorted by id and
-pretty-printed: two machines' files compared with any `diff` already show which chats
-exist on one side only or differ. A `format` field versions the shape. Comparing two
-copies inside the app is the track's second stage.
+`--json` prints the same figures as a **snapshot**: plus one row per chat (id,
+profile, title, deleted, created/modified, message counts, last message, and the ids
+of its messages), a row per note, knowledge-base source and self-model (key, time,
+content digest), when it was taken, and a `format` field that versions the shape. It
+holds ids, titles and digests — never message text — and is a few hundred kilobytes
+where the archive is tens of megabytes, which makes it the cheap way to carry a
+copy's shape to another machine.
+
+The summary also prints a **fingerprint**: sixteen hex digits over exactly what a
+comparison treats as a copy's identity, so that *equal fingerprints mean the
+comparison below would say "identical"*. Two machines can be checked by reading one
+line on each.
+
+**Comparing two copies — `--compare <OTHER>`.** `<OTHER>` is a snapshot or a backup
+archive of the other copy (which one is read from the file's first bytes, not its
+name); "here" is whatever the command would summarize — the live data, or the
+positional archive, so two archives compare too. The output is a **verdict** — the
+copies are identical · they hold the same messages and differ in details · this copy
+holds everything the other has · the other holds everything this one has · each
+holds something the other lacks — then a count line per family and the lists behind
+every non-zero count. The rules:
+
+- **A chat is compared by the ids of its messages, live and deleted together**, never
+  by its counts or dates. If every id the other side holds is held here too, this
+  side is *ahead*; if each side holds an id the other lacks, the chat *diverged* —
+  continued on two machines from one base, which `(count, last message)` reports as
+  "newer there" while losing what was written here. A false "this copy has
+  everything" is the one answer the command must never give: it is the answer a user
+  deletes the other copy on. A regenerated or rewritten reply keeps its id in
+  `deleted[]`, which nothing prunes, so regenerating reads as *ahead*, not as a
+  divergence. `/continue` is the one operation that changes a message under its id
+  ([§6.4](#64-cancellation-regeneration-continuation-deletion)); it only appends, so the longer text is
+  the later one.
+- **The same ids with a different title, deleted mark, attachment or stored-file
+  count, or live/deleted split are *details***, listed with what differs. Which side
+  changed later is said only when `modified_at` differs — a rename does not move it,
+  and the output does not pretend to know.
+- **Notes, knowledge-base sources and self-models are edited in place** and have no
+  such history: they are lined up by key, told apart by a content digest (for a note,
+  over its tags and what superseded it too) and ordered by their own timestamp. Equal
+  times with different content count for **both** sides — the verdict errs towards
+  "each has something", never towards "this one has everything".
+- **What could not be compared is said before the verdict**: an unreadable chat file
+  on either side, or a database that could not be read — which leaves the three
+  database families uncompared rather than reading as "no notes".
+- A snapshot from before the ids existed (`format` 1) is **refused with the way out**
+  rather than compared coarsely; one from a newer format is refused pointing at the
+  update. A snapshot redirected by Windows PowerShell (UTF-16 with a byte-order mark)
+  is read.
+- With two archives one `--password` is tried on both; an archive it does not open is
+  asked for by name. The exit code is 0 for any comparison that completed — here 1
+  means the command failed.
+- **There is no merge.** The command ends by saying which copy is safe to keep and
+  what keeping only one would lose.
 
 ---
 
