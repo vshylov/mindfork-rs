@@ -342,10 +342,20 @@ first frame and gets annoying with frequent launches.
 
   ```html
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/mindfork-wordmark-dark.svg">
+    <source media="(prefers-color-scheme: dark)" srcset="https://github.com/vshylov/mindfork-rs/raw/HEAD/assets/mindfork-wordmark-dark.svg?sanitize=true">
     <img alt="mindfork" src="assets/mindfork-wordmark-light.svg" width="330">
   </picture>
   ```
+
+  The dark variant is referenced **absolutely** on purpose: the same README is
+  the crate's page on crates.io, whose renderer rewrites a relative `<img src>`
+  to an absolute GitHub raw URL but leaves `<source srcset>` untouched — so a
+  relative one resolves against `crates.io/crates/` and is a 404 for every
+  visitor in dark mode (measured; see the journal entry "the README's
+  screenshots are the dark ones"). The URL above is the form crates.io writes
+  itself. The screenshots take the other road out of the same trap — they are
+  embedded as the **dark** capture with no `<picture>` at all, because a picture
+  of a terminal should not follow the page's theme.
 
   Condition R1 (text as outlines) is met — §2. We keep `alt` as text: the
   heading stays accessible for screen readers and for those with images

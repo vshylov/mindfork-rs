@@ -24,3 +24,11 @@ them.
 The set (per the design plan's confirmed forks): the chat hero shot, the chat
 list, settings twice — Model/server and Tools — and the self-model screen,
 each in Dark and Light themes, English UI.
+
+**Which variant goes where.** The project README (and therefore the crate's
+page on crates.io) embeds the **Dark** PNGs unconditionally — a picture of a
+terminal should look like a terminal whatever theme the page is read in, and
+most consoles are dark. mindfork.io inlines the **light and dark SVGs** and
+switches them with its own theme toggle. The Light PNGs are generated and
+committed all the same: the drift gate sweeps the whole matrix, so a Light
+capture that stopped matching the code is still caught.

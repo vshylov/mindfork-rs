@@ -2133,3 +2133,17 @@ the rehearsal as a post-merge step and say so in the pull request. And the chain
 the upstream workflow's *name*, a string nothing checks — put the manual way out in the
 checklist a human follows on the day.
 — *website — the site waits for the release*.
+
+**The README is two pages, and the second one renders less HTML than the first.**
+crates.io shows the same README.md, through its own pipeline: a relative `<img src>`
+is rewritten to an absolute `github.com/<owner>/<repo>/raw/HEAD/…?sanitize=true`, but
+`<source srcset>` is copied through untouched — so every `<picture>` whose dark half is
+a relative path resolves against `crates.io/crates/`, a 404, and the crate page is blank
+there for anyone whose system is dark. Measured on the published rendering
+(`static.crates.io/readmes/<crate>/<crate>-<version>.html`, which is fetchable and is the
+cheapest way to see what the registry actually kept) and in a dark-scheme browser, where
+all six images reported `naturalWidth` 0. Two consequences worth keeping: write an
+absolute URL wherever the markup needs one that crates.io will not fix, and remember that
+the rendering is a **snapshot taken at publish time** — a README fix reaches the registry
+only with the next published version, however long that is.
+— *the README's screenshots are the dark ones*.
