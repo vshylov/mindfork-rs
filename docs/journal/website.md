@@ -10,7 +10,7 @@ the reasoning behind the site, not its current shape. For the current shape
 read the research/design doc above; for the traps that recur across areas
 read [lessons.md](../lessons.md).
 
-## Entries (22)
+## Entries (23)
 
 - Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 - Post-M9: website — S2 infra: one CloudFormation stack, mindfork.io live (done)
@@ -34,6 +34,7 @@ read [lessons.md](../lessons.md).
 - Post-M9: website — a Cache-Control the site never sent (done)
 - Post-M9: website — IndexNow, a knock rather than an invitation (done)
 - Post-M9: website — /llms.txt, generated from the site rather than written (done)
+- Post-M9: website — the 0.10.2 release post (done)
 
 ### Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 
@@ -1074,3 +1075,53 @@ templates, content and CI, no Rust touched.
   above that), IndexNow, Bing Webmaster Tools by import, and this. Two items were declined
   rather than done — Yandex's console, unavailable to the author, and a per-page Open Graph
   card, which affects how a shared link looks and not how a page ranks.
+
+### Post-M9: website — the 0.10.2 release post (done)
+
+**What.** `blog/2026-09-20-mindfork-0-10-2.md`, in the release pull request as its
+own commit — 0.9.9's shape — plus one sentence of the at-a-glance article and the
+regenerated `/llms.txt`. The post has the release's single subject, **data that
+lives on more than one computer**, and opens with why the question exists at all:
+no account and no sync is a promise, and "which of these copies do I keep" is its
+price. Then `mindfork stats` (what it prints, that it only reads, that an
+encrypted archive is never written out decrypted, the fingerprint), `--compare`
+(the snapshot with no message text in it, the verdict, the lists, *diverged*, and
+why ids rather than dates), the one-frame chat switch, and `restore`'s password
+prompt as the only item of the "also" list. It closes on the sentence 0.9.9's post
+spent on its migrations, spent here on their absence: no stored format changes,
+and 0.10.1 and 0.10.2 open the same files.
+
+**There is no 0.10.1 post, and this one does not backfill it.** That release
+changed where the program installs from and nothing on screen, and the launch
+post of the same day carried the news. What it left behind is one clause: this is
+the first release post whose last line can name `cargo install mindfork` beside
+the releases page.
+
+**What the post refuses to overclaim.** Every statement is the changelog's or
+[install.md](../install.md) §2.2's. Equal fingerprints mean identical *chats,
+notes, knowledge base and self-models* — install.md's list, which is what the
+comparison treats as identity — and not "identical data folders". The section
+that shows the lists is the one that says mindfork **does not merge copies**, so
+`--compare` is not read as a sync tool by someone who stops there. The snapshot is
+"a small file" rather than a size: install.md's "a few hundred kilobytes" was
+measured on one data root and the post has no business promising it for another.
+
+**The at-a-glance article** gains one sentence after the backups one, and its
+`updated` moves to 2026-09-20: the article says it describes mindfork
+`app_version`, and the release PR bumps that number, so its storage section would
+otherwise claim to describe 0.10.2 while stopping at 0.10.1. The landing grid is
+untouched — the data card is about where the data lives, and a read-only summary
+of it does not change that sentence.
+
+**`/llms.txt` regenerated**, the post at the top of its News section. This is the
+first post added since the generator landed (it came after the launch post), so
+it is the first time `site_llms_txt.py --check` has done the job it was written
+for: a pull request that adds a post without regenerating would now be red.
+
+**Zola was not run locally.** The `zola` on this machine's PATH is 0.22.1, which
+cannot build this site at all, and fetching the pinned 0.23.6 is a download the
+task did not need: `site.yml`'s PR gate runs `zola check` and `zola build` at the
+pinned version on every pull request touching `site/`. One thing was checked by
+hand because 0.23 renders content as Tera — the post contains no `{{` and no
+`{%`. No live run: site content only, no Rust touched by this commit. Gates
+(`cyrillic_scan`/`link_check`/`doc_index_check`/`site_llms_txt --check`) green.
