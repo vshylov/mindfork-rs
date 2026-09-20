@@ -1,6 +1,6 @@
 <h1>
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/mindfork-wordmark-dark.svg">
+    <source media="(prefers-color-scheme: dark)" srcset="https://github.com/vshylov/mindfork-rs/raw/HEAD/assets/mindfork-wordmark-dark.svg?sanitize=true">
     <img src="assets/mindfork-wordmark-light.svg" alt="mindfork" width="320">
   </picture>
 </h1>
@@ -31,10 +31,7 @@ temporary directory.
 > [docs/history/request.md](docs/history/request.md).
 
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/chat-dark-en.png">
-    <img src="assets/screenshots/chat-light-en.png" alt="mindfork chat: a conversation with an expanded thoughts block, a GFM table, a Mermaid flowchart drawn as text graphics, a LaTeX line and a note_save tool card" width="900">
-  </picture>
+  <img src="assets/screenshots/chat-dark-en.png" alt="mindfork chat: a conversation with an expanded thoughts block, a GFM table, a Mermaid flowchart drawn as text graphics, a LaTeX line and a note_save tool card" width="900">
 </p>
 
 Every screenshot here is **generated from code** against a demo profile — never
@@ -45,22 +42,10 @@ drift from what the app renders
 <details>
 <summary><b>More screens</b> — the chat list, settings (model &amp; tools), and the assistant's self-model</summary>
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/chat-list-dark-en.png">
-    <img src="assets/screenshots/chat-list-light-en.png" alt="the full-screen chat list: search, sort, message counts, an active-chat marker" width="900">
-  </picture>
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/settings-model-dark-en.png">
-    <img src="assets/screenshots/settings-model-light-en.png" alt="settings, Model/server: a managed llama-server with model path, context, GPU layers, FlashAttention and speculative decoding" width="900">
-  </picture>
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/settings-tools-dark-en.png">
-    <img src="assets/screenshots/settings-tools-light-en.png" alt="settings, Tools: the agentic loop, web search, the Python sandbox, video and file-access switches" width="900">
-  </picture>
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/self-model-dark-en.png">
-    <img src="assets/screenshots/self-model-light-en.png" alt="the self-model screen (F3): the assistant's summary, goals with statuses, its model of the user, and dated observations" width="900">
-  </picture>
+  <img src="assets/screenshots/chat-list-dark-en.png" alt="the full-screen chat list: search, sort, message counts, an active-chat marker" width="900">
+  <img src="assets/screenshots/settings-model-dark-en.png" alt="settings, Model/server: a managed llama-server with model path, context, GPU layers, FlashAttention and speculative decoding" width="900">
+  <img src="assets/screenshots/settings-tools-dark-en.png" alt="settings, Tools: the agentic loop, web search, the Python sandbox, video and file-access switches" width="900">
+  <img src="assets/screenshots/self-model-dark-en.png" alt="the self-model screen (F3): the assistant's summary, goals with statuses, its model of the user, and dated observations" width="900">
 </p>
 </details>
 

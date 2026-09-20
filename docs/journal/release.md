@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (45)
+## Entries (46)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -57,6 +57,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: crates.io — the publish becomes a button the owner presses (done)
 - Release 0.10.1 (prepared)
 - Release 0.10.2 (prepared)
+- Post-M9: the README's screenshots are the dark ones (done)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -2475,3 +2476,47 @@ every reversible check first. Full record —
   the post in a second pull request after the publication. At this project's
   traffic it has not been worth a second pull request; the number is here so the
   next release decides on a measurement rather than on a guess.
+
+### Post-M9: the README's screenshots are the dark ones (done)
+
+- **The shot should look like the thing it shows.** The five README captures
+  were a `<picture>` pair switched by `prefers-color-scheme`, so a reader whose
+  system is light saw mindfork rendered on a white terminal — a configuration
+  almost nobody runs. A terminal screenshot is not a page element that should
+  follow the page's theme: the console it is a picture *of* has a dark
+  background in most setups, and the dark capture is the authentic one in either
+  theme. The owner asked for the dark variants; the five `<picture>` blocks
+  collapsed to a plain `<img>` of `*-dark-en.png` (branch
+  `docs/readme-dark-screenshots`).
+- **The same README is the crates.io page, and crates.io drops `srcset`.**
+  Measured on the published rendering
+  (`static.crates.io/readmes/mindfork/mindfork-0.10.2.html`): the renderer
+  rewrites a relative `<img src>` to an absolute
+  `github.com/vshylov/mindfork-rs/raw/HEAD/…?sanitize=true`, and leaves
+  `<source srcset>` exactly as written. Confirmed in a dark-scheme browser on
+  `crates.io/crates/mindfork`: all **six** `<picture>` images — the wordmark and
+  all five screenshots — resolved to `https://crates.io/crates/assets/…` and
+  reported `naturalWidth` **0**. That URL is a 404 (checked directly, both with
+  and without the `/crates/` prefix), so every visitor arriving in dark mode has
+  been reading a crate page with six blank images. The collapse fixes five of
+  them for free: a plain `<img>` is the one element crates.io does rewrite.
+- **The wordmark stays a `<picture>` and got the URL crates.io would have
+  written itself.** A logo genuinely must contrast with the page under it, so
+  the theme switch is right there — but its dark `<source>` now carries the
+  absolute
+  `https://github.com/vshylov/mindfork-rs/raw/HEAD/assets/mindfork-wordmark-dark.svg?sanitize=true`,
+  the same form crates.io emits for the light `<img>`. Verified: `200`,
+  `image/svg+xml`, **2606 bytes** — byte-for-byte the committed file. This is
+  the one `<picture>` left in the README, and it is the one that needs to be.
+- **Nothing changed in the capture pipeline.** Both themes are still generated
+  and still committed: mindfork.io inlines the light **SVG**s under its own
+  theme toggle, and the drift gate sweeps the whole matrix. Only which file the
+  README embeds changed.
+- **crates.io will keep showing the old README until the next publish.** The
+  rendering is a snapshot taken at publish time — there is no re-render for a
+  crate already on the registry — so the dark screenshots reach
+  `crates.io/crates/mindfork` when 0.10.3 is published, and not before. The
+  GitHub README changes on merge.
+- **Tests**: unchanged (3379 unit green, 196 `#[ignore]`); no code was touched.
+  Gates run: `link_check.py`, `doc_index_check.py`, `cyrillic_scan.py`. **No
+  live run** — a documentation PR, no engine/memory/tool path (AGENTS.md §3).
