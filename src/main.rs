@@ -523,7 +523,7 @@ fn run_backup(
 }
 
 /// CLI: `stats` — a summary of the user data, live or inside a backup archive
-/// (docs/data-stats.md, spec §12.4). Takes no single-instance guard: nothing is
+/// (docs/history/data-stats.md, spec §12.4). Takes no single-instance guard: nothing is
 /// written, a chat file is replaced atomically by the running app (a reader
 /// sees the old or the new one, never half), and the database is opened
 /// read-only — so the command works next to a running app, which is when the
@@ -536,7 +536,7 @@ fn run_backup(
 /// With `--compare` the same summary is taken of the other copy — a snapshot or
 /// an archive, told apart by the file itself — and what is printed is what each
 /// holds that the other lacks. The exit code stays 0 for any comparison that
-/// completed: in this CLI 1 means the command failed (docs/data-stats.md G7).
+/// completed: in this CLI 1 means the command failed (docs/history/data-stats.md G7).
 fn run_stats(
     paths: &Paths,
     archive: Option<&Path>,

@@ -195,7 +195,7 @@ being recent is dropped, not shortened.
   `--compare` takes a `--json` snapshot or an archive of the other copy and compares
   chats **by the ids of their messages**, so a chat continued on two machines reads as
   *diverged*, never as "newer there"; equal fingerprints mean an identical comparison.
-  Live **GO**, both stages ([docs/data-stats.md](docs/data-stats.md), spec §12.4,
+  Live **GO**, both stages ([docs/history/data-stats.md](docs/history/data-stats.md), spec §12.4,
   [docs/journal/storage.md](docs/journal/storage.md)).
 - **The model row asks the provider** (stage 4b, the last of stage 4). The settings
   hint recommended `gpt-4o` and `claude-opus-4-8` — a hint that names a model ages, so

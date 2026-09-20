@@ -1,4 +1,4 @@
-//! Tests of `mindfork stats` (docs/data-stats.md §4.4). The data root under
+//! Tests of `mindfork stats` (docs/history/data-stats.md §4.4). The data root under
 //! test is written by the **real** writers — `JsonStore::save_chat`, the `Db`
 //! API, `create_backup` — so the projection is exercised against the shape the
 //! app leaves on disk, not against a fixture that agrees with it by design.

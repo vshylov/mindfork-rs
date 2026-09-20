@@ -4084,7 +4084,7 @@ The data is portable and travels between machines as backup archives
 ([§12.3](#123-backup-and-deletion)), so a user with three or four copies needs to
 ask, without opening each one, **which copy is the newest** — and whether an older
 one holds something the newest lacks. `mindfork stats [ARCHIVE] [-p PASSWORD]
-[--json]` (`features/data_stats.rs`, [docs/data-stats.md](docs/data-stats.md))
+[--json]` (`features/data_stats.rs`, [docs/history/data-stats.md](docs/history/data-stats.md))
 prints, for the live data or for a backup archive:
 
 - the **last message** and the **last change** (the newest `modified_at` — it moves

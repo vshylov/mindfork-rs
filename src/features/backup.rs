@@ -249,7 +249,7 @@ pub struct ArchiveEntry {
 }
 
 /// A backup archive opened to be **read where it lies** — for `mindfork stats
-/// <archive>` (docs/data-stats.md F5), which summarizes a backup without
+/// <archive>` (docs/history/data-stats.md F5), which summarizes a backup without
 /// restoring it. Nothing is unpacked: an entry is handed to the caller as a
 /// stream, so no decrypted byte of an encrypted archive reaches the disk.
 ///
