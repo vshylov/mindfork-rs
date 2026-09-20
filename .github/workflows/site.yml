@@ -1,4 +1,5 @@
-# mindfork.io: a build gate on pull requests, deploy on push to main.
+# mindfork.io: a build gate on pull requests, deploy on push to main - once the
+# version `main` describes is a published release (the `gate` job below).
 # Design: docs/research/mindfork-io-website.md §5.5; infra (bucket,
 # distribution, the OIDC deploy role) comes from the `mindfork-website`
 # CloudFormation stack, infra/website.cfn.yaml.
@@ -33,8 +34,26 @@ on:
       - "assets/**"
       - "tools/site_sync_assets.py"
       - ".github/workflows/site.yml"
+  # What lets a held deploy go. The release pull request carries the release's
+  # own news, so the push that merges it is held by the `gate` job until the
+  # release is public; `crates.io` starts on `release: published`, and when it
+  # completes the release is out and the crate is on the registry - every
+  # sentence of the post is true by the time it appears. A `workflow_run` run
+  # belongs to the default branch whatever started the other workflow: it checks
+  # out `main` (never the tag, never a pull request's head) and its OIDC subject
+  # is `refs/heads/main`, the one subject the deploy role trusts - which a run on
+  # the `release` event itself, whose ref is the tag, would not have.
+  # docs/research/site-waits-for-release.md.
+  workflow_run:
+    workflows: ["crates.io"]
+    types: [completed]
   # Manual redeploy (e.g. after an infra change with no site diff).
   workflow_dispatch:
+    inputs:
+      force:
+        description: "Deploy even if Cargo.toml's version is not a published release yet"
+        type: boolean
+        default: false
 
 # Superseded PR builds are cancelled; deploys on main queue and never cancel
 # each other mid-sync.
@@ -71,9 +90,40 @@ jobs:
       - name: Build
         run: zola --root site build
 
+  # The site says "X.Y.Z is out" only once it is. Held, the run is green and the
+  # deploy below is skipped, with a notice naming what releases it; an answer the
+  # gate cannot read fails the run instead of deploying on a guess. The logic and
+  # every arm of it live in tools/site_release_gate.py, self-tested in ci.yml's
+  # lint job - a refusal written inline here would first run on a release day.
+  gate:
+    name: Is this version out?
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    # One checkout and one API request; the ceiling is for a runner that stalls.
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      deploy: ${{ steps.ask.outputs.deploy }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Ask GitHub whether Cargo.toml's version is a published release
+        id: ask
+        timeout-minutes: 2
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          if [ "$FORCE" = "true" ]; then
+            python3 tools/site_release_gate.py --force
+          else
+            python3 tools/site_release_gate.py
+          fi
+
   deploy:
     name: Deploy to mindfork.io
-    if: github.event_name != 'pull_request'
+    needs: gate
+    if: needs.gate.outputs.deploy == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

@@ -218,7 +218,10 @@ data format change adds an item to `CHANGELOG.md` → `[Unreleased]` (§4).
    in `CHANGELOG.md` rename
    `[Unreleased]` → `[X.Y.Z] — <date>`, start a fresh empty `[Unreleased]`, and
    update the comparison links at the bottom of the file. Gates
-   (`fmt`/`clippy`/`test`) green, CI on the PR green.
+   (`fmt`/`clippy`/`test`) green, CI on the PR green. The release's post for
+   mindfork.io belongs in this PR too: merging it does **not** put it on the
+   site — `site.yml` holds its deploy while `Cargo.toml` names a version that is
+   not a published release yet (step 8).
 2. **Merge** the release PR (up to the user).
 3. **Tag**: the user sets `git tag vX.Y.Z <merge-commit>` and pushes
    (`git push origin vX.Y.Z`). The agent doesn't push tags/`main` itself (§5).
@@ -254,6 +257,16 @@ data format change adds an item to `CHANGELOG.md` → `[Unreleased]` (§4).
    happened. The workflow also runs by hand (`workflow_dispatch`), where it
    is a rehearsal by default (`dry_run: true`, everything but the upload)
    and a publish when that box is cleared.
+8. **The site follows by itself.** When `crates-io.yml` completes, `site.yml`
+   runs again, its gate (`tools/site_release_gate.py`) now finds the release
+   published, and the deploy held since step 2 goes out — the post, `app_version`
+   and anything else merged meanwhile — a few minutes after the publication,
+   with the crate already on the registry. Check that mindfork.io shows the
+   post. If it does not (the chain hangs on the *name* of the `crates.io`
+   workflow), dispatch `Site` by hand: once the release is public the gate lets
+   it through. A release that stalls after step 2 freezes the site; `Site`
+   dispatched with `force` deploys `main` regardless
+   ([docs/research/site-waits-for-release.md](docs/research/site-waits-for-release.md)).
 
 A **rehearsal** of the whole workflow, when it or the packaging changes, is a tag
 carrying a prerelease suffix on the branch head (`v<current version>-rc1`): the
