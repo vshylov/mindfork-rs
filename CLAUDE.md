@@ -193,8 +193,9 @@ being recent is dropped, not shortened.
 - **The site waits for the release.** The release PR's merge deployed its own
   post 25 min 28 s before the release was public (measured on 0.10.2). `site.yml`
   now holds a deploy while `Cargo.toml` names an unpublished version and runs
-  again when `crates.io` completes; `force` overrides. The OIDC half is
-  verifiable only after the merge
+  again when `crates.io` completes; `force` overrides. The chain and its OIDC
+  subject were rehearsed after the merge — **GO**; the hold is first seen on the
+  next release PR's merge
   ([docs/research/site-waits-for-release.md](docs/research/site-waits-for-release.md),
   [docs/journal/website.md](docs/journal/website.md)).
 - **`mindfork stats` — which copy of the data is the newest, and what the other

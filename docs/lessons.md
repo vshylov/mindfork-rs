@@ -2116,3 +2116,20 @@ experiment is needed. Diff the deployed template against the repository first, o
 comment-only edit produces no change set at all, so the stack's stored template keeps the
 older wording until the next real change.
 — *mindfork.io in Google Search Console*.
+
+**A role that trusts a branch cannot be assumed from the event that makes a release — hang
+the job on `workflow_run`.** An OIDC deploy role scoped to `repo:…:ref:refs/heads/main`
+refuses a run on `release: published`, whose ref is the tag, and widening the trust to tags
+lets a tag on *any* commit deploy. A `workflow_run` run belongs to the default branch
+whatever started the upstream workflow: it checks out `main`, never the tag or a pull
+request's head, and its subject is `refs/heads/main` — measured, the role was assumed from
+one a second after the upstream completed. Three properties to know before relying on it.
+`types: [completed]` fires on a **failed** upstream too (the rehearsal's upstream was red
+and the chain still ran), so the downstream must decide for itself whether to act — here a
+gate that asks whether the release is public, which is also what makes a failed crate
+upload unable to strand the announcement. The trigger exists only once the workflow file
+is on the default branch, so it **cannot be shown on the pull request that adds it**: plan
+the rehearsal as a post-merge step and say so in the pull request. And the chain hangs on
+the upstream workflow's *name*, a string nothing checks — put the manual way out in the
+checklist a human follows on the day.
+— *website — the site waits for the release*.

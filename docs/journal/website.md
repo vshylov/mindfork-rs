@@ -1198,3 +1198,33 @@ AGENTS.md §6 gains a step 8 that says to look at the site after publishing and 
 to press if the post is not there. No live run: no Rust touched. Gates
 (`cyrillic_scan`/`link_check`/`doc_index_check`/`actions_pin_check`, the new
 self-test) green; 3379 unit tests unchanged.
+
+**The post-merge rehearsal — GO (2026-09-20, the evening of the merge).** Two runs,
+both on `main` at `88e5ce29`, the merge of the pull request.
+
+- *The merge itself* was the deploy arm's first pass through the real workflow
+  (`site.yml` is in its own `paths`): run 35529336333, the gate answered in 8 s —
+  "v0.10.2 … the release is published" — and the deploy went out as it always has, 25 s.
+- *The chain*: `crates.io` dispatched with `dry_run: true` at 18:32:30Z
+  (run 35529389837) completed at 18:32:43Z, and `Site` started **by itself one second
+  later** (run 35529401872, `event: workflow_run`, branch `main`). Its gate said
+  *deploy*; the deploy job logged `Assuming role with OIDC` and `Authenticated as
+  assumedRoleId …:GitHubActions` — the role that trusts `refs/heads/main` alone
+  accepted a `workflow_run` run, which was the one claim this entry had from
+  documentation rather than measurement — then the three S3 passes, the invalidation
+  and IndexNow. Thirty seconds, trigger to done.
+- **The upstream run was red, and that turned out to be the more useful rehearsal.**
+  The dry run stopped after 13 s at `This version is not on crates.io yet`: 0.10.2
+  *is* there, so the registry check refused, `cargo publish` was skipped and nothing
+  was uploaded — that workflow's correct answer between releases, when `Cargo.toml`
+  always names a published version. `types: [completed]` fired anyway. So the chain
+  does not depend on the upload *succeeding*: a release whose crate upload fails still
+  gets its site deploy, because the gate asks about the release, not about the crate.
+  That is the behaviour wanted — the release is public either way — and it is now
+  measured rather than reasoned. What it costs is one red run in the Actions history
+  per rehearsal; a dry run is green only in the window a release pull request has
+  merged and the release is not yet published, which is where the 0.10.1 rehearsal ran.
+- **Still unseen in the real workflow: the hold.** It needs a `Cargo.toml` that names
+  an unpublished version on `main`, which is the next release pull request's merge.
+  Expect a green `Site` run with "Deploy to mindfork.io" skipped and a "Site deploy
+  held" notice; its arm is the one measured against the live API above.

@@ -1,7 +1,7 @@
 # The site waits for the release
 
-**Status:** decided 2026-09-20, implemented in the same pull request. One part is
-verifiable only after the merge — §6.
+**Status:** decided 2026-09-20, implemented in the same pull request (#605). The part
+verifiable only after the merge was rehearsed the same evening — **GO**, §6.
 
 ## 1. The defect
 
@@ -143,3 +143,15 @@ assume the role. If (1) fails, the failure is benign and loud — a red `Site` r
 after a release, with the manual dispatch as the way out — and the fix is then
 fork F1 (b). The hold itself is first seen for real on the next release pull
 request's merge; its arm is the one §3 measured against the live API.
+
+**Rehearsed 2026-09-20 — GO.** `crates.io` dispatched with `dry_run: true` completed
+at 18:32:43Z and `Site` started by itself at 18:32:44Z (`event: workflow_run`, branch
+`main`); the gate said *deploy*, the deploy job logged `Authenticated as assumedRoleId
+…:GitHubActions`, and the site was deployed thirty seconds after the trigger. So (1)
+and (2) both hold. One thing the procedure above did not foresee: between releases
+the dry run itself is **red** — it stops at "This version is not on crates.io yet",
+because the version is — and the chain fired regardless, since `types: [completed]`
+does not look at the conclusion. That is the wanted behaviour (the gate asks about
+the release, not the crate, so a failed upload does not strand the post) and it is
+why a red upstream run is not a failed rehearsal. Full record —
+[docs/journal/website.md](../journal/website.md), "the site waits for the release".
