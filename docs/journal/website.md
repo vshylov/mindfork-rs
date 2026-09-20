@@ -10,7 +10,7 @@ the reasoning behind the site, not its current shape. For the current shape
 read the research/design doc above; for the traps that recur across areas
 read [lessons.md](../lessons.md).
 
-## Entries (23)
+## Entries (24)
 
 - Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 - Post-M9: website — S2 infra: one CloudFormation stack, mindfork.io live (done)
@@ -35,6 +35,7 @@ read [lessons.md](../lessons.md).
 - Post-M9: website — IndexNow, a knock rather than an invitation (done)
 - Post-M9: website — /llms.txt, generated from the site rather than written (done)
 - Post-M9: website — the 0.10.2 release post (done)
+- Post-M9: website — the site waits for the release (done)
 
 ### Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 
@@ -1125,3 +1126,75 @@ pinned version on every pull request touching `site/`. One thing was checked by
 hand because 0.23 renders content as Tera — the post contains no `{{` and no
 `{%`. No live run: site content only, no Rust touched by this commit. Gates
 (`cyrillic_scan`/`link_check`/`doc_index_check`/`site_llms_txt --check`) green.
+
+### Post-M9: website — the site waits for the release (done)
+
+**What.** `site.yml` no longer deploys the release's news before the release
+exists. A new `gate` job asks GitHub whether `v<Cargo.toml version>` is a published
+release (`tools/site_release_gate.py`); the `deploy` job needs its answer. Held,
+the run is green, the deploy is a skipped job, and a notice says what releases it.
+The deploy goes out when the `crates.io` workflow completes after the publication
+(`workflow_run`), and `workflow_dispatch` gains a `force` input. Forks, user's
+decisions and measurements —
+[docs/research/site-waits-for-release.md](../research/site-waits-for-release.md).
+
+**Why.** The release pull request carries the post and `app_version`, and its merge
+deployed them: on 0.10.2 the site said "is out" for 25 min 28 s before the releases
+page agreed, and named `cargo install mindfork` for 28 min 05 s before the registry
+had the version ([release.md](release.md), "Release 0.10.2"). That entry concluded
+the window "cannot be closed by hurrying, only by merging the post in a second pull
+request". The second half was wrong: it can be closed by not deploying.
+
+**Why `workflow_run`, and not the `release` event.** The deploy role trusts one
+OIDC subject, `refs/heads/main`. A run on `release: published` has the tag as its
+ref and could not assume it, and widening the trust to tags would let a tag on any
+commit deploy the site. A `workflow_run` run belongs to the default branch whatever
+started the other workflow — it checks out `main`, never the tag — so the role, the
+stack and the permissions are untouched. Hanging it on `crates.io` rather than
+dispatching on the publication also orders it after the upload: the post appears
+about 3.5 minutes after the publication, with the crate already on the registry, so
+its `cargo install` sentence is true when it appears. The window did not shrink to
+zero; it changed sign, and a site that trails the release claims nothing false.
+
+**The gate's key is `Cargo.toml`, not `app_version`.** It is the version's source of
+truth and `release_guard.py` already holds the tag to it; a release pull request
+that forgot `app_version` would otherwise open the gate for its own post. Between
+releases `Cargo.toml` names the latest published release, so an ordinary site
+change deploys as before, one ten-second job later.
+
+**Three answers, and the third is red.** Published → deploy. No such release, a
+draft, or a prerelease → hold, exit 0. Anything else — 401, 403, 429, 5xx, a body
+that is not a release, no connection — fails the run rather than deploying on a
+guess; a rerun costs a minute and `force` works with the API down, because a forced
+run asks nothing. All three were driven against the **live** API, not only
+fixtures: `v0.10.2` → deploy, `v0.10.3` → hold with `deploy=false`, a refused token
+→ `401`, exit 1, nothing written to `GITHUB_OUTPUT`. The `draft` field is read even
+though the endpoint is documented to return published releases only — that was not
+measurable (no draft existed), and reading it makes the answer right either way.
+
+**Verified the way lessons §10 asks.** The logic is a script with a `--self-test`
+(fifteen classifications, seven checks of the manifest readers and their refusals,
+five end-to-end runs including "forced while the API is down", which asserts the network
+is never asked), wired into `ci.yml`'s lint job. The workflow was parsed and its
+shape asserted — triggers, `needs`, the `if`, permissions, timeouts on the job and
+on the network step — and the `run:` block was extracted and executed against a
+stubbed `python3` for each value `FORCE` can take: `true` alone passes `--force`;
+`false` and the empty string a push or a `workflow_run` delivers do not. And the
+self-test was itself tested: four mutations of the script — a draft deploys, an API
+error deploys, a forced run asks the network, a held run writes `deploy=true` — each
+turned it red.
+
+**What this pull request cannot show.** `workflow_run` fires only from the workflow
+file on the default branch, so that the chain fires, and that its OIDC subject is
+the trusted one, are verifiable only after the merge — by dispatching `crates.io`
+with its default `dry_run: true`, which uploads nothing and must be followed by a
+`Site` run that deploys. If the subject is not what the documentation says, the
+failure is a red `Site` run after a release, with the manual dispatch as the way
+out. The research doc's §6 has the procedure; this entry gains its outcome.
+
+**Costs, stated.** A site change merged between a release pull request and the
+publication waits for the publication. The chain hangs on the *name* `crates.io`;
+AGENTS.md §6 gains a step 8 that says to look at the site after publishing and what
+to press if the post is not there. No live run: no Rust touched. Gates
+(`cyrillic_scan`/`link_check`/`doc_index_check`/`actions_pin_check`, the new
+self-test) green; 3379 unit tests unchanged.

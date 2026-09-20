@@ -339,7 +339,14 @@ roadmap item as designed, from the consumer side.
   route until its manifest lagged a tag, second amendment in §4.1) → `zola check`
   (broken links) → `zola build` — a build gate, no deploy.
 - **Push to `main`** touching `site/**` or `assets/screenshots/**`:
-  build → OIDC role → `s3 sync --delete` → invalidate `/*`.
+  build → OIDC role → `s3 sync --delete` → invalidate `/*` — **once the version
+  `Cargo.toml` names is a published release**. A `gate` job asks first
+  (`tools/site_release_gate.py`); the release pull request's own merge is
+  therefore held, and the deploy goes out when the `crates.io` workflow
+  completes after the publication (`workflow_run`, which runs on `main` and so
+  keeps the one OIDC subject the role trusts). `workflow_dispatch` takes a
+  `force` input for a release that stalled. Measurements, forks and the
+  post-merge rehearsal — [site-waits-for-release.md](site-waits-for-release.md).
 - Repo gates: `site/` needs a `cyrillic_scan.py` carve-out only when `/ru/`
   content lands (same class of exemption as `locales/*.json`).
 

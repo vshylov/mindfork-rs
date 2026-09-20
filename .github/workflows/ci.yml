@@ -191,6 +191,11 @@ jobs:
         run: python3 tools/indexnow.py --check
       - name: The IndexNow submitter's own arms
         run: python3 tools/indexnow.py --self-test
+      # The gate that holds the site's deploy until the release it announces is
+      # published (site.yml). Its hold and cannot-tell arms are reached on a
+      # release day only, which is the wrong day to find a typo in one.
+      - name: The site release gate's own arms
+        run: python3 tools/site_release_gate.py --self-test
       - name: Install the toolchain (from rust-toolchain.toml)
         run: rustup show
       # A cache belongs to the branch that wrote it, so with the default

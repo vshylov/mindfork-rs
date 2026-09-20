@@ -151,6 +151,7 @@ python tools/site_legal_pages.py    # regenerate the site's privacy page from PR
 python tools/site_legal_pages.py --check  # ...and its gate
 python tools/indexnow.py --check   # the site's IndexNow key file (+ --self-test)
 python tools/site_llms_txt.py --check  # /llms.txt matches the site content
+python tools/site_release_gate.py --self-test  # the gate that holds the site's deploy for a release
 python tools/actions_pin_check.py  # every workflow action is pinned to a commit
 python tools/release_guard.py --self-test  # the tag guard release.yml runs, against fixtures
 ```
@@ -189,6 +190,13 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **The site waits for the release.** The release PR's merge deployed its own
+  post 25 min 28 s before the release was public (measured on 0.10.2). `site.yml`
+  now holds a deploy while `Cargo.toml` names an unpublished version and runs
+  again when `crates.io` completes; `force` overrides. The OIDC half is
+  verifiable only after the merge
+  ([docs/research/site-waits-for-release.md](docs/research/site-waits-for-release.md),
+  [docs/journal/website.md](docs/journal/website.md)).
 - **`mindfork stats` — which copy of the data is the newest, and what the other
   one holds** (both stages). A read-only summary of the live data or of a backup
   archive, encrypted ones included: nothing is created, migrated or unpacked.
