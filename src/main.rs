@@ -573,7 +573,6 @@ fn resolve_restore_password(
     loc: &Locale,
 ) -> anyhow::Result<Option<String>> {
     use crate::features::backup::ArchivePassword;
-    use crate::features::terminal_input;
 
     let from_settings = argument.is_none();
     let mut current = effective_password(argument, stored);
@@ -583,31 +582,48 @@ fn resolve_restore_password(
         let Ok(status) = backup::check_password(archive, current.as_deref()) else {
             return Ok(current);
         };
-        match status {
-            ArchivePassword::NotNeeded | ArchivePassword::Ok => return Ok(current),
-            ArchivePassword::Required | ArchivePassword::Wrong => {
-                let stored_failed = stored_password_failed(from_settings, attempt, status);
-                if !terminal_input::is_interactive() {
-                    if stored_failed {
-                        bail!("{}", loc.t("cli.restore.stored_password_wrong"));
-                    }
-                    return Ok(current);
-                }
-                if stored_failed {
-                    eprintln!("{}", loc.t("cli.restore.stored_password_wrong"));
-                } else if status == ArchivePassword::Wrong {
-                    eprintln!("{}", loc.t("backup.err.wrong_password"));
-                }
-                match terminal_input::read_password(loc.t("cli.restore.password_prompt"))? {
-                    Some(entered) => current = Some(entered),
-                    // Cancelled: hand back what we had, so the refusal is the
-                    // regular localized one rather than a bare exit.
-                    None => return Ok(current),
-                }
-            }
+        if matches!(status, ArchivePassword::NotNeeded | ArchivePassword::Ok) {
+            return Ok(current);
+        }
+        let stored_failed = stored_password_failed(from_settings, attempt, status);
+        match ask_for_password(status, stored_failed, loc)? {
+            Some(entered) => current = Some(entered),
+            // No prompt is possible, or it was cancelled: hand back what we
+            // had, so the refusal is the regular localized one rather than a
+            // bare exit.
+            None => return Ok(current),
         }
     }
     Ok(current)
+}
+
+/// Asks for the password after the archive refused the one we held (`status` is
+/// `Required` or `Wrong`), saying first what was wrong with that one. `Ok(None)`
+/// — stdin is not a terminal, or the user cancelled the prompt. `Err` — there
+/// is no one to ask **and** the password that failed was the stored one: the
+/// caller's regular refusal would blame the user for it.
+fn ask_for_password(
+    status: crate::features::backup::ArchivePassword,
+    stored_failed: bool,
+    loc: &Locale,
+) -> anyhow::Result<Option<String>> {
+    use crate::features::backup::ArchivePassword;
+    use crate::features::terminal_input;
+
+    if !terminal_input::is_interactive() {
+        if stored_failed {
+            bail!("{}", loc.t("cli.restore.stored_password_wrong"));
+        }
+        return Ok(None);
+    }
+    if stored_failed {
+        eprintln!("{}", loc.t("cli.restore.stored_password_wrong"));
+    } else if status == ArchivePassword::Wrong {
+        eprintln!("{}", loc.t("backup.err.wrong_password"));
+    }
+    Ok(terminal_input::read_password(
+        loc.t("cli.restore.password_prompt"),
+    )?)
 }
 
 /// Whether the password the archive just refused is the one from the settings
