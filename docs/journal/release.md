@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (44)
+## Entries (45)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -56,6 +56,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: public release readiness — stage 6, the flip (done)
 - Post-M9: crates.io — the publish becomes a button the owner presses (done)
 - Release 0.10.1 (prepared)
+- Release 0.10.2 (prepared)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -2372,3 +2373,51 @@ every reversible check first. Full record —
   documentation for a library target and this crate has none. The
   `documentation` field has always pointed at the manual, and that is the link
   the crates.io page carries.
+
+### Release 0.10.2 (prepared)
+
+- **A release PR** per the checklist in [AGENTS.md §6](../../AGENTS.md) (branch
+  `chore/release-0.10.2`): bumped `Cargo.toml` `0.10.1 → 0.10.2` (+ `Cargo.lock`,
+  one line), `site/zola.toml` `app_version`, `CHANGELOG.md` — `[Unreleased]` →
+  `[0.10.2] — 2026-09-20` under a two-sentence lead, a fresh empty `[Unreleased]`
+  opened, comparison links updated. The `v0.10.2` tag is applied by the user after
+  the merge (the agent doesn't push tags/`main`). Gates green: 3379 unit tests
+  (196 `#[ignore]`), `clippy -D warnings`, `fmt`, and `release_guard.py --tag
+  v0.10.2` accepting the tag this release will carry — its extracted notes read
+  through, since they are the text of the draft.
+- **The number is the owner's, and it bends §6 knowingly.** While at `0.x` a MINOR
+  carries features and a PATCH carries fixes, and `mindfork stats` is a feature;
+  the request named `v0.10.2`. What argues for it: the command is read-only and
+  lives entirely outside the TUI, no storage format moves (the only new format is
+  the snapshot's own, `SNAPSHOT_FORMAT`, which nothing but `--compare` reads), and
+  the one change on screen is a fix. Recorded so that the PATCH is not later read
+  as an oversight, or as a precedent that a track is a PATCH.
+- **What the release carries**: both stages of `mindfork stats`
+  ([docs/history/data-stats.md](../history/data-stats.md)), `restore`'s password
+  prompt on stderr with the saved-password refusal named as such, and the
+  one-frame chat switch. No `Data` rubric, because there is nothing under it: no
+  schema constant changed between `v0.10.1` and this commit (checked in the diff,
+  not assumed), so 0.10.1 and 0.10.2 open the same files and no migration runs.
+- **What else landed since v0.10.1 and is deliberately absent from the notes**:
+  the site's structured data, its `Cache-Control`, IndexNow, `/llms.txt` and the
+  Search Console record; the README badges; the crates.io item closing in the
+  roadmap. A changelog is what a user's installation does differently, and none
+  of those change it.
+- **The release post ships in this pull request**, as its own commit — 0.9.9's
+  shape (#548). It has a consequence worth writing down once: `site.yml` deploys
+  on the merge, and the release is a draft until the artifact smoke test and the
+  owner's publication, so for that window mindfork.io says "0.10.2 is out" about
+  a release the releases page does not list yet — and `cargo install mindfork`,
+  which the post names, lags by the few more minutes `crates-io.yml` takes after
+  the publication. `app_version` has had the same window since §6 put it in the
+  release PR. It is short, it is the owner's to close, and splitting the post
+  into a second pull request merged after the publication is the alternative if
+  it ever matters; it was not taken here.
+- **`release_guard.py --tag` writes `notes.md` into the working directory** —
+  right for the workflow, which reads it in the next step, and a stray untracked
+  file when the guard is run by hand as the checklist's gate. Removed before the
+  commit; nothing ignores it, so `git status` is what catches it.
+- **This is the second release whose publication also uploads the crate.** Nothing
+  about that path changed since 0.10.1 proved it: merge → tag → `release.yml`
+  builds the draft → the artifact smoke test → the owner publishes →
+  `crates-io.yml` uploads `mindfork 0.10.2` from the same tag.
