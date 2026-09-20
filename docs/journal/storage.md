@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (15)
+## Entries (16)
 
 - Post-M9: persisting the input-box draft in the chat file (done)
 - Post-M9: persisting deleted exchanges in the chat file (`Ctrl+E`/`Ctrl+R`) (done)
@@ -27,6 +27,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: `workspace/` joins the backup (done)
 - Post-M9: safe defaults 2b — the data root is the owner's alone on unix (done)
 - Post-M9: `mindfork stats` — which copy of the data is the newest (done)
+- Post-M9: `mindfork stats --compare` — what each copy holds that the other lacks (done)
 
 ### Post-M9: persisting the input-box draft in the chat file (done)
 - **Unsaved input-box text is stored on the chat and restored on
@@ -881,3 +882,58 @@ discards is recoverable from `backups/`.
   nested runs — survived, and was right to: ADR 0010 never gives a run `call_subagent`, so
   the recursion was removed rather than tested.
 - 3359 unit tests (+22), 196 `#[ignore]`. Stage 2 (`--compare`) is on the roadmap.
+
+### Post-M9: `mindfork stats --compare` — what each copy holds that the other lacks (done)
+- **Stage 2 of [data-stats.md](../data-stats.md)** (§5; spec §12.4), on the user's
+  go-ahead after stage 1 merged. Stage 1 says which copy is the newest; this answers the
+  other half of the original request — a copy that is not the newest can still hold
+  changes. `mindfork stats --compare <OTHER>`, where `<OTHER>` is a `--json` snapshot or
+  a backup archive (told apart by the file's first bytes) and "here" is the live data or
+  the positional archive.
+- **What reading the code decided.** A message's id is stable and never reused:
+  `Ctrl+R` and `rewrite_current_message` make a *new* message and move the old one, id
+  and all, into `Chat.deleted`, which is only ever pushed to. So "the other copy is a
+  continuation of mine" is a **set** statement — every id I hold, live or deleted, is
+  held there — and "we diverged" is each side holding an id the other lacks. Counts and
+  dates cannot tell these apart: `[m1 m2 m3a]` against `[m1 m2 m3b m4b]` is "newer there"
+  by both, and loses `m3a`. A false "this copy has everything" is the answer a user
+  deletes the other copy on, so the cheaper comparison was rejected (G1). `/continue` is
+  the one operation that changes a message under its id; it only appends, so each id
+  carries its text length and the longer one counts for its side.
+- **The snapshot is format 2**: per chat the two id lists and the attachment/file counts,
+  per note / knowledge-base source / self-model a `KeyedRow` (key, own timestamp, 64-bit
+  content digest — for a note over its tags and what superseded it), `taken_at`, and a
+  fingerprint. 300 KB for the real 233-chat root, no message text in it. A format 1
+  snapshot is **refused with the way out** rather than compared coarsely: it would
+  deserialize into empty id lists and read as "this copy has everything". A snapshot
+  redirected by Windows PowerShell (UTF-16, BOM) is read through `text_decode`.
+- **The fingerprint** is sixteen hex digits over exactly the identity the comparison
+  uses, so equal fingerprints mean `--compare` would say *identical* — pinned by tests
+  in both directions. It is a row of the plain summary: two machines can be checked by
+  reading one line on each, with nothing carried.
+- **Direction is never guessed.** Notes are edited in place and have no history, so they
+  order by `updated_at`; equal times with different digests count for **both** sides.
+  `modified_at` does not move on a rename or a soft delete, so a chat that differs in
+  details says "which side changed later is not recorded" rather than picking one. What
+  could not be compared — an unreadable chat file, an unreadable database — is said
+  **before** the verdict, and an unreadable database leaves its three families
+  uncompared rather than reading as "no notes".
+- **Mutation testing earned its place twice.** Of five mutations two survived. Removing
+  the format guard: the test asserted the refusal by words the *other* refusal ("not a
+  snapshot") also contains. Dropping the title from the identity: a rename was tested
+  together with a deleted exchange, which moved the fingerprint on its own — and it
+  exposed that the comparison and the fingerprint each had their **own** definition of
+  "the same chat". There is one now (`ChatRow::identity`), each detail has a test of its
+  own, and both mutations fail.
+- **Live run — GO** (no engine involved). The real data root against its own snapshot and
+  against an encrypted `pre-migrate` archive made two days earlier by 0.9.9: *identical*,
+  fingerprints equal, across a chat-schema step — the tolerant projection at work.
+  Against a five-day-old encrypted `pre-restore` archive: *this copy holds everything*,
+  listing the four chats that exist only here and the self-model that is newer here.
+  Against a snapshot edited by hand to contain one of every difference (a chat removed, a
+  foreign id appended, one id swapped, a title changed, a note's digest and time
+  changed): only here 1, more there 1, diverged 1, details 1, notes newer there 1, and
+  the verdict *each holds something*. The format 1 and not-a-snapshot refusals name the
+  file and the command to run. 0.24 s against a snapshot in a debug build.
+- No merge (G8) — it is on the roadmap as its own track. 3379 unit tests (+20), 196
+  `#[ignore]`.

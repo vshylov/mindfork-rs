@@ -493,7 +493,11 @@ src/
 │  ├─ data_stats.rs         `mindfork stats` (spec §12.4): a read-only summary of the live
 │  │                        data or of a backup archive — a tolerant projection of the chat
 │  │                        file, `db::stats_of_file`/`stats_of_image` for data.db, text and
-│  │                        `--json` renderers; nothing is created, migrated or unpacked
+│  │                        `--json` renderers; nothing is created, migrated or unpacked.
+│  │                        `data_stats/compare.rs` — `--compare`: chats by the ids of their
+│  │                        messages (ahead / diverged), database rows by key and digest,
+│  │                        the verdict; `data_stats/snapshot.rs` — reading the other copy
+│  │                        (a snapshot, format-guarded, or an archive — told by the bytes)
 │  ├─ data_migration.rs     schema migration orchestration at startup (ADR 0006): downgrade/
 │  │                        corruption gates, pre-migration backup, control-parse
 │  ├─ terminal_input.rs     CLI terminal input: the hidden backup-password prompt, and
@@ -3383,8 +3387,9 @@ Principles:
   mindfork-import format, `features/import.rs`; the former
   `import-lamellama` was removed — it hints at the replacement),
   `backup [-o FILE] [-c 0..9]`/`restore <archive>` (backup/restore,
-  `features/backup.rs`; take single-instance), `stats [archive] [--json]`
-  (the data summary, `features/data_stats.rs`; answered in `real_main`
+  `features/backup.rs`; take single-instance), `stats [archive] [--compare
+  other] [--json]` (the data summary and the comparison of two copies,
+  `features/data_stats.rs`; answered in `real_main`
   **before** `ensure_dirs` and the log, takes no lock — it only reads,
   spec §12.4), `sandbox setup [--force]`,
   `llama backends|setup|installed` (the llama.cpp downloader,

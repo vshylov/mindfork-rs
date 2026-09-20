@@ -13,6 +13,11 @@
 //! * an **image** — a backup's `data.db`, read from the zip entry straight into
 //!   SQLite's memory (F5): nothing of an encrypted archive reaches the disk.
 //!
+//! Besides the counts, each note, knowledge-base source and self-model is listed
+//! as a [`KeyedRow`] — a key, its own timestamp and a digest of its content — which
+//! is what `mindfork stats --compare` lines two copies up by (docs/data-stats.md
+//! G5). A digest, never the text: the rows travel in a `--json` snapshot.
+//!
 //! Only ordinary tables are queried, never the `vec0` virtual ones, so the
 //! counts do not depend on the sqlite-vec extension being loadable for the
 //! image at hand. A table this binary knows and the database lacks counts as
@@ -31,8 +36,37 @@ use rusqlite::{Connection, OpenFlags};
 /// hangs on a wedged database would be worse than one that says so.
 const BUSY_TIMEOUT: Duration = Duration::from_secs(2);
 
+/// How many hex digits of the SHA-256 a [`KeyedRow`] keeps: 64 bits, which is
+/// ample for telling two versions of one note apart and keeps a snapshot small.
+const DIGEST_HEX: usize = 16;
+
+/// One thing in `data.db` that two copies can be lined up by.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct KeyedRow {
+    /// What identifies it across copies: a note's id, `profile/source` for a
+    /// knowledge-base source, the profile id for a self-model.
+    pub key: String,
+    /// Its own "last changed", as stored. The app writes UTC RFC 3339
+    /// everywhere, so two of these order as text when they do not parse.
+    pub at: String,
+    /// A digest of the content — and, for a note, of its tags and of what
+    /// superseded it, so that superseding a note reads as a change to it.
+    pub digest: String,
+}
+
+impl KeyedRow {
+    fn new(key: String, at: String, content: &[&str]) -> Self {
+        // A separator no field can contain keeps `("ab", "c")` and
+        // `("a", "bc")` apart.
+        let material = content.join("\u{0}");
+        let mut digest = crate::entities::chat_file::sha256_hex(material.as_bytes());
+        digest.truncate(DIGEST_HEX);
+        Self { key, at, digest }
+    }
+}
+
 /// What `data.db` holds, across all profiles.
-#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct DbStats {
     /// Notes, superseded ones included.
     pub notes: u64,
@@ -46,6 +80,15 @@ pub struct DbStats {
     pub rag_sources: u64,
     pub rag_chunks: u64,
     pub self_models: u64,
+    /// Every note, superseded ones included, sorted by key. `default` — a
+    /// snapshot may be read back by `--compare`, and the counts above must
+    /// still parse from one that predates the lists.
+    #[serde(default)]
+    pub note_list: Vec<KeyedRow>,
+    #[serde(default)]
+    pub source_list: Vec<KeyedRow>,
+    #[serde(default)]
+    pub self_model_list: Vec<KeyedRow>,
 }
 
 /// Counts over the database file at `path`, which is left untouched.
@@ -90,7 +133,55 @@ fn collect(conn: &Connection) -> Result<DbStats> {
         rag_sources: count(conn, "rag_sources", "SELECT COUNT(*) FROM rag_sources")?,
         rag_chunks: count(conn, "rag_documents", "SELECT COUNT(*) FROM rag_documents")?,
         self_models: count(conn, "self_models", "SELECT COUNT(*) FROM self_models")?,
+        note_list: note_rows(conn)?,
+        source_list: rows(
+            conn,
+            "rag_sources",
+            "SELECT profile_id || '/' || source, created_at, content, '', ''
+             FROM rag_sources ORDER BY 1",
+        )?,
+        self_model_list: rows(
+            conn,
+            "self_models",
+            "SELECT profile_id, updated_at, data, '', '' FROM self_models ORDER BY 1",
+        )?,
     })
+}
+
+/// Notes with what superseded them. A superseded note is a **changed** note for
+/// a comparison — its content is what it was, and it has left every listing —
+/// so the superseding id goes into the digest and the later of the two times is
+/// the row's. A database older than `note_superseded` has plain notes.
+fn note_rows(conn: &Connection) -> Result<Vec<KeyedRow>> {
+    let sql = if has_table(conn, "note_superseded")? {
+        "SELECT n.id, MAX(n.updated_at, COALESCE(s.superseded_at, '')), n.content, n.tags,
+                COALESCE(s.superseded_by, '')
+         FROM notes n LEFT JOIN note_superseded s ON s.note_id = n.id ORDER BY 1"
+    } else {
+        "SELECT id, updated_at, content, tags, '' FROM notes ORDER BY 1"
+    };
+    rows(conn, "notes", sql)
+}
+
+/// The rows of `sql` — `key, at, content, extra, extra` — or none when `table`
+/// does not exist.
+fn rows(conn: &Connection, table: &str, sql: &str) -> Result<Vec<KeyedRow>> {
+    if !has_table(conn, table)? {
+        return Ok(Vec::new());
+    }
+    let mut statement = conn.prepare(sql)?;
+    let listed = statement
+        .query_map([], |row| {
+            let content: [String; 3] = [row.get(2)?, row.get(3)?, row.get(4)?];
+            Ok(KeyedRow::new(
+                row.get(0)?,
+                row.get(1)?,
+                &[&content[0], &content[1], &content[2]],
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .with_context(|| format!("listing {table}"))?;
+    Ok(listed)
 }
 
 fn has_table(conn: &Connection, table: &str) -> Result<bool> {
@@ -170,7 +261,46 @@ mod tests {
             rag_sources: 1,
             rag_chunks: 2,
             self_models: 1,
+            note_list: vec![
+                // Superseded: the later of the two times, and a digest that
+                // differs from the same note's before it was superseded.
+                KeyedRow::new(
+                    "n1".into(),
+                    "2026-03-05T10:20:30+00:00".into(),
+                    &["old", "[]", "n2"],
+                ),
+                KeyedRow::new(
+                    "n2".into(),
+                    "2026-03-05T10:20:30.5+00:00".into(),
+                    &["new", "[]", ""],
+                ),
+                KeyedRow::new(
+                    "n3".into(),
+                    "2026-02-01T00:00:00+00:00".into(),
+                    &["other", "[]", ""],
+                ),
+            ],
+            source_list: vec![KeyedRow::new(
+                "p/a.txt".into(),
+                "2026-01-01T00:00:00+00:00".into(),
+                &["text", "", ""],
+            )],
+            self_model_list: vec![KeyedRow::new(
+                "p".into(),
+                "2026-01-01T00:00:00+00:00".into(),
+                &["{}", "", ""],
+            )],
         }
+    }
+
+    /// The digest is over the fields **as fields**: moving a character across
+    /// a boundary is a different row, and superseding changes a note's.
+    #[test]
+    fn a_digest_tells_fields_apart_and_sees_a_supersession() {
+        let row = |content: &[&str]| KeyedRow::new("k".into(), "t".into(), content).digest;
+        assert_ne!(row(&["ab", "c", ""]), row(&["a", "bc", ""]));
+        assert_ne!(row(&["old", "[]", ""]), row(&["old", "[]", "n2"]));
+        assert_eq!(row(&["old", "[]", ""]).len(), DIGEST_HEX);
     }
 
     fn listing(dir: &Path) -> Vec<(String, u64)> {
@@ -247,6 +377,9 @@ mod tests {
             stats_of_file(&path).unwrap(),
             DbStats {
                 rag_sources: 1,
+                // What the old database has is listed as well as counted; the
+                // notes it predates are an empty list, not an error.
+                source_list: vec![KeyedRow::new("p/a".into(), "c".into(), &["b", "", ""])],
                 ..DbStats::default()
             }
         );

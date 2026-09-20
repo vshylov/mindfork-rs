@@ -127,11 +127,19 @@ fn real_main(
     // data yet still has none afterwards.
     if let CliCommand::Stats {
         archive,
+        compare,
         password,
         json,
     } = command
     {
-        return run_stats(paths, archive.as_deref(), password, json, loc);
+        return run_stats(
+            paths,
+            archive.as_deref(),
+            compare.as_deref(),
+            password,
+            json,
+            loc,
+        );
     }
     paths.ensure_dirs(loc).with_context(|| {
         loc.tf(
@@ -524,29 +532,70 @@ fn run_backup(
 /// An archive's password is settled exactly as `restore` settles it — the
 /// argument, else the one stored in the settings, else a prompt — through the
 /// same function, so the two commands cannot come to disagree about one file.
+///
+/// With `--compare` the same summary is taken of the other copy — a snapshot or
+/// an archive, told apart by the file itself — and what is printed is what each
+/// holds that the other lacks. The exit code stays 0 for any comparison that
+/// completed: in this CLI 1 means the command failed (docs/data-stats.md G7).
 fn run_stats(
     paths: &Paths,
     archive: Option<&Path>,
+    compare: Option<&Path>,
     password: Option<String>,
     json: bool,
     loc: &Locale,
 ) -> anyhow::Result<ExitCode> {
-    use crate::features::data_stats;
+    use crate::features::data_stats::{self, OtherCopy};
 
     let stats = match archive {
         None => data_stats::collect_root(paths, loc)?,
-        Some(archive) => {
-            let stored = backup_config(paths).stored_password;
-            let password = resolve_restore_password(archive, password, stored, loc)?;
-            data_stats::collect_archive(archive, password.as_deref(), loc)?
-        }
+        Some(archive) => stats_of_archive(paths, archive, password.clone(), loc)?,
     };
+    let Some(other) = compare else {
+        if json {
+            println!("{}", data_stats::render_json(&stats));
+        } else {
+            println!("{}", data_stats::render_text(&stats, loc));
+        }
+        return Ok(ExitCode::SUCCESS);
+    };
+
+    let (there, snapshot) = match data_stats::other_copy(other, loc)? {
+        OtherCopy::Archive => (stats_of_archive(paths, other, password, loc)?, None),
+        OtherCopy::Snapshot => (
+            data_stats::read_snapshot(other, loc)?,
+            Some(other.display().to_string()),
+        ),
+    };
+    let comparison = data_stats::compare(&stats, &there, snapshot);
     if json {
-        println!("{}", data_stats::render_json(&stats));
+        println!("{}", data_stats::render_comparison_json(&comparison));
     } else {
-        println!("{}", data_stats::render_text(&stats, loc));
+        println!("{}", data_stats::render_comparison_text(&comparison, loc));
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// The summary of one backup archive, its password settled as `restore`
+/// settles it. The archive is named on stderr first: with two of them in one
+/// command (`stats a.zip --compare b.zip`) a bare "Backup password:" would not
+/// say which one is being asked about.
+fn stats_of_archive(
+    paths: &Paths,
+    archive: &Path,
+    password: Option<String>,
+    loc: &Locale,
+) -> anyhow::Result<features::data_stats::DataStats> {
+    let stored = backup_config(paths).stored_password;
+    eprintln!(
+        "{}",
+        loc.tf(
+            "cli.stats.reading_archive",
+            &[("path", &archive.display().to_string())]
+        )
+    );
+    let password = resolve_restore_password(archive, password, stored, loc)?;
+    features::data_stats::collect_archive(archive, password.as_deref(), loc)
 }
 
 /// How many times the restore password may be re-entered before giving up.
@@ -1319,6 +1368,7 @@ mod tests {
         let paths = Paths::with_root(tmp.path().join("never-created"));
         let command = CliCommand::Stats {
             archive: None,
+            compare: None,
             password: None,
             json: true,
         };

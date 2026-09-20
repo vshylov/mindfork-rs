@@ -47,7 +47,11 @@ pub enum CliCommand {
     /// root, or — given an archive — a backup, without restoring it.
     Stats {
         archive: Option<PathBuf>,
+        /// The other copy to compare with (`--compare`): a `--json` snapshot or
+        /// a backup archive — which one is read from the file, not its name.
+        compare: Option<PathBuf>,
         /// Password for an encrypted archive; settled like [`Self::Restore`]'s.
+        /// With two archives it is tried on both.
         password: Option<String>,
         /// Print the machine-readable snapshot instead of the text.
         json: bool,
@@ -183,19 +187,24 @@ struct ArchiveArgs<'a> {
     password: Option<String>,
     /// Which of the caller's boolean `flags` were given.
     flags: Vec<&'a str>,
+    /// The value of the caller's one extra valued option, when it was given.
+    extra: Option<&'a str>,
 }
 
 /// `Ok(None)` — help was asked for. `flags` — the boolean options this
-/// command allows besides `-p/--password`.
+/// command allows besides `-p/--password`; `valued` — the aliases of its one
+/// extra option that takes a value (empty — it has none).
 fn archive_args<'a>(
     toks: &[&'a str],
     loc: &Locale,
     flags: &[&str],
+    valued: &[&str],
 ) -> Result<Option<ArchiveArgs<'a>>, String> {
     let mut args = ArchiveArgs {
         archive: None,
         password: None,
         flags: Vec::new(),
+        extra: None,
     };
     let mut i = 0;
     while i < toks.len() {
@@ -204,6 +213,8 @@ fn archive_args<'a>(
             return Ok(None);
         } else if let Some(v) = opt_value(toks, &mut i, loc, &["-p", "--password"])? {
             args.password = Some(v.to_string());
+        } else if let Some(v) = opt_value(toks, &mut i, loc, valued)? {
+            args.extra = Some(v);
         } else if flags.contains(&a) {
             args.flags.push(a);
             i += 1;
@@ -220,7 +231,7 @@ fn archive_args<'a>(
 }
 
 fn parse_restore(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> {
-    let Some(args) = archive_args(toks, loc, &[])? else {
+    let Some(args) = archive_args(toks, loc, &[], &[])? else {
         return Ok(CliCommand::Help {
             topic: Some(HelpTopic::Restore),
         });
@@ -233,7 +244,7 @@ fn parse_restore(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> {
 
 fn parse_stats(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> {
     const JSON: &str = "--json";
-    let Some(args) = archive_args(toks, loc, &[JSON])? else {
+    let Some(args) = archive_args(toks, loc, &[JSON], &["--compare"])? else {
         return Ok(CliCommand::Help {
             topic: Some(HelpTopic::Stats),
         });
@@ -241,7 +252,8 @@ fn parse_stats(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> {
     // A password with nothing to open is a mistyped command, not a harmless
     // extra: the likeliest cause is a forgotten archive path, and summarizing
     // the live data instead would answer a question nobody asked.
-    if args.password.is_some() && args.archive.is_none() {
+    // (`--compare` may name an archive too, and then the password is for it.)
+    if args.password.is_some() && args.archive.is_none() && args.extra.is_none() {
         return Err(err_line(
             loc,
             "cli.parse.stats_password_without_archive",
@@ -250,6 +262,7 @@ fn parse_stats(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> {
     }
     Ok(CliCommand::Stats {
         archive: args.archive.map(PathBuf::from),
+        compare: args.extra.map(PathBuf::from),
         password: args.password,
         json: args.flags.contains(&JSON),
     })
@@ -649,10 +662,12 @@ pub fn render_help(topic: Option<HelpTopic>, loc: &Locale) -> String {
         ),
         Some(HelpTopic::Stats) => format!(
             "{d}\n\n{usage} mindfork stats [ARCHIVE] [OPTIONS]\n\n{arguments}\n\
-             {a:<30}{ca}\n\n{options}\n{p:<30}{cp}\n{j:<30}{cj}\n{h:<30}{ch}\n\n{n}",
+             {a:<30}{ca}\n\n{options}\n{c:<30}{cc}\n{p:<30}{cp}\n{j:<30}{cj}\n{h:<30}{ch}\n\n{n}",
             d = loc.t("cli.help.cmd.stats"),
             a = "  [ARCHIVE]",
             ca = loc.t("cli.help.arg.stats.archive"),
+            c = "  --compare <OTHER>",
+            cc = loc.t("cli.help.opt.stats.compare"),
             p = "  -p, --password <PASSWORD>",
             cp = loc.t("cli.help.opt.restore.password"),
             j = "  --json",
@@ -900,6 +915,7 @@ mod tests {
     fn stats_takes_an_optional_archive_a_password_and_json() {
         let stats = |archive: Option<&str>, password: Option<&str>, json| CliCommand::Stats {
             archive: archive.map(PathBuf::from),
+            compare: None,
             password: password.map(str::to_string),
             json,
         };
@@ -925,13 +941,41 @@ mod tests {
         );
     }
 
+    /// `--compare` takes the other copy — both spellings, anywhere on the
+    /// line — and composes with the archive, the password and `--json`.
+    #[test]
+    fn stats_compare_names_the_other_copy() {
+        let compare =
+            |archive: Option<&str>, other: &str, password: Option<&str>, json| CliCommand::Stats {
+                archive: archive.map(PathBuf::from),
+                compare: Some(PathBuf::from(other)),
+                password: password.map(str::to_string),
+                json,
+            };
+        assert_eq!(
+            p(&["stats", "--compare", "b.json"]).unwrap(),
+            compare(None, "b.json", None, false)
+        );
+        assert_eq!(
+            p(&["stats", "--compare=b.zip", "a.zip", "--json"]).unwrap(),
+            compare(Some("a.zip"), "b.zip", None, true)
+        );
+        // A password with only the other copy to open is for that copy.
+        assert_eq!(
+            p(&["stats", "-p", "s3cret", "--compare", "b.zip"]).unwrap(),
+            compare(None, "b.zip", Some("s3cret"), false)
+        );
+        assert!(
+            p(&["stats", "--compare"]).is_err(),
+            "the option needs a value"
+        );
+        // The option is `stats`'s own: `restore` still refuses it.
+        assert!(p(&["restore", "a.zip", "--compare", "b.zip"]).is_err());
+    }
+
     #[test]
     fn stats_refuses_what_it_cannot_mean() {
         assert!(p(&["stats", "a.zip", "b.zip"]).is_err(), "one archive");
-        assert!(
-            p(&["stats", "--compare"]).is_err(),
-            "stage 2 is not here yet"
-        );
         assert!(
             p(&["stats", "-p"]).is_err(),
             "a password option with no value"
@@ -963,6 +1007,7 @@ mod tests {
         );
         assert!(topic.contains("--password <PASSWORD>  "), "{topic}");
         assert!(topic.contains("--json"), "{topic}");
+        assert!(topic.contains("--compare <OTHER>  "), "{topic}");
         assert!(topic.contains("only reads"), "{topic}");
     }
 
