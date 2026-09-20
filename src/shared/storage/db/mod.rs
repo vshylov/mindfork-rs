@@ -605,8 +605,10 @@ mod llm_history;
 mod notes;
 mod rag;
 mod self_model;
+mod stats;
 
 pub use embed_gen::{ReembedPending, ReembedRow};
+pub use stats::{DbStats, stats_of_file, stats_of_image};
 
 #[cfg(test)]
 mod migrate_tests {

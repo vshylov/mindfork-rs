@@ -4078,6 +4078,58 @@ not the runs.
 - **Both commands narrate what they are doing.** Packing or unpacking a real data root takes seconds (compaction, then a few hundred entries), and a command that prints nothing until it is finished is indistinguishable from one that has hung — most of all right after the `restore` password prompt, where the echo-less input leaves the user unsure it was taken at all. So each phase announces itself **before** it runs (checking the archive → the pre-restore copy → compacting → packing → clearing → unpacking), and the two entry loops count themselves out (`N of M`, no more often than twice a second, so a small data root still finishes in silence). Keystrokes typed while the command was working are **discarded** on the way out (`features/terminal_input.rs`): they were typed at us, and without that the shell inherits them on exit and replays them as its own command line — which is what an impatient `Enter` at the password prompt used to do.
 - **The database is compacted on both paths.** `data.db` accumulates free pages (deleted notes, `/rag remove`d chunks, an attachment index dropped with its chat) that SQLite never returns to the file system on its own. A backup packs a `VACUUM INTO` copy instead of the live file — smaller, and self-contained, so the `-wal`/`-shm` sidecars are folded in rather than packed; a restore compacts what it unpacked, which is what an archive made before this existed (or by another tool) needs. Both are **best effort**: a file that isn't a readable database is packed / left raw, because a backup that happens is worth more than a compact one. The backup path never modifies the source — it is refused before SQLite ever opens it if the header isn't a database's, and opened read-only otherwise; both guards are there because opening a database can make SQLite delete a stale sidecar next to it.
 
+### 12.4. A summary of the data: `mindfork stats`
+
+The data is portable and travels between machines as backup archives
+([§12.3](#123-backup-and-deletion)), so a user with three or four copies needs to
+ask, without opening each one, **which copy is the newest** — and whether an older
+one holds something the newest lacks. `mindfork stats [ARCHIVE] [-p PASSWORD]
+[--json]` (`features/data_stats.rs`, [docs/data-stats.md](docs/data-stats.md))
+prints, for the live data or for a backup archive:
+
+- the **last message** and the **last change** (the newest `modified_at` — it moves
+  on a rename or a deletion too), in **UTC**, so that the outputs of several machines
+  compare as text;
+- profiles and chats, each with its soft-deleted part;
+- **messages, counted as the chat list counts them** — the bubbles the feed draws
+  ([§11.2](#112-the-chat-list-an-overlay)), through the same rule
+  (`visible_row_count`), with the part that sits in deleted chats and the raw number
+  of stored rows next to it; **deleted messages** — the `deleted[]` archive of
+  `Ctrl+E`/`Ctrl+R` ([§11.7](#117-keybindings-preliminary));
+- attached files, stored files, images, distinct **projects** and the chats they are
+  attached to, sub-agent runs and their messages (not part of the message total, as
+  they are not part of the list's);
+- from `data.db`: notes with the superseded ones, note links, the newest note change,
+  knowledge-base sources and chunks, self-models; and the sizes of both halves.
+
+Three rules carry it:
+
+- **It only reads.** The command is answered before the data root's directories and
+  the log file are created, takes no single-instance lock and runs no migration; the
+  database is opened read-only, behind the same header check the backup uses. So it
+  is safe next to a running app, on a read-only medium, and on a machine with no data
+  at all — which stays without any, and is told so rather than shown a table of
+  zeros. **Nothing of an archive is unpacked**: chats are parsed from the zip entries
+  and the database is loaded into memory, so no decrypted byte of an encrypted backup
+  reaches the disk. The summary is deliberately **not** written into `manifest.json`
+  instead: the manifest is unencrypted by contract, and these numbers are user data.
+- **It reads whatever is there.** Chat files go through a projection naming only the
+  counted fields, all defaulted, so a file from an older schema counts without being
+  migrated and one from a newer schema counts with a note that the numbers may be
+  incomplete. An unreadable chat file is named and left out; an unreadable database
+  costs the database rows and nothing else.
+- **An archive's password is settled exactly as `restore` settles it** — `--password`,
+  else the one stored in the settings, else a prompt — by the same function. The prompt
+  is written to stderr, so `--json > file` stays clean. When the password that fails is
+  the *stored* one, the refusal says so and names `--password`, instead of calling
+  wrong a password the user never typed; `restore` says the same.
+
+`--json` prints the same figures plus **one row per chat** (id, profile, title,
+deleted, created/modified, message counts, last message), sorted by id and
+pretty-printed: two machines' files compared with any `diff` already show which chats
+exist on one side only or differ. A `format` field versions the shape. Comparing two
+copies inside the app is the track's second stage.
+
 ---
 
 ## 13. Security

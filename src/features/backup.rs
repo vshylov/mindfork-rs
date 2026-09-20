@@ -89,7 +89,7 @@ use crate::shared::storage::schema::{CHAT_SCHEMA, DB_SCHEMA, PROFILES_SCHEMA, SE
 const MANIFEST_NAME: &str = "manifest.json";
 
 /// Data schema versions at backup creation time (release-engineering.md, the manifest deliverable).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SchemaVersions {
     pub settings: u32,
     pub profiles: u32,
@@ -101,7 +101,7 @@ pub struct SchemaVersions {
 /// versions, and creation time. Needed so that when restoring a backup made
 /// by a **newer** mindfork version, the user gets a warning (data is intact;
 /// the startup downgrade guard protects it regardless — ADR 0006).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BackupManifest {
     pub app_version: String,
     pub schemas: SchemaVersions,
@@ -236,6 +236,90 @@ pub fn check_password(archive: &Path, password: Option<&str>) -> Result<ArchiveP
     match zip.by_index_decrypt(first, password.as_bytes()) {
         Ok(_) => Ok(ArchivePassword::Ok),
         Err(_) => Ok(ArchivePassword::Wrong),
+    }
+}
+
+/// One file entry of an archive, as [`ArchiveReader::entries`] lists it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArchiveEntry {
+    /// The path inside the archive, `/`-separated, relative to the data root.
+    pub name: String,
+    /// The uncompressed size in bytes.
+    pub size: u64,
+}
+
+/// A backup archive opened to be **read where it lies** — for `mindfork stats
+/// <archive>` (docs/data-stats.md F5), which summarizes a backup without
+/// restoring it. Nothing is unpacked: an entry is handed to the caller as a
+/// stream, so no decrypted byte of an encrypted archive reaches the disk.
+///
+/// [`ArchiveReader::open`] asks the same two questions [`restore_backup`] asks
+/// before it destroys anything — is this a zip, does the password open it —
+/// through the same [`check_password`], and answers with the same messages.
+pub struct ArchiveReader {
+    zip: ZipArchive<File>,
+    password: Option<String>,
+}
+
+impl ArchiveReader {
+    /// Opens `archive`. `Err` — a missing file, not a zip, or an encrypted
+    /// archive with no password or the wrong one (already localized).
+    pub fn open(archive: &Path, password: Option<&str>, loc: &Locale) -> Result<Self> {
+        let file = File::open(archive).with_context(|| {
+            loc.tf(
+                "backup.ctx.open_archive",
+                &[("path", &archive.display().to_string())],
+            )
+        })?;
+        let zip = ZipArchive::new(file).with_context(|| loc.t("backup.ctx.corrupt").to_string())?;
+        match check_password(archive, password)
+            .with_context(|| loc.t("backup.ctx.corrupt").to_string())?
+        {
+            ArchivePassword::NotNeeded | ArchivePassword::Ok => {}
+            ArchivePassword::Required => bail!("{}", loc.t("backup.err.password_required")),
+            ArchivePassword::Wrong => bail!("{}", loc.t("backup.err.wrong_password")),
+        }
+        Ok(Self {
+            zip,
+            password: normalize(password).map(str::to_string),
+        })
+    }
+
+    /// Every file entry (directories left out). Names and sizes are readable
+    /// without the password — ZIP AES encrypts content only.
+    pub fn entries(&mut self) -> Vec<ArchiveEntry> {
+        (0..self.zip.len())
+            .filter_map(|i| {
+                let entry = self.zip.by_index_raw(i).ok()?;
+                (!entry.is_dir()).then(|| ArchiveEntry {
+                    name: entry.name().to_string(),
+                    size: entry.size(),
+                })
+            })
+            .collect()
+    }
+
+    /// Hands the entry called `name` to `read` as a stream, with its
+    /// uncompressed size. `Ok(None)` — the archive has no such entry. A
+    /// password given for an unencrypted entry (`manifest.json`, or all of a
+    /// plain archive) is discarded by the zip layer, so one path reads both.
+    pub fn with_entry<T>(
+        &mut self,
+        name: &str,
+        read: impl FnOnce(&mut dyn io::Read, u64) -> Result<T>,
+    ) -> Result<Option<T>> {
+        let opened = match &self.password {
+            Some(pw) => self.zip.by_name_decrypt(name, pw.as_bytes()),
+            None => self.zip.by_name(name),
+        };
+        match opened {
+            Ok(mut entry) => {
+                let size = entry.size();
+                read(&mut entry, size).map(Some)
+            }
+            Err(zip::result::ZipError::FileNotFound) => Ok(None),
+            Err(err) => Err(err.into()),
+        }
     }
 }
 

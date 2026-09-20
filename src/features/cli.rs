@@ -43,6 +43,15 @@ pub enum CliCommand {
         /// one, then to an interactive prompt.
         password: Option<String>,
     },
+    /// Summarize the user data (`stats [archive]`, spec §12.4): the live data
+    /// root, or — given an archive — a backup, without restoring it.
+    Stats {
+        archive: Option<PathBuf>,
+        /// Password for an encrypted archive; settled like [`Self::Restore`]'s.
+        password: Option<String>,
+        /// Print the machine-readable snapshot instead of the text.
+        json: bool,
+    },
     /// Import from a mindfork-import format file (`import <file>`).
     /// Format spec — docs/import-format.md.
     Import { file: PathBuf },
@@ -94,6 +103,7 @@ pub enum CliCommand {
 pub enum HelpTopic {
     Backup,
     Restore,
+    Stats,
     Import,
     Sandbox,
     SandboxSetup,
@@ -119,6 +129,7 @@ pub fn parse(args: &[String], loc: &Locale) -> Result<CliCommand, String> {
         "-V" | "--version" => Ok(CliCommand::Version),
         "backup" => parse_backup(rest, loc),
         "restore" => parse_restore(rest, loc),
+        "stats" => parse_stats(rest, loc),
         "import" => parse_import(rest, loc),
         // The command was removed (stage 1 of the "plugins" track): LameLLaMA
         // import is now done by an external converter that emits a
@@ -164,30 +175,83 @@ fn parse_backup(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> {
     })
 }
 
-fn parse_restore(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> {
-    let mut archive: Option<&str> = None;
-    let mut password = None;
+/// What `restore` and `stats` both take: one positional archive and its
+/// password. One loop, so the two commands cannot come to spell the password
+/// option differently.
+struct ArchiveArgs<'a> {
+    archive: Option<&'a str>,
+    password: Option<String>,
+    /// Which of the caller's boolean `flags` were given.
+    flags: Vec<&'a str>,
+}
+
+/// `Ok(None)` — help was asked for. `flags` — the boolean options this
+/// command allows besides `-p/--password`.
+fn archive_args<'a>(
+    toks: &[&'a str],
+    loc: &Locale,
+    flags: &[&str],
+) -> Result<Option<ArchiveArgs<'a>>, String> {
+    let mut args = ArchiveArgs {
+        archive: None,
+        password: None,
+        flags: Vec::new(),
+    };
     let mut i = 0;
     while i < toks.len() {
         let a = toks[i];
         if a == "-h" || a == "--help" {
-            return Ok(CliCommand::Help {
-                topic: Some(HelpTopic::Restore),
-            });
+            return Ok(None);
         } else if let Some(v) = opt_value(toks, &mut i, loc, &["-p", "--password"])? {
-            password = Some(v.to_string());
+            args.password = Some(v.to_string());
+        } else if flags.contains(&a) {
+            args.flags.push(a);
+            i += 1;
         } else if a.starts_with('-') {
             return Err(unknown_option(loc, a));
-        } else if archive.is_none() {
-            archive = Some(a);
+        } else if args.archive.is_none() {
+            args.archive = Some(a);
             i += 1;
         } else {
             return Err(unexpected_arg(loc, a));
         }
     }
+    Ok(Some(args))
+}
+
+fn parse_restore(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> {
+    let Some(args) = archive_args(toks, loc, &[])? else {
+        return Ok(CliCommand::Help {
+            topic: Some(HelpTopic::Restore),
+        });
+    };
     Ok(CliCommand::Restore {
-        archive: PathBuf::from(archive.ok_or_else(|| missing_arg(loc, "<archive>"))?),
-        password,
+        archive: PathBuf::from(args.archive.ok_or_else(|| missing_arg(loc, "<archive>"))?),
+        password: args.password,
+    })
+}
+
+fn parse_stats(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> {
+    const JSON: &str = "--json";
+    let Some(args) = archive_args(toks, loc, &[JSON])? else {
+        return Ok(CliCommand::Help {
+            topic: Some(HelpTopic::Stats),
+        });
+    };
+    // A password with nothing to open is a mistyped command, not a harmless
+    // extra: the likeliest cause is a forgotten archive path, and summarizing
+    // the live data instead would answer a question nobody asked.
+    if args.password.is_some() && args.archive.is_none() {
+        return Err(err_line(
+            loc,
+            "cli.parse.stats_password_without_archive",
+            &[],
+        ));
+    }
+    Ok(CliCommand::Stats {
+        archive: args.archive.map(PathBuf::from),
+        password: args.password,
+        json: args.flags.contains(&JSON),
     })
 }
 
@@ -537,7 +601,7 @@ pub fn render_help(topic: Option<HelpTopic>, loc: &Locale) -> String {
     match topic {
         None => format!(
             "{about}\n\n{usage} mindfork [COMMAND]\n\n{commands}\n\
-             {dm:<20}{cd}\n{b:<20}{cb}\n{r:<20}{cr}\n{im:<20}{ci}\n{sb:<20}{cs}\n{ll:<20}{cll}\n{lc:<20}{cl}\n\n\
+             {dm:<20}{cd}\n{b:<20}{cb}\n{r:<20}{cr}\n{st:<20}{cst}\n{im:<20}{ci}\n{sb:<20}{cs}\n{ll:<20}{cll}\n{lc:<20}{cl}\n\n\
              {options}\n  -h, --help     {oh}\n  -V, --version  {ov}",
             about = loc.t("cli.help.about"),
             dm = "  demo",
@@ -546,6 +610,8 @@ pub fn render_help(topic: Option<HelpTopic>, loc: &Locale) -> String {
             cb = loc.t("cli.help.cmd.backup"),
             r = "  restore",
             cr = loc.t("cli.help.cmd.restore"),
+            st = "  stats",
+            cst = loc.t("cli.help.cmd.stats"),
             im = "  import",
             ci = loc.t("cli.help.cmd.import"),
             sb = "  sandbox",
@@ -580,6 +646,20 @@ pub fn render_help(topic: Option<HelpTopic>, loc: &Locale) -> String {
             cp = loc.t("cli.help.opt.restore.password"),
             h = "  -h, --help",
             ch = loc.t("cli.help.opt.help"),
+        ),
+        Some(HelpTopic::Stats) => format!(
+            "{d}\n\n{usage} mindfork stats [ARCHIVE] [OPTIONS]\n\n{arguments}\n\
+             {a:<30}{ca}\n\n{options}\n{p:<30}{cp}\n{j:<30}{cj}\n{h:<30}{ch}\n\n{n}",
+            d = loc.t("cli.help.cmd.stats"),
+            a = "  [ARCHIVE]",
+            ca = loc.t("cli.help.arg.stats.archive"),
+            p = "  -p, --password <PASSWORD>",
+            cp = loc.t("cli.help.opt.restore.password"),
+            j = "  --json",
+            cj = loc.t("cli.help.opt.stats.json"),
+            h = "  -h, --help",
+            ch = loc.t("cli.help.opt.help"),
+            n = loc.t("cli.help.stats.note"),
         ),
         Some(HelpTopic::Import) => format!(
             "{d}\n\n{usage} mindfork import <FILE>\n\n{arguments}\n\
@@ -812,6 +892,78 @@ mod tests {
         );
         assert!(p(&["restore"]).is_err()); // no required argument
         assert!(p(&["restore", "a.zip", "b.zip"]).is_err()); // extra argument
+    }
+
+    /// `stats` alone reads the live data; an archive, its password (both
+    /// spellings, either order) and `--json` are all optional.
+    #[test]
+    fn stats_takes_an_optional_archive_a_password_and_json() {
+        let stats = |archive: Option<&str>, password: Option<&str>, json| CliCommand::Stats {
+            archive: archive.map(PathBuf::from),
+            password: password.map(str::to_string),
+            json,
+        };
+        assert_eq!(p(&["stats"]).unwrap(), stats(None, None, false));
+        assert_eq!(p(&["stats", "--json"]).unwrap(), stats(None, None, true));
+        assert_eq!(
+            p(&["stats", "a.zip"]).unwrap(),
+            stats(Some("a.zip"), None, false)
+        );
+        assert_eq!(
+            p(&["stats", "--json", "-p", "s3cret", "a.zip"]).unwrap(),
+            stats(Some("a.zip"), Some("s3cret"), true)
+        );
+        assert_eq!(
+            p(&["stats", "a.zip", "--password=s3cret"]).unwrap(),
+            stats(Some("a.zip"), Some("s3cret"), false)
+        );
+        assert_eq!(
+            p(&["stats", "a.zip", "--help"]).unwrap(),
+            CliCommand::Help {
+                topic: Some(HelpTopic::Stats)
+            }
+        );
+    }
+
+    #[test]
+    fn stats_refuses_what_it_cannot_mean() {
+        assert!(p(&["stats", "a.zip", "b.zip"]).is_err(), "one archive");
+        assert!(
+            p(&["stats", "--compare"]).is_err(),
+            "stage 2 is not here yet"
+        );
+        assert!(
+            p(&["stats", "-p"]).is_err(),
+            "a password option with no value"
+        );
+        // A password and no archive: refused, and the refusal says why — in
+        // both locales, since it is the one error this command owns.
+        for lang in [Lang::En, Lang::Ru] {
+            let owned = ["stats".to_string(), "-p".to_string(), "x".to_string()];
+            let err = parse(&owned, locale(lang)).unwrap_err();
+            assert!(
+                err.contains(locale(lang).t("cli.parse.stats_password_without_archive")),
+                "{lang:?}: {err}"
+            );
+        }
+        // `--json` belongs to `stats` alone: `restore` still refuses it.
+        assert!(p(&["restore", "a.zip", "--json"]).is_err());
+    }
+
+    /// The topic says the one thing a user deciding whether to run it on a
+    /// live, precious data root needs to hear: it only reads.
+    #[test]
+    fn stats_help_is_listed_and_says_it_only_reads() {
+        let loc = locale(Lang::En);
+        assert!(render_help(None, loc).contains("stats  "));
+        let topic = render_help(Some(HelpTopic::Stats), loc);
+        assert!(
+            topic.contains("mindfork stats [ARCHIVE] [OPTIONS]"),
+            "{topic}"
+        );
+        assert!(topic.contains("--password <PASSWORD>  "), "{topic}");
+        assert!(topic.contains("--json"), "{topic}");
+        assert!(topic.contains("only reads"), "{topic}");
     }
 
     #[test]
@@ -1073,6 +1225,7 @@ mod tests {
             None,
             Some(HelpTopic::Backup),
             Some(HelpTopic::Restore),
+            Some(HelpTopic::Stats),
             Some(HelpTopic::Import),
             Some(HelpTopic::Sandbox),
             Some(HelpTopic::SandboxSetup),

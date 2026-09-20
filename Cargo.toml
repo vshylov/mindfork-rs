@@ -171,7 +171,11 @@ regex = "1.12.4"
 # See docs/research/tts.md §6.
 rodio = { version = "0.22.0", default-features = false, features = ["playback", "wav", "mp3"] }
 reqwest = { version = "0.13.4", default-features = false, features = ["json", "stream", "rustls", "form"] }
-rusqlite = { version = "0.40.1", features = ["bundled"] }
+# `serialize` — `Connection::deserialize_read_exact`: `mindfork stats <archive>` reads a
+# backup's `data.db` from the zip entry straight into memory, so no decrypted copy of an
+# encrypted backup's database ever lands on disk (docs/data-stats.md F5). A module of
+# rusqlite itself; it adds no crate.
+rusqlite = { version = "0.40.1", features = ["bundled", "serialize"] }
 scraper = "0.27.0"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"

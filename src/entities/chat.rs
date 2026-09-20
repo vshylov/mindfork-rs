@@ -435,17 +435,26 @@ impl Chat {
 /// assistant rounds are one bubble unless a round opts out via
 /// [`Message::new_bubble`].
 pub fn visible_message_count(messages: &[Message]) -> usize {
+    visible_row_count(messages.iter().map(|m| (m.role, m.new_bubble)))
+}
+
+/// [`visible_message_count`] over bare `(role, new_bubble)` pairs — the rule
+/// itself, for a reader that does not hold [`Message`]s. `mindfork stats`
+/// counts chats through a tolerant projection of the chat file
+/// (docs/data-stats.md F7) and must agree with the list's cards, so it feeds
+/// the same rule rather than restating it.
+pub fn visible_row_count(rows: impl IntoIterator<Item = (MessageRole, bool)>) -> usize {
     let mut count = 0;
     let mut in_assistant_bubble = false;
-    for m in messages {
-        match m.role {
+    for (role, new_bubble) in rows {
+        match role {
             MessageRole::Tool => {}
             MessageRole::User | MessageRole::System => {
                 count += 1;
                 in_assistant_bubble = false;
             }
             MessageRole::Assistant => {
-                if !in_assistant_bubble || m.new_bubble {
+                if !in_assistant_bubble || new_bubble {
                     count += 1;
                 }
                 in_assistant_bubble = true;

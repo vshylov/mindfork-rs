@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (14)
+## Entries (15)
 
 - Post-M9: persisting the input-box draft in the chat file (done)
 - Post-M9: persisting deleted exchanges in the chat file (`Ctrl+E`/`Ctrl+R`) (done)
@@ -26,6 +26,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a launch that finds chats but no `data.db` says so (done)
 - Post-M9: `workspace/` joins the backup (done)
 - Post-M9: safe defaults 2b — the data root is the owner's alone on unix (done)
+- Post-M9: `mindfork stats` — which copy of the data is the newest (done)
 
 ### Post-M9: persisting the input-box draft in the chat file (done)
 - **Unsaved input-box text is stored on the chat and restored on
@@ -831,3 +832,52 @@ discards is recoverable from `backups/`.
   profile's ACL, and DPAPI binds the secrets to the user.
 - Tests are `#[cfg(unix)]` and run on CI's Linux job: a `0755` root created before the
   app starts comes back `0700`, and a written `settings.json` is `0600`.
+
+### Post-M9: `mindfork stats` — which copy of the data is the newest (done)
+- **The request** (2026-09-20): with the data on three or four computers nothing says
+  which copy is the newest, and a copy that is not the newest can still hold changes.
+  Asked for: a command-line argument printing the last message's date, chats and deleted
+  chats, messages and deleted messages, attached files, projects "and so on". Design,
+  forks and the measurement that preceded them — [data-stats.md](../data-stats.md);
+  behaviour — spec §12.4. The user's decisions: the name `stats`, comparison as a second
+  stage, archives summarized too and password-protected ones taken into account.
+- **Every figure already existed in the stored data**, so nothing new is recorded. What
+  reading the code changed was *which* number "messages" is: the probe counted 2705
+  storage rows where the chat list's cards sum to 1198 bubbles — an agentic loop stores a
+  row per round and per tool result. The summary reports the list's number, through the
+  list's own rule: `visible_message_count` was opened up as `visible_row_count` over
+  `(role, new_bubble)` pairs, and a test pins the projection to the domain type on a chat
+  that exercises stitching, a tool row and `new_bubble`. Rows are printed beside it.
+- **Read-only is the design, not a property.** `stats` is answered in `real_main` before
+  `ensure_dirs` and the log (a test at that call site: a root that does not exist still
+  does not exist), takes no single-instance lock, runs no migration; `data.db` is opened
+  read-only behind the header check `vacuum_into` makes, because SQLite deletes a stale
+  sidecar next to a zero-page file even read-only (lessons §8) — the test plants a `-wal`
+  as the witness, and removing the check fails it. Chats are read through a projection of
+  defaulted fields with `IgnoredAny` for the rest, so an unmigrated or newer-schema file
+  still counts and base64 image payloads are never materialized.
+- **Nothing of an archive touches the disk.** Chats are parsed from the zip entries; the
+  database is loaded by `Connection::deserialize_read_exact` straight from the entry
+  (rusqlite's `serialize` feature, no new crate) — extracting it would have put a
+  decrypted copy of an encrypted backup into the temp directory. For the same reason the
+  summary is **not** written into `manifest.json`: that file is unencrypted by contract.
+  `ArchiveReader` in `features/backup.rs` is the read seam; it answers a missing or wrong
+  password through `check_password`, in `restore`'s words.
+- **Two defects on the seam shared with `restore`, both found by the live run.** The
+  machine has a stored backup password, so `stats <archive>` without `--password` was
+  refused as "wrong backup password" — for a password nobody typed, naming no route.
+  `resolve_restore_password` now takes the argument and the stored password apart and says
+  which one failed (`cli.restore.stored_password_wrong`), for both commands. And the
+  password prompt went to stdout, which `--json > file` would have hidden from the user
+  and written into the file; it goes to stderr now.
+- **Live run — GO** (no engine involved; the run is the command itself). Against the real
+  dev data root: 233 chats / 47 deleted, 2705 rows, 57 exchanges, 57 attachments, 30 runs,
+  113 notes / 19 superseded, 64 links — every figure equal to the independent Python
+  probe taken before the design; 0.8 s in a debug build; `logs/` untouched. Against a real
+  AES-256 backup of the same root (58 MB): the same figures to the digit, with the right
+  password; refused with a wrong one, with none, and with the stored one that does not fit.
+- **Mutation-checked**: answering after `ensure_dirs`, dropping the header check, and
+  counting rows instead of bubbles each fail a test. A fourth mutation — a recursion over
+  nested runs — survived, and was right to: ADR 0010 never gives a run `call_subagent`, so
+  the recursion was removed rather than tested.
+- 3359 unit tests (+22), 196 `#[ignore]`. Stage 2 (`--compare`) is on the roadmap.
