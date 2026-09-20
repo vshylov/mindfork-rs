@@ -14,6 +14,23 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Added
+- **`mindfork stats` — which copy of your data is the newest.** With the data on
+  several computers, one command now prints when the last message was written,
+  how many chats and messages there are (and how many are deleted), the attached
+  files, images, projects, notes and the knowledge base — for the data on this
+  computer, or for a backup archive without restoring it
+  (`mindfork stats copy.zip`, with `--password` for an encrypted one). It only
+  reads: nothing is created or unpacked, so it is safe while the app is open, and
+  an encrypted archive is never written out decrypted. `--json` adds a row per
+  chat, so two computers' snapshots can be compared with any diff tool.
+
+### Changed
+- **`restore` asks for the password on stderr**, so redirecting a command's output
+  no longer hides the question. And when the password that fails is the one saved
+  in the settings, the message says that and points at `--password`, instead of
+  "wrong backup password" for a password you never typed.
+
 ### Fixed
 - **Opening a chat no longer flashes the previous one.** Picking a chat in the
   chat list showed the conversation you were leaving for a fraction of a second

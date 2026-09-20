@@ -1155,6 +1155,19 @@ and let the one place that knows write the claim, rather than teaching the produ
 predict it or the consumer to edit the producer's words.
 — *a chart's line no longer says it was shown to a model that takes no images*.
 
+**A shared refusal blames the user for an input the program supplied.** `restore` falls
+back to the backup password stored in the settings, and when that one did not open the
+archive the answer was "wrong backup password" — to a user who had typed none, with no
+route named. It went unseen because the machine that wrote the test has no stored
+password; the first live run of `stats` on a machine that has one hit it at once, and
+an archive from another computer meets it by construction (each machine stores its
+own). When a value can come from the user **or** from the program, the failure message
+has to know which — and the second command that reuses the seam is when to look.
+A sibling from the same run: **a prompt belongs on stderr the moment a command's
+stdout becomes data** — `stats --json > file` would have hidden the password question
+from the user and written it into the file.
+— *`mindfork stats` — which copy of the data is the newest*.
+
 ## 5. Terminal and ratatui rendering
 
 **One wide label in an aligned table re-wraps every description in it.** The help

@@ -210,7 +210,8 @@ executable** (the file itself always lives next to the binary, **not** inside
 
 ### 2.2. Backup and restore
 
-The commands run without the TUI (the app must be closed) and exit:
+The commands run without the TUI (the app must be closed — except `stats`
+below, which only reads) and exit:
 
 ```bash
 # Create a copy (zip). Without -o, the name is auto-generated under backups/.
@@ -273,6 +274,37 @@ directory already has something in it, it's automatically saved to `backups/` (a
 pre-restore copy), then the data is cleared and the given archive is unpacked. If
 unpacking fails (e.g. the archive is corrupted partway through), a **rollback** to
 the pre-restore copy is performed — all actions are reported to the console.
+
+#### Which copy is the newest — `mindfork stats`
+
+With the data on several computers, `mindfork stats` answers which copy to keep
+without opening each one:
+
+```bash
+mindfork stats                          # the data on this computer
+mindfork stats D:\copy.zip              # a backup archive, without restoring it
+mindfork stats D:\copy.zip --password "a long passphrase"
+mindfork stats --json > this-pc.json    # a snapshot with a row per chat
+```
+
+It prints when the last message was written and when anything last changed, how
+many profiles, chats and messages there are (and how many of them are deleted),
+the attached and stored files, images, projects, notes and the knowledge base.
+Messages are counted the way the chat list counts them. Times are in UTC, so the
+output of two computers can be compared line by line.
+
+The command **only reads**. Nothing is created, migrated or unpacked, so it can be
+run while the app is open, and an archive stays a closed archive: an encrypted one
+is read in memory and never written out decrypted. The password is found the way
+`restore` finds it — `--password`, else the one in the settings, else you are
+asked. The password in the settings belongs to this computer, so for an archive
+made elsewhere with a different one, pass `--password`.
+
+The newest copy is not always the most complete one: a chat continued on a laptop
+after the desktop's backup was taken exists only on the laptop. To see that, take
+`--json` on both computers and compare the two files with any diff tool — each
+chat is one block, sorted by id, so a chat that exists on one side only, or has
+more messages there, stands out.
 
 ### 2.3. External locales (`data/locales/`) — editing text and new languages
 

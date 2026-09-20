@@ -174,9 +174,9 @@ Backend selection: `MINDFORK_ENGINE_URL` (external, any OpenAI server) OR
 rented instead of hosted — `python tools/e2e_hf.py run`, see
 `docs/history/remote-e2e-hf.md`.
 
-## Status (2026-09-19, version 0.10.1)
+## Status (2026-09-20, version 0.10.1)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3337 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **3359 unit tests
 green, 196 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
@@ -189,6 +189,12 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **`mindfork stats` — which copy of the data is the newest** (stage 1 of 2). A
+  read-only summary of the live data or of a backup archive, encrypted ones included:
+  nothing is created, migrated or unpacked, messages count as the chat list counts
+  them, `--json` carries a row per chat. Live **GO** on the real data root; comparison
+  is stage 2 ([docs/data-stats.md](docs/data-stats.md), spec §12.4,
+  [docs/journal/storage.md](docs/journal/storage.md)).
 - **The model row asks the provider** (stage 4b, the last of stage 4). The settings
   hint recommended `gpt-4o` and `claude-opus-4-8` — a hint that names a model ages, so
   `Enter` on a model row now asks the provider what it serves and offers the list,

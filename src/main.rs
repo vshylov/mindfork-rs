@@ -121,6 +121,18 @@ fn real_main(
     if matches!(command, CliCommand::Demo) {
         return run_demo(loc, locale_warnings);
     }
+    // `stats` only reads (spec §12.4): it is answered here, before the data
+    // root's directories and the log file are created, so that summarizing a
+    // copy leaves that copy byte for byte what it was — and a machine with no
+    // data yet still has none afterwards.
+    if let CliCommand::Stats {
+        archive,
+        password,
+        json,
+    } = command
+    {
+        return run_stats(paths, archive.as_deref(), password, json, loc);
+    }
     paths.ensure_dirs(loc).with_context(|| {
         loc.tf(
             "cli.ctx.ensure_dirs",
@@ -182,7 +194,9 @@ fn real_main(
             Ok(ExitCode::SUCCESS)
         }
         CliCommand::Run => run_tui(paths, loc),
-        CliCommand::Demo => unreachable!("handled above, before the real root is touched"),
+        CliCommand::Demo | CliCommand::Stats { .. } => {
+            unreachable!("handled above, before the real root is touched")
+        }
         CliCommand::Help { .. } | CliCommand::Version => unreachable!("handled in main"),
     }
 }
@@ -500,6 +514,41 @@ fn run_backup(
     Ok(())
 }
 
+/// CLI: `stats` — a summary of the user data, live or inside a backup archive
+/// (docs/data-stats.md, spec §12.4). Takes no single-instance guard: nothing is
+/// written, a chat file is replaced atomically by the running app (a reader
+/// sees the old or the new one, never half), and the database is opened
+/// read-only — so the command works next to a running app, which is when the
+/// question "is this copy the newest?" tends to come up.
+///
+/// An archive's password is settled exactly as `restore` settles it — the
+/// argument, else the one stored in the settings, else a prompt — through the
+/// same function, so the two commands cannot come to disagree about one file.
+fn run_stats(
+    paths: &Paths,
+    archive: Option<&Path>,
+    password: Option<String>,
+    json: bool,
+    loc: &Locale,
+) -> anyhow::Result<ExitCode> {
+    use crate::features::data_stats;
+
+    let stats = match archive {
+        None => data_stats::collect_root(paths, loc)?,
+        Some(archive) => {
+            let stored = backup_config(paths).stored_password;
+            let password = resolve_restore_password(archive, password, stored, loc)?;
+            data_stats::collect_archive(archive, password.as_deref(), loc)?
+        }
+    };
+    if json {
+        println!("{}", data_stats::render_json(&stats));
+    } else {
+        println!("{}", data_stats::render_text(&stats, loc));
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
 /// How many times the restore password may be re-entered before giving up.
 const PASSWORD_ATTEMPTS: usize = 3;
 
@@ -511,16 +560,24 @@ const PASSWORD_ATTEMPTS: usize = 3;
 /// stored password can apply (ADR 0008: secrets don't travel). Returning the
 /// unusable password rather than erroring here keeps every "no/wrong password"
 /// message in one place — `backup::restore_backup`'s pre-flight validation.
+///
+/// One exception, found on a live run of `stats`: when the password that failed
+/// is the **stored** one, "wrong backup password" accuses the user of a password
+/// they never typed, and names no way forward. Each machine keeps its own
+/// (ADR 0008), so an archive from another machine meets exactly this. That case
+/// says what happened and that `--password` is the route ([`stored_password_failed`]).
 fn resolve_restore_password(
     archive: &Path,
-    password: Option<String>,
+    argument: Option<String>,
+    stored: Option<String>,
     loc: &Locale,
 ) -> anyhow::Result<Option<String>> {
     use crate::features::backup::ArchivePassword;
     use crate::features::terminal_input;
 
-    let mut current = password;
-    for _ in 0..PASSWORD_ATTEMPTS {
+    let from_settings = argument.is_none();
+    let mut current = effective_password(argument, stored);
+    for attempt in 0..PASSWORD_ATTEMPTS {
         // A read failure here is not ours to report: restore_backup validates
         // the archive properly and produces the localized error.
         let Ok(status) = backup::check_password(archive, current.as_deref()) else {
@@ -529,10 +586,16 @@ fn resolve_restore_password(
         match status {
             ArchivePassword::NotNeeded | ArchivePassword::Ok => return Ok(current),
             ArchivePassword::Required | ArchivePassword::Wrong => {
+                let stored_failed = stored_password_failed(from_settings, attempt, status);
                 if !terminal_input::is_interactive() {
+                    if stored_failed {
+                        bail!("{}", loc.t("cli.restore.stored_password_wrong"));
+                    }
                     return Ok(current);
                 }
-                if status == ArchivePassword::Wrong {
+                if stored_failed {
+                    eprintln!("{}", loc.t("cli.restore.stored_password_wrong"));
+                } else if status == ArchivePassword::Wrong {
                     eprintln!("{}", loc.t("backup.err.wrong_password"));
                 }
                 match terminal_input::read_password(loc.t("cli.restore.password_prompt"))? {
@@ -547,6 +610,18 @@ fn resolve_restore_password(
     Ok(current)
 }
 
+/// Whether the password the archive just refused is the one from the settings
+/// rather than one the user gave: no `--password` argument, the first attempt
+/// (a later one was typed at the prompt), and a password that was *tried* —
+/// `Required` means there was none to blame.
+fn stored_password_failed(
+    from_settings: bool,
+    attempt: usize,
+    status: crate::features::backup::ArchivePassword,
+) -> bool {
+    from_settings && attempt == 0 && status == crate::features::backup::ArchivePassword::Wrong
+}
+
 /// CLI: restoring from a backup (transactionally, with a pre-restore copy and a
 /// rollback on failure). Output goes to stdout/stderr (the TUI isn't running).
 fn run_restore(
@@ -557,11 +632,7 @@ fn run_restore(
 ) -> anyhow::Result<()> {
     let _instance = acquire_cli_guard(loc, loc.t("cli.guard.action.restore"))?;
     let cfg = backup_config(paths);
-    let password = resolve_restore_password(
-        archive,
-        effective_password(password, cfg.stored_password),
-        loc,
-    )?;
+    let password = resolve_restore_password(archive, password, cfg.stored_password, loc)?;
 
     // Warn if the backup was made by a newer version of the app: the data is intact, but
     // the current version might refuse to open it (downgrade guard, ADR 0006). We swallow
@@ -1222,6 +1293,45 @@ mod tests {
     /// Precedence for the run's one effective password: the argument wins over
     /// the stored setting, and an empty value means "no password" from either
     /// source (docs/history/backup-password.md §4 F8).
+    /// The contract is an order of calls in `real_main`, so it is tested there
+    /// (docs/lessons.md §2): a summary of a data root that does not exist must
+    /// not bring it into existence, which is what `ensure_dirs` a few lines
+    /// further down would do.
+    #[test]
+    fn stats_is_answered_before_the_data_root_is_created() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = Paths::with_root(tmp.path().join("never-created"));
+        let command = CliCommand::Stats {
+            archive: None,
+            password: None,
+            json: true,
+        };
+        real_main(command, &paths, i18n::locale(Lang::En), &[]).unwrap();
+        assert!(!paths.root().exists());
+        assert_eq!(std::fs::read_dir(tmp.path()).unwrap().count(), 0);
+    }
+
+    /// "Wrong password" is only the stored password's fault when nobody typed
+    /// one: not with `--password`, not on a retry, and not when there was no
+    /// password to try at all.
+    #[test]
+    fn only_an_untyped_first_attempt_blames_the_stored_password() {
+        use crate::features::backup::ArchivePassword::{Required, Wrong};
+        assert!(stored_password_failed(true, 0, Wrong));
+        assert!(
+            !stored_password_failed(false, 0, Wrong),
+            "--password was given"
+        );
+        assert!(
+            !stored_password_failed(true, 1, Wrong),
+            "typed at the prompt"
+        );
+        assert!(
+            !stored_password_failed(true, 0, Required),
+            "nothing was tried"
+        );
+    }
+
     #[test]
     fn effective_password_prefers_the_argument_then_the_setting() {
         let arg = || Some("from-arg".to_string());

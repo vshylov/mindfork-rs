@@ -287,6 +287,13 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
     would serve them, deferred until there is a second live consumer — a URI
     vocabulary invented ahead of one is a vocabulary nobody speaks.
 ## Chat and profile management
+- **`mindfork stats --compare` — stage 2 of the data summary**
+  ([data-stats.md](data-stats.md) §5). Stage 1 says which copy is the newest and
+  leaves "does the older copy hold something this one lacks" to a `diff` of two
+  `--json` snapshots. Stage 2 answers it in the app: chats (and notes) only here,
+  only there, newer here, newer there — against a snapshot or a backup archive
+  from the other machine. Open: what makes a chat "newer", per-note rows in the
+  snapshot, a one-line fingerprint of the chat set in the summary.
 - **Folders/tags for chats** — grouping in the list (`Esc`).
 - **Pin important chats** at the top of the list.
 - **Prompt templates / snippets** — quick inserts of frequently used system

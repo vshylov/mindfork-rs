@@ -31,16 +31,20 @@ pub fn is_interactive() -> bool {
 /// Deliberately hand-rolled rather than pulling in `rpassword`: the surface is a
 /// dozen lines, and the project's precedent is its own micro-solution when the
 /// alternative is a crate for one function (ADR 0003, `features/cli.rs`).
+///
+/// The prompt goes to **stderr**, like every password prompt that expects its
+/// command's output to be redirected: `mindfork stats backup.zip --json > a.json`
+/// would otherwise hide the question from the user and write it into the file.
 pub fn read_password(prompt: &str) -> std::io::Result<Option<String>> {
-    print!("{prompt}");
-    std::io::stdout().flush()?;
+    eprint!("{prompt}");
+    std::io::stderr().flush()?;
 
     terminal::enable_raw_mode()?;
     let result = read_line_raw();
     // Restore the terminal whatever happened — a leaked raw mode would leave the
     // user's shell without echo.
     let _ = terminal::disable_raw_mode();
-    println!();
+    eprintln!();
 
     result
 }
