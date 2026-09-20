@@ -2421,3 +2421,57 @@ every reversible check first. Full record —
   about that path changed since 0.10.1 proved it: merge → tag → `release.yml`
   builds the draft → the artifact smoke test → the owner publishes →
   `crates-io.yml` uploads `mindfork 0.10.2` from the same tag.
+- **The draft, checked before anyone else could see it** (§6 step 5). `v0.10.2` sat
+  on the merge commit `4b30a64d`, which was `origin/main`; `release.yml` ran
+  17:13:05Z → 17:28:37Z, every job green, and left a draft that was not a
+  prerelease with the seven assets 0.10.1 has, each about 1 % larger. Its notes
+  were the CHANGELOG's `[0.10.2]` section verbatim plus the footer. All six lines
+  of `sha256sums.txt` equalled the `digest` GitHub computes per asset on upload,
+  and the downloaded Windows archive hashed to the same value locally — three
+  witnesses, one number. From the archive: `mindfork --version` says 0.10.2; the
+  image names no `vcruntime`/`msvcp`/`api-ms-win-crt` DLL, so the static CRT of
+  the release-pipeline stage holds; a launch with no terminal refuses with exit
+  code 2; `stats` on the empty portable root says there is no data and creates
+  nothing (the file set hashed equal before and after).
+- **And the release's own feature, run by the shipped binary on real data.** A
+  `defaults.json` beside the unpacked executable pointed it at the development
+  data root (`mode: path`) — 233 chats, 1198 messages. Its `stats` output was
+  byte-identical to the development build's, fingerprint included; names, sizes
+  and modification times under the root were equal before and after both runs,
+  which is "only reads" measured on the artifact rather than on the build that
+  passed the tests; and a `--json` snapshot taken by the release binary (about
+  300 KB, no message-text field in it) compared *identical* under both binaries.
+  One trap for whoever repeats this: that root's interface language is `ru`, so
+  the summary is in Russian, and a grep for "fingerprint" finding nothing is not a
+  failure. The snapshot (it holds chat titles) and that `defaults.json` were
+  deleted afterwards — left in place, the unpacked executable would open the real
+  development data for anyone who launched it. Not done from the agent's shell:
+  the interactive TUI run and the installer, which stay with the owner.
+- **Published, and the numbers of it.** The owner published the release at
+  17:35:51Z; it is `immutable` and the repository's latest. `crates-io.yml`
+  started two seconds later, and `mindfork 0.10.2` was on the registry at
+  17:38:28Z: 375 files packaged — the count the pull request's
+  `cargo publish --dry-run` had predicted — 3 985 912 bytes (0.10.1 was
+  3 941 402), MIT, one binary target and no library, edition 2024,
+  `rust-version` 1.96, not yanked, the declared keywords and categories intact,
+  both versions listed and 0.10.2 the default. The second execution of the upload
+  branch, and nothing about it differed from the first.
+- **`cargo info mindfork` must be asked from outside the repository.** Run in the
+  checkout it answered `version: 0.10.2 (from .\)` *before* the crate had been
+  uploaded — it resolves the local manifest first, so inside this repository it
+  can never say anything about the registry. From another directory it resolves
+  0.10.2 from the index. The 0.10.1 entry above cites the same command as
+  evidence without saying where it was run; the registry API's version record is
+  the witness that does not depend on the working directory.
+- **The two badges do not move together.** A minute after the upload the README's
+  release badge rendered `v0.10.2` and its crates.io badge still `v0.10.1`:
+  shields.io's cache, not the registry, and not something to chase.
+- **The window this entry predicted, measured.** The site's deploy finished at
+  17:10:23Z and the release was published at 17:35:51Z, so mindfork.io said
+  "0.10.2 is out" for **25 min 28 s** before the releases page agreed, and named
+  `cargo install mindfork` for **28 min 05 s** before the registry had the
+  version. `release.yml` itself is 15 min 32 s of it and the smoke test above most of
+  the rest — so the window cannot be closed by hurrying, only by merging
+  the post in a second pull request after the publication. At this project's
+  traffic it has not been worth a second pull request; the number is here so the
+  next release decides on a measurement rather than on a guess.
