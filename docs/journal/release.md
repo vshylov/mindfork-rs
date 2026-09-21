@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (47)
+## Entries (48)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -59,6 +59,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Release 0.10.2 (prepared)
 - Post-M9: the README's screenshots are the dark ones (done)
 - Post-M9: `install.sh` — the release installs itself on a bare Linux box (done)
+- Release 0.11.0 (prepared)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -2605,3 +2606,53 @@ every reversible check first. Full record —
   measured numbers.
 - **Gates**: no Rust changed — **3408 unit tests, 197 `#[ignore]`**, as before;
   link / source-language / index / action-pin gates green.
+
+### Release 0.11.0 (prepared)
+
+- **A release PR** per the checklist in [AGENTS.md §6](../../AGENTS.md) (branch
+  `chore/release-0.11.0`): bumped `Cargo.toml` `0.10.2 → 0.11.0` (+ `Cargo.lock`,
+  one line), `site/zola.toml` `app_version`, `CHANGELOG.md` — `[Unreleased]` →
+  `[0.11.0] — 2026-09-21` under a lead paragraph, a fresh empty `[Unreleased]`
+  opened, comparison links updated. The `v0.11.0` tag is applied by the user
+  after the merge (the agent doesn't push tags/`main`). Gates green: 3408 unit
+  tests (197 `#[ignore]`), `clippy -D warnings`, `fmt`, and `release_guard.py
+  --tag v0.11.0` accepting the tag this release will carry — its 47 lines of
+  notes read through, since they are the text of the draft (and the `notes.md`
+  it drops in the working directory removed, as recorded under 0.10.2).
+- **A MINOR, by §6's own rule**: while at `0.x` a MINOR carries features, and
+  this one is a track — `mindfork setup`, the install script, backend families —
+  with three fixes to `llama setup` beside it. The owner chose the number and
+  the moment (2026-09-21).
+- **Why now, before the pod probe**: `main`'s README has advertised
+  `releases/latest/download/install.sh` since the install script merged, and
+  that address is a **404** until a release carries the asset (measured after
+  the merge — `v0.10.2` has seven assets and the script is not one of them). And
+  the probe that is still owed cannot be run in full against 0.10.2 at all: that
+  binary refuses CUDA on Linux, has no `setup`, and ships no script. After this
+  release the probe *is* the line in the README, end to end, on a rented pod —
+  the acceptance test of the whole track. Nothing in the release is worse than
+  what it replaces; what the probe finds goes into 0.11.1.
+- **What the release carries**: the provisioning track through stage 2
+  ([cloud-provisioning.md](../research/cloud-provisioning.md)) — `mindfork
+  setup` with `--set` and `--verify`, `install.sh` and install.md §1/§3.4,
+  `--backend` families, and the three `llama setup` fixes (CUDA on Linux refused,
+  the version read as a log line with the build check skipping in silence, a
+  half-uploaded nightly picked). No `Data` rubric, because there is nothing under
+  it: no schema constant and no config field changed between `v0.10.2` and this
+  commit (checked in the diff, not assumed), so 0.10.2 and 0.11.0 open the same
+  files and no migration runs.
+- **Deliberately absent from the notes**: the site's release gate and its
+  rehearsal, the README's dark screenshots, a CI action bump, the research
+  documents. A changelog is what a user's installation does differently.
+- **The first release with eight assets**, and the first whose `release` job
+  installs its own archive with its own script before the draft exists
+  (rehearsed GO on `v0.10.2-rc1`). The draft's smoke test (§6 step 5) gains the
+  script's checks: one digest three ways, the attestation read with `--format
+  json` and a control arm, the archive installed `--from` the downloaded assets
+  in a bare container.
+- **The release post ships in this pull request**, as its own commit — and for
+  the first time its merge does **not** put it on the site: `site.yml` now holds
+  the deploy while `Cargo.toml` names an unpublished version
+  ([site-waits-for-release.md](../research/site-waits-for-release.md)). This is
+  the first real hold; its timings belong in the entry that records the
+  publication. The site's install page gains the one-liner in the same commit.

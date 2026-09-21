@@ -50,6 +50,23 @@ sudo pacman -U   ./mindfork-rs-<version>-1-x86_64.pkg.tar.zst   # Arch
 route, the same as on Windows: unpack, run `./mindfork`, and the data folder
 lives beside the binary.
 
+**One line**, which unpacks that archive into `~/mindfork`, checks it against the
+release's checksums and makes it startable — on a bare image it installs the one
+system library the app needs (ALSA's), or tells you the command:
+
+```bash
+curl -fsSL https://github.com/vshylov/mindfork-rs/releases/latest/download/install.sh | sh
+```
+
+The script is an asset of the release like the archive itself — listed in
+`sha256sums.txt`, covered by the same attestation — and short enough to read
+first: download it and run `sh install.sh`. `--dir` chooses the folder, and
+everything after `--` is handed to `mindfork`, which is how a rented GPU box
+goes from nothing to a loaded model in one line
+([the guide](https://github.com/vshylov/mindfork-rs/blob/main/docs/install.md),
+§3.3–§3.4). Running it again is safe: nothing already in place is downloaded
+twice, and your data is never touched.
+
 x86-64, glibc 2.35 or newer (Ubuntu 22.04 and anything later). A terminal
 emulator you already have.
 
