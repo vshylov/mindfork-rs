@@ -605,6 +605,22 @@ that does not depend on it running — here, the sweep of stale job directories.
 
 ## 3. Measure; do not assume
 
+**A measured fact about someone else's release has a date on it — and a check
+that cannot parse must not pass.** The download research measured, on
+2026-09-09, that llama.cpp ships no CUDA build for Linux; upstream began
+shipping one on 2026-09-14, under a runtime-archive name the pairing rule — also
+measured, also true that day — did not match, so `llama setup` refused CUDA on
+Linux while the document said there was none to refuse. The same week the server
+began logging a line ahead of its `--version`, and the build-number check, written
+as "if both numbers parse and differ, fail", found one number, **skipped itself,
+and told nobody** — only the `#[ignore]` install smoke noticed, because it
+asserts the number rather than its absence. Two habits: a rule derived from a
+listing goes into the code as a *derivation* anchored on both ends, never as a
+formatted name; and the arm where a guard cannot read its input says so out
+loud. Re-run the live smoke of anything that reads an upstream surface before
+building on top of it.
+— *the Linux CUDA fix, 2026-09-21*.
+
 **A catalogue endpoint pages, and the page is smaller than the catalogue.**
 Gemini's `GET /v1beta/models` answers **50** of its 58 models without
 `pageSize`, and Anthropic's `/v1/models` defaults to `limit=20`; both cap at

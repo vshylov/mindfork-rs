@@ -10,10 +10,12 @@
 //!
 //! The whole flow: resolve a release (§3.1 — `releases/latest` is *not* a
 //! build, every `bNNNNN` tag is a prerelease), derive the backends this
-//! platform can run (§3.3's anchored parse), download the chosen one plus, on
-//! Windows, its CUDA runtime (§3.4 — without it the CUDA backend silently does
-//! not load), verify every byte against the release's own sha256, unpack into
-//! `data/llama/<backend>-<tag>/` and prove the result runs.
+//! platform can run (§3.3's anchored parse), download the chosen one plus its
+//! CUDA runtime (§3.4 — without it the CUDA backend silently does not load; on
+//! Linux too since upstream began publishing CUDA builds there,
+//! docs/research/cloud-provisioning.md §3.1), verify every byte against the
+//! release's own sha256, unpack into `data/llama/<backend>-<tag>/` and prove the
+//! result runs.
 //!
 //! `features` layer: no TUI, no stdout — progress is a `impl FnMut(&str)`
 //! callback the CLI supplies (the `sandbox_setup::setup` shape).
@@ -81,8 +83,8 @@ pub struct Release {
 }
 
 /// A backend offered for the running platform: the server archive and, for a
-/// `cuda-*` backend on Windows, the CUDA runtime archive that must land in the
-/// same directory.
+/// `cuda-*` backend, the CUDA runtime archive that must land in the same
+/// directory.
 #[derive(Debug, Clone)]
 pub struct Backend {
     /// `cpu`, `cuda-12.4`, `vulkan`, `rocm-10.0`, … — derived, never enumerated.
@@ -132,7 +134,8 @@ pub struct Install {
 /// Options for [`setup`].
 #[derive(Debug, Clone)]
 pub struct SetupOptions {
-    /// The backend id, as `backends` reports it.
+    /// The backend id, as `backends` reports it — or a family of one
+    /// (`cuda-12`), see [`resolve_backend`].
     pub backend: String,
     /// A build tag to pin (`b10883`); `None` — the newest one with binaries.
     pub build: Option<String>,
@@ -249,11 +252,33 @@ fn backend_of(name: &str, tag: &str, os_tok: &str, arch_tok: &str) -> Option<(St
     (!id.is_empty()).then_some((id, ext))
 }
 
-/// The CUDA runtime archive paired with `backend` — by (backend token, arch),
-/// and **without a build tag** in its name: `cudart-llama-bin-win-cuda-12.4-x64.zip`
-/// sits in the same release as `llama-<tag>-bin-win-cuda-12.4-x64.zip`.
-fn cudart_name(backend: &str, os_tok: &str, arch_tok: &str) -> String {
-    format!("cudart-llama-bin-{os_tok}-{backend}-{arch_tok}.zip")
+/// Is `name` the CUDA runtime archive paired with `backend`?
+///
+/// Upstream spells it two ways, so it is **derived** like the server archive —
+/// anchored on both ends — and not formatted
+/// (docs/research/cloud-provisioning.md §3.1):
+///
+/// ```text
+/// cudart-llama-bin-win-cuda-12.4-x64.zip                  Windows: no build tag
+/// cudart-llama-b11070-bin-ubuntu-cuda-12.8-x64.tar.gz     Linux, since b10969
+/// ```
+///
+/// Formatting the first shape for every OS is what made `setup --backend
+/// cuda-12.8` refuse on Linux, naming a file upstream had never published.
+fn is_cudart_for(name: &str, tag: &str, os_tok: &str, backend: &str, arch_tok: &str) -> bool {
+    let Some(ext) = Ext::of(name) else {
+        return false;
+    };
+    let Some(rest) = ext.strip(name).strip_prefix("cudart-llama-") else {
+        return false;
+    };
+    let rest = rest.strip_prefix(&format!("{tag}-")).unwrap_or(rest);
+    rest == format!("bin-{os_tok}-{backend}-{arch_tok}")
+}
+
+/// What [`is_cudart_for`] looks for, for the message that says it was not found.
+fn cudart_pattern(backend: &str, os_tok: &str, arch_tok: &str) -> String {
+    format!("cudart-llama-*bin-{os_tok}-{backend}-{arch_tok}.*")
 }
 
 /// Every backend in `release` that this `(os, arch)` can run, sorted by id.
@@ -273,8 +298,11 @@ pub fn backends(release: &Release, os: &str, arch: &str) -> Vec<Backend> {
             continue; // first one wins; upstream has never published two
         }
         let cudart = id.starts_with("cuda-").then(|| {
-            let want = cudart_name(&id, os_tok, arch_tok);
-            release.assets.iter().find(|a| a.name == want).cloned()
+            release
+                .assets
+                .iter()
+                .find(|a| is_cudart_for(&a.name, &release.tag_name, os_tok, &id, arch_tok))
+                .cloned()
         });
         out.push(Backend {
             id,
@@ -284,6 +312,43 @@ pub fn backends(release: &Release, os: &str, arch: &str) -> Vec<Backend> {
     }
     out.sort_by(|a, b| a.id.cmp(&b.id));
     out
+}
+
+/// Why a backend the user named is not in a release.
+#[derive(Debug, PartialEq, Eq)]
+enum BackendMiss {
+    /// Nothing by that id, and nothing in that family.
+    Unknown,
+    /// A family that names more than one (`sycl` → `sycl-fp16`, `sycl-fp32`).
+    Ambiguous(Vec<String>),
+}
+
+/// The backend `spec` names among `available`: an exact id, or a **family** —
+/// `cuda-12` for the one `cuda-12.*` the build carries.
+///
+/// The minor in the name moves (Windows went `cuda-13.3` → `cuda-13.4` inside
+/// twelve days, docs/research/cloud-provisioning.md §3.1), so without this a
+/// command line saved in a template has the shelf life of upstream's next
+/// toolkit bump. An exact id always wins, and a family that matches two is
+/// refused with both named — never guessed.
+fn resolve_backend<'a>(available: &'a [Backend], spec: &str) -> Result<&'a Backend, BackendMiss> {
+    if let Some(exact) = available.iter().find(|b| b.id == spec) {
+        return Ok(exact);
+    }
+    let family: Vec<&Backend> = available
+        .iter()
+        .filter(|b| {
+            b.id.strip_prefix(spec)
+                .is_some_and(|rest| rest.starts_with('.') || rest.starts_with('-'))
+        })
+        .collect();
+    match family.as_slice() {
+        [] => Err(BackendMiss::Unknown),
+        [one] => Ok(one),
+        many => Err(BackendMiss::Ambiguous(
+            many.iter().map(|b| b.id.clone()).collect(),
+        )),
+    }
 }
 
 /// The install directory's name: `<backend>-<tag>`, which reads back as what it
@@ -391,13 +456,19 @@ async fn api_get(client: &reqwest::Client, url: &str, loc: &Locale) -> Result<St
 }
 
 /// Resolves the release to install from: the pinned `build`, or the newest of
-/// the [`RELEASE_SCAN`] most recent that actually carries binaries for this
-/// platform.
+/// the [`RELEASE_SCAN`] most recent that carries `wanted` for this platform.
+///
+/// "Carries binaries" is not enough of a test. Of the 40 newest builds on
+/// 2026-09-21, two had no assets at all and one was **partial** — runtimes
+/// without their builds (docs/research/cloud-provisioning.md §3.1) — and a
+/// partial build that has *some* backend would answer a request for another
+/// with "unknown backend" while the build before it has it.
 async fn fetch_release(
     client: &reqwest::Client,
     build: Option<&str>,
     os: &str,
     arch: &str,
+    wanted: impl Fn(&[Backend]) -> bool,
     loc: &Locale,
 ) -> Result<Release> {
     if let Some(tag) = build {
@@ -411,22 +482,39 @@ async fn fetch_release(
     let body = api_get(client, &url, loc).await?;
     let releases: Vec<Release> = serde_json::from_str(&body)
         .with_context(|| loc.t("llamacpp.setup.releases_parse").to_string())?;
-    releases
-        .into_iter()
-        .find(|r| !backends(r, os, arch).is_empty())
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "{}",
-                loc.tf(
-                    "llamacpp.setup.no_release",
-                    &[
-                        ("count", &RELEASE_SCAN.to_string()),
-                        ("os", os),
-                        ("arch", arch)
-                    ],
-                )
+    pick_release(releases, os, arch, wanted).ok_or_else(|| {
+        anyhow::anyhow!(
+            "{}",
+            loc.tf(
+                "llamacpp.setup.no_release",
+                &[
+                    ("count", &RELEASE_SCAN.to_string()),
+                    ("os", os),
+                    ("arch", arch)
+                ],
             )
-        })
+        )
+    })
+}
+
+/// The release to use out of a newest-first page: the newest that carries
+/// `wanted`; failing that, the newest with anything for this platform at all —
+/// so the refusal that follows can still say what *is* on offer.
+fn pick_release(
+    releases: Vec<Release>,
+    os: &str,
+    arch: &str,
+    wanted: impl Fn(&[Backend]) -> bool,
+) -> Option<Release> {
+    let mut usable: Vec<Release> = releases
+        .into_iter()
+        .filter(|r| !backends(r, os, arch).is_empty())
+        .collect();
+    let at = usable
+        .iter()
+        .position(|r| wanted(&backends(r, os, arch)))
+        .unwrap_or(0);
+    (at < usable.len()).then(|| usable.swap_remove(at))
 }
 
 /// Refuses a platform upstream publishes nothing for, by name rather than with
@@ -447,7 +535,7 @@ pub async fn list_backends(build: Option<&str>, loc: &Locale) -> Result<Listing>
     let (os, arch) = (std::env::consts::OS, std::env::consts::ARCH);
     check_platform(os, arch, loc)?;
     let client = http_client(loc)?;
-    let release = fetch_release(&client, build, os, arch, loc).await?;
+    let release = fetch_release(&client, build, os, arch, |_| true, loc).await?;
     let backends = backends(&release, os, arch);
     if backends.is_empty() {
         bail!(
@@ -540,31 +628,35 @@ pub async fn setup(
     })?;
 
     let client = http_client(loc)?;
-    let release = fetch_release(&client, opts.build.as_deref(), os, arch, loc).await?;
+    // The newest build that has this backend *whole* — with its runtime, when
+    // one is going to be fetched.
+    let complete = |found: &[Backend]| {
+        resolve_backend(found, &opts.backend).is_ok_and(|b| !(opts.cudart && b.cudart_missing()))
+    };
+    let release = fetch_release(&client, opts.build.as_deref(), os, arch, complete, loc).await?;
     let available = backends(&release, os, arch);
-    let backend = available
-        .iter()
-        .find(|b| b.id == opts.backend)
-        .ok_or_else(|| {
-            let list = available
-                .iter()
-                .map(|b| b.id.as_str())
-                .collect::<Vec<_>>()
-                .join(", ");
-            anyhow::anyhow!(
-                "{}",
-                loc.tf(
-                    "llamacpp.setup.unknown_backend",
-                    &[
-                        ("id", &opts.backend),
-                        ("tag", &release.tag_name),
-                        ("os", os),
-                        ("arch", arch),
-                        ("list", &list),
-                    ],
-                )
+    let backend = resolve_backend(&available, &opts.backend).map_err(|miss| {
+        let (key, ids) = match miss {
+            BackendMiss::Unknown => (
+                "llamacpp.setup.unknown_backend",
+                available.iter().map(|b| b.id.clone()).collect::<Vec<_>>(),
+            ),
+            BackendMiss::Ambiguous(ids) => ("llamacpp.setup.ambiguous_backend", ids),
+        };
+        anyhow::anyhow!(
+            "{}",
+            loc.tf(
+                key,
+                &[
+                    ("id", &opts.backend),
+                    ("tag", &release.tag_name),
+                    ("os", os),
+                    ("arch", arch),
+                    ("list", &ids.join(", ")),
+                ],
             )
-        })?;
+        )
+    })?;
 
     // R4: a CUDA build without its runtime does not error — it loads no CUDA
     // device and runs on the CPU. Refuse rather than produce that.
@@ -578,7 +670,7 @@ pub async fn setup(
                     ("tag", &release.tag_name),
                     (
                         "name",
-                        &cudart_name(
+                        &cudart_pattern(
                             &backend.id,
                             os_token(os).unwrap_or(""),
                             arch_token(arch).unwrap_or("")
@@ -661,19 +753,26 @@ pub async fn setup(
     // R5, and the only thing that proves the ~50-file library set is complete:
     // run it before it is moved into place, so a broken unpack never becomes an
     // install that `llama installed` would list.
-    let version = first_line(&run_probe(&staged_binary, &["--version"], loc).await?);
-    if let (Some(want), Some(got)) = (
+    let version = version_line(&run_probe(&staged_binary, &["--version"], loc).await?);
+    match (
         tag_build_number(&release.tag_name),
         version_build_number(&version),
-    ) && want != got
-    {
-        bail!(
+    ) {
+        (Some(want), Some(got)) if want != got => bail!(
             "{}",
             loc.tf(
                 "llamacpp.setup.build_mismatch",
                 &[("got", &got.to_string()), ("expected", &want.to_string())],
             )
-        );
+        ),
+        // The binary ran — the library set is complete — but said nothing this
+        // can compare. Not a failure: upstream's wording is theirs to change.
+        // Not silence either: this arm is how the check once stopped checking
+        // without anyone being told.
+        (Some(_), None) => {
+            progress(&loc.tf("llamacpp.setup.build_unreadable", &[("said", &version)]))
+        }
+        _ => {}
     }
 
     if dir.exists() {
@@ -725,7 +824,7 @@ async fn probe(
     }
     // `--version` prints two lines (the version, then the compiler it was built
     // with); only the first is the answer.
-    let version = first_line(&run_probe(&binary, &["--version"], loc).await?);
+    let version = version_line(&run_probe(&binary, &["--version"], loc).await?);
     let devices = parse_devices(&run_probe(&binary, &["--list-devices"], loc).await?);
     progress(&loc.tf("llamacpp.setup.version", &[("version", &version)]));
     if devices.is_empty() {
@@ -748,12 +847,27 @@ async fn probe(
     })
 }
 
-/// The first non-empty line of a probe's output, trimmed.
-fn first_line(text: &str) -> String {
-    text.lines()
-        .map(str::trim)
-        .find(|l| !l.is_empty())
-        .unwrap_or("")
+/// The line of `--version`'s output that is the version.
+///
+/// It used to be the first one. Since some build before `b11070` the server
+/// logs ahead of it, on the same stream (measured 2026-09-21):
+///
+/// ```text
+/// 0.00.000.803 I srv  llama_server: initializing ...
+/// version: 0.4.1-dev (build 11070, commit 0c3626ec0)
+/// built with Clang 20.1.8 for Windows x86_64
+/// ```
+///
+/// Taking the first line showed the user a log line as the version and — worse
+/// — made the build-number check of R5 find no number and **skip itself in
+/// silence**. So the line is recognised by what it says, and only an output
+/// with no such line falls back to its first one.
+fn version_line(text: &str) -> String {
+    let mut lines = text.lines().map(str::trim).filter(|l| !l.is_empty());
+    let first = lines.clone().next().unwrap_or("");
+    lines
+        .find(|l| l.starts_with("version:"))
+        .unwrap_or(first)
         .to_string()
 }
 
@@ -1542,6 +1656,47 @@ mod tests {
         "llama-b10883-xcframework.zip",
     ];
 
+    /// The 33 assets of build `b11070` (2026-09-21), verbatim: twelve days after
+    /// `b10883`, and the first fixture with **CUDA for Linux** in it (upstream
+    /// since `b10969`). Its Linux runtime archives carry the build tag and are
+    /// tarballs; the Windows ones, in the same release, still do neither —
+    /// docs/research/cloud-provisioning.md §3.1.
+    const B11070: &[&str] = &[
+        "cudart-llama-b11070-bin-ubuntu-cuda-12.8-x64.tar.gz",
+        "cudart-llama-b11070-bin-ubuntu-cuda-13.3-arm64.tar.gz",
+        "cudart-llama-b11070-bin-ubuntu-cuda-13.3-x64.tar.gz",
+        "cudart-llama-bin-win-cuda-12.4-x64.zip",
+        "cudart-llama-bin-win-cuda-13.4-arm64.zip",
+        "cudart-llama-bin-win-cuda-13.4-x64.zip",
+        "llama-b11070-bin-android-arm64.tar.gz",
+        "llama-b11070-bin-macos-arm64.tar.gz",
+        "llama-b11070-bin-macos-x64.tar.gz",
+        "llama-b11070-bin-ubuntu-arm64.tar.gz",
+        "llama-b11070-bin-ubuntu-cuda-12.8-x64.tar.gz",
+        "llama-b11070-bin-ubuntu-cuda-13.3-arm64.tar.gz",
+        "llama-b11070-bin-ubuntu-cuda-13.3-x64.tar.gz",
+        "llama-b11070-bin-ubuntu-openvino-2026.4-x64.tar.gz",
+        "llama-b11070-bin-ubuntu-rocm-10.0-x64.tar.gz",
+        "llama-b11070-bin-ubuntu-s390x.tar.gz",
+        "llama-b11070-bin-ubuntu-sycl-fp16-x64.tar.gz",
+        "llama-b11070-bin-ubuntu-sycl-fp32-x64.tar.gz",
+        "llama-b11070-bin-ubuntu-vulkan-arm64.tar.gz",
+        "llama-b11070-bin-ubuntu-vulkan-x64.tar.gz",
+        "llama-b11070-bin-ubuntu-x64.tar.gz",
+        "llama-b11070-bin-win-cpu-arm64.zip",
+        "llama-b11070-bin-win-cpu-x64.zip",
+        "llama-b11070-bin-win-cuda-12.4-x64.zip",
+        "llama-b11070-bin-win-cuda-13.4-arm64.zip",
+        "llama-b11070-bin-win-cuda-13.4-x64.zip",
+        "llama-b11070-bin-win-opencl-adreno-arm64.zip",
+        "llama-b11070-bin-win-openvino-2026.4-x64.zip",
+        "llama-b11070-bin-win-rocm-10.0-x64.zip",
+        "llama-b11070-bin-win-sycl-x64.zip",
+        "llama-b11070-bin-win-vulkan-x64.zip",
+        "llama-b11070-ui.tar.gz",
+        "llama-b11070-xcframework.zip",
+    ];
+
     /// Build `b9000` (2026-05-02): the AMD backend was still called
     /// `hip-radeon`, and the openEuler rows put something other than an OS in
     /// the first token and something other than an arch in the last.
@@ -1730,6 +1885,186 @@ mod tests {
         );
         let vulkan = found.iter().find(|b| b.id == "vulkan").unwrap();
         assert!(!vulkan.needs_cudart() && vulkan.cudart.is_none());
+    }
+
+    /// The regression: upstream began publishing CUDA for Linux, and named its
+    /// runtime archive unlike the Windows one — with the build tag, as a
+    /// tarball. Formatting the Windows shape for every OS left `cuda-12.8`
+    /// listed as "no CUDA runtime published" and `setup` refusing it.
+    #[test]
+    fn linux_cuda_backends_are_paired_with_their_tagged_runtime() {
+        let rel = release("b11070", B11070);
+        assert_eq!(
+            ids(&rel, "linux", "x86_64"),
+            [
+                "cpu",
+                "cuda-12.8",
+                "cuda-13.3",
+                "openvino-2026.4",
+                "rocm-10.0",
+                "sycl-fp16",
+                "sycl-fp32",
+                "vulkan"
+            ]
+        );
+        let runtime = |os: &str, arch: &str, id: &str| {
+            let found = backends(&rel, os, arch);
+            let b = found.iter().find(|b| b.id == id).unwrap();
+            assert!(!b.cudart_missing(), "{os}/{arch} {id}");
+            b.cudart.as_ref().unwrap().name.clone()
+        };
+        assert_eq!(
+            runtime("linux", "x86_64", "cuda-12.8"),
+            "cudart-llama-b11070-bin-ubuntu-cuda-12.8-x64.tar.gz"
+        );
+        assert_eq!(
+            runtime("linux", "x86_64", "cuda-13.3"),
+            "cudart-llama-b11070-bin-ubuntu-cuda-13.3-x64.tar.gz"
+        );
+        assert_eq!(
+            ids(&rel, "linux", "aarch64"),
+            ["cpu", "cuda-13.3", "vulkan"]
+        );
+        assert_eq!(
+            runtime("linux", "aarch64", "cuda-13.3"),
+            "cudart-llama-b11070-bin-ubuntu-cuda-13.3-arm64.tar.gz"
+        );
+        // The same release still names the Windows runtimes the old way.
+        assert_eq!(
+            runtime("windows", "x86_64", "cuda-12.4"),
+            "cudart-llama-bin-win-cuda-12.4-x64.zip"
+        );
+        assert_eq!(
+            runtime("windows", "aarch64", "cuda-13.4"),
+            "cudart-llama-bin-win-cuda-13.4-arm64.zip"
+        );
+    }
+
+    /// Anchored on both ends, like the server archive: a runtime of another
+    /// build, OS, architecture or CUDA version is not this backend's.
+    #[test]
+    fn a_runtime_archive_is_matched_exactly_or_not_at_all() {
+        let is = |name: &str| is_cudart_for(name, "b11070", "ubuntu", "cuda-12.8", "x64");
+        assert!(is("cudart-llama-b11070-bin-ubuntu-cuda-12.8-x64.tar.gz"));
+        assert!(is("cudart-llama-bin-ubuntu-cuda-12.8-x64.tar.gz")); // untagged
+        assert!(is("cudart-llama-b11070-bin-ubuntu-cuda-12.8-x64.zip")); // ext is read
+        assert!(!is("cudart-llama-b11069-bin-ubuntu-cuda-12.8-x64.tar.gz")); // another build
+        assert!(!is("cudart-llama-b11070-bin-ubuntu-cuda-12.8-arm64.tar.gz"));
+        assert!(!is("cudart-llama-b11070-bin-ubuntu-cuda-12.80-x64.tar.gz"));
+        assert!(!is("cudart-llama-b11070-bin-win-cuda-12.8-x64.tar.gz"));
+        assert!(!is("llama-b11070-bin-ubuntu-cuda-12.8-x64.tar.gz")); // the server
+        assert!(!is("cudart-llama-b11070-bin-ubuntu-cuda-12.8-x64.txt"));
+        // And a runtime archive is never mistaken for a backend.
+        assert_eq!(
+            backend_of(
+                "cudart-llama-b11070-bin-ubuntu-cuda-12.8-x64.tar.gz",
+                "b11070",
+                "ubuntu",
+                "x64"
+            ),
+            None
+        );
+    }
+
+    /// `b11070` logs a line ahead of its version, on the same stream. Taking
+    /// the first line made R5's build check find no number and skip itself —
+    /// the live install smoke is what noticed; this pins the shape it saw.
+    #[test]
+    fn the_version_is_the_line_that_says_so_not_the_first_one() {
+        let b11070 = "0.00.000.803 I srv  llama_server: initializing ...\n\
+                      version: 0.4.1-dev (build 11070, commit 0c3626ec0)\n\
+                      built with Clang 20.1.8 for Windows x86_64\n";
+        let line = version_line(b11070);
+        assert_eq!(line, "version: 0.4.1-dev (build 11070, commit 0c3626ec0)");
+        assert_eq!(version_build_number(&line), Some(11070));
+        // The shape every earlier build printed is read as before.
+        let b10883 = "version: 0.4.0-dev (build 10883, commit 91f6a6cf3)\n\
+                      built with Clang 20.1.8 for Windows x86_64\n";
+        assert_eq!(version_build_number(&version_line(b10883)), Some(10883));
+        // No such line: the first one, so the user is still shown what it said.
+        assert_eq!(version_line("\n  something else\nmore\n"), "something else");
+        assert_eq!(version_line(""), "");
+    }
+
+    /// `cuda-12` is the one `cuda-12.*` a build carries: the minor moved from
+    /// 13.3 to 13.4 between the two fixtures here, and a saved command line
+    /// should outlive that. An exact id wins; two matches are refused by name.
+    #[test]
+    fn a_family_names_the_one_backend_of_it() {
+        let found = backends(&release("b11070", B11070), "linux", "x86_64");
+        let id = |spec: &str| resolve_backend(&found, spec).map(|b| b.id.clone());
+        assert_eq!(id("cuda-12.8"), Ok("cuda-12.8".to_string()));
+        assert_eq!(id("cuda-12"), Ok("cuda-12.8".to_string()));
+        assert_eq!(id("cuda-13"), Ok("cuda-13.3".to_string()));
+        assert_eq!(id("rocm"), Ok("rocm-10.0".to_string()));
+        assert_eq!(id("vulkan"), Ok("vulkan".to_string()));
+        assert_eq!(
+            id("cuda"),
+            Err(BackendMiss::Ambiguous(vec![
+                "cuda-12.8".to_string(),
+                "cuda-13.3".to_string()
+            ]))
+        );
+        assert_eq!(
+            id("sycl"),
+            Err(BackendMiss::Ambiguous(vec![
+                "sycl-fp16".to_string(),
+                "sycl-fp32".to_string()
+            ]))
+        );
+        // A family ends at a token boundary: a prefix of a token is not one.
+        for spec in ["cuda-1", "cud", "", "cuda-12.", "metal"] {
+            assert_eq!(id(spec), Err(BackendMiss::Unknown), "{spec:?}");
+        }
+        // The same family on Windows, where the minor differs.
+        let win = backends(&release("b11070", B11070), "windows", "x86_64");
+        assert_eq!(
+            resolve_backend(&win, "cuda-13").map(|b| b.id.as_str()),
+            Ok("cuda-13.4")
+        );
+    }
+
+    /// Of the 40 newest builds on 2026-09-21, two had no assets and one was
+    /// partial. The scan takes the newest build that has what was asked for,
+    /// whole, and only falls back to "the newest with anything" so that the
+    /// refusal can name what is on offer.
+    #[test]
+    fn the_scan_prefers_the_build_that_carries_what_was_asked_for() {
+        let partial: Vec<&str> = vec![
+            "llama-b11072-bin-ubuntu-vulkan-x64.tar.gz",
+            "llama-b11072-bin-ubuntu-cuda-12.8-x64.tar.gz", // no runtime beside it
+        ];
+        let page = || {
+            vec![
+                release("b11073", &[]),                  // published, nothing uploaded
+                release("v0.4.1", &["nightly-tag.txt"]), // the semver release
+                release("b11072", &partial),
+                release("b11070", B11070),
+            ]
+        };
+        let pick = |wanted: &dyn Fn(&[Backend]) -> bool| {
+            pick_release(page(), "linux", "x86_64", wanted).map(|r| r.tag_name)
+        };
+        let whole = |spec: &'static str, cudart: bool| {
+            move |found: &[Backend]| {
+                resolve_backend(found, spec).is_ok_and(|b| !(cudart && b.cudart_missing()))
+            }
+        };
+        // Anything at all: the newest build with binaries, partial or not.
+        assert_eq!(pick(&|_| true).as_deref(), Some("b11072"));
+        assert_eq!(pick(&whole("vulkan", true)).as_deref(), Some("b11072"));
+        // CUDA with its runtime: the partial build is passed over…
+        assert_eq!(pick(&whole("cuda-12", true)).as_deref(), Some("b11070"));
+        // …unless the runtime is not going to be fetched (`--no-cudart`).
+        assert_eq!(pick(&whole("cuda-12", false)).as_deref(), Some("b11072"));
+        assert_eq!(pick(&whole("rocm", true)).as_deref(), Some("b11070"));
+        // Nowhere on the page: the newest usable build, for its list.
+        assert_eq!(pick(&whole("metal", true)).as_deref(), Some("b11072"));
+        // Nothing for this platform anywhere: no release, and the caller says so.
+        assert_eq!(
+            pick_release(page(), "freebsd", "x86_64", |_| true).map(|r| r.tag_name),
+            None
+        );
     }
 
     /// A `cuda-*` build whose runtime archive is absent is a half-install that

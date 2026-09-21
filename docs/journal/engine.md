@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (73)
+## Entries (74)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -85,6 +85,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a server with no model, and a budget that forgot about reasoning (done)
 - Post-M9: four catalogues, and what each of them will say about a model (done)
 - Post-M9: the flag llama.cpp took away (done)
+- Post-M9: CUDA for Linux, refused — and a version check that stopped checking (done)
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
   a long time (up to the `MANAGED_READY_TIMEOUT=600s` timeout) in "server:
@@ -4710,3 +4711,61 @@ could never get — lessons §2, a fourth time; every such wait is bounded now.
 - **Gates**: fmt / clippy / test green — **3323 unit tests, 196 `#[ignore]`**
   (+2 unit tests, +1 live smoke; the two settings dumps regenerated for the
   label).
+
+### Post-M9: CUDA for Linux, refused — and a version check that stopped checking (done)
+
+- **Found while researching something else** — one-command provisioning for a
+  rented GPU box ([cloud-provisioning.md](../research/cloud-provisioning.md)),
+  whose first question was "what does `llama setup` offer on Linux". The download
+  research had measured, on 2026-09-09, that upstream ships **no CUDA build for
+  Linux**. It has since `b10969` (2026-09-14, upstream PR #28186), and names the
+  runtime archive unlike the Windows one: with the build tag, as a tarball —
+  `cudart-llama-b11070-bin-ubuntu-cuda-12.8-x64.tar.gz` beside
+  `cudart-llama-bin-win-cuda-12.4-x64.zip` in the same release. `cudart_name`
+  *formatted* the Windows shape for every OS. Measured before the fix, by feeding
+  the real `b11070` names through `backends(.., "linux", "x86_64")`: `cuda-12.8`
+  → `cudart=None, missing=true`, i.e. listed as "no CUDA runtime published" and
+  refused by `setup`, naming a file that was never published.
+- **The runtime is derived now, like the server archive** (`is_cudart_for`):
+  `cudart-llama-[<tag>-]bin-<os>-<backend>-<arch>.<ext>`, anchored on both ends,
+  the extension read off the name. Nothing else had to change to install it —
+  `extract` already dispatches on the name and `merge_payload` already collapses
+  a single root directory, which is the download track's "derive, do not
+  enumerate" paying for itself.
+- **The live smoke then failed on something else, and it was right to.**
+  `live_install_cpu_into_a_tempdir` asserts the installed binary's build number
+  equals the tag's, and got `None`: `b11070` prints
+  `0.00.000.803 I srv  llama_server: initializing ...` **ahead of** its
+  `version:` line, on the same stream. `first_line` took the log line — so the
+  released 0.10.2 shows users a log line as the version today, and R5's check,
+  written as "both numbers parse and differ → fail", found one number and
+  **skipped itself in silence**. `version_line` takes the line that *begins*
+  `version:` (falling back to the first, so the user still sees what was said),
+  and a binary that runs but names no number is reported
+  (`llamacpp.setup.build_unreadable`) — not failed, since the wording is
+  upstream's to change, and not silent, since that is how this went unnoticed.
+  `--list-devices` is unaffected (measured: the log goes to stderr, the devices
+  to stdout).
+- **Two things the same listing argued for.** *Families*: Windows went
+  `cuda-13.3` → `cuda-13.4` between `b10883` and `b11070`, twelve days, so
+  `--backend cuda-12` now resolves to the one `cuda-12.*` on offer
+  (`resolve_backend`: an exact id wins, a family ends at a token boundary,
+  `cuda` and `sycl` are refused with both candidates named). *The scan*: of the
+  40 newest builds, 2 carried no assets and 1 was partial (runtimes without their
+  builds), and "the newest with any backend" would have answered a request for
+  CUDA with "unknown backend" from a half-uploaded build — `pick_release` takes
+  the newest that has the named backend **whole** (with its runtime unless
+  `--no-cudart`), and falls back to the newest usable one only so that the
+  refusal can list what is on offer.
+- **Live run** — **GO on Windows, the Linux GPU half owed**, 2026-09-21. The two
+  `#[ignore]` smokes against the real API and the `b11070` CPU archive: green,
+  the version read as `version: 0.4.1-dev (build 11070, …)`. Through the real
+  CLI in a scratch portable root: `--backend cuda` → the ambiguity with
+  `cuda-12.4, cuda-13.4` named; `--backend metal` → unknown, with the list;
+  `--backend cp` is not a family of `cpu`. **Not run: a CUDA install on Linux
+  with a GPU under it** — this machine has neither; it rides on the pod probe of
+  the provisioning research (`tools/pod_probe.sh`, P3), whose report belongs in
+  the next entry.
+- **Gates**: fmt / clippy / test green — **3384 unit tests, 196 `#[ignore]`**
+  (+5 unit tests: the `b11070` fixture's Linux pairing, the runtime matcher's
+  refusals, families, the scan, the version line).
