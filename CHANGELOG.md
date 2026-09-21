@@ -14,14 +14,17 @@ split by subsystem.
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-09-21
+
+**From a bare Linux machine to a local model that answers, in one line.** A new
+command installs the Python sandbox and llama.cpp and writes the model, its
+projector, the embedding model and the context into the settings — checked
+before anything is downloaded, and started once to prove it loads; an install
+script puts the app itself on the machine first. Written for a rented GPU box
+that is new at every stop, and just as good on a desktop. And `llama setup` can
+install CUDA builds on Linux, which it had been refusing.
+
 ### Added
-- **An install script for Linux, and a recipe for a rented GPU box.** `curl -fsSL
-  …/releases/latest/download/install.sh | sh` unpacks the portable build, checks
-  it against the release's checksums, installs the one system library a bare
-  image lacks, and can hand the rest of the line to `mindfork setup`. It is safe
-  to run again: on RunPod, where a stopped pod loses everything outside
-  `/workspace`, the same line puts back what is missing in seconds
-  (docs/install.md §1, §3.4).
 - **`mindfork setup` — a working local engine from one command.** For a machine
   that is new every time (a rented GPU box, a container), and any other:
   `mindfork setup --sandbox --llama cuda-12 --model … --mmproj … --embed-model …
@@ -33,6 +36,13 @@ split by subsystem.
   `--set engine.managed.sessions=4` reaches any other setting, and `--verify`
   starts the servers once and reports how long they took to load, the context,
   whether the model takes images — or why it did not start.
+- **An install script for Linux, and a recipe for a rented GPU box.** `curl -fsSL
+  …/releases/latest/download/install.sh | sh` unpacks the portable build, checks
+  it against the release's checksums, installs the one system library a bare
+  image lacks, and can hand the rest of the line to `mindfork setup`. It is safe
+  to run again: on RunPod, where a stopped pod loses everything outside
+  `/workspace`, the same line puts back what is missing in seconds
+  (docs/install.md §1, §3.4).
 - **`mindfork llama setup --backend cuda-12` — a backend family.** llama.cpp
   renames its CUDA builds whenever it moves to the next toolkit (`cuda-13.3`
   became `cuda-13.4` inside two weeks), so a command you had saved stopped
@@ -2598,7 +2608,8 @@ history is in the [docs/journal/](docs/journal/) log).
   (notes/RAG/self-model, sqlite-vec, per-profile isolation). Schema format is
   v1; schema versioning and migrations are formalized in later releases.
 
-[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.10.2...HEAD
+[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/vshylov/mindfork-rs/compare/v0.10.2...v0.11.0
 [0.10.2]: https://github.com/vshylov/mindfork-rs/compare/v0.10.1...v0.10.2
 [0.10.1]: https://github.com/vshylov/mindfork-rs/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/vshylov/mindfork-rs/compare/v0.9.9...v0.10.0
