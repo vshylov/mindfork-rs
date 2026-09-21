@@ -193,6 +193,7 @@ fn real_main(
             run_llama_installed(paths, loc);
             Ok(ExitCode::SUCCESS)
         }
+        CliCommand::Setup(args) => run_setup(paths, &args, loc),
         CliCommand::LlamaRemove { id, force } => {
             run_llama_remove(paths, &id, force, loc)?;
             Ok(ExitCode::SUCCESS)
@@ -842,6 +843,211 @@ fn run_sandbox_setup(
     Ok(())
 }
 
+/// CLI: one-command provisioning (`mindfork setup …`) — the sandbox, llama.cpp
+/// and the managed engine's settings in one go, for a machine that is new every
+/// time (docs/research/cloud-provisioning.md §4.2).
+///
+/// The order is the design:
+///
+///  1. **the settings half is validated first**, on the in-memory config — a
+///     typo in a path or a key is an error before the first byte is downloaded;
+///  2. the downloads, each of which **may fail without stopping the rest**
+///     (fork F10): at an hourly rate a chat without Python beats no chat, and
+///     the re-run repairs what is missing;
+///  3. **one write**, of what the steps that succeeded decided, through the same
+///     two precautions every CLI write of user data takes
+///     ([`open_config_for_cli_write`]);
+///  4. `--verify`, against the settings as they now are on disk;
+///  5. a summary, and a non-zero exit if any step failed.
+///
+/// One single-instance guard covers all of it, as it does for each `setup` this
+/// composes.
+fn run_setup(paths: &Paths, args: &cli::SetupArgs, loc: &Locale) -> anyhow::Result<ExitCode> {
+    // The launch path (`ServerHandle::launch`, the preflight) wants the
+    // registry's own `'static` reference, which is what this one already is.
+    let loc: &'static Locale = i18n::locale(loc.lang());
+    if args.is_empty() {
+        println!("{}", cli::render_help(Some(cli::HelpTopic::Setup), loc));
+        return Ok(ExitCode::from(2));
+    }
+    let _instance = acquire_cli_guard(loc, loc.t("cli.guard.action.setup"))?;
+    Ok(ExitCode::from(setup_under_guard(paths, args, loc)?))
+}
+
+/// Everything `setup` does once it holds the single-instance guard, returning
+/// the process exit code. Split off so that the tests can run the whole command
+/// on a scratch root: the guard is one lock per machine, which a test must not
+/// take — it would fail whenever the app is open, and against its neighbours.
+fn setup_under_guard(
+    paths: &Paths,
+    args: &cli::SetupArgs,
+    loc: &'static Locale,
+) -> anyhow::Result<u8> {
+    let (store, mut config) = open_config_for_cli_write(paths, loc, SETUP_CTX)?;
+    let before = config.clone();
+    let wrote = features::provision::apply_settings(&mut config, args, loc)?;
+
+    let mut run = SetupRun {
+        paths,
+        loc,
+        runtime: cli_runtime(loc)?,
+        config,
+        wrote,
+        failed: Vec::new(),
+    };
+    if args.sandbox {
+        run.sandbox();
+    }
+    if let Some(backend) = &args.llama {
+        run.llama(backend, args.llama_build.clone());
+    }
+    run.write(&store, &before)?;
+    if args.verify {
+        run.verify();
+    }
+    Ok(run.summary())
+}
+
+/// The locale key of the context every settings failure of `setup` is wrapped in.
+const SETUP_CTX: &str = "cli.ctx.setup";
+
+/// One `mindfork setup` in flight: what the steps share, so that each step is a
+/// method of a few lines rather than an arm of one long function.
+struct SetupRun<'a> {
+    paths: &'a Paths,
+    loc: &'static Locale,
+    runtime: tokio::runtime::Runtime,
+    /// The config as it will be written — the settings half already applied.
+    config: AppConfig,
+    /// One printable line per setting written, in order.
+    wrote: Vec<String>,
+    /// The names of the steps that failed, for the summary and the exit code.
+    failed: Vec<&'static str>,
+}
+
+impl SetupRun<'_> {
+    /// A failed step is said where it happened and remembered for the summary —
+    /// and does not stop the steps after it.
+    fn fail(&mut self, step: &'static str, err: &anyhow::Error) {
+        let name = self.loc.t(step);
+        eprintln!(
+            "{}",
+            self.loc.tf(
+                "setup.step.failed",
+                &[("step", name), ("reason", &format!("{err:#}"))]
+            )
+        );
+        self.failed.push(name);
+    }
+
+    fn sandbox(&mut self) {
+        println!("{}", self.loc.t("setup.step.sandbox.header"));
+        let done = self.runtime.block_on(features::sandbox_setup::setup(
+            &self.paths.sandbox_dir(),
+            &features::sandbox_setup::SetupOptions { force: false },
+            self.loc,
+            |msg| println!("{msg}"),
+        ));
+        match done {
+            // Only after a successful provisioning — ADR 0005 §5, as
+            // `sandbox setup --enable-python` has it.
+            Ok(()) if !self.config.tools.python_enabled => {
+                self.config.tools.python_enabled = true;
+                self.wrote.push(self.loc.tf(
+                    "setup.settings.line",
+                    &[("key", "tools.python_enabled"), ("value", "true")],
+                ));
+            }
+            Ok(()) => {}
+            Err(e) => self.fail("setup.step.sandbox", &e),
+        }
+    }
+
+    fn llama(&mut self, backend: &str, build: Option<String>) {
+        println!("{}", self.loc.t("setup.step.llama.header"));
+        let done = self.runtime.block_on(features::llama_setup::setup(
+            &self.paths.llama_dir(),
+            &features::llama_setup::SetupOptions {
+                backend: backend.to_string(),
+                build,
+                force: false,
+                cudart: true,
+            },
+            self.loc,
+            |msg| println!("{msg}"),
+        ));
+        match done {
+            Ok(_) => {
+                let cleared = features::provision::clear_dead_binaries(&mut self.config);
+                let loc = self.loc;
+                self.wrote.extend(
+                    cleared
+                        .into_iter()
+                        .map(|key| loc.tf("setup.settings.cleared", &[("key", key)])),
+                );
+            }
+            Err(e) => self.fail("setup.step.llama", &e),
+        }
+    }
+
+    /// The one write: what the steps that succeeded decided, and only when that
+    /// differs from what was loaded — a re-run on a provisioned machine touches
+    /// nothing.
+    fn write(&self, store: &JsonStore, before: &AppConfig) -> anyhow::Result<()> {
+        if self.wrote.is_empty() {
+            return Ok(());
+        }
+        println!("{}", self.loc.t("setup.settings.header"));
+        for line in &self.wrote {
+            println!("{line}");
+        }
+        if self.config == *before {
+            println!("{}", self.loc.t("setup.settings.unchanged"));
+            return Ok(());
+        }
+        store
+            .save_config(&self.config)
+            .with_context(|| self.loc.t(SETUP_CTX).to_string())
+    }
+
+    fn verify(&mut self) {
+        println!("{}", self.loc.t("setup.step.verify.header"));
+        let lookup = app::supervisor::BinaryLookup::from_paths(self.paths);
+        let ok = self
+            .runtime
+            .block_on(app::verify::run(&self.config, &lookup, self.loc, |msg| {
+                println!("{msg}")
+            }));
+        if ok {
+            return;
+        }
+        self.failed.push(self.loc.t("setup.step.verify"));
+        println!(
+            "{}",
+            self.loc.tf(
+                "setup.verify.see_log",
+                &[("path", &self.paths.log_dir().display().to_string())]
+            )
+        );
+    }
+
+    /// The closing line, and the process exit code that goes with it.
+    fn summary(&self) -> u8 {
+        if self.failed.is_empty() {
+            println!("{}", self.loc.t("setup.summary.ok"));
+            return 0;
+        }
+        eprintln!(
+            "{}",
+            self.loc.tf(
+                "setup.summary.failed",
+                &[("steps", &self.failed.join(", "))]
+            )
+        );
+        1
+    }
+}
+
 /// A tokio runtime for a CLI command whose work is async (the network).
 fn cli_runtime(loc: &Locale) -> anyhow::Result<tokio::runtime::Runtime> {
     tokio::runtime::Builder::new_multi_thread()
@@ -1266,6 +1472,136 @@ mod tests {
             Lang::En,
             "the installer's language choice was lost by creating settings.json"
         );
+    }
+
+    fn setup_args_for(model: &Path) -> cli::SetupArgs {
+        cli::SetupArgs {
+            model: Some(model.to_path_buf()),
+            ctx: Some(4096),
+            set: vec![("engine.managed.sessions".into(), "2".into())],
+            ..Default::default()
+        }
+    }
+
+    /// `setup` on a data root that has never been used writes `settings.json`
+    /// once — seeded with the installer's language, like the other two CLI
+    /// writers — and the same line again writes **nothing**: a re-run on a
+    /// provisioned machine must not even rotate the `.bak`.
+    #[test]
+    fn setup_writes_once_and_a_rerun_touches_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = Paths::with_root(tmp.path()).with_default_language(Lang::En);
+        let model = tmp.path().join("chat.gguf");
+        std::fs::write(&model, b"GGUF").unwrap();
+        let loc = i18n::locale(Lang::En);
+        let args = setup_args_for(&model);
+
+        assert_eq!(setup_under_guard(&paths, &args, loc).unwrap(), 0);
+        let cfg = JsonStore::new(paths.clone()).load_config().unwrap();
+        assert_eq!(cfg.engine.mode, ServerMode::Managed);
+        assert_eq!(
+            cfg.engine.managed.model_path.as_deref(),
+            Some(model.to_str().unwrap())
+        );
+        assert_eq!(cfg.engine.managed.context_size, 4096);
+        assert_eq!(cfg.engine.managed.sessions, 2);
+        assert_eq!(cfg.engine.managed.binary, None, "no binary path is written");
+        assert_eq!(cfg.interface.language, Lang::En, "the language was seeded");
+
+        let written = std::fs::read(paths.settings_file()).unwrap();
+        let bak = paths.settings_file().with_extension("bak");
+        assert!(!bak.exists(), "a first write has nothing to back up");
+        assert_eq!(setup_under_guard(&paths, &args, loc).unwrap(), 0);
+        assert!(!bak.exists(), "the re-run wrote: it rotated a backup");
+        assert_eq!(std::fs::read(paths.settings_file()).unwrap(), written);
+    }
+
+    /// A typo is refused before anything exists: no `settings.json`, in the
+    /// words the launch would have used.
+    #[test]
+    fn setup_refuses_a_typo_before_anything_is_written() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = Paths::with_root(tmp.path());
+        let loc = i18n::locale(Lang::En);
+        let args = setup_args_for(&tmp.path().join("nope.gguf"));
+        let err = setup_under_guard(&paths, &args, loc).unwrap_err();
+        assert!(err.to_string().contains("nope.gguf"), "{err}");
+        assert!(!paths.settings_file().exists());
+
+        let args = cli::SetupArgs {
+            set: vec![("engine.managed.modle_path".into(), "x".into())],
+            ..Default::default()
+        };
+        let err = setup_under_guard(&paths, &args, loc).unwrap_err();
+        assert!(err.to_string().contains("modle_path"), "{err}");
+        assert!(!paths.settings_file().exists());
+    }
+
+    /// Bare `setup` has nothing to do: its help and exit code 2, before the
+    /// guard is taken and before the data root is touched.
+    #[test]
+    fn setup_with_nothing_to_do_exits_2_and_writes_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = Paths::with_root(tmp.path());
+        let code = run_setup(&paths, &cli::SetupArgs::default(), i18n::locale(Lang::En)).unwrap();
+        assert_eq!(format!("{code:?}"), format!("{:?}", ExitCode::from(2)));
+        assert!(!paths.settings_file().exists());
+    }
+
+    /// `--verify` on an engine that is not ours to start is a skip and a clean
+    /// exit; on a managed engine with nothing to run it is a failure — exit 1 —
+    /// **and the settings are still written**: a failed step does not undo the
+    /// ones that succeeded (fork F10).
+    #[test]
+    fn setup_verify_skips_a_cloud_engine_and_fails_an_empty_managed_one() {
+        let loc = i18n::locale(Lang::En);
+        let cloud = tempfile::tempdir().unwrap();
+        let paths = Paths::with_root(cloud.path());
+        let args = cli::SetupArgs {
+            set: vec![
+                ("engine.mode".into(), "claude".into()),
+                ("embed.mode".into(), "openai".into()),
+            ],
+            verify: true,
+            ..Default::default()
+        };
+        assert_eq!(setup_under_guard(&paths, &args, loc).unwrap(), 0);
+
+        let empty = tempfile::tempdir().unwrap();
+        let paths = Paths::with_root(empty.path());
+        let args = cli::SetupArgs {
+            ctx: Some(2048),
+            verify: true,
+            ..Default::default()
+        };
+        assert_eq!(setup_under_guard(&paths, &args, loc).unwrap(), 1);
+        let cfg = JsonStore::new(paths.clone()).load_config().unwrap();
+        assert_eq!(cfg.engine.managed.context_size, 2048);
+    }
+
+    /// A failed download is said, remembered for the summary and the exit code —
+    /// and is not an `Err`: the steps after it still run.
+    #[test]
+    fn a_failed_setup_step_is_remembered_not_raised() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = Paths::with_root(tmp.path());
+        let loc = i18n::locale(Lang::En);
+        let mut run = SetupRun {
+            paths: &paths,
+            loc,
+            runtime: cli_runtime(loc).unwrap(),
+            config: AppConfig::default(),
+            wrote: Vec::new(),
+            failed: Vec::new(),
+        };
+        assert_eq!(run.summary(), 0);
+        run.fail("setup.step.sandbox", &anyhow!("the network went away"));
+        assert_eq!(run.failed, [loc.t("setup.step.sandbox")]);
+        assert_eq!(run.summary(), 1);
+        // Nothing was decided, so nothing is written — not even an empty file.
+        run.write(&JsonStore::new(paths.clone()), &AppConfig::default())
+            .unwrap();
+        assert!(!paths.settings_file().exists());
     }
 
     /// An existing config is edited, not replaced: unrelated settings survive.

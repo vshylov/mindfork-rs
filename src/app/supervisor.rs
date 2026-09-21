@@ -19,7 +19,7 @@ use crate::shared::api::{
 };
 use crate::shared::config::{
     CloudProvider, EmbedSettings, EngineSettings, ImpersonationEngineSettings, ImpersonationMode,
-    ManagedSettings, ServerMode,
+    ManagedEmbedSettings, ManagedSettings, ServerMode,
 };
 use crate::shared::i18n::Locale;
 use crate::shared::paths::Paths;
@@ -27,7 +27,7 @@ use crate::shared::server::ServerStatus;
 
 /// A generous readiness timeout for the managed server: loading the model can take
 /// minutes.
-const MANAGED_READY_TIMEOUT: Duration = Duration::from_secs(600);
+pub(crate) const MANAGED_READY_TIMEOUT: Duration = Duration::from_secs(600);
 /// A short readiness timeout for the external server (it should already be up).
 const EXTERNAL_READY_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -146,7 +146,7 @@ impl BinaryLookup {
 
     /// The launchable path for a configured setting, or `None` — see
     /// [`crate::features::llama_setup::resolve_binary`].
-    fn resolve(&self, configured: Option<&str>) -> Option<PathBuf> {
+    pub(crate) fn resolve(&self, configured: Option<&str>) -> Option<PathBuf> {
         crate::features::llama_setup::resolve_binary(
             configured,
             self.exe_dir.as_deref(),
@@ -296,36 +296,7 @@ impl ServerSupervisor for LlamaSupervisor {
             // downloaded build serves both.
             ServerMode::Managed => match self.lookup.resolve(settings.managed.binary.as_deref()) {
                 Some(bin) => {
-                    let m = &settings.managed;
-                    let cfg = ManagedConfig {
-                        binary: bin,
-                        model_path: m.model_path.clone(),
-                        // An embedding model has no image encoder — the projector is
-                        // a chat-server setting only.
-                        mmproj: None,
-                        gpu_layers: m.gpu_layers,
-                        context_size: crate::shared::config::DEFAULT_CONTEXT_SIZE,
-                        // Its batch is the context size (`build_args`), not this.
-                        batch_size: None,
-                        // Embeddings are one request at a time; the chat
-                        // server's session budget is not this server's.
-                        parallel: 1,
-                        jinja: false, // the embedding server doesn't need a chat template
-                        reasoning_format: None,
-                        embeddings: true,
-                        no_mmap: false,
-                        // Speculative decoding/FlashAttention aren't applicable to the
-                        // embedding server (it doesn't generate tokens).
-                        flash_attn: None,
-                        spec_type: None,
-                        draft_model: None,
-                        draft_gpu_layers: None,
-                        draft_n_max: None,
-                        draft_n_min: None,
-                        host: "127.0.0.1".into(),
-                        port: m.port,
-                        extra_args: vec![],
-                    };
+                    let cfg = managed_embed_config(&settings.managed, bin);
                     // The same refusal the chat server makes: without a model file
                     // `llama-server` starts a *router* that answers `/health` and
                     // refuses every embedding request (§2.1 of
@@ -495,6 +466,44 @@ fn managed_chat_setup(
     }
 }
 
+/// The embedding server's launch config: the same `llama-server` with
+/// `--embeddings`, its binary already resolved by the caller.
+///
+/// A function rather than a literal inside `embed_setup` so that `mindfork setup
+/// --verify` starts **exactly** what the app will (`app::verify`) — a second
+/// copy of these fields would drift the first time one of them changed.
+pub(crate) fn managed_embed_config(m: &ManagedEmbedSettings, binary: PathBuf) -> ManagedConfig {
+    ManagedConfig {
+        binary,
+        model_path: m.model_path.clone(),
+        // An embedding model has no image encoder — the projector is a
+        // chat-server setting only.
+        mmproj: None,
+        gpu_layers: m.gpu_layers,
+        context_size: crate::shared::config::DEFAULT_CONTEXT_SIZE,
+        // Its batch is the context size (`build_args`), not this.
+        batch_size: None,
+        // Embeddings are one request at a time; the chat server's session
+        // budget is not this server's.
+        parallel: 1,
+        jinja: false, // the embedding server doesn't need a chat template
+        reasoning_format: None,
+        embeddings: true,
+        no_mmap: false,
+        // Speculative decoding/FlashAttention aren't applicable to the
+        // embedding server (it doesn't generate tokens).
+        flash_attn: None,
+        spec_type: None,
+        draft_model: None,
+        draft_gpu_layers: None,
+        draft_n_max: None,
+        draft_n_min: None,
+        host: "127.0.0.1".into(),
+        port: m.port,
+        extra_args: vec![],
+    }
+}
+
 /// Builds a [`ManagedConfig`] (`llama-server`) from the engine's managed subsection
 /// (shared by the assistant's chat server and the impersonation server).
 ///
@@ -503,7 +512,7 @@ fn managed_chat_setup(
 /// setting resolves to the build installed last under `data/llama/`. Nothing
 /// found leaves the path empty, which `managed_chat_setup` reads as
 /// `NotConfigured` exactly as before.
-fn managed_config(s: &ManagedSettings, lookup: &BinaryLookup) -> ManagedConfig {
+pub(crate) fn managed_config(s: &ManagedSettings, lookup: &BinaryLookup) -> ManagedConfig {
     ManagedConfig {
         binary: lookup.resolve(s.binary.as_deref()).unwrap_or_default(),
         model_path: s.model_path.clone(),

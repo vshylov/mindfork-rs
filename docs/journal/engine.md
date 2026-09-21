@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (74)
+## Entries (75)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -86,6 +86,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: four catalogues, and what each of them will say about a model (done)
 - Post-M9: the flag llama.cpp took away (done)
 - Post-M9: CUDA for Linux, refused — and a version check that stopped checking (done)
+- Post-M9: `mindfork setup` — a working managed engine from one command (done)
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
   a long time (up to the `MANAGED_READY_TIMEOUT=600s` timeout) in "server:
@@ -4769,3 +4770,91 @@ could never get — lessons §2, a fourth time; every such wait is bounded now.
 - **Gates**: fmt / clippy / test green — **3384 unit tests, 196 `#[ignore]`**
   (+5 unit tests: the `b11070` fixture's Linux pairing, the runtime matcher's
   refusals, families, the scan, the version line).
+
+### Post-M9: `mindfork setup` — a working managed engine from one command (done)
+
+- **Stage 1 of the provisioning track**
+  ([cloud-provisioning.md](../research/cloud-provisioning.md) §4.2–§4.3, forks
+  F1/F3/F7/F10). A rented GPU box is new every time, and the last step to a
+  managed engine there was the settings screen — four paths and a number, typed
+  on a meter. The environment route does not replace it: `MINDFORK_MODEL` and its
+  kin *override* on every launch and become permanent by accident the first time
+  anything is saved, and the managed branch is keyed on `MINDFORK_LLAMA_BIN`, so
+  it cannot even use the build `llama setup` installed. `setup` **writes**.
+- **The order is the design** (`run_setup`, `main.rs`): the settings half is
+  applied to the in-memory config and validated **before the first download**
+  (`features/provision.rs` — the launch's own `preflight_model`, extracted from
+  `ServerHandle::launch` so that a path the command accepts is a path the launch
+  accepts); then the downloads, each allowed to fail without stopping the rest;
+  then **one** write, only if the config differs from what was loaded; then
+  `--verify`; then a per-step summary and a non-zero exit on any failure. One
+  single-instance guard covers all of it. Bare `setup` prints its help and exits
+  `2`.
+- **`--set KEY=VALUE` is safe to offer because of one check.** Every config
+  struct is `#[serde(default)]`, so an unknown key deserializes away in silence
+  and `engine.managed.modle_path=x` would "succeed". The document is taken
+  through the config's own types and back, and the key must survive with the
+  value given — numbers with a tolerance (an `f32` field returns `0.699999988`
+  for `0.7`), a field skipped when empty read as null. A literal that does not
+  fit is retried as the text it was typed as (`model_name=4`), and the *first*
+  refusal is the one reported. `schema_version` and `api_keys` are refused.
+- **Two decisions the research had not made.** *Naming a model switches the
+  mode* — `--model` → `engine.mode = managed`, said with the mode it replaced —
+  because a data root restored from home may arrive in `claude`, and a command
+  that then configured an engine nobody uses would have done nothing. And *no
+  binary path is written, but a dead one is cleared*: after a successful
+  `--llama`, a managed binary path with a separator in it that names no file is
+  unset so the empty field finds the fresh install. The separator test is
+  textual — either `/` or `\` — because the case it exists for is
+  `C:\llama\llama-server.exe` arriving on Linux, where `Path` reads the whole of
+  it as one file name with no directory part.
+- **`--verify` starts what the app will start** (`app/verify.rs`): the
+  supervisor's `managed_config` and a `managed_embed_config` extracted from
+  `embed_setup` for the purpose, through `ServerHandle::launch` and
+  `wait_until_ready` with the supervisor's timeout — **both servers at once**,
+  since whether the two fit the card together is one of the questions. It reports
+  time to ready and `/props` (context, vision, slots) through the `EngineBackend`
+  methods the app already uses. A port something listens on is **refused, not
+  probed**: a readiness probe cannot tell our server from that one, and would
+  have verified a stranger. A cloud or external mode, and an embedder nobody
+  configured, are skips.
+- **Live run** — **GO**, 2026-09-21, Windows, the real CLI in a scratch portable
+  root with `cpu-b11070`, `gemma-3-4b-it-q8_0` and `bge-m3-Q8_0` on the CPU:
+  `setup --llama cpu --model … --embed-model … --ctx 4096 --ngl 0 --set … --verify`
+  → llama.cpp recognised as installed, seven settings written, both servers up
+  together, `chat server: ready in 9 s — context 4096, text only, 4 slots`,
+  `embedding server: ready in 9 s`, both stopped (ports free, no process left),
+  `binary` still unset, exit 0, 10 s in all. Control arms, each live: a typo'd
+  model beside `--llama vulkan` → refused in the launch's words **before any
+  download**, no `settings.json` created; an unknown / refused / mistyped `--set`
+  → refused by name; the same line again → "already said so — nothing was
+  written"; a planted `/opt/gone/llama-server` → cleared after `--llama`, a bare
+  `llama-server` left alone; a projector of another model under `--verify` →
+  `FAILED — llama-server exited before becoming ready`, the log folder named,
+  exit 1; a bare binary name not on `PATH` → `FAILED — spawning llama-server
+  (llama-server): program not found` (the whole cause chain — the first run
+  showed only the context, which is the half nobody can act on). The
+  `#[ignore]` smoke `verify_starts_reports_and_stops_e2e_live` is green on the
+  same pair. **Not run: Linux, and a GPU** — both ride on the pod probe.
+- **A gate tripped, usefully**: `all_bundle_key_references_in_code_exist` took
+  the fixture file name `setup.msi` for a locale key the moment a `setup.` prefix
+  existed; it joined `notes.md` on that gate's list of file names.
+- **The coverage gate asked for the handler's tests, and was right to.** The
+  first push failed Sonar on **new-code coverage, 76.1 % against 80 %** — no
+  findings, no duplication: the uncovered quarter was `run_setup`, the one piece
+  that decides the order, the single write and the exit code, and it was
+  untested because it began by taking the machine-wide instance guard, which a
+  test must not take (it fails whenever the app is open). Everything after the
+  guard is now `setup_under_guard`, run by the tests on a scratch root: one write
+  and **no second one on a re-run** (asserted on the absent `.bak`), a typo
+  refused before `settings.json` exists, a cloud engine skipped under `--verify`,
+  an empty managed one failing it **with the settings still written**, a failed
+  step remembered rather than raised. The `/props` phrase became a pure
+  `facts_phrase`. What stays uncovered is honest: the two download steps and the
+  ready path of `--verify`, which need the network and a real server and have
+  the live run above instead.
+- **Gates**: fmt / clippy / test green — **3408 unit tests, 197 `#[ignore]`**
+  (+24 unit tests: the parser and its help, the five named settings and the mode
+  switch, path refusals in both locales, split GGUFs, `--set` reach / fallback /
+  unknown key / refused keys, dead-binary clearing, `--verify`'s skips, refusals,
+  busy port and facts, the handler on a scratch root; +1 live smoke).

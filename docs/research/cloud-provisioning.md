@@ -501,6 +501,14 @@ stack on Windows, and the whole one-liner on a rented pod, recorded in
    the *released* binary still refuses CUDA on Linux — which is what P3 of the
    probe expects to see, and why it goes on with `--no-cudart`.
 1. **`feat/setup-command`** — `mindfork setup` with paths, `--set`, `--verify`.
+   **Done 2026-09-21** ([journal/engine.md](../journal/engine.md)), live **GO**
+   on Windows/CPU. Two decisions were made in the building and are recorded
+   in spec §3.4: `--model` and `--embed-model` **switch the mode** to managed
+   and say which one they replaced; and although no binary path is written, a
+   managed binary path that names **no file** is cleared after a successful
+   `--llama` — the path a data root restored from another machine brings.
+   `--verify` also refuses a busy port instead of probing it: a readiness
+   probe cannot tell our server from whatever already answers there.
 2. **`feat/install-script`** — `install.sh`, the release workflow, the rehearsal;
    install.md gains "On a rented GPU box" with the RunPod recipe.
 3. *(if F4 goes that way)* **model download** — its own research section first.

@@ -61,7 +61,9 @@ offered with the likely ones first.
 For `managed`, the **Binary** field may be left empty — the app then uses the
 build `mindfork llama setup` installed last, or a `llama-server` sitting next to
 it. The **Model** field there is a path to a `.gguf` file, not a name: a managed
-server with no model starts nothing at all, deliberately.
+server with no model starts nothing at all, deliberately. All of this section's
+managed fields can also be written from the command line in one go —
+`mindfork setup --model … --ctx … --verify` ([install.md](install.md) §3.3).
 
 The status chip at the top right of the section says where the engine stands:
 `● ready`, `◐ connecting…`, `✕ not configured`, or a refusal with its reason.

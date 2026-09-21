@@ -177,8 +177,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-21, version 0.10.2)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3384 unit tests
-green, 196 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **3408 unit tests
+green, 197 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -190,6 +190,15 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **`mindfork setup` — a working managed engine from one command** (stage 1 of
+  the provisioning track). Sandbox + llama.cpp + the model, projector, embedder
+  and context **written** into the settings (the env variables only override),
+  `--set KEY=VALUE` guarded by a round trip through the config's types, and
+  `--verify`, which starts what the app will start and reports `/props`.
+  Validated before any download; a failed step does not stop the rest. Live **GO**
+  on Windows/CPU; Linux and a GPU ride on the pod probe
+  ([docs/research/cloud-provisioning.md](docs/research/cloud-provisioning.md) §4,
+  spec §3.4, [docs/journal/engine.md](docs/journal/engine.md)).
 - **`llama setup` refused CUDA on Linux** — upstream has shipped it since
   2026-09-14, under a runtime-archive name unlike the Windows one; the name is
   derived now. The live smoke then caught `--version` logging ahead of itself,
@@ -361,39 +370,6 @@ being recent is dropped, not shortened.
   `/props` first, the catalogue not even asked
   ([docs/history/gateway-capabilities.md](docs/history/gateway-capabilities.md), spec §6.7, §8.1,
   [docs/journal/engine.md](docs/journal/engine.md)).
-- **`external` against a gateway — a thought under a second name** — the mode we
-  recommend for OpenRouter dropped every thought it sent: the client read
-  `delta.reasoning_content`, a gateway writes `delta.reasoning`, and an unknown
-  field deserializes away in silence, so a reasoning model there answered with
-  its thinking invisible and the `<think>` fallback could not help (the gateway
-  has already lifted the reasoning out of `content`). Both names are read now,
-  `reasoning_content` first, taking **both** fields — one trace under two names
-  must not double — so the local stack is byte-identical to before. The review's
-  other "change nothing" — `reasoning_effort:"none"` on the three silent turns —
-  **was refuted by the measurement that followed**: that body is answered `400
-  "Reasoning is mandatory for this endpoint and cannot be disabled"`, so on an
-  always-reasoning model the title, the compaction roll and impersonation fail
-  while chat works (the xAI failure by another road). Fixed on the user's choice: the
-  client re-sends once without the field and **remembers** the refusal per server,
-  feeding the same `omit_effort_none` switch xAI is configured with — narrow by
-  construction (a `400` only, only when the turn asked, only when the message
-  names reasoning *and* its disabling), so a `503` stays the retry decorator's, and
-  **GO** on R1: the title comes back where the same request used to be the `400` —
-  with 772 characters of reasoning still spent, because that endpoint cannot be
-  asked to stop, which is the residual the fix does not claim to remove.
-  The catalogue itself is measured
-  and carries `context_length` **and** `supported_parameters` per model, so the
-  window and the honest sampling list are one fetch away.
-  Live **GO** on `deepseek/deepseek-r1` through OpenRouter (the session had no
-  route to the service; the author ran it): thoughts and answer both arrive, and
-  the same run turned F3 from prediction into measurement — 22 567 tokens, nothing
-  folded, because a gateway reports no window — while proving `usage` parses.
-  Writing those commands found two more things: `live_client` sent no `model`, so
-  **no** live smoke could have been pointed at a gateway (it now derives
-  `MINDFORK_ENGINE_MODEL`), and "run the whole `--ignored` set" is local-stack
-  advice that costs hours and real money on a metered one (install.md §7.1)
-  ([docs/research/openrouter-external.md](docs/research/openrouter-external.md),
-  spec §6.5, [docs/journal/engine.md](docs/journal/engine.md)).
 - **A headless launch (no TTY) exits with code 2** and a one-line reason — the
   TUI cannot be run from an agent's shell; live verification needs a real
   terminal.

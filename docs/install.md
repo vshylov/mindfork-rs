@@ -759,10 +759,88 @@ Two differences from a cloud key:
   each holds its own key. A cloud gateway for chat beside a local embedding server is
   the normal case, and sharing one key would send the gateway's token to localhost.
 
+### 3.3. Everything in one go (`mindfork setup`)
+
+One command takes a machine from "mindfork is unpacked" to "a local model
+answers" — the Python sandbox, llama.cpp, and the settings of the managed engine
+— without opening the settings screen. It exists for machines that are **new
+every time** (a rented GPU box, a container), and is just as usable on a desktop:
+
+```bash
+mindfork setup --sandbox --llama cuda-12 \
+  --model /models/gemma-4-31b-it-q4_0.gguf \
+  --mmproj /models/mmproj-gemma-4-31b-it-f16.gguf \
+  --embed-model /models/bge-m3-Q8_0.gguf \
+  --ctx 32768 --verify
+```
+
+| | |
+|---|---|
+| `--sandbox` | install the Python sandbox and switch Python execution on — `sandbox setup --enable-python` (§4.1) |
+| `--llama <BACKEND>` | install that llama.cpp backend, or family (`cuda-12`) — `llama setup --backend` (§3.1); `--llama-build <TAG>` pins the build |
+| `--model <GGUF>` | the chat model; **also switches the engine to managed mode**, and says so if it was in another |
+| `--mmproj <GGUF>` | the vision projector that ships beside a vision model |
+| `--embed-model <GGUF>` | the embedding model (memory, the knowledge base); also switches embeddings to managed mode |
+| `--ctx <N>` / `--ngl <N>` | the chat server's context window and GPU layers |
+| `--set <KEY>=<VALUE>` | any other setting, by its path in `settings.json` — `--set engine.managed.sessions=4 --set engine.managed.no_mmap=true`. Repeatable |
+| `--verify` | afterwards start the configured servers once, report what they say about themselves, and stop them |
+
+How it behaves, which matters more than the list:
+
+- **Every option is one step, and a step you do not name is not run.**
+  `mindfork setup --ctx 65536` alone is a perfectly good use.
+- **Paths and keys are checked before anything is downloaded or written.** A
+  model path that names no file, a part of a multi-file GGUF that is not the
+  first, a `--set` key that does not exist (`engine.managed.modle_path`) or a
+  value of the wrong type is an error *now*, in the same words the app would
+  have used at launch — not a status line ten minutes and a gigabyte later.
+  Relative paths are stored absolute.
+- **A step that fails does not stop the others.** If the sandbox download fails,
+  llama.cpp is still installed and the settings are still written; the command
+  ends with the list of what failed and a non-zero exit code. **Run the same
+  line again** and it repeats only what is missing — everything that is already
+  in place is recognised and skipped.
+- **It writes `settings.json`**, once, at the end. That is the difference from
+  the environment variables below: what it sets is what the settings screen
+  (`Ctrl+P`) shows, and what you change there afterwards sticks.
+- **It writes no path to the `llama-server` binary** — an empty *Binary* field
+  already finds the build installed last (§3.1). The one exception runs the
+  other way: after a successful `--llama`, a binary path in the settings that
+  names **no file** — typically one that arrived with data restored from another
+  machine — is cleared, and the command says so.
+- **`--set` takes the value as JSON when it parses as JSON** (`true`, `4`,
+  `null` to unset, `"quoted"`), and as plain text otherwise, so paths, hosts and
+  mode names need no quoting. API keys cannot be set this way — a key typed on
+  a command line ends up in the shell's history; give the key's *variable name*
+  instead (`--set engine.openai.api_key_env=MY_KEY`, §3.2).
+
+**`--verify`** starts exactly what the app will start — the chat server and, if
+one is configured, the embedding server, **both at once**, since whether the two
+fit the GPU together is one of the questions — waits for each to load, and
+prints one line per server:
+
+```
+== Starting what was configured
+  chat server: starting on port 8000…
+  embedding server: starting on port 8001…
+  chat server: ready in 41 s — context 32768, takes images, 4 slots
+  embedding server: ready in 6 s
+```
+
+A context too large for the card, a projector that belongs to another model, a
+port something else already listens on — each shows up here as `FAILED` with the
+reason, while the command line can still be edited. The servers' own output goes
+to the log (`data/logs/`), and the command names the folder when something
+fails. A cloud or external engine is not started and not failed: there is
+nothing of ours to start.
+
 ### Quick start via environment variables (dev)
 
 Env takes priority over `settings.json` (handy for smoke runs), affecting only the
-inference/embedding servers:
+inference/embedding servers. It **overrides on every launch** rather than
+configuring — and an overridden value is written back the first time you change
+anything on the settings screen — so for a setup meant to last use
+`mindfork setup` (§3.3) instead:
 
 ```powershell
 # external chat server (any OpenAI-compatible one)

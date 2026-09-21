@@ -332,9 +332,10 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   asset, for RunPod and its kin. Stage 0 is **done** (2026-09-21): upstream has
   published **CUDA builds for Linux** since 2026-09-14 and `llama setup` refused
   them, because the Linux runtime archive is named unlike the Windows one. What
-  remains: the probe on a rented pod (`tools/pod_probe.sh`), which also carries
-  stage 0's Linux-GPU live half; stage 1 (`mindfork setup`); stage 2
-  (`install.sh`); a model download as a later stage.
+  Stage 1 is **done** too: `mindfork setup` (install.md §3.3). What remains: the
+  probe on a rented pod (`tools/pod_probe.sh`), which carries the Linux-GPU live
+  half of both stages; stage 2 (`install.sh` as a release asset, and the RunPod
+  recipe in install.md); a model download as a later stage.
 - **Provider bridges** — the "any OpenAI-compatible endpoint" pattern
   (external + LiteLLM/OpenRouter) is documented in install.md §3, together with
   the key such a gateway needs

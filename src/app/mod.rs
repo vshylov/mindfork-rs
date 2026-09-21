@@ -8,3 +8,4 @@ pub mod gen_state;
 pub mod orchestrator;
 pub mod runtime;
 pub mod supervisor;
+pub mod verify;

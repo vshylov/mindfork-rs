@@ -15,6 +15,17 @@ split by subsystem.
 ## [Unreleased]
 
 ### Added
+- **`mindfork setup` — a working local engine from one command.** For a machine
+  that is new every time (a rented GPU box, a container), and any other:
+  `mindfork setup --sandbox --llama cuda-12 --model … --mmproj … --embed-model …
+  --ctx 32768 --verify` installs the Python sandbox and llama.cpp, writes the
+  model, projector, embedding model and context into the settings and switches
+  the engine to managed mode — no settings screen in between. Paths and keys are
+  checked before anything is downloaded; a step that fails does not stop the
+  others, and running the same line again repeats only what is missing.
+  `--set engine.managed.sessions=4` reaches any other setting, and `--verify`
+  starts the servers once and reports how long they took to load, the context,
+  whether the model takes images — or why it did not start.
 - **`mindfork llama setup --backend cuda-12` — a backend family.** llama.cpp
   renames its CUDA builds whenever it moves to the next toolkit (`cuda-13.3`
   became `cuda-13.4` inside two weeks), so a command you had saved stopped
