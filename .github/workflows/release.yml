@@ -265,10 +265,35 @@ jobs:
           cp artifacts/linux-packages/* dist/
           cp artifacts/windows-installer/* dist/
 
+          # The Linux install script — what
+          # `releases/latest/download/install.sh` resolves to. An asset like the
+          # rest, so it is listed in sha256sums.txt and attested below: it adds
+          # no root of trust that the binary beside it did not already have
+          # (docs/research/cloud-provisioning.md §6 F5).
+          cp packaging/linux/install.sh dist/install.sh
+
           # Checksums (over all artifacts: archives + packages + the installer).
           (cd dist && sha256sum ./* > sha256sums.txt)
 
           echo "Artifacts:"; ls -l dist
+      # The script that ships installs the archive that ships, from the
+      # sha256sums.txt that ships: the three are produced by the step above and
+      # meet nowhere else before a user's machine. `--from` keeps it off the
+      # network; the scenarios first, then the real thing, whose `--version`
+      # must be the tag's.
+      - name: The install script installs this release
+        run: |
+          set -euo pipefail
+          BIN="$PWD/artifacts/bin-linux/mindfork"
+          chmod +x "$BIN"
+          BIN="$BIN" sh packaging/linux/install_test.sh
+          got="$(sh dist/install.sh --from dist --dir "$RUNNER_TEMP/mindfork" --no-link -- --version | tail -1)"
+          # A rehearsal tag carries a suffix (`v0.10.2-rc1`) the binary does not:
+          # its version is Cargo.toml's, which the guard already matched to the tag.
+          version="${GITHUB_REF_NAME#v}"
+          want="mindfork ${version%%-*}"
+          echo "installed: $got (expected: $want)"
+          test "$got" = "$want"
       # The notes and the footer come from the same guard the `guard` job ran, so
       # the page cannot be assembled by a rule the gate never checked. It refuses
       # here too if the CHANGELOG lost its section between the two jobs.

@@ -236,11 +236,17 @@ data format change adds an item to `CHANGELOG.md` → `[Unreleased]` (§4).
    (`nfpm` from `packaging/nfpm.yaml`: `mindfork-rs_X.Y.Z-1_amd64.deb`,
    `mindfork-rs-X.Y.Z-1.x86_64.rpm`, `mindfork-rs-X.Y.Z-1-x86_64.pkg.tar.zst`) +
    **Windows installer** (`mindfork-rs-vX.Y.Z-x86_64-setup.exe`, Inno Setup from
-   `packaging/windows/mindfork.iss`) + `sha256sums.txt` → `gh release create
+   `packaging/windows/mindfork.iss`) + **`install.sh`** (the Linux install
+   script, `packaging/linux/install.sh` — before the draft is created the job
+   runs its scenarios against the release's own binary and then installs the
+   release's own archive with it, `--from dist`, requiring the tag's version
+   back) + `sha256sums.txt` → `gh release create
    --draft` with notes = the `[X.Y.Z]` section from the CHANGELOG.
    Packaging changes (`packaging/**`) are validated on the PR by a separate `packaging.yml`
-   (Linux: package build + install smoke in Ubuntu/Fedora/Arch containers; Windows:
-   `.iss` compilation).
+   (Linux: package build + install smoke in Ubuntu/Fedora/Arch containers, and
+   `install.sh` in five bare images — its scenarios, a real install with the
+   distribution's ALSA package, and the download of the latest published
+   release; Windows: `.iss` compilation).
 5. **Artifact smoke test — on the draft, before anyone else can see it**:
    download the archive, `mindfork --version` (matches the tag), run the TUI on a
    copy of the data; optionally — install the package/installer in a VM.

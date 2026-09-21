@@ -1,6 +1,7 @@
 # Validates packaging on PRs and pushes to main. Linux: builds packages (deb/rpm/archlinux)
 # via nfpm and checks the install in Ubuntu/Fedora/Arch containers (a smoke: the layout +
-# running `--version` as a regular user). Windows: compiles the Inno Setup installer
+# running `--version` as a regular user); runs the install script (install.sh) in five
+# bare distribution images. Windows: compiles the Inno Setup installer
 # script (a syntax check for the .iss + [Code], without building a real binary).
 # The real public release builds and attaches artifacts separately — release.yml.
 # See docs/history/installers.md §8.
@@ -75,6 +76,30 @@ jobs:
         run: |
           VERSION="$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
           bash packaging/linux/build-packages.sh target/release/mindfork "$VERSION" dist
+      # The install script is shell, and shell has no compiler to tell it about a
+      # quoting slip. `warning` and up: the style notes are not what this is for.
+      - name: shellcheck the install script
+        run: shellcheck --severity=warning packaging/linux/install.sh packaging/linux/install_test.sh
+      # A portable archive shaped like release.yml's — flat, with a sha256sums.txt
+      # that spells names `./name` — for the `install-script` job to install with
+      # `--from`. The bare binary rides along as the scenarios' `BIN`.
+      - name: Portable archive for the install-script job
+        run: |
+          set -euo pipefail
+          VERSION="$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
+          mkdir -p portable/stage/data/dictionaries
+          cp target/release/mindfork portable/stage/
+          cp dictionaries/*.aff dictionaries/*.dic portable/stage/data/dictionaries/
+          tar -C portable/stage -czf "portable/mindfork-rs-v${VERSION}-x86_64-linux.tar.gz" .
+          rm -rf portable/stage
+          (cd portable && sha256sum ./*.tar.gz > sha256sums.txt)
+          cp target/release/mindfork portable/mindfork-bin
+          ls -l portable
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: portable-archive
+          path: portable/
+          if-no-files-found: error
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: linux-packages
@@ -169,6 +194,75 @@ jobs:
             mindfork --version
           fi
           echo "SMOKE OK: ${{ matrix.image }}"
+
+  # install.sh in the images it is written for: a bare distribution with no
+  # curl, no ALSA and `dash` for a shell. Three things a unit test cannot say —
+  # that each package manager's branch really brings the app up, that Ubuntu
+  # 22.04 takes the `libasound2` fallback where 24.04 takes `libasound2t64`, and
+  # that the download path works against a published release.
+  install-script:
+    name: install.sh (${{ matrix.image }})
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - ubuntu:24.04
+          - ubuntu:22.04
+          - debian:12
+          - fedora:latest
+          - archlinux:latest
+    container: ${{ matrix.image }}
+    steps:
+      # Before the checkout: without git it unpacks a tarball, and a minimal image
+      # may not even have `tar`. curl is for the download scenario only — the
+      # script itself is content with wget, and with neither under `--from`.
+      - name: What the image lacks (tar, gzip, curl, certificates)
+        shell: sh
+        run: |
+          set -eu
+          if command -v apt-get >/dev/null 2>&1; then
+            apt-get -o Acquire::Retries=3 update -qq
+            apt-get install -y -qq --no-install-recommends tar gzip curl ca-certificates
+          elif command -v dnf >/dev/null 2>&1; then
+            dnf install -y -q tar gzip curl
+          elif command -v pacman >/dev/null 2>&1; then
+            pacman -Sy --noconfirm --needed tar gzip curl
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: portable-archive
+          path: portable
+      - name: Scenarios (no network needed)
+        shell: sh
+        run: |
+          set -eu
+          chmod +x portable/mindfork-bin
+          BIN="$PWD/portable/mindfork-bin" sh packaging/linux/install_test.sh
+      # The real thing: the script finds the app cannot start, installs the
+      # distribution's ALSA package itself, links the binary, runs it.
+      - name: Install from the archive, dependencies and all
+        shell: sh
+        run: |
+          set -eu
+          sh packaging/linux/install.sh --from portable --dir /opt/mindfork -- --version
+          test "$(readlink /usr/local/bin/mindfork)" = /opt/mindfork/mindfork
+          mindfork --version
+          # The line a restarted container runs: nothing is unpacked twice.
+          sh packaging/linux/install.sh --from portable --dir /opt/mindfork | tee again.log
+          grep -q "already installed" again.log
+      # The download path, end to end, against whatever release is the latest:
+      # the redirect, the archive, its sha256sums.txt, the verification.
+      - name: Install the latest published release from the network
+        shell: sh
+        run: |
+          set -eu
+          sh packaging/linux/install.sh --dir /opt/released --no-link -- --version | tee released.log
+          grep -q "sha256 ok" released.log
+          grep -Eq "^mindfork [0-9]+\.[0-9]+\.[0-9]+" released.log
 
   windows-installer:
     name: Windows installer (compile .iss)
