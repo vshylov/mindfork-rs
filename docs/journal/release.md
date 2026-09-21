@@ -2572,10 +2572,36 @@ every reversible check first. Full record —
   script installs the distribution's ALSA package itself and the app answers
   `--version`, and the download of the latest published release end to end.
   `shellcheck --severity=warning` runs on both scripts.
-- **Owed**: the release rehearsal (`v0.10.2-rc1`, pushed by the user — AGENTS.md
-  §6) that shows `install.sh` among the draft's assets and in its
-  `sha256sums.txt`; and the pod probe, after which install.md §3.4's recipe —
-  written from RunPod's documentation and from what was measured in containers —
-  gets its measured numbers.
+- **In CI, as measured** (the pull request's own `packaging.yml` run): all five
+  images green on the first push. Ubuntu 24.04, Ubuntu 22.04 and Fedora each
+  print `passed=25 failed=0` and turn out to be bare of `libasound` — the real
+  binary does not start there, the script answers exit 3 with the command. In
+  the real install the script says `libasound.so.2 is missing … — installing`,
+  brings in the distribution's package (`apt` on 22.04, where the `libasound2`
+  fallback is the one that exists; `dnf` on Fedora), and `mindfork 0.10.2`
+  answers, through the `/usr/local/bin` link too; the second run prints
+  `already installed`. With no `--version` the redirect resolved to `v0.10.2`,
+  the published archive was downloaded, `sha256 ok`, unpacked, and answered
+  `mindfork 0.10.2`. `shellcheck` clean.
+- **Rehearsal — `v0.10.2-rc1`: GO**, 2026-09-21, on the merge commit of the pull
+  request (`95aa418d`, the user's tag). Every job green and the page a **draft
+  prerelease**. `install.sh` (13 460 bytes) is among its eight assets and the
+  first line of `sha256sums.txt`; the digest listed there, the digest of the
+  downloaded asset and the digest of `packaging/linux/install.sh` at the tag are
+  the same `701cecea…`. The new step printed `passed=24` — one fewer than in a
+  bare image, because the runner *has* `libasound`, so the "names the library"
+  arm has nothing to name — and `installed: mindfork 0.10.2 (expected: mindfork
+  0.10.2)`: the rehearsal tag's suffix is stripped as designed. **The build
+  attestation covers the script**: `gh attestation verify install.sh` exits 0
+  with `install.sh` among the subjects, workflow `release.yml`, ref
+  `refs/tags/v0.10.2-rc1` — and exits 1 on a file the release never produced,
+  which is the arm that says the 0 means something (the command prints nothing
+  on success; read `--format json`). Last, the draft's **own archive installed
+  by the draft's own script** in a bare `ubuntu:24.04` with no network
+  (`--from`): `sha256 ok`, unpacked, the marker `v0.10.2-rc1`, and the expected
+  exit 3 for the missing library. The draft and the tag are the user's to delete.
+- **Owed**: the pod probe, after which install.md §3.4's recipe — written from
+  RunPod's documentation and from what was measured in containers — gets its
+  measured numbers.
 - **Gates**: no Rust changed — **3408 unit tests, 197 `#[ignore]`**, as before;
   link / source-language / index / action-pin gates green.

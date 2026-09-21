@@ -1,6 +1,10 @@
 # One command from a bare GPU box to a chat — provisioning on RunPod and its kin
 
-> **Status:** researched and decided (2026-09-21), not yet implemented. **F1, F4
+> **Status:** researched, decided and **implemented through stage 2**
+> (2026-09-21) — stage 0 the Linux CUDA fix, stage 1 `mindfork setup`, stage 2
+> `install.sh`, rehearsed GO on `v0.10.2-rc1` (§8). **Still owed: the probe on
+> a rented pod** — nothing in this track has yet run on Linux under a GPU — and
+> a model download as a later stage. **F1, F4
 > and F5 were put to the user and chosen at their recommendation** (the user's
 > decision, 2026-09-21); the rest of §6 stands at its recommendation, stated in
 > the same exchange. The probe of §7 is the user's to run on a pod they rent —
@@ -515,8 +519,10 @@ stack on Windows, and the whole one-liner on a rented pod, recorded in
    the script, its 25 scenarios, five bare images in `packaging.yml`, the
    release job installing its own archive, install.md §1 and §3.4. `--from
    DIR` was added in the building — an offline install, and the seam that
-   makes the script testable without a network. The release rehearsal and
-   the pod probe are still owed.
+   makes the script testable without a network. **Rehearsed GO** on
+   `v0.10.2-rc1` the same day: the script among the draft's assets, first in
+   its `sha256sums.txt`, covered by the build attestation, and the draft's own
+   archive installed by it. The pod probe is still owed.
 3. *(if F4 goes that way)* **model download** — its own research section first.
 
 The probe runs before stage 0 is merged; stage 1 does not depend on it.
