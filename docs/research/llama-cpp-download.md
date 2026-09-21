@@ -360,7 +360,12 @@ Windows x64, `b10883`, download → on disk:
 
 Linux x64 is smaller across the board (`cpu` 17 MB, `vulkan` 30 MB,
 `rocm-10.0` 218 MB) and has no CUDA archive at all — the CUDA rows are Windows
-only. A 645 MB download landing 1.17 GB in `target/debug/data/` during
+only. **Amended 2026-09-21: true for five days.** Upstream has published CUDA
+builds for Linux since `b10969` (2026-09-14), and named their runtime archive
+unlike the Windows one — with the build tag, as a tarball — which the pairing
+rule of §3.2 ("carries **no build tag**") did not survive: `setup` refused
+CUDA on Linux until the runtime's name was derived instead of formatted
+([cloud-provisioning.md](cloud-provisioning.md) §3.1). A 645 MB download landing 1.17 GB in `target/debug/data/` during
 development, one `cargo clean` from oblivion, is worth knowing before it
 happens (§5).
 

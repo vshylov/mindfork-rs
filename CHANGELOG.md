@@ -14,6 +14,28 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Added
+- **`mindfork llama setup --backend cuda-12` — a backend family.** llama.cpp
+  renames its CUDA builds whenever it moves to the next toolkit (`cuda-13.3`
+  became `cuda-13.4` inside two weeks), so a command you had saved stopped
+  working. A family installs the one build of it on offer; one that fits two
+  backends (`cuda`, `sycl`) is refused and both are named.
+
+### Fixed
+- **`mindfork llama setup` refused every CUDA build on Linux.** llama.cpp has
+  published CUDA builds for Linux since mid-September 2026, but the command
+  looked for their runtime archive under the name the Windows one has, found
+  nothing, listed the backend as "no CUDA runtime published" and would not
+  install it.
+- **The installed llama.cpp's version read as a log line.** Recent builds print
+  a log line ahead of their version, so `llama setup` showed that line instead —
+  and the check that the binary you got is the build you asked for stopped
+  checking, without saying so. The version is found by what it says now, and a
+  binary that names no build number is reported as such.
+- **`llama setup` could pick a half-uploaded build.** With no `--build`, it
+  takes the newest build that actually has the backend you named, complete,
+  instead of the newest with anything in it.
+
 ## [0.10.2] — 2026-09-20
 
 **For data that lives on more than one computer.** A new command says which copy

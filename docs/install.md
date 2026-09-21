@@ -380,7 +380,8 @@ files found **on top of** the baked-in ones — you can edit text and add langua
 The app is an **HTTP client** to a local **OpenAI-compatible** server. The protocol
 is universal, so in external mode any such server works (llama.cpp `llama-server`,
 vLLM, LM Studio, Ollama …). The recommended and verified backend is
-**llama.cpp `llama-server`** (prebuilt Windows/CUDA binaries). The whole chain
+**llama.cpp `llama-server`** (prebuilt binaries, CUDA included, for Windows and
+Linux). The whole chain
 (streaming, EOS stop, tool-calling, "thoughts") is verified on Gemma 4 E4B-it.
 
 > **No `llama-server` yet?** `mindfork llama backends` lists the builds
@@ -634,7 +635,11 @@ Build b10883 (2026-09-09), windows/x86_64:
 easy GPU choice — it runs on NVIDIA *and* AMD through the driver you already
 have, and costs 30 MB against CUDA's 600. `cuda-*` is the fastest on NVIDIA;
 pick the version your driver supports, and note that the CUDA runtime DLLs are
-downloaded with it (that is where most of the size goes). `rocm-*` is AMD's own
+downloaded with it (that is where most of the size goes). On **Linux** the CUDA
+builds exist since September 2026 (`cuda-12.8`, `cuda-13.3` at the time of
+writing); upstream builds them on Ubuntu 24.04, so expect them to want a system
+at least that new — the command runs the binary after unpacking and says so if
+it cannot start. `rocm-*` is AMD's own
 stack, `sycl`/`openvino` are Intel's. The list is derived from the release, so a
 backend upstream adds or renames shows up without an app update.
 
@@ -642,8 +647,8 @@ backend upstream adds or renames shows up without an app update.
 
 | | |
 |---|---|
-| `--backend <ID>` | which backend to install; there is no default — the sizes differ too much to choose for you |
-| `--build <TAG>` | pin a build, e.g. `--build b10883`. Without it, the newest one. llama.cpp publishes about a dozen builds a day, so pinning is how you keep a known-good one |
+| `--backend <ID>` | which backend to install; there is no default — the sizes differ too much to choose for you. A **family** works too: `cuda-12` installs the one `cuda-12.*` build on offer, so a command you saved keeps working when llama.cpp moves to the next CUDA minor. A family that fits two backends (`cuda`, `sycl`) is refused and both are named |
+| `--build <TAG>` | pin a build, e.g. `--build b10883`. Without it, the newest one **that has the backend you named** — llama.cpp publishes about a dozen builds a day and now and then one arrives empty or half-uploaded. Pinning is how you keep a known-good one |
 | `--no-cudart` | skip the CUDA runtime (only if it is already installed on the machine) |
 | `--set-binary` | write the installed binary's path into the settings afterwards |
 | `--force` | download and unpack again over an existing install |

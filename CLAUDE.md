@@ -175,9 +175,9 @@ Backend selection: `MINDFORK_ENGINE_URL` (external, any OpenAI server) OR
 rented instead of hosted — `python tools/e2e_hf.py run`, see
 `docs/history/remote-e2e-hf.md`.
 
-## Status (2026-09-20, version 0.10.2)
+## Status (2026-09-21, version 0.10.2)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3379 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **3384 unit tests
 green, 196 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
@@ -190,6 +190,14 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **`llama setup` refused CUDA on Linux** — upstream has shipped it since
+  2026-09-14, under a runtime-archive name unlike the Windows one; the name is
+  derived now. The live smoke then caught `--version` logging ahead of itself,
+  which had made the build check skip in silence. Plus backend families
+  (`cuda-12`) and a scan that passes over half-uploaded builds. Live **GO** on
+  Windows; the Linux GPU half rides on the pod probe
+  ([docs/research/cloud-provisioning.md](docs/research/cloud-provisioning.md) §3.1,
+  [docs/journal/engine.md](docs/journal/engine.md)).
 - **The site waits for the release.** The release PR's merge deployed its own
   post 25 min 28 s before the release was public (measured on 0.10.2). `site.yml`
   now holds a deploy while `Cargo.toml` names an unpublished version and runs
