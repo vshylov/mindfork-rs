@@ -196,8 +196,8 @@ being recent is dropped, not shortened.
   checksums agree; whether the app starts is decided by **running it**, and the
   missing `libasound` installed or named with exit 3; idempotent, so on RunPod the
   same line repairs what a stop cleared. 25 scenarios, five bare images in
-  `packaging.yml`, and the release job installs its own archive. The rehearsal and
-  the pod probe are owed
+  `packaging.yml`, and the release job installs its own archive. Rehearsed **GO**
+  on `v0.10.2-rc1`; the pod probe is owed
   ([docs/journal/release.md](docs/journal/release.md), install.md §1, §3.4).
 - **`mindfork setup` — a working managed engine from one command** (stage 1 of
   the provisioning track). Sandbox + llama.cpp + the model, projector, embedder
