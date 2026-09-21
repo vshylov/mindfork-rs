@@ -180,16 +180,33 @@ async fn facts(s: &Started, loc: &Locale) -> String {
     if s.label != "setup.verify.chat" {
         return String::new();
     }
+    facts_phrase(
+        s.client.context_budget().await,
+        s.client.vision().await,
+        s.client.parallel_slots().await,
+        loc,
+    )
+}
+
+/// The phrase itself, from answers already in hand: what the server said is
+/// listed, what it did not say is left out — a server that reports nothing
+/// (not a llama.cpp, or an old one) gets no dangling dash.
+fn facts_phrase(
+    context: Option<u32>,
+    vision: VisionSupport,
+    slots: Option<u32>,
+    loc: &Locale,
+) -> String {
     let mut parts: Vec<String> = Vec::new();
-    if let Some(n) = s.client.context_budget().await {
+    if let Some(n) = context {
         parts.push(loc.tf("setup.verify.fact.context", &[("n", &n.to_string())]));
     }
-    match s.client.vision().await {
+    match vision {
         VisionSupport::Supported => parts.push(loc.t("setup.verify.fact.vision_on").to_string()),
         VisionSupport::Unsupported => parts.push(loc.t("setup.verify.fact.vision_off").to_string()),
         VisionSupport::Unknown => {}
     }
-    if let Some(n) = s.client.parallel_slots().await {
+    if let Some(n) = slots {
         parts.push(loc.tf("setup.verify.fact.slots", &[("n", &n.to_string())]));
     }
     if parts.is_empty() {
@@ -300,6 +317,27 @@ mod tests {
         let (ok, lines) = lines_of(&config, &BinaryLookup::default());
         assert!(!ok);
         assert!(lines[0].contains("/no/such/model.gguf"), "{lines:?}");
+    }
+
+    /// The ready line lists what the server said and leaves out what it did not.
+    #[test]
+    fn the_facts_are_what_the_server_said_and_nothing_else() {
+        let loc = locale(Lang::En);
+        assert_eq!(
+            facts_phrase(Some(32768), VisionSupport::Supported, Some(4), loc),
+            " — context 32768, takes images, 4 slots"
+        );
+        assert_eq!(
+            facts_phrase(Some(4096), VisionSupport::Unsupported, None, loc),
+            " — context 4096, text only"
+        );
+        // A server that answers `/health` and nothing on `/props`: no dash at all.
+        assert_eq!(facts_phrase(None, VisionSupport::Unknown, None, loc), "");
+        let ru = facts_phrase(Some(1), VisionSupport::Supported, Some(2), locale(Lang::Ru));
+        assert!(
+            !ru.contains('{') && ru.contains('1') && ru.contains('2'),
+            "{ru}"
+        );
     }
 
     /// The whole path against a real binary and a real model:

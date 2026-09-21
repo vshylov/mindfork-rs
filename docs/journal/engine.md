@@ -4839,8 +4839,22 @@ could never get — lessons §2, a fourth time; every such wait is bounded now.
 - **A gate tripped, usefully**: `all_bundle_key_references_in_code_exist` took
   the fixture file name `setup.msi` for a locale key the moment a `setup.` prefix
   existed; it joined `notes.md` on that gate's list of file names.
-- **Gates**: fmt / clippy / test green — **3402 unit tests, 197 `#[ignore]`**
-  (+18 unit tests: the parser and its help, the five named settings and the mode
+- **The coverage gate asked for the handler's tests, and was right to.** The
+  first push failed Sonar on **new-code coverage, 76.1 % against 80 %** — no
+  findings, no duplication: the uncovered quarter was `run_setup`, the one piece
+  that decides the order, the single write and the exit code, and it was
+  untested because it began by taking the machine-wide instance guard, which a
+  test must not take (it fails whenever the app is open). Everything after the
+  guard is now `setup_under_guard`, run by the tests on a scratch root: one write
+  and **no second one on a re-run** (asserted on the absent `.bak`), a typo
+  refused before `settings.json` exists, a cloud engine skipped under `--verify`,
+  an empty managed one failing it **with the settings still written**, a failed
+  step remembered rather than raised. The `/props` phrase became a pure
+  `facts_phrase`. What stays uncovered is honest: the two download steps and the
+  ready path of `--verify`, which need the network and a real server and have
+  the live run above instead.
+- **Gates**: fmt / clippy / test green — **3408 unit tests, 197 `#[ignore]`**
+  (+24 unit tests: the parser and its help, the five named settings and the mode
   switch, path refusals in both locales, split GGUFs, `--set` reach / fallback /
-  unknown key / refused keys, dead-binary clearing, `--verify`'s skips, refusals
-  and the busy port; +1 live smoke).
+  unknown key / refused keys, dead-binary clearing, `--verify`'s skips, refusals,
+  busy port and facts, the handler on a scratch root; +1 live smoke).

@@ -871,6 +871,18 @@ fn run_setup(paths: &Paths, args: &cli::SetupArgs, loc: &Locale) -> anyhow::Resu
         return Ok(ExitCode::from(2));
     }
     let _instance = acquire_cli_guard(loc, loc.t("cli.guard.action.setup"))?;
+    Ok(ExitCode::from(setup_under_guard(paths, args, loc)?))
+}
+
+/// Everything `setup` does once it holds the single-instance guard, returning
+/// the process exit code. Split off so that the tests can run the whole command
+/// on a scratch root: the guard is one lock per machine, which a test must not
+/// take — it would fail whenever the app is open, and against its neighbours.
+fn setup_under_guard(
+    paths: &Paths,
+    args: &cli::SetupArgs,
+    loc: &'static Locale,
+) -> anyhow::Result<u8> {
     let (store, mut config) = open_config_for_cli_write(paths, loc, SETUP_CTX)?;
     let before = config.clone();
     let wrote = features::provision::apply_settings(&mut config, args, loc)?;
@@ -1019,10 +1031,11 @@ impl SetupRun<'_> {
         );
     }
 
-    fn summary(&self) -> ExitCode {
+    /// The closing line, and the process exit code that goes with it.
+    fn summary(&self) -> u8 {
         if self.failed.is_empty() {
             println!("{}", self.loc.t("setup.summary.ok"));
-            return ExitCode::SUCCESS;
+            return 0;
         }
         eprintln!(
             "{}",
@@ -1031,7 +1044,7 @@ impl SetupRun<'_> {
                 &[("steps", &self.failed.join(", "))]
             )
         );
-        ExitCode::from(1)
+        1
     }
 }
 
@@ -1459,6 +1472,136 @@ mod tests {
             Lang::En,
             "the installer's language choice was lost by creating settings.json"
         );
+    }
+
+    fn setup_args_for(model: &Path) -> cli::SetupArgs {
+        cli::SetupArgs {
+            model: Some(model.to_path_buf()),
+            ctx: Some(4096),
+            set: vec![("engine.managed.sessions".into(), "2".into())],
+            ..Default::default()
+        }
+    }
+
+    /// `setup` on a data root that has never been used writes `settings.json`
+    /// once — seeded with the installer's language, like the other two CLI
+    /// writers — and the same line again writes **nothing**: a re-run on a
+    /// provisioned machine must not even rotate the `.bak`.
+    #[test]
+    fn setup_writes_once_and_a_rerun_touches_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = Paths::with_root(tmp.path()).with_default_language(Lang::En);
+        let model = tmp.path().join("chat.gguf");
+        std::fs::write(&model, b"GGUF").unwrap();
+        let loc = i18n::locale(Lang::En);
+        let args = setup_args_for(&model);
+
+        assert_eq!(setup_under_guard(&paths, &args, loc).unwrap(), 0);
+        let cfg = JsonStore::new(paths.clone()).load_config().unwrap();
+        assert_eq!(cfg.engine.mode, ServerMode::Managed);
+        assert_eq!(
+            cfg.engine.managed.model_path.as_deref(),
+            Some(model.to_str().unwrap())
+        );
+        assert_eq!(cfg.engine.managed.context_size, 4096);
+        assert_eq!(cfg.engine.managed.sessions, 2);
+        assert_eq!(cfg.engine.managed.binary, None, "no binary path is written");
+        assert_eq!(cfg.interface.language, Lang::En, "the language was seeded");
+
+        let written = std::fs::read(paths.settings_file()).unwrap();
+        let bak = paths.settings_file().with_extension("bak");
+        assert!(!bak.exists(), "a first write has nothing to back up");
+        assert_eq!(setup_under_guard(&paths, &args, loc).unwrap(), 0);
+        assert!(!bak.exists(), "the re-run wrote: it rotated a backup");
+        assert_eq!(std::fs::read(paths.settings_file()).unwrap(), written);
+    }
+
+    /// A typo is refused before anything exists: no `settings.json`, in the
+    /// words the launch would have used.
+    #[test]
+    fn setup_refuses_a_typo_before_anything_is_written() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = Paths::with_root(tmp.path());
+        let loc = i18n::locale(Lang::En);
+        let args = setup_args_for(&tmp.path().join("nope.gguf"));
+        let err = setup_under_guard(&paths, &args, loc).unwrap_err();
+        assert!(err.to_string().contains("nope.gguf"), "{err}");
+        assert!(!paths.settings_file().exists());
+
+        let args = cli::SetupArgs {
+            set: vec![("engine.managed.modle_path".into(), "x".into())],
+            ..Default::default()
+        };
+        let err = setup_under_guard(&paths, &args, loc).unwrap_err();
+        assert!(err.to_string().contains("modle_path"), "{err}");
+        assert!(!paths.settings_file().exists());
+    }
+
+    /// Bare `setup` has nothing to do: its help and exit code 2, before the
+    /// guard is taken and before the data root is touched.
+    #[test]
+    fn setup_with_nothing_to_do_exits_2_and_writes_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = Paths::with_root(tmp.path());
+        let code = run_setup(&paths, &cli::SetupArgs::default(), i18n::locale(Lang::En)).unwrap();
+        assert_eq!(format!("{code:?}"), format!("{:?}", ExitCode::from(2)));
+        assert!(!paths.settings_file().exists());
+    }
+
+    /// `--verify` on an engine that is not ours to start is a skip and a clean
+    /// exit; on a managed engine with nothing to run it is a failure — exit 1 —
+    /// **and the settings are still written**: a failed step does not undo the
+    /// ones that succeeded (fork F10).
+    #[test]
+    fn setup_verify_skips_a_cloud_engine_and_fails_an_empty_managed_one() {
+        let loc = i18n::locale(Lang::En);
+        let cloud = tempfile::tempdir().unwrap();
+        let paths = Paths::with_root(cloud.path());
+        let args = cli::SetupArgs {
+            set: vec![
+                ("engine.mode".into(), "claude".into()),
+                ("embed.mode".into(), "openai".into()),
+            ],
+            verify: true,
+            ..Default::default()
+        };
+        assert_eq!(setup_under_guard(&paths, &args, loc).unwrap(), 0);
+
+        let empty = tempfile::tempdir().unwrap();
+        let paths = Paths::with_root(empty.path());
+        let args = cli::SetupArgs {
+            ctx: Some(2048),
+            verify: true,
+            ..Default::default()
+        };
+        assert_eq!(setup_under_guard(&paths, &args, loc).unwrap(), 1);
+        let cfg = JsonStore::new(paths.clone()).load_config().unwrap();
+        assert_eq!(cfg.engine.managed.context_size, 2048);
+    }
+
+    /// A failed download is said, remembered for the summary and the exit code —
+    /// and is not an `Err`: the steps after it still run.
+    #[test]
+    fn a_failed_setup_step_is_remembered_not_raised() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = Paths::with_root(tmp.path());
+        let loc = i18n::locale(Lang::En);
+        let mut run = SetupRun {
+            paths: &paths,
+            loc,
+            runtime: cli_runtime(loc).unwrap(),
+            config: AppConfig::default(),
+            wrote: Vec::new(),
+            failed: Vec::new(),
+        };
+        assert_eq!(run.summary(), 0);
+        run.fail("setup.step.sandbox", &anyhow!("the network went away"));
+        assert_eq!(run.failed, [loc.t("setup.step.sandbox")]);
+        assert_eq!(run.summary(), 1);
+        // Nothing was decided, so nothing is written — not even an empty file.
+        run.write(&JsonStore::new(paths.clone()), &AppConfig::default())
+            .unwrap();
+        assert!(!paths.settings_file().exists());
     }
 
     /// An existing config is edited, not replaced: unrelated settings survive.
