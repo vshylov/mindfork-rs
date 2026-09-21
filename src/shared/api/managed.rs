@@ -362,13 +362,7 @@ impl ServerHandle {
         // catch the most common cause here and immediately return a clear error
         // (the supervisor turns it into `ServerStatus::Disconnected`).
         if let Some(model) = &cfg.model_path {
-            if !std::path::Path::new(model).is_file() {
-                bail!(
-                    "{}",
-                    loc.tf("ui.err.managed.model_not_found", &[("path", model)])
-                );
-            }
-            check_split_model(model, loc)?;
+            preflight_model(model, loc)?;
         }
         // The same preflight check for the speculative-decoding draft
         // model (`-md`): otherwise `llama-server` would just as silently crash while
@@ -439,6 +433,22 @@ impl ServerHandle {
             base_url: cfg.base_url(),
         })
     }
+}
+
+/// The preflight of a model path: the file is there, and if it is one part of a
+/// multi-file GGUF, it is the first and the rest are beside it.
+///
+/// Public because `mindfork setup` asks the same question **before it writes
+/// the path into the settings** (docs/research/cloud-provisioning.md §4.2): one
+/// implementation, so a path the command accepts is a path the launch accepts.
+pub fn preflight_model(model: &str, loc: &'static Locale) -> Result<()> {
+    if !std::path::Path::new(model).is_file() {
+        bail!(
+            "{}",
+            loc.tf("ui.err.managed.model_not_found", &[("path", model)])
+        );
+    }
+    check_split_model(model, loc)
 }
 
 /// The preflight for a **multi-file** GGUF (`shared/gguf.rs`, spec §3.4): the

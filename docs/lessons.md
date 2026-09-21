@@ -1597,6 +1597,19 @@ the app itself displays wants link text that *describes* rather than repeats the
 
 ## 8. Storage, schema and data safety
 
+**`#[serde(default)]` makes an unknown key succeed.** Every config struct is
+`#[serde(default)]` so that an old `settings.json` reads without a migration —
+which also means a key the struct does not have deserializes away **in
+silence**. Any code that merges outside JSON into the config (a generic setter,
+an import, a seed file) therefore cannot treat "it deserialized" as "it was
+accepted": `engine.managed.modle_path=…` parses, saves, and changes nothing.
+The check that closes it is a round trip — through the config's own types and
+back, and the key must still be there with the value given (compare numbers with
+a tolerance: an `f32` field returns the nearest `f32`, and `0.7` is not
+`0.699999988`). `deny_unknown_fields` is not the fix; it would break the forward
+compatibility the attribute is there for.
+— *`mindfork setup --set`, 2026-09-21*.
+
 **Additive is free; a value rewrite is a migration.** A new `#[serde(default)]` field, a
 `CREATE TABLE IF NOT EXISTS`, or a guarded `ALTER TABLE … ADD COLUMN` needs no schema
 bump (ADR 0006 F12) — every query names its columns, so an older binary ignores the new

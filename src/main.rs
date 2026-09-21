@@ -193,6 +193,7 @@ fn real_main(
             run_llama_installed(paths, loc);
             Ok(ExitCode::SUCCESS)
         }
+        CliCommand::Setup(args) => run_setup(paths, &args, loc),
         CliCommand::LlamaRemove { id, force } => {
             run_llama_remove(paths, &id, force, loc)?;
             Ok(ExitCode::SUCCESS)
@@ -840,6 +841,198 @@ fn run_sandbox_setup(
         println!("{}", loc.t("cli.sandbox.python_enabled"));
     }
     Ok(())
+}
+
+/// CLI: one-command provisioning (`mindfork setup …`) — the sandbox, llama.cpp
+/// and the managed engine's settings in one go, for a machine that is new every
+/// time (docs/research/cloud-provisioning.md §4.2).
+///
+/// The order is the design:
+///
+///  1. **the settings half is validated first**, on the in-memory config — a
+///     typo in a path or a key is an error before the first byte is downloaded;
+///  2. the downloads, each of which **may fail without stopping the rest**
+///     (fork F10): at an hourly rate a chat without Python beats no chat, and
+///     the re-run repairs what is missing;
+///  3. **one write**, of what the steps that succeeded decided, through the same
+///     two precautions every CLI write of user data takes
+///     ([`open_config_for_cli_write`]);
+///  4. `--verify`, against the settings as they now are on disk;
+///  5. a summary, and a non-zero exit if any step failed.
+///
+/// One single-instance guard covers all of it, as it does for each `setup` this
+/// composes.
+fn run_setup(paths: &Paths, args: &cli::SetupArgs, loc: &Locale) -> anyhow::Result<ExitCode> {
+    // The launch path (`ServerHandle::launch`, the preflight) wants the
+    // registry's own `'static` reference, which is what this one already is.
+    let loc: &'static Locale = i18n::locale(loc.lang());
+    if args.is_empty() {
+        println!("{}", cli::render_help(Some(cli::HelpTopic::Setup), loc));
+        return Ok(ExitCode::from(2));
+    }
+    let _instance = acquire_cli_guard(loc, loc.t("cli.guard.action.setup"))?;
+    let (store, mut config) = open_config_for_cli_write(paths, loc, SETUP_CTX)?;
+    let before = config.clone();
+    let wrote = features::provision::apply_settings(&mut config, args, loc)?;
+
+    let mut run = SetupRun {
+        paths,
+        loc,
+        runtime: cli_runtime(loc)?,
+        config,
+        wrote,
+        failed: Vec::new(),
+    };
+    if args.sandbox {
+        run.sandbox();
+    }
+    if let Some(backend) = &args.llama {
+        run.llama(backend, args.llama_build.clone());
+    }
+    run.write(&store, &before)?;
+    if args.verify {
+        run.verify();
+    }
+    Ok(run.summary())
+}
+
+/// The locale key of the context every settings failure of `setup` is wrapped in.
+const SETUP_CTX: &str = "cli.ctx.setup";
+
+/// One `mindfork setup` in flight: what the steps share, so that each step is a
+/// method of a few lines rather than an arm of one long function.
+struct SetupRun<'a> {
+    paths: &'a Paths,
+    loc: &'static Locale,
+    runtime: tokio::runtime::Runtime,
+    /// The config as it will be written — the settings half already applied.
+    config: AppConfig,
+    /// One printable line per setting written, in order.
+    wrote: Vec<String>,
+    /// The names of the steps that failed, for the summary and the exit code.
+    failed: Vec<&'static str>,
+}
+
+impl SetupRun<'_> {
+    /// A failed step is said where it happened and remembered for the summary —
+    /// and does not stop the steps after it.
+    fn fail(&mut self, step: &'static str, err: &anyhow::Error) {
+        let name = self.loc.t(step);
+        eprintln!(
+            "{}",
+            self.loc.tf(
+                "setup.step.failed",
+                &[("step", name), ("reason", &format!("{err:#}"))]
+            )
+        );
+        self.failed.push(name);
+    }
+
+    fn sandbox(&mut self) {
+        println!("{}", self.loc.t("setup.step.sandbox.header"));
+        let done = self.runtime.block_on(features::sandbox_setup::setup(
+            &self.paths.sandbox_dir(),
+            &features::sandbox_setup::SetupOptions { force: false },
+            self.loc,
+            |msg| println!("{msg}"),
+        ));
+        match done {
+            // Only after a successful provisioning — ADR 0005 §5, as
+            // `sandbox setup --enable-python` has it.
+            Ok(()) if !self.config.tools.python_enabled => {
+                self.config.tools.python_enabled = true;
+                self.wrote.push(self.loc.tf(
+                    "setup.settings.line",
+                    &[("key", "tools.python_enabled"), ("value", "true")],
+                ));
+            }
+            Ok(()) => {}
+            Err(e) => self.fail("setup.step.sandbox", &e),
+        }
+    }
+
+    fn llama(&mut self, backend: &str, build: Option<String>) {
+        println!("{}", self.loc.t("setup.step.llama.header"));
+        let done = self.runtime.block_on(features::llama_setup::setup(
+            &self.paths.llama_dir(),
+            &features::llama_setup::SetupOptions {
+                backend: backend.to_string(),
+                build,
+                force: false,
+                cudart: true,
+            },
+            self.loc,
+            |msg| println!("{msg}"),
+        ));
+        match done {
+            Ok(_) => {
+                let cleared = features::provision::clear_dead_binaries(&mut self.config);
+                let loc = self.loc;
+                self.wrote.extend(
+                    cleared
+                        .into_iter()
+                        .map(|key| loc.tf("setup.settings.cleared", &[("key", key)])),
+                );
+            }
+            Err(e) => self.fail("setup.step.llama", &e),
+        }
+    }
+
+    /// The one write: what the steps that succeeded decided, and only when that
+    /// differs from what was loaded — a re-run on a provisioned machine touches
+    /// nothing.
+    fn write(&self, store: &JsonStore, before: &AppConfig) -> anyhow::Result<()> {
+        if self.wrote.is_empty() {
+            return Ok(());
+        }
+        println!("{}", self.loc.t("setup.settings.header"));
+        for line in &self.wrote {
+            println!("{line}");
+        }
+        if self.config == *before {
+            println!("{}", self.loc.t("setup.settings.unchanged"));
+            return Ok(());
+        }
+        store
+            .save_config(&self.config)
+            .with_context(|| self.loc.t(SETUP_CTX).to_string())
+    }
+
+    fn verify(&mut self) {
+        println!("{}", self.loc.t("setup.step.verify.header"));
+        let lookup = app::supervisor::BinaryLookup::from_paths(self.paths);
+        let ok = self
+            .runtime
+            .block_on(app::verify::run(&self.config, &lookup, self.loc, |msg| {
+                println!("{msg}")
+            }));
+        if ok {
+            return;
+        }
+        self.failed.push(self.loc.t("setup.step.verify"));
+        println!(
+            "{}",
+            self.loc.tf(
+                "setup.verify.see_log",
+                &[("path", &self.paths.log_dir().display().to_string())]
+            )
+        );
+    }
+
+    fn summary(&self) -> ExitCode {
+        if self.failed.is_empty() {
+            println!("{}", self.loc.t("setup.summary.ok"));
+            return ExitCode::SUCCESS;
+        }
+        eprintln!(
+            "{}",
+            self.loc.tf(
+                "setup.summary.failed",
+                &[("steps", &self.failed.join(", "))]
+            )
+        );
+        ExitCode::from(1)
+    }
 }
 
 /// A tokio runtime for a CLI command whose work is async (the network).

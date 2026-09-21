@@ -820,8 +820,9 @@ mod tests {
         // Dynamic keys (`format!`) aren't literals, covered separately (meta.rs).
         // File names sharing a bundle prefix are whitelisted.
         // `notes.md` — a sample attachment file name in tests, colliding with the
-        // `notes.` prefix of the notes tools' keys.
-        const NON_KEY: &[&str] = &["defaults.json", "python.webc", "notes.md"];
+        // `notes.` prefix of the notes tools' keys; `setup.msi` — likewise, against
+        // the `setup.` prefix of `mindfork setup`'s messages.
+        const NON_KEY: &[&str] = &["defaults.json", "python.webc", "notes.md", "setup.msi"];
         let prefixes = bundle_prefixes();
         let ru = locale(Lang::Ru);
         let missing: Vec<String> = dotted_literals_in_src()

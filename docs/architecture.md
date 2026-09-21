@@ -263,7 +263,11 @@ src/
 │  │  ├─ input.rs           input batching + clipboard paste (Windows path): Chunk, coalescing
 │  │  ├─ dispatch.rs        apply_event (AppEvent→screen) + Intent→AppCommand translation
 │  │  └─ clipboard.rs       read/write the system clipboard (arboard)
-│  └─ supervisor.rs         ServerSupervisor: (re)start managed / connect to external
+│  ├─ supervisor.rs         ServerSupervisor: (re)start managed / connect to external
+│  └─ verify.rs             `mindfork setup --verify`: starts what the settings describe
+│                           through the supervisor's own managed_config /
+│                           managed_embed_config + ServerHandle::launch, both servers at
+│                           once, reports /props, stops them; refuses a busy port
 │
 ├─ screens/                 full screens (FSD "pages"); do NOT depend on app
 │  ├─ chat/                 ChatScreen: chat UI state. God object broken up
@@ -505,6 +509,12 @@ src/
 │  ├─ sandbox_setup.rs      Python sandbox provisioning (mindfork sandbox setup): wasmer +
 │  │                        python.webc + wheels from a lock list (sha256); cache warmup;
 │  │                        packs CPython + site-packages into packed-sandbox.webc
+│  ├─ provision.rs          `mindfork setup` — the settings half: the typed flags and
+│  │                        `--set KEY=VALUE` applied to AppConfig and VALIDATED before any
+│  │                        download (the launch's own preflight_model; a --set key must
+│  │                        survive a round trip through the config's types, because
+│  │                        #[serde(default)] drops an unknown key in silence);
+│  │                        clear_dead_binaries after a successful --llama
 │  ├─ llama_setup.rs        llama.cpp downloader (mindfork llama backends|setup|installed
 │  │                        |remove)
 │  │                        + resolve_binary: what an empty/bare binary setting means
@@ -3394,13 +3404,26 @@ Principles:
   spec §12.4), `sandbox setup [--force]`,
   `llama backends|setup|installed` (the llama.cpp downloader,
   `features/llama_setup.rs`; `setup` takes single-instance),
+  `setup [--sandbox] [--llama ID] [--model …] [--set K=V] [--verify]` (the
+  composite, `features/provision.rs` + `app/verify.rs`; takes
+  single-instance once for all of it),
   `locales export <code> -o FILE`. Subcommands run without the TUI and exit
   the process.
+  - **`setup` validates, downloads, writes once, verifies — in that order**
+    ([docs/research/cloud-provisioning.md](research/cloud-provisioning.md)
+    §4.2). The settings half is applied to the in-memory config **before the
+    first download**, so a typo in a path or a `--set` key costs nothing; each
+    download may fail without stopping the rest, and only a step that
+    succeeded contributes its setting (`tools.python_enabled`, the cleared
+    dead binary paths); the config is saved once, and only if it differs from
+    what was loaded. It is the **third** CLI writer of user data and goes
+    through `open_config_for_cli_write` like the other two. Bare `setup` has
+    nothing to do: it prints its help and exits `2`.
   - **`llama remove` reads `settings.json` and never writes it**: a build a
     managed field points at is refused unless `--force`, so a delete cannot
     quietly leave three fields aiming at nothing.
-  - **The two CLI writers of user data share their precautions.**
-    `sandbox setup --enable-python` and `llama setup --set-binary` both go
+  - **The CLI writers of user data share their precautions.**
+    `sandbox setup --enable-python`, `llama setup --set-binary` and `setup` all go
     through `open_config_for_cli_write` — `data_migration::run` (the ADR 0006
     downgrade guard) and language seeding on a fresh `settings.json` — and both
     are applied **past the `?`**, so a failed provisioning never writes.

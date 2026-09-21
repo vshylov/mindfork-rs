@@ -137,6 +137,13 @@ mindfork llama backends                 # what llama.cpp publishes for your mach
 mindfork llama setup --backend vulkan --set-binary   # …and point the settings at it
 ```
 
+Or everything in one line — llama.cpp, the Python sandbox, the model and its
+context written into the settings, and a test start to see that it loads:
+
+```bash
+mindfork setup --llama vulkan --sandbox --model ~/models/chat.gguf --ctx 16384 --verify
+```
+
 The model itself is a **GGUF** file, which llama.cpp does not ship — Hugging Face
 hosts them; search the model's name with `GGUF`.
 

@@ -3,7 +3,7 @@
 //! axis B — docs/history/i18n-cli.md): `clap` doesn't let us localize parse-error
 //! messages, and its derive attributes don't accept a locale parameter (we'd
 //! have had to fall back to a global process locale — exactly what we
-//! rejected `rust-i18n` for). The surface is small (5 subcommands, a handful
+//! rejected `rust-i18n` for). The surface is small (a dozen subcommands, a handful
 //! of options), so a custom parser follows the precedent of markdown
 //! (ADR 0003), i18n, `calc`, InputBox (ADR 0001): our own solution when a
 //! crate gets in the way of a requirement.
@@ -88,6 +88,9 @@ pub enum CliCommand {
     },
     /// List the llama.cpp builds already in `data/llama/` (`llama installed`).
     LlamaInstalled,
+    /// Provision in one go (`setup …`): the sandbox, llama.cpp and the managed
+    /// engine's settings — docs/research/cloud-provisioning.md §4.2.
+    Setup(SetupArgs),
     /// Delete a downloaded build (`llama remove <id>`). `force` — delete even
     /// though a managed setting points at it.
     LlamaRemove { id: String, force: bool },
@@ -100,6 +103,46 @@ pub enum CliCommand {
     Help { topic: Option<HelpTopic> },
     /// Show the version (`-V`/`--version`).
     Version,
+}
+
+/// What `mindfork setup` was asked to do. **Every field is one optional step**,
+/// and a step that was not named is not run; none at all is "nothing to do",
+/// which the command answers with its help and exit code 2 (the `llama setup`
+/// shape for a missing `--backend`).
+///
+/// Long forms only, throughout: the command writes user data, so every part of
+/// it is spelled out at the call site (the `--enable-python` rule).
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct SetupArgs {
+    /// Install the Python sandbox and switch `python_exec` on (`--sandbox`) —
+    /// `sandbox setup --enable-python`.
+    pub sandbox: bool,
+    /// Install this llama.cpp backend, or family of one (`--llama <BACKEND>`) —
+    /// `llama setup --backend`.
+    pub llama: Option<String>,
+    /// …from this build rather than the newest (`--llama-build <TAG>`).
+    pub llama_build: Option<String>,
+    /// `engine.managed.model_path`, and with it `engine.mode = managed`.
+    pub model: Option<PathBuf>,
+    /// `engine.managed.mmproj`.
+    pub mmproj: Option<PathBuf>,
+    /// `embed.managed.model_path`, and with it `embed.mode = managed`.
+    pub embed_model: Option<PathBuf>,
+    /// `engine.managed.context_size`.
+    pub ctx: Option<u32>,
+    /// `engine.managed.gpu_layers`.
+    pub ngl: Option<i32>,
+    /// `--set KEY=VALUE`, in the order given: any other settings field.
+    pub set: Vec<(String, String)>,
+    /// Start what was configured, report what it says about itself, stop it.
+    pub verify: bool,
+}
+
+impl SetupArgs {
+    /// No step was named.
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 /// Help topic: general (`None` for [`CliCommand::Help`]) or a specific subcommand.
@@ -116,6 +159,7 @@ pub enum HelpTopic {
     LlamaSetup,
     LlamaInstalled,
     LlamaRemove,
+    Setup,
     Locales,
     LocalesExport,
     Demo,
@@ -142,6 +186,7 @@ pub fn parse(args: &[String], loc: &Locale) -> Result<CliCommand, String> {
         "import-lamellama" => Err(err_line(loc, "cli.import.lamellama_removed", &[])),
         "sandbox" => parse_sandbox(rest, loc),
         "llama" => parse_llama(rest, loc),
+        "setup" => parse_setup(rest, loc),
         "locales" => parse_locales(rest, loc),
         "demo" => parse_demo(rest, loc),
         other if other.starts_with('-') => Err(unknown_option(loc, other)),
@@ -430,6 +475,102 @@ fn parse_llama_remove(toks: &[&str], loc: &Locale) -> Result<CliCommand, String>
     Ok(CliCommand::LlamaRemove { id, force })
 }
 
+fn parse_setup(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> {
+    let mut args = SetupArgs::default();
+    let mut i = 0;
+    while i < toks.len() {
+        let a = toks[i];
+        match a {
+            "-h" | "--help" => {
+                return Ok(CliCommand::Help {
+                    topic: Some(HelpTopic::Setup),
+                });
+            }
+            "--sandbox" => {
+                args.sandbox = true;
+                i += 1;
+            }
+            "--verify" => {
+                args.verify = true;
+                i += 1;
+            }
+            _ => match setup_value(toks, &mut i, loc)? {
+                Some((opt, v)) => args.assign(opt, v, loc)?,
+                None if a.starts_with('-') => return Err(unknown_option(loc, a)),
+                None => return Err(unexpected_arg(loc, a)),
+            },
+        }
+    }
+    // A build with no backend to take it from is a mistyped command, not a
+    // harmless extra: the likeliest cause is a forgotten `--llama`.
+    if args.llama_build.is_some() && args.llama.is_none() {
+        return Err(missing_opt(loc, "--llama"));
+    }
+    Ok(CliCommand::Setup(args))
+}
+
+/// The options of `setup` that take a value.
+const SETUP_VALUED: &[&str] = &[
+    "--llama",
+    "--llama-build",
+    "--model",
+    "--mmproj",
+    "--embed-model",
+    "--ctx",
+    "--ngl",
+    "--set",
+];
+
+/// The valued option at `toks[*i]` and its value, when it is one of `setup`'s.
+fn setup_value<'a>(
+    toks: &[&'a str],
+    i: &mut usize,
+    loc: &Locale,
+) -> Result<Option<(&'static str, &'a str)>, String> {
+    for &opt in SETUP_VALUED {
+        if let Some(v) = opt_value(toks, i, loc, &[opt])? {
+            return Ok(Some((opt, v)));
+        }
+    }
+    Ok(None)
+}
+
+impl SetupArgs {
+    /// Stores the value of one of [`SETUP_VALUED`].
+    fn assign(&mut self, opt: &str, v: &str, loc: &Locale) -> Result<(), String> {
+        match opt {
+            "--llama" => self.llama = Some(v.to_string()),
+            "--llama-build" => self.llama_build = Some(v.to_string()),
+            "--model" => self.model = Some(PathBuf::from(v)),
+            "--mmproj" => self.mmproj = Some(PathBuf::from(v)),
+            "--embed-model" => self.embed_model = Some(PathBuf::from(v)),
+            "--ctx" => self.ctx = Some(parse_number(v, opt, loc)?),
+            "--ngl" => self.ngl = Some(parse_number(v, opt, loc)?),
+            "--set" => self.set.push(parse_assignment(v, loc)?),
+            other => unreachable!("not one of SETUP_VALUED: {other}"),
+        }
+        Ok(())
+    }
+}
+
+/// A numeric option's value, or a refusal naming the option and what was typed.
+fn parse_number<T: std::str::FromStr>(v: &str, opt: &str, loc: &Locale) -> Result<T, String> {
+    v.trim()
+        .parse()
+        .map_err(|_| err_line(loc, "cli.parse.bad_number", &[("opt", opt), ("value", v)]))
+}
+
+/// `KEY=VALUE`, split at the **first** `=` — the value may carry more of them
+/// (a URL with a query, a JSON literal).
+fn parse_assignment(v: &str, loc: &Locale) -> Result<(String, String), String> {
+    match v.split_once('=') {
+        Some((key, value)) if !key.trim().is_empty() => {
+            Ok((key.trim().to_string(), value.to_string()))
+        }
+        _ => Err(err_line(loc, "cli.parse.bad_set", &[("value", v)])),
+    }
+}
+
 fn parse_demo(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> {
     // `demo` takes no arguments; the first token decides everything.
     match toks.first() {
@@ -614,11 +755,13 @@ pub fn render_help(topic: Option<HelpTopic>, loc: &Locale) -> String {
     match topic {
         None => format!(
             "{about}\n\n{usage} mindfork [COMMAND]\n\n{commands}\n\
-             {dm:<20}{cd}\n{b:<20}{cb}\n{r:<20}{cr}\n{st:<20}{cst}\n{im:<20}{ci}\n{sb:<20}{cs}\n{ll:<20}{cll}\n{lc:<20}{cl}\n\n\
+             {dm:<20}{cd}\n{su:<20}{csu}\n{b:<20}{cb}\n{r:<20}{cr}\n{st:<20}{cst}\n{im:<20}{ci}\n{sb:<20}{cs}\n{ll:<20}{cll}\n{lc:<20}{cl}\n\n\
              {options}\n  -h, --help     {oh}\n  -V, --version  {ov}",
             about = loc.t("cli.help.about"),
             dm = "  demo",
             cd = loc.t("cli.help.cmd.demo"),
+            su = "  setup",
+            csu = loc.t("cli.help.cmd.setup"),
             b = "  backup",
             cb = loc.t("cli.help.cmd.backup"),
             r = "  restore",
@@ -753,6 +896,36 @@ pub fn render_help(topic: Option<HelpTopic>, loc: &Locale) -> String {
             cf = loc.t("cli.help.opt.llama.remove_force"),
             h = "  -h, --help",
             ch = loc.t("cli.help.opt.help"),
+        ),
+        Some(HelpTopic::Setup) => format!(
+            "{d}\n\n{usage} mindfork setup [OPTIONS]\n\n{options}\n\
+             {sb:<26}{csb}\n{ll:<26}{cll}\n{lb:<26}{clb}\n{m:<26}{cm}\n{mp:<26}{cmp}\n\
+             {em:<26}{cem}\n{cx:<26}{ccx}\n{ng:<26}{cng}\n{st:<26}{cst}\n{vf:<26}{cvf}\n\
+             {h:<26}{ch}\n\n{n}",
+            d = loc.t("cli.help.cmd.setup"),
+            sb = "  --sandbox",
+            csb = loc.t("cli.help.opt.setup.sandbox"),
+            ll = "  --llama <BACKEND>",
+            cll = loc.t("cli.help.opt.setup.llama"),
+            lb = "  --llama-build <TAG>",
+            clb = loc.t("cli.help.opt.llama.build"),
+            m = "  --model <GGUF>",
+            cm = loc.t("cli.help.opt.setup.model"),
+            mp = "  --mmproj <GGUF>",
+            cmp = loc.t("cli.help.opt.setup.mmproj"),
+            em = "  --embed-model <GGUF>",
+            cem = loc.t("cli.help.opt.setup.embed_model"),
+            cx = "  --ctx <N>",
+            ccx = loc.t("cli.help.opt.setup.ctx"),
+            ng = "  --ngl <N>",
+            cng = loc.t("cli.help.opt.setup.ngl"),
+            st = "  --set <KEY>=<VALUE>",
+            cst = loc.t("cli.help.opt.setup.set"),
+            vf = "  --verify",
+            cvf = loc.t("cli.help.opt.setup.verify"),
+            h = "  -h, --help",
+            ch = loc.t("cli.help.opt.help"),
+            n = loc.t("cli.help.setup.note"),
         ),
         Some(HelpTopic::Demo) => format!(
             "{d}\n\n{usage} mindfork demo\n\n{n}",
@@ -1187,6 +1360,131 @@ mod tests {
         assert!(p(&["llama", "remove", "--all"]).is_err());
     }
 
+    /// Every option of `setup` is one step, in either spelling, and none of
+    /// them has a short form: the command writes user data.
+    #[test]
+    fn setup_parses_every_step_in_both_spellings() {
+        assert_eq!(
+            p(&[
+                "setup",
+                "--sandbox",
+                "--llama",
+                "cuda-12",
+                "--llama-build=b11070",
+                "--model",
+                "/w/chat.gguf",
+                "--mmproj=/w/mmproj.gguf",
+                "--embed-model",
+                "/w/embed.gguf",
+                "--ctx",
+                "32768",
+                "--ngl=-1",
+                "--set",
+                "engine.managed.sessions=4",
+                "--set=engine.external.url=http://h:1/v1?a=b",
+                "--verify",
+            ])
+            .unwrap(),
+            CliCommand::Setup(SetupArgs {
+                sandbox: true,
+                llama: Some("cuda-12".to_string()),
+                llama_build: Some("b11070".to_string()),
+                model: Some(PathBuf::from("/w/chat.gguf")),
+                mmproj: Some(PathBuf::from("/w/mmproj.gguf")),
+                embed_model: Some(PathBuf::from("/w/embed.gguf")),
+                ctx: Some(32768),
+                ngl: Some(-1),
+                // Split at the first `=` only: a URL keeps its own.
+                set: vec![
+                    ("engine.managed.sessions".to_string(), "4".to_string()),
+                    (
+                        "engine.external.url".to_string(),
+                        "http://h:1/v1?a=b".to_string()
+                    ),
+                ],
+                verify: true,
+            })
+        );
+        // One step alone is a use, and bare `setup` parses — the command answers
+        // "nothing to do" with its help (the `llama setup` shape).
+        let CliCommand::Setup(only_ctx) = p(&["setup", "--ctx", "8192"]).unwrap() else {
+            panic!("not a setup")
+        };
+        assert!(!only_ctx.is_empty() && only_ctx.model.is_none());
+        let CliCommand::Setup(bare) = p(&["setup"]).unwrap() else {
+            panic!("not a setup")
+        };
+        assert!(bare.is_empty());
+        assert_eq!(
+            p(&["setup", "--model", "x", "--help"]).unwrap(),
+            CliCommand::Help {
+                topic: Some(HelpTopic::Setup)
+            }
+        );
+    }
+
+    #[test]
+    fn setup_refuses_what_it_cannot_mean() {
+        for bad in [
+            &["setup", "--ctx", "lots"][..],
+            &["setup", "--ctx", "-1"],
+            &["setup", "--ngl", "all"],
+            &["setup", "--set", "no-equals-sign"],
+            &["setup", "--set", "=value"],
+            &["setup", "--set"],
+            &["setup", "--model"],
+            &["setup", "-m", "x.gguf"], // long forms only
+            &["setup", "--enable-python"],
+            &["setup", "stray"],
+            // A build with no backend to take it from: a forgotten `--llama`.
+            &["setup", "--llama-build", "b11070"],
+        ] {
+            assert!(p(bad).is_err(), "{bad:?}");
+        }
+        // The two refusals this command owns say what was typed, in both locales.
+        for lang in [Lang::En, Lang::Ru] {
+            let parse_in = |args: &[&str]| {
+                let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+                parse(&owned, locale(lang)).unwrap_err()
+            };
+            let err = parse_in(&["setup", "--ctx", "lots"]);
+            assert!(
+                err.contains("--ctx") && err.contains("lots"),
+                "{lang:?}: {err}"
+            );
+            let err = parse_in(&["setup", "--set", "no-equals-sign"]);
+            assert!(err.contains("no-equals-sign"), "{lang:?}: {err}");
+            assert!(!err.contains('{'), "{lang:?}: {err}");
+        }
+    }
+
+    /// The topic says the two things someone pasting this into a rented box
+    /// needs to hear: a failed step does not stop the rest, and the settings
+    /// are written — not overridden.
+    #[test]
+    fn setup_help_is_listed_and_says_how_it_behaves() {
+        let loc = locale(Lang::En);
+        assert!(render_help(None, loc).contains("setup  "));
+        let topic = render_help(Some(HelpTopic::Setup), loc);
+        assert!(topic.contains("mindfork setup [OPTIONS]"), "{topic}");
+        for opt in [
+            "--sandbox",
+            "--llama <BACKEND>",
+            "--llama-build <TAG>",
+            "--model <GGUF>",
+            "--mmproj <GGUF>",
+            "--embed-model <GGUF>  ",
+            "--ctx <N>",
+            "--ngl <N>",
+            "--set <KEY>=<VALUE>  ",
+            "--verify",
+        ] {
+            assert!(topic.contains(opt), "{opt}: {topic}");
+        }
+        assert!(topic.contains("does not stop the others"), "{topic}");
+        assert!(topic.contains("settings.json"), "{topic}");
+    }
+
     #[test]
     fn locales_export() {
         assert_eq!(
@@ -1279,6 +1577,8 @@ mod tests {
             Some(HelpTopic::LlamaSetup),
             Some(HelpTopic::LlamaInstalled),
             Some(HelpTopic::LlamaRemove),
+            Some(HelpTopic::Setup),
+            Some(HelpTopic::Demo),
             Some(HelpTopic::Locales),
             Some(HelpTopic::LocalesExport),
         ];
