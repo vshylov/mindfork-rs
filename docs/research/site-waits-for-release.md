@@ -155,3 +155,10 @@ does not look at the conclusion. That is the wanted behaviour (the gate asks abo
 the release, not the crate, so a failed upload does not strand the post) and it is
 why a red upstream run is not a failed rehearsal. Full record —
 [docs/journal/website.md](../journal/website.md), "the site waits for the release".
+
+**The hold, seen for real — 0.11.0, 2026-09-21.** The release pull request's merge
+ran `Site` green with the build and the deploy skipped and the notice "the deploy is
+held"; the site stayed silent for the 2 h 45 min the draft was checked; and after the
+publication at 21:44:52Z the chain ran unattended — `crates.io` to 21:47:44Z, `Site`
+six seconds later, deployed by 21:48:29Z. **3 min 37 s after the release, against
+25 min 28 s before it** — the number this document opened with.

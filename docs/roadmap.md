@@ -334,9 +334,11 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   them, because the Linux runtime archive is named unlike the Windows one. What
   Stages 1 and 2 are **done** too: `mindfork setup` (install.md §3.3) and
   `install.sh` with the rented-box recipe (install.md §1, §3.4), rehearsed GO
-  on `v0.10.2-rc1`. What remains: the probe on a rented pod
-  (`tools/pod_probe.sh`), which carries the Linux-GPU live half of every stage
-  and gives the recipe its measured numbers; a model download as a later stage.
+  on `v0.10.2-rc1` and **released in 0.11.0** (2026-09-21). What remains: the
+  probe on a rented pod — since the release, the README's own line run end to
+  end, with `tools/pod_probe.sh` for the measurements it does not take — which
+  carries the Linux-GPU live half of every stage and gives the recipe its
+  measured numbers; a model download as a later stage.
 - **Provider bridges** — the "any OpenAI-compatible endpoint" pattern
   (external + LiteLLM/OpenRouter) is documented in install.md §3, together with
   the key such a gateway needs

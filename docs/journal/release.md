@@ -2656,3 +2656,57 @@ every reversible check first. Full record —
   ([site-waits-for-release.md](../research/site-waits-for-release.md)). This is
   the first real hold; its timings belong in the entry that records the
   publication. The site's install page gains the one-liner in the same commit.
+- **The draft, checked before anyone else could see it** (§6 step 5). `v0.11.0`
+  sat on the merge commit `0c52a4bb`, which was `origin/main`; `release.yml` was
+  green and left a draft that was not a prerelease, with **eight** assets — the
+  seven 0.10.2 has, and `install.sh`. Its notes were the CHANGELOG's `[0.11.0]`
+  section byte for byte (51 lines, compared against the guard's own extraction).
+  All seven lines of `sha256sums.txt` equalled the `digest` GitHub computes per
+  asset on upload, with nothing listed that is not an asset — checked without
+  downloading a binary. The job's new step said `passed=24 failed=0` and
+  `installed: mindfork 0.11.0 (expected: mindfork 0.11.0)`. For the script, one
+  digest three ways (`701cecea…`: the list, the downloaded asset, the file at the
+  tag), and `gh attestation verify` exit 0 with eight subjects, `install.sh`
+  among them, `release.yml` at `refs/tags/v0.11.0` — against exit 1 for a file
+  the release never produced. **Two** attestations answer for the script, not
+  one: it is byte-identical to the rehearsal's, an attestation is bound to a
+  digest, and the rehearsal's outlived the deletion of its draft and its tag.
+  Then the draft's own archive installed by the draft's own script in a bare
+  `ubuntu:24.04` with no network: `sha256 ok`, unpacked (the binary, the
+  dictionaries, the licences, the documents), marker `v0.11.0`, and the expected
+  exit 3 for the missing library.
+- **The released Linux binary, run on Linux** — a first for this checklist, in
+  the cached lab image, which has `libasound`: installed `--from` the draft's
+  assets, it answers `mindfork 0.11.0`; a launch with no terminal refuses with
+  exit 2; bare `setup` is help and exit 2; `setup --model … --ctx … --set …`
+  writes its three settings; a mistyped `--set` key is refused by name. And
+  **`llama backends` on Linux lists `cuda-12.8 727 MB (+ CUDA runtime)` and
+  `cuda-13.4 562 MB (+ CUDA runtime)`** for build `b11081` — stage 0's fix,
+  measured on the shipped artifact against the live release list, where 0.10.2
+  printed "no CUDA runtime published". The same listing is the argument for
+  families made by upstream on the day of the release: Linux CUDA 13 had been
+  `cuda-13.3` that morning (`b11070`, the fixture) and was `cuda-13.4` by the
+  evening, so `--llama cuda-13` kept working and `cuda-13.3` would not have;
+  `--backend cuda` is refused with both candidates named. Not done: a CUDA
+  *install* on Linux under a GPU (727 MB, two tarballs merged into one directory,
+  `--list-devices`) — the pod probe's; and the Windows archive's headless smoke,
+  the interactive TUI run and the installer, which stayed with the owner.
+- **Published, and the numbers of it.** The owner published the release at
+  21:44:52Z on 2026-09-21; it is the repository's latest. `crates-io.yml` started
+  two seconds later and finished at 21:47:44Z; `mindfork 0.11.0` was on the
+  registry at 21:47:30Z — 4 011 683 bytes (0.10.2 was 3 985 912), not yanked, the
+  default version. The third execution of the upload branch, and nothing about it
+  differed.
+- **The address the README had been promising answered.**
+  `releases/latest/download/install.sh` was a 404 from the merge of the install
+  script until this publication, and a 200 after it. The README's line was then
+  run as published, by an **unprivileged user** in a container — a path neither
+  the scenarios nor CI had taken, since both run as root: the latest tag resolved
+  from the redirect to `v0.11.0`, the archive downloaded, `sha256 ok`, unpacked,
+  `not linked into /usr/local/bin (no permission). Run it as: /tmp/mf/mindfork`,
+  `mindfork 0.11.0`, and the arguments after `--` handed over; the same line again
+  said `already installed` and downloaded nothing.
+- **The site followed by itself, for the first time with a real hold behind it** —
+  3 min 37 s from the publication to the post being live, where 0.10.2's post had
+  gone out 25 min 28 s *before* its release. The timings are in
+  [website.md](website.md), "the site waits for the release".
