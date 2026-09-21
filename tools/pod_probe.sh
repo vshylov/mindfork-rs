@@ -131,7 +131,7 @@ section "P3 the official CUDA build"
 BACKEND="$("$APP/mindfork" llama backends 2>/dev/null | awk '$1 ~ /^cuda-12/{print $1; exit}')"
 say "backend picked from the list: ${BACKEND:-NONE}"
 if [ -n "$BACKEND" ]; then
-    say "-- without --no-cudart (expected to be REFUSED until stage 0 lands):"
+    say "-- without --no-cudart (0.10.2 REFUSES this; a release with the fix installs it):"
     run "$APP/mindfork" llama setup --backend "$BACKEND"
     say "-- with --no-cudart (the host's own CUDA libraries):"
     run "$APP/mindfork" llama setup --backend "$BACKEND" --no-cudart

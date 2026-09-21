@@ -133,8 +133,8 @@ id=cuda-12.8 asset=llama-b11070-bin-ubuntu-cuda-12.8-x64.tar.gz cudart=None miss
 id=cuda-13.3 … cudart=None missing=true
 ```
 
-So on Linux today `mindfork llama backends` lists `cuda-12.8` with the "no CUDA
-runtime" note, and `llama setup --backend cuda-12.8` **bails** with
+So on Linux, as of 0.10.2, `mindfork llama backends` lists `cuda-12.8` with the
+"no CUDA runtime" note, and `llama setup --backend cuda-12.8` **bails** with
 `llamacpp.setup.cudart_missing`, naming a file upstream has never published.
 `--no-cudart` gets past it and then depends on the host's own CUDA libraries.
 This is a defect on its own, provisioning or not, and it is the same lesson as
@@ -494,7 +494,12 @@ stack on Windows, and the whole one-liner on a rented pod, recorded in
 0. **`fix/llama-linux-cudart`** — derive the runtime's name; look for the named
    backend when scanning; families (F9). Corrects
    [llama-cpp-download.md](llama-cpp-download.md) §3.7 and
-   [install.md](../install.md) §3.1.
+   [install.md](../install.md) §3.1. **Done 2026-09-21**, and its live smoke
+   found a second defect on the same seam: `b11070` logs a line ahead of its
+   `--version`, which had made the build-number check skip itself in silence
+   ([journal/engine.md](../journal/engine.md)). Until a release carries the fix,
+   the *released* binary still refuses CUDA on Linux — which is what P3 of the
+   probe expects to see, and why it goes on with `--no-cudart`.
 1. **`feat/setup-command`** — `mindfork setup` with paths, `--set`, `--verify`.
 2. **`feat/install-script`** — `install.sh`, the release workflow, the rehearsal;
    install.md gains "On a rented GPU box" with the RunPod recipe.

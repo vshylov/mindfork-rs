@@ -329,11 +329,12 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   ([cloud-provisioning.md](research/cloud-provisioning.md)): `mindfork setup`
   (sandbox + llama.cpp + the model, projector, embedder and context written
   into the settings, `--verify`) behind a thin `install.sh` shipped as a release
-  asset, for RunPod and its kin. Stage 0 is a defect on its own: upstream has
-  published **CUDA builds for Linux** since 2026-09-14 and `llama setup` refuses
-  them, because the Linux runtime archive is named unlike the Windows one. The
-  probe on a rented pod (`tools/pod_probe.sh`) is still owed; a model download
-  is a later stage.
+  asset, for RunPod and its kin. Stage 0 is **done** (2026-09-21): upstream has
+  published **CUDA builds for Linux** since 2026-09-14 and `llama setup` refused
+  them, because the Linux runtime archive is named unlike the Windows one. What
+  remains: the probe on a rented pod (`tools/pod_probe.sh`), which also carries
+  stage 0's Linux-GPU live half; stage 1 (`mindfork setup`); stage 2
+  (`install.sh`); a model download as a later stage.
 - **Provider bridges** — the "any OpenAI-compatible endpoint" pattern
   (external + LiteLLM/OpenRouter) is documented in install.md §3, together with
   the key such a gateway needs
