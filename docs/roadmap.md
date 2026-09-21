@@ -325,6 +325,15 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   [chat-content-search.md §9.1](research/chat-content-search.md).
 
 ## Engine and reliability
+- **One command from a bare GPU box to a chat** — researched and decided
+  ([cloud-provisioning.md](research/cloud-provisioning.md)): `mindfork setup`
+  (sandbox + llama.cpp + the model, projector, embedder and context written
+  into the settings, `--verify`) behind a thin `install.sh` shipped as a release
+  asset, for RunPod and its kin. Stage 0 is a defect on its own: upstream has
+  published **CUDA builds for Linux** since 2026-09-14 and `llama setup` refuses
+  them, because the Linux runtime archive is named unlike the Windows one. The
+  probe on a rented pod (`tools/pod_probe.sh`) is still owed; a model download
+  is a later stage.
 - **Provider bridges** — the "any OpenAI-compatible endpoint" pattern
   (external + LiteLLM/OpenRouter) is documented in install.md §3, together with
   the key such a gateway needs
