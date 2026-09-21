@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (46)
+## Entries (47)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -58,6 +58,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Release 0.10.1 (prepared)
 - Release 0.10.2 (prepared)
 - Post-M9: the README's screenshots are the dark ones (done)
+- Post-M9: `install.sh` — the release installs itself on a bare Linux box (done)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -2520,3 +2521,61 @@ every reversible check first. Full record —
 - **Tests**: unchanged (3379 unit green, 196 `#[ignore]`); no code was touched.
   Gates run: `link_check.py`, `doc_index_check.py`, `cyrillic_scan.py`. **No
   live run** — a documentation PR, no engine/memory/tool path (AGENTS.md §3).
+
+### Post-M9: `install.sh` — the release installs itself on a bare Linux box (done)
+
+- **Stage 2 of the provisioning track**
+  ([cloud-provisioning.md](../research/cloud-provisioning.md) §4.4, forks F5 and
+  F6). `mindfork setup` cannot put `mindfork` on a machine that does not have it,
+  and on a rented pod that machine is new at every stop. `packaging/linux/install.sh`
+  is that first step and nothing more: platform check, the archive, its checksum,
+  the one library a bare image lacks, a link, and — after `--` — the rest of the
+  line handed to `mindfork`, which is where the real work (`setup`) stays, in
+  tested Rust.
+- **A release asset, by the user's choice (F5)**: `releases/latest/download/install.sh`.
+  `release.yml` copies it into `dist/` *before* the checksums, so it is listed in
+  `sha256sums.txt` and covered by the build attestation like every other asset —
+  no new root of trust: whoever can publish a release could already ship the
+  binary. The site's bucket does not become a code-distribution channel.
+- **What the shell is careful about.** POSIX `sh` — verified under `dash`, which
+  is what a minimal image has — and one `main` called on the last line, so a
+  download cut short runs nothing. The latest tag comes from the **redirect** of
+  the releases page, not the API (60 requests an hour, shared by a datacenter's
+  whole address). A tag is validated before it reaches a URL or a file name. The
+  archive is refused unless `sha256sums.txt` lists it and agrees — the release
+  writes `<hash>  ./<name>`, and the parser reads that spelling and the two
+  `sha256sum` writes elsewhere. It is unpacked beside the target and the binary
+  **moved** in, because `tar` over a running binary is "Text file busy" and a
+  rename is not. Whether the app can start is decided by **running it**, not by
+  asking a package database: the loader names `libasound.so.2`, the script
+  installs the distribution's package (`libasound2t64` before `libasound2` — the
+  time_t64 trap of `nfpm.yaml`, third appearance) as root or through
+  passwordless `sudo`, and otherwise stops with exit code 3 and the exact
+  command. A version already in place is recognised by a marker file, so the
+  line a restarted pod runs downloads nothing; `DIR/data` is never touched.
+- **`--from DIR` is a feature and the test seam at once**: install from files on
+  disk, no network. It is what lets `packaging/linux/install_test.sh` run 25
+  scenarios anywhere — every refusal as a control arm (a tampered archive, an
+  unlisted one, a missing `sha256sums.txt`, two archives and no `--version`, a
+  tag with shell in it), arguments after `--` arriving as five with the one that
+  has a space in it whole, a re-run that unpacks nothing, an upgrade that moves
+  the marker and not the data — and what lets the **release job install its own
+  archive** with its own script from its own `sha256sums.txt` before the draft
+  exists, requiring the tag's version back (a rehearsal tag's suffix stripped:
+  the binary's version is `Cargo.toml`'s).
+- **Verified locally** in a bare `ubuntu:24.04` with no network: 25/25 with a
+  real Linux binary (`libasound` absent → exit 3, the `apt-get` line named),
+  22/22 without one; the redirect resolves to `v0.10.2`, whose asset names are
+  the ones the script builds. **In CI** (`packaging.yml`, new `install-script`
+  job): five bare images — Ubuntu 24.04 and 22.04 (the `libasound2` fallback),
+  Debian 12, Fedora, Arch — run the scenarios, a real install in which the
+  script installs the distribution's ALSA package itself and the app answers
+  `--version`, and the download of the latest published release end to end.
+  `shellcheck --severity=warning` runs on both scripts.
+- **Owed**: the release rehearsal (`v0.10.2-rc1`, pushed by the user — AGENTS.md
+  §6) that shows `install.sh` among the draft's assets and in its
+  `sha256sums.txt`; and the pod probe, after which install.md §3.4's recipe —
+  written from RunPod's documentation and from what was measured in containers —
+  gets its measured numbers.
+- **Gates**: no Rust changed — **3408 unit tests, 197 `#[ignore]`**, as before;
+  link / source-language / index / action-pin gates green.

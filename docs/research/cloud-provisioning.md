@@ -511,6 +511,12 @@ stack on Windows, and the whole one-liner on a rented pod, recorded in
    probe cannot tell our server from whatever already answers there.
 2. **`feat/install-script`** — `install.sh`, the release workflow, the rehearsal;
    install.md gains "On a rented GPU box" with the RunPod recipe.
+   **Implemented 2026-09-21** ([journal/release.md](../journal/release.md)):
+   the script, its 25 scenarios, five bare images in `packaging.yml`, the
+   release job installing its own archive, install.md §1 and §3.4. `--from
+   DIR` was added in the building — an offline install, and the seam that
+   makes the script testable without a network. The release rehearsal and
+   the pod probe are still owed.
 3. *(if F4 goes that way)* **model download** — its own research section first.
 
 The probe runs before stage 0 is merged; stage 1 does not depend on it.

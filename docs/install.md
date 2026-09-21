@@ -23,6 +23,51 @@ RHEL/Rocky 9 with glibc 2.34 is **not** supported).
 The portable archive keeps data **next to the binary** (in `data/`); it's a
 self-contained folder/flash drive. For an "installed" setup — see the packages below.
 
+### The install script (Linux)
+
+One line puts the portable build into a directory and makes it startable — the
+route for a machine that is new every time (a container, a rented GPU box, §3.4),
+and a perfectly good one for a desktop:
+
+```bash
+curl -fsSL https://github.com/vshylov/mindfork-rs/releases/latest/download/install.sh | sh
+```
+
+It is an asset of the release like the archive itself — listed in
+`sha256sums.txt`, covered by the same build attestation — so piping it adds no
+party to trust that the binary had not already added. If you would rather read
+before you run, download it, read it, and run `sh install.sh`; it is one short
+POSIX script.
+
+| | |
+|---|---|
+| `--dir DIR` | where to install; default `~/mindfork`. The app's data lives in `DIR/data` (portable mode, §2) |
+| `--version vX.Y.Z` | a particular release; default — the latest |
+| `--from DIR` | install from files already on disk (the archive and `sha256sums.txt`) — no network at all |
+| `--no-deps` | do not install the system library (below); the script then only says what is missing |
+| `--no-link` | do not link the binary into `/usr/local/bin` |
+| `-- ARGS…` | when the install is done, run `mindfork ARGS…` — typically `-- setup …` (§3.3) |
+
+What it does, in order: refuses anything but Linux x86_64 with glibc 2.35+, in
+words; finds the latest release from the *redirect* of the releases page (not
+the API, whose 60 requests an hour are shared by everyone behind a datacenter's
+address); downloads the archive and `sha256sums.txt`, **refuses the archive if
+the two disagree**, and unpacks it; then **runs the binary** to see whether it
+starts. On a bare image it does not — the app needs ALSA's runtime library
+(`libasound.so.2`, for speech playback) and minimal images do not carry it — so
+the script installs that one package with the system's package manager
+(`apt-get`, `dnf`, `pacman` or `zypper`; as root, or through `sudo` when it needs
+no password), and if it cannot, stops with exit code 3 and the exact command to
+run. Finally it links `/usr/local/bin/mindfork` and prints the version.
+
+**Running it again is safe and cheap**: a version that is already in place is
+recognised and not downloaded, your data in `DIR/data` is never touched (the
+archive carries only the bundled dictionaries there), and an upgrade works even
+while the app is running. The checksum proves the bytes are the ones the release
+published — not truncated, not corrupted; it cannot prove *who* published them,
+because both files come from the same place. That is what the attestation is
+for: `gh attestation verify <archive> --repo vshylov/mindfork-rs`.
+
 ### Linux packages (deb / rpm / pkg.tar.zst)
 
 Each release ships system packages:
@@ -833,6 +878,66 @@ reason, while the command line can still be edited. The servers' own output goes
 to the log (`data/logs/`), and the command names the folder when something
 fails. A cloud or external engine is not started and not failed: there is
 nothing of ours to start.
+
+### 3.4. On a rented GPU box (RunPod and similar)
+
+A rented pod is a machine that is **new every time**, and on RunPod more so than
+it looks: the container's own disk is cleared **whenever the pod stops**, not only
+when it is terminated — what survives is the volume, mounted at `/workspace`. So
+everything goes onto the volume, and one line both installs and repairs:
+
+```bash
+curl -fsSL https://github.com/vshylov/mindfork-rs/releases/latest/download/install.sh \
+  | sh -s -- --dir /workspace/mindfork -- setup \
+      --sandbox --llama cuda-12 \
+      --model /workspace/models/gemma-4-31b-it-q4_0.gguf \
+      --mmproj /workspace/models/mmproj-gemma-4-31b-it-f16.gguf \
+      --embed-model /workspace/models/bge-m3-Q8_0.gguf \
+      --ctx 32768 --verify
+tmux new -A -s mindfork mindfork
+```
+
+The first run downloads the app, the sandbox and llama.cpp and writes the
+settings; **after a restart the same line takes seconds** — everything under
+`/workspace/mindfork` is recognised as present, and only what the container lost
+(the ALSA package, the link in `/usr/local/bin`) is put back. Pasted into a
+template's *start command* (followed by the image's own `/start.sh`), a restart
+needs no typing at all.
+
+- **The models are yours to bring** — a network volume that already holds the
+  GGUFs, or a download of your own; `setup` takes paths (§3.3).
+- **Pick an Ubuntu 24.04 image** (`runpod/pytorch:…-ubuntu2404`, or any
+  `nvidia/cuda:…-ubuntu24.04`). llama.cpp's CUDA builds for Linux are built on
+  24.04; on an older system `setup` installs them and then reports that the
+  binary does not start. `cuda-12` is a *family* (§3.1): it keeps working when
+  llama.cpp moves to the next CUDA minor.
+- **Use tmux.** The managed `llama-server` is a child of the app: a dropped SSH
+  session takes the app down, the app takes the server down, and reconnecting
+  means loading twenty gigabytes again. `tmux new -A -s mindfork` attaches to the
+  session if it is still there. In the browser terminal `Ctrl+N` and `Ctrl+T`
+  belong to the browser and never arrive — type `/new` and `/thoughts` instead
+  (`F1` → *Commands* lists the command behind every key).
+- **A model on a network volume may load slowly through mmap**; if `--verify`
+  shows minutes where you expected seconds, add `--set engine.managed.no_mmap=true`.
+- **API keys: by variable name.** A container's `/etc/machine-id` is empty, so the
+  app cannot store a key there (its storage is bound to the machine, §3.2) and
+  says so. Put the key into the pod's environment (RunPod: a *secret* referenced
+  from the template) and name the variable:
+  `--set engine.openai.api_key_env=OPENAI_API_KEY`.
+- **Your data is on someone else's disk**, unencrypted, and terminating the pod
+  deletes the volume. Before you terminate: `mindfork backup -p <password> -o
+  /workspace/mindfork-backup.zip` and copy it off; at home, `mindfork stats
+  --compare` says which copy is the newer (§2.2). To start *from* your data,
+  `mindfork restore <archive>` before `setup` — a binary path it brings from
+  another machine is cleared by `setup --llama` (§3.3).
+- **The meter does not stop by itself.** RunPod neither stops an idle pod nor
+  stops billing when the container exits — stop or terminate it yourself.
+
+Elsewhere the same line works unchanged, with the directory of your choice:
+Vast.ai (put it into the *on-start script* — in its SSH and Jupyter modes the
+image's entrypoint is not called), and the providers that rent full VMs (Lambda,
+TensorDock, DigitalOcean GPU droplets), where nothing is cleared on reboot and
+the line is simply run once, or given as cloud-init user data.
 
 ### Quick start via environment variables (dev)
 

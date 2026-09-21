@@ -40,7 +40,14 @@ there are no backport branches.
   on our behalf and which is therefore checked as a finished file. For the
   engine it is the digest the llama.cpp release publishes for that exact asset,
   read from the same release listing as the download URL; an asset the release
-  publishes no digest for is not installed.
+  publishes no digest for is not installed. The Linux **install script**
+  (`install.sh`, a release asset) downloads one thing — the release's own
+  archive, from `github.com` over HTTPS — and refuses it unless it matches the
+  release's `sha256sums.txt`; that proves the bytes are the ones published, not
+  who published them, which is what the build attestation on every asset
+  (`gh attestation verify`) is for. It sends nothing, reads no credential, and
+  the only thing it installs besides the app is the distribution's ALSA
+  runtime package, when the app cannot start without it.
 - **Secrets are stored encrypted and machine-bound**: cloud API keys and MCP
   server tokens entered in settings are encrypted with DPAPI on Windows and a
   `machine-id`-derived key on Linux, so a copied settings file does not carry

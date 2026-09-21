@@ -15,6 +15,13 @@ split by subsystem.
 ## [Unreleased]
 
 ### Added
+- **An install script for Linux, and a recipe for a rented GPU box.** `curl -fsSL
+  …/releases/latest/download/install.sh | sh` unpacks the portable build, checks
+  it against the release's checksums, installs the one system library a bare
+  image lacks, and can hand the rest of the line to `mindfork setup`. It is safe
+  to run again: on RunPod, where a stopped pod loses everything outside
+  `/workspace`, the same line puts back what is missing in seconds
+  (docs/install.md §1, §3.4).
 - **`mindfork setup` — a working local engine from one command.** For a machine
   that is new every time (a rented GPU box, a container), and any other:
   `mindfork setup --sandbox --llama cuda-12 --model … --mmproj … --embed-model …

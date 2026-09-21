@@ -190,6 +190,15 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **`install.sh` — the release installs itself on a bare Linux box** (stage 2 of
+  the provisioning track). A release asset, so listed in `sha256sums.txt` and
+  attested — no new root of trust. POSIX `sh`; the archive refused unless the
+  checksums agree; whether the app starts is decided by **running it**, and the
+  missing `libasound` installed or named with exit 3; idempotent, so on RunPod the
+  same line repairs what a stop cleared. 25 scenarios, five bare images in
+  `packaging.yml`, and the release job installs its own archive. The rehearsal and
+  the pod probe are owed
+  ([docs/journal/release.md](docs/journal/release.md), install.md §1, §3.4).
 - **`mindfork setup` — a working managed engine from one command** (stage 1 of
   the provisioning track). Sandbox + llama.cpp + the model, projector, embedder
   and context **written** into the settings (the env variables only override),

@@ -96,7 +96,15 @@ articles at [mindfork.io](https://mindfork.io/articles/).
 Grab a build from the
 [releases](https://github.com/vshylov/mindfork-rs/releases): a Windows
 **installer** or zip archive, Linux **deb / rpm / pkg.tar.zst** packages or a
-tar.gz. Or build from source with a recent stable Rust (edition 2024):
+tar.gz. On Linux one line installs the portable build — and on a rented GPU box
+or in a container, the same line again repairs what a restart lost
+([install.md](docs/install.md) §1, §3.4):
+
+```bash
+curl -fsSL https://github.com/vshylov/mindfork-rs/releases/latest/download/install.sh | sh
+```
+
+Or build from source with a recent stable Rust (edition 2024):
 
 ```bash
 cargo build --release          # binary lands in target/release/
