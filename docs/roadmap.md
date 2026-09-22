@@ -337,7 +337,8 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   on `v0.10.2-rc1` and **released in 0.11.0** (2026-09-21) — where the first real
   pod run found it failing inside `tar` (root without `CAP_CHOWN`; fixed in
   0.11.1) — and, past that flag, the whole line **ran on the pod**: CUDA
-  llama.cpp, the sandbox, a 31B model verified at 131k. What remains: the
+  llama.cpp, the sandbox, a 31B model verified at 131k; **0.11.1** (2026-09-22)
+  ships the fix, and the README's line passes in the pod's shape. What remains: the
   probe on a rented pod — since the release, the README's own line run end to
   end, with `tools/pod_probe.sh` for the measurements it does not take — which
   carries the Linux-GPU live half of every stage and gives the recipe its

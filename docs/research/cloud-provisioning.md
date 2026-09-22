@@ -530,8 +530,9 @@ stack on Windows, and the whole one-liner on a rented pod, recorded in
    hand, **the rest of the line ran on that pod**: `setup --sandbox --llama
    cuda-12 --model <31B Q8_0> --ctx 131072 --verify` went through — the first
    run of any of this on Linux under a GPU, and the track's acceptance test
-   passed. The probe's measurements (§7: JIT, the volume, `machine-id`) are
-   still owed.
+   passed. **0.11.1** (2026-09-22) ships the fix; the README's line passes
+   under `--cap-drop CHOWN` as published. The probe's measurements (§7: JIT,
+   the volume, `machine-id`) are still owed.
 3. *(if F4 goes that way)* **model download** — its own research section first.
 
 The probe runs before stage 0 is merged; stage 1 does not depend on it.

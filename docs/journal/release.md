@@ -2794,3 +2794,34 @@ every reversible check first. Full record —
   and that it works now — with the owner's own result that the rest of the line
   ran on the pod. `app_version` moves with it; `site.yml` holds the deploy as
   it did for 0.11.0.
+- **The draft, checked before anyone else could see it** (§6 step 5). `v0.11.1`
+  sat on the merge commit `f77e0069`, which was `origin/main`; `release.yml` was
+  green and left a draft that was not a prerelease, with eight assets. Its notes
+  were the CHANGELOG's `[0.11.1]` section byte for byte (16 lines). All seven
+  lines of `sha256sums.txt` equalled GitHub's own digest per asset. The job's
+  install step said `passed=27` — the CAP_CHOWN arm **ran on the runner** under
+  `sudo`, its control firing (a plain `tar -x` refused, the script succeeding) —
+  and `installed: mindfork 0.11.1 (expected: mindfork 0.11.1)`. `install.sh` one
+  digest three ways (`d0c4a156…`), `tar --no-same-owner` in the asset, attested
+  (one attestation this time: the script changed), the control arm exit 1. And
+  the check 0.11.0 lacked: **the draft's own archive installed by the draft's
+  own script under `--cap-drop CHOWN`** — `sha256 ok`, `unpacked`, **0 chown
+  refusals** where 0.11.0's script had 49, the binary owned `0:0`, marker
+  `v0.11.1`, the expected exit 3 for the missing library.
+- **Published, and the numbers of it.** The owner published at 12:40:10Z on
+  2026-09-22; `crates-io.yml` 12:40:12Z → 12:43:01Z, `mindfork 0.11.1` on the
+  registry at 12:42:55Z (4 011 922 bytes, the default version); `Site` started
+  by itself two seconds after `crates.io` completed and the post was live at
+  12:43:35Z — **3 min 25 s after the publication** (0.11.0: 3 min 37 s). The
+  hold on the merge had shown its notice as before. From outside: the post
+  answers 200, the home page's structured data says `"softwareVersion":
+  "0.11.1"`.
+- **The README's line, as published, in the pod's shape.** Root without
+  `CAP_CHOWN` in a bare `ubuntu:24.04` with only `curl` added — the container
+  that reproduced the failure — ran `curl … | sh -s -- --dir /workspace/mindfork
+  -- --version`: the latest tag resolved to `v0.11.1`, `sha256 ok`, `unpacked`,
+  `libasound.so.2 is missing … — installing` / `installed`, linked, `mindfork
+  0.11.1`, exit 0, **0 chown refusals**; the same line again said `already
+  installed`. The one thing that failed on the first pod now passes in the
+  same shape; what the owner ran past it by hand (the whole `setup … --verify`
+  on a 31B at 131k) is recorded above.
