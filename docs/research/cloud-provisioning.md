@@ -1,10 +1,12 @@
 # One command from a bare GPU box to a chat — provisioning on RunPod and its kin
 
-> **Status:** researched, decided and **implemented through stage 2**
-> (2026-09-21) — stage 0 the Linux CUDA fix, stage 1 `mindfork setup`, stage 2
-> `install.sh`, rehearsed GO on `v0.10.2-rc1` (§8). **Still owed: the probe on
-> a rented pod** — nothing in this track has yet run on Linux under a GPU — and
-> a model download as a later stage. **F1, F4
+> **Status:** researched, decided, **implemented through stage 2 and accepted
+> on a pod** — stage 0 the Linux CUDA fix, stage 1 `mindfork setup`, stage 2
+> `install.sh` (2026-09-21), and on 2026-09-22 the README's line ran on a
+> RunPod pod end to end (§7–§8). The model download F4 had deferred to a
+> later stage is **closed by a measurement, not built**: the Hub's own `hf
+> download` is the fast path, and a stream of ours would be the slow one
+> (§3.4). **F1, F4
 > and F5 were put to the user and chosen at their recommendation** (the user's
 > decision, 2026-09-21); the rest of §6 stands at its recommendation, stated in
 > the same exchange. The probe of §7 is the user's to run on a pod they rent —
@@ -243,6 +245,26 @@ choice is explicit (F4):
    the split-GGUF check and the model caption; and the cache layout is
    upstream's to change.
 
+**Measured on the pod, 2026-09-22 — F4's "later stage" closes here.** The
+owner brought the 34 GB pair (a 31B Q8_0 and its `f16` projector) two ways.
+`curl` on the files' `resolve/main/…?download=true` links: **hours**. `hf
+download <repo> --include … --local-dir /workspace/models`: **minutes** — the
+Hub's own client fetches a file as parallel chunks through its Xet backend,
+where the `resolve` link is one HTTP stream assembled on the way out. Run
+again after a pod reset with the files on the volume, `hf download` finished
+in 20 s and downloaded nothing: it keeps a `.cache/huggingface/` record beside
+the files and returns what matches, and without the record it hashes the file
+and compares (`file_download.py`, `_hf_hub_download_to_local_dir`). Routes 2
+and 3 above are both that one stream — `fetch.sh`'s `curl -C -` and
+`llama_setup`'s resumable fetch alike — so the measurement rejects them on
+their merits, not on effort: a downloader of ours would be the slow one, and
+reimplementing Xet is not this project. Wrapping `hf` from `setup` is
+rejected too: a Python tool that renamed its own command in 2025
+(`huggingface-cli` → `hf`), a token-naming rule (R6) for gated repositories,
+and nothing the one line before ours does not already do. **Route 1 stands,
+with `hf download` as the documented way to bring the files** (install.md
+§3.4).
+
 ### 3.5 The neighbours
 
 **Vast.ai**: Docker too, but in its SSH/Jupyter launch modes the image's
@@ -427,6 +449,9 @@ makes a restart need no typing at all.
   → **Recommendation: (a).** Paths are what was asked; the download brings a
   new network destination, a token-naming rule and backup/restore list changes
   (§3.4) — a stage, not a flag. *(Chosen by the user, 2026-09-21.)*
+  *Closed 2026-09-22, measured on the pod (§3.4): the later stage is not
+  built — `hf download` brings the files in minutes where a single stream
+  took hours, and ours would be a single stream.*
 - **F5 — where `install.sh` lives.** (a) a release asset, in `sha256sums.txt`;
   (b) `mindfork.io/install.sh`; (c) no script — six documented lines.
   → **Recommendation: (a).** It adds **no new root of trust**: whoever can
@@ -560,7 +585,10 @@ stack on Windows, and the whole one-liner on a rented pod, recorded in
    The track's acceptance test is passed. Left for `pod_probe.sh`, when a
    pod is up anyway: the JIT on an 8.0/9.0 card, a network volume's read
    speed, `machine-id` across a stop.
-3. *(if F4 goes that way)* **model download** — its own research section first.
+3. ~~**model download**~~ — **not built.** Measured on the pod (2026-09-22,
+   §3.4): the Hub's own `hf download` is minutes where a single-stream fetch —
+   which is all a downloader of ours would be — took hours. Documented in
+   install.md §3.4 instead; F4 closed.
 
 The probe runs before stage 0 is merged; stage 1 does not depend on it.
 
@@ -583,6 +611,9 @@ The probe runs before stage 0 is merged; stage 1 does not depend on it.
   topology — app at home, engine rented — already works as `external` over an
   SSH tunnel ([remote-e2e-gpu.md](remote-e2e-gpu.md) §5).
 - **Vulkan in containers, source builds, a CUDA build of our own** — §3.1.
+- **A model downloader of our own** — §3.4, measured: the Hub's client fetches
+  parallel chunks (Xet); any stream of ours is the slow path the `resolve`
+  link already is. `hf download` is documented, not wrapped.
 
 ## 10. Documentation touch list (AGENTS.md §4)
 

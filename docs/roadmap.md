@@ -342,8 +342,10 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   — `ready in 4 s — context 131072` on an RTX PRO 6000 — the track's acceptance
   test, passed; install.md §3.4 carries the numbers. **Track complete.** What
   is left is optional: `tools/pod_probe.sh` for the JIT on an A100/H100, a
-  network volume's read speed and `machine-id` across a stop; and a model
-  download as a later stage (fork F4), on demand.
+  network volume's read speed and `machine-id` across a stop. The model
+  download is **not ours** (fork F4, closed 2026-09-22): `hf download` brings
+  a 34 GB pair in minutes where a `curl` of the `resolve` link took hours,
+  and a stream of ours would be that stream — install.md §3.4 documents it.
 - **Provider bridges** — the "any OpenAI-compatible endpoint" pattern
   (external + LiteLLM/OpenRouter) is documented in install.md §3, together with
   the key such a gateway needs

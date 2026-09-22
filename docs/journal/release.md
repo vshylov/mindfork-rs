@@ -2796,6 +2796,20 @@ every reversible check first. Full record —
   server and in both locales), install.md §3.4 lists the port beside the other
   RunPod facts, and the reset's cost — llama.cpp downloaded again, 727 MB,
   because `data/llama/` is on the volume only if `--dir` is — is written down.
+- **The model download — closed by a measurement, not by code.** The one
+  stage the research had deferred (F4's "later") was tried two ways by the
+  owner on the pod: the files' `resolve/main/…` links through `curl` took
+  **hours** for the 34 GB pair; `hf download <repo> --include … --local-dir
+  /workspace/models`, **minutes** — the Hub's client fetches a file as parallel
+  chunks through its Xet backend, where the `resolve` link is one stream.
+  Every route the research had sketched for a downloader of ours (§3.4:
+  `fetch.sh`'s `curl -C -`, `llama_setup`'s resumable fetch) is that one
+  stream, so the measurement rejects them on their merits; and after a pod
+  reset, with the files on the volume, the same `hf download` finished in
+  20 s and fetched nothing — its `.cache/huggingface/` record beside the
+  files, or a hash of them, says they are the ones. install.md §3.4 carries
+  the command and the numbers; the research's status, F4, §3.4, §8 and §9
+  record the closure; the roadmap drops the stage.
 
 ### Release 0.11.1 (prepared)
 
