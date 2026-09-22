@@ -14,6 +14,13 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Fixed
+- **`install.sh` failed on RunPod** — and on any container that runs as root
+  without the right to change file owners. The archive records the CI runner's
+  user, `tar` run as root tried to restore it, and every file was refused. The
+  script no longer asks for it (the files are yours), and the test suite now has
+  that shape of container in it.
+
 ## [0.11.0] — 2026-09-21
 
 **From a bare Linux machine to a local model that answers, in one line.** A new

@@ -198,7 +198,9 @@ being recent is dropped, not shortened.
   same line repairs what a stop cleared. 25 scenarios, five bare images in
   `packaging.yml`, and the release job installs its own archive. Rehearsed **GO**
   on `v0.10.2-rc1`, **released in 0.11.0** (the README's line run as published, as
-  an unprivileged user); the pod probe is owed
+  an unprivileged user) — and **failed on the first real pod**: root without
+  `CAP_CHOWN`, `tar` restoring the archive's owner; `--no-same-owner`, a
+  `capsh` scenario with a control arm, 0.11.1. The rest of the probe is owed
   ([docs/journal/release.md](docs/journal/release.md), install.md §1, §3.4).
 - **`mindfork setup` — a working managed engine from one command** (stage 1 of
   the provisioning track). Sandbox + llama.cpp + the model, projector, embedder
