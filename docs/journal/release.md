@@ -2771,6 +2771,18 @@ every reversible check first. Full record —
   probe's remaining questions — the JIT on an 8.0/9.0 card, mmap off a network
   volume, `machine-id` across a stop — are still open, but the acceptance test of
   the track is passed everywhere except at the one flag this entry fixes.
+- **And with 0.11.1 published, the line itself — nothing typed but the line.**
+  The owner ran the README's command on the pod on 2026-09-22 and it went
+  through end to end: `already installed` (the volume had survived), the
+  sandbox provisioned (wasmer 7.2.0, Python 3.13.5, every package, the cache
+  warmed, the image packed and started), llama.cpp `cuda-12.8` of `b11101`
+  downloaded (161 MB) with its runtime (566 MB unpacked) — the family resolved
+  to a build twenty newer than the one the docs were written against —
+  `devices: CUDA0: NVIDIA RTX PRO 6000 Blackwell Server Edition (97251 MiB,
+  96693 MiB free)`, three settings written, and `chat server: ready in 4 s —
+  context 131072, text only, 4 slots`. That is the track's acceptance test,
+  passed on the machine it was written for; install.md §3.4 now carries the
+  numbers, and the research's probe is closed GO (§7).
 
 ### Release 0.11.1 (prepared)
 

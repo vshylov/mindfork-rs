@@ -904,13 +904,34 @@ settings; **after a restart the same line takes seconds** — everything under
 template's *start command* (followed by the image's own `/start.sh`), a restart
 needs no typing at all.
 
+**What it looks like, measured** (2026-09-22, a RunPod pod with an RTX PRO 6000
+Blackwell, 96 GB; the line above with a 31B Q8_0 model and `--ctx 131072`,
+the models already on the volume): the app recognised as installed, the
+sandbox downloaded and packed (245 MB of wasmer, Python, 30-odd packages, the
+cache warmed), llama.cpp `cuda-12.8` installed with its runtime — 161 + 566 MB
+unpacked — and its device list reading `CUDA0: NVIDIA RTX PRO 6000 Blackwell
+(97251 MiB)`, the settings written, and then:
+
+```
+== Starting what was configured
+  chat server: starting on port 8000…
+  embedding server: no model configured — skipped (memory search and the knowledge base stay off)
+  chat server: ready in 4 s — context 131072, text only, 4 slots
+Done. Start the app with: mindfork
+```
+
+Four seconds is a model already in the page cache from an earlier run; a cold
+load of 33 GB takes as long as the disk takes. `text only` is what a model
+without `--mmproj` reports; the projector is a second file, §3.
+
 - **The models are yours to bring** — a network volume that already holds the
   GGUFs, or a download of your own; `setup` takes paths (§3.3).
 - **Pick an Ubuntu 24.04 image** (`runpod/pytorch:…-ubuntu2404`, or any
   `nvidia/cuda:…-ubuntu24.04`). llama.cpp's CUDA builds for Linux are built on
   24.04; on an older system `setup` installs them and then reports that the
   binary does not start. `cuda-12` is a *family* (§3.1): it keeps working when
-  llama.cpp moves to the next CUDA minor.
+  llama.cpp moves to the next CUDA minor — between the two pod runs above it
+  went from `b11081` to `b11101` and the line did not change.
 - **Use tmux.** The managed `llama-server` is a child of the app: a dropped SSH
   session takes the app down, the app takes the server down, and reconnecting
   means loading twenty gigabytes again. `tmux new -A -s mindfork` attaches to the
