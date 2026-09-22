@@ -175,7 +175,7 @@ Backend selection: `MINDFORK_ENGINE_URL` (external, any OpenAI server) OR
 rented instead of hosted — `python tools/e2e_hf.py run`, see
 `docs/history/remote-e2e-hf.md`.
 
-## Status (2026-09-21, version 0.11.0)
+## Status (2026-09-22, version 0.11.1)
 
 The **M0–M9** plan is done, plus extensive post-M9 work — **3408 unit tests
 green, 197 `#[ignore]`** (live smokes + a real-clipboard round trip + the
@@ -200,7 +200,9 @@ being recent is dropped, not shortened.
   on `v0.10.2-rc1`, **released in 0.11.0** (the README's line run as published, as
   an unprivileged user) — and **failed on the first real pod**: root without
   `CAP_CHOWN`, `tar` restoring the archive's owner; `--no-same-owner`, a
-  `capsh` scenario with a control arm, 0.11.1. The rest of the probe is owed
+  `capsh` scenario with a control arm, 0.11.1. With the archive unpacked by hand
+  the rest of the line **ran on that pod**: CUDA llama.cpp, the sandbox, a 31B
+  Q8_0 verified at 131k. The probe's measurements are still owed
   ([docs/journal/release.md](docs/journal/release.md), install.md §1, §3.4).
 - **`mindfork setup` — a working managed engine from one command** (stage 1 of
   the provisioning track). Sandbox + llama.cpp + the model, projector, embedder

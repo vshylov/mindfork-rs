@@ -14,6 +14,14 @@ split by subsystem.
 
 ## [Unreleased]
 
+## [0.11.1] — 2026-09-22
+
+**The install script works on a rented pod.** 0.11.0's line failed on RunPod
+before it had unpacked a single file; the first real run found it, and this
+release carries the one-flag fix and the test that would have caught it. With
+the archive unpacked by hand, the rest of the line — llama.cpp with CUDA, the
+sandbox, a 31B model verified at a 131k context — ran on that pod as designed.
+
 ### Fixed
 - **`install.sh` failed on RunPod** — and on any container that runs as root
   without the right to change file owners. The archive records the CI runner's
@@ -2615,7 +2623,8 @@ history is in the [docs/journal/](docs/journal/) log).
   (notes/RAG/self-model, sqlite-vec, per-profile isolation). Schema format is
   v1; schema versioning and migrations are formalized in later releases.
 
-[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.11.1...HEAD
+[0.11.1]: https://github.com/vshylov/mindfork-rs/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/vshylov/mindfork-rs/compare/v0.10.2...v0.11.0
 [0.10.2]: https://github.com/vshylov/mindfork-rs/compare/v0.10.1...v0.10.2
 [0.10.1]: https://github.com/vshylov/mindfork-rs/compare/v0.10.0...v0.10.1
