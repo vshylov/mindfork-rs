@@ -482,6 +482,24 @@ A40/4090 hour answers everything else and leaves that one open:
 on P3** sends stage 0 back to §3.1's alternatives (source build, or the
 upstream image as a template base) before anything else is designed.
 
+**What the README's line answered, run on a RunPod pod (2026-09-22, an RTX
+PRO 6000 Blackwell, 96 GB, a 31B Q8_0 at `--ctx 131072`):** P1 — the archive
+starts once the script has installed `libasound2t64` itself (and, the day
+before, does *not* unpack as root without `CAP_CHOWN`: the one defect the
+track shipped with, fixed in 0.11.1). P2 — the API answered; `llama setup`
+resolved `cuda-12` to `cuda-12.8` of `b11101`. **P3 — GO**: the official CUDA
+build with its runtime archive, `devices: CUDA0: NVIDIA RTX PRO 6000 Blackwell
+Server Edition (97251 MiB, 96693 MiB free)`. P4 — compute capability 12.0 is
+in upstream's native list, so no JIT to measure on this card; the server was
+`ready in 4 s — context 131072, text only, 4 slots` (a model in the page cache
+from the previous run). **P5 — GO**: 245 MB of wasmer, Python and every
+package, the cache warmed, the image packed and started, `tools.python_enabled
+= true` written. P6 — the owner drove it from the pod's terminal; the TUI
+itself was not the subject. P7 and P8 — not measured: the models were on the
+pod's own volume, and `machine-id` was not read. **The probe's go/no-go is
+GO**; what `pod_probe.sh` would still add is the JIT on an 8.0/9.0 card, a
+network volume's read speed, and `machine-id` across a stop.
+
 **Unit.** The `b11070` names as a fixture next to `B10883`: Linux CUDA pairing,
 the tagged `.tar.gz` runtime, a partial release, family resolution and its
 ambiguity refusal. For `setup`: parser cases in both option spellings; the
@@ -530,9 +548,12 @@ stack on Windows, and the whole one-liner on a rented pod, recorded in
    hand, **the rest of the line ran on that pod**: `setup --sandbox --llama
    cuda-12 --model <31B Q8_0> --ctx 131072 --verify` went through — the first
    run of any of this on Linux under a GPU, and the track's acceptance test
-   passed. **0.11.1** (2026-09-22) ships the fix; the README's line passes
-   under `--cap-drop CHOWN` as published. The probe's measurements (§7: JIT,
-   the volume, `machine-id`) are still owed.
+   passed. **0.11.1** (2026-09-22) ships the fix, and the same day **the
+   README's line ran on the pod as published, end to end** — nothing typed
+   but the line: `ready in 4 s — context 131072, text only, 4 slots` (§7).
+   The track's acceptance test is passed. Left for `pod_probe.sh`, when a
+   pod is up anyway: the JIT on an 8.0/9.0 card, a network volume's read
+   speed, `machine-id` across a stop.
 3. *(if F4 goes that way)* **model download** — its own research section first.
 
 The probe runs before stage 0 is merged; stage 1 does not depend on it.

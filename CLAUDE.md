@@ -190,21 +190,17 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
-- **`install.sh` — the release installs itself on a bare Linux box** (stage 2 of
-  the provisioning track). A release asset, so listed in `sha256sums.txt` and
-  attested — no new root of trust. POSIX `sh`; the archive refused unless the
-  checksums agree; whether the app starts is decided by **running it**, and the
-  missing `libasound` installed or named with exit 3; idempotent, so on RunPod the
-  same line repairs what a stop cleared. 25 scenarios, five bare images in
-  `packaging.yml`, and the release job installs its own archive. Rehearsed **GO**
-  on `v0.10.2-rc1`, **released in 0.11.0** (the README's line run as published, as
-  an unprivileged user) — and **failed on the first real pod**: root without
-  `CAP_CHOWN`, `tar` restoring the archive's owner; `--no-same-owner`, a
-  `capsh` scenario with a control arm, 0.11.1. With the archive unpacked by hand
-  the rest of the line **ran on that pod**: CUDA llama.cpp, the sandbox, a 31B
-  Q8_0 verified at 131k. **0.11.1 ships the fix**, and the README's line passes
-  in the pod's shape (`--cap-drop CHOWN`). The probe's measurements are still owed
-  ([docs/journal/release.md](docs/journal/release.md), install.md §1, §3.4).
+- **One command from a bare GPU box to a chat — track complete** (2026-09-22).
+  `install.sh` (a release asset, attested; the archive refused unless the
+  checksums agree; whether the app starts decided by running it) hands over to
+  `mindfork setup`, and the README's line ran on a RunPod pod end to end: CUDA
+  llama.cpp with its runtime, the sandbox, a 31B Q8_0 `ready in 4 s — context
+  131072`. The first real pod found the one defect that shipped — root without
+  `CAP_CHOWN`, `tar` restoring the archive's owner — fixed in 0.11.1 with a
+  `capsh` scenario and its control arm. Optional: `pod_probe.sh`'s JIT / volume
+  / `machine-id` measurements
+  ([docs/research/cloud-provisioning.md](docs/research/cloud-provisioning.md) §7–§8,
+  [docs/journal/release.md](docs/journal/release.md), install.md §1, §3.3–§3.4).
 - **`mindfork setup` — a working managed engine from one command** (stage 1 of
   the provisioning track). Sandbox + llama.cpp + the model, projector, embedder
   and context **written** into the settings (the env variables only override),

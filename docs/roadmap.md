@@ -338,11 +338,12 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   pod run found it failing inside `tar` (root without `CAP_CHOWN`; fixed in
   0.11.1) — and, past that flag, the whole line **ran on the pod**: CUDA
   llama.cpp, the sandbox, a 31B model verified at 131k; **0.11.1** (2026-09-22)
-  ships the fix, and the README's line passes in the pod's shape. What remains: the
-  probe on a rented pod — since the release, the README's own line run end to
-  end, with `tools/pod_probe.sh` for the measurements it does not take — which
-  carries the Linux-GPU live half of every stage and gives the recipe its
-  measured numbers; a model download as a later stage.
+  ships the fix, and the same day **the README's line ran on the pod end to end**
+  — `ready in 4 s — context 131072` on an RTX PRO 6000 — the track's acceptance
+  test, passed; install.md §3.4 carries the numbers. **Track complete.** What
+  is left is optional: `tools/pod_probe.sh` for the JIT on an A100/H100, a
+  network volume's read speed and `machine-id` across a stop; and a model
+  download as a later stage (fork F4), on demand.
 - **Provider bridges** — the "any OpenAI-compatible endpoint" pattern
   (external + LiteLLM/OpenRouter) is documented in install.md §3, together with
   the key such a gateway needs
