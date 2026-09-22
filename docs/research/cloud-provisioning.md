@@ -491,12 +491,18 @@ resolved `cuda-12` to `cuda-12.8` of `b11101`. **P3 — GO**: the official CUDA
 build with its runtime archive, `devices: CUDA0: NVIDIA RTX PRO 6000 Blackwell
 Server Edition (97251 MiB, 96693 MiB free)`. P4 — compute capability 12.0 is
 in upstream's native list, so no JIT to measure on this card; the server was
-`ready in 4 s — context 131072, text only, 4 slots` (a model in the page cache
+`ready in 4 s — context 131072, text only, 4 slots` (a model in the page cache;
+cold after a reset, with the projector, **33 s** — 34 GB off the pod's volume
 from the previous run). **P5 — GO**: 245 MB of wasmer, Python and every
 package, the cache warmed, the image packed and started, `tools.python_enabled
 = true` written. P6 — the owner drove it from the pod's terminal; the TUI
 itself was not the subject. P7 and P8 — not measured: the models were on the
-pod's own volume, and `machine-id` was not read. **The probe's go/no-go is
+pod's own volume, and `machine-id` was not read. A third run, with `--mmproj`
+and `--embed-model` (2026-09-22): `takes images` on the chat server — the
+finetune's projector fits — and the embedder refused on **port 8001, which
+RunPod's own `nginx` holds on every pod** (`ss -ltnp`: `nginx`, pid 88); moved
+to 8011 with one `--set`, both servers came up together. The refusal now names
+that `--set`. **The probe's go/no-go is
 GO**; what `pod_probe.sh` would still add is the JIT on an 8.0/9.0 card, a
 network volume's read speed, and `machine-id` across a stop.
 

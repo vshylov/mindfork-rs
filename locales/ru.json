@@ -2553,7 +2553,7 @@
   "setup.verify.failed": "  {server}: СБОЙ — {reason}",
   "setup.verify.no_binary": "нечего запускать: llama-server не установлен в data/llama, не лежит рядом с приложением и не указан в настройках (mindfork setup --llama <бэкенд>)",
   "setup.verify.no_model": "файл модели не задан (mindfork setup --model <файл.gguf>)",
-  "setup.verify.port_busy": "порт {port} уже занят — там слушает другой llama-server или другое приложение",
+  "setup.verify.port_busy": "порт {port} уже занят — там слушает другой llama-server или другое приложение. Перенесите наш: mindfork setup --set {key}=<другой порт>",
   "setup.verify.fact.context": "контекст {n}",
   "setup.verify.fact.vision_on": "принимает изображения",
   "setup.verify.fact.vision_off": "только текст",

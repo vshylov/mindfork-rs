@@ -14,6 +14,12 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Changed
+- **`mindfork setup --verify` says how to move a busy port.** When something
+  else already listens where a server would — on RunPod that is the image's own
+  `nginx` on 8001, the embedding server's default — the refusal now ends with
+  the `--set` that moves that server's port.
+
 ## [0.11.1] — 2026-09-22
 
 **The install script works on a rented pod.** 0.11.0's line failed on RunPod

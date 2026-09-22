@@ -920,8 +920,8 @@ unpacked — and its device list reading `CUDA0: NVIDIA RTX PRO 6000 Blackwell
 Done. Start the app with: mindfork
 ```
 
-Four seconds is a model already in the page cache from an earlier run; a cold
-load of 33 GB takes as long as the disk takes. `text only` is what a model
+Four seconds is a model already in the page cache from an earlier run; the same
+model cold, after a pod reset, took 33 s with its projector beside it. `text only` is what a model
 without `--mmproj` reports; the projector is a second file, §3.
 
 - **The models are yours to bring** — a network volume that already holds the
@@ -930,16 +930,27 @@ without `--mmproj` reports; the projector is a second file, §3.
   `nvidia/cuda:…-ubuntu24.04`). llama.cpp's CUDA builds for Linux are built on
   24.04; on an older system `setup` installs them and then reports that the
   binary does not start. `cuda-12` is a *family* (§3.1): it keeps working when
-  llama.cpp moves to the next CUDA minor — between the two pod runs above it
-  went from `b11081` to `b11101` and the line did not change.
+  llama.cpp moves to the next CUDA minor — across three pod runs it went
+  `b11081` → `b11101` → `b11102` and the line did not change.
+- **A pod *reset* clears the container disk but keeps the volume**, so after one
+  the line finds the app and the sandbox's downloads in place, repacks the
+  sandbox image (that lives on the container disk) and **downloads llama.cpp
+  again** — its 727 MB sit under `DIR/data/llama/`, which is on the volume only
+  if `DIR` is. Keep `--dir` on `/workspace`.
 - **Use tmux.** The managed `llama-server` is a child of the app: a dropped SSH
   session takes the app down, the app takes the server down, and reconnecting
   means loading twenty gigabytes again. `tmux new -A -s mindfork` attaches to the
   session if it is still there. In the browser terminal `Ctrl+N` and `Ctrl+T`
   belong to the browser and never arrive — type `/new` and `/thoughts` instead
   (`F1` → *Commands* lists the command behind every key).
+- **Port 8001 is taken on every RunPod pod** — by the image's own `nginx`
+  (`ss -ltnp` shows it), and 8001 is the embedding server's default. `--verify`
+  says so and names the way out; add it to the line once:
+  `--set embed.managed.port=8011`. The chat server's 8000 is free there.
 - **A model on a network volume may load slowly through mmap**; if `--verify`
   shows minutes where you expected seconds, add `--set engine.managed.no_mmap=true`.
+  For scale: on the pod's own volume a cold 31B Q8_0 with its projector — 34 GB
+  — was `ready in 33 s`; the same files warm, 4 s.
 - **API keys: by variable name.** A container's `/etc/machine-id` is empty, so the
   app cannot store a key there (its storage is bound to the machine, §3.2) and
   says so. Put the key into the pod's environment (RunPod: a *secret* referenced

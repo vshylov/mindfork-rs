@@ -2251,7 +2251,7 @@
   "setup.verify.failed": "  {server}: FAILED — {reason}",
   "setup.verify.no_binary": "no llama-server to run: none is installed under data/llama, none sits beside the app, and the settings name none (mindfork setup --llama <backend>)",
   "setup.verify.no_model": "no model file is configured (mindfork setup --model <file.gguf>)",
-  "setup.verify.port_busy": "port {port} is already in use — another llama-server, or another app, is listening there",
+  "setup.verify.port_busy": "port {port} is already in use — another llama-server, or another app, is listening there. Move ours: mindfork setup --set {key}=<another port>",
   "setup.verify.fact.context": "context {n}",
   "setup.verify.fact.vision_on": "takes images",
   "setup.verify.fact.vision_off": "text only",
