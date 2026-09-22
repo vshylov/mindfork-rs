@@ -924,8 +924,29 @@ Four seconds is a model already in the page cache from an earlier run; the same
 model cold, after a pod reset, took 33 s with its projector beside it. `text only` is what a model
 without `--mmproj` reports; the projector is a second file, §3.
 
-- **The models are yours to bring** — a network volume that already holds the
-  GGUFs, or a download of your own; `setup` takes paths (§3.3).
+- **The models are yours to bring, and `hf download` is how to bring them** —
+  onto the volume, before the line above (`setup` then takes the paths, §3.3):
+
+  ```bash
+  pip install -U huggingface_hub
+  hf download bartowski/Ateron_Gemma-4-MoonGem-31B-GGUF \
+      --include "Ateron_Gemma-4-MoonGem-31B-Q8_0.gguf" \
+      --include "mmproj-Ateron_Gemma-4-MoonGem-31B-f16.gguf" \
+      --local-dir /workspace/models
+  ```
+
+  Not `curl` on a file's `resolve/main/…` link. That is one HTTP stream, and
+  on a pod it took **hours** for a 34 GB pair that `hf download` — the Hub's
+  own client, fetching a file as parallel chunks through its Xet backend —
+  brought in **minutes** (measured 2026-09-22). Run again after a pod reset,
+  with the files already on the volume, the same command finished in 20 s
+  and downloaded nothing: `hf` keeps a record of what it fetched beside the
+  files (`.cache/huggingface/` under `--local-dir`) and skips what matches,
+  so the command is safe in a start command. The `pip install -U` is there
+  because an image's preinstalled `huggingface_hub` may predate both the `hf`
+  command and the Xet backend. A gated repository wants `HF_TOKEN` in the
+  environment for `hf`; the app never reads it, and keeps it out of what it
+  starts (§4.1).
 - **Pick an Ubuntu 24.04 image** (`runpod/pytorch:…-ubuntu2404`, or any
   `nvidia/cuda:…-ubuntu24.04`). llama.cpp's CUDA builds for Linux are built on
   24.04; on an older system `setup` installs them and then reports that the
