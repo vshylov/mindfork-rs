@@ -197,7 +197,8 @@ being recent is dropped, not shortened.
   missing `libasound` installed or named with exit 3; idempotent, so on RunPod the
   same line repairs what a stop cleared. 25 scenarios, five bare images in
   `packaging.yml`, and the release job installs its own archive. Rehearsed **GO**
-  on `v0.10.2-rc1`; the pod probe is owed
+  on `v0.10.2-rc1`, **released in 0.11.0** (the README's line run as published, as
+  an unprivileged user); the pod probe is owed
   ([docs/journal/release.md](docs/journal/release.md), install.md §1, §3.4).
 - **`mindfork setup` — a working managed engine from one command** (stage 1 of
   the provisioning track). Sandbox + llama.cpp + the model, projector, embedder
@@ -219,9 +220,8 @@ being recent is dropped, not shortened.
 - **The site waits for the release.** The release PR's merge deployed its own
   post 25 min 28 s before the release was public (measured on 0.10.2). `site.yml`
   now holds a deploy while `Cargo.toml` names an unpublished version and runs
-  again when `crates.io` completes; `force` overrides. The chain and its OIDC
-  subject were rehearsed after the merge — **GO**; the hold is first seen on the
-  next release PR's merge
+  again when `crates.io` completes; `force` overrides. Rehearsed **GO**, and seen
+  for real on 0.11.0: held on the merge, live 3 min 37 s *after* the publication
   ([docs/research/site-waits-for-release.md](docs/research/site-waits-for-release.md),
   [docs/journal/website.md](docs/journal/website.md)).
 - **`mindfork stats` — which copy of the data is the newest, and what the other

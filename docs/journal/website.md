@@ -1228,3 +1228,21 @@ both on `main` at `88e5ce29`, the merge of the pull request.
   an unpublished version on `main`, which is the next release pull request's merge.
   Expect a green `Site` run with "Deploy to mindfork.io" skipped and a "Site deploy
   held" notice; its arm is the one measured against the live API above.
+- **Seen: the hold, and the release that let it go — 0.11.0, 2026-09-21.** The release
+  pull request (#614) carried the post and `app_version`. Its merge started `Site` at
+  18:59:57Z: "Is this version out?" green, "Build (gate)" and "Deploy to mindfork.io"
+  **skipped**, and the notice `v0.11.0 in vshylov/mindfork-rs: there is no published
+  release under that tag - the deploy is held`, naming both ways out (publish, or
+  dispatch with `force`). The site then said nothing about 0.11.0 for the 2 h 45 min
+  the draft was being checked — which is the whole point. The owner published at
+  21:44:52Z; `crates.io` ran 21:44:54Z → 21:47:44Z (the crate on the registry at
+  21:47:30Z); `Site` started **by itself** at 21:47:50Z, six seconds later
+  (`event: workflow_run`), the gate said *deploy*, and "Deploy to mindfork.io" ran
+  21:48:06Z → 21:48:29Z. **The post was live 3 min 37 s after the publication**, with
+  the release public and `cargo install mindfork` already true — every sentence of it
+  true when it appeared. On 0.10.2 the same post shape had gone out 25 min 28 s
+  *before* its release. Checked from outside: the post answers 200, the blog index
+  lists it, the install page carries the new one-liner, and the home page's
+  structured data says `"softwareVersion": "0.11.0"`. One thing for whoever checks
+  next: the post's address is `/blog/mindfork-0-11-0/` — Zola takes the date off the
+  file name — so a guess built from the file name is a 404 that means nothing.
