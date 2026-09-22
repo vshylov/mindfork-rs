@@ -60,9 +60,23 @@ pub async fn run(
         managed_embed_config(&config.embed.managed, binary)
     });
 
-    for (label, mode, cfg) in [
-        ("setup.verify.chat", config.engine.mode, chat),
-        ("setup.verify.embed", config.embed.mode, embed),
+    // The third column is the settings key that moves each server's port — the
+    // one thing a busy port's refusal should name, since a port that is busy on
+    // every pod of a provider (RunPod's own nginx sits on 8001, measured
+    // 2026-09-22) is not something the user can free.
+    for (label, mode, cfg, port_key) in [
+        (
+            "setup.verify.chat",
+            config.engine.mode,
+            chat,
+            "engine.managed.port",
+        ),
+        (
+            "setup.verify.embed",
+            config.embed.mode,
+            embed,
+            "embed.managed.port",
+        ),
     ] {
         let name = loc.t(label);
         let Some(cfg) = cfg else {
@@ -94,7 +108,10 @@ pub async fn run(
                 ok = false;
                 progress(&loc.tf(
                     "setup.verify.failed",
-                    &[("server", name), ("reason", &refusal.localized(&cfg, loc))],
+                    &[
+                        ("server", name),
+                        ("reason", &refusal.localized(&cfg, port_key, loc)),
+                    ],
                 ));
             }
         }
@@ -148,15 +165,18 @@ enum Refusal {
 }
 
 impl Refusal {
-    fn localized(&self, cfg: &ManagedConfig, loc: &Locale) -> String {
+    /// `port_key` — the settings key that moves this server's port, for the
+    /// busy-port refusal to name.
+    fn localized(&self, cfg: &ManagedConfig, port_key: &str, loc: &Locale) -> String {
         match self {
             Refusal::NotConfigured if cfg.binary.as_os_str().is_empty() => {
                 loc.t("setup.verify.no_binary").to_string()
             }
             Refusal::NotConfigured => loc.t("setup.verify.no_model").to_string(),
-            Refusal::PortBusy => {
-                loc.tf("setup.verify.port_busy", &[("port", &cfg.port.to_string())])
-            }
+            Refusal::PortBusy => loc.tf(
+                "setup.verify.port_busy",
+                &[("port", &cfg.port.to_string()), ("key", port_key)],
+            ),
             Refusal::Launch(said) => said.clone(),
         }
     }
@@ -299,8 +319,43 @@ mod tests {
         };
         let (ok, lines) = lines_of(&config, &BinaryLookup::default());
         assert!(!ok);
-        let want = loc.tf("setup.verify.port_busy", &[("port", &port.to_string())]);
+        let want = loc.tf(
+            "setup.verify.port_busy",
+            &[("port", &port.to_string()), ("key", "engine.managed.port")],
+        );
         assert!(lines[0].contains(&want), "{lines:?}");
+        // The way out is spelled with the key of the server whose port it is:
+        // RunPod's own nginx sits on the embedder's default 8001 (measured), and
+        // a user told only "8001 is busy" cannot free it — they can move ours.
+        assert!(
+            lines[0].contains("--set engine.managed.port="),
+            "the refusal names the way out: {lines:?}"
+        );
+
+        // The embedder's refusal names the embedder's key, not the chat's.
+        let mut config = AppConfig::default();
+        config.engine.mode = ServerMode::Claude;
+        config.embed.managed.binary = Some("/somewhere/llama-server".into());
+        config.embed.managed.model_path = Some(model.display().to_string());
+        config.embed.managed.port = port;
+        let (ok, lines) = lines_of(&config, &BinaryLookup::default());
+        assert!(!ok);
+        let embed_line = lines
+            .iter()
+            .find(|l| l.contains(&port.to_string()))
+            .unwrap();
+        assert!(
+            embed_line.contains("--set embed.managed.port="),
+            "{lines:?}"
+        );
+        for lang in [Lang::En, Lang::Ru] {
+            let text = locale(lang).tf(
+                "setup.verify.port_busy",
+                &[("port", "8001"), ("key", "embed.managed.port")],
+            );
+            assert!(!text.contains('{'), "{lang:?}: {text}");
+            assert!(text.contains("embed.managed.port="), "{lang:?}: {text}");
+        }
     }
 
     /// The launch's preflight speaks for itself: a model path that names no file

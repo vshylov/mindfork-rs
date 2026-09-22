@@ -2783,6 +2783,19 @@ every reversible check first. Full record —
   context 131072, text only, 4 slots`. That is the track's acceptance test,
   passed on the machine it was written for; install.md §3.4 now carries the
   numbers, and the research's probe is closed GO (§7).
+- **The third run — vision and the embedder — found the provider's port.** With
+  `--mmproj` and `--embed-model` added (2026-09-22): the chat server came up
+  `takes images` — the finetune's `f16` projector fits its weights — cold after
+  a pod reset in **33 s** (34 GB off the volume; 4 s warm the day before), and
+  the embedder was refused: `port 8001 is already in use`. `ss -ltnp` on the pod
+  named the squatter — **RunPod's own `nginx` (pid 88) on 8001**, the embedding
+  server's default, on every pod of the provider. `--set embed.managed.port=8011`
+  and both servers came up together. `--verify` had named the cause and not the
+  way out; its refusal now ends with the `--set` that moves *that* server's port
+  (`engine.managed.port` / `embed.managed.port`, chosen per server, tested per
+  server and in both locales), install.md §3.4 lists the port beside the other
+  RunPod facts, and the reset's cost — llama.cpp downloaded again, 727 MB,
+  because `data/llama/` is on the volume only if `--dir` is — is written down.
 
 ### Release 0.11.1 (prepared)
 
