@@ -202,7 +202,8 @@ being recent is dropped, not shortened.
   `CAP_CHOWN`, `tar` restoring the archive's owner; `--no-same-owner`, a
   `capsh` scenario with a control arm, 0.11.1. With the archive unpacked by hand
   the rest of the line **ran on that pod**: CUDA llama.cpp, the sandbox, a 31B
-  Q8_0 verified at 131k. The probe's measurements are still owed
+  Q8_0 verified at 131k. **0.11.1 ships the fix**, and the README's line passes
+  in the pod's shape (`--cap-drop CHOWN`). The probe's measurements are still owed
   ([docs/journal/release.md](docs/journal/release.md), install.md §1, §3.4).
 - **`mindfork setup` — a working managed engine from one command** (stage 1 of
   the provisioning track). Sandbox + llama.cpp + the model, projector, embedder
