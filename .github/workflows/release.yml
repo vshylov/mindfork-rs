@@ -286,7 +286,10 @@ jobs:
           set -euo pipefail
           BIN="$PWD/artifacts/bin-linux/mindfork"
           chmod +x "$BIN"
-          BIN="$BIN" sh packaging/linux/install_test.sh
+          # The scenarios run as root under `sudo` so that the one arm which
+          # drops CAP_CHOWN — a RunPod pod's shape — runs rather than skips.
+          sudo apt-get install -y -qq libcap2-bin >/dev/null
+          sudo BIN="$BIN" sh packaging/linux/install_test.sh
           got="$(sh dist/install.sh --from dist --dir "$RUNNER_TEMP/mindfork" --no-link -- --version | tail -1)"
           # A rehearsal tag carries a suffix (`v0.10.2-rc1`) the binary does not:
           # its version is Cargo.toml's, which the guard already matched to the tag.

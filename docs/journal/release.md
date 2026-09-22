@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (48)
+## Entries (49)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -60,6 +60,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: the README's screenshots are the dark ones (done)
 - Post-M9: `install.sh` — the release installs itself on a bare Linux box (done)
 - Release 0.11.0 (prepared)
+- Post-M9: `install.sh` failed on the first real pod — root without CAP_CHOWN (done)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -2710,3 +2711,51 @@ every reversible check first. Full record —
   3 min 37 s from the publication to the post being live, where 0.10.2's post had
   gone out 25 min 28 s *before* its release. The timings are in
   [website.md](website.md), "the site waits for the release".
+
+### Post-M9: `install.sh` failed on the first real pod — root without CAP_CHOWN (done)
+
+- **The first run of the README's line on a real RunPod pod, 2026-09-22, failed
+  inside `tar`**: 51 lines of `Cannot change ownership to uid 1001, gid 1001:
+  Operation not permitted`, then `Exiting with failure status`, and no binary.
+  The download and the checksum had passed (`sha256 ok`); the archive was fine.
+- **Cause, reproduced locally before the fix.** The release archive records the
+  entries' owner as `runner/runner` — uid 1001, the CI runner that packed it
+  (`tar -tzvf`). GNU tar run **as root** restores recorded owners by default
+  (`--same-owner` is root's default; a non-root user gets `--no-same-owner`
+  implicitly). A RunPod pod runs the command as root, but in a container
+  **without `CAP_CHOWN`**, where every `chown` is `EPERM`. `docker run
+  --cap-drop CHOWN` is the same shape: the released 0.11.0 script there prints
+  49 refusals and leaves no `mindfork`; a plain `tar -x` fails the same way; and
+  `tar --no-same-owner -x` succeeds with the files owned by root, which is what
+  they should be. Every earlier check ran as root **with** `CAP_CHOWN` — the 25
+  scenarios locally, the five CI images, the release job — or as an unprivileged
+  user, for whom tar never chowns. Neither could see it; only a pod could.
+- **The fix is one flag** — `tar --no-same-owner` in `unpack` — with the reason
+  in a comment beside it. Nothing about the archive's owner was ever worth
+  keeping: the files are the installer's to own. Verified on the **real 0.11.0
+  archive** under `--cap-drop CHOWN`: `sha256 ok`, `unpacked`, the binary owned
+  `0:0`, the expected exit 3 for the missing library.
+- **The test now has the pod's shape, and proves it has it.** `install_test.sh`
+  packs its fixtures with `--owner=1001 --group=1001 --numeric-owner`, so every
+  scenario exercises a foreign owner whatever uid runs the test; and one new arm,
+  under root with `capsh --drop=cap_chown`, has a **control**: a plain `tar -x`
+  must be refused (exit 2) where the script must succeed — an environment that
+  cannot show the difference cannot test the fix. Root without `capsh` is a
+  **FAIL**, not a skip: this is the one arm that found a real defect on a real
+  machine, so it does not get to be silently absent. A non-root run skips it and
+  says why. `packaging.yml`'s five images gain `libcap2-bin`/`libcap`; the
+  release job runs the scenarios under `sudo` so the arm runs there too.
+  Measured: 28/28 on Ubuntu 24.04 and 22.04 as root with `capsh`; the FAIL arm
+  fires without it; 22/22 with the skip as uid 1000.
+- **Shellcheck caught four old lines while it was here** — `check … $?` after an
+  `a && b` condition (SC2319), where `$?` is the condition's, not a command's.
+  All four are explicit `if … then ok=0; else ok=1; fi` now. `shellcheck
+  --severity=warning` is clean on both scripts.
+- **What this says about the probe.** One line on one pod found what two days of
+  containers could not, because the property that mattered — root without a
+  capability — is one no container of ours had. The recipe in install.md §3.4 is
+  unchanged: it was right, the script under it was not. **Until 0.11.1 ships,
+  the README's line fails on RunPod**; the workaround is to install with a plain
+  user's tar (`--no-same-owner` by hand) or to wait for the release.
+- **Gates**: no Rust changed — **3408 unit tests, 197 `#[ignore]`**; 28 shell
+  scenarios; link / source-language / index / action-pin gates green.

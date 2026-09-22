@@ -1379,6 +1379,19 @@ that never comes.
 
 ## 6. Windows and cross-platform
 
+**Root in a container is not root: `tar` as root restores the archive's owner,
+and a pod refuses it.** A release archive records whoever packed it (the CI
+runner, uid 1001). GNU tar under uid 0 applies that owner by default — and a
+RunPod pod runs as uid 0 *without `CAP_CHOWN`*, so every entry is `Operation not
+permitted` and the install fails after the checksum passed. No container of ours
+had that shape: root with the capability, or a user for whom tar never chowns —
+both invisible. Unpack with `--no-same-owner` whenever the owner is not worth
+keeping (it never is for an install), and test under `capsh --drop=cap_chown`
+with a control arm that shows a plain `tar -x` failing there. More generally: a
+"works as root" claim needs the capability set named, and `docker run
+--cap-drop` is one flag away from the pod's.
+— *`install.sh` on the first real pod, 2026-09-22*.
+
 **`Path` only knows the host's separators, and this app's data crosses hosts.**
 `Path::file_name()` on a `C:\Projects\app` string returns the **whole string** on
 Linux — there is no `\` separator there — so a label derived that way came out as

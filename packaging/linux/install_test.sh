@@ -39,10 +39,16 @@ release_dir() { # directory, tag, binary to pack
     chmod 0755 "$1/stage/mindfork"
     echo "readme" >"$1/stage/README.md"
     echo "dict" >"$1/stage/data/dictionaries/en_US.dic"
-    tar -C "$1/stage" -czf "$1/mindfork-rs-$2-x86_64-linux.tar.gz" .
+    tar --owner="$FOREIGN_UID" --group="$FOREIGN_UID" --numeric-owner         -C "$1/stage" -czf "$1/mindfork-rs-$2-x86_64-linux.tar.gz" .
     rm -rf "$1/stage"
     (cd "$1" && sha256sum ./*.tar.gz >sha256sums.txt)
 }
+
+# The archive records whoever packed it. release.yml packs as the CI runner
+# (uid 1001), so a real release's entries are owned by a user the target
+# machine does not have — and with a fixed foreign owner here every scenario
+# below exercises that, whatever uid runs the test.
+FOREIGN_UID=1001
 
 # The stand-in: answers `--version`, and otherwise reports how many arguments
 # it got and each one on its own line — which is what proves a quoted argument
@@ -73,10 +79,34 @@ if [ -n "${BIN:-}" ]; then
         echo "$out" | grep -q "libasound"
         check "the refusal names the library and the command" 0 $?
     fi
-    [ -x "$WORK/opt-real/mindfork" ] && [ -f "$WORK/opt-real/data/dictionaries/en_US.dic" ]
-    check "unpacked all the same: binary and bundled data" 0 $?
+    if [ -x "$WORK/opt-real/mindfork" ] && [ -f "$WORK/opt-real/data/dictionaries/en_US.dic" ]; then ok=0; else ok=1; fi
+    check "unpacked all the same: binary and bundled data" 0 $ok
 else
     echo "== the real binary: skipped (BIN is not set)"
+fi
+
+# What the first real pod found (2026-09-22): a container that runs as root
+# but without CAP_CHOWN. GNU tar as root restores the archive's recorded owner
+# by default, and here that is "Operation not permitted" on every entry. Only
+# root can be refused a chown, so the arm exists only when the test runs as
+# root — and it proves itself: a plain `tar -x` must fail where the script
+# must succeed, or the environment cannot show the difference.
+echo "== root without CAP_CHOWN (the pod's shape)"
+if [ "$(id -u)" = 0 ] && command -v capsh >/dev/null 2>&1; then
+    release_dir "$WORK/relc" v9.9.9 "$STANDIN"
+    capsh --drop=cap_chown -- -c "mkdir -p $WORK/plain && cd $WORK/plain && tar -xzf $WORK/relc/mindfork-rs-v9.9.9-x86_64-linux.tar.gz" >/dev/null 2>&1
+    check "control arm: a plain tar -x is refused without CAP_CHOWN" 2 $?
+    capsh --drop=cap_chown -- -c "sh $S --from $WORK/relc --dir $WORK/opt-c --no-link -- --version" >/dev/null 2>&1
+    check "install.sh installs where a plain tar cannot" 0 $?
+    if [ -x "$WORK/opt-c/mindfork" ] && [ -f "$WORK/opt-c/data/dictionaries/en_US.dic" ]; then ok=0; else ok=1; fi
+    check "…and everything is there" 0 $ok
+elif [ "$(id -u)" = 0 ]; then
+    # Root without capsh cannot show the difference — and this is the one arm
+    # that found a real defect on a real pod, so it does not get to skip.
+    fail=$((fail + 1))
+    echo "  FAIL  capsh is not installed (libcap2-bin / libcap) — the CAP_CHOWN arm cannot run as root"
+else
+    echo "  SKIP  not root — a non-root tar never chowns, so there is nothing to refuse"
 fi
 
 echo "== install, hand-over, link"
@@ -89,8 +119,8 @@ echo "$out" | grep -q "^ARGC:5$"
 check "five arguments after -- arrive as five" 0 $?
 echo "$out" | grep -q "^ARG:a.b=c d$"
 check "…and the one with a space in it arrives whole" 0 $?
-[ "$(cat "$WORK/opt/.mindfork-version")" = "v9.9.9" ] && [ ! -e "$WORK/opt/.staging" ]
-check "the marker is written and staging is gone" 0 $?
+if [ "$(cat "$WORK/opt/.mindfork-version")" = "v9.9.9" ] && [ ! -e "$WORK/opt/.staging" ]; then ok=0; else ok=1; fi
+check "the marker is written and staging is gone" 0 $ok
 
 echo "== again: nothing is unpacked twice, and user data is not the script's to touch"
 echo '{"mine":true}' >"$WORK/opt/data/settings.json"
@@ -106,8 +136,8 @@ echo "== an upgrade over it"
 mkdir -p "$WORK/rel2" && release_dir "$WORK/rel2" v9.9.10 "$STANDIN"
 sh "$S" --from "$WORK/rel2" --dir "$WORK/opt" --no-link >/dev/null 2>&1
 check "upgrade" 0 $?
-[ "$(cat "$WORK/opt/.mindfork-version")" = "v9.9.10" ] && grep -q mine "$WORK/opt/data/settings.json"
-check "the marker moved, the data did not" 0 $?
+if [ "$(cat "$WORK/opt/.mindfork-version")" = "v9.9.10" ] && grep -q mine "$WORK/opt/data/settings.json"; then ok=0; else ok=1; fi
+check "the marker moved, the data did not" 0 $ok
 
 echo "== refusals"
 mkdir -p "$WORK/bad" && cp "$WORK/rel"/* "$WORK/bad/"

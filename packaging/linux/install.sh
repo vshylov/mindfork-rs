@@ -173,11 +173,19 @@ verify() { # directory, archive name
 # under a running app, which keeps the old file until it exits. The archive
 # holds no user data (its `data/` is the bundled dictionaries only), so
 # settings, chats and everything `mindfork setup` downloaded stay as they were.
+#
+# `--no-same-owner`: the archive records the CI runner's uid/gid (1001), and
+# GNU tar run as root *restores* recorded owners by default — which in a
+# container that runs as root but without CAP_CHOWN (a RunPod pod, measured
+# 2026-09-22: 51 "Cannot change ownership to uid 1001" lines and a failed
+# install) is "Operation not permitted". The files are ours to own; nothing
+# about the archive's owner is worth keeping. For a non-root user this is
+# already tar's default, so nothing changes there.
 unpack() { # archive path, install dir
     stage="$2/.staging"
     rm -rf "$stage"
     mkdir -p "$stage"
-    tar -xzf "$1" -C "$stage"
+    tar --no-same-owner -xzf "$1" -C "$stage"
     [ -f "$stage/mindfork" ] || die "the archive holds no 'mindfork' binary"
     chmod 0755 "$stage/mindfork"
     mv -f "$stage/mindfork" "$2/mindfork"

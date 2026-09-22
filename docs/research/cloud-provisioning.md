@@ -522,7 +522,12 @@ stack on Windows, and the whole one-liner on a rented pod, recorded in
    makes the script testable without a network. **Rehearsed GO** on
    `v0.10.2-rc1` the same day: the script among the draft's assets, first in
    its `sha256sums.txt`, covered by the build attestation, and the draft's own
-   archive installed by it. The pod probe is still owed.
+   archive installed by it. **The first real pod run (2026-09-22) failed inside
+   `tar`** — root without `CAP_CHOWN` refusing to restore the archive's recorded
+   owner — a shape no container of ours had; fixed with `--no-same-owner` and a
+   `capsh --drop=cap_chown` scenario with its control arm
+   ([journal/release.md](../journal/release.md)). The rest of the probe is still
+   owed.
 3. *(if F4 goes that way)* **model download** — its own research section first.
 
 The probe runs before stage 0 is merged; stage 1 does not depend on it.
