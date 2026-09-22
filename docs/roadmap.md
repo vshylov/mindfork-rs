@@ -335,8 +335,9 @@ and **embedding-model change** tracks are done (see "Recently closed" below and
   Stages 1 and 2 are **done** too: `mindfork setup` (install.md §3.3) and
   `install.sh` with the rented-box recipe (install.md §1, §3.4), rehearsed GO
   on `v0.10.2-rc1` and **released in 0.11.0** (2026-09-21) — where the first real
-  pod run found it failing inside `tar` (root without `CAP_CHOWN`; fixed for
-  0.11.1). What remains: the
+  pod run found it failing inside `tar` (root without `CAP_CHOWN`; fixed in
+  0.11.1) — and, past that flag, the whole line **ran on the pod**: CUDA
+  llama.cpp, the sandbox, a 31B model verified at 131k. What remains: the
   probe on a rented pod — since the release, the README's own line run end to
   end, with `tools/pod_probe.sh` for the measurements it does not take — which
   carries the Linux-GPU live half of every stage and gives the recipe its

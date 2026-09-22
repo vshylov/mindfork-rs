@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (49)
+## Entries (50)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -61,6 +61,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: `install.sh` — the release installs itself on a bare Linux box (done)
 - Release 0.11.0 (prepared)
 - Post-M9: `install.sh` failed on the first real pod — root without CAP_CHOWN (done)
+- Release 0.11.1 (prepared)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -2759,3 +2760,37 @@ every reversible check first. Full record —
   user's tar (`--no-same-owner` by hand) or to wait for the release.
 - **Gates**: no Rust changed — **3408 unit tests, 197 `#[ignore]`**; 28 shell
   scenarios; link / source-language / index / action-pin gates green.
+- **And the rest of the line ran on that pod.** With the archive unpacked by hand
+  (`tar --no-same-owner`, `libasound2t64` installed), the owner reported that
+  `./mindfork setup --sandbox --llama cuda-12 --model <Gemma 4 31B Q8_0>
+  --ctx 131072 --verify` **went through without a problem** (2026-09-22). That is
+  the first time any of this track has run on Linux under a GPU: the official
+  llama.cpp CUDA build for Linux installed with its runtime archive (stage 0), the
+  sandbox provisioned in a container, the settings written, and `--verify`
+  bringing a 31B Q8_0 model up at a 131 072-token context on the card. The
+  probe's remaining questions — the JIT on an 8.0/9.0 card, mmap off a network
+  volume, `machine-id` across a stop — are still open, but the acceptance test of
+  the track is passed everywhere except at the one flag this entry fixes.
+
+### Release 0.11.1 (prepared)
+
+- **A release PR** per the checklist in [AGENTS.md §6](../../AGENTS.md) (branch
+  `chore/release-0.11.1`): bumped `Cargo.toml` `0.11.0 → 0.11.1` (+ `Cargo.lock`,
+  one line), `site/zola.toml` `app_version`, `CHANGELOG.md` — `[Unreleased]` →
+  `[0.11.1] — 2026-09-22` under a lead paragraph, a fresh empty `[Unreleased]`
+  opened, comparison links updated. The `v0.11.1` tag is applied by the user
+  after the merge. Gates green: 3408 unit tests (197 `#[ignore]`), `clippy -D
+  warnings`, `fmt`, `release_guard.py --tag v0.11.1` accepting the tag.
+- **A PATCH, by §6's rule, and a small one on purpose.** One change since
+  `v0.11.0` and it is not in Rust: `install.sh`'s `--no-same-owner`, with the
+  scenario that reproduces the pod's shape. No `Data` rubric — no schema
+  constant and no config field moved (the diff of `src/` against `v0.11.0` is
+  empty), so 0.11.0 and 0.11.1 open the same files.
+- **Why a release rather than waiting**: `releases/latest/download/install.sh`
+  is the README's first line, and until this ships that line fails on the
+  machine it was written for. A published release is the only way the address
+  serves the fixed script.
+- **The release post is short** and says the one thing: the line failed, why,
+  and that it works now — with the owner's own result that the rest of the line
+  ran on the pod. `app_version` moves with it; `site.yml` holds the deploy as
+  it did for 0.11.0.

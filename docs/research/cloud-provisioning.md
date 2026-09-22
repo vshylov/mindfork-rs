@@ -526,8 +526,12 @@ stack on Windows, and the whole one-liner on a rented pod, recorded in
    `tar`** — root without `CAP_CHOWN` refusing to restore the archive's recorded
    owner — a shape no container of ours had; fixed with `--no-same-owner` and a
    `capsh --drop=cap_chown` scenario with its control arm
-   ([journal/release.md](../journal/release.md)). The rest of the probe is still
-   owed.
+   ([journal/release.md](../journal/release.md)). With the archive unpacked by
+   hand, **the rest of the line ran on that pod**: `setup --sandbox --llama
+   cuda-12 --model <31B Q8_0> --ctx 131072 --verify` went through — the first
+   run of any of this on Linux under a GPU, and the track's acceptance test
+   passed. The probe's measurements (§7: JIT, the volume, `machine-id`) are
+   still owed.
 3. *(if F4 goes that way)* **model download** — its own research section first.
 
 The probe runs before stage 0 is merged; stage 1 does not depend on it.
