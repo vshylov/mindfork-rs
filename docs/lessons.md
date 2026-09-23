@@ -1375,6 +1375,18 @@ never answered, the refusal that answers with a different event, and the answer
 that never comes.
 — *a chat asked for from another screen arrives in one frame*.
 
+**A terminal computes some of its own state in the quiet — an animation that never
+pauses keeps that state stale.** Windows Terminal re-finds the URLs it detects in the
+text only after 100 ms without output (a *debounce*: every write re-arms it), and on
+hover it reads whatever text now stands where it found a URL last. A spinner drawn on
+every 50 ms tick meant it never re-scanned, so the indexing banner's row moved the feed
+and every detected link sat one row off — the hover underlined prose and called it
+`Invalid URI`. And an "empty" frame is not empty on the wire: the 2026 markers and
+ratatui's cursor show and move go out even when the diff is nothing. Repaint an
+animation when what it shows changes, on a period comfortably above 100 ms plus the
+tick (`SPINNER_STEP`, asserted at compile time against `TICK`).
+— *the spinner leaves the terminal a quiet gap*.
+
 ---
 
 ## 6. Windows and cross-platform

@@ -14,6 +14,13 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Fixed
+- **Links no longer underline the wrong line while a file is indexed.** In
+  Windows Terminal, hovering the line under a link during indexing underlined
+  that line and showed `Invalid URI`: the indexing spinner redrew the screen so
+  often that the terminal never updated where the links were. The spinner now
+  redraws only when its glyph changes, and turns at an even pace.
+
 ### Changed
 - **`mindfork setup --verify` says how to move a busy port.** When something
   else already listens where a server would — on RunPod that is the image's own

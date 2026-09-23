@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (41)
+## Entries (42)
 
 - Post-M9: mouse-wheel feed scrolling (done)
 - Post-M9: own markdown renderer (tables + LaTeX + theme) (done)
@@ -53,6 +53,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: mid-turn the `Esc` hint says "cancel" (done)
 - Post-M9: the bar's hint grid becomes everyone's (done)
 - Post-M9: the confirmation popup shows the code it is asking about (done)
+- Post-M9: the spinner leaves the terminal a quiet gap (done)
 
 ### Post-M9: mouse-wheel feed scrolling (done)
 - **The mouse wheel scrolls the feed** on par with `PageUp/PageDown`. `ratatui::init()`
@@ -2389,3 +2390,58 @@ the sizing reverted — checked, not assumed. The premise is asserted too (the t
 on screen), so a popup that stopped wrapping could not make it pass vacuously. Unit: 3182
 green, 173 ignored. **No live run**: pure UI, and the assertion is over the buffer a terminal
 would print.
+
+### Post-M9: the spinner leaves the terminal a quiet gap (done)
+
+Reported from Windows Terminal with a screenshot: while an attachment was being indexed,
+hovering the line *under* a link in the feed underlined that line and raised the terminal's
+own tooltip, `Invalid URI — Ctrl+Click to follow link`. Only during indexing.
+
+**Whose tooltip.** Not ours: the app emits no OSC 8 anywhere, so a link in the feed is styled
+text and nothing more. The underline on hover and the tooltip are Windows Terminal's
+"automatically detect URLs", which scans the visible text with a regex and keeps the matches'
+positions in an interval tree. Read in its source (`main`): the tree is rebuilt in
+`ControlCore`'s `outputIdle` callback, a `throttled_func` with `delay = 100ms, debounce =
+true`, which every write re-arms (`_connectionOutputHandler`); and on hover
+`Terminal::GetHyperlinkAtBufferPosition` returns `GetPlainText(start, stop)` over the
+**stored** interval — whatever text stands there now. Prose with spaces fails `Uri` parsing,
+hence `Invalid URI`.
+
+**Why only while indexing.** The banner takes a row (`banner_h`), the feed is one row shorter
+and, stuck to the bottom, moves up by one; and while a spinner ran the loop drew a frame on
+every 50 ms tick (`spinner_frame_needed`), each with at least the synchronized-output markers
+and ratatui's cursor show and move, even when the glyph had not changed — it changed every
+second frame. Output never paused for 100 ms, so the tree kept the positions from before the
+banner appeared: exactly one row below each link. Once indexing ends the loop goes quiet and
+the terminal catches up 100 ms later, which is why it read as intermittent. The terminal is
+the one keeping a position it knows may be stale; what kept it stale was us.
+
+**The fix is the write rate, not the terminal.** `shared::ui::Spinner` makes the glyph a
+function of time — one step per `SPINNER_STEP` = 200 ms — and records the step it last drew;
+`ChatScreen::spinner_due` asks the banner's and the impersonation preview's spinner, and the
+loop repaints an idle chat only when a glyph would change. A frame lands on the first tick
+after a step's boundary, so frames come 150–250 ms apart and every gap outlasts the debounce.
+A `const _: () = assert!` beside `TICK` ties the two (`SPINNER_STEP - TICK > 100 ms`), and it
+does refuse a 150 ms step at compile time (checked). The frame counter this replaces had a
+second defect it shared the cure with: it advanced per frame drawn, so the spin sped up while
+the user typed or a reply streamed. Both spinners stay in their old slots; `is_rag_active` and
+`is_impersonating` survive for the tests only.
+
+Rejected: **OSC 8 for our own links** — the terminal would carry the URI in the cell's
+attributes and could not drift from the text, but that is the terminal-dependent feature
+docs/research/chat-uri-links.md already set aside, and it would leave every other detected
+URL (a path, an address in prose) as stale as before. **Throttling the progress repaints** —
+the events come once per 16-chunk embedding batch (`EMBED_BATCH_CHUNKS`), far apart, so the
+spinner was the whole write rate.
+
+**Tests.** `shared::ui`: the glyph steps with time and not with frames, and is due only at a
+step's boundary — including a frame drawn late in its step, which is due again at the next
+boundary rather than a whole step later. `app::runtime`: through the loop's own
+`spinner_frame_needed`, with frames drawn by the screen's real `render`, a drawn spinner asks
+for no frame, a progress update keeps it quiet, and the impersonation preview behaves alike.
+Six mutations — the loop repainting whenever a spinner exists (the old behaviour), `glyph`
+not recording, each render bypassing the clock, `update` restarting the spinner, a shorter
+step — each killed. Unit: 3411 green, 197 ignored. **No live run** in the engine sense: pure
+UI and terminal I/O. What stands in for one is a look in Windows Terminal — hover a link while
+an attachment indexes — which the app cannot take from an agent's shell (no TTY); it is the
+reporter's to take.
