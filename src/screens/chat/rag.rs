@@ -19,7 +19,7 @@ impl RagBanner {
             name: String::new(),
             location: String::new(),
             after: String::new(),
-            tick: 0,
+            spinner: Spinner::new(),
         }
     }
 
@@ -45,16 +45,16 @@ impl RagBanner {
             name: name.to_string(),
             location,
             after: after.to_string(),
-            tick: 0,
+            spinner: Spinner::new(),
         }
     }
 
-    /// Replaces the text and keeps the spinner phase — a progress update must
-    /// not restart the animation.
+    /// Replaces the text and keeps the spinner — a progress update must not
+    /// restart the animation.
     pub(super) fn update(&mut self, next: RagBanner) {
-        let tick = self.tick;
+        let spinner = self.spinner;
         *self = next;
-        self.tick = tick;
+        self.spinner = spinner;
     }
 
     /// The full text, as it reads with room to spare.
@@ -240,8 +240,10 @@ impl ChatScreen {
         self.push_note(&msg);
     }
 
-    /// Whether background RAG indexing is in progress (the loop repaints frames
-    /// for the spinner animation while this is `true`).
+    /// Whether background indexing is in progress — the banner is up. The loop
+    /// asks [`Self::spinner_due`] instead: a running spinner needs a frame only
+    /// when its glyph changes.
+    #[cfg(test)]
     pub fn is_rag_active(&self) -> bool {
         self.rag.is_some()
     }
@@ -442,10 +444,12 @@ mod tests {
     }
 
     #[test]
-    fn banner_update_keeps_the_spinner_phase() {
+    fn banner_update_keeps_the_spinner() {
         let mut s = ChatScreen::new();
         s.set_rag_progress(RagProgress::Started { total: 2 });
-        s.rag.as_mut().unwrap().tick = 7;
+        // Drawn once, the spinner differs from any fresh one (which is not).
+        s.rag.as_mut().unwrap().spinner.glyph(&['x']);
+        let before = s.rag.as_ref().unwrap().spinner;
         s.set_file_progress(crate::features::file_command::FileProgress::Indexing {
             name: "a.pdf".into(),
             done: 1,
@@ -453,7 +457,7 @@ mod tests {
         });
         let banner = s.rag.as_ref().unwrap();
         assert_eq!(
-            banner.tick, 7,
+            banner.spinner, before,
             "a progress update does not restart the spinner"
         );
         assert_eq!(banner.name, "a.pdf");

@@ -1,6 +1,8 @@
 //! `shared` layer (FSD): small reusable TUI rendering helpers, independent of
 //! the upper layers.
 
+use std::time::{Duration, Instant};
+
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
@@ -79,6 +81,77 @@ pub fn prime_full_redraw(buf: &mut Buffer) {
 /// palette and widgets get by with `DIM`/`BOLD`/`ITALIC`/`UNDERLINED`/
 /// `REVERSED`), so no cell of a real frame will ever match it.
 const SENTINEL_MODIFIER: Modifier = Modifier::HIDDEN;
+
+/// How long one spinner glyph stays up — and so how often an otherwise idle
+/// screen writes to the terminal while a spinner runs, which is the number
+/// that matters. Windows Terminal re-finds the URLs it detects in the text
+/// only once its output has been quiet for 100 ms (`ControlCore`'s
+/// `outputIdle`, a debounce). A spinner repainting every 50 ms tick never let
+/// it: every detected link stayed on the row it held before the layout last
+/// moved, so the indexing banner's own row pushed the feed up, and hovering
+/// the line under a link underlined it and read its text as the URI
+/// (`Invalid URI`). With the loop's 50 ms tick the frames land 150–250 ms
+/// apart — a quiet gap longer than the debounce after each of them
+/// (docs/journal/ui-feed.md, "the spinner leaves the terminal a quiet gap").
+pub const SPINNER_STEP: Duration = Duration::from_millis(200);
+
+/// A spinner's clock: the glyph it shows is a function of the time since it
+/// started, not of the frames drawn, and the loop repaints for it only when
+/// that glyph changes ([`Spinner::due`]). A frame counter got both wrong: the
+/// spin sped up with every frame something else asked for (typing, a stream),
+/// and the loop had to draw on every tick to move it at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Spinner {
+    started: Instant,
+    /// The step the last frame showed (`None` — not drawn yet).
+    drawn: Option<u128>,
+}
+
+impl Default for Spinner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Spinner {
+    /// A spinner starting now, on its first glyph.
+    pub fn new() -> Self {
+        Self::started_at(Instant::now())
+    }
+
+    fn started_at(started: Instant) -> Self {
+        Self {
+            started,
+            drawn: None,
+        }
+    }
+
+    /// Whole [`SPINNER_STEP`]s from the start to `now`.
+    fn step_at(&self, now: Instant) -> u128 {
+        now.saturating_duration_since(self.started).as_millis() / SPINNER_STEP.as_millis()
+    }
+
+    /// Whether a frame drawn now would show another glyph than the last one
+    /// did — or none has been drawn yet.
+    pub fn due(&self) -> bool {
+        self.due_at(Instant::now())
+    }
+
+    fn due_at(&self, now: Instant) -> bool {
+        self.drawn != Some(self.step_at(now))
+    }
+
+    /// The glyph of `frames` to draw now, recorded as drawn.
+    pub fn glyph(&mut self, frames: &[char]) -> char {
+        self.glyph_at(frames, Instant::now())
+    }
+
+    fn glyph_at(&mut self, frames: &[char], now: Instant) -> char {
+        let step = self.step_at(now);
+        self.drawn = Some(step);
+        frames[(step % frames.len() as u128) as usize]
+    }
+}
 
 /// Draws a vertical scrollbar in the **right column** of `area` when the
 /// content doesn't fit by height (`total > viewport`); otherwise — a no-op
@@ -920,5 +993,43 @@ mod tests {
             assert!(!cell.modifier.contains(Modifier::DIM));
         })
         .unwrap();
+    }
+
+    const FRAMES: &[char] = &['a', 'b', 'c'];
+
+    fn ms(n: u64) -> Duration {
+        Duration::from_millis(n)
+    }
+
+    #[test]
+    fn a_spinner_steps_with_time_not_with_frames() {
+        let t0 = Instant::now();
+        let mut s = Spinner::started_at(t0);
+        // However many frames are drawn within one step, they show one glyph —
+        // a repaint someone else asked for does not speed the spin up.
+        for _ in 0..5 {
+            assert_eq!(s.glyph_at(FRAMES, t0), 'a');
+        }
+        assert_eq!(s.glyph_at(FRAMES, t0 + SPINNER_STEP - ms(1)), 'a');
+        assert_eq!(s.glyph_at(FRAMES, t0 + SPINNER_STEP), 'b');
+        assert_eq!(s.glyph_at(FRAMES, t0 + SPINNER_STEP * 2), 'c');
+        assert_eq!(s.glyph_at(FRAMES, t0 + SPINNER_STEP * 3), 'a', "wraps");
+    }
+
+    #[test]
+    fn a_spinner_is_due_only_when_its_glyph_would_change() {
+        let t0 = Instant::now();
+        let mut s = Spinner::started_at(t0);
+        assert!(s.due_at(t0), "never drawn — the first frame is due");
+        s.glyph_at(FRAMES, t0);
+        // The idle ticks inside a step write nothing to the terminal.
+        assert!(!s.due_at(t0 + ms(50)));
+        assert!(!s.due_at(t0 + SPINNER_STEP - ms(1)));
+        assert!(s.due_at(t0 + SPINNER_STEP), "the next glyph is due");
+        // Drawn late in its step (the loop draws on its next tick), the glyph
+        // is due again at the step's boundary, not a whole step after the draw.
+        s.glyph_at(FRAMES, t0 + SPINNER_STEP + ms(40));
+        assert!(!s.due_at(t0 + SPINNER_STEP * 2 - ms(1)));
+        assert!(s.due_at(t0 + SPINNER_STEP * 2));
     }
 }

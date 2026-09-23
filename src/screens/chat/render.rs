@@ -69,19 +69,18 @@ impl ChatScreen {
         }
     }
 
+    /// Whether a spinner on this screen — the indexing banner's or the
+    /// impersonation preview's — would show another glyph now than in the last
+    /// frame. The one reason the loop repaints an otherwise idle chat, and it
+    /// comes once a [`SPINNER_STEP`](crate::shared::ui::SPINNER_STEP), never on every tick: Windows Terminal
+    /// needs quiet output to re-find the links it underlines (see the constant).
+    pub fn spinner_due(&self) -> bool {
+        self.rag.as_ref().is_some_and(|b| b.spinner.due())
+            || self.impersonation.as_ref().is_some_and(|i| i.spinner.due())
+    }
+
     pub fn render(&mut self, frame: &mut Frame) {
         let _ = self.maybe_recheck_spelling();
-
-        // Spinner animation for the indexing indicator (the loop draws every
-        // tick while `is_rag_active()`); the divisor slows the frame change to
-        // a pleasant pace.
-        if let Some(banner) = &mut self.rag {
-            banner.tick = banner.tick.wrapping_add(1);
-        }
-        // Spinner animation for the impersonation preview (while `is_impersonating()`).
-        if let Some(imp) = &mut self.impersonation {
-            imp.tick = imp.tick.wrapping_add(1);
-        }
 
         // The input/preview height grows to fit content with wrapping (1–6
         // rows + border). The impersonation preview wraps by "width minus
@@ -140,11 +139,10 @@ impl ChatScreen {
             self.loc,
         );
 
-        if let Some(banner) = &self.rag {
+        if let Some(banner) = &mut self.rag {
             // Spinner frames — from the palette's glyph set (Braille;
-            // compat — ASCII).
-            let frames = self.palette.glyphs().spinner;
-            let spinner = frames[(banner.tick / 2) % frames.len()];
+            // compat — ASCII); which one shows is the spinner's clock's call.
+            let spinner = banner.spinner.glyph(self.palette.glyphs().spinner);
             let prefix = format!("{spinner} RAG: ");
             // The row is one line high and the widget would clip a long text at
             // the edge — counters last, which are the point of the banner. Fit
@@ -174,12 +172,13 @@ impl ChatScreen {
     fn render_input_area(&mut self, frame: &mut Frame, input_area: Rect) {
         // During impersonation the input box is hidden — a streaming reply
         // preview sits in its place. See spec §11.8.
-        if let Some(imp) = &self.impersonation {
+        if let Some(imp) = &mut self.impersonation {
+            let spinner = imp.spinner.glyph(self.palette.glyphs().spinner);
             impersonation_preview::render(
                 frame,
                 input_area,
                 &imp.text,
-                imp.tick,
+                spinner,
                 imp.done,
                 &self.palette,
                 self.loc,

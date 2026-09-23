@@ -35,7 +35,7 @@ use crate::shared::i18n::{Locale, locale};
 use crate::shared::keys;
 use crate::shared::server::{ServerStatus, ServerStatuses};
 use crate::shared::theme::Palette;
-use crate::shared::ui::{ListScroll, dim_background};
+use crate::shared::ui::{ListScroll, Spinner, dim_background};
 use crate::widgets::chat_link_picker::{ChatLinkAction, ChatLinkPickerState};
 use crate::widgets::emoji_picker::{EmojiPickerAction, EmojiPickerState};
 use crate::widgets::help_dialog::{HelpContext, HelpSection};
@@ -478,8 +478,8 @@ struct ImpersonationState {
     /// The reply's accumulated text (starts with whatever seed text was already
     /// typed).
     text: String,
-    /// A repaint-tick counter for the spinner animation.
-    tick: usize,
+    /// The preview's spinner (its clock — see [`Spinner`]).
+    spinner: Spinner,
     /// Generation has finished (the spinner stops until applied/reset).
     done: bool,
 }
@@ -507,8 +507,8 @@ struct RagBanner {
     location: String,
     /// The fixed text after the name — the file and chunk counters.
     after: String,
-    /// A repaint-tick counter for the spinner animation.
-    tick: usize,
+    /// The banner's spinner (its clock — see [`Spinner`]).
+    spinner: Spinner,
 }
 
 /// The chat screen: all UI state and its rendering.
