@@ -175,9 +175,9 @@ Backend selection: `MINDFORK_ENGINE_URL` (external, any OpenAI server) OR
 rented instead of hosted — `python tools/e2e_hf.py run`, see
 `docs/history/remote-e2e-hf.md`.
 
-## Status (2026-09-22, version 0.11.1)
+## Status (2026-09-23, version 0.11.1)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3408 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **3411 unit tests
 green, 197 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
@@ -190,6 +190,10 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **A spinner repaints when its glyph changes, not every tick** — a frame per 50 ms
+  tick never gave Windows Terminal the 100 ms of quiet it re-finds URLs in, so during
+  indexing a hover underlined the line under a link (`Invalid URI`)
+  ([docs/journal/ui-feed.md](docs/journal/ui-feed.md), spec §4.4.1).
 - **One command from a bare GPU box to a chat — track complete** (2026-09-22).
   `install.sh` (a release asset, attested; the archive refused unless the
   checksums agree; whether the app starts decided by running it) hands over to

@@ -41,7 +41,7 @@ use crate::screens::self_model::{SelfModelIntent, SelfModelScreen};
 use crate::screens::settings::{SettingsIntent, SettingsScreen};
 use crate::screens::tasks::{TasksIntent, TasksScreen};
 use crate::shared::theme::Palette;
-use crate::shared::ui::dim_background;
+use crate::shared::ui::{SPINNER_STEP, dim_background};
 use crate::widgets::help_dialog::{
     self, DEFAULT_HELP_TAB, HelpContext, HelpKeyOutcome, HelpSection, HelpState, HelpTab,
 };
@@ -285,6 +285,15 @@ fn esc_target(back: &Option<Back>) -> EscTarget {
 
 /// The input polling period (the repaint tick).
 const TICK: Duration = Duration::from_millis(50);
+
+// A spinner frame is drawn on the first tick after its step's boundary, so two
+// of them can land as little as `SPINNER_STEP - TICK` apart — and that gap has
+// to outlast Windows Terminal's 100 ms output-idle debounce, or the terminal
+// never re-finds the links it underlines while a spinner runs (see the constant).
+const _: () = assert!(
+    SPINNER_STEP.as_millis() - TICK.as_millis() > 100,
+    "a spinner frame must leave the terminal more than 100 ms of quiet"
+);
 
 /// Initializes the terminal, runs the loop, and restores the terminal on exit
 /// (including on panic — `ratatui::init` sets a panic hook). `app` loads the
@@ -549,9 +558,9 @@ fn run_loop(
     // Otherwise `terminal.draw` is called ~20 times/sec and repositions the cursor
     // every time (`frame.set_cursor_position`), and the terminal (especially Windows
     // Terminal) resets the blink phase on every cursor move → the cursor blinks more
-    // often and unevenly, even though CPU stays ~0% (the buffer diff is empty). There
-    // are no timer-driven animations in rendering, so idle ticks don't need to
-    // repaint. See spec §11.
+    // often and unevenly, even though CPU stays ~0% (the buffer diff is empty). The
+    // one timer-driven animation is a spinner, and it asks for a frame only when its
+    // glyph changes (`spinner_frame_needed`), so idle ticks don't repaint. See spec §11.
     let mut dirty = true;
     // Which screen was DRAWN in the previous frame: a switch requires a full
     // repaint (see below, at `prime_full_redraw`). We track this by the actual draw —
@@ -586,9 +595,9 @@ fn run_loop(
         if spellcheck_upkeep(&mut spell, &mut screen, &mut active) {
             dirty = true;
         }
-        // While background RAG indexing or impersonation is running — repaint every
-        // tick for the spinner animation (outside them, idle ticks don't repaint —
-        // `dirty`).
+        // While background indexing or impersonation runs, its spinner asks for a
+        // frame each time its glyph changes — once a `SPINNER_STEP`, not every tick
+        // (outside them, idle ticks don't repaint — `dirty`).
         if spinner_frame_needed(&active, &screen) {
             dirty = true;
             refresh_task_rows(&active, cmd_tx);
@@ -686,14 +695,15 @@ fn spellcheck_upkeep(
     dirty
 }
 
-/// Whether a frame must repaint without input: a spinner animation on the
-/// chat screen (background RAG indexing or impersonation) repaints every
-/// tick; the tasks screen repaints once a second while a run is out, so its
-/// elapsed column moves (spec §11.10) — and not at all once every run has
-/// landed.
+/// Whether a frame must repaint without input: a spinner on the chat screen
+/// (background indexing or impersonation) repaints when its glyph changes,
+/// once a [`SPINNER_STEP`] — drawing on every tick wrote to the terminal so
+/// often that Windows Terminal never re-found the links it underlines; the
+/// tasks screen repaints once a second while a run is out, so its elapsed
+/// column moves (spec §11.10) — and not at all once every run has landed.
 fn spinner_frame_needed(active: &ActiveScreen, screen: &ChatScreen) -> bool {
     match active {
-        ActiveScreen::Chat => screen.is_rag_active() || screen.is_impersonating(),
+        ActiveScreen::Chat => screen.spinner_due(),
         ActiveScreen::Tasks(tasks) => tasks.needs_repaint(),
         _ => false,
     }

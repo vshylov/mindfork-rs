@@ -13,7 +13,7 @@ impl ChatScreen {
         self.impersonation = Some(ImpersonationState {
             generation_id,
             text: self.input.text(),
-            tick: 0,
+            spinner: Spinner::new(),
             done: false,
         });
     }
@@ -52,8 +52,10 @@ impl ChatScreen {
         }
     }
 
-    /// Whether impersonation is in progress (the loop repaints frames for the
-    /// spinner animation).
+    /// Whether impersonation is in progress — the preview stands in for the
+    /// input box. The loop asks [`Self::spinner_due`] instead: a running spinner
+    /// needs a frame only when its glyph changes.
+    #[cfg(test)]
     pub fn is_impersonating(&self) -> bool {
         self.impersonation.is_some()
     }

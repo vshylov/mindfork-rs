@@ -936,8 +936,12 @@ next to the sum.
   input/mouse/resize, a dictionary reload, a spellcheck recompute). Nothing is
   redrawn while idle — otherwise `ratatui` would reposition the cursor every tick
   and throw off its blink phase. The loop body still spins every tick and wakes
-  debounced deferred actions (spellcheck recheck, RAG/impersonation spinner
-  animation).
+  debounced deferred actions (spellcheck recheck). A spinner (RAG/attachment
+  indexing banner, impersonation preview) keeps a `shared::ui::Spinner` clock and
+  asks for a frame only when its glyph changes (`ChatScreen::spinner_due`, once a
+  `SPINNER_STEP` = 200 ms): Windows Terminal re-finds the URLs it underlines only
+  after 100 ms of quiet output, and a frame per tick never gave it that (spec
+  §4.4.1).
 - **Atomic frame (DEC 2026).** Every `terminal.draw` is wrapped in
   `BeginSynchronizedUpdate`/`EndSynchronizedUpdate` (CSI `?2026h`/`?2026l`): the
   terminal applies the frame as a whole, so the hardware cursor is never visible

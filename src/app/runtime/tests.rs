@@ -2273,3 +2273,51 @@ fn a_closed_queue_reports_the_backend_gone_after_applying_what_is_left() {
         "an event queued before the task died is still applied — the screen stays correct"
     );
 }
+
+/// A spinner asks the loop for a frame only when its glyph changes, never on
+/// every tick: drawing each tick kept Windows Terminal from ever going quiet,
+/// and a link it underlines stayed on the row it held before the indexing
+/// banner moved the feed (see `SPINNER_STEP`). Asked through the loop's own
+/// predicate, with the frame drawn by the screen's real `render`.
+#[test]
+fn a_drawn_spinner_asks_for_no_frame_until_its_glyph_changes() {
+    use crate::features::file_command::FileProgress;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    let chat = ActiveScreen::Chat;
+    let mut screen = ChatScreen::new();
+    let mut term = Terminal::new(TestBackend::new(60, 12)).unwrap();
+    assert!(
+        !spinner_frame_needed(&chat, &screen),
+        "no spinner, no frame"
+    );
+    let indexing = |done| FileProgress::Indexing {
+        name: "a.pdf".into(),
+        done,
+        total: 69,
+    };
+    screen.set_file_progress(indexing(16));
+    assert!(
+        spinner_frame_needed(&chat, &screen),
+        "the first frame is due"
+    );
+    term.draw(|f| screen.render(f)).unwrap();
+    assert!(
+        !spinner_frame_needed(&chat, &screen),
+        "the frame just drawn shows this step's glyph — an idle tick writes nothing"
+    );
+    // A progress update keeps the spinner, so it asks for no frame of its own
+    // (the event makes the frame dirty by itself).
+    screen.set_file_progress(indexing(32));
+    assert!(!spinner_frame_needed(&chat, &screen));
+    screen.set_file_progress(FileProgress::Indexed {
+        name: "a.pdf".into(),
+        chunks: 69,
+    });
+    assert!(!spinner_frame_needed(&chat, &screen), "the banner is gone");
+    // The impersonation preview's spinner is asked the same way.
+    screen.begin_impersonation(Uuid::new_v4());
+    assert!(spinner_frame_needed(&chat, &screen));
+    term.draw(|f| screen.render(f)).unwrap();
+    assert!(!spinner_frame_needed(&chat, &screen));
+}

@@ -16,14 +16,14 @@ use crate::shared::theme::Palette;
 use crate::shared::wrap::wrap_ranges;
 
 /// Draws the impersonation preview in `area`. `text` — the accumulated reply
-/// text, `tick` — a frame counter for the spinner animation, `done` — generation
-/// finished (the spinner stops, the hint changes). Spinner frames come from the
-/// palette's glyph set (Braille; ASCII in compatibility mode).
+/// text, `spinner` — the spinner glyph of this frame (the caller's
+/// `shared::ui::Spinner` picks it from the palette's set), `done` — generation
+/// finished (the spinner stops, the hint changes).
 pub fn render(
     frame: &mut Frame,
     area: Rect,
     text: &str,
-    tick: usize,
+    spinner: char,
     done: bool,
     palette: &Palette,
     loc: &'static Locale,
@@ -31,8 +31,6 @@ pub fn render(
     let hint = if done {
         loc.t("ui.impersonation.done").to_string()
     } else {
-        let frames = palette.glyphs().spinner;
-        let spinner = frames[(tick / 2) % frames.len()];
         loc.tf(
             "ui.impersonation.active",
             &[("spinner", &spinner.to_string())],
