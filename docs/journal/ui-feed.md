@@ -2443,5 +2443,6 @@ Six mutations — the loop repainting whenever a spinner exists (the old behavio
 not recording, each render bypassing the clock, `update` restarting the spinner, a shorter
 step — each killed. Unit: 3411 green, 197 ignored. **No live run** in the engine sense: pure
 UI and terminal I/O. What stands in for one is a look in Windows Terminal — hover a link while
-an attachment indexes — which the app cannot take from an agent's shell (no TTY); it is the
-reporter's to take.
+an index is being built — which the app cannot take from an agent's shell (no TTY): taken by the
+reporter on the same chat with the banner up (`322/1447`), **GO** — the underline sits on the
+link itself.
