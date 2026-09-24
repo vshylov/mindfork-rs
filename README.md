@@ -27,8 +27,7 @@ temporary directory.
 > to** once it is given room to reflect: it keeps notes about you, maintains a
 > self-model it can revisit, reads and adjusts its own system message and
 > sampling mid-conversation, and can delegate work to a subagent that has its
-> own tools. The full story is in [spec.md](spec.md); the original idea, in
-> [docs/history/request.md](docs/history/request.md).
+> own tools.
 
 <p align="center">
   <img src="assets/screenshots/chat-dark-en.png" alt="mindfork chat: a conversation with an expanded thoughts block, a GFM table, a Mermaid flowchart drawn as text graphics, a LaTeX line and a note_save tool card" width="900">
