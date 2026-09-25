@@ -1444,7 +1444,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - **Asked for directly**: tool calls should fold away the way "thoughts" already
   do, be **collapsed by default**, and the collapsed/expanded state should be
   remembered **per chat** — for both kinds of block. Plan with forks C1–C3 —
-  [docs/feed-collapse.md](../../docs/feed-collapse.md) (**user's decision, 2026-08-03**,
+  [docs/history/feed-collapse.md](../history/feed-collapse.md) (**user's decision, 2026-08-03**,
   both questions as recommended). Behaviour — spec §11.3. Branch
   `feat/feed-collapse`.
 - **Reading the code decided the shape and made it small.** Per-chat UI state

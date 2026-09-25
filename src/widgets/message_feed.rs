@@ -256,7 +256,7 @@ pub struct MessageFeed {
     /// Which foldable blocks are expanded — "thoughts" (`Ctrl+T`) and tool
     /// calls (`Ctrl+O`). Per chat: the screen loads it on activation and sends
     /// every toggle back to the orchestrator, which stores it on the chat
-    /// (spec §11.3, docs/feed-collapse.md).
+    /// (spec §11.3, docs/history/feed-collapse.md).
     view: FeedView,
     /// Flag "the feed was just scrolled by the user" — the loop, on it, does a
     /// full terminal repaint (like on resize). Needed because of artifacts in

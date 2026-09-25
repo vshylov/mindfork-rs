@@ -1,6 +1,8 @@
-//! The `features` layer (FSD): user scenarios (send_message, regenerate,
-//! delete_last, edit_message, chat_search_sort, spellcheck, tools, …).
-//! See spec §4.2.
+//! The `features` layer (FSD): user scenarios as pure logic (chat_search_sort,
+//! rename_chat, chat_export, backup, compaction, spellcheck, tools, the typed
+//! routes in ui_command, …). Send, regenerate and take-back are orchestrator
+//! handlers (`app/orchestrator/generation.rs`), since the orchestrator alone
+//! owns `Chat`. See spec §4.2.
 //!
 //! Filled in starting at M3. Feature logic — pure functions, testable without a UI.
 

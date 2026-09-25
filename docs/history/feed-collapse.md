@@ -1,6 +1,7 @@
 # Collapsing tool calls in the feed, per chat
 
-**Status:** in progress. Forks **C1–C3 — user's decision, 2026-08-03**.
+**Status:** done — shipped in 0.9.5 (2026-08-09); the plan lives in
+`docs/history/` per AGENTS.md §1. Forks **C1–C3 — user's decision, 2026-08-03**.
 
 Asked for directly: tool calls should collapse the way "thoughts" already do,
 they should be **collapsed by default**, and the collapsed/expanded state should

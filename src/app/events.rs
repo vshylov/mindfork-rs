@@ -51,7 +51,7 @@ pub enum AppCommand {
     /// Save the feed's collapse state on the active chat (`Ctrl+T` — "thoughts",
     /// `Ctrl+O` — tool calls). Like [`AppCommand::SetDraft`]: written with the
     /// save debounce, `modified_at` untouched — a view toggle must not bump the
-    /// chat up the list. See spec §11.3, docs/feed-collapse.md.
+    /// chat up the list. See spec §11.3, docs/history/feed-collapse.md.
     SetFeedView(FeedView),
     /// Store whether the chat list shows this chat's sub-agent transcripts
     /// (`Ctrl+O` in the list, `/subagents` in the chat). Addressed by id — the

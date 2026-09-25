@@ -1536,7 +1536,7 @@ fn mouse_wheel_up_scrolls_feed_and_disables_follow() {
 #[test]
 fn ctrl_t_and_ctrl_o_report_the_new_collapse_state() {
     // Both toggles are independent and both report the whole view back, so the
-    // orchestrator can store it on the chat (spec §11.3, docs/feed-collapse.md).
+    // orchestrator can store it on the chat (spec §11.3, docs/history/feed-collapse.md).
     let mut s = ChatScreen::new();
     assert_eq!(
         s.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL)),

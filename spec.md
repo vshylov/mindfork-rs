@@ -219,13 +219,14 @@ src/
 │  ├─ input_box.rs          #   our own multiline input (ADR 0001): word wrap, cursor, spellcheck indication
 │  ├─ status_bar.rs         #   model/tokens/profile/server state
 │  └─ dialogs.rs            #   modals: confirmations, profile picker, spellcheck-suggestion popup
-├─ features/                # (FSD "features") user scenarios (one action each)
-│  ├─ send_message.rs       │  regenerate.rs        │  delete_last.rs
-│  ├─ edit_message.rs       │  chat_search_sort.rs  │  rename_chat.rs
+├─ features/                # (FSD "features") user scenarios as pure logic (one action each);
+│  │                        #   send, regenerate and take-back are orchestrator handlers (app/orchestrator/generation.rs)
+│  ├─ chat_search_sort.rs   │  rename_chat.rs       │  chat_export.rs
+│  ├─ backup.rs             │  compaction.rs        │  ui_command.rs (the typed routes)
 │  ├─ spellcheck/           #   segmentation, checking, suggestions, personal dictionary
-│  └─ tools/                #   the registry and tool implementations (client-side)
-│     ├─ registry.rs        │  rag.rs   │  notes.rs   │  python.rs   │  web.rs
-│     ├─ introspection.rs   │  subagent.rs
+│  └─ tools/                #   the registry (mod.rs) and tool implementations (client-side)
+│     ├─ rag.rs             │  notes/   │  python.rs   │  web.rs   │  fs.rs   │  code.rs
+│     ├─ introspection.rs   │  subagent.rs   │  dialogue.rs   │  mcp.rs
 ├─ entities/                # (FSD "entities") domain types (no I/O)
 │  ├─ profile.rs  │ chat.rs │ message.rs │ note.rs │ rag.rs │ sampling.rs
 └─ shared/                  # (FSD "shared") infrastructure and utilities
@@ -236,6 +237,8 @@ src/
    ├─ wrap.rs                #   column-based word wrap (unicode-width) for the feed/input
    ├─ keymap.rs  │ theme.rs │ paths.rs │ error.rs
 ```
+
+The diagram is the shape, not the inventory: the full module map with its invariants is [docs/architecture.md](docs/architecture.md) §3.
 
 FSD dependency rule: `app → screens → widgets → features → entities → shared`. A layer never imports "sideways" or "upward". Cross-cutting infrastructure (the engine, storage) lives in `shared` and is exposed to the orchestrator/features via traits.
 

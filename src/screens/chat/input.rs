@@ -191,7 +191,7 @@ impl ChatScreen {
             // Collapsing "thoughts" (spec §11.3).
             // Collapsing "thoughts" (spec §11.3). The new state goes back to
             // the orchestrator, which stores it on the chat — the collapse
-            // state is per chat, like the draft (docs/feed-collapse.md).
+            // state is per chat, like the draft (docs/history/feed-collapse.md).
             't' => {
                 self.feed_view.toggle_thoughts();
                 // Collapsing reshapes all feed blocks — the same kind of
