@@ -706,7 +706,9 @@ and the app's own "Legal" tab in #434), and the dictionaries' provenance.
    (his decision, 2026-09-02). Emptying it is the one item on this list that is
    not a pull request — and the last thing standing between here and stage 7,
    since a reviewer who follows the link from the application would otherwise
-   meet a 403.
+   meet a 403. *Done: the allowlist came off on the day of the first public
+   release, 0.10.0 (noted 2026-09-25); stage 7 now waits on the Reputation
+   field alone.*
 7. **The application** (F1a, F2) — **gated on the Reputation field**, not on our
    own readiness: everything else has been done for weeks by the time this is
    fileable. Sequence and reasoning in F2. Say in it what §3's "no hacking tools"

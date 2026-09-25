@@ -414,9 +414,9 @@ equal weight.
   2026-09-02 (F2 there) is public repository → a public release → an article →
   stars, downloads and discussion accumulate → apply; weeks, not days. Stage 8
   is then the two signing requests in `release.yml`. The site's IP allowlist
-  was to come off first (stage 6); the journal's last word on it is 2026-09-02.
-  Countable places that feed the field: crates.io (done), an AUR package and a
-  winget manifest — the next two items.
+  (stage 6) came off on the day of the first public release, so nothing on our
+  side stands before the application. Countable places that feed the field:
+  crates.io (done), an AUR package and a winget manifest — the next two items.
 - **winget manifest** — **deferred**: pointing at the portable zip until the
   setup executable is signed ([installers.md §5.4](history/installers.md)).
 - **AUR `mindfork-rs-bin`** — **on demand**; the release already ships an Arch

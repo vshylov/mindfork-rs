@@ -470,7 +470,9 @@ build was verified with the pinned Zola 0.22.1 (0.23.x still cannot discover
   will open the site when the program is tested and the repository is public
   (2026-09-02). The pages deploy either way; they are simply not reachable from
   outside yet — which also means the application cannot be filed until that
-  happens, since a reviewer following the link would meet a 403.
+  happens, since a reviewer following the link would meet a 403. *Update
+  (2026-09-25): the allowlist came off on the day of the first public release,
+  0.10.0 — recorded here so this line stops reading as the current state.*
 - **Verified by building, not by reading**: `zola check` clean, `zola build`
   produces both pages, and each was rendered through headless Edge against a
   local `zola serve` — the footer's two links resolve to absolute URLs, the
