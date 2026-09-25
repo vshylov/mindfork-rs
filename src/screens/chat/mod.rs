@@ -343,7 +343,7 @@ pub enum ChatIntent {
     /// The feed's collapse state changed (`Ctrl+T` — "thoughts", `Ctrl+O` —
     /// tool calls). Stored **per chat**, like the draft: the orchestrator writes
     /// it to the active chat and hands it back on activation. See spec §11.3,
-    /// docs/feed-collapse.md.
+    /// docs/history/feed-collapse.md.
     SetFeedView(FeedView),
     /// Write text to the system clipboard (`Ctrl+C` copy / `Ctrl+X` cut the
     /// input box's selection). A UI-layer side effect — `runtime` writes via
