@@ -1,961 +1,712 @@
-# Possible Roadmap
+# Roadmap
 
-> Live list of ideas. Implemented items don't come back here — track history
-> lives in [docs/journal/](journal/) (the post-M9 log, split by subsystem) and
-> [docs/history/](history/).
-> A compact summary of what recently closed is at the end of the file.
+> What may come next, what is waiting on something outside the repository, and
+> what was considered and deliberately left out — with the reason. Finished work
+> does not stay here: what was done, why, and what was measured lives in
+> [docs/journal/](journal/) (by subsystem) and [docs/history/](history/), and
+> [CHANGELOG.md](../CHANGELOG.md) says what each release changed. The
+> [closed list](#closed) at the end is an index of pointers, nothing more.
 
+## How to read this file
 
-### Rejected: a semantic index over the attached project
+Every open item is one bullet, tagged with why it is still open:
 
-Measured and turned down on 2026-08-21 (fork F4 of the code-workspace track,
-[docs/history/code-workspace.md](history/code-workspace.md) §7.9). A probe
-indexed this repository and answered eight user-vocabulary questions beside
-`code_grep`; across 48 turns per arm the index could not be shown to improve
-correctness or reduce rounds, and the sign of the difference depends on how an
-unusable turn is counted.
+| Tag | Meaning |
+|---|---|
+| **idea** | nobody has asked for it yet; ideas are of equal weight, unprioritized |
+| **deferred** | designed or measured, and consciously put off — the bullet says what would bring it back |
+| **blocked** | waits on something outside this repository: an upstream release, an approval, a plan |
+| **on demand** | small and understood; built the day someone hits the wall |
 
-Not "never" — **not on this evidence**. What would change it: a judge-graded
-measurement at n≈80 per arm instead of a keyword grader, or a corpus with sparse
-comments, where `code_grep` has far less to match on. Either is a new probe.
-Re-proposing it without one repeats a day of work whose answer is written down.
+A track (multi-stage work with a design doc) sits here only while it is open.
+When it finishes it moves to [Closed](#closed) as one line, and whatever it left
+open stays above as bullets of its own — a finished track's leftovers are where
+most new items come from. An item that was measured and turned down goes to
+[Decided against](#decided-against), so that it is not re-proposed without new
+evidence. Adding or closing an item is part of every task's documentation step
+([AGENTS.md §4](../AGENTS.md)).
 
 ## Most valuable next
-The unprioritized list below is an idea bank of equal weight; this section calls
-out the highest-payoff tracks (real user pain / direct savings).
 
-**The first public release** left this list on 2026-09-19 — **track complete**,
-all six stages. The audit of what making the repository public changes found
-twelve blockers and staged them: the first minute of a stranger's run, safe
-defaults for the file tools ([safe-defaults.md](research/safe-defaults.md)), the
-release pipeline ([release-pipeline.md](research/release-pipeline.md)),
-robustness and the shipped defaults
-([robustness-and-defaults.md](research/robustness-and-defaults.md), with the model
-picker in [model-picker.md](research/model-picker.md)), the documents a stranger
-meets ([public-documents.md](research/public-documents.md)) — and finally the
-flip itself, recorded in
-[public-release-readiness.md](research/public-release-readiness.md) §5: 9 229
-blobs and 582 pull requests scanned for credentials with **zero** found, 59
-release assets and 183 CI artifacts deleted for carrying dictionaries without
-their licences, v0.10.0 published and immutable, and the settings SECURITY.md had
-been promising. Its last open item closed on 2026-09-19: `mindfork` **0.10.1**
-is on crates.io, published by the release rather than by hand.
+**Nothing is called out right now.** The tracks this section carried — the
+first public release, images, retry/backoff and the prompt-caching measurement —
+have all closed. When a track is next chosen it is named here with the user
+pain or the saving it answers; until then the lists below are an idea bank of
+equal weight.
 
-**Multimodality (images)** left this list on 2026-08-13 — **track complete**,
-both stages: `/image attach|remove|list` works against a local
-`llama-server --mmproj` and all four clouds
-([multimodal-images.md](research/multimodal-images.md), spec §9.10). What was
-deliberately left open is below, under "Feed and chat UI" and "Tools".
+## Open
 
-**Retry/backoff on cloud errors** left this list on 2026-08-12 — **done**, both
-stages (see "Recently closed").
+### Engine and providers
 
-**Prompt caching** left this list on 2026-08-08: it is researched and measured,
-but the change the numbers argue for was rejected on behavioural grounds, so
-what remains is a partial gain rather than the headline one
-([prompt-caching.md](research/prompt-caching.md)).
-
-## Memory, self-model, knowledge
-The project's flagship track (self-model / notes / connectivity / RAG). The
-core, the **self-model consolidation** (A), **RAG: sources and retrieval** (B)
-and **embedding-model change** tracks are done (see "Recently closed" below and
-`docs/history/`). **Deferred** groundwork remains:
-- **vec0 for notes and observations as their count grows** — cosine is
-  currently computed brute-force in Rust (`db::cosine`, `note_search_semantic`);
-  for tens–hundreds (and up to thousands) of notes this is cheap (single-digit
-  ms per `note_recall`). **Deferred** (premature optimization, decision
-  2026-07): vec0 would only speed up the **query path**, not the O(n²)
-  consolidation, and the implementation requires a schema migration for a
-  stable integer rowid (notes have a `TEXT` uuid PK). Revisit **once the note
-  count actually grows into the thousands**. Plan ready:
-  [notes-vec0](notes-vec0.md).
-
-## Context and tokens
-- **History compression — groundwork** (the track itself is **done**, stages
-  0–3, see "Recently closed";
-  [history-compression.md](research/history-compression.md), spec §6.7):
-  - a **semantic index over the folded range** — sub-decision S11 chose the
-    full-text index the app already keeps, and recorded the embedding variant as
-    the answer if a live run ever shows lexical misses;
-  - **learning the window from the 400 body** — sub-decision S3, deferred as
-    redundant with `/props`, since the body shape that carries `n_ctx` is
-    llama.cpp's own;
-  - `estimate_prompt_tokens` still ignores `req.tools`, which matters for the
-    `~` figure though no longer for the trigger.
-- **Prompt caching** — **researched and measured; implementation deferred**
-  (user's decision 2026-08-08). Full contracts, three live measurements and the
-  decision points: [prompt-caching.md](research/prompt-caching.md).
-  In short: caching is automatic on llama.cpp, OpenAI and Gemini and **opt-in
-  only** on Anthropic, which caches nothing today. The gain hinges on a stable
-  prefix, and our volatile block sits at the end of `system` — measured, a
-  change to it costs the whole conversation (llama.cpp 0% vs 99% reuse; OpenAI
-  0% vs 81%; Anthropic a 2304-token write per turn vs none). Moving it after the
-  conversation is what the numbers argue for and **what was rejected**: many
-  models read data appended to a *user* message as part of the user's request,
-  and that behavioural risk in the self-model track outweighs a bounded token
-  saving. So the 2026-07-03 decision stands. **Still available and
-  layout-independent, if revisited:** Anthropic breakpoints (the head alone is
-  worth ~5k tokens a turn), the cache share in the token counter, and
-  `prompt_cache_key`. The promising way to get the rest is to make the
-  observation selection **stable** rather than to relocate the block
-  (§5 F1(e)) — untested.
-- **`cached_tokens` in the token counter** — show the cache-hit share. All four
-  providers report it and we drop it (llama.cpp: `timings.cache_n`, present
-  since 2025-09 and not gated by `include_usage`). Beyond the display, it is the
-  **instrument**: a prefix broken by some future change is otherwise invisible.
-  Note the accounting trap measured in
-  [prompt-caching.md §3.3](research/prompt-caching.md): with caching on,
-  Anthropic's `input_tokens` is only the *uncached remainder* — 13 tokens for a
-  7.4k prompt — so the counter must sum it with the cache fields.
-
-## Tools
-- **Parallel sub-agents — groundwork** (the track itself is **done**, both
-  stages, 2026-09-04: `sessions` per engine section and the session
-  semaphore, `-np N --kv-unified`, the `parallel_slots` hint; the round's
-  parallel group under `tools.subagent_parallel`, `TurnShared` immutable
-  with the confirmation lock, the mirror keyed by run id, the description
-  with the number — [docs/research/parallel-subagents.md](research/parallel-subagents.md),
-  ADR 0010 amended). What the research left for later (its §8):
-  - **background sub-agents** — a child that outlives its round, the parent
-    notified in a later round (Claude Code's background agents): a
-    "task notification" round shape and a place for a result that arrives
-    after the turn ends. **Done, both stages** (2026-09-05: stage 1 —
-    `start_subagent`, the run outside the turn, the notification and the
-    wake, the app-wide session budget, stop/delete/quit; stage 2 — `F6`
-    stops the run on its open transcript where `Esc` only goes back, and a
-    chat whose run landed while it was closed is marked unread in the list;
-    forks F1–F10 at their recommendations, F3 → no confirmations; go on
-    Qwen 3.6 27B and Gemma 4 31B):
-    [docs/research/background-subagents.md](research/background-subagents.md).
-    **The tasks screen is done** (2026-09-06: `F7`/`/tasks`, every run
-    across every chat with its position or outcome and the silent tasks
-    below, [docs/research/tasks-screen.md](research/tasks-screen.md), every
-    fork at its recommendation). **Stopping a silent task from it — done**
-    (2026-09-07: `F6` on a running or waiting task row, a third outcome
-    *cancelled* that touches neither the failure streak nor the spawn-time
-    bookkeeping, one notice for a `/compact` the user typed,
-    [docs/research/stop-silent-task.md](research/stop-silent-task.md), every
-    fork at its recommendation), **and its typed route — done** (2026-09-08:
-    `/tasks stop <kind>` on the registry row, the words `reflection · notes ·
-    self · compact`, the answer off the chat screen's own flags,
-    [docs/research/tasks-stop-command.md](research/tasks-stop-command.md),
-    every fork at its recommendation). **The silent tasks under the app-wide
-    budget are done** (2026-09-07: the budget's silent lane — one permit
-    for the app's own requests over the same pool sum — and the pool known
-    at one session, where a `llama-server` without `-np` runs four unified
-    slots; measured before designing: the compaction roll beside a
-    background run ended both at the default,
-    [docs/research/silent-tasks-budget.md](research/silent-tasks-budget.md),
-    every fork at its recommendation). **The silent stream yields to the
-    turn — done** (2026-09-07: a silent reservation's child token,
-    cancelled by an interactive waiter that would then fit and admitted
-    ahead of the task's retry, the retry inside the task, at most three
-    yields; measured first — a one-word turn waited 45.9 s behind the roll
-    on the CPU build where a cancelled stream's room is free in 0.79 s,
-    [docs/research/silent-preemption.md](research/silent-preemption.md),
-    every fork at its recommendation). **The batch on a CPU-only host —
-    done** (2026-09-07: the batch a cancel waits for is linear in `-b`,
-    measured on five launch lines; `-b 256 -ub 256` at `-ngl 0` unless a
-    number is typed, a GPU host's line untouched,
-    [docs/research/cpu-batch.md](research/cpu-batch.md), every fork at its
-    recommendation). **Background dialogues are
-    done** (2026-09-06: `start_dialogue` behind the same switch, the
-    director's brief snapshotted at the call, every dialogue stream priced by
-    the session budget — which also closed a live defect, a foreground scene
-    overlapping a background run — and the wake turn's muted re-ask;
-    [docs/research/background-dialogues.md](research/background-dialogues.md),
-    ADR 0011 amended);
-  - **concurrent ordinary tools** — **done** (2026-09-04, see "Recently
-    closed"; [docs/research/concurrent-tools.md](research/concurrent-tools.md),
-    ADR 0012). What its §8 left for later:
-    - **`web_search` in the marked set** — after a measured probe of three
-      concurrent searches on the keyless chain, or per provider (Tavily
-      first; F4 there);
-    - **MCP tools on `readOnlyHint`** — only as a per-server opt-in the
-      user types, never the server's word alone (§4.9 there);
-    - **`youtube_watch` and `note_recall`** — the first once a marked tool
-      with an effect has exercised the effect ordering, the second once the
-      vector backfill leaves the read path or becomes a single flight;
-  - **admission by budget** for the unified KV pool — **done** (2026-09-04:
-    every stream reserves its calibrated prompt estimate plus its reply cap
-    and waits for room; the collective failure reproduced and then
-    unreachable on the CPU build —
-    [docs/research/admission-by-budget.md](research/admission-by-budget.md)).
-    What its §8 left for later: the external shape typed (a `pool` field for
-    a split server); a "waiting for room" label on the chip; the background
-    tasks under an app-wide budget; `--kv-unified-per-slot` as a managed
-    option;
-  - **the Gemma stack's slow prefill** (~50 tok/s on b10791 with the
-    projector, against ~2200 tok/s for Qwen on the same line) — the Gemma
-    line without `-mm` and one cold request would tell whether it is the
-    projector or the model's path; not this track's, but it made the e2e
-    set take 72 minutes. *Narrowed 2026-09-05:* the same model without
-    the projector on a rented L40S (`server-cuda-b10795`) prefills at
-    ~2 100 tok/s (research §3.7), so it is the projector or the Windows
-    CUDA build, not the model's path; the LAN line without `-mm` is the
-    one remaining check.
-- **MCP host — groundwork** (core is **done**: spec §9.6,
-  [ADR 0007](decisions/0007-plugins-mcp-host-import-format.md); double opt-in,
-  TOFU pinning, statuses/descriptions in settings, and the **server editor**
-  ([mcp-server-editor.md](history/mcp-server-editor.md)) — both stages, so a
-  server is authored, given its tokens and imported from another client's config
-  without leaving the window):
-  - HTTP transport (currently stdio only).
-  - resources/prompts (currently tools only).
-  - `notifications/tools/list_changed` — live catalog re-listing.
-  - deferred schemas ("tool search") — context budget with many servers.
-  - per-server tool count ceiling.
-  - server `instructions` → system prompt.
-  - non-text result blocks: **images are done** (spec §9.10,
-    [mcp-tool-images.md](research/mcp-tool-images.md)); audio and resource blocks
-    are still placeholders, and nothing downstream can carry them yet.
-  - WASM sandbox for untrusted tools.
-  - localization of client wire errors (currently — a technical layer).
-- **`fetch_url`: no address policy** left this list on 2026-08-13 — **done**, and
-  it covers `web_search`'s page fetches too: the check lives inside the client's
-  DNS resolver (so the approved address is the connected one), an IP literal is
-  judged before the request, every redirect hop is re-checked, and
-  `tools.web_allow_private` (off by default) is the way back in
-  ([fetch-url-address-policy.md](research/fetch-url-address-policy.md), spec §9.3).
-
-## Feed and chat UI
-- **Syntax grammars: user overlay and more languages** — 22 grammars are now
-  vendored ([plan](history/vendored-syntaxes.md)), which covers what a model
-  usually tags a block with; the rest of the long tail (Fortran, COBOL, Vala,
-  Haxe, …) is one manifest row plus one file each. **V** is blocked on
-  licensing — its only grammar has none, so the label maps to Go for now. Deferred by the
-  same plan (fork F5): letting a user drop a grammar into `data/syntaxes/`, the
-  way external locales work — the overlay would have to parse and re-link at
-  runtime, i.e. pay back the ~130 ms the build-time dump removes, so it needs
-  its own measurement. Also unexplored: replacing the base bundle with the
-  current `sublimehq/Packages` (198 syntaxes, newer versions of what we ship).
-- **Per-message collapse/select/copy** — explicitly deferred past M3, noted
-  "account for the mouse toggle `Ctrl+W`". Selecting a single message,
-  copying a single block. Collapsing itself is done for the *whole feed*
-  (`Ctrl+T` — "thoughts", `Ctrl+O` — tool calls, stored per chat, spec §11.3);
-  what is still missing is a way to fold one *particular* block, which needs
-  block selection first.
-- **`cyrillic_scan.py`: `in_test` is never unset** — it flips on the first
-  `#[cfg(test)]` in a file and treats everything below as test code, where
-  Cyrillic in code position is legitimate fixture data. That is how two
-  production strings in `message_feed.rs` (a file with `#[cfg(test)]` **test
-  accessors** at line ~564) stayed Russian through the whole English-source
-  migration; they are fixed, the scanner's blind spot is not. An attribute on a
-  single item shouldn't mean "the rest of the file is tests".
-- **Horizontal scroll for wide tables** (instead of the current clip with
-  "…") — groundwork from ADR 0003.
-- **Mermaid: whitelist expansion** — flowchart/sequence already render
-  ([implemented](research/mermaid-ascii-rendering.md) after our upstream fix
-  to `mermaid-text` 0.56.1); stateDiagram/class/er are candidates once their
-  text rendering becomes readable. Plus upstream groundwork: `max_width` as
-  a hard budget (issue promised to the maintainer).
-- **Wide glyphs on conhost: half-background** (upstream,
-  [ratatui#2652](https://github.com/ratatui/ratatui/issues/2652) — filed by
-  us with a byte-level repro). The trailing cell of a wide glyph carries the
-  default style and is marked `skip`, so on a **style-only** edit (the glyph
-  stays wide — e.g. the selection background moves off it) the diff only
-  emits the leading cell, and the old background stays in the second half.
-  Not VS16-specific: also reproduces on `😀`. **Can't be fixed locally** — the
-  only workaround requires writing into the second half of the wide glyph,
-  and that's exactly what
-  [ratatui#2651](https://github.com/ratatui/ratatui/issues/2651) makes unsafe
-  (`last_pos` ignoring width → the write drifts a column and shifts the row).
-  Closing #2651 (tracking `last_pos` by width) would also remove our
-  workarounds: the full redraw on screen switch / popup close and the VS16
-  emoji swap in the grid. The mechanics and terminal-independent probes are
-  in `shared::ui` and `widgets::emoji_picker`.
-- **Regeneration with variations** — not just `Ctrl+R` with the same request,
-  but with different sampling / picking from several response variants.
-- **Editing any (not just the last) message** with history branching.
-- **`chat://` addresses — groundwork** (the track itself is **done**, both
-  stages, see "Recently closed";
-  [chat-uri-links.md](research/chat-uri-links.md), spec §9.11, §11.3):
-  - **message- and page-level addresses** (`chat://<id>/p3`): `chat_search`
-    already names the page, `HistoryView::locate` maps a page back to a message
-    and `OpenChatAt` takes a message uuid — so a hit could open exactly where it
-    matched. Left out until the address format has proved itself without a path
-    component.
-  - **a back-stack deeper than one step**: `Esc` after following a reference now
-    returns to the conversation it was followed from (fork F6, reopened by use
-    and shipped), but a chain A → B → C steps back to B and no further — the
-    shape the search half has always had. A true stack would have to answer what
-    an ordinary chat switch does to its *middle*, which nothing has asked for.
-  - **an address split across two rendered rows is styled but not clickable**
-    (`Ctrl+L` still follows it). Fixing it means carrying link identity through
-    the wrap, which is a span-metadata problem ratatui gives no room for.
-  - **other organs' schemes** (`note://`, `attachment://`): the same mechanism
-    would serve them, deferred until there is a second live consumer — a URI
-    vocabulary invented ahead of one is a vocabulary nobody speaks.
-## Chat and profile management
-- **Merging two copies of the data.** `mindfork stats --compare`
-  ([history/data-stats.md](history/data-stats.md) §5, spec §12.4) says what each copy holds
-  that the other lacks, and deliberately stops there (G8): a chat file names a
-  profile and may own `files/` and `workspace/` directories and an attachment index,
-  so carrying one by hand is not a promised path. A `merge` would be the track that
-  makes it one — additive only (a chat or note that exists on one side), with a
-  diverged chat left for the user to decide.
-- **Folders/tags for chats** — grouping in the list (`Esc`).
-- **Pin important chats** at the top of the list.
-- **Prompt templates / snippets** — quick inserts of frequently used system
-  messages or seeds.
-- **Widening what chat search indexes** — the index covers `message.text` only;
-  "thoughts" and tool results are the obvious candidates. Since the index is
-  disposable, that costs a rebuild rather than a migration. Ranking is the other
-  open question: the search screen groups by chat precisely to sidestep it, and
-  trigram's `bm25` is a weak (though measurably non-degenerate) proxy for
-  relevance. Both would now also pay off twice: the assistant-facing
-  `chat_search`/`chat_read` pair (spec §9.11,
-  [cross-chat-search-tool.md](research/cross-chat-search-tool.md)) reads the
-  same index and inherits the same limits. The search itself is done — see
-  "Recently closed", [chat-content-search.md](research/chat-content-search.md)
-  and [chat-search-stage2.md](history/chat-search-stage2.md).
-- **`cache.db` for chat-list summaries** — the disposable cache introduced for
-  content search is a natural home for other cheap-to-recompute state; the chat
-  list is currently built by parsing every `chats/*.json` at startup. **Measured
-  before building (2026-07-30), and the measurement postponed it.** The parse
-  costs **36.5 ms in release** and ≈ 7 MB resident on the dev corpus (171 chats,
-  1540 messages, 14 MB of JSON) — the 94 ms this entry used to quote is the
-  *debug* figure. And the title understates the work: the parse feeds
-  `Orchestrator.chats: Vec<Chat>`, which holds every chat's full history, so
-  removing it means making the orchestrator **lazy** — a multi-stage track
-  through the "sole owner of `Chat`" invariant, with one structural obstacle
-  (`search.rs::group_hits`) and a clean way past it (store the message's position
-  in the index). Cost and payoff both grow linearly: ×10 is ~365 ms and ~70 MB.
-  **Revisit at ~1000 chats, or a release parse over ~300 ms.** Numbers and scope:
-  [chat-content-search.md §9.1](research/chat-content-search.md).
-
-## Engine and reliability
-- **One command from a bare GPU box to a chat** — researched and decided
-  ([cloud-provisioning.md](research/cloud-provisioning.md)): `mindfork setup`
-  (sandbox + llama.cpp + the model, projector, embedder and context written
-  into the settings, `--verify`) behind a thin `install.sh` shipped as a release
-  asset, for RunPod and its kin. Stage 0 is **done** (2026-09-21): upstream has
-  published **CUDA builds for Linux** since 2026-09-14 and `llama setup` refused
-  them, because the Linux runtime archive is named unlike the Windows one. What
-  Stages 1 and 2 are **done** too: `mindfork setup` (install.md §3.3) and
-  `install.sh` with the rented-box recipe (install.md §1, §3.4), rehearsed GO
-  on `v0.10.2-rc1` and **released in 0.11.0** (2026-09-21) — where the first real
-  pod run found it failing inside `tar` (root without `CAP_CHOWN`; fixed in
-  0.11.1) — and, past that flag, the whole line **ran on the pod**: CUDA
-  llama.cpp, the sandbox, a 31B model verified at 131k; **0.11.1** (2026-09-22)
-  ships the fix, and the same day **the README's line ran on the pod end to end**
-  — `ready in 4 s — context 131072` on an RTX PRO 6000 — the track's acceptance
-  test, passed; install.md §3.4 carries the numbers. **Track complete.** What
-  is left is optional: `tools/pod_probe.sh` for the JIT on an A100/H100, a
-  network volume's read speed and `machine-id` across a stop. The model
-  download is **not ours** (fork F4, closed 2026-09-22): `hf download` brings
-  a 34 GB pair in minutes where a `curl` of the `resolve` link took hours,
-  and a stream of ours would be that stream — install.md §3.4 documents it.
-- **Provider bridges** — the "any OpenAI-compatible endpoint" pattern
-  (external + LiteLLM/OpenRouter) is documented in install.md §3, together with
-  the key such a gateway needs
-  ([external-api-key.md](history/external-api-key.md)) and the model name it
-  routes on ([external-model-name.md](research/external-model-name.md)); the
-  OpenRouter review is closed (see "Recently closed"). What remains:
-  - the optional **managed-custom-command** (the supervisor launches an arbitrary
-    sidecar proxy) — on demand. See [plugin research §6](research/plugin-system.md).
-  - **embeddings through a gateway.** The `Embedder` half sends `model`, so the
-    "Embeddings" tab can point at one, but no run has
-    ([openrouter-external.md](research/openrouter-external.md) §4.1).
-  - OpenRouter's **own request knobs** — `provider` routing, the `models`
-    fallback, `transforms`, attribution headers, `usage.cost` — deliberately not
-    exposed (research §6). `provider` routing is the one with a measured use: a
-    routed provider that misses its model's tool template, whose special tokens
-    then end the turn as reply text (research §8.1). On demand.
-- **API keys: storage extensions** (ADR 0008) — an OS keychain as an
-  additional `scheme`; UI management of other machines' entries ("forget this
-  computer") — also where an explicit cleanup of MCP secrets orphaned by a rename
-  or delete belongs. Two of this item's halves are **done**: the MCP `env` map
-  (spec §9.6) and the **external server's key**
-  ([external-api-key.md](history/external-api-key.md), spec §11.6 — addressed per
-  slot rather than per provider, which is what ADR 0008 could not do).
-- **Retry/backoff — groundwork** (the track itself is **done**, both stages, see
-  "Recently closed"; [cloud-retry-backoff.md](research/cloud-retry-backoff.md)):
-  - the same policy for the **other HTTP callers** (fork F9, recorded rather than
-    built): embeddings above all — `/reindex` re-embeds hundreds of chunks and one
-    `429` currently voids a batch — plus TTS and `youtube_watch`. Each has its own
-    degradation story today, so none is broken; they simply do not recover.
-  - **quota-vs-rate `429` discrimination** (F5): today a billing-flavoured `429`
-    costs two short waits before the body is shown. A marker blacklist in the
-    `OVERFLOW_MARKERS` shape would skip them; left out until the wasted seconds
-    actually bite.
-  - **`Retry-After` as an HTTP-date** is read as "no hint" — no provider we speak
-    to sends that form, so parsing it would be code with no caller.
-- **Configurable health-check cadence.** The monitor's intervals
+- **Provider bridges — what remains.** The "any OpenAI-compatible endpoint"
+  pattern (external + LiteLLM/OpenRouter) is documented in install.md §3,
+  with the key such a gateway needs ([external-api-key.md](history/external-api-key.md))
+  and the model name it routes on ([external-model-name.md](research/external-model-name.md));
+  the OpenRouter review is closed. Left:
+  - **on demand** — a **managed custom command**: the supervisor launching an
+    arbitrary sidecar proxy ([plugin-system.md §6](research/plugin-system.md)).
+  - **deferred** — **embeddings through a gateway**: the `Embedder` half sends
+    `model`, so the "Embeddings" tab can point at one, but no run has
+    ([openrouter-external.md §4.1](research/openrouter-external.md)).
+  - **on demand** — **OpenRouter's own request knobs** (`provider` routing, the
+    `models` fallback, `transforms`, attribution headers, `usage.cost`) —
+    deliberately not exposed (§6 there). `provider` routing is the one with a
+    measured use: a routed provider that misses its model's tool template, whose
+    special tokens then end the turn as reply text (§8.1 there).
+  - **deferred** — **xAI's server-side Live Search / X Search**, and the
+    Responses route as the cheap way to xAI-only features
+    ([grok-xai-provider.md §5](research/grok-xai-provider.md), F1 and F6).
+- **Raw `llama-server` arguments in managed settings** — **on demand**.
+  `ManagedConfig.extra_args` exists and `build_args` appends it, but every
+  caller passes an empty list, so managed mode can send only the flags that have
+  a field of their own. Where it bites: a large MoE model on a consumer GPU is
+  `--n-cpu-moe`/`-ot` work, reachable today only by starting `llama-server` by
+  hand and switching to external mode. The build is small (one text field split
+  by `shared::cmdline::split`, a restart on change, hidden behind the managed
+  group); the cost is a free-form argv into a child process — a field that can
+  break a launch in ways no preflight checks, and a security review of its own
+  ([cloud-provisioning.md §9](research/cloud-provisioning.md)). The managed
+  child inherits the app's environment, so llama.cpp's own `LLAMA_ARG_*`
+  variables may already be a way through — untested.
+- **An embedder context setting** — **on demand**. The managed embedder's
+  context is the hardcoded `DEFAULT_CONTEXT_SIZE` in `supervisor.rs`
+  ([cloud-provisioning.md §9](research/cloud-provisioning.md)).
+- **`MINDFORK_MODEL` is ignored unless `MINDFORK_LLAMA_BIN` is set** —
+  **on demand**. An adjacent finding of the provisioning track (§2.2, §9 there):
+  an empty binary has resolved by itself since the download track, so the
+  variable could stand alone. A small fix in its own PR, or a line in install.md.
+- **Configurable health-check cadence** — **on demand**. The monitor's intervals
   (`HEALTHY_POLL` 60 s / `RECHECK_POLL` 5 s), the failure streak (3) and the
-  relaunch budget (≤3 per 5 min) are constants. Nothing has asked for them to be
-  settings yet; if a setup appears where they're wrong (a very slow link, a
-  deliberately flaky server), they'd go in the "Model" section next to the
-  engine fields.
-- **Raw `llama-server` arguments in managed settings.** `ManagedConfig` already
-  carries an `extra_args` tail and `build_args` appends it, but the supervisor
-  hands it an empty vector — there is no setting behind it, so managed mode can
-  send only the flags that have a field of their own. Where that bites is a
-  large MoE model: fitting one on a consumer GPU is `--n-cpu-moe`/`-ot` work,
-  and the only route to those flags today is to start `llama-server` by hand and
-  switch to external mode. The build is small (one text field, split by
-  `shared::cmdline::split`, a restart on change, hidden behind the existing
-  managed group); the cost is a field that can break a launch in ways no
-  preflight can check, and whose failures arrive as the server's exit code. Left
-  written down rather than built for that reason — the escape hatch exists and
-  nobody has hit the wall yet. Noted while checking that a multi-file GGUF loads
-  in managed mode (journal/engine.md, 2026-08-23).
-- **On-the-fly model switching** without a full settings-section restart (a
-  quick model selector right in the chat).
-- **Multimodality — what the track left open** (both stages **done**, and
-  clipboard paste since; see "Recently closed";
-  [multimodal-images.md](research/multimodal-images.md) §5, spec §9.10):
-  - **rendering images in the feed** (kitty/sixel/iTerm2, or a halfblock
-    renderer over the decoded pixels) — today a sent image shows as a chip.
-  **Attach by URL** left this list on 2026-08-13 — **done**: the bytes are
-  downloaded client-side, so all five engines are served by one path and a dead
-  link cannot break a stored conversation
-  ([image-url-attach.md](research/image-url-attach.md), spec §9.10).
-- **YouTube — groundwork** (stages 1 and 2 are **done**, see "Recently closed";
-  [youtube-integration.md](research/youtube-integration.md),
-  [youtube-transcript.md](history/youtube-transcript.md), spec §9.9):
-  - **cross-chat caching** of an expensive watch (R8b). Within one chat a
-    follow-up is already free — the result is in the history; only a *different*
-    chat re-pays. `cache.db` is deliberately the wrong home: it is disposable by
-    design and a video read is expensive to recompute;
-  - a transcript path that needs **no cloud key at all** (R7) — the one user
-    story stage 1 does not serve. Everything free is PoToken-gated, so this means
-    a paid captions vendor or a `yt-dlp` sidecar;
-  - **default-model rot**: `gemini-2.5-flash-lite` already 404s for new users, so
-    whatever ships as the default eventually stops existing.
+  relaunch budget (3 per 5 min; the MCP host keeps its own copy) are constants.
+  If a setup appears where they are wrong (a very slow link, a deliberately
+  flaky server), they go in the "Model" section next to the engine fields.
+- **The batch on the settings screen** — **idea**. The measured prefill
+  throughput shown beside the Batch (`-b`) field, and setting the batch for the
+  user (F4b) — [slow-prefill-detection.md §7](research/slow-prefill-detection.md).
+- **On-the-fly model switching** — **idea**. A quick selector in the chat,
+  without a settings-section restart. The settings screen already asks the
+  provider what it serves (`Enter` on a model row, 0.10.0,
+  [model-picker.md](research/model-picker.md)); the Video model row is not
+  covered by it yet.
+- **The Gemma stack's slow prefill** — **deferred, one measurement short**.
+  ~50 tok/s on b10791 with the projector, against ~2200 tok/s for Qwen on the
+  same line; the same model without the projector on a rented L40S prefills at
+  ~2 100 tok/s ([parallel-subagents.md §3.7](research/parallel-subagents.md)),
+  so it is the projector or the Windows CUDA build, not the model's path. The
+  LAN line without `-mm` is the one remaining check.
+- **Admission by budget — leftovers** (§8 of
+  [admission-by-budget.md](research/admission-by-budget.md); the track is
+  closed) — **on demand**, each: the external shape typed, a `pool` field for a
+  split server (F4b); a "waiting for room" label on the status chip and the
+  transcript row (F6b — the tasks screen already says *waiting* for the app's
+  own tasks); `--kv-unified-per-slot` as a managed option (F7b); a retry that
+  re-enters `acquire` instead of waiting on a timer (the honest fix is the
+  estimate); a per-client test of an error object arriving after a text delta,
+  for the Anthropic and Gemini in-stream envelopes; the parked-set bound of the
+  RAM prompt cache.
+- **Retry/backoff — leftovers** ([cloud-retry-backoff.md](research/cloud-retry-backoff.md);
+  the track is closed) — **deferred**: the same policy for the **other HTTP
+  callers** (F9) — embeddings above all, since `/reindex` re-embeds hundreds of
+  chunks and one `429` voids a batch, plus TTS and `youtube_watch`; each has its
+  own degradation story, so none is broken, they simply do not recover. And
+  **quota-vs-rate `429` discrimination** (F5): a billing-flavoured `429` costs
+  two short waits before the body is shown; a marker blacklist in the
+  `OVERFLOW_MARKERS` shape would skip them — left out until the wasted seconds
+  bite.
+- **API keys — storage extensions** (ADR 0008) — **idea**. An OS keychain as an
+  additional `scheme`; UI management of other machines' entries ("forget this
+  computer"); an explicit cleanup of MCP secrets orphaned by a rename or delete
+  — deliberately not collected today (spec §9.6,
+  [mcp-server-editor.md](history/mcp-server-editor.md) S4(b)).
+- **Provisioning — optional measurements and the wider box** — **on demand**.
+  `tools/pod_probe.sh` on an A100/H100 for the JIT, a network volume's read
+  speed, `machine-id` across a stop
+  ([cloud-provisioning.md §8](research/cloud-provisioning.md), stage 2); and,
+  from its §9, Vulkan in containers, source builds, a CUDA build of our own.
 
-## Testing, CI, quality
-- **Live `#[ignore]` smokes in CI** — the llama.cpp set is covered (see
-  "Recently closed"). What is left is deliberate or out of reach: a *scheduled*
-  run is **not** wired (R5a — every run costs ~$1, and the non-hermetic smokes
-  would flake unattended, which is how a nightly gate stops being read); the
-  cloud-key smokes need their own credentials; the Python-sandbox and
-  managed-server ones need local assets and a child process of our own, so they
-  cannot run remotely at all.
-- **Remote gate: chat-free runs** — `run` always creates the L40S chat endpoint,
-  even for a filter that only exercises the embedders (~$0.10 wasted per such
-  iteration). The probe has `--embed-only`; the runner has no `--no-chat`.
-  Minor, and the full gate always needs chat.
-- **Hot-path benchmarks** — feed rendering (markdown+syntect cache), line
-  wrapping, brute-force memory cosine — a performance regression detector.
-- **cargo-nextest — evaluated and rejected** (2026-08-05, measured, so that it
-  is not re-litigated from first principles). Locally on Windows it is *slower*
-  than `cargo test`: 46.3s against 37.4s at full parallelism and 52.3s against
-  45.4s at the runner's four threads. The reason is structural rather than
-  incidental — this is a single binary crate whose 1833 tests live in one
-  executable, and nextest runs each test in its own process, which Windows
-  charges for. It also does nothing about compilation, which was the larger half
-  of the Windows job. Its one genuinely attractive feature here is
-  `--partition` sharding, but that multiplies the compile cost across shards,
-  i.e. it trades away exactly what the cache warming just bought. Worth
-  revisiting only if the crate is ever split, or if the suite grows enough that
-  sharding beats a warm single build.
-- **SonarQube Cloud leftovers** — the gate is blocking as of 2026-08-05
-  (`sonar.qualitygate.wait`, see the journal) and since 2026-08-06 runs the
-  custom **"Sonar way without new-code coverage"**. The quality-gate badge landed
-  on 2026-09-19, once the Sonar project itself was made public — a **private**
-  project's badge renders for nobody who does not hold a token, which is the one
-  thing that item had been waiting on. What remains: folding the coverage run
-  into the Linux `test` job instead of a job of its own, if the measurements say
-  the duplicated instrumented test run is the expensive half. On that there is
-  now a measurement: the whole `sonar` job runs in ~3.5 min against the Windows
-  job's 19, so it was never on the critical path and merging it would buy wall
-  clock only once Windows drops below it. Also unreviewed: the project's
-  **New Code definition**, which decides what the gate judges — less pressing now
-  that coverage is not one of the conditions, but it still scopes the issue and
-  duplication checks.
-- **Coverage is measured but no longer enforced** — dropping `new_coverage` from
-  the gate closed a structural false alarm, at the price that a genuinely
-  untested new feature can pass. Two things would restore enforcement without
-  bringing the false alarm back, neither cheap enough to do on spec: teaching CI
-  to run the `#[ignore]` live suite under instrumentation (it needs a real
-  engine, so the honest home is the remote HF runner, not every PR), and a
-  coverage view that separates "untestable here" from "untested" instead of
-  folding both into one percentage.
-- **Make the checks *required*** — "blocking" currently stops at the job: a failed
-  gate reddens `SonarQube Cloud`, but GitHub still lets a red pull request be
-  merged, because that is branch protection's job and it is **unavailable for a
-  private repository on the Free plan** (the API answers 403; noticed earlier
-  while looking for required checks during the runner-minutes work). So today the
-  gate is a signal plus discipline, not mechanical enforcement. On GitHub Pro or
-  Team it is one setting — mark `SonarQube Cloud`, `Tests`, and `Lints` required.
+### Context and tokens
 
-## Multilingualism (i18n)
+- **Prompt caching** — **deferred** (user's decision 2026-08-08; the contracts,
+  three live measurements and the decision points are in
+  [prompt-caching.md](research/prompt-caching.md)). Caching is automatic on
+  llama.cpp, OpenAI and Gemini and opt-in only on Anthropic, which caches
+  nothing today. The gain hinges on a stable prefix, and our volatile block
+  sits at the end of `system` — measured, a change to it costs the whole
+  conversation (llama.cpp 0% vs 99% reuse; OpenAI 0% vs 81%; Anthropic a
+  2304-token write per turn vs none). Relocating the block is
+  [decided against](#decided-against). Still available and layout-independent:
+  Anthropic breakpoints (the head alone is worth ~5k tokens a turn), the cache
+  share in the token counter, `prompt_cache_key`. The promising way to the rest
+  is a **stable observation selection** rather than a relocation (§5 F1(e)
+  there) — untested.
+- **`cached_tokens` in the token counter** — **idea, and the instrument**. All
+  four providers report the cache-hit share and the client drops it (llama.cpp
+  `timings.cache_n`, present since 2025-09 and not gated by `include_usage`;
+  OpenAI `prompt_tokens_details.cached_tokens`; Anthropic
+  `cache_read_input_tokens`; Gemini `cachedContentTokenCount`). Beyond the
+  display: a prefix broken by some future change is otherwise invisible. The
+  accounting trap is measured in [prompt-caching.md §3.3](research/prompt-caching.md):
+  with caching on, Anthropic's `input_tokens` is only the *uncached remainder* —
+  13 tokens for a 7.4k prompt — so the counter must sum it with the cache
+  fields.
+- **History compression — leftovers** ([history-compression.md](research/history-compression.md),
+  spec §6.7; the track is closed) — **deferred**: a **semantic index over the
+  folded range** — sub-decision S11 chose the full-text index the app already
+  keeps and recorded the embedding variant as the answer if a live run ever
+  shows lexical misses; **learning the window from the 400 body** (S3) is
+  redundant with `/props`, since the body shape that carries `n_ctx` is
+  llama.cpp's own. (The estimate's blind spot for `req.tools`, once listed
+  here, was found and fixed on 2026-09-09 —
+  [roll-usage-calibration.md §2.1](research/roll-usage-calibration.md).)
 
-> **Track finished** (axis A tiers 1–3 + axis B + i18n CLI stages 1–3): agent
-> language ([docs/history/i18n.md](history/i18n.md)) and external locales
-> ([docs/history/i18n-external-locales.md](history/i18n-external-locales.md)),
-> interface language ([docs/history/i18n-ui.md](history/i18n-ui.md)), all CLI
-> text ([docs/history/i18n-cli.md](history/i18n-cli.md)). Below — only the
-> remaining groundwork.
+### Tools and MCP
 
-- **Hot-reload of external locales** — editing `data/locales/*.json` applies
-  on restart (the registry is `&'static`-leaked); reloading live would
-  require a different ownership model.
+- **MCP host — groundwork.** The core is done (spec §9.6,
+  [ADR 0007](decisions/0007-plugins-mcp-host-import-format.md): double opt-in,
+  TOFU pinning, statuses in settings, the server editor); the client is stdio
+  and tools-only. **idea**, each: HTTP transport; resources and prompts;
+  `notifications/tools/list_changed` (live catalog re-listing); deferred
+  schemas ("tool search") for the context budget with many servers; a
+  per-server tool-count ceiling; the server's `instructions` into the system
+  prompt; audio and resource result blocks (images are done —
+  [mcp-tool-images.md](research/mcp-tool-images.md); the other two are
+  placeholders, and nothing downstream can carry them yet); a WASM sandbox for
+  untrusted tools; localization of the client's wire errors (a technical layer
+  today).
+- **Concurrent tools — what §8 left** ([concurrent-tools.md](research/concurrent-tools.md),
+  [ADR 0012](decisions/0012-concurrent-tool-calls.md); the track is closed) —
+  **deferred**: `web_search` in the marked set, after a measured probe of three
+  concurrent searches on the keyless chain or per provider (Tavily first; F4
+  there); MCP tools on `readOnlyHint` only as a per-server opt-in the user
+  types, never the server's word alone (§4.9 there); `youtube_watch` once a
+  marked tool with an effect has exercised the effect ordering, `note_recall`
+  once the vector backfill leaves the read path or becomes a single flight.
+- **Sub-agents and dialogues — leftovers** (the tracks are closed) — **idea**,
+  each: notifications across profiles, and a searchable history of runs beyond
+  the tasks screen's cap ([background-subagents.md §8](research/background-subagents.md),
+  [tasks-screen.md §8](research/tasks-screen.md)); a "stop all" key on the
+  tasks screen ([tasks-stop-all.md §7](research/tasks-stop-all.md)); a roll
+  that re-plans against the conversation at its retry
+  ([silent-preemption.md §8](research/silent-preemption.md)); dialogue
+  participants with tools (ADR 0011 F4), `Message.author` as the growth path
+  past two participants, the director editing an arbitrary earlier message,
+  and a director's pre-brief before the first line — leaning no
+  ([two-agent-dialogue.md §8](research/two-agent-dialogue.md),
+  [background-dialogues.md §8](research/background-dialogues.md)). Per-speaker
+  voices over a dialogue transcript are under Speech; a parent's JSON export
+  not carrying its transcripts is under Chats, search and data.
+- **Web search — the keyed providers** — **deferred**. Serper and the cloud
+  providers' server-side search tools; SearXNG was not adopted and its design
+  stays on record ([web-search-keyed-providers.md §7](research/web-search-keyed-providers.md),
+  F2).
+- **`fetch_url` — tables in rich extraction** — **deferred**. Headings and code
+  blocks survive ([fetch-url-fidelity.md](history/fetch-url-fidelity.md));
+  tables need a layout decision, Markdown table vs flattened rows. (A persistent
+  scratch directory for `python_exec`, once listed here, was met another way:
+  files a call saves to `/w/out` stay with the chat and go back in via `files`
+  — [sandbox-file-exchange.md](history/sandbox-file-exchange.md); a directory
+  shared across calls is out of scope there, §1.1 D4.)
+- **The sandbox's network: plain `http://` to an off-machine host fails under
+  `--net`** while HTTPS works — **deferred**
+  ([safe-defaults.md §7](research/safe-defaults.md)).
+- **YouTube — leftovers** ([youtube-integration.md](research/youtube-integration.md),
+  spec §9.9; both stages are closed) — **deferred**: **cross-chat caching** of
+  an expensive watch (R8b) — within one chat a follow-up is free, the result is
+  in the history; only a *different* chat re-pays, and `cache.db` is the wrong
+  home, being disposable by design; a transcript path that needs **no cloud
+  key** (R7) — everything free is PoToken-gated, so this means a paid captions
+  vendor or a `yt-dlp` sidecar; **default-model rot** — the default moved from
+  `gemini-2.5-flash-lite` (a 404 for new users) to `gemini-3.5-flash`, and
+  whatever ships as the default eventually stops existing; the settings picker
+  does not cover the Video row yet.
 
-> **Not-roadmap, recorded as a decision:** CLI subcommand/flag names are
-> **not** localized (part of the protocol — translating a command like
-> `backup` into the interface language is bad practice, especially now that
-> the source itself is English). Pluralization is intentionally
-> number-neutral (a plain `tf` without grammar) — real grammar is only
-> needed on axis B, if a language with complex pluralization shows up.
+### Memory, notes and RAG
 
-## Other
-- **Backup encryption — groundwork** (core is **done**, see "Recently closed"):
-  the archive's **file names and sizes stay visible** and the key derivation is
-  fixed by the zip format at PBKDF2-HMAC-SHA1/1000 — both are properties of
-  WinZip AES, so improving either means an outer container of our own
-  (ChaCha20-Poly1305 + Argon2id), which costs the ability to open the archive in
-  7-Zip by hand. That trade was made deliberately, not by omission
-  ([backup-password.md](history/backup-password.md) F1), and would only be worth
-  revisiting if someone needs to hide *which* chats exist rather than what is in
-  them. Also deferred: `MINDFORK_BACKUP_PASSWORD` for scripted/CI backups (F7) —
-  trivial to add, left out so there is one fewer place a password can come from.
-- **Installers — groundwork** (core is **done**,
-  [docs/history/installers.md](history/installers.md): Windows Inno Setup +
-  Linux nfpm, shipped with releases): Windows code signing — R8 was deferred
-  there "until public launch", and is now **designed**
-  ([research/code-signing.md](research/code-signing.md): SignPath Foundation,
-  the metadata that has to be fixed first, and the two signing steps in
-  `release.yml`), waiting only on the repository going public; winget manifest
-  (portable-zip until signing — unblocked once the setup executable is signed);
-  AUR `mindfork-rs-bin`; MSI for GPO/Intune on demand.
-- **Publishing to crates.io as `mindfork`** — **done on 2026-09-19**:
-  `cargo install mindfork` installs **0.10.1**
-  ([crates.io/crates/mindfork](https://crates.io/crates/mindfork)). The package
-  was renamed for it ([docs/research/binary-rename.md](research/binary-rename.md)
-  §10, which revises the 2026-08-24 decision that it stays `mindfork-rs`: the
-  `-rs` is a repository name, and a registry has no such ambiguity to resolve),
-  and the upload is not a command anyone types — publishing the GitHub release
-  starts `.github/workflows/crates-io.yml` (AGENTS.md §6 step 7), which is why
-  what is on the registry is the tree the released binaries were built from.
-  Not 0.10.0: that tag points at a tree whose package was still `mindfork-rs`
-  and whose lock differs from the next commit by 42 dependency versions, and a
-  crate version — unlike a release — can never be corrected. Still open around
-  it: **docs.rs shows no documentation**, because the crate has no library
-  target; the `documentation` field points at the manual instead, which is what
-  the crates.io page links.
-- **Auto-update** — self-update, musl-static and arm64 builds, an "a new
-  version is available" notice in the TUI. Groundwork from the finished
-  "release engineering" track
-  ([docs/history/release-engineering.md](history/release-engineering.md) §5);
-  the release pipeline (tag → archives + sha256 + packages + installer on
-  GitHub Releases) already exists.
-- **Message playback (TTS)** — **the `feat/tts` stage is implemented**
-  (2026-07-23, [research/tts.md §13](research/tts.md),
-  [journal/tools.md](journal/tools.md)): the `/tts` command (`/tts N`/`all`/`stop`), a
-  Markdown speech extractor (`shared/markdown/speak.rs` — code/mermaid/tables/
-  formulas get a voice note), the `rodio` player, stop points, a "Playback"
-  settings tab. **Primary engine — OpenAI TTS** (`gpt-4o-mini-tts`, `onyx`
-  voice) — not a new vendor (the key is already stored, ADR 0008); plus
-  `gemini` and `external` (any OpenAI-compatible server). Groundwork: a
-  **local engine** (vosk-tts + our own Russian Rust frontend, a managed
-  sidecar `mindfork tts setup` modeled on ADR 0005 — for an offline/non-OpenAI
-  audience; ElevenLabs/Azure are skipped — they'd need their own signup);
-  **stitching chunks across speech-block boundaries** (even smoother
-  multi-paragraph playback); SSE streaming within a chunk; audio caching;
-  auto voice selection by message language; **native Gemini multi-speaker**
-  (one request, several voices — right now different voices per role are done
-  with two requests/engines, which works across all providers); OS TTS.
-- **Voice input (STT)** — the other half of "voice"; a notable feature for a
-  TUI chat.
-- **Custom keyboard layout** — there's already a field for this under
-  "Interface" (marked as groundwork since M9), but actual custom-binding
-  application isn't done. Note that it is no longer the *answer* to a host
-  stealing keys — the typed routes are (see "Recently closed") — so this is
-  now a convenience for power users rather than an accessibility gap.
-- **A clipboard for JupyterLab's terminal** — the one host OSC 52 cannot serve
-  (see "Recently closed"): it embeds xterm.js *without* `@xterm/addon-clipboard`,
-  so the escape is dropped. Nothing the app can send fixes that; the routes left
-  are upstream (ask JupyterLab to load the addon) or sideways (write the
-  conversation to a file the user can open — which is the existing "Export chat
-  to a file" item, and would serve this case too).
+- **vec0 for notes and observations as their count grows** — **deferred**
+  (premature optimization, decision 2026-07). Cosine is brute-force in Rust
+  (`db::cosine`, `note_search_semantic`); for tens to hundreds of notes that is
+  single-digit ms per `note_recall`, and up to thousands still cheap. vec0 would
+  speed up only the **query path**, not the O(n²) consolidation, and needs a
+  schema migration for a stable integer rowid (notes have a `TEXT` uuid PK).
+  Revisit once the note count actually grows into the thousands; plan ready —
+  [notes-vec0.md](notes-vec0.md).
+- **Re-chunking attachments after a chunking change** — **deferred**. A model
+  change needs no walk over the chats — `/reindex` re-embeds from the chunk
+  text the DB already holds — but a change of chunk parameters still would
+  ([embedding-model-change-reindex.md](research/embedding-model-change-reindex.md)).
+
+### Feed and rendering
+
+- **Syntax grammars — a user overlay and more languages.** 22 grammars are
+  vendored ([vendored-syntaxes.md](history/vendored-syntaxes.md)), which covers
+  what a model usually tags a block with; the rest of the long tail (Fortran,
+  COBOL, Vala, Haxe, …) is one manifest row plus one file each — **on demand**.
+  **V** is **blocked** on licensing: its only grammar has none, so the label
+  maps to Go. A user dropping a grammar into `data/syntaxes/`, the way external
+  locales work, is **deferred** by the same plan (F5): the overlay would parse
+  and re-link at runtime, paying back the ~130 ms the build-time dump removes,
+  so it needs its own measurement. Unexplored: replacing the base bundle with
+  the current `sublimehq/Packages` (198 syntaxes, newer versions of what we
+  ship).
+- **Per-message collapse, select and copy** — **idea**, deferred past M3
+  ("account for the mouse toggle `Ctrl+W`"). Collapsing is done for the *whole
+  feed* (`Ctrl+T` thoughts, `Ctrl+O` tool calls, stored per chat, spec §11.3),
+  and `F5`/`/copy` take the whole conversation; folding or copying one
+  particular message or block needs block selection first.
+- **Horizontal scroll for wide tables** — **idea**, instead of the clip with
+  `…`; groundwork from [ADR 0003](decisions/0003-own-markdown-renderer.md).
+- **Mermaid — whitelist expansion** — **deferred**. flowchart and sequence
+  render ([mermaid-ascii-rendering.md](research/mermaid-ascii-rendering.md));
+  stateDiagram, class and er are candidates once their text rendering reads
+  well. The upstream groundwork this item used to carry is done: `max_width` as
+  a hard budget shipped in `mermaid-text` 0.57.0 (`max_width_strict`, from our
+  feature request), and the app keeps its own width check on purpose.
+- **Wide glyphs on conhost: the half-background** — **blocked on a ratatui
+  release**, and the block has moved. Both issues we filed are fixed on
+  upstream `main`: [ratatui#2651](https://github.com/ratatui/ratatui/issues/2651)
+  (`last_pos` ignoring a glyph's width, so a write after a wide glyph drifted
+  a column) by PR #2721, merged 2026-08-24 for the 0.30.3 milestone, and
+  [ratatui#2652](https://github.com/ratatui/ratatui/issues/2652) (the trailing
+  cell of a wide glyph never repainted on a style-only change, so the old
+  background stayed in its second half; not VS16-specific, `😀` too) by
+  PR #2743, merged 2026-09-03. The newest release is still 0.30.2
+  (2026-06-19), the one in `Cargo.lock`. Once 0.30.3 ships: bump, re-run the
+  byte-level probes on conhost, and remove the workarounds #2651 forced — the
+  full redraw on screen switch and popup close, and the VS16 emoji swap in the
+  grid (mechanics in `shared::ui` and `widgets::emoji_picker`, whose canary
+  test asserts the upstream defect and will fail when the fix arrives).
+- **Rendering images in the feed** — **idea**. kitty/sixel/iTerm2, or a
+  halfblock renderer over the decoded pixels; today a sent image leaves no mark
+  in the message, and the only chips are for images waiting to be sent and on
+  a tool's card ([multimodal-images.md §5](research/multimodal-images.md),
+  spec §9.10).
+- **Regeneration with variations** — **idea**. Not just `Ctrl+R`/`/regen` with
+  the same request: different sampling, or picking from several response
+  variants. Today a replaced reply is only archived.
+- **Editing any message, not just the last, with history branching** —
+  **idea**. `Ctrl+E`/`/takeback` edits the last exchange and `/clone` copies a
+  whole chat; there is no fork at a chosen message.
+- **`chat://` addresses — leftovers** ([chat-uri-links.md](research/chat-uri-links.md),
+  spec §9.11, §11.3; the track is closed) — **deferred**: message- and
+  page-level addresses (`chat://<id>/p3`) — `chat_search` names the page,
+  `HistoryView::locate` maps a page back to a message and `OpenChatAt` takes a
+  message uuid, so a hit could open exactly where it matched; left out until the
+  address format has proved itself without a path component. A back-stack
+  deeper than one step — a chain A → B → C steps back to B and no further, the
+  shape the search half has always had; a true stack would have to answer what
+  an ordinary chat switch does to its *middle*, which nothing has asked for.
+  An address split across two rendered rows is styled but not clickable
+  (`Ctrl+L` still follows it) — carrying link identity through the wrap is a
+  span-metadata problem ratatui gives no room for. Other organs' schemes
+  (`note://`, `attachment://`) — until there is a second live consumer.
+- **A theme from a color configuration** — **idea**. A user palette layered
+  over auto/dark/light; today `Theme` is those three, each a built-in palette.
+
+### Input, keys and the terminal
+
 - **Layout-independent hotkeys on unix beyond Cyrillic** — **blocked on an
-  upstream release.** The kitty keyboard protocol carries the answer (the *base
+  upstream release**. The kitty keyboard protocol carries the answer (the *base
   layout key* of the "report alternate keys" enhancement), but crossterm 0.29
   parses only the shifted alternate and drops it
-  ([#968](https://github.com/crossterm-rs/crossterm/issues/968)). The parsing +
-  API patch is written, verified on Linux and submitted as
-  [crossterm#1074](https://github.com/crossterm-rs/crossterm/pull/1074); an
-  end-to-end spike through our resolver is validated. Remaining once it ships on
-  crates.io: bump, push `REPORT_ALTERNATE_KEYS` alongside
-  `DISAMBIGUATE_ESCAPE_CODES` in `app/runtime/mod.rs`, add the tier-0 branch in
-  `shared/keys.rs` (**after** the ASCII short-circuit — see the AZERTY case in
-  the research doc) — no call site changes. Note that crossterm merges PRs
-  regularly but last released in April 2025, so this may sit for a while. On
-  Windows every layout already works (stage 1); VTE-family terminals need
-  nothing. See
-  [docs/research/layout-independent-hotkeys.md](research/layout-independent-hotkeys.md).
-- **Applying a theme from a color configuration** — a user palette layered
-  over auto/dark/light.
+  ([#968](https://github.com/crossterm-rs/crossterm/issues/968)). The parsing
+  + API patch is written, verified on Linux and submitted as
+  [crossterm#1074](https://github.com/crossterm-rs/crossterm/pull/1074) — still
+  open as of 2026-09-25, and crossterm's last release is 0.29.0 of 2025-04-05,
+  so this may sit for a while. Once it ships: bump, push
+  `REPORT_ALTERNATE_KEYS` alongside `DISAMBIGUATE_ESCAPE_CODES` in
+  `app/runtime/mod.rs`, add the tier-0 branch in `shared/keys.rs` **after** the
+  ASCII short-circuit (the AZERTY case in the research) — no call-site changes.
+  Windows already works on every layout (stage 1); VTE-family terminals need
+  nothing. [layout-independent-hotkeys.md](research/layout-independent-hotkeys.md).
+- **Custom key bindings** — **idea**. Every chord is hardcoded and nothing in
+  the settings describes one (the M8-era "custom layout" field is gone). No
+  longer the answer to a host stealing keys — the typed routes are
+  ([command-only-control.md](history/command-only-control.md)) — so this is a
+  convenience for power users rather than an accessibility gap.
+- **A clipboard for JupyterLab's terminal** — **blocked upstream**. It embeds
+  xterm.js *without* `@xterm/addon-clipboard`, so it drops OSC 52
+  ([osc52-clipboard.md](history/osc52-clipboard.md)); nothing the app can send
+  fixes that. `/export` is the route that works there, and the copy's message
+  points at it.
+- **`terminal_compat` on legacy conhost** — **deferred**. Whether the switch
+  could be detected rather than set is a question with no measurement yet
+  ([robustness-and-defaults.md §1](research/robustness-and-defaults.md)).
 
----
+### Chats, search and data
 
-## Recently closed
-- **Images on an engine that takes none** (complete, two stages): whether a gateway's
-  model sees images comes from its catalogue's `architecture.input_modalities` after
-  `/props`, so a text-only model's `/image attach` refuses and a tool's picture is
-  withheld and said; and a chat whose history already holds an image goes on working
-  after a switch to such an engine — llama.cpp without a projector as well as a
-  gateway — with each image sent as a marker the model reads as "you cannot see this",
-  and the chat told once. Before, each such turn was a `500` or a `404`, for good.
-  Design and measurements:
+- **Merging two copies of the data** — **idea**. `mindfork stats --compare`
+  says what each copy holds that the other lacks and deliberately stops there
+  (G8, [data-stats.md §5](history/data-stats.md), spec §12.4): a chat file
+  names a profile and may own `files/` and `workspace/` directories and an
+  attachment index, so carrying one by hand is not a promised path. A `merge`
+  would be the track that makes it one — additive only (a chat or note that
+  exists on one side), with a diverged chat left for the user. Smaller and
+  **on demand**: `stats` pointed at an arbitrary data directory, and per-profile
+  breakdowns (§3 there).
+- **Folders or tags for chats**, **pinning** important ones at the top of the
+  list, **prompt templates / snippets** for frequently used system messages or
+  seeds — **idea**, each; none has a field yet.
+- **Widening what chat search indexes, and ranking** — **idea**. The index
+  covers message text of every role — tool results included, since each is a
+  `Tool`-role message, and sub-agent transcripts since 0.9.8 — but not thoughts,
+  tool-call arguments or attachments; the index is disposable, so widening it
+  costs a rebuild rather than a migration. Ranking is the other open question:
+  nothing ranks today, the search screen groups by chat precisely to sidestep
+  it, and the research measured trigram's `bm25` as a weak though non-degenerate
+  proxy. Both pay twice now: the assistant-facing `chat_search`/`chat_read` pair
+  reads the same index and inherits the same limits
+  ([cross-chat-search-tool.md](research/cross-chat-search-tool.md), spec §9.11;
+  [chat-search-stage2.md](history/chat-search-stage2.md) F3).
+- **`cache.db` for chat-list summaries — a lazy orchestrator** — **deferred by
+  measurement** (2026-07-30, [chat-content-search.md §9.1](research/chat-content-search.md)).
+  The chat list is built by parsing every `chats/*.json` at startup: **36.5 ms
+  in release** and ≈ 7 MB resident on the dev corpus (171 chats, 1540 messages,
+  14 MB of JSON). The parse feeds `Orchestrator.chats: Vec<Chat>`, which holds
+  every chat's full history, so removing it means making the orchestrator
+  **lazy** — a multi-stage track through the "sole owner of `Chat`" invariant,
+  with one structural obstacle (`search.rs::group_hits`) and a clean way past
+  it (store the message's position in the index). Cost and payoff both grow
+  linearly: ×10 is ~365 ms and ~70 MB. Revisit at ~1000 chats, or a release
+  parse over ~300 ms.
+- **`/export json` carries no tool calls and no sub-agent transcripts** —
+  **deferred**. The `mindfork-import` v1 document has no place for them; every
+  such export says so, and `md` keeps everything
+  ([chat-export-file.md](history/chat-export-file.md)).
+- **`MINDFORK_BACKUP_PASSWORD`** for scripted or CI backups — **deferred** (F7
+  of [backup-password.md](history/backup-password.md)): trivial to add, left
+  out so there is one fewer place a password can come from.
+
+### Speech
+
+- **Message playback (TTS) — groundwork.** The `/tts` stage shipped on
+  2026-07-23 (OpenAI `gpt-4o-mini-tts`, Gemini and any OpenAI-compatible server;
+  the Markdown speech extractor, the `rodio` player, a "Playback" tab —
+  [tts.md §13](research/tts.md), [ADR 0009](decisions/0009-tts-speech-synthesis.md)).
+  **idea**, each: a **local engine** (vosk-tts with a Russian frontend of our
+  own, a managed sidecar `mindfork tts setup` on the ADR 0005 pattern — for an
+  offline audience; ElevenLabs/Azure skipped, they need their own signup);
+  stitching chunks across speech-block boundaries; SSE streaming within a
+  chunk; an audio cache; voice selection by message language (today by role);
+  native Gemini multi-speaker (one request, several voices — today two
+  requests, which works on every provider) and per-speaker voices over a
+  dialogue transcript; OS TTS.
+- **Voice input (STT)** — **idea**; the other half of "voice", and nothing
+  exists yet.
+
+### Localization
+
+- **Hot-reload of external locales** — **deferred**. Editing
+  `data/locales/*.json` applies on restart (the registry is `&'static`-leaked,
+  a repeat `init` is ignored); reloading live needs a different ownership model
+  ([i18n-external-locales.md](history/i18n-external-locales.md)).
+
+### First run, setup and distribution
+
+- **A first-run wizard in the TUI** — **idea**, a track of its own: provider →
+  key → model, with `mindfork setup` as what it would call
+  ([public-release-readiness.md §3.4](research/public-release-readiness.md)
+  F2(b), [cloud-provisioning.md §9](research/cloud-provisioning.md)).
+- **Windows code signing** — **blocked on reputation**. Designed end to end
+  ([code-signing.md](research/code-signing.md): SignPath Foundation, the
+  metadata fixed in stages 2–5, the site's policy pages), and the site's policy
+  page says "not signed yet". The application (stage 7) is gated on SignPath's
+  mandatory *Reputation* field, not on our readiness — the order decided on
+  2026-09-02 (F2 there) is public repository → a public release → an article →
+  stars, downloads and discussion accumulate → apply; weeks, not days. Stage 8
+  is then the two signing requests in `release.yml`. The site's IP allowlist
+  was to come off first (stage 6); the journal's last word on it is 2026-09-02.
+  Countable places that feed the field: crates.io (done), an AUR package and a
+  winget manifest — the next two items.
+- **winget manifest** — **deferred**: pointing at the portable zip until the
+  setup executable is signed ([installers.md §5.4](history/installers.md)).
+- **AUR `mindfork-rs-bin`** — **on demand**; the release already ships an Arch
+  package built by nfpm.
+- **MSI for GPO/Intune** — **on demand**.
+- **GPG signing of the Linux packages** — **idea**
+  ([code-signing.md §6.4](research/code-signing.md), out of scope there).
+- **Auto-update** — **idea**: self-update, musl-static and arm64 builds (the
+  matrix is x86_64 glibc Linux and Windows; `install.sh` refuses anything
+  else), a "new version is available" notice in the TUI. Two things to know
+  first: [PRIVACY.md](../PRIVACY.md) promises no update check and no version
+  ping, so a notice changes the policy; and on Linux re-running `install.sh`
+  already upgrades in place. Groundwork from
+  [release-engineering.md §5](history/release-engineering.md).
+- **docs.rs shows no documentation** — **deferred**. The crate has no library
+  target; the `documentation` field points at the manual, which is what the
+  crates.io page links.
+- **Small things from the public-release audit** — **on demand**
+  ([public-release-readiness.md §2.4](research/public-release-readiness.md),
+  "nice to have"): `NO_COLOR`; a "terminal too small" message; a port-in-use
+  diagnosis for the managed server (only `setup --verify` refuses a busy port
+  today); per-release debuginfo; the commit hash in `--version`; a demo
+  recording; `linguist-vendored` for the vendored grammars; a warning that
+  restoring a stranger's backup restores its MCP commands; MCP stdout lines read
+  unbounded; the site's CSP header and the Download button's contrast;
+  `generation.rs`'s size as a contributor barrier.
+
+### Website
+
+- **A Russian version of the site** — **deferred**, on F4's own terms
+  ([mindfork-io-website.md §8](research/mindfork-io-website.md), S4).
+- **CloudFront's flat-rate plan with WAF** — **deferred** until traffic asks
+  for it (§3.2 and §7 F1(b) there).
+
+### Testing, CI and quality
+
+- **Live `#[ignore]` smokes in CI.** The llama.cpp set runs on the rented gate
+  by hand ([remote-e2e-hf.md](history/remote-e2e-hf.md)); a scheduled run is
+  [decided against](#decided-against). **blocked** — the cloud-key smokes need
+  their own credentials, which no workflow holds; the Python-sandbox and
+  managed-server smokes need local assets and a child process of our own, so
+  they cannot run remotely at all.
+- **Remote gate: chat-free runs** — **on demand**. `run` always creates the
+  L40S chat endpoint, even for a filter that only exercises the embedders
+  (~$0.10 wasted per such iteration); the probe has `--embed-only`, the runner
+  has `--no-embed` but no `--no-chat`. Minor — the full gate always needs chat.
+- **Hot-path benchmarks** — **idea**. Feed rendering (markdown + syntect
+  cache), line wrapping, brute-force memory cosine — a performance regression
+  detector; there is no `benches/` yet.
+- **`cyrillic_scan.py`: `in_test` is never unset** — **on demand**. It flips
+  on the first test marker in a file (`#[cfg(test)]`, `mod tests`, `#[test]`,
+  `#[tokio::test]`) and treats everything below as test code, where Cyrillic in
+  code position is legitimate fixture data. That is how two production strings
+  in `message_feed.rs` (a file with `#[cfg(test)]` test accessors mid-file)
+  stayed Russian through the whole English-source migration; they are fixed,
+  the scanner's blind spot is not. An attribute on a single item should not
+  mean "the rest of the file is tests".
+- **SonarQube Cloud — leftovers** — **deferred**. The gate is blocking
+  (2026-08-05) and runs the custom "Sonar way without new-code coverage"
+  (2026-08-06); the badge landed on 2026-09-19, once the project was public.
+  Folding the coverage run into the Linux `test` job would buy wall clock only
+  once `sonar` is on the critical path — measured, its median is ~4 min against
+  the Windows job's ~6 (down from 19 before the fixture work). Also unreviewed:
+  the project's **New Code definition**, which scopes the issue and duplication
+  checks.
+- **Coverage is measured but not enforced** — **deferred**. Dropping
+  `new_coverage` from the gate closed a structural false alarm, at the price
+  that a genuinely untested new feature can pass. Two things would restore
+  enforcement without the false alarm, neither cheap enough to do on spec:
+  running the `#[ignore]` live suite under instrumentation (it needs a real
+  engine, so the honest home is the remote runner, not every PR), and a
+  coverage view that separates "untestable here" from "untested" instead of
+  folding both into one percentage.
+
+## Decided against
+
+Measured or reasoned through, and turned down. Each line says what would reopen
+it; re-proposing one without that repeats a day of work whose answer is written
+down.
+
+- **A semantic index over the attached project** (2026-08-21, fork F4 of the
+  code workspace, [code-workspace.md §7.9](history/code-workspace.md)). A probe
+  indexed this repository and answered eight user-vocabulary questions beside
+  `code_grep`; across 48 turns per arm the index could not be shown to improve
+  correctness or reduce rounds, and the sign of the difference depended on how
+  an unusable turn was counted. Not "never" — **not on this evidence**. Reopens
+  with a judge-graded measurement at n≈80 per arm instead of a keyword grader,
+  or a corpus with sparse comments, where `code_grep` has far less to match on.
+- **Moving the volatile self-model block after the conversation** — the change
+  the prompt-caching numbers argue for (2026-08-08, standing since 2026-07-03;
+  [prompt-caching.md](research/prompt-caching.md)). Many models read data
+  appended to a *user* message as part of the user's request, and that
+  behavioural risk in the self-model track outweighs a bounded token saving.
+  What stays possible without it is the "Prompt caching" item above.
+- **`cargo-nextest`** (2026-08-05, measured). Slower than `cargo test` on
+  Windows — 46.3 s against 37.4 s at full parallelism, 52.3 s against 45.4 s at
+  the runner's four threads — because the crate's tests (1833 at the time) live
+  in one executable and nextest runs each in its own process, which Windows
+  charges for; it does nothing about compilation, the larger half of the Windows
+  job, and its `--partition` sharding multiplies the compile cost that the cache
+  warming had just bought back. Revisit only if the crate is ever split, or the
+  suite grows enough that sharding beats a warm single build.
+- **A scheduled live run of the `#[ignore]` suite** (R5a,
+  [remote-e2e-hf.md](history/remote-e2e-hf.md)). Every run costs ~$1, and the
+  non-hermetic smokes would flake unattended — which is how a nightly gate stops
+  being read. The gate runs by hand, before the PR that needs it.
+- **In-feed search on `/`** ([in-feed-search.md](history/in-feed-search.md)).
+  Unimplementable: the chat's input box is always focused and `/` in an empty
+  box is exactly how a command starts, so gating on empty input does not rescue
+  it. `Ctrl+F` is the key.
+- **Threading source ranges through the renderer**, so in-feed search would
+  also match text the renderer transformed (fork S3(c), rejected 2026-07-30,
+  [in-feed-search.md §5](history/in-feed-search.md)). Measured: 65 words of
+  186 805 (0.035%), all LaTeX command names, mermaid syntax and markup tokens.
+- **Narrowing the tool profile to the one tool under test in the compliance
+  probes** ([lessons.md §9](lessons.md)). It looked like the "remove the
+  alternative" rule and measured 7 failures in 20; the fix was the probes'
+  wording (0 in 20 on both model families).
+- **Echoing `reasoning_details` back to a gateway**
+  ([openrouter-external.md](research/openrouter-external.md)). Measured: a
+  garbage signature is a `400` through the gateway and direct, and sending no
+  blocks never is — there is nothing to build.
+- **A model download stream of our own** (fork F4 of the provisioning track,
+  closed 2026-09-22, [cloud-provisioning.md](research/cloud-provisioning.md)).
+  `hf download` brings a 34 GB pair in minutes where a `curl` of the `resolve`
+  link took hours; a stream of ours would be that stream. install.md §3.4
+  documents the command instead.
+- **An outer encrypted container for backups** (ChaCha20-Poly1305 + Argon2id;
+  fork F1 of [backup-password.md](history/backup-password.md)). It would hide
+  the archive's file names and sizes and replace the zip format's fixed
+  PBKDF2-HMAC-SHA1/1000, at the price of opening the archive in 7-Zip by hand.
+  Reopens only if someone needs to hide *which* chats exist rather than what is
+  in them.
+- **Localized CLI subcommand and flag names.** Part of the protocol —
+  translating `backup` into the interface language is bad practice, especially
+  with an English source. Likewise **grammar-aware pluralization**: the plain
+  `tf` is number-neutral by design, and real grammar is only needed on axis B
+  if a language with complex plurals shows up.
+- **`Retry-After` as an HTTP-date** — read as "no hint": no provider we speak
+  to sends that form, so parsing it would be code with no caller
+  ([cloud-retry-backoff.md](research/cloud-retry-backoff.md)).
+
+## Closed
+
+An index, newest first — one line per track, with the release that shipped it
+and where its story is told. What a track left open is a bullet above, under
+its area.
+
+- **One command from a bare GPU box to a chat** — 0.11.0–0.11.1 (2026-09-21/22):
+  `mindfork setup`, `install.sh` as an attested release asset, and the README's
+  line run on a RunPod pod end to end (`ready in 4 s — context 131072`).
+  [cloud-provisioning.md](research/cloud-provisioning.md), install.md §1,
+  §3.3–§3.4.
+- **`mindfork stats` and `--compare`** — 0.10.2 (2026-09-20): a read-only
+  summary of the live data or a backup archive, and a comparison by message
+  ids. [data-stats.md](history/data-stats.md), spec §12.4.
+- **Publishing to crates.io as `mindfork`** — 0.10.1 (2026-09-19; the current
+  release is there too): the GitHub release publishes it (`crates-io.yml`),
+  not a hand. [binary-rename.md §10](research/binary-rename.md).
+- **Required checks** — 2026-09-19: the `main` ruleset requires one context,
+  `CI gate`, which covers Lints, Tests and SonarQube Cloud (requiring the test
+  jobs by name had made a docs-only PR unmergeable). journal/ci.md, "one
+  context the branch ruleset can require".
+- **The first public release** — 0.10.0 (2026-09-18), the flip on 2026-09-19,
+  six stages: the first minute of a stranger's run, safe defaults for the file
+  tools, the release pipeline, robustness and the shipped defaults, the model
+  picker, the documents a stranger meets, and the flip itself (9 229 blobs and
+  582 pull requests scanned for credentials, zero found).
+  [public-release-readiness.md §5](research/public-release-readiness.md),
+  [safe-defaults.md](research/safe-defaults.md),
+  [release-pipeline.md](research/release-pipeline.md),
+  [robustness-and-defaults.md](research/robustness-and-defaults.md),
+  [model-picker.md](research/model-picker.md),
+  [public-documents.md](research/public-documents.md).
+- **Images on an engine that takes none** — 0.10.0, two stages: the gateway's
+  catalogue says whether the model sees images, and a chat already holding one
+  goes on working after a switch to such an engine.
   [gateway-vision-catalogue.md](research/gateway-vision-catalogue.md),
-  [history-images-no-vision.md](research/history-images-no-vision.md). What stays
-  open: nothing recorded.
-- **`external` against OpenRouter** (complete, a review and three tracks,
-  #551–#559): the gateway's "thoughts" read under its own `reasoning` field; the
-  silent turns recover from a model that must reason, the refusal remembered per
-  server; the context window and the honest sampling list taken from the
-  catalogue; a tool's images re-homed into a user message and `/continue` gated
-  by the routed vendor; the thinking switch sent as the gateway's own
-  `reasoning` field. Echoing `reasoning_details` was measured and left unbuilt —
-  sending no blocks cannot meet the signature rejection an echo can. Every run
-  carried the request's `model`, so the multi-model live run this list owed is
-  done too. Design: [openrouter-external.md](research/openrouter-external.md),
+  [history-images-no-vision.md](research/history-images-no-vision.md), spec §9.10.
+- **`external` against OpenRouter** — 0.10.0, a review and three tracks: the
+  gateway's thoughts and its thinking switch, the context window and the
+  honest sampling list from the catalogue, a tool's images re-homed and
+  `/continue` gated by the routed vendor.
+  [openrouter-external.md](research/openrouter-external.md),
   [gateway-capabilities.md](history/gateway-capabilities.md),
   [gateway-images-and-continue.md](history/gateway-images-and-continue.md),
-  [gateway-thinking-switch.md](history/gateway-thinking-switch.md). What stays
-  open: the sub-items of "Provider bridges" above.
-- **Concurrent ordinary tools** (complete, one PR): the round's consecutive
-  read-only calls run at once — `Tool::concurrent()` (default off; the file,
-  project, attachment, chat, history and introspection readers, and
-  `fetch_url`), the loop's *segment* with results, records and effects in the
-  model's order, `concurrent_calls` per engine section (1 local, 4 cloud) with
-  a "Parallel tool calls" row beside `sessions`, and `fetch_url`'s summary
-  under `sessions`. Every model emitted the calls unprompted, 26/26. Design:
-  [docs/research/concurrent-tools.md](research/concurrent-tools.md),
-  [ADR 0012](decisions/0012-concurrent-tool-calls.md). What stays open: its
-  §8 — `web_search`, MCP `readOnlyHint`, `youtube_watch`/`note_recall` — as
-  sub-bullets of the parallel sub-agents groundwork item above.
-- **`/continue`** (complete, probe + 2 stages): an interrupted reply resumes
-  in place via assistant prefill — managed/external (llama.cpp/vLLM, the
-  server's echo stripped byte-exactly), Gemini, and Claude up to the 4.5
-  generation (allowlist-by-version gate; thinking dropped and the prefill
-  right-trimmed on the wire); OpenAI/Grok refuse with the route that works.
-  `MessageFinish` records why every reply ended; a tool-result tail resumes
-  the loop; a length-cut reply finally gets a note. Design and measurements:
-  [docs/research/continue-generation.md](research/continue-generation.md).
-  What stays open: nothing recorded — external non-llama.cpp/vLLM servers
-  keep the documented-fields-plus-honest-note stance (research §10).
-- **Subagent chats** (complete, 8 PRs): `call_subagent` as a nested turn with
-  the agent's tools (ADR 0010), the transcript on the call's record, the
-  migration of old calls, the transcript in the list, in search, titled at
-  landing, visible while it runs, and a tool call's card that opens when the
-  call starts. Design: [docs/research/subagent-chats.md](research/subagent-chats.md),
-  stage 2: [docs/history/subagent-live.md](history/subagent-live.md). What
-  stays open: a parent's JSON export not carrying its transcripts (the v1
-  import document has no place for tool calls). **The two-agent dialogue is
-  complete, both stages** (`run_dialogue`, spec §9.13,
-  [ADR 0011](decisions/0011-dialogue-directed-run.md), design
-  [two-agent-dialogue.md](research/two-agent-dialogue.md)); the subagent's
-  token-by-token transcript streaming, which this list still carried as open,
-  had in fact shipped with the live track's addendum (subagent-live.md §8,
-  spec §9.3.2) — corrected here rather than left to rot.
-- **Model-compliance probes vs the gate** (complete): opened when
-  `rewrite_tool_e2e_live` took down a Gemma dispatch of the live gate, and
-  expected to need a split — a deterministic mechanism test for the gate, the
-  compliance probe kept manual. Neither was needed. The mechanism already had
-  strictly stronger deterministic coverage (`rewrite_tool_discards_partial_and_
-  saves_it`, on a `MockBackend`), and the flake was in **the test's own wording**:
-  asking the model to demonstrate the tool "strictly by steps" invited it to
-  narrate the call as prose instead of making it. The two families then turned
-  out to flake for two *different* reasons — Gemma by narrating (fixed by a
-  closed instruction, 1 in 8 → 0 in 30), Qwen by producing nothing at all, the
-  whole turn spent thinking (fixed by muting thinking, 1 in 20 → 0 in 20).
-  Final configuration: **0 in 20 on each family**. Narrowing the profile to the
-  one tool under test was tried and *rejected* — it looked like the "remove the
-  alternative" rule and measured 7 failures in 20. No exclusion mechanism, no
-  "manual probe" convention, and the end-to-end path stays in the gate.
-  `control_tools_are_callable` also stopped showing the model
-  `rewrite_current_message`'s schema without ever checking it. See
-  [docs/lessons.md](lessons.md) §9.
-- **Export a conversation to a file** (complete): `/export [md|json] [path]`.
-  Markdown is byte-for-byte what `F5` copies — the user's call, and a good one:
-  the content is Markdown already because that is how models write, so there is
-  one formatter and no way for the file and the clipboard to drift. JSON is the
-  `mindfork-import` v1 document the app already reads, with explicit ids, so an
-  export imports back onto the same chat; it carries no tool calls and every
-  such export says so. Paths (and the generated `<date>-<slug>` name) resolve
-  against the current directory, and an existing file is refused. This is also
-  the route out of JupyterLab's terminal, which the entry below could not serve.
-  See [chat-export-file.md](history/chat-export-file.md), spec §11.7.
-- **OSC 52 — copying to the client's clipboard** (complete): over SSH `arboard`
-  wrote the server's clipboard, and on a headless server it failed outright, so
-  `/copy` there produced only an error. A copy now also goes to the terminal's
-  own clipboard, automatically when the session looks remote
-  (`interface.clipboard_osc52`: `auto`/`always`/`off`). The research corrected
-  the item's own premise: **JupyterLab drops OSC 52** (xterm.js without the
-  clipboard addon), while VS Code supports it but usually runs the pty locally —
-  so the beneficiary is plain SSH, which is also where the old behaviour was
-  worst. The protocol acknowledges nothing and its support cannot be queried, so
-  the note says the text was *sent*, and a conversation past the 74 994-byte
-  ceiling is refused with an explanation rather than silently halved. tmux gets
-  DCS passthrough; `screen` does not. See
+  [gateway-thinking-switch.md](history/gateway-thinking-switch.md).
+- **A reply the content filter stopped says so** — 0.10.0.
+  [content-filter-finish.md](research/content-filter-finish.md), spec §6.4.
+- **Sandbox file exchange** — 0.9.9–0.10.0, five stages: files into, out of
+  and between `python_exec` calls. [sandbox-file-exchange.md](history/sandbox-file-exchange.md).
+- **`/continue`** — 0.9.9: an interrupted reply resumes in place via assistant
+  prefill where the provider allows it, and refuses with the route that works
+  where not. [continue-generation.md](research/continue-generation.md).
+- **Background sub-agents, the tasks screen and the silent tasks** — 0.9.9
+  (2026-09-05…08): `start_subagent` and `start_dialogue`, the `F7`/`/tasks`
+  screen, `F6` and `/tasks stop <kind>`, the app-wide session budget with its
+  silent lane, the silent stream yielding to the turn, the batch on a CPU-only
+  host. [background-subagents.md](research/background-subagents.md),
+  [background-dialogues.md](research/background-dialogues.md),
+  [tasks-screen.md](research/tasks-screen.md),
+  [stop-silent-task.md](research/stop-silent-task.md),
+  [tasks-stop-command.md](research/tasks-stop-command.md),
+  [tasks-stop-all.md](research/tasks-stop-all.md),
+  [silent-tasks-budget.md](research/silent-tasks-budget.md),
+  [silent-preemption.md](research/silent-preemption.md),
+  [cpu-batch.md](research/cpu-batch.md).
+- **Parallel sub-agents, concurrent ordinary tools, admission by budget** —
+  0.9.9 (2026-09-04): `sessions` per engine section and the session semaphore;
+  the round's read-only calls run at once (`Tool::concurrent()`); every stream
+  reserves its estimate against the unified KV pool.
+  [parallel-subagents.md](research/parallel-subagents.md),
+  [concurrent-tools.md](research/concurrent-tools.md),
+  [admission-by-budget.md](research/admission-by-budget.md),
+  [ADR 0010](decisions/0010-subagent-nested-turn.md),
+  [ADR 0012](decisions/0012-concurrent-tool-calls.md).
+- **The two-agent dialogue** — 0.9.9: `run_dialogue`, a directed scene as a
+  scripted multi-context run. [two-agent-dialogue.md](research/two-agent-dialogue.md),
+  [ADR 0011](decisions/0011-dialogue-directed-run.md), spec §9.13.
+- **Images from MCP tools** — 0.9.6. [mcp-tool-images.md](research/mcp-tool-images.md).
+- **Subagent chats** — 0.9.8 (2026-08-27), 8 PRs: `call_subagent` as a nested
+  turn with the agent's tools, the transcript on the call's record, in the
+  list, in search, and streamed while it runs.
+  [subagent-chats.md](research/subagent-chats.md),
+  [subagent-live.md](history/subagent-live.md).
+- **Model-compliance probes vs the live gate** — the flake was in the probes'
+  own wording, not in the mechanism; 0 in 20 on both model families, and no
+  exclusion mechanism was built. journal/ci.md, [lessons.md §9](lessons.md).
+- **Export a conversation to a file** — 0.9.7: `/export [md|json] [path]`.
+  [chat-export-file.md](history/chat-export-file.md), spec §11.7.
+- **OSC 52 — copying to the client's clipboard** — 0.9.7.
   [osc52-clipboard.md](history/osc52-clipboard.md), spec §11.7.
-- **Command-only control** (stages 1–2, complete): the app is now operable
-  without a single chord, for terminals embedded in a host that claims them.
-  The item did not exist on this list — it came from the question "could the app
-  be driven by commands alone?", and the survey answered it with a measurement:
-  VS Code's default `commandsToSkipShell` takes `Ctrl+P`, `Ctrl+E`, `Ctrl+F`,
-  `Ctrl+K`, `F1`, `F3`, `F5` and both quit keys, so six features were already
-  unreachable there, while a browser tab reserves `Ctrl+N`/`Ctrl+T`/`Ctrl+W` —
-  the last of which closes the session's own tab. Nineteen commands close the
-  class; each reaches its action through the **same handler its chord uses**, so
-  there is one behaviour behind two routes, and each answers when a precondition
-  blocks it, where a key is simply silent. The registry is one table (copied
-  parsers would have been the duplication seam again) and the help tab derives
-  its rows from it. What made the scope small was noticing that typing itself
-  survives every host, and that every `Esc` chain already ends at the chat
-  screen: safe keys navigate, commands act. Stage 2 then took the two actions
-  that lived inside *other* screens — `/profile list|new|delete` and
-  `/self clear` — and is the one place the track breaks parity on purpose: both
-  always confirm, because a typed prefix can name a profile the user did not
-  picture where the screen would have shown it selected. Verified live in VS
-  Code's integrated terminal. See
+- **Command-only control** — 0.9.7, two stages: every chord has a typed route.
   [command-only-control.md](history/command-only-control.md), spec §11.7.
-- **Navigable `chat://` references** (stages 1–2, complete): a conversation now
-  has **one address**, and the assistant knows it. The item asked only for the
-  second half — recognize a reference and resolve it — and the survey moved its
-  centre of gravity: nothing in the repository minted or mentioned the scheme, so
-  the feature rested on one model's habit (grok-4.6 invented `chat://` out of the
-  bracketed address the tools printed). So the tools now print `chat://<id>`,
-  their descriptions ask the model to cite it **when it mentions a conversation
-  to the user**, and `chat_read` reads it back — which fixed a latent defect on
-  the way past: it used to fail its own scheme, because `resolve` stripped only
-  `-` before the hex test. Live: a **local** gemma-4-31B cited the conversation
-  it had read, unprompted beyond the descriptions — the habit is transferable
-  once the format is actually taught. The feed styles only addresses that
-  **resolve**, against the current profile's chats, so a link is never a dead end
-  and the profile boundary needs no separate check; recognition runs in the block
-  builder *before* the wrap, because an address is 15 columns and a narrow panel
-  splits it where the post-render matching used by in-feed search would miss it.
-  `Ctrl+L` follows a reference and — stage 2 — so does a click, the first
-  clickable thing in the feed, from a map derived at render time for the viewport
-  only; `Esc` retraces the step, through the same one-deep back-stack the search
-  screen uses (fork F6, reopened by use once following a link and losing the way
-  back read as a trap). See [chat-uri-links.md](research/chat-uri-links.md), spec §9.11, §11.3.
-- **Images in a message** (stages 1–2, complete): `/image attach|remove|list`
-  shows a picture to a local `llama-server --mmproj` and to all four clouds. The
-  decision that shaped everything else was **not** copying `/file`: an image is
-  staged for the *next message* rather than pinned to the chat, because that is
-  what every provider's wire format models and because a chat-scoped set would
-  rewrite the head of the prompt — measured, the append-only shape keeps
-  llama.cpp's prefix cache across an image turn. A request carrying no images
-  stays byte-identical to what the app sent before the feature, in all four
-  formats, which is what makes the change safe for every existing conversation.
-  Capability is *asked* (`/props` `modalities.vision`), never inferred from a
-  model name, and an engine that cannot say is trusted rather than refused.
-  Images are downscaled and normalized to png/jpeg once, at attach time, since
-  xAI takes nothing else and an unscaled photo would ride every later turn.
-  **Clipboard paste** followed (`/image paste`, plus `Ctrl+V` where the terminal
-  forwards it): the app never had a `Ctrl+V` handler at all — pasting works
-  because the *terminal* injects text, and an image injects nothing — so the
-  command is the route that works everywhere and the key is the convenience. See
-  [multimodal-images.md](research/multimodal-images.md), spec §9.10.
-- **Retry/backoff on cloud errors** (stages 1–2, complete): a transient provider
-  failure no longer costs the turn. The one-line roadmap item turned out to be
-  **three** defects, two of them invisible, and stage 1 closed those first: a
-  failure arriving *after* the answer started was silent — the partial reply stayed
-  on screen with nothing marking it a fragment, and on Claude an in-stream
-  `error` event (how a `529` arrives once a stream is accepted) was swallowed
-  entirely, so an overloaded truncation was byte-for-byte a normal completion;
-  the initial POST had no connect timeout and ignored `Esc` until the first bytes;
-  and the status was thrown away, which is what made a retry unimplementable.
-  Stage 2 added the retry itself as a **decorator** over the cloud and external
-  backends — three attempts, ~1 s then ~2 s with downward jitter, `Retry-After`
-  honoured as given up to 30 s and refused beyond it, the wait shown as a
-  status-bar chip and interruptible by `Esc`. The safety property falls out of one
-  rule rather than needing its own: a retry is allowed only while the turn is
-  *uncommitted*, and since a tool call counts as content, a round that emitted
-  calls can never be replayed — so no tool effect fires twice. Managed servers are
-  deliberately left to the health monitor and relaunch budget, which is the honest
-  recovery for a child that reloads for minutes. See
+- **Navigable `chat://` references** — 0.9.7, two stages.
+  [chat-uri-links.md](research/chat-uri-links.md), spec §9.11, §11.3.
+- **The cross-chat search tools** (`chat_search`/`chat_read`) — 0.9.7.
+  [cross-chat-search-tool.md](research/cross-chat-search-tool.md), spec §9.11.
+- **The external server's key, and the model name it routes on** — 0.9.7 and
+  0.9.9. [external-api-key.md](history/external-api-key.md),
+  [external-model-name.md](research/external-model-name.md).
+- **Images in a message** — 0.9.6 (2026-08-13), two stages plus clipboard paste
+  and attach by URL. [multimodal-images.md](research/multimodal-images.md),
+  [image-url-attach.md](research/image-url-attach.md), spec §9.10.
+- **`fetch_url` — an address policy** — 0.9.6 (2026-08-13), and it covers
+  `web_search`'s page fetches too.
+  [fetch-url-address-policy.md](research/fetch-url-address-policy.md), spec §9.3.
+- **Retry/backoff on cloud errors** — 0.9.6 (2026-08-12), two stages.
   [cloud-retry-backoff.md](research/cloud-retry-backoff.md), spec §6.8.
-- **History compression / rolling summary** (stages 0–3, complete): a long
-  conversation keeps fitting the model's context window. The older part is
-  folded into a rolling summary — on request (`/compact`) and, once a turn's
-  **exact** prompt reaches a share of the resolved window, by itself. The
-  decision that dissolved most of the hard problems: compression changes what a
-  *request* carries and never what the chat holds, so the feed, full-text
-  search, the `F5` export and the reflection watermark needed no changes at all;
-  the feed marks the boundary with a foldable divider. The window is resolved
-  from an explicit setting, a managed server's `-c`, or the engine's own
-  `/props`, and the trigger reads the server's exact `usage` because the byte
-  estimate's error **changes sign** by content type (+68% on Russian prose,
-  −20% on code) — unsafe on exactly the tool-heavy chats that overflow first.
-  A summary is lossy, so `history_read` walks the folded range page by page and
-  `history_search` says where to look; search runs over the full-text index the
-  app already keeps rather than over embeddings, since an embedding server is
-  separate and routinely unconfigured, and the local user with a small window is
-  precisely who the track exists for. Along the way it uncovered that the client
-  had been **discarding the server's exact token counts** on every turn —
-  llama.cpp sends `usage` *after* the chunk carrying `finish_reason`, and the
-  stream ended on that chunk. See
+- **History compression / rolling summary** — 0.9.5 (2026-08-09), stages 0–3.
   [history-compression.md](research/history-compression.md), spec §6.7.
-- **YouTube: the words, as a chat attachment** (stage 2, complete):
-  `transcript: true` also brings back the spoken words with timestamps, in the
-  **same** provider call as the description (the video is ingested either way, so
-  a second call would double the expensive half) — the parameter says so, or the
-  model treats the words as a cheap extra. A transcript past the per-file
-  attachment budget lands as a **chat attachment** (spec §9.7), already paged and
-  searchable, instead of going into the context whole; the threshold is the
-  existing budget, which also makes such a transcript by-reference by
-  construction. The stage's real work was the contract: `ChatEffect` gained a
-  generic `AddAttachment`, and since effects only reach `Chat` when the turn ends
-  while `ToolContext.attachments` is a turn snapshot, the loop mirrors the effect
-  into that snapshot — otherwise "attached as X, read it with `attachment_read`"
-  would be an instruction the turn could not carry out. Timestamps are corrected
-  to be absolute: measured live, the same model numbered a clip from zero on one
-  run and absolutely on the next, so the shift is decided rather than applied
-  blindly. See [youtube-transcript.md](history/youtube-transcript.md), spec §9.9.
-- **Page fidelity for `fetch_url`** (complete): a fetched page keeps its
-  **headings and code blocks** (`extract_rich`, `fetch_url` only — `web_search`'s
-  1500-character budget exists for ranking), and a page over the attachment
-  budget becomes a **chat attachment** instead of being cut silently at 12 000
-  characters mid-word. Along the way, two neighbours of the same defect class:
-  `web_search` stopped reporting "no results" when a provider was actually
-  serving a captcha behind HTTP 200, and `python_exec` now says that each call
-  gets a fresh sandbox (nothing, `/tmp` included, survives a call). Specified by
-  one real transcript in which a single page fetch turned into six `python_exec`
-  rounds and 16 MB downloaded twice. See
+- **YouTube: what a video says and shows, and the words as a chat attachment**
+  — 0.9.5, two stages. [youtube-integration.md](research/youtube-integration.md),
+  [youtube-transcript.md](history/youtube-transcript.md), spec §9.9.
+- **Page fidelity for `fetch_url`** — 0.9.5.
   [fetch-url-fidelity.md](history/fetch-url-fidelity.md), spec §9.3.1.
-  **Groundwork:** tables in rich extraction (needs a layout decision — Markdown
-  table vs flattened rows); a persistent per-chat scratch directory for
-  `python_exec` (its own lifecycle and cleanup questions).
-- **YouTube: what a video says and shows** (stage 1, complete): `youtube_watch`
-  describes a video's frames *and* audio with timestamps, narrowed by `focus`,
-  and `start`/`end` clip a long one to a segment. It calls **Gemini out of band**
-  rather than through the chat engine (the ADR 0009 shape), so it works on a
-  local `llama-server` too — which matters because measurement, not preference,
-  left one option: every free caption route is now behind YouTube's PoToken gate
-  (a *signed* `timedtext` URL returns 200 with an **empty body**),
-  `captions.download` needs the video owner's OAuth, and OpenAI and Anthropic
-  take no video at all. Billed per second of footage (~103 tok/s at low detail,
-  measured), so the tool refuses past a configurable ceiling and says how to ask
-  for a segment; with no key it degrades to free metadata and states what is
-  missing, and `fetch_url` stopped dead-ending on YouTube links. See
-  [youtube-integration.md](research/youtube-integration.md), spec §9.9.
-- **Password-protected backups** (complete): `--password` on `backup`/`restore`,
-  or a password set once in settings → "Data", stored machine-bound exactly like
-  a cloud API key (ADR 0008) — including for the copies the app makes itself
-  before a restore or a data migration. The archive is standard AES-256, so
-  7-Zip still opens it by hand; restore takes an encrypted **and** an
-  unencrypted copy with nothing to switch (the zip layer discards a password an
-  entry does not need), and a wrong one is refused before anything is replaced
-  (the password is verified when an entry is opened, not after reading it). Both
-  of those are measured properties, not assumptions. See
+- **Password-protected backups** — 0.9.5.
   [backup-password.md](history/backup-password.md), spec §12.3.
-- **Confirmation for dangerous tools** (complete): `tools.confirm_dangerous` —
-  off by default — parks a call to `python_exec`, `fs_write` or any MCP tool and
-  shows it, formatted the way the feed will show it afterwards, before it runs;
-  `Enter` runs it, `A` allows that tool for the rest of the turn, `Esc` declines
-  without cancelling the turn (the model is told and carries on). What counts as
-  dangerous is declared by the tool itself, next to its group and gate; MCP
-  servers' own `destructiveHint` annotations are **not** consulted — untrusted
-  input can only ever relax a decision, which is the attack. The load-bearing
-  piece is the confirmation channel: the agentic loop is a background task, and
-  this is the first thing that sends anything back *into* one, with replies from
-  a stale turn or another call of the same round dropped. Turned off, the loop is
-  byte-for-byte its old self. See
+- **Confirmation for dangerous tools** — 0.9.5.
   [tool-confirmation.md](history/tool-confirmation.md), spec §9.8.
-A compact summary (details — in [docs/journal/](journal/) and
-[docs/history/](history/)):
-- **In-feed text search** (complete): **`Ctrl+F`** inside a chat searches that
-  conversation — every match highlighted, a `match n of total` counter,
-  `Enter`/`↓` and `Shift+Enter`/`↑` to step, `Esc` to close; the message you are
-  writing is untouched. **Not `/`, which this item asked for and which turned out
-  to be unimplementable**: the chat's input box is always focused, and `/` in an
-  empty box is exactly how a command starts (`/rag`, `/file`, …), so gating on
-  empty input does not rescue it either. next/prev goes to the matched **line**,
-  re-derived every frame — the largest real message is 38,782 characters, so
-  jumping to the message start would leave the viewport unmoved. Matching runs
-  over what is **drawn**, which is why the counter can equal the highlights;
-  the same reason means it covers thoughts and tool cards, and misses text the
-  renderer transformed — **measured and closed 2026-07-30**: 65 words of 186 805
-  (0.035%), all of them LaTeX command names, mermaid syntax and markup tokens, so
-  threading source ranges through the renderer (fork S3(c)) was rejected rather
-  than deferred; the same measurement turned up the dropped-HTML defect and got it
-  fixed ([in-feed-search.md §5](history/in-feed-search.md)).
-  Prerequisite shipped with it: the highlight left
-  `CacheKey`, so typing costs a warm frame (17 ms) instead of re-rendering the
-  chat (39 ms). See [in-feed-search.md](history/in-feed-search.md).
-- **Chat content search** (stages 1–2, complete): the chat list's search box
-  toggles between titles and **message text** (`Ctrl+F`) and filters to the chats
-  containing a match, with the existing sort still ordering them; from there
-  `Ctrl+G` opens the **messages themselves** — grouped by chat, each with a
-  snippet built in Rust with the match highlighted, its role and date — and
-  `Enter` opens the chat *at* that message, which is marked in the feed **with the
-  query highlighted inside it**, and `Esc` there comes back to the results whole —
-  same selection and scroll — before going on to the chat list
-  (`Enter` on a chat in content mode does the same, at its first match). The index
-  is a separate, disposable `cache.db` — derived data, so a version mismatch or a
-  corrupt file is answered by deleting and rebuilding rather than by ADR 0006's
-  migration machinery, and the backup allowlist leaves it out with no code change.
-  Trigram tokenizer, so matching is by fragment, like the title filter users
-  already have — which also sidesteps Russian morphology, for which FTS5 has no
-  stemmer; and every token is quoted, so ordinary text (`C++`, `cost-benefit`)
-  searches for itself instead of raising an FTS5 syntax error. The jump is
-  infrastructure in its own right: it is necessarily deferred into `render` (the
-  block cache only exists there), it anchors to the *message* so it survives a
-  resize, and it forced the seven "scroll to the bottom" sites to be split by who
-  asked — so content arriving on its own no longer yanks a reader back. A live run
-  revised one decision on the spot: fork S3 shipped as (b), post-render span
-  matching, because a feed that didn't highlight what the results list did read as
-  inconsistent — approximate by design, since it matches what was drawn rather than
-  the source. **Still open**: in-feed `/`-search, which the jump *and* that
-  highlight now make cheap — §Feed and chat UI.
-  See [chat-content-search.md](research/chat-content-search.md)
-  and [chat-search-stage2.md](history/chat-search-stage2.md).
-- **Remote live e2e gate** (stages 0–3, complete): the mandatory live gate
-  (AGENTS.md §3) stopped depending on one machine at one LAN address.
-  `tools/e2e_hf.py` rents a real `llama-server` (HF Inference Endpoints'
-  llama.cpp engine) plus **two** embedding models, runs the `#[ignore]` suite
-  against them, and deletes them — **verifying** the deletion, since a leaked
-  endpoint is the one outcome that costs money. In CI as a
-  `workflow_dispatch` job with a scheduled sweeper as the backstop; two
-  consecutive green runs (66 passed / 0 failed). The platform was chosen for
-  its *cleanup guarantee* rather than its price — idle scale-to-zero is a
-  dead-man's switch no rented pod offers. See
-  [remote-e2e-hf.md](history/remote-e2e-hf.md), research
-  [remote-e2e-gpu.md](research/remote-e2e-gpu.md).
-- **Embedding-model change** (stages 1–3, complete): a swap is detected
-  behaviourally by a canary vector — dimensionality is *not* identity —
-  `/reindex` re-embeds every stored vector in place from the text the DB already
-  holds, and the memory similarity gates are read as positions in a reference
-  scale, calibrated automatically per model (so they follow the model instead of
-  one fixed calibration, and stay exactly as they are until a model actually
-  changes). This also closed the older "re-indexing chat attachments after a
-  model change" item: its "needs a walk over all chats" premise was wrong for
-  this purpose (`attachment_documents.chunk_text` is in the DB, so a walk is
-  only needed to re-*chunk*), and attachment indexes now come back without
-  re-attaching each file. See
+- **The MCP server editor** — 0.9.5, two stages.
+  [mcp-server-editor.md](history/mcp-server-editor.md), spec §9.6.
+- **In-feed text search (`Ctrl+F`)** — 0.9.5.
+  [in-feed-search.md](history/in-feed-search.md).
+- **Chat content search** — 0.9.5, two stages, on the disposable `cache.db`.
+  [chat-content-search.md](research/chat-content-search.md),
+  [chat-search-stage2.md](history/chat-search-stage2.md).
+- **Embedding-model change** — 0.9.5, stages 1–3: the canary vector,
+  `/reindex`, similarity gates calibrated per model.
   [embedding-model-change-reindex.md](research/embedding-model-change-reindex.md),
   spec §9.3.4.
-- **English source** (prep for open source: all docs, comments and
-  non-user-facing strings moved RU -> EN; the convention flipped and guarded in
-  CI by `tools/cyrillic_scan.py`) —
-  [english-source-migration.md](history/english-source-migration.md).
-- **API keys in settings** (entry in the settings window, machine-bound
-  encryption in the config, per-machine entries) —
-  [ADR 0008](decisions/0008-api-key-storage.md), research
-  [api-key-storage.md](research/api-key-storage.md).
-- **Self-model consolidation** (auto-"sleep" on a timer + summary↔observation
-  semantics + interest aging) —
-  [self-model-consolidation.md](history/self-model-consolidation.md).
-- **RAG: sources and retrieval** (html/pdf/docx + per-chunk indexing progress +
-  cross-source dedup) —
-  [rag-sources-retrieval.md](history/rag-sources-retrieval.md).
-- **Plugins / MCP host** + generic import (`mindfork import`, the
-  [mindfork-import](import-format.md) format) —
-  [ADR 0007](decisions/0007-plugins-mcp-host-import-format.md).
-- **Installers** (Windows Inno Setup + Linux nfpm) —
-  [installers.md](history/installers.md).
-- **Release engineering** (versions/CHANGELOG/CI/schema migrations) —
-  [release-engineering.md](history/release-engineering.md).
-- **Multilingualism** (axis A, axis B, CLI) — [i18n.md](history/i18n.md) and
-  neighbors.
-- **OS-locale language detection** (`i18n::detect_os_language`) — installer
-  stage 1.
-- **Mermaid rendering** (flowchart/sequence) —
-  [mermaid-ascii-rendering.md](research/mermaid-ascii-rendering.md).
+- **The remote live e2e gate** — stages 0–3: `tools/e2e_hf.py` rents the stack
+  on HF Inference Endpoints and verifies the deletion.
+  [remote-e2e-hf.md](history/remote-e2e-hf.md),
+  [remote-e2e-gpu.md](research/remote-e2e-gpu.md).
+- **The code workspace** — the project attached to a chat.
+  [code-workspace.md](history/code-workspace.md), spec §9.12.
+- **Message playback (TTS)** — 0.9.2–0.9.3 (2026-07-23): `/tts` on the OpenAI,
+  Gemini and external engines. [tts.md §13](research/tts.md),
+  [ADR 0009](decisions/0009-tts-speech-synthesis.md).
+- **Earlier**: the English source ([english-source-migration.md](history/english-source-migration.md));
+  API keys in settings ([ADR 0008](decisions/0008-api-key-storage.md),
+  [api-key-storage.md](research/api-key-storage.md)); self-model consolidation
+  ([self-model-consolidation.md](history/self-model-consolidation.md)); RAG
+  sources and retrieval ([rag-sources-retrieval.md](history/rag-sources-retrieval.md));
+  plugins / MCP host and the import format
+  ([ADR 0007](decisions/0007-plugins-mcp-host-import-format.md),
+  [import-format.md](import-format.md)); installers
+  ([installers.md](history/installers.md)); release engineering
+  ([release-engineering.md](history/release-engineering.md)); multilingualism
+  ([i18n.md](history/i18n.md) and its neighbours); OS-locale language
+  detection (`i18n::detect_os_language`); Mermaid rendering
+  ([mermaid-ascii-rendering.md](research/mermaid-ascii-rendering.md)).
