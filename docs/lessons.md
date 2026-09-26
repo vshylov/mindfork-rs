@@ -1002,7 +1002,10 @@ found live, each costing a user a wasted turn:
 
 The fix is always the same: name the routes that do *not* work, and the one that does.
 Two corollaries. **Only advertise what exists** — an attachment entry names the search
-tool only for a file that really has an index. And **distinguish "nothing here" from
+tool only for a file that really has an index — and exists **now**: a page `fetch_url`
+attached is readable in the next round but indexed only when the turn lands, so the
+result that offered search sent the model into "no index was built" and 20 guessed pages
+of 72 (*a fetched page and its birth turn*). And **distinguish "nothing here" from
 "no hits"**, since they call for different next actions. An error pointing at a command
 that would refuse is the same bug in politer clothing.
 — *chat file attachments — stage 2 (`attachment_read`)*, *`youtube_watch` — a degraded
@@ -1731,6 +1734,13 @@ path, not by the root.
 — *safe defaults 2a*.
 
 ## 9. Live runs and model behaviour
+
+**A second turn that repeats the first turn's question tests the model's memory, not
+the feature.** A smoke asked for a fact in turn 1 (by paging) and again in turn 2 to
+prove the index built in between; on the third run the model answered turn 2 from its
+own previous reply and never searched. Ask the later turn about something the earlier
+one did not read — the same "remove the alternative" rule, across turns.
+— *a fetched page and its birth turn*.
 
 **Through a gateway, a model's raw tool template in the reply text is the
 *provider's* parser failing, not ours — and the live set costs money there.**

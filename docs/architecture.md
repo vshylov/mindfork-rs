@@ -406,7 +406,9 @@ src/
 │  │  │                     <h1> the <title> begins with, the <title> without its
 │  │  │                     site segment (NameFields; spec §9.3.1);
 │  │  │                     a YouTube link is answered with metadata + a pointer
-│  │  │                     to youtube_watch instead of "no readable text")
+│  │  │                     to youtube_watch instead of "no readable text";
+│  │  │                     a cut at MAX_EXTRACT_CHARS is stated in the result
+│  │  │                     and in the attachment, with the last heading)
 │  │  ├─ youtube.rs         youtube_watch: what a video says and shows. Free
 │  │  │                     metadata (watch page/oEmbed, pure parse) + the video
 │  │  │                     call via shared/video; degrades to metadata when no
@@ -2039,6 +2041,14 @@ dedupe-by-source rule the orchestrator will), and the orchestrator persists them
 through `insert_attachment` — the path `/file attach` takes. The loop still
 never touches `Chat`: the invariant is intact, the snapshot is its own. See
 spec §9.9, docs/history/youtube-transcript.md §3 F1.
+
+The mirror covers reading, not searching: the index is started by
+`insert_attachment`, so a file is searchable only after its turn lands. The mirror
+therefore also records the file's id in `ToolContext.born_this_turn`, and
+`attachment_search` names such a file as *attached in this turn* instead of as one
+with no index; `fetch_url` and `youtube_watch` offer only the page route in their
+result and say why (docs/research/attachment-birth-turn.md — stage 2 there moves the
+indexing into the turn).
 
 **A tool's images, and who says whether they were shown.** `ToolOutcome.images`
 are *offered*, not sent: in `record_call` the loop withholds them all when the

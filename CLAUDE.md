@@ -177,8 +177,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-26, version 0.11.1)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3435 unit tests
-green, 199 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **3443 unit tests
+green, 202 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -190,6 +190,11 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **A fetched page is not searchable in its birth turn** (stage 1) — its index starts
+  when the turn lands, so `fetch_url`/`youtube_watch` offer pages only and search names
+  the file; a cut says where it ends; ceiling 1 000 000. Live **GO**; stage 2 indexes
+  in-turn ([docs/research/attachment-birth-turn.md](docs/research/attachment-birth-turn.md),
+  [docs/journal/rag.md](docs/journal/rag.md)).
 - **Raw `llama-server` arguments in managed settings** — an *Extra arguments* field
   per managed section (`--n-cpu-moe` fits a 26B MoE in 8.4 GB); a field's flag, the
   connection's, `--tools`/`--agent` and `-hf` refused, their `LLAMA_*` scrubbed from

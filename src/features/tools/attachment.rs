@@ -20,6 +20,7 @@
 
 use anyhow::Result;
 
+use crate::entities::attachment::{AttachMode, Attachment};
 use crate::entities::profile::ToolId;
 use crate::shared::api::EmbedRole;
 
@@ -165,33 +166,47 @@ impl Tool for AttachmentSearch {
             DEFAULT_TOP_K,
         )?;
 
-        // None of the *currently attached* files is indexed (no embedder when
-        // they were attached, or they are all inline) — say so and point at the
-        // guaranteed path instead of returning a bare "nothing found", which
-        // would read as "the file has nothing about it".
-        let indexed = ctx.storage.db().attachment_indexed_ids(ctx.chat_id)?;
-        let any_indexed = indexed
+        // Only a by-reference file is ever indexed (fork F13): an inline one is in
+        // the prompt in full, and saying "no index" about it would send the model
+        // paging through text it already has.
+        let by_ref: Vec<&Attachment> = ctx
+            .attachments
             .iter()
-            .any(|id| ctx.attachments.iter().any(|a| a.id == *id));
-        if !any_indexed {
+            .filter(|a| a.mode == AttachMode::ByReference)
+            .collect();
+        if by_ref.is_empty() {
             return Ok(ToolOutcome::text(
-                ctx.loc.t("tool.attachment_search.not_indexed"),
+                ctx.loc.t("tool.attachment_search.all_inline"),
             ));
         }
-        // The embedder may have gone away since indexing — degrade to the same
-        // clear answer rather than failing the turn (ADR 0002).
+        // Which of the *currently attached* files the search cannot see — named,
+        // with the reason, instead of a bare "nothing found", which would read as
+        // "the file has nothing about it" (docs/research/attachment-birth-turn.md F2).
+        let indexed = ctx.storage.db().attachment_indexed_ids(ctx.chat_id)?;
+        let unsearched: Vec<&Attachment> = by_ref
+            .iter()
+            .copied()
+            .filter(|a| !indexed.contains(&a.id))
+            .collect();
+        if unsearched.len() == by_ref.len() {
+            let mut out = ctx.loc.t("tool.attachment_search.not_indexed").to_string();
+            push_unsearched(&mut out, ctx, &unsearched);
+            return Ok(ToolOutcome::text(out));
+        }
+        // The embedder may have gone away since indexing — a clear answer rather
+        // than a failed turn (ADR 0002), and not "no index": the index is there.
         let Ok(mut embeddings) = ctx
             .embedder
             .embed(vec![query.to_string()], EmbedRole::Query)
             .await
         else {
             return Ok(ToolOutcome::text(
-                ctx.loc.t("tool.attachment_search.not_indexed"),
+                ctx.loc.t("tool.attachment_search.embedder_down"),
             ));
         };
         let Some(query_vec) = embeddings.pop() else {
             return Ok(ToolOutcome::text(
-                ctx.loc.t("tool.attachment_search.not_indexed"),
+                ctx.loc.t("tool.attachment_search.embedder_down"),
             ));
         };
         let hits = ctx
@@ -206,9 +221,9 @@ impl Tool for AttachmentSearch {
             .filter(|h| ctx.attachments.iter().any(|a| a.id == h.attachment_id))
             .collect();
         if hits.is_empty() {
-            return Ok(ToolOutcome::text(
-                ctx.loc.t("tool.attachment_search.result.empty"),
-            ));
+            let mut out = ctx.loc.t("tool.attachment_search.result.empty").to_string();
+            push_not_searched(&mut out, ctx, &unsearched);
+            return Ok(ToolOutcome::text(out));
         }
         // Chunks are cut with overlap, so neighbouring hits from one file repeat
         // each other's edges — the same reason `rag_search` stitches and dedups.
@@ -241,14 +256,55 @@ impl Tool for AttachmentSearch {
         // read. Reminding the model of that keeps the two complementary.
         out.push_str("\n\n");
         out.push_str(ctx.loc.t("tool.attachment_search.result.hint"));
+        push_not_searched(&mut out, ctx, &unsearched);
         Ok(ToolOutcome::text(out))
+    }
+}
+
+/// Appends, after a search that did run, the files it could not see — so a
+/// fragment list (or "nothing found") is not read as covering them. Nothing when
+/// every by-reference file is indexed.
+fn push_not_searched(out: &mut String, ctx: &ToolContext, unsearched: &[&Attachment]) {
+    if unsearched.is_empty() {
+        return;
+    }
+    out.push_str("\n\n");
+    out.push_str(ctx.loc.t("tool.attachment_search.not_searched"));
+    push_unsearched(out, ctx, unsearched);
+}
+
+/// One line per file the search cannot see, with why and how many pages it has,
+/// then the route that does reach it. A file this turn's own tool attached is not
+/// indexed before the turn lands — "no index" would read as permanent, and it is
+/// not (docs/research/attachment-birth-turn.md F2).
+fn push_unsearched(out: &mut String, ctx: &ToolContext, unsearched: &[&Attachment]) {
+    for a in unsearched {
+        let key = if ctx.born_this_turn.contains(&a.id) {
+            "tool.attachment_search.unindexed.born"
+        } else {
+            "tool.attachment_search.unindexed.none"
+        };
+        let pages = a.page_count(ctx.attachment_cfg.page_tokens).to_string();
+        out.push('\n');
+        out.push_str(&ctx.loc.tf(key, &[("name", &a.name), ("pages", &pages)]));
+    }
+    out.push('\n');
+    out.push_str(ctx.loc.t("tool.attachment_search.unindexed.route"));
+    // The door, closed: the live run of this change saw a model search a
+    // just-attached page three times in one turn, each answer the same
+    // (docs/research/attachment-birth-turn.md §4a, lessons §4).
+    if unsearched
+        .iter()
+        .any(|a| ctx.born_this_turn.contains(&a.id))
+    {
+        out.push(' ');
+        out.push_str(ctx.loc.t("tool.attachment_search.unindexed.born_retry"));
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::entities::attachment::{AttachMode, Attachment};
     use uuid::Uuid;
 
     /// Page size used by the fixtures: 10 estimated tokens ≈ 40 bytes ≈ 20
@@ -542,6 +598,131 @@ mod tests {
         assert!(out.contains("attachment_read"), "{out}");
     }
 
+    /// The turn that prompted docs/research/attachment-birth-turn.md: a page this
+    /// turn's own `fetch_url` attached was searched twice and answered "no search
+    /// index was built", which read as permanent. It is not — the file is indexed
+    /// after the turn lands — so the answer names it as attached in this turn, with
+    /// its page count and the route that works now.
+    #[tokio::test]
+    async fn search_names_a_file_attached_in_this_turn() {
+        let doc = att("spec.md", "первая строка\nвторая строка\nтретья строка\n");
+        let (_d, mut ctx) = ctx_with(vec![doc.clone()]);
+        ctx.born_this_turn = vec![doc.id].into();
+        let out = AttachmentSearch
+            .invoke(&ctx, serde_json::json!({"query": "что угодно"}))
+            .await
+            .unwrap()
+            .result;
+        let pages = doc.page_count(PAGE).to_string();
+        let born = ctx.loc.tf(
+            "tool.attachment_search.unindexed.born",
+            &[("name", "spec.md"), ("pages", &pages)],
+        );
+        assert!(
+            out.starts_with(ctx.loc.t("tool.attachment_search.not_indexed")),
+            "{out}"
+        );
+        assert!(out.contains(&born), "{out}");
+        assert!(
+            out.contains(ctx.loc.t("tool.attachment_search.unindexed.route")),
+            "{out}"
+        );
+        // Searching again in the same turn cannot help, and the answer says so.
+        let retry = ctx.loc.t("tool.attachment_search.unindexed.born_retry");
+        assert!(out.contains(retry), "{out}");
+
+        // A file from an earlier turn with no index is a different situation.
+        ctx.born_this_turn = Vec::new().into();
+        let out = AttachmentSearch
+            .invoke(&ctx, serde_json::json!({"query": "что угодно"}))
+            .await
+            .unwrap()
+            .result;
+        let none = ctx.loc.tf(
+            "tool.attachment_search.unindexed.none",
+            &[("name", "spec.md"), ("pages", &pages)],
+        );
+        assert!(out.contains(&none) && !out.contains(&born), "{out}");
+        assert!(
+            !out.contains(retry),
+            "no birth, no promise about the next turn: {out}"
+        );
+    }
+
+    /// With one file indexed and another not, the search runs — and used to omit the
+    /// second in silence, so "nothing found" could mean "the file you mean was never
+    /// looked at". Both a hit list and an empty answer now end with the files it did
+    /// not see.
+    #[tokio::test]
+    async fn search_names_the_files_it_did_not_see() {
+        let old = att("old.txt", "x");
+        let fresh = att("fresh.md", "y");
+        let (_d, mut ctx) = ctx_with(vec![old.clone(), fresh.clone()]);
+        ctx.born_this_turn = vec![fresh.id].into();
+        index(&ctx, &old, &["рецепт борща со свёклой и капустой"]).await;
+        let born = ctx.loc.tf(
+            "tool.attachment_search.unindexed.born",
+            &[
+                ("name", "fresh.md"),
+                ("pages", &fresh.page_count(PAGE).to_string()),
+            ],
+        );
+        let header = ctx.loc.t("tool.attachment_search.not_searched");
+
+        let hits = AttachmentSearch
+            .invoke(&ctx, serde_json::json!({"query": "борщ со свёклой"}))
+            .await
+            .unwrap()
+            .result;
+        assert!(hits.contains("рецепт борща"), "{hits}");
+        let tail = hits.split_once(header).expect("no not-searched section").1;
+        assert!(tail.contains(&born), "{hits}");
+        assert!(
+            !tail.contains("old.txt"),
+            "an indexed file listed as unseen: {hits}"
+        );
+
+        // "Nothing found" carries the same list. Forced the way it happens for real: the
+        // only nearest fragment belongs to a file already taken out of the chat (its
+        // rows not yet pruned), so the snapshot filter leaves no hits.
+        let removed = att("removed.txt", "z");
+        index(&ctx, &removed, &["строка удалённого файла"]).await;
+        let out = AttachmentSearch
+            .invoke(
+                &ctx,
+                serde_json::json!({"query": "строка удалённого файла", "top_k": 1}),
+            )
+            .await
+            .unwrap()
+            .result;
+        assert!(
+            out.starts_with(ctx.loc.t("tool.attachment_search.result.empty")),
+            "{out}"
+        );
+        assert!(out.contains(header) && out.contains(&born), "{out}");
+    }
+
+    /// Every file inline: there is no index by design (fork F13) and nothing to read
+    /// page by page — the text is already in the prompt. Pointing at
+    /// `attachment_read` would send the model paging through what it has.
+    #[tokio::test]
+    async fn search_over_inline_files_only_says_they_are_in_full() {
+        let inline = Attachment::new(
+            "note.txt",
+            "/tmp/note.txt",
+            "короткий файл".into(),
+            13,
+            AttachMode::Inline,
+        );
+        let (_d, ctx) = ctx_with(vec![inline]);
+        let out = AttachmentSearch
+            .invoke(&ctx, serde_json::json!({"query": "файл"}))
+            .await
+            .unwrap()
+            .result;
+        assert_eq!(out, ctx.loc.t("tool.attachment_search.all_inline"));
+    }
+
     #[tokio::test]
     async fn search_degrades_when_the_embedder_is_gone() {
         // Indexed earlier, embedder unavailable now (ADR 0002 degradation): a
@@ -568,6 +749,8 @@ mod tests {
             .unwrap()
             .result;
         assert!(out.contains("attachment_read"), "{out}");
+        // Not "no index": the index is there, the server is not.
+        assert_eq!(out, ctx.loc.t("tool.attachment_search.embedder_down"));
     }
 
     #[tokio::test]

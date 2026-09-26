@@ -38,8 +38,14 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 /// a single page may put into a chat. Far above the attachment budget: beyond
 /// that budget the text is attached rather than cut, so this only fires on a
 /// genuinely enormous page, and when it does the result **says so** (unlike the
-/// silent 12 000-character cut this replaced — see the plan doc, P2).
-const MAX_EXTRACT_CHARS: usize = 400_000;
+/// silent 12 000-character cut this replaced — see the plan doc, P2), and so does
+/// the attachment, with where the text stops.
+///
+/// Raised from 400 000 when the project's own `spec.md` (448 525 characters) came
+/// back without its last five chapters (docs/research/attachment-birth-turn.md F4):
+/// a model-initiated fetch stays bounded well below `/file attach`'s 32 MB, but a
+/// long specification fits.
+const MAX_EXTRACT_CHARS: usize = 1_000_000;
 /// How much of the text goes into the summarizer: it is a single-turn subagent
 /// with its own context, so a 250 000-character page cannot be handed over
 /// whole. When the page exceeds this the summary covers its head, and the full
@@ -134,12 +140,21 @@ impl FetchUrl {
 }
 
 /// The page's extracted text plus what the caller has to be honest about.
+#[derive(Default)]
 pub(crate) struct PageText {
     pub text: String,
     /// The text hit [`MAX_EXTRACT_CHARS`] — this is not the whole page.
     pub truncated: bool,
     /// The page's name, when it states one ([`page_name`]) — the attachment's display name.
     pub title: Option<String>,
+    /// The body was text (plain, Markdown, JSON, CSV, JavaScript) and is given as served, not
+    /// extracted from HTML — the attachment header must not claim markup was removed
+    /// (docs/research/attachment-birth-turn.md F5).
+    pub verbatim: bool,
+    /// How many characters the cut left out, when that is known: only for a verbatim
+    /// body, which is in hand whole. Extraction stops at the ceiling, so an HTML page's
+    /// remainder is never counted — and the note does not guess it.
+    pub dropped_chars: Option<usize>,
 }
 
 /// Picks the text to return from the response body. Non-HTML **text** responses
@@ -149,13 +164,17 @@ pub(crate) struct PageText {
 /// give "failed to extract readable text". HTML → rich extraction
 /// (`web::extract_rich`: prose **plus headings and code blocks**).
 /// `None` — nothing to extract (empty). A pure function — testable without a network.
+///
+/// Any `text/*` that is not HTML or XML counts as text: `text/markdown` went down the
+/// HTML path, found no `<p>` in a Markdown body and answered "no readable text" for a
+/// page that is nothing but (found while testing F5 of
+/// docs/research/attachment-birth-turn.md).
 fn body_to_text(content_type: &str, body: &str) -> Option<PageText> {
     let ct = content_type.to_ascii_lowercase();
     let is_html = ct.contains("html") || ct.contains("xml");
     let is_texty = ct.contains("json")
-        || ct.contains("text/plain")
         || ct.contains("javascript")
-        || ct.contains("csv");
+        || (ct.trim_start().starts_with("text/") && !is_html);
     let looks_json = {
         let t = body.trim_start();
         t.starts_with('{') || t.starts_with('[')
@@ -163,10 +182,13 @@ fn body_to_text(content_type: &str, body: &str) -> Option<PageText> {
     if is_texty || (looks_json && !is_html) {
         let trimmed = body.trim();
         if !trimmed.is_empty() {
+            let total = trimmed.chars().count();
             return Some(PageText {
                 text: truncate_chars(trimmed, MAX_EXTRACT_CHARS),
-                truncated: trimmed.chars().count() > MAX_EXTRACT_CHARS,
+                truncated: total > MAX_EXTRACT_CHARS,
                 title: None,
+                verbatim: true,
+                dropped_chars: (total > MAX_EXTRACT_CHARS).then(|| total - MAX_EXTRACT_CHARS),
             });
         }
     }
@@ -175,7 +197,95 @@ fn body_to_text(content_type: &str, body: &str) -> Option<PageText> {
         truncated: text.chars().count() >= MAX_EXTRACT_CHARS,
         text,
         title: page_name(body),
+        verbatim: false,
+        dropped_chars: None,
     })
+}
+
+/// The last Markdown heading of `text` — a line of one to six `#` and a space, at
+/// most three spaces in, outside a fenced code block — with its byte offset: where a
+/// cut text says it stops (docs/research/attachment-birth-turn.md F3). Rich extraction
+/// writes headings this way (`## …`) and so does a plain `.md` page; a text with none
+/// (JSON, unstructured prose) has no answer, and the note then says less rather than
+/// guessing. A shell comment inside a fence is not a heading, which is what the fence
+/// tracking is for.
+fn last_heading(text: &str) -> Option<(usize, String)> {
+    /// Long enough for any real section title; a "heading" past it is a paragraph.
+    const MAX_HEADING_CHARS: usize = 120;
+    let mut fence: Option<char> = None;
+    let mut found = None;
+    let mut offset = 0;
+    for line in text.split_inclusive('\n') {
+        let start = offset;
+        offset += line.len();
+        let body = line.trim_start_matches(' ');
+        if line.len() - body.len() > 3 {
+            continue; // an indented code block, not a heading or a fence
+        }
+        let marker = body.chars().next();
+        if let Some(open) = fence {
+            if marker == Some(open) && body.starts_with(&open.to_string().repeat(3)) {
+                fence = None;
+            }
+            continue;
+        }
+        if body.starts_with("```") || body.starts_with("~~~") {
+            fence = marker;
+            continue;
+        }
+        let level = body.chars().take_while(|&c| c == '#').count();
+        if !(1..=6).contains(&level) {
+            continue;
+        }
+        let rest = &body[level..];
+        if !rest.starts_with([' ', '\t']) {
+            continue; // `#hashtag`, `#[derive]`
+        }
+        // A closing run of `#` is decoration (CommonMark), not part of the title.
+        let title = rest.trim().trim_end_matches('#').trim_end();
+        if title.is_empty() {
+            continue;
+        }
+        let title = if title.chars().count() > MAX_HEADING_CHARS {
+            format!("{}…", truncate_chars(title, MAX_HEADING_CHARS))
+        } else {
+            title.to_string()
+        };
+        found = Some((start, title));
+    }
+    found
+}
+
+/// What a result says about a page that hit the ceiling (docs/research/attachment-birth-turn.md
+/// F3): the limit; where the received text stops, when the caller can place it; how much
+/// was left out, when that is known; and that no route reaches the rest — a note that
+/// stopped at "this is not the whole page" left the model hunting the end of the
+/// attachment for a chapter that was never in it.
+fn cut_note(
+    loc: &crate::shared::i18n::Locale,
+    page: &PageText,
+    ends_in: Option<(&str, usize, usize)>,
+) -> String {
+    let limit = MAX_EXTRACT_CHARS.to_string();
+    let mut parts = vec![loc.tf("tool.fetch_url.result.truncated", &[("limit", &limit)])];
+    if let Some((heading, at, pages)) = ends_in {
+        parts.push(loc.tf(
+            "tool.fetch_url.result.cut_at_heading",
+            &[
+                ("heading", heading),
+                ("page", &at.to_string()),
+                ("pages", &pages.to_string()),
+            ],
+        ));
+    }
+    if let Some(n) = page.dropped_chars {
+        parts.push(loc.tf(
+            "tool.fetch_url.result.cut_dropped",
+            &[("n", &n.to_string())],
+        ));
+    }
+    parts.push(loc.t("tool.fetch_url.result.cut_door").to_string());
+    parts.join(" ")
 }
 
 /// The page's name for the attachment: the name a second field confirms
@@ -479,8 +589,10 @@ impl FetchUrl {
             ),
         };
         if page.truncated {
+            // The text is right here in the result, so there is no page to place
+            // its end on — the limit, the remainder and the door still apply.
             out.push('\n');
-            out.push_str(ctx.loc.t("tool.fetch_url.result.truncated"));
+            out.push_str(&cut_note(ctx.loc, page, None));
         }
         ToolOutcome::text(out).with_prefill(prefill)
     }
@@ -499,11 +611,40 @@ impl FetchUrl {
     ) -> ToolOutcome {
         let base = page.title.clone().unwrap_or_else(|| url.to_string());
         let name = unique_name(&base, url, &ctx.attachments);
-        let header = ctx.loc.tf(
-            "tool.fetch_url.attachment.header",
-            &[("name", &name), ("url", url)],
-        );
-        let text = format!("{header}\n\n{}", page.text);
+        let header_key = if page.verbatim {
+            "tool.fetch_url.attachment.header_verbatim"
+        } else {
+            "tool.fetch_url.attachment.header"
+        };
+        let mut header = ctx.loc.tf(header_key, &[("name", &name), ("url", url)]);
+        // A cut is stated **in the attachment**, twice (F3): in the header — which the
+        // pinned excerpt shows on every later turn, when this result is long gone from
+        // view — and where the text stops, so the last page ends on the marker rather
+        // than on half a word.
+        let limit = MAX_EXTRACT_CHARS.to_string();
+        let ends_in = page.truncated.then(|| last_heading(&page.text)).flatten();
+        if page.truncated {
+            header.push('\n');
+            header.push_str(&match &ends_in {
+                Some((_, heading)) => ctx.loc.tf(
+                    "tool.fetch_url.attachment.truncated_heading",
+                    &[("limit", &limit), ("heading", heading)],
+                ),
+                None => ctx
+                    .loc
+                    .tf("tool.fetch_url.attachment.truncated", &[("limit", &limit)]),
+            });
+        }
+        let mut text = format!("{header}\n\n{}", page.text);
+        if page.truncated {
+            text.push_str("\n\n");
+            text.push_str(
+                &ctx.loc
+                    .tf("tool.fetch_url.attachment.cut_marker", &[("limit", &limit)]),
+            );
+        }
+        // The heading's place in the attachment, past the header and its blank line.
+        let ends_in = ends_in.map(|(at, heading)| (header.len() + 2 + at, heading));
         // Through the shared rule rather than hardcoding `ByReference`: that is a
         // *consequence* of the threshold above, and the orchestrator decides
         // `/file attach` the same way, so the two cannot drift.
@@ -529,13 +670,31 @@ impl FetchUrl {
                 }
             }
         }
+        // "The whole page" only when it is: a cut page is attached as what was received.
+        let attached_key = if page.truncated {
+            "tool.fetch_url.result.attached_cut"
+        } else {
+            "tool.fetch_url.result.attached"
+        };
         out.push_str(&ctx.loc.tf(
-            "tool.fetch_url.result.attached",
+            attached_key,
             &[("name", &name), ("pages", &pages.to_string())],
         ));
+        // Only the route that works now is offered (F1): the file is indexed after the
+        // turn lands, and the search tool's own description pulls toward it for exactly
+        // this kind of file, so the dead route is named, not just left out.
+        out.push(' ');
+        out.push_str(ctx.loc.t("tool.attachment.no_search_this_turn"));
         if page.truncated {
+            let ends_in = ends_in.as_ref().map(|(at, heading)| {
+                (
+                    heading.as_str(),
+                    attachment.page_at(ctx.attachment_cfg.page_tokens, *at),
+                    pages,
+                )
+            });
             out.push('\n');
-            out.push_str(ctx.loc.t("tool.fetch_url.result.truncated"));
+            out.push_str(&cut_note(ctx.loc, &page, ends_in));
         }
         ToolOutcome::with_effects(out, vec![ChatEffect::AddAttachment(Box::new(attachment))])
             .with_prefill(prefill)
@@ -732,8 +891,8 @@ mod tests {
         let body = "Абзац с содержательным текстом страницы. ".repeat(2000);
         PageText {
             text: format!("НАЧАЛО\n{body}\nКОНЕЦ"),
-            truncated: false,
             title: title.map(str::to_string),
+            ..PageText::default()
         }
     }
 
@@ -783,12 +942,25 @@ mod tests {
             "got: {}",
             out.result
         );
+        assert!(out.result.contains(&pages), "no page count: {}", out.result);
+        // Search is not a route in this turn — the file is indexed after the turn
+        // lands — so the only mention of it is the sentence saying so
+        // (docs/research/attachment-birth-turn.md F1).
+        let no_search = ctx.loc.t("tool.attachment.no_search_this_turn");
+        assert!(out.result.contains(no_search), "got: {}", out.result);
         assert!(
-            out.result.contains("attachment_search"),
-            "got: {}",
+            !out.result
+                .replace(no_search, "")
+                .contains("attachment_search"),
+            "search offered as a route: {}",
             out.result
         );
-        assert!(out.result.contains(&pages), "no page count: {}", out.result);
+        // Nothing was cut, so nothing says so.
+        let limit = MAX_EXTRACT_CHARS.to_string();
+        let marker = ctx
+            .loc
+            .tf("tool.fetch_url.attachment.cut_marker", &[("limit", &limit)]);
+        assert!(!att.text.contains(&marker), "a whole page marked as cut");
     }
 
     #[tokio::test]
@@ -841,29 +1013,216 @@ mod tests {
         );
     }
 
-    /// The size ceiling stays, but it is announced — the other half of P2.
+    /// The size ceiling stays, but it is announced — the other half of P2 — in the
+    /// result **and** in the attachment, with the door closed: nothing fetches the rest
+    /// (docs/research/attachment-birth-turn.md F3).
     #[tokio::test]
     async fn hitting_the_size_ceiling_is_announced() {
-        use crate::shared::i18n::{Lang, locale};
         let (_d, ctx) = ctx_with_engine(Arc::new(MockBackend::scripted(vec![])));
+        let limit = MAX_EXTRACT_CHARS.to_string();
+        let note = ctx
+            .loc
+            .tf("tool.fetch_url.result.truncated", &[("limit", &limit)]);
+        let door = ctx.loc.t("tool.fetch_url.result.cut_door");
         let mut page = big_page(None);
         page.truncated = true;
         let out = FetchUrl::default()
             .attached_result(&ctx, "https://example.com", None, false, page)
             .await;
-        let marker = locale(Lang::Ru).t("tool.fetch_url.result.truncated");
-        assert!(out.result.contains(marker), "got: {}", out.result);
+        assert!(out.result.contains(&note), "got: {}", out.result);
+        assert!(out.result.contains(door), "got: {}", out.result);
+        // A cut page is not "the whole page".
+        assert!(
+            !out.result.contains(
+                ctx.loc
+                    .t("tool.fetch_url.result.attached")
+                    .split('«')
+                    .next()
+                    .unwrap()
+            ),
+            "a cut page announced as whole: {}",
+            out.result
+        );
+        let [ChatEffect::AddAttachment(att)] = out.effects.as_slice() else {
+            panic!("no attachment effect: {:?}", out.effects);
+        };
+        // The attachment says it too — its header is what the pinned excerpt shows on
+        // every later turn — and its last page ends on the marker, not mid-word.
+        let header_note = ctx
+            .loc
+            .tf("tool.fetch_url.attachment.truncated", &[("limit", &limit)]);
+        let excerpt = att.excerpt(ctx.attachment_cfg.excerpt_tokens);
+        assert!(excerpt.contains(&header_note), "{excerpt}");
+        let marker = ctx
+            .loc
+            .tf("tool.fetch_url.attachment.cut_marker", &[("limit", &limit)]);
+        let pages = att.page_count(ctx.attachment_cfg.page_tokens);
+        let last = att.page(ctx.attachment_cfg.page_tokens, pages).unwrap();
+        assert!(last.trim_end().ends_with(&marker), "{last}");
 
         // The same on the path where the page fits and is returned inline.
         let small = PageText {
             text: "короткий текст".into(),
             truncated: true,
-            title: None,
+            ..PageText::default()
         };
         let inline = FetchUrl::default()
             .inline_result(&ctx, "https://example.com", None, false, &small)
             .await;
-        assert!(inline.result.contains(marker), "got: {}", inline.result);
+        assert!(inline.result.contains(&note), "got: {}", inline.result);
+        assert!(inline.result.contains(door), "got: {}", inline.result);
+    }
+
+    /// The transcript that prompted F3: the model was told "not the whole page" and
+    /// went hunting the end of the attachment for a chapter the cut had removed. The
+    /// note now names the section the text stops in, the page that section starts
+    /// on — the one `attachment_read` returns it on — and, for a body taken verbatim,
+    /// how much never arrived.
+    #[tokio::test]
+    async fn a_cut_page_says_where_it_ends() {
+        let (_d, ctx) = ctx_with_engine(Arc::new(MockBackend::scripted(vec![])));
+        let filler = "Строка содержательного текста спецификации.\n".repeat(400);
+        let text = format!(
+            "# Спецификация\n\n## 1. Обзор\n\n{filler}\n```sh\n# не заголовок, а комментарий\n```\n\n\
+             ### 12.3. Резервное копирование\n\n{filler}и оборв"
+        );
+        let page = PageText {
+            text,
+            truncated: true,
+            verbatim: true,
+            dropped_chars: Some(48_564),
+            ..PageText::default()
+        };
+        let out = FetchUrl::default()
+            .attached_result(&ctx, "https://example.com/spec.md", None, false, page)
+            .await;
+        let [ChatEffect::AddAttachment(att)] = out.effects.as_slice() else {
+            panic!("no attachment effect: {:?}", out.effects);
+        };
+        let heading = "12.3. Резервное копирование";
+        let tokens = ctx.attachment_cfg.page_tokens;
+        let pages = att.page_count(tokens);
+        let at = (1..=pages)
+            .find(|&n| att.page(tokens, n).unwrap().contains("### 12.3."))
+            .expect("the heading is on some page");
+        assert!(at > 1, "the fixture must put the heading past page 1");
+        let expected = ctx.loc.tf(
+            "tool.fetch_url.result.cut_at_heading",
+            &[
+                ("heading", heading),
+                ("page", &at.to_string()),
+                ("pages", &pages.to_string()),
+            ],
+        );
+        assert!(out.result.contains(&expected), "got: {}", out.result);
+        assert!(
+            out.result.contains(
+                &ctx.loc
+                    .tf("tool.fetch_url.result.cut_dropped", &[("n", "48564")])
+            ),
+            "got: {}",
+            out.result
+        );
+        // The fenced shell comment came later in the fixture's first half and must not
+        // win; the section named in the header is the real one.
+        let header_note = ctx.loc.tf(
+            "tool.fetch_url.attachment.truncated_heading",
+            &[
+                ("limit", &MAX_EXTRACT_CHARS.to_string()),
+                ("heading", heading),
+            ],
+        );
+        assert!(att.text.contains(&header_note), "{}", att.text);
+        // A verbatim body is not described as extracted from HTML (F5).
+        let verbatim = ctx.loc.tf(
+            "tool.fetch_url.attachment.header_verbatim",
+            &[("name", &att.name), ("url", "https://example.com/spec.md")],
+        );
+        assert!(att.text.starts_with(&verbatim), "{}", att.text);
+    }
+
+    /// An HTML page's remainder is never counted — extraction stops at the ceiling —
+    /// so its note gives no figure rather than a guessed one; its header keeps the
+    /// "extracted from HTML" line, which is true there.
+    #[tokio::test]
+    async fn an_html_cut_gives_no_remainder_figure() {
+        let (_d, ctx) = ctx_with_engine(Arc::new(MockBackend::scripted(vec![])));
+        let mut page = big_page(Some("Страница"));
+        page.truncated = true;
+        let out = FetchUrl::default()
+            .attached_result(&ctx, "https://example.com/p", None, false, page)
+            .await;
+        let dropped = ctx.loc.t("tool.fetch_url.result.cut_dropped");
+        let (dropped_head, _) = dropped.split_once("{n}").unwrap();
+        assert!(!out.result.contains(dropped_head), "got: {}", out.result);
+        let [ChatEffect::AddAttachment(att)] = out.effects.as_slice() else {
+            panic!("no attachment effect: {:?}", out.effects);
+        };
+        let html = ctx.loc.tf(
+            "tool.fetch_url.attachment.header",
+            &[("name", "Страница"), ("url", "https://example.com/p")],
+        );
+        assert!(att.text.starts_with(&html), "{}", att.text);
+    }
+
+    /// What counts as the heading a cut text stops in: Markdown ATX headings, outside
+    /// fences, at most three spaces in; not `#[derive]`, not `#tag`, not an empty `#`.
+    #[test]
+    fn last_heading_reads_markdown_headings_outside_fences() {
+        let last = |t: &str| last_heading(t).map(|(_, h)| h);
+        assert_eq!(last("# A\ntext\n## B ##\nmore"), Some("B".into()));
+        assert_eq!(last("## A\n```sh\n# comment\n```\n"), Some("A".into()));
+        assert_eq!(last("## A\n~~~\n# comment\n~~~\n"), Some("A".into()));
+        // A fence opened with backticks is not closed by tildes.
+        assert_eq!(last("## A\n```\n~~~\n# still code\n"), Some("A".into()));
+        assert_eq!(last("#[derive(Debug)]\n#tag\n#\n####### seven"), None);
+        assert_eq!(
+            last("    # indented code\n   ### three spaces"),
+            Some("three spaces".into())
+        );
+        assert_eq!(last("plain prose, no structure"), None);
+        // The offset is the heading line's own start.
+        let text = "intro\n## Here\nbody";
+        let (at, _) = last_heading(text).unwrap();
+        assert!(text[at..].starts_with("## Here"));
+        // A paragraph-long "heading" is clipped.
+        let long = format!("# {}", "слово ".repeat(60));
+        let got = last(&long).unwrap();
+        assert!(got.chars().count() <= 121 && got.ends_with('…'), "{got}");
+    }
+
+    /// A verbatim body over the ceiling knows how much it lost; an HTML body does not
+    /// pretend to (F3, F5).
+    #[test]
+    fn a_verbatim_body_reports_what_the_cut_left_out() {
+        let body = "x".repeat(MAX_EXTRACT_CHARS + 1234);
+        let page = body_to_text("text/plain; charset=utf-8", &body).unwrap();
+        assert!(page.verbatim && page.truncated);
+        assert_eq!(page.dropped_chars, Some(1234));
+        assert_eq!(page.text.chars().count(), MAX_EXTRACT_CHARS);
+
+        let small = body_to_text("text/plain", "# Title\n\ntext").unwrap();
+        assert!(small.verbatim && !small.truncated && small.dropped_chars.is_none());
+
+        // A Markdown page is text too: on the HTML path it had no `<p>` to extract
+        // and came back as "no readable text".
+        for ct in [
+            "text/markdown; charset=utf-8",
+            "text/x-markdown",
+            "text/csv",
+        ] {
+            let md = body_to_text(ct, "# Title\n\nA paragraph.\n\n## Next\n\nMore.")
+                .unwrap_or_else(|| panic!("{ct}: no text"));
+            assert!(md.verbatim, "{ct}");
+            assert!(md.text.contains("## Next"), "{ct}: {}", md.text);
+        }
+
+        let html = body_to_text(
+            "text/html",
+            "<html><body><p>Достаточно длинный абзац, чтобы пройти порог отсева.</p></body></html>",
+        )
+        .unwrap();
+        assert!(!html.verbatim && html.dropped_chars.is_none());
     }
 
     /// A page within the budget keeps the previous behaviour: the text itself,
@@ -873,8 +1232,8 @@ mod tests {
         let (_d, ctx) = ctx_with_engine(Arc::new(MockBackend::scripted(vec![])));
         let page = PageText {
             text: "Небольшая страница целиком.".into(),
-            truncated: false,
             title: Some("t".into()),
+            ..PageText::default()
         };
         let out = FetchUrl::default()
             .inline_result(&ctx, "https://example.com", None, false, &page)
@@ -1326,8 +1685,7 @@ mod tests {
         let (_d, ctx) = ctx_with_engine(Arc::new(UsageBackend));
         let small = PageText {
             text: "A small page.".into(),
-            truncated: false,
-            title: None,
+            ..PageText::default()
         };
         let inline = FetchUrl::default()
             .inline_result(&ctx, "https://example.com", None, true, &small)
@@ -1700,5 +2058,113 @@ mod tests {
             .await
             .unwrap();
         assert!(out.result.contains("Содержимое"), "got: {}", out.result);
+    }
+
+    /// The page behind docs/research/attachment-birth-turn.md, for real: under the old
+    /// 400 000-character ceiling it lost §13–§17; under the new one it arrives whole,
+    /// described as the text it is, and the result offers no search in its birth turn.
+    #[tokio::test]
+    #[ignore = "requires network access"]
+    async fn live_the_spec_arrives_whole() {
+        let (_d, ctx) = ctx_with_engine(Arc::new(MockBackend::scripted(vec![])));
+        let url = "https://raw.githubusercontent.com/vshylov/mindfork-rs/main/spec.md";
+        let out = FetchUrl::default()
+            .invoke(&ctx, serde_json::json!({"url": url, "summarize": false}))
+            .await
+            .unwrap();
+        let [ChatEffect::AddAttachment(att)] = out.effects.as_slice() else {
+            panic!("not attached: {}", out.result);
+        };
+        eprintln!(
+            "spec: {} chars, {} pages\n--- result ---\n{}",
+            att.text.chars().count(),
+            att.page_count(ctx.attachment_cfg.page_tokens),
+            out.result
+        );
+        assert!(
+            att.text.contains("## 17. Self-model"),
+            "the last chapter is missing"
+        );
+        let limit = MAX_EXTRACT_CHARS.to_string();
+        assert!(
+            !out.result.contains(
+                &ctx.loc
+                    .tf("tool.fetch_url.result.truncated", &[("limit", &limit)])
+            ),
+            "{}",
+            out.result
+        );
+        let verbatim = ctx.loc.tf(
+            "tool.fetch_url.attachment.header_verbatim",
+            &[("name", url), ("url", url)],
+        );
+        assert!(att.text.starts_with(&verbatim), "{}", &att.text[..400]);
+        let no_search = ctx.loc.t("tool.attachment.no_search_this_turn");
+        assert!(
+            !out.result
+                .replace(no_search, "")
+                .contains("attachment_search"),
+            "{}",
+            out.result
+        );
+    }
+
+    /// Two real pages over the new ceiling: a plain-text book (verbatim — the note
+    /// counts what was left out, and there is no Markdown heading to name) and a long
+    /// HTML book (extracted — a heading to name, no remainder figure). Both
+    /// attachments open with the cut and end on the marker.
+    #[tokio::test]
+    #[ignore = "requires network access"]
+    async fn live_pages_over_the_ceiling_say_where_they_end() {
+        let (_d, ctx) = ctx_with_engine(Arc::new(MockBackend::scripted(vec![])));
+        let limit = MAX_EXTRACT_CHARS.to_string();
+        let marker = ctx
+            .loc
+            .tf("tool.fetch_url.attachment.cut_marker", &[("limit", &limit)]);
+        let dropped = ctx.loc.t("tool.fetch_url.result.cut_dropped");
+        let (dropped_head, _) = dropped.split_once("{n}").unwrap();
+        let (heading_head, _) = ctx
+            .loc
+            .t("tool.fetch_url.result.cut_at_heading")
+            .split_once("{heading}")
+            .unwrap();
+        for (url, verbatim) in [
+            ("https://www.gutenberg.org/cache/epub/2600/pg2600.txt", true),
+            ("https://doc.rust-lang.org/book/print.html", false),
+        ] {
+            let out = FetchUrl::default()
+                .invoke(&ctx, serde_json::json!({"url": url, "summarize": false}))
+                .await
+                .unwrap();
+            let [ChatEffect::AddAttachment(att)] = out.effects.as_slice() else {
+                panic!("{url}: not attached: {}", out.result);
+            };
+            let tokens = ctx.attachment_cfg.page_tokens;
+            let pages = att.page_count(tokens);
+            let last = att.page(tokens, pages).unwrap();
+            eprintln!(
+                "{url}: {} chars, {pages} pages\n--- result ---\n{}\n--- header ---\n{}\n--- last page tail ---\n{}",
+                att.text.chars().count(),
+                out.result,
+                att.text.lines().take(4).collect::<Vec<_>>().join("\n"),
+                last.chars()
+                    .rev()
+                    .take(300)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect::<String>()
+            );
+            assert!(last.trim_end().ends_with(&marker), "{url}");
+            assert!(
+                out.result
+                    .contains(ctx.loc.t("tool.fetch_url.result.cut_door")),
+                "{url}"
+            );
+            assert_eq!(out.result.contains(dropped_head), verbatim, "{url}");
+            if !verbatim {
+                assert!(out.result.contains(heading_head), "{url}: no heading named");
+            }
+        }
     }
 }

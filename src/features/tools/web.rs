@@ -899,21 +899,28 @@ fn collect_blocks(root: scraper::ElementRef, block_sel: &Selector) -> Vec<Block>
 /// Joins rich-extraction blocks into the final text, truncated to `max_chars`.
 fn join_blocks(blocks: Vec<Block>, max_chars: usize) -> String {
     let mut out = String::new();
+    // A running count: re-counting the growing output per block was quadratic in
+    // the page — measured on a 4 698-block book, 87 ms against 17 ms at the
+    // 1 000 000-character ceiling (docs/research/attachment-birth-turn.md F4).
+    let mut chars = 0usize;
     let mut prev: Option<Kind> = None;
     for b in blocks {
-        if out.chars().count() >= max_chars {
+        if chars >= max_chars {
             break;
         }
         if let Some(p) = prev {
             // Consecutive list items read as a list; everything else gets a blank
             // line, so headings and fences land as valid Markdown.
-            out.push_str(if p == Kind::Item && b.kind == Kind::Item {
+            let sep = if p == Kind::Item && b.kind == Kind::Item {
                 "\n"
             } else {
                 "\n\n"
-            });
+            };
+            out.push_str(sep);
+            chars += sep.len();
         }
         out.push_str(&b.text);
+        chars += b.text.chars().count();
         prev = Some(b.kind);
     }
     truncate_chars(&out, max_chars)

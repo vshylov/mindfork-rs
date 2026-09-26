@@ -97,6 +97,13 @@ pub struct ToolContext {
     /// attachment's text can be hundreds of KB. Read by `attachment_read`; empty
     /// for background tasks (they have no chat). See spec §9.7.
     pub attachments: std::sync::Arc<[crate::entities::attachment::Attachment]>,
+    /// The attachments this turn's own tools produced (`fetch_url`, `youtube_watch`),
+    /// mirrored into [`Self::attachments`] as their rounds end. Such a file is not
+    /// indexed before the turn lands, so `attachment_search` names it as *attached in
+    /// this turn* rather than as having no index at all
+    /// (docs/research/attachment-birth-turn.md F2). A sub-agent inherits the list with
+    /// the clone: it runs inside the same turn.
+    pub born_this_turn: std::sync::Arc<[Uuid]>,
     /// Attachment budget and page size (`config.attachments`): the page size for
     /// `attachment_read`, and — for a tool that produces an attachment of its own
     /// — the same thresholds the orchestrator decides the mode with.
@@ -350,6 +357,9 @@ impl ToolContext {
             effective_sampling: turn.effective_sampling,
             last_user_message_at: turn.last_user_message_at,
             attachments: turn.attachments,
+            // A turn starts with nothing of its own attached; `sync_attachments`
+            // fills this as the turn's tools produce files.
+            born_this_turn: std::sync::Arc::from(Vec::new()),
             attachment_cfg: params.attachments,
             history: turn.history,
             history_page_tokens: params.history_page_tokens,
