@@ -2888,7 +2888,9 @@ every reversible check first. Full record —
   (no `deny_unknown_fields`), so a downgrade reads the same file.
 - **The `CHANGELOG` section had two `### Changed` headings** — the `setup --verify`
   port hint had been appended under a second one after `Fixed`. Merged into one
-  before the rename; the notes the release job builds are the section verbatim.
+  before the rename; the notes the release job builds are the section verbatim,
+  followed by the site/install-guide footer `release_guard.py` has appended since
+  2026-07-26.
 - **The release post** leads with the two things that change what a user can do —
   the extra-arguments table (VRAM **and** the speed it costs: 141.8 → 28.0 tok/s at
   `--n-cpu-moe 20`, from managed-extra-args.md §7) and the page read whole and
@@ -2896,3 +2898,30 @@ every reversible check first. Full record —
   `llms.txt` regenerated from its front matter; the site checked and built with the
   pinned Zola 0.23.6 after `site_sync_assets.py`. `site.yml` holds the deploy until
   the release is public, as for 0.11.0 and 0.11.1.
+- **The draft, checked before anyone else could see it** (§6 step 5). `v0.11.2` sat
+  on the merge commit `39fa402e`, which was `origin/main`; `release.yml` was green in
+  all six jobs and left a draft that was not a prerelease, with eight assets. Its
+  notes were the CHANGELOG's `[0.11.2]` section (60 lines) plus the standard footer.
+  All seven lines of `sha256sums.txt` equalled GitHub's own digest per asset.
+  `install.sh` was byte for byte 0.11.1's (`d0c4a156…`) — nothing in `packaging/`
+  changed but the installer's two privacy pages — and the job's install step said
+  `passed=27 failed=0` and `installed: mindfork 0.11.2 (expected: mindfork 0.11.2)`.
+  `gh attestation verify --owner vshylov` passed for the Windows and Linux archives.
+  The Windows archive's binary answered `mindfork 0.11.2` and ran `mindfork stats`
+  over a copy of the development data (240 chats, 1 228 messages, a 131 MB
+  `data.db`): exit 0, the copy deleted after. **Not run**: the TUI (it needs a real
+  terminal) and the pod-shape install under `--cap-drop CHOWN` (no Docker daemon on
+  this machine; the script unchanged, its 27 scenarios green in the job).
+- **Two false alarms of the checker's own making**, for the next release: the names
+  in `sha256sums.txt` carry a `./` prefix, and the notes end in the footer above —
+  a comparison that ignores either reports every asset mismatched and the notes
+  different. Neither was a defect in the draft.
+- **Published, and the numbers of it.** The owner published at 13:47:40Z on
+  2026-09-26 (immutable); `crates-io.yml` 13:47:41Z → 13:50:19Z, `mindfork 0.11.2`
+  on the registry at 13:50:14Z (4 054 784 bytes, the default version); `Site`
+  started by itself one second after `crates.io` completed and deployed at
+  13:50:54Z — **3 min 14 s after the publication** (0.11.1: 3 min 25 s; 0.11.0:
+  3 min 37 s). The hold on the merge had shown as before: "Is this version out?"
+  green, the deploy skipped. From outside: the post answers 200, the home page's
+  structured data says `"softwareVersion": "0.11.2"`, `/llms.txt` lists the post,
+  and `releases/latest` — the README's install line — resolves to `v0.11.2`.
