@@ -14,6 +14,16 @@ split by subsystem.
 
 ## [Unreleased]
 
+## [0.11.2] — 2026-09-26
+
+**A bigger model on a smaller card, and a long page read whole.** The managed
+`llama-server` now takes the arguments the settings have no field for — measured,
+`--n-cpu-moe 20` brings a 26B mixture-of-experts model down from 17.3 GB of video
+memory to 8.4 GB. And a page the assistant fetches arrives whole up to a million
+characters and can be searched in the same reply: asked about the last chapter of
+an 81-page specification, the assistant finds it with one search instead of
+guessing its way through the pages.
+
 ### Added
 - **Extra arguments for the managed `llama-server`.** Each managed section —
   the assistant's, impersonation's and the embedder's — ends with an *Extra
@@ -29,6 +39,10 @@ split by subsystem.
 ### Changed
 - **A fetched page can be up to 1 000 000 characters** (was 400 000), so a long
   specification — this project's own among them — now arrives whole.
+- **`mindfork setup --verify` says how to move a busy port.** When something
+  else already listens where a server would — on RunPod that is the image's own
+  `nginx` on 8001, the embedding server's default — the refusal now ends with
+  the `--set` that moves that server's port.
 
 ### Fixed
 - **A page the assistant just fetched can be searched in the same reply.** Its
@@ -62,12 +76,6 @@ split by subsystem.
   that line and showed `Invalid URI`: the indexing spinner redrew the screen so
   often that the terminal never updated where the links were. The spinner now
   redraws only when its glyph changes, and turns at an even pace.
-
-### Changed
-- **`mindfork setup --verify` says how to move a busy port.** When something
-  else already listens where a server would — on RunPod that is the image's own
-  `nginx` on 8001, the embedding server's default — the refusal now ends with
-  the `--set` that moves that server's port.
 
 ## [0.11.1] — 2026-09-22
 
@@ -2678,7 +2686,8 @@ history is in the [docs/journal/](docs/journal/) log).
   (notes/RAG/self-model, sqlite-vec, per-profile isolation). Schema format is
   v1; schema versioning and migrations are formalized in later releases.
 
-[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.11.1...HEAD
+[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.11.2...HEAD
+[0.11.2]: https://github.com/vshylov/mindfork-rs/compare/v0.11.1...v0.11.2
 [0.11.1]: https://github.com/vshylov/mindfork-rs/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/vshylov/mindfork-rs/compare/v0.10.2...v0.11.0
 [0.10.2]: https://github.com/vshylov/mindfork-rs/compare/v0.10.1...v0.10.2
