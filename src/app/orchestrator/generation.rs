@@ -655,15 +655,19 @@ impl Orchestrator {
         let attach_cfg = self.config.attachments;
         let compact_cfg = self.config.compaction.clone();
         // Which attached files have a semantic index — the pinned block only
-        // offers `attachment_search` for those (spec §9.7). One indexed lookup,
-        // and only when the chat has attachments at all.
+        // offers `attachment_search` for those (spec §9.7), and for one whose
+        // index is still being built, which a search waits for (G5 of
+        // docs/research/attachment-birth-turn.md). One indexed lookup, and only
+        // when the chat has attachments at all.
         let indexed: Vec<Uuid> = if chat_ref.attachments.is_empty() {
             Vec::new()
         } else {
-            self.storage
-                .db()
-                .attachment_indexed_ids(active_id)
-                .unwrap_or_default()
+            searchable_ids(
+                &self.storage,
+                &self.index_board,
+                active_id,
+                &chat_ref.attachments,
+            )
         };
         // The other chats of this profile, for `chat_search`/`chat_read`
         // (spec §9.11) — built only when the turn actually offers the pair,
@@ -2429,13 +2433,16 @@ impl TurnLoop<'_> {
         // exists, will ask for it. Without this the tool result would be
         // an instruction the turn cannot carry out: the effect itself is
         // applied to `Chat` by the orchestrator only when the turn ends
-        // (docs/history/youtube-transcript.md §3 F1).
+        // (docs/history/youtube-transcript.md §3 F1). Its search index starts
+        // here too, so `attachment_search` has one to wait for in this turn
+        // (docs/research/attachment-birth-turn.md G2).
         //
         // Once per round, not per call: within a round the model has
         // already issued its calls, so finer granularity would buy
         // nothing. The loop still never touches `Chat` — this is its own
         // snapshot.
-        sync_attachments(&mut self.ctx, &self.effects);
+        let fresh = sync_attachments(&mut self.ctx, &self.effects);
+        start_attachment_indexes(&self.ctx, &fresh, self.shared.ui_loc, &self.shared.evt_tx);
         sync_files(&mut self.ctx, &self.effects);
         // …and the numbered list over them, last, because it reads both. It re-derives
         // rather than re-numbers: `#N` and the `/w/in` name the pinned block promised
@@ -3226,10 +3233,12 @@ impl TurnLoop<'_> {
         let indexed: Vec<Uuid> = if ctx.attachments.is_empty() {
             Vec::new()
         } else {
-            ctx.storage
-                .db()
-                .attachment_indexed_ids(ctx.chat_id)
-                .unwrap_or_default()
+            searchable_ids(
+                &ctx.storage,
+                &ctx.index_board,
+                ctx.chat_id,
+                &ctx.attachments,
+            )
         };
         // The chat's files as the child sees them (§12 T13): its context is the parent's,
         // so the list is the same one — and the block is built for a child that actually
@@ -5024,11 +5033,12 @@ fn ext_of(mime: &str) -> &'static str {
 /// Rebuilds the turn's attachment snapshot from the `AddAttachment` effects the
 /// round produced, applying the same dedupe-by-source rule the orchestrator will
 /// apply when it persists them — so what the model can read now and what ends up
-/// in the chat file are the same set.
+/// in the chat file are the same set. Returns the ids it mirrored for the first
+/// time, for [`start_attachment_indexes`].
 ///
 /// A no-op in the overwhelming majority of rounds (no such effect), so it checks
 /// before rebuilding rather than cloning the list every round.
-pub(super) fn sync_attachments(ctx: &mut ToolContext, effects: &[ChatEffect]) {
+pub(super) fn sync_attachments(ctx: &mut ToolContext, effects: &[ChatEffect]) -> Vec<Uuid> {
     let added: Vec<&crate::entities::attachment::Attachment> = effects
         .iter()
         .filter_map(|e| match e {
@@ -5037,22 +5047,80 @@ pub(super) fn sync_attachments(ctx: &mut ToolContext, effects: &[ChatEffect]) {
         })
         .collect();
     if added.is_empty() {
-        return;
+        return Vec::new();
     }
     let mut list: Vec<crate::entities::attachment::Attachment> = ctx.attachments.to_vec();
-    let mut born: Vec<Uuid> = ctx.born_this_turn.to_vec();
+    let mut fresh = Vec::new();
     for a in added {
         if list.iter().any(|x| x.id == a.id) {
             continue; // already mirrored by an earlier round
         }
         list.retain(|x| x.source != a.source);
         list.push(a.clone());
-        // Not indexed before the turn lands — `attachment_search` says so by name
-        // (docs/research/attachment-birth-turn.md F2).
-        born.push(a.id);
+        fresh.push(a.id);
     }
     ctx.attachments = list.into();
-    ctx.born_this_turn = born.into();
+    fresh
+}
+
+/// The attachments `attachment_search` can reach: those with an index, and those
+/// whose index is being built — the search waits for it (G5 of
+/// docs/research/attachment-birth-turn.md). What the pinned block offers search for.
+pub(super) fn searchable_ids(
+    storage: &crate::shared::storage::Storage,
+    board: &crate::features::attachment_index::IndexBoard,
+    chat_id: Uuid,
+    attachments: &[crate::entities::attachment::Attachment],
+) -> Vec<Uuid> {
+    let mut ids = storage
+        .db()
+        .attachment_indexed_ids(chat_id)
+        .unwrap_or_default();
+    ids.extend(
+        attachments
+            .iter()
+            .filter(|a| board.building(a.id).is_some() && !ids.contains(&a.id))
+            .map(|a| a.id)
+            .collect::<Vec<_>>(),
+    );
+    ids
+}
+
+/// Starts the search index of each attachment the round just mirrored — at the end
+/// of the round that produced it, not when the turn lands, so a search later in the
+/// same turn has an index to wait for instead of none at all
+/// (docs/research/attachment-birth-turn.md G2). Only a by-reference file is indexed
+/// (fork F13: an inline one is in the prompt whole). The board's claim is the only
+/// one: a sub-agent's attachment reaches its parent's round end too, and the landing
+/// starts only what nobody has.
+pub(super) fn start_attachment_indexes(
+    ctx: &ToolContext,
+    ids: &[Uuid],
+    loc: &'static crate::shared::i18n::Locale,
+    evt_tx: &UnboundedSender<AppEvent>,
+) {
+    for a in ctx.attachments.iter().filter(|a| ids.contains(&a.id)) {
+        if a.mode != crate::entities::attachment::AttachMode::ByReference
+            || !ctx.index_board.begin(a.id, false)
+        {
+            continue;
+        }
+        super::attachments::spawn_attachment_index(super::attachments::AttachIndexTask {
+            embedder: ctx.embedder.clone(),
+            storage: ctx.storage.clone(),
+            params: ctx.chunk_params,
+            loc,
+            evt_tx: evt_tx.clone(),
+            board: ctx.index_board.clone(),
+            index: super::attachments::AttachIndex {
+                chat_id: ctx.chat_id,
+                attachment_id: a.id,
+                name: a.name.clone(),
+                source: a.source.clone(),
+                text: a.text.clone(),
+            },
+        });
+    }
 }
 
 /// Rebuilds the turn's stored-file snapshot from the `AddChatFile` effects so far, with

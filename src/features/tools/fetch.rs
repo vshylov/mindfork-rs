@@ -680,11 +680,10 @@ impl FetchUrl {
             attached_key,
             &[("name", &name), ("pages", &pages.to_string())],
         ));
-        // Only the route that works now is offered (F1): the file is indexed after the
-        // turn lands, and the search tool's own description pulls toward it for exactly
-        // this kind of file, so the dead route is named, not just left out.
+        // Search is offered only where an index is coming (G4): it is being built
+        // from the end of this round, and a search waits for it.
         out.push(' ');
-        out.push_str(ctx.loc.t("tool.attachment.no_search_this_turn"));
+        out.push_str(super::attachment::search_route(ctx));
         if page.truncated {
             let ends_in = ends_in.as_ref().map(|(at, heading)| {
                 (
@@ -943,16 +942,28 @@ mod tests {
             out.result
         );
         assert!(out.result.contains(&pages), "no page count: {}", out.result);
-        // Search is not a route in this turn — the file is indexed after the turn
-        // lands — so the only mention of it is the sentence saying so
-        // (docs/research/attachment-birth-turn.md F1).
-        let no_search = ctx.loc.t("tool.attachment.no_search_this_turn");
-        assert!(out.result.contains(no_search), "got: {}", out.result);
+        // Search is offered as the index being built for it — with an embedder
+        // configured, as the test context has — and a search waits for it
+        // (docs/research/attachment-birth-turn.md G4).
+        let route = super::super::attachment::search_route(&ctx);
+        assert_eq!(route, ctx.loc.t("tool.attachment.search_indexing"));
+        assert!(out.result.contains(route), "got: {}", out.result);
+        // Without one, the same page is offered for reading only.
+        let mut bare = ctx.clone();
+        bare.embed_configured = false;
+        let out = FetchUrl::default()
+            .attached_result(
+                &bare,
+                "https://docs.vlang.io/x.html",
+                None,
+                false,
+                big_page(None),
+            )
+            .await;
         assert!(
-            !out.result
-                .replace(no_search, "")
-                .contains("attachment_search"),
-            "search offered as a route: {}",
+            out.result
+                .contains(bare.loc.t("tool.attachment.search_none")),
+            "got: {}",
             out.result
         );
         // Nothing was cut, so nothing says so.
@@ -2099,11 +2110,9 @@ mod tests {
             &[("name", url), ("url", url)],
         );
         assert!(att.text.starts_with(&verbatim), "{}", &att.text[..400]);
-        let no_search = ctx.loc.t("tool.attachment.no_search_this_turn");
         assert!(
-            !out.result
-                .replace(no_search, "")
-                .contains("attachment_search"),
+            out.result
+                .contains(super::super::attachment::search_route(&ctx)),
             "{}",
             out.result
         );

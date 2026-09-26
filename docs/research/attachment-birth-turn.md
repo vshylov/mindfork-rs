@@ -1,9 +1,8 @@
 # Research: an attachment born in the turn — the search it cannot have, and a cut it does not locate
 
-**Status:** stage 1 implemented, live **GO** (§4a) — forks decided by the user on
-2026-09-26, all five at the recommendation (F1a, F2a, F3a, F4b, F5a). Stage 2 is
-outlined in §5 and gets its own branch (the user's decision: "1 and 3 in one go, 2 as
-a separate stage").
+**Status:** complete — stage 1 (§2–§4a) and stage 2 (§5), each live **GO**. Forks
+decided by the user on 2026-09-26, all at the recommendation (the user's decision on
+the split: "1 and 3 in one go, 2 as a separate stage").
 
 **Related:** spec §9.3.1 (`fetch_url`), §9.7 (chat attachments), §9.9
 (`youtube_watch`); [docs/history/fetch-url-fidelity.md](../history/fetch-url-fidelity.md)
@@ -189,8 +188,8 @@ network smoke on a page over the ceiling for the markers.
 
 ## 5. Stage 2 — indexing inside the turn
 
-**Status:** forks decided by the user on 2026-09-26, all six at the recommendation
-(G1a–G6a); branch `feat/attachment-index-in-turn`.
+**Status:** implemented, live **GO** (§5.4) — forks decided by the user on
+2026-09-26, all six at the recommendation (G1a–G6a). The track is complete.
 
 ### 5.1. What is there to build on **[code]**
 
@@ -268,3 +267,12 @@ round's end, the landing not starting it twice, the pinned block offering search
 for a file in progress, the texts with and without an embedder. Live: stage 1's
 two-turn smoke turned into one turn — the birth turn finds §17.5 by one search — with
 stage 1's runs as the control (four of six found it by paging, two ran out of rounds).
+
+### 5.4. What the live run showed
+
+Six runs of the birth-turn smoke on `gemma-4-26B-A4B` + `bge-m3`: six GO, each finding
+§17.5 with **one** search and **no** page read, 28.5–33.2 s per turn with the page
+summary included. Against stage 1's runs of the same question — one to three searches
+answered "not indexed yet", four to six pages read, two of six turns out of rounds — the
+wait costs less than the sampling it replaces. The full record is in
+[docs/journal/rag.md](../journal/rag.md).

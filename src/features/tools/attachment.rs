@@ -32,6 +32,26 @@ pub const ATTACHMENT_READ_ID: &str = "attachment_read";
 pub const ATTACHMENT_SEARCH_ID: &str = "attachment_search";
 /// Default number of fragments `attachment_search` returns.
 const DEFAULT_TOP_K: usize = 5;
+/// How long a search waits for a file whose index is being built (fork G1 of
+/// docs/research/attachment-birth-turn.md). Measured: 976 fragments in 24 s on a
+/// local GPU `bge-m3`; a CPU embedder is about ten times slower, so a page near the
+/// fetch ceiling can take minutes there — past this the search covers what is
+/// indexed and says how much that is.
+const INDEX_WAIT: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// What a tool that just attached a by-reference file tells the model about
+/// searching it (fork G4 of docs/research/attachment-birth-turn.md): with an
+/// embedder configured, the file's index is being built from the end of this
+/// round and `attachment_search` waits for it; without one, no index will come, and
+/// saying "search" would send the model to a refusal ("only advertise what exists",
+/// docs/lessons.md §4). Shared by `fetch_url` and `youtube_watch`.
+pub(crate) fn search_route(ctx: &ToolContext) -> &'static str {
+    if ctx.embed_configured {
+        ctx.loc.t("tool.attachment.search_indexing")
+    } else {
+        ctx.loc.t("tool.attachment.search_none")
+    }
+}
 
 /// `attachment_read` — returns one page of a file attached to the chat.
 pub struct AttachmentRead;
@@ -179,18 +199,39 @@ impl Tool for AttachmentSearch {
                 ctx.loc.t("tool.attachment_search.all_inline"),
             ));
         }
-        // Which of the *currently attached* files the search cannot see — named,
-        // with the reason, instead of a bare "nothing found", which would read as
-        // "the file has nothing about it" (docs/research/attachment-birth-turn.md F2).
+        // A file whose index is being built right now — by the round that attached
+        // it, or by a `/file attach` a moment ago — is waited for, bounded and
+        // cancelled with the turn, while the banner shows the progress
+        // (docs/research/attachment-birth-turn.md G1). Answering "no index" there
+        // sent the model sampling pages it could have searched.
+        let building: Vec<uuid::Uuid> = by_ref
+            .iter()
+            .filter(|a| ctx.index_board.building(a.id).is_some())
+            .map(|a| a.id)
+            .collect();
+        if !building.is_empty() {
+            ctx.index_board
+                .wait(&building, INDEX_WAIT, &ctx.cancel)
+                .await;
+        }
+        // Which of the *currently attached* files the search cannot see whole —
+        // named, with the reason, instead of a bare "nothing found", which would
+        // read as "the file has nothing about it" (F2): no index at all, or one
+        // still being built past the wait (its rows are the file's beginning —
+        // chunks are written in document order).
         let indexed = ctx.storage.db().attachment_indexed_ids(ctx.chat_id)?;
-        let unsearched: Vec<&Attachment> = by_ref
+        let partial: Vec<(&Attachment, (usize, usize))> = by_ref
+            .iter()
+            .filter_map(|a| ctx.index_board.building(a.id).map(|p| (*a, p)))
+            .collect();
+        let unindexed: Vec<&Attachment> = by_ref
             .iter()
             .copied()
-            .filter(|a| !indexed.contains(&a.id))
+            .filter(|a| !indexed.contains(&a.id) && ctx.index_board.building(a.id).is_none())
             .collect();
-        if unsearched.len() == by_ref.len() {
+        if !by_ref.iter().any(|a| indexed.contains(&a.id)) {
             let mut out = ctx.loc.t("tool.attachment_search.not_indexed").to_string();
-            push_unsearched(&mut out, ctx, &unsearched);
+            push_lines(&mut out, ctx, &unindexed, &partial);
             return Ok(ToolOutcome::text(out));
         }
         // The embedder may have gone away since indexing — a clear answer rather
@@ -222,7 +263,7 @@ impl Tool for AttachmentSearch {
             .collect();
         if hits.is_empty() {
             let mut out = ctx.loc.t("tool.attachment_search.result.empty").to_string();
-            push_not_searched(&mut out, ctx, &unsearched);
+            push_not_searched(&mut out, ctx, &unindexed, &partial);
             return Ok(ToolOutcome::text(out));
         }
         // Chunks are cut with overlap, so neighbouring hits from one file repeat
@@ -256,49 +297,66 @@ impl Tool for AttachmentSearch {
         // read. Reminding the model of that keeps the two complementary.
         out.push_str("\n\n");
         out.push_str(ctx.loc.t("tool.attachment_search.result.hint"));
-        push_not_searched(&mut out, ctx, &unsearched);
+        push_not_searched(&mut out, ctx, &unindexed, &partial);
         Ok(ToolOutcome::text(out))
     }
 }
 
-/// Appends, after a search that did run, the files it could not see — so a
+/// Appends, after a search that did run, the files it could not see whole — so a
 /// fragment list (or "nothing found") is not read as covering them. Nothing when
-/// every by-reference file is indexed.
-fn push_not_searched(out: &mut String, ctx: &ToolContext, unsearched: &[&Attachment]) {
-    if unsearched.is_empty() {
-        return;
+/// every by-reference file is fully indexed.
+fn push_not_searched(
+    out: &mut String,
+    ctx: &ToolContext,
+    unindexed: &[&Attachment],
+    partial: &[(&Attachment, (usize, usize))],
+) {
+    if !partial.is_empty() {
+        out.push_str("\n\n");
+        out.push_str(ctx.loc.t("tool.attachment_search.partial"));
+        push_lines(out, ctx, &[], partial);
     }
-    out.push_str("\n\n");
-    out.push_str(ctx.loc.t("tool.attachment_search.not_searched"));
-    push_unsearched(out, ctx, unsearched);
+    if !unindexed.is_empty() {
+        out.push_str("\n\n");
+        out.push_str(ctx.loc.t("tool.attachment_search.not_searched"));
+        push_lines(out, ctx, unindexed, &[]);
+    }
 }
 
-/// One line per file the search cannot see, with why and how many pages it has,
-/// then the route that does reach it. A file this turn's own tool attached is not
-/// indexed before the turn lands — "no index" would read as permanent, and it is
-/// not (docs/research/attachment-birth-turn.md F2).
-fn push_unsearched(out: &mut String, ctx: &ToolContext, unsearched: &[&Attachment]) {
-    for a in unsearched {
-        let key = if ctx.born_this_turn.contains(&a.id) {
-            "tool.attachment_search.unindexed.born"
-        } else {
-            "tool.attachment_search.unindexed.none"
-        };
-        let pages = a.page_count(ctx.attachment_cfg.page_tokens).to_string();
+/// One line per file the search cannot see whole, with why and how many pages it
+/// has, then the route that does reach it — and, for a file whose index is still
+/// being built, that searching again later reaches more of it.
+fn push_lines(
+    out: &mut String,
+    ctx: &ToolContext,
+    unindexed: &[&Attachment],
+    partial: &[(&Attachment, (usize, usize))],
+) {
+    let pages = |a: &Attachment| a.page_count(ctx.attachment_cfg.page_tokens).to_string();
+    for (a, (done, total)) in partial {
         out.push('\n');
-        out.push_str(&ctx.loc.tf(key, &[("name", &a.name), ("pages", &pages)]));
+        out.push_str(&ctx.loc.tf(
+            "tool.attachment_search.unindexed.building",
+            &[
+                ("name", &a.name),
+                ("pages", &pages(a)),
+                ("done", &done.to_string()),
+                ("total", &total.to_string()),
+            ],
+        ));
+    }
+    for a in unindexed {
+        out.push('\n');
+        out.push_str(&ctx.loc.tf(
+            "tool.attachment_search.unindexed.none",
+            &[("name", &a.name), ("pages", &pages(a))],
+        ));
     }
     out.push('\n');
     out.push_str(ctx.loc.t("tool.attachment_search.unindexed.route"));
-    // The door, closed: the live run of this change saw a model search a
-    // just-attached page three times in one turn, each answer the same
-    // (docs/research/attachment-birth-turn.md §4a, lessons §4).
-    if unsearched
-        .iter()
-        .any(|a| ctx.born_this_turn.contains(&a.id))
-    {
+    if !partial.is_empty() {
         out.push(' ');
-        out.push_str(ctx.loc.t("tool.attachment_search.unindexed.born_retry"));
+        out.push_str(ctx.loc.t("tool.attachment_search.building_retry"));
     }
 }
 
@@ -598,41 +656,13 @@ mod tests {
         assert!(out.contains("attachment_read"), "{out}");
     }
 
-    /// The turn that prompted docs/research/attachment-birth-turn.md: a page this
-    /// turn's own `fetch_url` attached was searched twice and answered "no search
-    /// index was built", which read as permanent. It is not — the file is indexed
-    /// after the turn lands — so the answer names it as attached in this turn, with
-    /// its page count and the route that works now.
+    /// A file with no index and nothing building it is named, with its page count
+    /// and the route that works — not a bare "no index", which read as "search is
+    /// broken" (docs/research/attachment-birth-turn.md F2).
     #[tokio::test]
-    async fn search_names_a_file_attached_in_this_turn() {
+    async fn search_names_a_file_without_an_index() {
         let doc = att("spec.md", "первая строка\nвторая строка\nтретья строка\n");
-        let (_d, mut ctx) = ctx_with(vec![doc.clone()]);
-        ctx.born_this_turn = vec![doc.id].into();
-        let out = AttachmentSearch
-            .invoke(&ctx, serde_json::json!({"query": "что угодно"}))
-            .await
-            .unwrap()
-            .result;
-        let pages = doc.page_count(PAGE).to_string();
-        let born = ctx.loc.tf(
-            "tool.attachment_search.unindexed.born",
-            &[("name", "spec.md"), ("pages", &pages)],
-        );
-        assert!(
-            out.starts_with(ctx.loc.t("tool.attachment_search.not_indexed")),
-            "{out}"
-        );
-        assert!(out.contains(&born), "{out}");
-        assert!(
-            out.contains(ctx.loc.t("tool.attachment_search.unindexed.route")),
-            "{out}"
-        );
-        // Searching again in the same turn cannot help, and the answer says so.
-        let retry = ctx.loc.t("tool.attachment_search.unindexed.born_retry");
-        assert!(out.contains(retry), "{out}");
-
-        // A file from an earlier turn with no index is a different situation.
-        ctx.born_this_turn = Vec::new().into();
+        let (_d, ctx) = ctx_with(vec![doc.clone()]);
         let out = AttachmentSearch
             .invoke(&ctx, serde_json::json!({"query": "что угодно"}))
             .await
@@ -640,12 +670,142 @@ mod tests {
             .result;
         let none = ctx.loc.tf(
             "tool.attachment_search.unindexed.none",
-            &[("name", "spec.md"), ("pages", &pages)],
+            &[
+                ("name", "spec.md"),
+                ("pages", &doc.page_count(PAGE).to_string()),
+            ],
         );
-        assert!(out.contains(&none) && !out.contains(&born), "{out}");
         assert!(
-            !out.contains(retry),
-            "no birth, no promise about the next turn: {out}"
+            out.starts_with(ctx.loc.t("tool.attachment_search.not_indexed")),
+            "{out}"
+        );
+        assert!(out.contains(&none), "{out}");
+        assert!(
+            out.contains(ctx.loc.t("tool.attachment_search.unindexed.route")),
+            "{out}"
+        );
+        assert!(
+            !out.contains(ctx.loc.t("tool.attachment_search.building_retry")),
+            "nothing is being built, so nothing to come back for: {out}"
+        );
+    }
+
+    /// The fix of stage 2 (G1): the page a round just attached is being indexed, and
+    /// a search in the next round waits for the index and answers from it, instead
+    /// of "no index" and a model sampling pages.
+    #[tokio::test]
+    async fn search_waits_for_an_index_being_built() {
+        let doc = att("spec.md", "неважно — поиск идёт по индексу");
+        let (_d, ctx) = ctx_with(vec![doc.clone()]);
+        assert!(ctx.index_board.begin(doc.id, false));
+        ctx.index_board.progress(doc.id, 0, 2);
+        let builder = {
+            let ctx = ctx.clone();
+            let doc = doc.clone();
+            tokio::spawn(async move {
+                // The search is already waiting by the time the rows land.
+                tokio::task::yield_now().await;
+                index(
+                    &ctx,
+                    &doc,
+                    &[
+                        "раздел 17.5: prompt_cap по умолчанию 4000",
+                        "раздел 3: запуск сервера",
+                    ],
+                )
+                .await;
+                ctx.index_board.progress(doc.id, 2, 2);
+                ctx.index_board.finish(doc.id, None);
+            })
+        };
+        let out = AttachmentSearch
+            .invoke(&ctx, serde_json::json!({"query": "prompt_cap 4000"}))
+            .await
+            .unwrap()
+            .result;
+        builder.await.unwrap();
+        assert!(out.contains("prompt_cap по умолчанию 4000"), "{out}");
+        assert!(
+            !out.contains(ctx.loc.t("tool.attachment_search.partial")),
+            "the whole file was indexed before the search ran: {out}"
+        );
+    }
+
+    /// Past the bound the search covers what is indexed and says how much that is —
+    /// the beginning of the file, since chunks are written in document order — and
+    /// that coming back later reaches more. Paused time: the bound passes at once.
+    #[tokio::test(start_paused = true)]
+    async fn search_past_the_bound_says_what_it_covered() {
+        let doc = att("big.md", "неважно");
+        let (_d, ctx) = ctx_with(vec![doc.clone()]);
+        ctx.index_board.begin(doc.id, false);
+        index(&ctx, &doc, &["начало файла: введение и оглавление"]).await;
+        ctx.index_board.progress(doc.id, 1, 40);
+        let out = AttachmentSearch
+            .invoke(&ctx, serde_json::json!({"query": "введение"}))
+            .await
+            .unwrap()
+            .result;
+        assert!(out.contains("введение и оглавление"), "{out}");
+        let building = ctx.loc.tf(
+            "tool.attachment_search.unindexed.building",
+            &[
+                ("name", "big.md"),
+                ("pages", &doc.page_count(PAGE).to_string()),
+                ("done", "1"),
+                ("total", "40"),
+            ],
+        );
+        let tail = out
+            .split_once(ctx.loc.t("tool.attachment_search.partial"))
+            .expect("no partial section")
+            .1;
+        assert!(tail.contains(&building), "{out}");
+        assert!(
+            tail.contains(ctx.loc.t("tool.attachment_search.building_retry")),
+            "{out}"
+        );
+    }
+
+    /// Cancelling the turn ends the wait at once; with nothing indexed yet the
+    /// answer names the file as being built rather than as having no index.
+    #[tokio::test]
+    async fn a_cancelled_turn_does_not_wait_for_the_index() {
+        let doc = att("big.md", "неважно");
+        let (_d, ctx) = ctx_with(vec![doc.clone()]);
+        ctx.index_board.begin(doc.id, false);
+        ctx.index_board.progress(doc.id, 0, 40);
+        ctx.cancel.cancel();
+        let out = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            AttachmentSearch.invoke(&ctx, serde_json::json!({"query": "что угодно"})),
+        )
+        .await
+        .expect("the wait ignored the cancellation")
+        .unwrap()
+        .result;
+        assert!(
+            out.starts_with(ctx.loc.t("tool.attachment_search.not_indexed")),
+            "{out}"
+        );
+        let pages = doc.page_count(PAGE).to_string();
+        let building = ctx.loc.tf(
+            "tool.attachment_search.unindexed.building",
+            &[
+                ("name", "big.md"),
+                ("pages", &pages),
+                ("done", "0"),
+                ("total", "40"),
+            ],
+        );
+        assert!(out.contains(&building), "{out}");
+        let none = ctx.loc.tf(
+            "tool.attachment_search.unindexed.none",
+            &[("name", "big.md"), ("pages", &pages)],
+        );
+        assert!(
+            !out.contains(&none),
+            "a file being indexed is not a file without an index: {out}"
         );
     }
 
@@ -657,11 +817,10 @@ mod tests {
     async fn search_names_the_files_it_did_not_see() {
         let old = att("old.txt", "x");
         let fresh = att("fresh.md", "y");
-        let (_d, mut ctx) = ctx_with(vec![old.clone(), fresh.clone()]);
-        ctx.born_this_turn = vec![fresh.id].into();
+        let (_d, ctx) = ctx_with(vec![old.clone(), fresh.clone()]);
         index(&ctx, &old, &["рецепт борща со свёклой и капустой"]).await;
-        let born = ctx.loc.tf(
-            "tool.attachment_search.unindexed.born",
+        let none = ctx.loc.tf(
+            "tool.attachment_search.unindexed.none",
             &[
                 ("name", "fresh.md"),
                 ("pages", &fresh.page_count(PAGE).to_string()),
@@ -676,7 +835,7 @@ mod tests {
             .result;
         assert!(hits.contains("рецепт борща"), "{hits}");
         let tail = hits.split_once(header).expect("no not-searched section").1;
-        assert!(tail.contains(&born), "{hits}");
+        assert!(tail.contains(&none), "{hits}");
         assert!(
             !tail.contains("old.txt"),
             "an indexed file listed as unseen: {hits}"
@@ -699,7 +858,21 @@ mod tests {
             out.starts_with(ctx.loc.t("tool.attachment_search.result.empty")),
             "{out}"
         );
-        assert!(out.contains(header) && out.contains(&born), "{out}");
+        assert!(out.contains(header) && out.contains(&none), "{out}");
+    }
+
+    /// G4: a tool that attaches a file promises search only where an index is
+    /// coming.
+    #[test]
+    fn a_new_attachment_is_offered_search_only_with_an_embedder() {
+        let (_d, mut ctx) = ctx_with(Vec::new());
+        ctx.embed_configured = true;
+        let with = search_route(&ctx);
+        assert!(with.contains("attachment_search"), "{with}");
+        ctx.embed_configured = false;
+        let without = search_route(&ctx);
+        assert_eq!(without, ctx.loc.t("tool.attachment.search_none"));
+        assert_ne!(with, without);
     }
 
     /// Every file inline: there is no index by design (fork F13) and nothing to read

@@ -97,13 +97,15 @@ pub struct ToolContext {
     /// attachment's text can be hundreds of KB. Read by `attachment_read`; empty
     /// for background tasks (they have no chat). See spec §9.7.
     pub attachments: std::sync::Arc<[crate::entities::attachment::Attachment]>,
-    /// The attachments this turn's own tools produced (`fetch_url`, `youtube_watch`),
-    /// mirrored into [`Self::attachments`] as their rounds end. Such a file is not
-    /// indexed before the turn lands, so `attachment_search` names it as *attached in
-    /// this turn* rather than as having no index at all
-    /// (docs/research/attachment-birth-turn.md F2). A sub-agent inherits the list with
-    /// the clone: it runs inside the same turn.
-    pub born_this_turn: std::sync::Arc<[Uuid]>,
+    /// Which attachments are having their search index built right now, and how far
+    /// along — shared with the orchestrator. The loop claims a tool's attachment here
+    /// at its round's end, and `attachment_search` waits on it for a file still being
+    /// indexed (docs/research/attachment-birth-turn.md §5, G1–G2).
+    pub index_board: Arc<crate::features::attachment_index::IndexBoard>,
+    /// Whether an embedding server is configured at all — what a tool that attaches a
+    /// file may promise about searching it (G4). Configured but down is not told apart:
+    /// the index then fails fast and the search says there is none.
+    pub embed_configured: bool,
     /// Attachment budget and page size (`config.attachments`): the page size for
     /// `attachment_read`, and — for a tool that produces an attachment of its own
     /// — the same thresholds the orchestrator decides the mode with.
@@ -230,6 +232,10 @@ pub struct ToolDeps {
     pub storage: Arc<Storage>,
     pub engine: Arc<dyn EngineBackend>,
     pub embedder: Arc<dyn Embedder>,
+    /// See [`ToolContext::index_board`].
+    pub index_board: Arc<crate::features::attachment_index::IndexBoard>,
+    /// See [`ToolContext::embed_configured`].
+    pub embed_configured: bool,
 }
 
 /// Tool parameters from config (a per-turn snapshot). The single place that maps
@@ -357,9 +363,8 @@ impl ToolContext {
             effective_sampling: turn.effective_sampling,
             last_user_message_at: turn.last_user_message_at,
             attachments: turn.attachments,
-            // A turn starts with nothing of its own attached; `sync_attachments`
-            // fills this as the turn's tools produce files.
-            born_this_turn: std::sync::Arc::from(Vec::new()),
+            index_board: deps.index_board,
+            embed_configured: deps.embed_configured,
             attachment_cfg: params.attachments,
             history: turn.history,
             history_page_tokens: params.history_page_tokens,
@@ -1250,6 +1255,9 @@ pub(crate) mod testkit {
             storage: storage.clone(),
             engine: Arc::new(MockBackend::scripted(vec![])),
             embedder: Arc::new(MockEmbedder::new(16)),
+            // Tests run with a (mock) embedder.
+            index_board: Arc::new(crate::features::attachment_index::IndexBoard::new()),
+            embed_configured: true,
         };
         let mut turn = test_turn(profile_id);
         turn.lang = lang;
@@ -1320,6 +1328,9 @@ pub(crate) mod testkit {
             storage: storage.clone(),
             engine,
             embedder,
+            // Tests run with a (mock) embedder.
+            index_board: Arc::new(crate::features::attachment_index::IndexBoard::new()),
+            embed_configured: true,
         };
         let ctx = ToolContext::new(deps, test_params(), test_turn(profile_id));
         (dir, storage, ctx)

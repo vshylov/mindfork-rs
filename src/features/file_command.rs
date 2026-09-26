@@ -95,6 +95,11 @@ pub enum FileProgress {
         done: usize,
         total: usize,
     },
+    /// Building a file's index ended — the banner goes. Its outcome note
+    /// ([`Self::Indexed`] / [`Self::IndexSkipped`]) may come later: for a file a
+    /// tool attached mid-turn it is held until the file lands, so it never splits
+    /// the streaming reply (docs/research/attachment-birth-turn.md G3).
+    IndexEnded { name: String },
     /// The semantic index for a file is ready — `attachment_search` can reach it.
     Indexed { name: String, chunks: usize },
     /// No index was built (no embedder configured, or a write failed). Not an
