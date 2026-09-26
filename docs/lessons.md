@@ -59,7 +59,10 @@ neither. Run the real one, and read its warnings.
 
 **Never `git checkout -- <file>` to undo a scripted mutation.** It discards *all*
 uncommitted work in that file, not just the mutation. Commit first, back the file up,
-or apply the mutation as a reversible patch. **Recorded four times**: it cost a
+or apply the mutation as a reversible patch. **Recorded five times** — the fifth
+(*help keycaps no longer looked up as keys*) took the backup first and then undid the
+mutation with `git checkout` anyway, out of habit; the backup, not the revert, kept the
+fix. Restore **from** the backup. The first four cost a
 `Cargo.toml` feature trim plus the whole of `code.rs`, then all of `apply.rs`, then a
 third file that had to be reconstructed by hand — and then, in the session that had
 this very entry in context, an hour of a stage's work in one file, because the
