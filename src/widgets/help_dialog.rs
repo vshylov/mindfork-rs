@@ -209,8 +209,9 @@ const HELP_PAGE_SCROLL: usize = 8;
 /// per locale, or dropped entirely (the settings screen's keys were absent).
 /// Rows are `(keycap, desc_key)` pairs: `keycap` is a literal "key" (ASCII,
 /// universal) **or** a `ui.*` key where the label itself has words (mouse,
-/// typing); `desc_key` is always a `ui.*` description key. Both are resolved
-/// through the locale in [`key_lines`]. Input-box commands (`/…`) are split out
+/// typing); `desc_key` is always a `ui.*` description key. A `ui.*` label and the
+/// description go through the locale, a literal keycap is shown as written
+/// ([`label`]). Input-box commands (`/…`) are split out
 /// into [`HELP_COMMANDS`] (a separate tab). See spec §11.7,
 /// docs/history/help-hotkeys-context.md, docs/i18n-ui.md.
 pub struct HelpSection {
@@ -752,6 +753,21 @@ fn table_lines(
 /// whether the row opens a display group, the label span, the description.
 type ResolvedRows = Vec<(bool, Span<'static>, String)>;
 
+/// A row's label as shown: a `ui.*` key (a label with words — mouse, typing,
+/// `/file attach <path>`) through the locale, a literal keycap (`Ctrl+A`, `F1`,
+/// `/file list`) as written — the [`HelpSection`] contract. Looking a literal up
+/// as a key found it in no bundle, so it still showed right, but every label
+/// logged "key missing from every bundle" the first time the dialog was drawn —
+/// 47 lines in one session's log, burying the warning meant for a key that is
+/// really missing.
+fn label(k: &str, loc: &'static Locale) -> String {
+    if k.starts_with("ui.") {
+        loc.t(k).to_string()
+    } else {
+        k.to_string()
+    }
+}
+
 /// The labels and descriptions of one section, resolved through the locale —
 /// the step [`table_lines`] has to finish for the whole tab before it can
 /// measure the shared description column.
@@ -765,7 +781,7 @@ fn resolve_rows(
         .rows
         .iter()
         .map(|(k, d)| {
-            let key = loc.t(k).to_string();
+            let key = label(k, loc);
             let key_span = if command_labels && key.starts_with('/') {
                 Span::styled(format!(" {key} "), Style::new().fg(palette.warning))
             } else {

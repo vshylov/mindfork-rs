@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (68)
+## Entries (69)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -80,6 +80,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: an API-key row names whose key it is (done)
 - Post-M9: the model row asks the provider (done)
 - Post-M9: a chat asked for from another screen arrives in one frame (done)
+- Post-M9: help keycaps are no longer looked up as locale keys (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -3656,3 +3657,30 @@ line apart, is exactly the drift the template removes.
   (+11). Pure UI — **no live run required**; the frame itself needs a real
   terminal, so the visual check was the owner's: run on Windows on
   2026-09-19, the previous chat no longer shows — **GO**.
+
+### Post-M9: help keycaps are no longer looked up as locale keys (done)
+
+- **Found in passing** while reading a session log for another report: 47 `WARN
+  i18n: key missing from every bundle in the chain` lines at the moment the `F1` dialog
+  was drawn, one per label — `F1`, `Ctrl+Q / F10`, `Enter`, `Ctrl+K Ctrl+K`, `/`, `R`, `P`
+  and the rest. `HelpSection`'s contract says a row's label is a literal keycap **or** a
+  `ui.*` key where the label has words (mouse, typing, `/file attach <path>`), but
+  `resolve_rows` sent both through `loc.t`. A literal is in no bundle, so the fallback
+  chain ran out and returned the key itself — the right text on screen, and a warning per
+  label, once per session. Not a regression: the warning dates from 2026-07-14 and the
+  lookup from before the dialog moved to `widgets/` on 2026-08-25; logs showed it only
+  on the days the dialog was opened. The cost was the signal: that warning is the only
+  sign of a key really missing from an external locale, and 47 false ones bury it.
+- **The fix** is one function, `label`: `ui.*` through the locale, anything else as
+  written. No label changes on screen — no key in either bundle is shaped like a keycap
+  (every key is `a.b.c`), so no literal was ever translated. The commands tab's literal
+  labels (`/file list`, `/rag rebuild`) take the same path and stop warning too.
+- **The instrument.** The log's once-per-key set cannot serve a test (a key another test
+  already missed never shows again), so under `cfg(test)` every exhausted lookup is also
+  pushed onto a per-thread list, `i18n::take_missed_keys()`, itself tested.
+  `the_help_looks_up_no_missing_key` draws every tab of the dialog in every built-in
+  locale and asserts the list stays empty; mutated back to the old lookup it fails on
+  `Ru, Hotkeys`.
+- **Gates**: fmt / clippy / test green — **3458 unit tests, 202 `#[ignore]`** (+2). Pure
+  UI and a lookup path — **no live run required**.
+

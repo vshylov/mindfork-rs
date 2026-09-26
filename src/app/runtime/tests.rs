@@ -2321,3 +2321,31 @@ fn a_drawn_spinner_asks_for_no_frame_until_its_glyph_changes() {
     term.draw(|f| screen.render(f)).unwrap();
     assert!(!spinner_frame_needed(&chat, &screen));
 }
+
+/// Drawing the whole help — every tab, every section, every built-in locale —
+/// resolves nothing into a slug. The literal keycaps (`F1`, `Ctrl+Q / F10`,
+/// `/file list`) used to be looked up as locale keys: shown right, since the
+/// slug *is* the label, but each logged "key missing from every bundle" the
+/// first time the dialog was drawn — 47 lines in one session's log.
+#[test]
+fn the_help_looks_up_no_missing_key() {
+    use crate::widgets::help_dialog::{HelpState, HelpTab, render_help};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    let palette = Palette::default();
+    let _ = crate::shared::i18n::take_missed_keys();
+    for &lang in crate::shared::i18n::Lang::ALL {
+        let loc = crate::shared::i18n::locale(lang);
+        for tab in HelpTab::ALL {
+            let mut state = HelpState::open(tab);
+            let mut term = Terminal::new(TestBackend::new(120, 60)).unwrap();
+            term.draw(|f| render_help(f, &mut state, &HELP_SECTIONS, &palette, loc))
+                .unwrap();
+            assert_eq!(
+                crate::shared::i18n::take_missed_keys(),
+                Vec::<String>::new(),
+                "{lang:?}, {tab:?}: labels looked up as missing keys"
+            );
+        }
+    }
+}

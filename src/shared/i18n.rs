@@ -91,10 +91,28 @@ fn intern(code: &str) -> &'static str {
 static WARNED_MISSING: LazyLock<Mutex<HashSet<(Lang, String)>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
 
+#[cfg(test)]
+thread_local! {
+    /// Every lookup on this thread that exhausted the fallback chain, repeats included
+    /// — what a test reads to prove a render turned nothing into a slug. Per thread,
+    /// since the harness runs each test on its own: a process-wide list would pick up
+    /// a neighbour's misses. The log's once-per-key set cannot serve: a key another
+    /// test already missed would never show up again.
+    static MISSED: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Takes (and clears) this thread's missed keys — see [`MISSED`].
+#[cfg(test)]
+pub fn take_missed_keys() -> Vec<String> {
+    MISSED.with(|m| std::mem::take(&mut *m.borrow_mut()))
+}
+
 /// Logs "a key exhausted the fallback chain → a slug reaches the output" once per key.
 /// Called only for an actually-missing key (a rare path), the lock doesn't get in the
 /// way of the happy-path `t`.
 fn warn_missing_key_once(lang: Lang, key: &str) {
+    #[cfg(test)]
+    MISSED.with(|m| m.borrow_mut().push(key.to_string()));
     let mut warned = WARNED_MISSING.lock().expect("warned-keys set poisoned");
     if warned.insert((lang, key.to_string())) {
         tracing::warn!(
@@ -810,6 +828,20 @@ mod tests {
             .keys()
             .filter_map(|k| k.split('.').next().map(str::to_string))
             .collect()
+    }
+
+    /// The instrument a render test relies on (`take_missed_keys`): a key nowhere
+    /// in the chain is recorded — every time, not once like the log — a key found
+    /// is not, and taking clears the list.
+    #[test]
+    fn a_missed_key_is_recorded_on_its_thread() {
+        let _ = take_missed_keys();
+        let en = locale(Lang::En);
+        assert_eq!(en.t("no.such.key"), "no.such.key");
+        assert_eq!(en.t("no.such.key"), "no.such.key");
+        let _ = en.t("ui.help.title");
+        assert_eq!(take_missed_keys(), vec!["no.such.key", "no.such.key"]);
+        assert!(take_missed_keys().is_empty());
     }
 
     #[test]
