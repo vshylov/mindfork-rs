@@ -602,45 +602,178 @@ async fn an_attachment_from_a_tool_is_readable_in_the_next_round_of_the_same_tur
 
     // Mirroring twice (two rounds carrying the same accumulated effect list)
     // must not duplicate it — the effects vector is cumulative, not per round.
-    super::super::generation::sync_attachments(&mut ctx, &effects);
+    // It is reported as new once, however many rounds pass — what the loop starts
+    // the file's index on (docs/research/attachment-birth-turn.md G2).
+    assert!(super::super::generation::sync_attachments(&mut ctx, &effects).is_empty());
     assert_eq!(ctx.attachments.len(), 1);
-    // …and the file is known as this turn's own, which is what lets
-    // `attachment_search` say "attached in this turn" instead of "no index"
-    // (docs/research/attachment-birth-turn.md F2) — once, however many rounds pass.
-    assert_eq!(ctx.born_this_turn.as_ref(), [attachment.id].as_slice());
 }
 
-/// The search half of the same hole, end to end through the loop's own mirroring:
-/// a search in the round after the tool attached the file names it as born in this
-/// turn — the index is built after the turn lands — rather than as a file with no
-/// index, which is what the transcript behind attachment-birth-turn.md got.
+/// Stage 2 of docs/research/attachment-birth-turn.md, end to end through the loop's
+/// own two steps: the round that attached the page mirrors it and starts its index
+/// (G2), and a search in the next round waits for that index and answers from it
+/// (G1) — where stage 1 could only say the file was not indexed yet.
 #[tokio::test]
-async fn a_search_in_the_birth_turn_names_the_file_as_just_attached() {
+async fn a_search_in_the_birth_turn_waits_for_the_index_the_round_started() {
     use crate::features::tools::Tool;
     use crate::features::tools::attachment::AttachmentSearch;
 
-    let (_d, orch) = bare_orch();
+    let (_d, orch, mut rx) = bare_orch_rx();
     let body = "страница спецификации, строка за строкой\n".repeat(20);
     let attachment = made_up_attachment("spec.md", "https://example.com/spec.md", &body);
     let effects = vec![crate::features::tools::ChatEffect::AddAttachment(Box::new(
         attachment.clone(),
     ))];
     let mut ctx = turn_ctx(&orch, Uuid::new_v4(), Uuid::new_v4(), vec![]);
-    super::super::generation::sync_attachments(&mut ctx, &effects);
+    let fresh = super::super::generation::sync_attachments(&mut ctx, &effects);
+    assert_eq!(fresh, vec![attachment.id]);
+    super::super::generation::start_attachment_indexes(
+        &ctx,
+        &fresh,
+        orch.ui_locale(),
+        &orch.evt_tx,
+    );
+    // Claimed once: the parent mirroring a sub-agent's attachment, or the landing,
+    // finds it taken.
+    assert!(!ctx.index_board.begin(attachment.id, false));
 
     let out = AttachmentSearch
-        .invoke(&ctx, serde_json::json!({"query": "спецификация"}))
+        .invoke(&ctx, serde_json::json!({"query": "страница спецификации"}))
         .await
         .unwrap()
         .result;
-    let pages = attachment
-        .page_count(ctx.attachment_cfg.page_tokens)
-        .to_string();
-    let born = ctx.loc.tf(
-        "tool.attachment_search.unindexed.born",
-        &[("name", "spec.md"), ("pages", &pages)],
+    let (found, _) = ctx
+        .loc
+        .t("tool.attachment_search.result.header")
+        .split_once("{n}")
+        .unwrap();
+    assert!(out.starts_with(found), "{out}");
+    assert!(out.contains("строка за строкой"), "{out}");
+
+    // The attachment has not landed, so its note is held (G3): the banner ends,
+    // nothing is written into the feed mid-reply.
+    let mut ended = false;
+    while let Ok(e) = rx.try_recv() {
+        match e {
+            AppEvent::FileProgress(FileProgress::IndexEnded { .. }) => ended = true,
+            AppEvent::FileProgress(FileProgress::Indexed { .. }) => {
+                panic!("the note must wait for the attachment to land")
+            }
+            _ => {}
+        }
+    }
+    assert!(ended, "the banner must come down when the index is done");
+}
+
+/// G3 at the landing: the index a round started ended mid-turn and held its note;
+/// the landing says "attached" and then releases it — in that order — and does not
+/// index the file a second time.
+#[tokio::test]
+async fn the_landing_releases_a_held_note_after_attached_and_indexes_nothing_twice() {
+    let (_d, mut orch, mut rx) = bare_orch_rx();
+    let profile = Profile::new("P", "sys");
+    let chat = Chat::from_profile(&profile, "t");
+    let (profile_id, chat_id) = (profile.id, chat.id);
+    orch.profiles.push(profile);
+    orch.chats.push(chat);
+    orch.active_id = Some(chat_id);
+
+    let body = "страница спецификации, строка за строкой\n".repeat(20);
+    let attachment = made_up_attachment("spec.md", "https://example.com/spec.md", &body);
+    let effects = vec![crate::features::tools::ChatEffect::AddAttachment(Box::new(
+        attachment.clone(),
+    ))];
+    let mut ctx = turn_ctx(&orch, profile_id, chat_id, vec![]);
+    let fresh = super::super::generation::sync_attachments(&mut ctx, &effects);
+    super::super::generation::start_attachment_indexes(
+        &ctx,
+        &fresh,
+        orch.ui_locale(),
+        &orch.evt_tx,
     );
-    assert!(out.contains(&born), "{out}");
+    assert!(
+        ctx.index_board
+            .wait(
+                &[attachment.id],
+                std::time::Duration::from_secs(30),
+                &CancellationToken::new(),
+            )
+            .await
+    );
+    while rx.try_recv().is_ok() {}
+    let rows = orch.storage.db().attachment_indexed_ids(chat_id).unwrap();
+    assert_eq!(rows, vec![attachment.id], "the round's index is in place");
+
+    let gen_id = Uuid::new_v4();
+    orch.gen_state.begin(gen_id, CancellationToken::new());
+    orch.handle_done(super::super::generation::GenResult {
+        usage: None,
+        continuation: None,
+        images_withheld: 0,
+        id: gen_id,
+        chat_id,
+        messages: vec![Message::assistant("готово")],
+        effects,
+        deleted: vec![],
+    });
+    // Nothing is spawned at the landing, so a yield lets any stray task show itself.
+    tokio::task::yield_now().await;
+    let mut order = Vec::new();
+    while let Ok(e) = rx.try_recv() {
+        match e {
+            AppEvent::FileProgress(FileProgress::Attached { .. }) => order.push("attached"),
+            AppEvent::FileProgress(FileProgress::Indexed { .. }) => order.push("indexed"),
+            AppEvent::FileProgress(FileProgress::Indexing { .. }) => order.push("indexing"),
+            _ => {}
+        }
+    }
+    assert_eq!(order, vec!["attached", "indexed"]);
+}
+
+/// An index still running when its turn lands: the landing says "attached" at once,
+/// and the index's own end says "searchable" when it comes.
+#[tokio::test]
+async fn an_index_still_running_at_the_landing_speaks_when_it_ends() {
+    let (_d, mut orch, mut rx) = bare_orch_rx();
+    let profile = Profile::new("P", "sys");
+    let chat = Chat::from_profile(&profile, "t");
+    let (profile_id, chat_id) = (profile.id, chat.id);
+    orch.profiles.push(profile);
+    orch.chats.push(chat);
+    orch.active_id = Some(chat_id);
+
+    let body = "страница спецификации, строка за строкой\n".repeat(20);
+    let attachment = made_up_attachment("spec.md", "https://example.com/spec.md", &body);
+    let effects = vec![crate::features::tools::ChatEffect::AddAttachment(Box::new(
+        attachment.clone(),
+    ))];
+    let mut ctx = turn_ctx(&orch, profile_id, chat_id, vec![]);
+    let fresh = super::super::generation::sync_attachments(&mut ctx, &effects);
+    super::super::generation::start_attachment_indexes(
+        &ctx,
+        &fresh,
+        orch.ui_locale(),
+        &orch.evt_tx,
+    );
+    // Landed before the spawned task had a chance to run (one-threaded runtime,
+    // no await yet).
+    let gen_id = Uuid::new_v4();
+    orch.gen_state.begin(gen_id, CancellationToken::new());
+    orch.handle_done(super::super::generation::GenResult {
+        usage: None,
+        continuation: None,
+        images_withheld: 0,
+        id: gen_id,
+        chat_id,
+        messages: vec![Message::assistant("готово")],
+        effects,
+        deleted: vec![],
+    });
+    let outcome = wait_indexed(&mut rx).await;
+    assert!(outcome.is_ok(), "{outcome:?}");
+    assert_eq!(
+        orch.storage.db().attachment_indexed_ids(chat_id).unwrap(),
+        vec![attachment.id]
+    );
 }
 
 /// The other half of F1: what the model was told about is what gets stored —

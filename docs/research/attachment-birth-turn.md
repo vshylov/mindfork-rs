@@ -1,9 +1,8 @@
 # Research: an attachment born in the turn — the search it cannot have, and a cut it does not locate
 
-**Status:** stage 1 implemented, live **GO** (§4a) — forks decided by the user on
-2026-09-26, all five at the recommendation (F1a, F2a, F3a, F4b, F5a). Stage 2 is
-outlined in §5 and gets its own branch (the user's decision: "1 and 3 in one go, 2 as
-a separate stage").
+**Status:** complete — stage 1 (§2–§4a) and stage 2 (§5), each live **GO**. Forks
+decided by the user on 2026-09-26, all at the recommendation (the user's decision on
+the split: "1 and 3 in one go, 2 as a separate stage").
 
 **Related:** spec §9.3.1 (`fetch_url`), §9.7 (chat attachments), §9.9
 (`youtube_watch`); [docs/history/fetch-url-fidelity.md](../history/fetch-url-fidelity.md)
@@ -187,13 +186,93 @@ network smoke on a page over the ceiling for the markers.
 - The rest of the live record — network smokes on three real pages, the two-turn smoke
   and its runs — is in [docs/journal/rag.md](../journal/rag.md).
 
-## 5. Stage 2 (outline — its own branch)
+## 5. Stage 2 — indexing inside the turn
 
-Start indexing a tool-born attachment **when its round ends**, not when the turn
-lands, so the search named in F1 becomes real inside the turn: the loop spawns
-the same `index_attachment` the landing would, the landing skips a file already
-indexed or in progress, and `attachment_search` over a file being indexed answers
-with its progress (*fragments 312/1 024*) instead of a refusal — which also covers
-the `/file attach` case of a message sent while the index is still building. F1's
-text then becomes conditional on the index existing, the way the pinned block's
-already is.
+**Status:** implemented, live **GO** (§5.4) — forks decided by the user on
+2026-09-26, all six at the recommendation (G1a–G6a). The track is complete.
+
+### 5.1. What is there to build on **[code]**
+
+- The loop already mirrors a tool's `AddAttachment` into its snapshot at the end of
+  the round (`sync_attachments`), and it has everything indexing needs: `ctx.embedder`,
+  `ctx.storage`, `ctx.chunk_params` (the same `config.rag` the landing uses) and the
+  event channel. `index_attachment` is the one writer both paths already share.
+- A sub-agent's `AddAttachment` goes to its parent, which mirrors it at its own
+  round's end; a background run's lands through `insert_attachment` when the run
+  lands. So one attachment can reach the "start indexing" point up to three times —
+  child loop, parent loop, landing — and needs one owner.
+- **A feed note in the middle of a stream splits the reply.** `push_note` appends
+  after the streaming bubble, and the next chunk, finding the note last, opens a new
+  bubble (`ensure_streaming_bubble`). Today that only happens when a `/file attach`
+  index happens to finish mid-reply; indexing inside the turn would make it routine.
+- Measured in §1: 976 fragments in 24 s on a local GPU `bge-m3`. A turn's next
+  round comes 3–5 s after the one that fetched, so a search there meets an index
+  roughly a sixth built.
+
+### 5.2. Forks
+
+**G1. Search that meets a file still being indexed — (a), decided.**
+- **(a) Wait for it, bounded; then search.** Up to 120 s (a CPU embedder is about ten
+  times slower than the measured GPU one), cancelled with the turn; the progress is
+  on screen meanwhile, in the banner indexing already uses. Past the bound, search
+  what is indexed and say how much of the file that covers (fragments done/total —
+  chunks are written in document order). **Recommended.**
+- (b) Answer at once with the progress, no search. The model has to come back, and
+  §4a shows it does not reliably wait for anything.
+- (c) Search the partial index at once. The spec's §17 is at the end of the file:
+  the head a sixth-built index covers is exactly the part not asked about.
+
+**G2. Where indexing of a tool's attachment starts — (a), decided.**
+- **(a) At the end of the round that produced it**, next to `sync_attachments`, with a
+  small index board (`Arc`, shared by the orchestrator and the turn's context) that
+  records what was started — so the child, the parent and the landing start it once
+  — and the progress `attachment_search` reads and waits on. The landing starts only
+  what nobody has. **Recommended.**
+- (b) Lazily, on the first search. Saves nothing — a by-reference attachment is
+  indexed at landing anyway — and makes the first search wait for the whole file
+  rather than its remainder.
+
+**G3. The note that an index is done — (a), decided.**
+- **(a) Held until the attachment lands.** The banner shows progress live; the
+  "searchable — N fragments" note (or "no index — reason") is emitted by the landing
+  right after "attached", or by the index task when it finishes later. The reply is
+  never split, and the notes read in order. **Recommended.**
+- (b) As it happens — splits the streaming reply (5.1).
+- (c) No note for a tool's attachment.
+
+**G4. What `fetch_url` and `youtube_watch` say about search — (a), decided.**
+- **(a) Depends on the embedder:** configured — the file is being indexed for
+  `attachment_search`, a search waits for the index, and `attachment_read` reads any
+  page at once; not configured — pages only, and no index will be built.
+  **Recommended** — "only advertise what exists".
+- (b) One neutral sentence for both.
+
+**G5. The pinned block for a file whose index is still being built** (a large file,
+a slow embedder, the next turn starts early) **— (a), decided.**
+- **(a) Offer search**, as for an indexed file — the search waits. **Recommended.**
+- (b) Pages only until the index is done.
+
+**G6. Stage 1's birth-turn machinery** (`ToolContext.born_this_turn`, the "attached in
+this turn" line and its "searching again is pointless") **— (a), decided.**
+- **(a) Remove it.** A file born in the turn is then being indexed, indexed, or
+  without an index like any other, and the answer says which. **Recommended.**
+- (b) Keep it for a turn without an embedder — where "no index" already says it.
+
+### 5.3. Verification
+
+Unit: the board (start once, progress, a held note released by the landing or by a
+late finish), a search that waits and then finds, a search past the bound that
+reports coverage, cancellation ending the wait, the loop starting the index at the
+round's end, the landing not starting it twice, the pinned block offering search
+for a file in progress, the texts with and without an embedder. Live: stage 1's
+two-turn smoke turned into one turn — the birth turn finds §17.5 by one search — with
+stage 1's runs as the control (four of six found it by paging, two ran out of rounds).
+
+### 5.4. What the live run showed
+
+Six runs of the birth-turn smoke on `gemma-4-26B-A4B` + `bge-m3`: six GO, each finding
+§17.5 with **one** search and **no** page read, 28.5–33.2 s per turn with the page
+summary included. Against stage 1's runs of the same question — one to three searches
+answered "not indexed yet", four to six pages read, two of six turns out of rounds — the
+wait costs less than the sampling it replaces. The full record is in
+[docs/journal/rag.md](../journal/rag.md).

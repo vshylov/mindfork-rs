@@ -1193,6 +1193,14 @@ from the user and written it into the file.
 
 ## 5. Terminal and ratatui rendering
 
+**A feed note that arrives while a reply streams splits the reply.** `push_note` appends
+after the streaming bubble, and the next chunk, finding the note last, opens a new bubble
+(`ensure_streaming_bubble`). Anything a background job reports during a turn — an index
+finishing, a run landing — either goes to a non-feed surface (the banner) or is held
+until the turn's own events are out. Found designing in-turn attachment indexing, where
+it would have become routine; held on `IndexBoard` until the file lands.
+— *a fetched page searchable in its birth turn*.
+
 **One wide label in an aligned table re-wraps every description in it.** The help
 overlay aligns its label column to the widest entry, so a 44-character command
 (`/project build-cmd|run-cmd|test-cmd [line]`) squeezed the description column

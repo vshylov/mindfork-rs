@@ -126,6 +126,13 @@ impl ChatScreen {
                 );
                 self.show_banner(banner);
             }
+            FileProgress::IndexEnded { name } => {
+                // Only this file's banner: the slot is shared with RAG indexing,
+                // and a note-less end must not take another job's progress down.
+                if self.rag.as_ref().is_some_and(|b| b.name == name) {
+                    self.rag = None;
+                }
+            }
             FileProgress::Indexed { name, chunks } => {
                 self.rag = None;
                 let msg = self.loc.tf(

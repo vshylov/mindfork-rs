@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (19)
+## Entries (20)
 
 - Post-M9: loading/removing files in RAG via `/rag add|remove` commands (done)
 - Post-M9: smart RAG chunking (overlap + markdown) + stitching on retrieval (done)
@@ -31,6 +31,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: `/file remove` and `/image remove` refuse a name two items share (done)
 - Post-M9: `/file open 1` — a bare number is the listed `#N` (done)
 - Post-M9: a fetched page and its birth turn — no search it cannot have, and a cut that says where (done)
+- Post-M9: a fetched page searchable in its birth turn — the index starts at the round's end (done)
 
 ### Post-M9: loading/removing files in RAG via `/rag add|remove` commands (done)
 - **Commands in the input box**: `/rag add <path>` indexes a file or directory into the
@@ -1454,3 +1455,62 @@ heading, page and remainder on a verbatim cut, no remainder figure on an HTML cu
 `last_heading` over fences, `#[derive]`, `#tag`, closing hashes, indentation and a
 paragraph-long title; `text/markdown`, `text/x-markdown`, `text/csv` verbatim. Unit: 3443
 green, 202 ignored (3435 / 199 before).
+
+### Post-M9: a fetched page searchable in its birth turn — the index starts at the round's end (done)
+
+Stage 2 of [docs/research/attachment-birth-turn.md](../research/attachment-birth-turn.md)
+(§5); forks G1–G6 decided by the user on 2026-09-26, all at the recommendation. The track
+is complete.
+
+**Why.** Stage 1 made the birth turn honest, and the live runs showed what honesty alone
+leaves: the model still has to find its place in 81 pages by sampling them, and two birth
+turns of six spent the whole 8-round budget that way. The index was started only when the
+turn landed; everything it needed was already in the loop's hands at the end of the round
+that attached the page.
+
+**What changed.**
+- **G2 — the start.** `sync_attachments` returns the ids it mirrored for the first time,
+  and `start_attachment_indexes` spawns the same `spawn_attachment_index` the landing
+  used, right there. `features::attachment_index::IndexBoard` is the one owner of
+  "started": an attachment reaches that point up to three times — its loop, a parent loop
+  mirroring a sub-agent's attachment, the landing — and `begin` is claimed once;
+  `insert_attachment` starts only what nobody has (`land` → `Unknown`).
+- **G1 — the wait.** `attachment_search` waits for a file the board says is being built,
+  up to 120 s and cancelled with the turn (`watch` counter, marked seen before the check
+  so no change slips between check and `await`), then searches. Past the bound it searches
+  what is indexed — the file's beginning, chunks being written in order — and lists the
+  file as *still being built, done of total fragments*, with "search again later reaches
+  more".
+- **G3 — the note.** A feed note pushed while a reply streams opens a new bubble
+  (`ensure_streaming_bubble` finds the note last), so an index finishing mid-turn would
+  have split the reply. The task now sends `FileProgress::IndexEnded` (the banner comes
+  down, only if it is this file's) and gives its outcome note to the board, which holds it
+  until the landing: the feed reads "attached", then "searchable". An index still running
+  at the landing says it itself when it ends.
+- **G4** — `fetch_url` and `youtube_watch` say the index is being built and a search waits
+  for it when an embedder is configured (`ToolContext.embed_configured`, from the embed
+  server's status), and that the file is read by pages only when none is. **G5** — the
+  pinned block offers search for a file whose index is being built (`searchable_ids`).
+  **G6** — `born_this_turn` and its two sentences are gone: a file born in the turn is
+  being indexed, indexed, or without an index, like any other.
+
+**Live — GO.** llama.cpp b11191, `gemma-4-26B-A4B-it` Q4_1 (`-c 65536 --jinja`) and
+`bge-m3` Q8_0 (`-ub 8192 -b 8192`), RTX 4090. `fetched_page_is_searched_in_its_birth_turn_e2e_live`
+— one turn: fetch the real `spec.md`, name §17.5's `prompt_cap` default and what it was
+raised from — six runs, six GO, each with **one** `attachment_search` and **no** page read,
+28.5–33.2 s for the whole turn (the page summary included), 4000 and 1200 every time, and
+"attached" before "searchable" at the landing. The control is stage 1's runs of the same
+question: one to three searches answered "not indexed yet", four to six pages read, two of
+six birth turns out of rounds. `attachment_search_e2e_live`, `attachment_read_e2e_live`,
+`file_attachment_e2e_live` and the two `fetch_url` network smokes re-run green.
+
+**Tests.** The board: one claim, a note held until the landing and released by it, a late
+end speaking for itself, a landed attachment never held, a waiter woken by the end, the
+bound and the cancellation (paused time). The search: waits for an index being built and
+answers from it; past the bound says what it covered; a cancelled turn does not wait and
+names the file as being built, not as index-less; a file with no index; the mixed chat's
+list; `search_route` with and without an embedder. The loop and the landing: a round's
+attachment claimed and searched in the next round with its note held; the landing
+releasing a held note after "attached" and indexing nothing twice; an index still running
+at the landing speaking when it ends. The UI: `IndexEnded` takes down only its own
+banner and writes nothing. Unit: 3456 green, 202 ignored (3443 / 202 before).

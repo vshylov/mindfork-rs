@@ -31,13 +31,16 @@ split by subsystem.
   specification — this project's own among them — now arrives whole.
 
 ### Fixed
-- **A page the assistant just fetched is no longer offered for search in the
-  same reply.** Its search index is built after the reply, so the search
-  answered "no index was built" and the assistant guessed its way through the
-  pages. The fetch now offers page reading only and says search comes later; a
-  search tried anyway names the file as just attached, and in a chat where
-  other files are searchable it lists the ones it did not look at. The same for
-  a YouTube transcript.
+- **A page the assistant just fetched can be searched in the same reply.** Its
+  search index used to be built only after the reply, so the search answered
+  "no index was built" and the assistant guessed its way through the pages. The
+  index now starts as soon as the page is attached and a search waits for it —
+  asked about the last chapter of an 81-page page, the assistant finds it with
+  one search. Without an embedding server the page is offered for reading only.
+  A search also names the files it could not look at, or only partly, and why.
+  The same for a YouTube transcript; a file attached with `/file attach` and
+  asked about at once is waited for too. The "searchable" note now comes after
+  "attached" and no longer splits a reply in two.
 - **A page cut at the size limit says where it ends.** The assistant is told
   the section the text stops in, how much was left out when that is known, and
   that nothing can fetch the rest; the attachment itself carries the cut at the

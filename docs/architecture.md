@@ -475,6 +475,10 @@ src/
 │  ├─ compact_command.rs   /compact parser
 │  ├─ reindex_command.rs    /reindex parser (top-level, not a /rag subcommand: it
 │  │                        spans notes, attachments and every profile's base)
+│  ├─ attachment_index.rs   IndexBoard: which attachments' search indexes are being
+│  │                        built, their progress (attachment_search waits on it),
+│  │                        and the outcome note held until the file lands
+│  │                        (docs/research/attachment-birth-turn.md §5)
 │  ├─ file_command.rs       /file attach|remove|list|open|folder parser + FileProgress
 │  │                        (chat attachments and stored files, spec §9.7,
 │  │                        docs/file-attachments.md; opening goes through
@@ -2042,13 +2046,17 @@ through `insert_attachment` — the path `/file attach` takes. The loop still
 never touches `Chat`: the invariant is intact, the snapshot is its own. See
 spec §9.9, docs/history/youtube-transcript.md §3 F1.
 
-The mirror covers reading, not searching: the index is started by
-`insert_attachment`, so a file is searchable only after its turn lands. The mirror
-therefore also records the file's id in `ToolContext.born_this_turn`, and
-`attachment_search` names such a file as *attached in this turn* instead of as one
-with no index; `fetch_url` and `youtube_watch` offer only the page route in their
-result and say why (docs/research/attachment-birth-turn.md — stage 2 there moves the
-indexing into the turn).
+The mirror covers searching too: `sync_attachments` returns the ids it mirrored for
+the first time, and `start_attachment_indexes` starts their index right there, so
+`attachment_search` can reach the file in the same turn. The one owner of "started"
+is `features::attachment_index::IndexBoard`, an `Arc` the orchestrator shares with
+every turn's `ToolContext`: `begin` is claimed once — by the loop, by a parent loop
+mirroring a sub-agent's attachment, or by `insert_attachment` at the landing, which
+starts only what nobody has (`land`) — it carries the progress `attachment_search`
+waits on (bounded, cancelled with the turn), and it holds the index's outcome note
+until the file lands, because a feed note pushed mid-stream opens a new reply bubble
+(`ensure_streaming_bubble`). The banner comes down on `FileProgress::IndexEnded` at
+once; "searchable" follows "attached" (docs/research/attachment-birth-turn.md §5).
 
 **A tool's images, and who says whether they were shown.** `ToolOutcome.images`
 are *offered*, not sent: in `record_call` the loop withholds them all when the

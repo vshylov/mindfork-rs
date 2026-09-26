@@ -28,16 +28,11 @@ evidence. Adding or closing an item is part of every task's documentation step
 
 ## Most valuable next
 
-- **A fetched page searchable in the turn that fetched it** — stage 2 of
-  [attachment-birth-turn.md](research/attachment-birth-turn.md), chosen by the user
-  on 2026-09-26 as the next stage. Stage 1 made the birth turn honest (no search
-  offered, a search tried anyway names the file); the turn still has to find its
-  place by sampling pages, and on the live runs two birth turns of six spent the
-  whole 8-round budget that way where one search call would have answered.
-
-The other tracks this section carried — the first public release, images,
-retry/backoff and the prompt-caching measurement — have all closed. The lists
-below are otherwise an idea bank of equal weight.
+**Nothing is called out right now.** The tracks this section carried — the
+first public release, images, retry/backoff, the prompt-caching measurement and
+the attachment birth turn — have all closed. When a track is next chosen it is
+named here with the user pain or the saving it answers; until then the lists
+below are an idea bank of equal weight.
 
 ## Open
 
@@ -570,6 +565,11 @@ An index, newest first — one line per track, with the release that shipped it
 and where its story is told. What a track left open is a bullet above, under
 its area.
 
+- **An attachment in its birth turn** — unreleased (2026-09-26), two stages:
+  a fetched page no longer promises a search it cannot have and a cut says where
+  it ends (ceiling 1 000 000), then its index starts at the end of the round and a
+  search waits for it — the birth turn finds §17.5 of the spec with one search.
+  [attachment-birth-turn.md](research/attachment-birth-turn.md), spec §9.3.1, §9.7.
 - **Raw `llama-server` arguments in managed settings** — unreleased
   (2026-09-26): an *Extra arguments* field in each managed section, the
   flags that break the app or arm the server refused, the child's `LLAMA_*`

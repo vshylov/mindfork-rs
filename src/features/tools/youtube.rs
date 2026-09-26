@@ -776,10 +776,10 @@ fn transcript_outcome(
         "tool.youtube_watch.result.transcript_attached",
         &[("name", &name), ("pages", &pages.to_string())],
     ));
-    // Only the route that works now is offered: the file is indexed after the
-    // turn lands (docs/research/attachment-birth-turn.md F1).
+    // Search is offered only where an index is coming
+    // (docs/research/attachment-birth-turn.md G4).
     out.push(' ');
-    out.push_str(ctx.loc.t("tool.attachment.no_search_this_turn"));
+    out.push_str(super::attachment::search_route(ctx));
     if answer.truncated {
         out.push('\n');
         out.push_str(ctx.loc.t("tool.youtube_watch.result.transcript_truncated"));

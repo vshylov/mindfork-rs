@@ -463,6 +463,34 @@ mod tests {
         assert_eq!(banner.name, "a.pdf");
     }
 
+    /// An index that ended with its note held (a file a tool attached mid-turn,
+    /// docs/research/attachment-birth-turn.md G3) takes its own banner down and
+    /// writes nothing into the feed — and leaves another job's banner alone.
+    #[test]
+    fn an_index_end_clears_only_its_own_banner() {
+        use crate::features::file_command::FileProgress;
+        let mut s = ChatScreen::new();
+        let notes = s.feed.len();
+        s.set_file_progress(FileProgress::Indexing {
+            name: "spec.md".into(),
+            done: 976,
+            total: 976,
+        });
+        s.set_file_progress(FileProgress::IndexEnded {
+            name: "other.md".into(),
+        });
+        assert!(s.rag.is_some(), "another file's end took this banner down");
+        s.set_file_progress(FileProgress::IndexEnded {
+            name: "spec.md".into(),
+        });
+        assert!(s.rag.is_none(), "the finished index's banner stayed up");
+        assert_eq!(
+            s.feed.len(),
+            notes,
+            "the end itself says nothing in the feed"
+        );
+    }
+
     #[test]
     fn reembedded_progress_cancelled_says_a_rerun_continues() {
         let mut s = ChatScreen::new();

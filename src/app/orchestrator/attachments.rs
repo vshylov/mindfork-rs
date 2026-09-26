@@ -26,6 +26,7 @@ use crate::entities::attachment::{
     inline_tokens_excluding, name_is_shared, prompt_tokens,
 };
 use crate::entities::chat_file::{ChatFile, FileOrigin};
+use crate::features::attachment_index::{IndexBoard, Landing};
 use crate::features::file_command::{FileProgress, OpenedInstead, StoredInfo};
 use crate::features::tools::rag::ChunkParams;
 use crate::shared::api::{EmbedRole, Embedder};
@@ -374,7 +375,22 @@ impl Orchestrator {
         });
         self.emit_attachments();
         if let Some(task) = index {
-            self.spawn_attachment_index(task);
+            // A tool's attachment usually has its index started already — by the
+            // loop, at the end of the round that made it — and a note held for this
+            // moment; it goes out now, after "attached". Only what nobody started is
+            // started here (docs/research/attachment-birth-turn.md G2–G3).
+            match self.index_board.land(task.attachment_id) {
+                Landing::Unknown => {
+                    self.index_board.begin(task.attachment_id, true);
+                    self.spawn_attachment_index(task);
+                }
+                Landing::Running => {}
+                Landing::Ended(note) => {
+                    if let Some(note) = note {
+                        self.emit_file_progress(note);
+                    }
+                }
+            }
         }
     }
 
@@ -390,6 +406,7 @@ impl Orchestrator {
             params: ChunkParams::from_settings(&self.config.rag),
             loc: self.ui_locale(),
             evt_tx: self.evt_tx.clone(),
+            board: self.index_board.clone(),
             index: task,
         });
     }
@@ -870,14 +887,18 @@ pub(super) struct AttachIndex {
 }
 
 /// Parameters of the background attachment-indexing task.
-struct AttachIndexTask {
-    embedder: Arc<dyn Embedder>,
-    storage: Arc<Storage>,
-    params: ChunkParams,
+pub(super) struct AttachIndexTask {
+    pub(super) embedder: Arc<dyn Embedder>,
+    pub(super) storage: Arc<Storage>,
+    pub(super) params: ChunkParams,
     /// The interface language (axis B) — the progress/outcome notes are the user's.
-    loc: &'static Locale,
-    evt_tx: tokio::sync::mpsc::UnboundedSender<AppEvent>,
-    index: AttachIndex,
+    pub(super) loc: &'static Locale,
+    pub(super) evt_tx: tokio::sync::mpsc::UnboundedSender<AppEvent>,
+    /// Where the progress goes for `attachment_search` to wait on, and where the
+    /// outcome note waits for an attachment that has not landed yet. The caller
+    /// has already claimed the attachment there ([`IndexBoard::begin`]).
+    pub(super) board: Arc<IndexBoard>,
+    pub(super) index: AttachIndex,
 }
 
 /// Chunks, embeds and writes one attachment into the chat-scoped index — the
@@ -965,22 +986,37 @@ pub(super) async fn index_attachment(
 /// dimensionality doesn't match the DB, indexing is skipped with a clear note —
 /// the pinned block and `attachment_read` keep working in full. The feature never
 /// *depends* on RAG being set up.
-fn spawn_attachment_index(task: AttachIndexTask) {
+pub(super) fn spawn_attachment_index(task: AttachIndexTask) {
     let AttachIndexTask {
         embedder,
         storage,
         params,
         loc,
         evt_tx,
+        board,
         index,
     } = task;
 
     tokio::spawn(async move {
-        let skip = |reason: String| {
-            let _ = evt_tx.send(AppEvent::FileProgress(FileProgress::IndexSkipped {
-                name: index.name.clone(),
-                reason,
+        let id = index.attachment_id;
+        let name = index.name.clone();
+        // The task's end: the banner goes at once; the outcome note goes now if
+        // the attachment is in its chat, or waits on the board for it to land —
+        // a note in the middle of a streaming reply would split it
+        // (docs/research/attachment-birth-turn.md G3).
+        let end = |note: Option<FileProgress>| {
+            let _ = evt_tx.send(AppEvent::FileProgress(FileProgress::IndexEnded {
+                name: name.clone(),
             }));
+            if let Some(note) = board.finish(id, note) {
+                let _ = evt_tx.send(AppEvent::FileProgress(note));
+            }
+        };
+        let skipped = |reason: String| {
+            Some(FileProgress::IndexSkipped {
+                name: name.clone(),
+                reason,
+            })
         };
 
         // Precheck — a fast, clear answer when there's no embedder (the common
@@ -991,14 +1027,13 @@ fn spawn_attachment_index(task: AttachIndexTask) {
             .await
             .is_err()
         {
-            skip(loc.t("ui.file.index_no_embedder").to_string());
+            end(skipped(loc.t("ui.file.index_no_embedder").to_string()));
             return;
         }
 
         // Nothing cancels a single attach: the task is bounded by one file.
         let cancel = CancellationToken::new();
         let progress_tx = evt_tx.clone();
-        let name = index.name.clone();
         let outcome = index_attachment(
             &embedder,
             &storage,
@@ -1007,6 +1042,7 @@ fn spawn_attachment_index(task: AttachIndexTask) {
             loc,
             &cancel,
             |done, total| {
+                board.progress(id, done, total);
                 let _ = progress_tx.send(AppEvent::FileProgress(FileProgress::Indexing {
                     name: name.clone(),
                     done,
@@ -1016,18 +1052,16 @@ fn spawn_attachment_index(task: AttachIndexTask) {
         )
         .await;
 
-        match outcome {
+        end(match outcome {
             // No chunks at all: the file had nothing to index, and the attach
             // itself already reported success — saying more would be noise.
-            Ok(0) => {}
-            Ok(chunks) => {
-                let _ = evt_tx.send(AppEvent::FileProgress(FileProgress::Indexed {
-                    name: index.name,
-                    chunks,
-                }));
-            }
-            Err(reason) => skip(reason),
-        }
+            Ok(0) => None,
+            Ok(chunks) => Some(FileProgress::Indexed {
+                name: name.clone(),
+                chunks,
+            }),
+            Err(reason) => skipped(reason),
+        });
     });
 }
 

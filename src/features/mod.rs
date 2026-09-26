@@ -6,6 +6,7 @@
 //!
 //! Filled in starting at M3. Feature logic — pure functions, testable without a UI.
 
+pub mod attachment_index;
 pub mod backup;
 pub mod chat_export;
 pub mod chat_files;
