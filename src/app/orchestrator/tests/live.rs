@@ -242,6 +242,176 @@ async fn attachment_search_e2e_live() {
     );
 }
 
+/// A page a tool attached, searched in the turn it was born and in the next one
+/// (docs/research/attachment-birth-turn.md). The transcript behind it: `fetch_url`
+/// offered `attachment_search`, the search answered "no index was built", and the
+/// model sampled 20 of 72 pages at random. Now the result offers only the page route
+/// and names the dead one, a search the model tries anyway names the file as attached
+/// in this turn, and — the promise those texts make — after the turn lands the file is
+/// indexed and a question about another part of it is answered by meaning.
+///
+/// The page is the project's own `spec.md`, fetched for real, and the fact asked for
+/// sits in §17.5 — past the old 400 000-character ceiling, so the first turn also
+/// shows the whole document arrived. The second turn asks about §9.3.1 instead, a part
+/// the first turn does not read: asked the same question again, the model answered
+/// from its own previous reply and never searched (seen on the third run). The
+/// profile carries the three tools the story needs and nothing else ("remove the
+/// alternative", lessons §9).
+/// Needs `MINDFORK_ENGINE_URL`, `MINDFORK_EMBED_URL` and network access.
+#[tokio::test]
+#[ignore = "requires a live chat server (MINDFORK_ENGINE_URL), embedder (MINDFORK_EMBED_URL) and network access"]
+async fn fetched_page_search_across_its_birth_turn_e2e_live() {
+    use crate::app::events::FileProgress;
+    use crate::features::tools::attachment::{ATTACHMENT_READ_ID, ATTACHMENT_SEARCH_ID};
+    use crate::shared::i18n::{Lang, locale};
+    const URL: &str = "https://raw.githubusercontent.com/vshylov/mindfork-rs/main/spec.md";
+    const QUESTION: &str = "какое значение по умолчанию у параметра prompt_cap модели себя \
+         (глава 17 спецификации) и с какого значения его подняли? Назови оба числа.";
+    if std::env::var("MINDFORK_EMBED_URL").is_err() {
+        eprintln!("skip: MINDFORK_EMBED_URL not set (the second turn needs the index)");
+        return;
+    }
+    let mut config = AppConfig::default();
+    config.tools.web_enabled = true;
+    let Some((_dir, cmd_tx, mut evt_rx, handle)) = spawn_orch_live_cfg(config) else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    narrow_profile_to(
+        &cmd_tx,
+        &mut evt_rx,
+        vec![
+            crate::features::tools::FETCH_URL_ID.into(),
+            ATTACHMENT_READ_ID.into(),
+            ATTACHMENT_SEARCH_ID.into(),
+        ],
+    )
+    .await;
+
+    // Both bundles, so the check does not depend on the profile's scaffold language.
+    let no_search: Vec<&str> = Lang::ALL
+        .iter()
+        .map(|&l| locale(l).t("tool.attachment.no_search_this_turn"))
+        .collect();
+    let born_reason: Vec<String> = Lang::ALL
+        .iter()
+        .map(|&l| {
+            let t = locale(l).t("tool.attachment_search.unindexed.born");
+            t.split_once("): ").unwrap().1.to_string()
+        })
+        .collect();
+    let hits_header: Vec<String> = Lang::ALL
+        .iter()
+        .map(|&l| {
+            let t = locale(l).t("tool.attachment_search.result.header");
+            t.split_once("{n}").unwrap().0.to_string()
+        })
+        .collect();
+
+    // Turn 1 — the birth turn.
+    let (reply1, calls1) = run_turn_capture(
+        &cmd_tx,
+        &mut evt_rx,
+        &format!("Загрузи спецификацию {URL} и найди в ней, {QUESTION}"),
+    )
+    .await;
+    for (name, result) in &calls1 {
+        eprintln!(
+            "turn 1 call {name} -> {}",
+            result.chars().take(400).collect::<String>()
+        );
+    }
+    eprintln!("turn 1 reply: {reply1}");
+    let fetch = calls1
+        .iter()
+        .find(|(n, _)| n == crate::features::tools::FETCH_URL_ID)
+        .expect("the model never fetched the page, so nothing was tested");
+    let mut stripped = fetch.1.clone();
+    for s in &no_search {
+        stripped = stripped.replace(s, "");
+    }
+    assert!(
+        !stripped.contains("attachment_search"),
+        "the birth-turn result offers search as a route: {}",
+        fetch.1
+    );
+    assert!(
+        no_search.iter().any(|s| fetch.1.contains(s)),
+        "the dead route is not named: {}",
+        fetch.1
+    );
+    for (_, result) in calls1.iter().filter(|(n, _)| n == ATTACHMENT_SEARCH_ID) {
+        assert!(
+            born_reason.iter().any(|b| result.contains(b.as_str())),
+            "a birth-turn search must name the file as attached in this turn: {result}"
+        );
+    }
+    let searched1 = calls1
+        .iter()
+        .filter(|(n, _)| n == ATTACHMENT_SEARCH_ID)
+        .count();
+    let read1 = calls1
+        .iter()
+        .filter(|(n, _)| n == ATTACHMENT_READ_ID)
+        .count();
+    eprintln!("turn 1: {searched1} search call(s), {read1} page read(s)");
+
+    // The promise: after the turn lands, the file is indexed.
+    let indexed = wait_for(&mut evt_rx, |e| {
+        matches!(
+            e,
+            AppEvent::FileProgress(FileProgress::Indexed { .. })
+                | AppEvent::FileProgress(FileProgress::IndexSkipped { .. })
+        )
+    })
+    .await
+    .unwrap();
+    eprintln!("index: {indexed:?}");
+    assert!(
+        matches!(
+            indexed,
+            AppEvent::FileProgress(FileProgress::Indexed { .. })
+        ),
+        "the page was not indexed after its turn: {indexed:?}"
+    );
+
+    // Turn 2 — the same question, now answerable by meaning.
+    let (reply2, calls2) = run_turn_capture(
+        &cmd_tx,
+        &mut evt_rx,
+        "Теперь поищи в приложенной спецификации по смыслу: до скольких символов          обрезается имя вложения, которое fetch_url берёт из названия страницы?",
+    )
+    .await;
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    let _ = handle.await;
+    for (name, result) in &calls2 {
+        eprintln!(
+            "turn 2 call {name} -> {}",
+            result.chars().take(400).collect::<String>()
+        );
+    }
+    eprintln!("turn 2 reply: {reply2}");
+    let searches2: Vec<_> = calls2
+        .iter()
+        .filter(|(n, _)| n == ATTACHMENT_SEARCH_ID)
+        .collect();
+    assert!(
+        !searches2.is_empty(),
+        "turn 2 never searched: {:?}",
+        calls2.iter().map(|(n, _)| n).collect::<Vec<_>>()
+    );
+    assert!(
+        searches2
+            .iter()
+            .any(|(_, r)| hits_header.iter().any(|h| r.starts_with(h.as_str()))),
+        "the search after the turn landed still found nothing: {searches2:?}"
+    );
+    assert!(
+        reply2.contains("60"),
+        "§9.3.1 clips the name to 60 characters: {reply2}"
+    );
+}
+
 /// Chat attachments, stage 2 go/no-go (docs/file-attachments.md): a file too big
 /// to inline is attached **by reference**, and the model reaches the part it
 /// needs — the answer sits on a **late** page, so the excerpt alone cannot

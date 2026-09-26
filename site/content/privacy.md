@@ -2,11 +2,11 @@
 # Generated from PRIVACY.md by tools/site_legal_pages.py - do not edit.
 title = "Privacy policy"
 description = "What mindfork keeps on your machine, what leaves it and only on which setting of yours, and what reaches its author — which is nothing."
-updated = "2026-09-17"
+updated = "2026-09-26"
 template = "doc.html"
 +++
 
-Effective **2026-09-17**. It covers three things that are easy to confuse: the
+Effective **2026-09-26**. It covers three things that are easy to confuse: the
 **mindfork application**, the website **mindfork.io**, and the project's
 presence on **GitHub**. They have very different answers, so they are kept
 apart below.
@@ -174,7 +174,7 @@ file says, so if you had it on, it stays on.)
 - **`fetch_url`** retrieves the address the model chose. A page that fits the
   attachment budget reaches your chat model as a summary — up to 12 000
   characters of it are sent to be summarized — or as its text, when the model
-  asks for no summary or summarizing fails. A larger page (up to 400 000
+  asks for no summary or summarizing fails. A larger page (up to 1 000 000
   characters) is attached to the chat and kept with it, and its passages travel
   like any attachment's (§3.1).
 - **`youtube_watch`** fetches the video's watch page — or, failing that, its

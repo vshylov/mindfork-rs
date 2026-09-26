@@ -26,7 +26,25 @@ split by subsystem.
   whoever reaches its port (`--tools`, `--agent`) or have it download models
   (`-hf`) — for those, run `llama-server` yourself in external mode.
 
+### Changed
+- **A fetched page can be up to 1 000 000 characters** (was 400 000), so a long
+  specification — this project's own among them — now arrives whole.
+
 ### Fixed
+- **A page the assistant just fetched is no longer offered for search in the
+  same reply.** Its search index is built after the reply, so the search
+  answered "no index was built" and the assistant guessed its way through the
+  pages. The fetch now offers page reading only and says search comes later; a
+  search tried anyway names the file as just attached, and in a chat where
+  other files are searchable it lists the ones it did not look at. The same for
+  a YouTube transcript.
+- **A page cut at the size limit says where it ends.** The assistant is told
+  the section the text stops in, how much was left out when that is known, and
+  that nothing can fetch the rest; the attachment itself carries the cut at the
+  top and a marker where the text stops, instead of breaking off mid-word.
+- **A Markdown page (`text/markdown`) can be fetched.** It used to fail with
+  "no readable text"; a plain-text page is also no longer described as
+  "extracted from HTML".
 - **Double spaces in the Russian hint of the Batch field** are gone.
 - **A managed server that will not start says why.** When `llama-server`
   refuses its arguments, the status now shows its own message — *"refused to

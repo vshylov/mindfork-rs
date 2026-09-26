@@ -5040,14 +5040,19 @@ pub(super) fn sync_attachments(ctx: &mut ToolContext, effects: &[ChatEffect]) {
         return;
     }
     let mut list: Vec<crate::entities::attachment::Attachment> = ctx.attachments.to_vec();
+    let mut born: Vec<Uuid> = ctx.born_this_turn.to_vec();
     for a in added {
         if list.iter().any(|x| x.id == a.id) {
             continue; // already mirrored by an earlier round
         }
         list.retain(|x| x.source != a.source);
         list.push(a.clone());
+        // Not indexed before the turn lands — `attachment_search` says so by name
+        // (docs/research/attachment-birth-turn.md F2).
+        born.push(a.id);
     }
     ctx.attachments = list.into();
+    ctx.born_this_turn = born.into();
 }
 
 /// Rebuilds the turn's stored-file snapshot from the `AddChatFile` effects so far, with

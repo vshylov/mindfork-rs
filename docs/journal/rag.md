@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (18)
+## Entries (19)
 
 - Post-M9: loading/removing files in RAG via `/rag add|remove` commands (done)
 - Post-M9: smart RAG chunking (overlap + markdown) + stitching on retrieval (done)
@@ -30,6 +30,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: `/reindex` rebuilds an attachment index that is missing entirely (done)
 - Post-M9: `/file remove` and `/image remove` refuse a name two items share (done)
 - Post-M9: `/file open 1` — a bare number is the listed `#N` (done)
+- Post-M9: a fetched page and its birth turn — no search it cannot have, and a cut that says where (done)
 
 ### Post-M9: loading/removing files in RAG via `/rag add|remove` commands (done)
 - **Commands in the input box**: `/rag add <path>` indexes a file or directory into the
@@ -1363,3 +1364,93 @@ with `#1` alone, and the emptied chat points at `/file attach`; `/image remove 5
 staged range and `2` unstages the second. Not a live run: this is the command path and a
 tool's argument resolution — nothing reaches the engine, memory or a model, and the
 orchestrator's and the tool's tests drive both whole. Unit: 3246 green, 181 ignored (3240 / 181 before).
+
+### Post-M9: a fetched page and its birth turn — no search it cannot have, and a cut that says where (done)
+
+Stage 1 of [docs/research/attachment-birth-turn.md](../research/attachment-birth-turn.md);
+forks decided by the user on 2026-09-26, all five at the recommendation. Stage 2 — indexing
+inside the turn — is the next branch.
+
+**The report.** The user pointed the assistant (`gpt-6-sol`) at the project's own
+`spec.md` and asked why it read the pages as 1 · 9, 22, 38, 62 · 17, 19, 24, 70 · 72, 71,
+13, 20 · 21, 68, 69, 11, and whether its context had been shuffled too. **It had not**:
+every result is paired to its call by id, opens with its page number, and sits in call
+order, and nothing reorders messages by time (the tool rows are stamped microseconds
+*before* their assistant row, so a sort would have broken them). The order was the
+model's, and the chat file showed what pushed it: `fetch_url` attached the page and offered
+`attachment_search`; both searches answered "no search index was built"; with 72 pages
+and no search it read the table of contents and guessed positions. The search could not
+have worked — a tool's attachment reaches the turn's snapshot at the end of its round
+(`sync_attachments`), which is why `attachment_read` works at once, but the index is
+started by `insert_attachment`, which runs when the turn **lands**. The log: attached at
+01:36:10, searched at 01:36:14, the turn's last reply at 01:36:48.824, the indexer's first
+request at 01:36:48.826, searchable at 01:37:12. And the file was not the spec: the
+400 000-character ceiling stopped it at character 399 961, inside §12.3 — §13–§17 absent,
+§17 Self-model the very chapter the question was about — with a note that said only "not
+the whole page" and an attachment whose last page ended mid-word.
+
+**What changed.**
+- **F1** — `fetch_url` and `youtube_watch` offer only `attachment_read` and say, in a
+  sentence of its own, that `attachment_search` does not reach this attachment in this
+  turn. Naming the dead route matters because the search tool's own description tells
+  the model to prefer it for exactly this kind of file. "The whole page" is said only when
+  it is; a cut page is attached as "what was received".
+- **F2** — `ToolContext.born_this_turn`, filled by `sync_attachments` and inherited by a
+  sub-agent's clone. `attachment_search` names every by-reference file it cannot see, with
+  its page count and why: *attached in this turn — indexed after your reply* or *no search
+  index*. When some file is indexed the search runs and ends with the same list, marked
+  not searched, so "nothing found" no longer silently covers a file it never looked at. All
+  files inline gets "shown in full", and an embedder that stopped answering gets its own
+  sentence instead of "no index".
+- **F3** — the cut is stated where the model will meet it: the result names the limit,
+  the last Markdown heading before the cut (outside fences — a `# comment` in a shell block
+  is not a section) and the page it starts on (`Attachment::page_at`, the page
+  `attachment_read` returns), for a verbatim body the characters that never arrived, and
+  the door — re-fetching returns the same beginning, tell the user which part is missing.
+  The attachment carries it in its header, which the pinned excerpt repeats every later
+  turn, and in a bracketed marker where its text stops.
+- **F4** — `MAX_EXTRACT_CHARS` 400 000 → 1 000 000. `join_blocks` re-counted the growing
+  output's characters once per block; measured on the Rust book's `print.html` (4 698
+  blocks), 87 ms against 17 ms at the new ceiling in release (28 against 15 at the old) — the
+  research doc's "seconds" was an estimate and was wrong by thirty times, corrected there;
+  it is a running count now anyway. `PRIVACY.md` (and its translation, the site page and
+  the Windows installer's two privacy pages) names the new figure, dated 2026-09-26 — the
+  installer pages were first left stale, which CI's `wizard_rtf` gate caught (lessons §1).
+- **F5** — `PageText.verbatim`: a body that is text is described as text, not as "extracted
+  from HTML". **Found while testing it**: `text/markdown` went down the HTML path, found no
+  `<p>` and failed as "no readable text"; any `text/*` that is not HTML/XML is text now.
+
+**Live — GO.** llama.cpp b11191, `gemma-4-26B-A4B-it` Q4_1 (`-c 65536 --jinja`) and
+`bge-m3` Q8_0, RTX 4090. Network smokes: the spec arrives whole (448 761 characters, 81
+pages, §17 present, verbatim header, no search offered); War and Peace from Gutenberg
+(3.36 MB `text/plain`) cuts at 1 000 450 characters / 172 pages with "about 2 293 649 more
+characters were not received"; the Rust book's `print.html` cuts inside *Conditional `if
+let` Expressions*, page 172 of 172, and gives no remainder figure. The birth-turn smoke
+(`fetched_page_search_across_its_birth_turn_e2e_live`): turn 1 fetches the spec and is asked
+for §17.5's `prompt_cap` default; after it lands the file is indexed (976 chunks); turn 2
+asks about §9.3.1 by meaning. The first run was red on the stand, not the code: the
+embedder had been started by hand without `-ub`, and a 560-token chunk exceeded llama.cpp's
+512 physical batch — the managed launcher passes `-ub 8192 -b 8192`, the stand now does too.
+Every birth-turn search in every run got the *attached in this turn* answer and the model
+went on to `attachment_read`. What the texts do **not** do is stop Gemma trying: its first
+search comes straight after the fetch, before any search answer, and across eleven runs
+after the *searching again is pointless* sentence was added (from the first run, which
+searched three times) it searched 1, 1, 1, 3, 1, 3, 1, 1, 2, 1, 2 times — each a cheap
+local call. Turn 2's first question repeated turn 1's, and on the third run the model
+answered from its own previous reply without searching; the question moved to a part of
+the spec turn 1 does not read. With it, eight runs: seven GO, one red on the reply's
+content (it did not state the number). Of the six runs whose turn-1 reply was kept, four
+found 4000/1200 in the birth turn by sampling pages; two made eight calls — one fetch, one
+search, six pages, the default `max_tool_rounds` — and ended on Gemma's raw
+`<|tool_call>` markup as the reply. That is the case for stage 2: with search inside the
+turn, one call finds §17.5.
+
+**Tests.** The birth-turn and no-index answers (with and without the retry sentence),
+the mixed chat's not-searched list on hits and on an empty answer, all-inline,
+embedder-down; `sync_attachments` records the born id once across rounds, and a search in
+the next round names it; the result offers no search as a route; the cut in the result
+and in the attachment (header, excerpt, last page ending on the marker, inline path);
+heading, page and remainder on a verbatim cut, no remainder figure on an HTML cut;
+`last_heading` over fences, `#[derive]`, `#tag`, closing hashes, indentation and a
+paragraph-long title; `text/markdown`, `text/x-markdown`, `text/csv` verbatim. Unit: 3443
+green, 202 ignored (3435 / 199 before).

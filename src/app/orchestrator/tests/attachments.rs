@@ -604,6 +604,43 @@ async fn an_attachment_from_a_tool_is_readable_in_the_next_round_of_the_same_tur
     // must not duplicate it — the effects vector is cumulative, not per round.
     super::super::generation::sync_attachments(&mut ctx, &effects);
     assert_eq!(ctx.attachments.len(), 1);
+    // …and the file is known as this turn's own, which is what lets
+    // `attachment_search` say "attached in this turn" instead of "no index"
+    // (docs/research/attachment-birth-turn.md F2) — once, however many rounds pass.
+    assert_eq!(ctx.born_this_turn.as_ref(), [attachment.id].as_slice());
+}
+
+/// The search half of the same hole, end to end through the loop's own mirroring:
+/// a search in the round after the tool attached the file names it as born in this
+/// turn — the index is built after the turn lands — rather than as a file with no
+/// index, which is what the transcript behind attachment-birth-turn.md got.
+#[tokio::test]
+async fn a_search_in_the_birth_turn_names_the_file_as_just_attached() {
+    use crate::features::tools::Tool;
+    use crate::features::tools::attachment::AttachmentSearch;
+
+    let (_d, orch) = bare_orch();
+    let body = "страница спецификации, строка за строкой\n".repeat(20);
+    let attachment = made_up_attachment("spec.md", "https://example.com/spec.md", &body);
+    let effects = vec![crate::features::tools::ChatEffect::AddAttachment(Box::new(
+        attachment.clone(),
+    ))];
+    let mut ctx = turn_ctx(&orch, Uuid::new_v4(), Uuid::new_v4(), vec![]);
+    super::super::generation::sync_attachments(&mut ctx, &effects);
+
+    let out = AttachmentSearch
+        .invoke(&ctx, serde_json::json!({"query": "спецификация"}))
+        .await
+        .unwrap()
+        .result;
+    let pages = attachment
+        .page_count(ctx.attachment_cfg.page_tokens)
+        .to_string();
+    let born = ctx.loc.tf(
+        "tool.attachment_search.unindexed.born",
+        &[("name", "spec.md"), ("pages", &pages)],
+    );
+    assert!(out.contains(&born), "{out}");
 }
 
 /// The other half of F1: what the model was told about is what gets stored —

@@ -122,6 +122,22 @@ impl Attachment {
         n.checked_sub(1).and_then(|i| pages.get(i)).copied()
     }
 
+    /// The page (1-based) that holds byte `offset` of the text — the one
+    /// `attachment_read` returns it on, since both go through [`paginate`]. An offset
+    /// past the end is on the last page. For a note that names a place in the file
+    /// (docs/research/attachment-birth-turn.md F3).
+    pub fn page_at(&self, page_tokens: usize, offset: usize) -> usize {
+        let pages = paginate(&self.text, page_tokens);
+        let mut end = 0;
+        for (i, p) in pages.iter().enumerate() {
+            end += p.len();
+            if offset < end {
+                return i + 1;
+            }
+        }
+        pages.len()
+    }
+
     /// Does the user's `/file remove <target>` refer to this attachment? Matches
     /// the display name or the full source path, case-insensitively (Windows
     /// paths differ only in case all the time) — through
