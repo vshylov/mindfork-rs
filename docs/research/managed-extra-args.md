@@ -1,7 +1,8 @@
 # Raw `llama-server` arguments in managed settings
 
-> **Status:** forks settled (the user's decision, 2026-09-26): F1 (a), **F2 (b)
-> — the embedder too**, F3 (a), F4 (a), F5 (a), F6 (a), F7 (a). The roadmap item of the same name
+> **Status:** implemented (2026-09-26), live **GO** — §7. Forks settled by the
+> user the same day: F1 (a), **F2 (b) — the embedder too**, F3 (a), F4 (a), F5 (a),
+> F6 (a), F7 (a). The roadmap item of the same name
 > ([roadmap.md](../roadmap.md), "Engine and providers"): `ManagedConfig.extra_args`
 > exists and `build_args` appends it, but every caller passes an empty list, so
 > managed mode can send only the flags that have a field of their own. The item
@@ -205,3 +206,33 @@ roadmap item already describes.
 5. Docs: spec §3.4 and §11.6, architecture §5 and §10, install.md §3 (the
    field, and `LLAMA_ARG_*` as the process-wide route), README, CHANGELOG,
    journal/engine.md, roadmap (the item closed; the embedder half stays).
+
+## 7. Outcome (2026-09-26)
+
+Built as §6 planned, in one PR; the engine journal's entry has the whole story
+([journal/engine.md](../journal/engine.md), "raw `llama-server` arguments in managed
+settings"). Where the build departed from the plan or learned something:
+
+- The table lives in `shared/api/llama_args.rs`; its per-section rule needed a third
+  role — the **impersonation** section shows no *Sessions*, so `-np` is free there — and
+  `ManagedConfig` gained `role` to carry it to the launch.
+- `HF_TOKEN` joined kind 4 (`-hft`/`--hf-token`): useful only beside a download, and a
+  secret a server that downloads nothing has no business holding.
+- The early exit's line needed the monitor to **await the output readers** (≤ 1 s)
+  before announcing the exit — the exit and the last line race. The end-to-end test
+  with a real process did not catch the mutant that dropped the wait; a reader task
+  that takes its time does.
+
+**Live** (b11191 CUDA, RTX 4090): the smoke's control arm — `--n-cpu-mo 4` — failed in
+2.0 s with *"llama-server refused to start: error: invalid argument: --n-cpu-mo"*; with
+`LLAMA_API_KEY` in the environment the server came up with the raw arguments and
+`/v1/models` answered 200 with the alias — and 401 with the scrub switched off. The
+app's own path, `mindfork setup … --set 'engine.managed.extra_args=["--n-cpu-moe","20"]'
+--verify`, was ready in 10 s on gemma-4-26B-A4B Q4_1. What the knob buys on that model
+at `-c 16384`:
+
+| Extra arguments | VRAM | Decode |
+|---|---|---|
+| — | 17 264 MiB | 141.8 tok/s |
+| `--n-cpu-moe 10` | 12 776 MiB | 44.9 tok/s |
+| `--n-cpu-moe 20` | 8 422 MiB | 28.0 tok/s |

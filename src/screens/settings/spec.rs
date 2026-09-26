@@ -236,6 +236,7 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
             }
         }),
         XBinary => text(|c, t| c.engine.managed.binary = opt(t)),
+        XExtraArgs => text(|c, t| c.engine.managed.extra_args = parse_args(t)),
         XModel => text(|c, t| c.engine.managed.model_path = opt(t)),
         XMmproj => text(|c, t| c.engine.managed.mmproj = opt(t)),
         XDraftModel => text(|c, t| c.engine.managed.draft_model = opt(t)),
@@ -328,6 +329,7 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
             }
         }),
         IxBinary => text(|c, t| c.impersonation_engine.managed.binary = opt(t)),
+        IxExtraArgs => text(|c, t| c.impersonation_engine.managed.extra_args = parse_args(t)),
         IxModel => text(|c, t| c.impersonation_engine.managed.model_path = opt(t)),
         IxMmproj => text(|c, t| c.impersonation_engine.managed.mmproj = opt(t)),
         IxDraftModel => text(|c, t| c.impersonation_engine.managed.draft_model = opt(t)),
@@ -391,6 +393,7 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
             }
         }),
         EBinary => text(|c, t| c.embed.managed.binary = opt(t)),
+        EExtraArgs => text(|c, t| c.embed.managed.extra_args = parse_args(t)),
         EModel => text(|c, t| c.embed.managed.model_path = opt(t)),
         // ── Speech (TTS) ──────────────────────────────────────────────
         TtsMode => choice(

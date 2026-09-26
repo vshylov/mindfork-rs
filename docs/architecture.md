@@ -562,7 +562,10 @@ src/
    │  │                     endpoint shapes (OpenAI-compatible / Gemini native / Anthropic /
    │  │                     xAI language-models) into one CatalogModel carrying the role the
    │  │                     endpoint claimed — Unstated where it claimed none
-   │  ├─ managed.rs         ServerHandle (managed llama-server process), ManagedConfig, wait_until_ready
+   │  ├─ managed.rs         ServerHandle (managed llama-server process), ManagedConfig, wait_until_ready, ChildExit
+   │  ├─ llama_args.rs      the user's raw server arguments: which are refused per ManagedRole
+   │  │                     (a field's flag, the connection, an agent, a fetch) and which LLAMA_*
+   │  │                     variables the child loses — a table read from llama.cpp's --help
    │  ├─ thoughts.rs        streaming <think> parser (falls back to reasoning_content)
    │  └─ mock.rs            mock engine for tests (#[cfg(test)])
    ├─ storage/              storage
@@ -1607,7 +1610,25 @@ its own — or named by `api_key_env`, resolved through the same
   (a corrupt GGUF, OOM), the monitor raises `exited`, and
   `wait_until_ready(..., exited)` stops polling right away with a clear error —
   instead of waiting out the timeout (which would otherwise hang in
-  "connecting…" until `MANAGED_READY_TIMEOUT=600s`).
+  "connecting…" until `MANAGED_READY_TIMEOUT=600s`). `exited` is a
+  **`ChildExit`**: the token plus the first line the child's output readers
+  saw that llama.cpp's argument parser refuses a launch with (`error: …`,
+  ANSI-stripped), which becomes the message instead of the corrupt-GGUF guess.
+  `supervise` wires a spawned child: two `forward_lines` readers and
+  `spawn_monitor`, which after the process's exit awaits the readers for at most
+  `OUTPUT_DRAIN` (1 s) before arming the token — the exit and the last line race,
+  and a grandchild holding the pipe must not hold the probe.
+  **Raw arguments** (`ManagedConfig.extra_args`, appended last by `build_args`;
+  `ManagedConfig.role` says which section wrote the line): `launch` asks
+  `llama_args::check(extra_args, role)` before any preflight and bails with
+  `Refused::launch_message`; the settings editor asks the same function on
+  `Enter` (`screens/settings/helpers.rs::extra_args_error`). `server_command`
+  builds the `Command` and `env_remove`s `llama_args::scrubbed_env(role)` —
+  the `LLAMA_*` names of the flags refused outright, so none arrives through the
+  inherited environment. The table's spellings are llama.cpp's
+  (build 11191); `llama_args::the_table_matches_the_binary_live` checks them against
+  a real `--help`, and `every_flag_the_app_writes_is_judged` against `build_args`.
+  Spec §3.4, docs/research/managed-extra-args.md.
 
 ### Server management — `ServerSupervisor` (`app/supervisor.rs`)
 

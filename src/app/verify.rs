@@ -23,6 +23,7 @@ use std::time::Instant;
 use crate::app::supervisor::{
     BinaryLookup, MANAGED_READY_TIMEOUT, managed_config, managed_embed_config,
 };
+use crate::shared::api::llama_args::ManagedRole;
 use crate::shared::api::{
     EngineBackend, ManagedConfig, OpenAiClient, ServerHandle, VisionSupport, wait_until_ready,
 };
@@ -52,7 +53,7 @@ pub async fn run(
     let mut started: Vec<Started> = Vec::new();
 
     let chat = (config.engine.mode == ServerMode::Managed)
-        .then(|| managed_config(&config.engine.managed, lookup));
+        .then(|| managed_config(&config.engine.managed, ManagedRole::Assistant, lookup));
     let embed = (config.embed.mode == ServerMode::Managed).then(|| {
         let binary = lookup
             .resolve(config.embed.managed.binary.as_deref())

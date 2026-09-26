@@ -56,21 +56,19 @@ equal weight.
   - **deferred** — **xAI's server-side Live Search / X Search**, and the
     Responses route as the cheap way to xAI-only features
     ([grok-xai-provider.md §5](research/grok-xai-provider.md), F1 and F6).
-- **Raw `llama-server` arguments in managed settings** — **on demand**.
-  `ManagedConfig.extra_args` exists and `build_args` appends it, but every
-  caller passes an empty list, so managed mode can send only the flags that have
-  a field of their own. Where it bites: a large MoE model on a consumer GPU is
-  `--n-cpu-moe`/`-ot` work, reachable today only by starting `llama-server` by
-  hand and switching to external mode. The build is small (one text field split
-  by `shared::cmdline::split`, a restart on change, hidden behind the managed
-  group); the cost is a free-form argv into a child process — a field that can
-  break a launch in ways no preflight checks, and a security review of its own
-  ([cloud-provisioning.md §9](research/cloud-provisioning.md)). The managed
-  child inherits the app's environment, so llama.cpp's own `LLAMA_ARG_*`
-  variables may already be a way through — untested.
 - **An embedder context setting** — **on demand**. The managed embedder's
   context is the hardcoded `DEFAULT_CONTEXT_SIZE` in `supervisor.rs`
-  ([cloud-provisioning.md §9](research/cloud-provisioning.md)).
+  ([cloud-provisioning.md §9](research/cloud-provisioning.md)). Reachable
+  since 2026-09-26 as `-c N` in the embedder's *Extra arguments*
+  ([managed-extra-args.md](research/managed-extra-args.md)) — the last
+  occurrence wins, and upstream has deprecated repeating a flag, so a field of
+  its own is still the lasting answer.
+- **Raw arguments — leftovers** ([managed-extra-args.md](research/managed-extra-args.md);
+  closed 2026-09-26) — **on demand**, each: the refusal table is read from one
+  llama.cpp build and a rename upstream quietly turns a refusal into "the last
+  occurrence wins" until `the_table_matches_the_binary_live` is run against the
+  new build; a `MINDFORK_LLAMA_ARGS` variable for the dev launch, which
+  `setup --set` covers today.
 - **`MINDFORK_MODEL` is ignored unless `MINDFORK_LLAMA_BIN` is set** —
   **on demand**. An adjacent finding of the provisioning track (§2.2, §9 there):
   an empty binary has resolved by itself since the download track, so the
@@ -99,7 +97,9 @@ equal weight.
   closed) — **on demand**, each: the external shape typed, a `pool` field for a
   split server (F4b); a "waiting for room" label on the status chip and the
   transcript row (F6b — the tasks screen already says *waiting* for the app's
-  own tasks); `--kv-unified-per-slot` as a managed option (F7b); a retry that
+  own tasks); `--kv-unified-per-slot` as a managed option (F7b — reachable
+  now through *Extra arguments*, without the app knowing the per-slot limit);
+  a retry that
   re-enters `acquire` instead of waiting on a timer (the honest fix is the
   estimate); a per-client test of an error object arriving after a text delta,
   for the Anthropic and Gemini in-stream envelopes; the parked-set bound of the
@@ -565,6 +565,11 @@ An index, newest first — one line per track, with the release that shipped it
 and where its story is told. What a track left open is a bullet above, under
 its area.
 
+- **Raw `llama-server` arguments in managed settings** — unreleased
+  (2026-09-26): an *Extra arguments* field in each managed section, the
+  flags that break the app or arm the server refused, the child's `LLAMA_*`
+  side door closed, and a refused launch said in llama.cpp's words.
+  [managed-extra-args.md](research/managed-extra-args.md), spec §3.4.
 - **One command from a bare GPU box to a chat** — 0.11.0–0.11.1 (2026-09-21/22):
   `mindfork setup`, `install.sh` as an attested release asset, and the README's
   line run on a RunPod pod end to end (`ready in 4 s — context 131072`).

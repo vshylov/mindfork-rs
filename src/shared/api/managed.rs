@@ -4,6 +4,7 @@
 
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
@@ -12,6 +13,7 @@ use tokio::process::{Child, Command};
 use tokio_util::sync::CancellationToken;
 
 use crate::shared::api::OpenAiClient;
+use crate::shared::api::llama_args::{self, ManagedRole};
 use crate::shared::i18n::Locale;
 
 /// Launch configuration for the managed `llama-server` (llama.cpp) server.
@@ -63,7 +65,14 @@ pub struct ManagedConfig {
     /// The bind interface (`--host`).
     pub host: String,
     pub port: u16,
-    /// Extra raw arguments.
+    /// Which server this is — the section whose fields wrote the line, and so
+    /// which of [`Self::extra_args`] the launch refuses
+    /// ([`llama_args::check`]).
+    pub role: ManagedRole,
+    /// The user's raw arguments (`extra_args` in the settings, spec §3.4),
+    /// appended **last**. Checked before the spawn: a flag a field of the
+    /// section already writes, or one of the kinds docs/research/managed-extra-args.md
+    /// §4 refuses, stops the launch with a message naming it.
     pub extra_args: Vec<String>,
 }
 
@@ -327,10 +336,58 @@ pub struct ServerHandle {
     /// Armed on `drop`: the monitor task (the [`Child`] owner) kills the process.
     kill: CancellationToken,
     /// Armed by the monitor task when the child process exits on its own (normally,
-    /// or crashing while loading — a corrupt GGUF, out of memory). The probe watches
-    /// it to avoid waiting out the timeout pointlessly.
-    exited: CancellationToken,
+    /// or crashing while loading — a corrupt GGUF, out of memory, an argument it
+    /// refused). The probe watches it to avoid waiting out the timeout pointlessly.
+    exited: ChildExit,
     base_url: String,
+}
+
+/// What the readiness probe watches of a managed child: that it exited, and the
+/// line llama.cpp refused the launch with, if it printed one (spec §3.4,
+/// docs/research/managed-extra-args.md F6).
+///
+/// The line is what makes a typo in the extra arguments say what it is. Measured
+/// (M1–M3 there): an unknown flag, a bad value and the `--flag=value` form all end
+/// the process at once with `error: invalid argument: …` or `error while handling
+/// argument "…": …` on its output — which used to reach only the log, while the
+/// status blamed a corrupt GGUF or the memory. Nothing else is read out of the
+/// log: a loading failure prints timestamped records, not this line, and keeps
+/// the generic message.
+#[derive(Debug, Clone, Default)]
+pub struct ChildExit {
+    exited: CancellationToken,
+    said: Arc<Mutex<Option<String>>>,
+}
+
+impl ChildExit {
+    /// Whether the child has exited.
+    pub fn is_exited(&self) -> bool {
+        self.exited.is_cancelled()
+    }
+
+    /// Resolves once the child has exited — after its output was read to the
+    /// end, so [`Self::message`] already has the line it exited with.
+    pub async fn wait(&self) {
+        self.exited.cancelled().await
+    }
+
+    /// Why the child is gone, in the interface language: llama.cpp's own
+    /// refusal when it printed one, the generic guess otherwise.
+    pub fn message(&self, loc: &Locale) -> String {
+        match self.said.lock().ok().and_then(|said| said.clone()) {
+            Some(said) => loc.tf("ui.err.managed.early_exit_said", &[("said", &said)]),
+            None => loc.t("ui.err.managed.early_exit").to_string(),
+        }
+    }
+
+    /// An exit that already happened, for the probe's tests.
+    #[cfg(test)]
+    pub(crate) fn exited_saying(said: Option<&str>) -> Self {
+        let exit = Self::default();
+        *exit.said.lock().unwrap() = said.map(str::to_string);
+        exit.exited.cancel();
+        exit
+    }
 }
 
 impl Drop for ServerHandle {
@@ -346,8 +403,9 @@ impl ServerHandle {
     }
 
     /// A "the child process exited" signal — for the readiness probe
-    /// ([`wait_until_ready`]): catches an early exit (a corrupt GGUF/OOM) before the timeout.
-    pub fn exited(&self) -> CancellationToken {
+    /// ([`wait_until_ready`]): catches an early exit (a corrupt GGUF/OOM, a
+    /// refused argument) before the timeout, and says which.
+    pub fn exited(&self) -> ChildExit {
         self.exited.clone()
     }
 
@@ -355,6 +413,13 @@ impl ServerHandle {
     /// the interface language for the error text (the supervisor shows it in the status chip as
     /// `ServerStatus::Disconnected`; for the embedding server the error only goes to the log).
     pub fn launch(cfg: &ManagedConfig, loc: &'static Locale) -> Result<Self> {
+        // The user's raw arguments, before anything touches the disk: the one
+        // check every writer of the setting passes through — the settings editor
+        // asks the same question, but `settings.json`, `mindfork setup --set` and
+        // a restored backup never meet the editor (docs/research/managed-extra-args.md F5).
+        if let Err(refused) = llama_args::check(&cfg.extra_args, cfg.role) {
+            bail!("{}", refused.launch_message(loc));
+        }
         // A preflight check of the model file. `spawn` below succeeds even with the
         // GGUF missing — `llama-server` only later crashes while loading and
         // exits, and the background probe (`wait_until_ready`) doesn't notice and
@@ -399,40 +464,57 @@ impl ServerHandle {
         let args = build_args(cfg, no_mmap);
         tracing::info!(binary = %cfg.binary.display(), ?args, "launching managed llama-server");
 
-        let mut child = Command::new(&cfg.binary)
-            .args(&args)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()
-            .with_context(|| {
-                loc.tf(
-                    "ui.err.managed.spawn",
-                    &[("path", &cfg.binary.display().to_string())],
-                )
-            })?;
-
-        // Read the process's output so we (a) don't fill up the pipe, (b) can see loading progress.
-        if let Some(out) = child.stdout.take() {
-            tokio::spawn(forward_lines(out, false));
-        }
-        if let Some(err) = child.stderr.take() {
-            tokio::spawn(forward_lines(err, true));
-        }
-
-        // The monitor task owns `Child` and waits either for it to exit or for a
-        // kill signal (`drop` of the handle). An early exit arms `exited` — the readiness
-        // probe sees this and doesn't hang until the timeout on a dead process.
-        let kill = CancellationToken::new();
-        let exited = CancellationToken::new();
-        spawn_monitor(child, kill.clone(), exited.clone());
-
+        let child = server_command(cfg, &args).spawn().with_context(|| {
+            loc.tf(
+                "ui.err.managed.spawn",
+                &[("path", &cfg.binary.display().to_string())],
+            )
+        })?;
+        let (kill, exited) = supervise(child);
         Ok(Self {
             kill,
             exited,
             base_url: cfg.base_url(),
         })
     }
+}
+
+/// The child's command: the line, piped output, killed with its handle — and
+/// an environment without the side door to the flags [`llama_args::check`]
+/// refuses. The child inherits the app's environment, and llama.cpp reads
+/// `LLAMA_ARG_*` for every option (measured — docs/research/managed-extra-args.md
+/// M7); a `LLAMA_API_KEY` set for some other tool used to give a server whose
+/// `/health` says ok and whose every request is a `401` (M9).
+fn server_command(cfg: &ManagedConfig, args: &[String]) -> Command {
+    let mut cmd = Command::new(&cfg.binary);
+    cmd.args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    for var in llama_args::scrubbed_env(cfg.role) {
+        cmd.env_remove(var);
+    }
+    cmd
+}
+
+/// Takes charge of a spawned child: its output is read — so the pipe never
+/// fills, loading progress reaches the log, and the line llama.cpp refuses a
+/// launch with is kept — and a monitor task owns it, waiting either for it to
+/// exit or for the returned kill token (`drop` of the handle). An early exit
+/// arms the returned [`ChildExit`]: the readiness probe sees it and doesn't hang
+/// until the timeout on a dead process.
+fn supervise(mut child: Child) -> (CancellationToken, ChildExit) {
+    let exited = ChildExit::default();
+    let mut readers = Vec::new();
+    if let Some(out) = child.stdout.take() {
+        readers.push(tokio::spawn(forward_lines(out, false, exited.said.clone())));
+    }
+    if let Some(err) = child.stderr.take() {
+        readers.push(tokio::spawn(forward_lines(err, true, exited.said.clone())));
+    }
+    let kill = CancellationToken::new();
+    spawn_monitor(child, kill.clone(), exited.clone(), readers);
+    (kill, exited)
 }
 
 /// The preflight of a model path: the file is there, and if it is one part of a
@@ -490,10 +572,25 @@ fn check_split_model(model: &str, loc: &'static Locale) -> Result<()> {
     Ok(())
 }
 
+/// How long an exited child's output is waited for before `exited` is armed
+/// anyway. The process is gone; what is left is the pipe's last lines, and a
+/// grandchild holding the pipe open must not hold the probe with it.
+const OUTPUT_DRAIN: Duration = Duration::from_secs(1);
+
 /// The child process's monitor task: waits for it to exit (arms `exited`) or for a
 /// `kill` signal (kills the process). Owns [`Child`], so `kill_on_drop`
 /// still fires if the runtime force-drops the task.
-fn spawn_monitor(mut child: Child, kill: CancellationToken, exited: CancellationToken) {
+///
+/// `readers` are the tasks reading the child's output. The process's exit and its
+/// last lines race — `wait` can return while the refusal is still in the pipe — so
+/// an exit is announced only once they have read to the end (or after
+/// [`OUTPUT_DRAIN`]).
+fn spawn_monitor(
+    mut child: Child,
+    kill: CancellationToken,
+    exited: ChildExit,
+    readers: Vec<tokio::task::JoinHandle<()>>,
+) {
     tokio::spawn(async move {
         tokio::select! {
             status = child.wait() => {
@@ -501,7 +598,13 @@ fn spawn_monitor(mut child: Child, kill: CancellationToken, exited: Cancellation
                     Ok(s) => tracing::warn!(status = ?s, "managed llama-server exited on its own"),
                     Err(e) => tracing::warn!(error = %e, "error waiting for the child llama-server"),
                 }
-                exited.cancel();
+                let drained = async {
+                    for reader in readers {
+                        let _ = reader.await;
+                    }
+                };
+                let _ = tokio::time::timeout(OUTPUT_DRAIN, drained).await;
+                exited.exited.cancel();
             }
             _ = kill.cancelled() => {
                 let _ = child.start_kill();
@@ -521,7 +624,7 @@ fn spawn_monitor(mut child: Child, kill: CancellationToken, exited: Cancellation
 pub async fn wait_until_ready(
     client: &OpenAiClient,
     timeout: Duration,
-    exited: Option<CancellationToken>,
+    exited: Option<ChildExit>,
     loc: &'static Locale,
 ) -> Result<()> {
     let deadline = tokio::time::Instant::now() + timeout;
@@ -530,8 +633,8 @@ pub async fn wait_until_ready(
             return Ok(());
         }
         // The child process died while loading — don't wait for the timeout.
-        if exited.as_ref().is_some_and(|e| e.is_cancelled()) {
-            bail!("{}", loc.t("ui.err.managed.early_exit"));
+        if let Some(exit) = exited.as_ref().filter(|e| e.is_exited()) {
+            bail!("{}", exit.message(loc));
         }
         if tokio::time::Instant::now() >= deadline {
             // A generic message: the probe serves not only the managed `llama-server`,
@@ -552,7 +655,7 @@ pub async fn wait_until_ready(
             Some(ex) => {
                 tokio::select! {
                     _ = sleep => {}
-                    _ = ex.cancelled() => {}
+                    _ = ex.wait() => {}
                 }
             }
             None => sleep.await,
@@ -560,18 +663,60 @@ pub async fn wait_until_ready(
     }
 }
 
-async fn forward_lines<R>(reader: R, is_err: bool)
+async fn forward_lines<R>(reader: R, is_err: bool, said: Arc<Mutex<Option<String>>>)
 where
     R: tokio::io::AsyncRead + Unpin,
 {
     let mut lines = BufReader::new(reader).lines();
     while let Ok(Some(line)) = lines.next_line().await {
+        if let Some(refusal) = refusal_line(&line)
+            && let Ok(mut said) = said.lock()
+        {
+            // The first one: an argument error ends the parse at once, and what
+            // follows it is the option's usage, not another cause.
+            said.get_or_insert(refusal);
+        }
         if is_err {
             tracing::warn!(target: "llama-server", "{line}");
         } else {
             tracing::info!(target: "llama-server", "{line}");
         }
     }
+}
+
+/// The line llama.cpp's argument parser refuses a launch with, cleaned of
+/// colour: `error: invalid argument: --bogus`, `error while handling argument
+/// "-c": invalid stoi argument` (docs/research/managed-extra-args.md M1–M3).
+/// Every other line — the timestamped log records included — is `None`.
+fn refusal_line(line: &str) -> Option<String> {
+    let clean = strip_ansi(line);
+    let clean = clean.trim();
+    clean.starts_with("error").then(|| clean.to_string())
+}
+
+/// `line` without its ANSI escape sequences (`ESC [ … final-byte`): llama.cpp
+/// colours its output when it decides the stream is a terminal, and a status
+/// line carrying `\x1b[0m` would show the escape as text.
+fn strip_ansi(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut chars = line.chars();
+    while let Some(c) = chars.next() {
+        if c != '\u{1b}' {
+            out.push(c);
+            continue;
+        }
+        // A CSI sequence ends at its first byte in `@`..=`~`; a lone ESC or
+        // another kind of sequence loses just the ESC.
+        if chars.clone().next() == Some('[') {
+            chars.next();
+            for c in chars.by_ref() {
+                if ('@'..='~').contains(&c) {
+                    break;
+                }
+            }
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -605,6 +750,7 @@ mod tests {
             draft_n_min: None,
             host: "127.0.0.1".into(),
             port: 8000,
+            role: ManagedRole::Assistant,
             extra_args: vec![],
         }
     }
@@ -1069,46 +1215,31 @@ mod tests {
     async fn wait_until_ready_bails_on_early_exit() {
         // The child process died while loading (`exited` armed), the port is dead —
         // the probe shouldn't hang until the timeout, but return a clear error right away.
+        // And it says why when llama.cpp did (docs/research/managed-extra-args.md F6).
         let client = OpenAiClient::new("http://127.0.0.1:1/v1");
-        let exited = CancellationToken::new();
-        exited.cancel();
+        let exited = ChildExit::exited_saying(Some("error: invalid argument: --x"));
         let err = wait_until_ready(&client, Duration::from_secs(600), Some(exited), ru())
             .await
             .expect_err("expected an early-exit error");
         assert!(
-            err.to_string().contains("завершился до готовности"),
+            err.to_string()
+                .contains("отказался запускаться: error: invalid argument: --x"),
             "{err}"
         );
     }
 
     #[tokio::test]
     async fn monitor_cancels_exited_when_child_dies() {
-        // A real short-lived process: the monitor must arm `exited` on its
-        // exit. Cross-platform: `cmd /C exit` on Windows, `sh -c` on unix.
-        let mut cmd = if cfg!(windows) {
-            let mut c = Command::new("cmd");
-            c.args(["/C", "exit"]);
-            c
-        } else {
-            let mut c = Command::new("sh");
-            c.args(["-c", "exit 0"]);
-            c
-        };
-        let child = cmd
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .kill_on_drop(true)
-            .spawn()
-            .expect("spawn of a short-lived process");
-
+        // A real short-lived process: the monitor must arm `exited` on its exit.
+        let child = exiting_child();
         let kill = CancellationToken::new();
-        let exited = CancellationToken::new();
-        spawn_monitor(child, kill, exited.clone());
+        let exited = ChildExit::default();
+        spawn_monitor(child, kill, exited.clone(), vec![]);
 
-        tokio::time::timeout(Duration::from_secs(5), exited.cancelled())
+        tokio::time::timeout(Duration::from_secs(5), exited.wait())
             .await
             .expect("the monitor must arm exited on process exit");
-        assert!(exited.is_cancelled());
+        assert!(exited.is_exited());
     }
 
     /// A **real** `llama-server` launched by the app's own line for a CPU-only
@@ -1216,6 +1347,87 @@ mod tests {
             "unified pool: every slot may use the whole -c"
         );
     }
+    /// A **real** `llama-server` launched with the user's raw arguments
+    /// (docs/research/managed-extra-args.md §6): they reach the line — the
+    /// `--alias` comes back as the catalogue's model id — and the child comes up
+    /// with a `LLAMA_API_KEY` in the app's environment that, inherited, would have
+    /// locked the app out with a `401` on everything past `/health` (M9). The
+    /// control arm is the typo the field makes common: a misspelled flag must fail
+    /// the probe at once with llama.cpp's own words, not the corrupt-GGUF guess and
+    /// not the ten-minute timeout.
+    ///
+    ///     MINDFORK_LLAMA_BIN=.../llama-server.exe MINDFORK_MODEL=.../small.gguf \
+    ///       cargo test managed_extra_args -- --ignored --nocapture --test-threads=1
+    #[tokio::test]
+    #[ignore = "requires a local llama-server binary + model (MINDFORK_LLAMA_BIN, MINDFORK_MODEL)"]
+    async fn managed_extra_args_reach_a_real_server_live() {
+        let (Ok(bin), Ok(model)) = (
+            std::env::var("MINDFORK_LLAMA_BIN"),
+            std::env::var("MINDFORK_MODEL"),
+        ) else {
+            eprintln!("skip: MINDFORK_LLAMA_BIN / MINDFORK_MODEL not set");
+            return;
+        };
+        let en = locale(Lang::En);
+        let cfg = |extra: &[&str]| ManagedConfig {
+            binary: bin.clone().into(),
+            model_path: Some(model.clone()),
+            context_size: 2048,
+            port: 18125,
+            extra_args: extra.iter().map(|a| a.to_string()).collect(),
+            ..base_cfg()
+        };
+
+        // The control arm first: it must fail fast and say what llama.cpp said.
+        let started = std::time::Instant::now();
+        let handle = ServerHandle::launch(&cfg(&["--n-cpu-mo", "4"]), en).expect("launch");
+        let client = OpenAiClient::new(handle.base_url());
+        let err = wait_until_ready(&client, Duration::from_secs(600), Some(handle.exited()), en)
+            .await
+            .expect_err("a misspelled flag cannot come up");
+        eprintln!("control arm ({:?}): {err}", started.elapsed());
+        assert!(
+            err.to_string()
+                .contains("refused to start: error: invalid argument: --n-cpu-mo"),
+            "{err}"
+        );
+        drop(handle);
+
+        /// Takes the variable back out when the arm ends, however it ends.
+        struct Unset(&'static str);
+        impl Drop for Unset {
+            fn drop(&mut self) {
+                // SAFETY: live smokes run with `--test-threads=1`; nothing else
+                // reads the environment while this one does.
+                unsafe { std::env::remove_var(self.0) };
+            }
+        }
+        // SAFETY: as above.
+        unsafe { std::env::set_var("LLAMA_API_KEY", "set-for-some-other-tool") };
+        let _unset = Unset("LLAMA_API_KEY");
+
+        let line = ["--alias", "mindfork-extra-args", "--n-cpu-moe", "4"];
+        let handle = ServerHandle::launch(&cfg(&line), en).expect("launch");
+        let client = OpenAiClient::new(handle.base_url());
+        wait_until_ready(&client, Duration::from_secs(600), Some(handle.exited()), en)
+            .await
+            .expect("the server should come up with the raw arguments");
+        let models = reqwest::get(format!("{}/models", handle.base_url()))
+            .await
+            .expect("GET /v1/models");
+        let status = models.status();
+        let body = models.text().await.unwrap_or_default();
+        eprintln!("live: /v1/models {status}: {body}");
+        assert!(
+            status.is_success(),
+            "{status}: the inherited key reached the child"
+        );
+        assert!(
+            body.contains("\"mindfork-extra-args\""),
+            "the alias is the catalogue's id"
+        );
+    }
+
     /// The batch the launch line implies, from the same two facts `build_args`
     /// reads (docs/research/slow-prefill-detection.md §3.2).
     #[test]
@@ -1267,6 +1479,232 @@ mod tests {
         assert_eq!(
             prefill_hold(LLAMA_DEFAULT_BATCH, Prefill { tokens: 0, ms: 0 }),
             None
+        );
+    }
+
+    // ---- the extra arguments (docs/research/managed-extra-args.md) ----
+
+    /// A refused argument stops the launch before anything is spawned, and the
+    /// message names the setting and the flag. The negative control: an argument
+    /// the table leaves open gets as far as `spawn` — without it this test would
+    /// pass with the check deleted (lessons §2).
+    #[test]
+    fn a_refused_extra_argument_stops_the_launch_before_the_spawn() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let launch = |extra: &[&str]| {
+            let cfg = ManagedConfig {
+                binary: dir.path().join("no-such-llama-server"),
+                extra_args: extra.iter().map(|a| a.to_string()).collect(),
+                ..base_cfg()
+            };
+            match ServerHandle::launch(&cfg, locale(Lang::En)) {
+                Err(e) => e.to_string(),
+                Ok(_) => panic!("launch cannot succeed: the binary does not exist"),
+            }
+        };
+        let err = launch(&["--n-cpu-moe", "20", "--tools", "all"]);
+        assert!(
+            err.starts_with("Extra arguments: --tools") && err.contains("External"),
+            "{err}"
+        );
+        let err = launch(&["--n-cpu-moe", "20"]);
+        assert!(err.contains("spawning llama-server"), "{err}");
+    }
+
+    /// The role decides: the same flag is the assistant's field and the
+    /// embedder's to set.
+    #[test]
+    fn the_launch_judges_the_line_by_its_role() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let launch = |role: ManagedRole| {
+            let cfg = ManagedConfig {
+                binary: dir.path().join("no-such-llama-server"),
+                role,
+                extra_args: vec!["-c".into(), "4096".into()],
+                ..base_cfg()
+            };
+            ServerHandle::launch(&cfg, locale(Lang::En))
+                .err()
+                .map(|e| e.to_string())
+                .unwrap_or_default()
+        };
+        assert!(launch(ManagedRole::Assistant).contains("Context (-c)"));
+        assert!(launch(ManagedRole::Embedder).contains("spawning llama-server"));
+    }
+
+    /// The child's environment loses the variables of the refused flags, and
+    /// only those: a `LLAMA_ARG_*` for an open flag is the user's process-wide
+    /// route and stays (M7).
+    #[test]
+    fn the_command_removes_the_refused_flags_environment() {
+        let removed = |role: ManagedRole| -> Vec<String> {
+            let cfg = ManagedConfig { role, ..base_cfg() };
+            server_command(&cfg, &[])
+                .as_std()
+                .get_envs()
+                .filter(|(_, v)| v.is_none())
+                .map(|(k, _)| k.to_string_lossy().into_owned())
+                .collect()
+        };
+        let chat = removed(ManagedRole::Assistant);
+        for var in [
+            "LLAMA_API_KEY",
+            "LLAMA_ARG_TOOLS",
+            "LLAMA_ARG_HF_REPO",
+            "HF_TOKEN",
+        ] {
+            assert!(chat.iter().any(|v| v == var), "{var} not removed: {chat:?}");
+        }
+        assert!(!chat.iter().any(|v| v == "LLAMA_ARG_N_CPU_MOE"));
+        assert!(
+            !removed(ManagedRole::Embedder)
+                .iter()
+                .any(|v| v == "LLAMA_ARG_EMBEDDINGS")
+        );
+    }
+
+    /// The line llama.cpp refuses a launch with, as measured (M1–M3), and the
+    /// lines that are not it — a timestamped `E` record, the option's usage.
+    #[test]
+    fn the_refusal_line_is_the_argument_parsers_error() {
+        for line in [
+            "error: invalid argument: --bogus-flag",
+            "error while handling argument \"-c\": invalid stoi argument",
+            "\u{1b}[31merror: invalid argument: --x\u{1b}[0m\r",
+        ] {
+            let got = refusal_line(line).expect(line);
+            assert!(
+                got.starts_with("error") && !got.contains('\u{1b}'),
+                "{got:?}"
+            );
+            assert!(!got.ends_with('\r'), "{got:?}");
+        }
+        for line in [
+            "0.00.047.856 E srv    load_model: failed to load model, 'fake.gguf'",
+            "-c,    --ctx-size N                     size of the prompt context",
+            "to show complete usage, run with -h",
+            "",
+        ] {
+            assert_eq!(refusal_line(line), None, "{line}");
+        }
+        assert_eq!(
+            strip_ansi("\u{1b}[34m0.00.000.787\u{1b}[0m I srv"),
+            "0.00.000.787 I srv"
+        );
+    }
+
+    /// The race the drain exists for, end to end: a real process prints the
+    /// refusal and exits at once, and the exit is announced with the line in
+    /// hand — the probe's message carries llama.cpp's words, not the guess.
+    #[tokio::test]
+    async fn an_exit_is_announced_with_the_line_it_printed() {
+        let child = shell(
+            "echo error: invalid argument: --n-cpu-mo 1>&2 & exit 1",
+            "echo 'error: invalid argument: --n-cpu-mo' >&2; exit 1",
+        )
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .expect("spawn of a short-lived process");
+        let (_kill, exited) = supervise(child);
+        tokio::time::timeout(Duration::from_secs(10), exited.wait())
+            .await
+            .expect("the monitor must arm exited on process exit");
+        let msg = exited.message(locale(Lang::En));
+        assert!(
+            msg.starts_with("llama-server refused to start: error: invalid argument: --n-cpu-mo"),
+            "{msg}"
+        );
+    }
+
+    /// The exit is announced only once the output has been read: a reader
+    /// still busy with the last lines when the process is gone delays it, and
+    /// the line it finds is in the message. A real process loses this race
+    /// too rarely to show it, so the reader here is a task that takes its time.
+    #[tokio::test]
+    async fn the_exit_waits_for_the_output_to_be_read() {
+        let exited = ChildExit::default();
+        let said = exited.said.clone();
+        let reader = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            *said.lock().unwrap() = Some("error: late".into());
+        });
+        spawn_monitor(
+            exiting_child(),
+            CancellationToken::new(),
+            exited.clone(),
+            vec![reader],
+        );
+        tokio::time::timeout(Duration::from_secs(5), exited.wait())
+            .await
+            .expect("the monitor must arm exited");
+        assert_eq!(
+            exited.message(locale(Lang::En)),
+            "llama-server refused to start: error: late"
+        );
+    }
+
+    /// …but not for ever: a reader that never finishes — a grandchild holding
+    /// the pipe open — delays the announcement by [`OUTPUT_DRAIN`] at most.
+    #[tokio::test]
+    async fn an_endless_reader_does_not_hold_the_exit() {
+        let exited = ChildExit::default();
+        let reader = tokio::spawn(std::future::pending::<()>());
+        spawn_monitor(
+            exiting_child(),
+            CancellationToken::new(),
+            exited.clone(),
+            vec![reader],
+        );
+        tokio::time::timeout(OUTPUT_DRAIN * 5, exited.wait())
+            .await
+            .expect("the drain must be bounded");
+    }
+
+    /// A shell running a script: `cmd /C` on Windows, `sh -c` on unix.
+    fn shell(windows: &str, unix: &str) -> Command {
+        let mut c;
+        if cfg!(windows) {
+            c = Command::new("cmd");
+            c.args(["/C", windows]);
+        } else {
+            c = Command::new("sh");
+            c.args(["-c", unix]);
+        }
+        c
+    }
+
+    /// A process that exits at once, its output discarded.
+    fn exiting_child() -> Child {
+        shell("exit", "exit 0")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .expect("spawn of a short-lived process")
+    }
+
+    /// The reader keeps the parser's first refusal: what follows it is the
+    /// option's usage, and a later `error` line would not be the cause.
+    #[tokio::test]
+    async fn the_reader_keeps_the_first_refusal() {
+        let said = Arc::new(Mutex::new(None));
+        let output = b"0.00.000.8 I srv  init\nerror: invalid argument: --a\nusage:\nerror: b\n";
+        forward_lines(&output[..], true, said.clone()).await;
+        assert_eq!(
+            said.lock().unwrap().as_deref(),
+            Some("error: invalid argument: --a")
+        );
+    }
+
+    /// With nothing refused on the way out, the message stays the generic one.
+    #[test]
+    fn a_silent_exit_keeps_the_generic_message() {
+        let en = locale(Lang::En);
+        assert_eq!(
+            ChildExit::exited_saying(None).message(en),
+            en.t("ui.err.managed.early_exit")
         );
     }
 }

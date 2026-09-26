@@ -549,6 +549,42 @@ Two modes (configured on the settings screen, `Ctrl+P`, "Model/server" section):
     assistant's order. **1** on managed and external (one after another,
     exactly as before) and **4** on the cloud providers. A `fetch_url` page
     summary is a request stream and counts against *Parallel sessions* above.
+  - **Extra arguments** (the *Advanced* group, last in each managed section —
+    the assistant's, impersonation's and the embedder's): raw `llama-server`
+    arguments added to the end of the line the app builds, for everything
+    llama.cpp offers and the settings do not. Type them as a command line —
+    whitespace separates, quote an argument that contains spaces; no shell is
+    involved, so `|` in an `-ot` pattern is just a character. The case it was
+    built for is a large **mixture-of-experts** model on a card too small for
+    it: `--n-cpu-moe N` keeps the experts of the first N layers in RAM.
+    Measured on gemma-4-26B-A4B Q4_1 at `-c 16384` on an RTX 4090: 17.3 GB of
+    VRAM at 142 tokens/s on the GPU alone, 12.8 GB at 45 tokens/s with
+    `--n-cpu-moe 10`, 8.4 GB at 28 tokens/s with `--n-cpu-moe 20` — pick the
+    smallest N that fits (`-ot "<regex>=CPU"` places tensors by name for the
+    same purpose). Other uses: `-t 8`, `--cache-type-k q8_0`, `-ub 1024`,
+    `--kv-unified-per-slot N`; on the embedder, `-c` and `-ngl`, which its
+    section has no field for. Changing the line **restarts** the server.
+    Refused, with the editor left open and the reason in its title: a flag one
+    of the section's own fields writes (`-c`, `--ctx-size`, `--port`, …; the
+    message names the field — llama.cpp takes the last of two copies of a flag,
+    and has deprecated sending two), and flags that would lock the app out of
+    its own server (`--api-key`, `--api-prefix`, `--ssl-*`), give the server a
+    shell for whoever reaches its port (`--tools`, `--agent`, `--mcp-servers-*`)
+    or make it download models by itself (`-hf`, `--model-url`, `--models-dir`).
+    For those, start `llama-server` yourself and use **external** mode. A typo
+    llama.cpp refuses shows in the status as its own words — *"llama-server
+    refused to start: error: invalid argument: --n-cpu-mo"*. From the command
+    line the field is a JSON list:
+    `mindfork setup --set 'engine.managed.extra_args=["--n-cpu-moe","20"]'`.
+    **Environment variables.** llama.cpp also reads `LLAMA_ARG_<NAME>` for most
+    options (`LLAMA_ARG_N_CPU_MOE=20`; `--help` names each one), and the managed
+    servers inherit the app's environment — a way to set a flag for **all
+    three** servers at once, which the command line overrides. The variables of
+    the refused flags (`LLAMA_API_KEY`, `LLAMA_ARG_TOOLS`, `LLAMA_ARG_HF_REPO`,
+    `HF_TOKEN`, …) are removed from the managed servers' environment: a
+    `LLAMA_API_KEY` set for some other tool would otherwise give a server that
+    reports ready and refuses every request. Design and measurements:
+    [docs/research/managed-extra-args.md](research/managed-extra-args.md).
 - **external** — connects to an already-running server by URL. The **"Model
   (opt.)"** field next to it is optional but not decorative: it is **sent as the
   request's `model`**, which is what a multi-model endpoint routes on

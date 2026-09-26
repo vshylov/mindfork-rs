@@ -11,6 +11,7 @@ pub mod contract;
 pub mod error;
 pub mod gemini;
 pub mod http;
+pub mod llama_args;
 pub mod managed;
 pub mod openai;
 pub mod retry;

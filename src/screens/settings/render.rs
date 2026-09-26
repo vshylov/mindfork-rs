@@ -171,7 +171,7 @@ impl SettingsScreen {
         // System message/greeting — a large multiline popup with
         // wrapping; other fields — a compact single-line strip. On a validation
         // error the title carries a red message and the editor doesn't close.
-        let err = editor.error;
+        let err = editor.error.clone();
         let base_title = if editor.multiline {
             loc.tf(
                 "ui.editor.multiline_footer",
