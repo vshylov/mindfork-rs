@@ -14,6 +14,12 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Added
+- **The input box's height is a setting.** Settings → Interface → *Input box
+  height*: how many rows of text the box grows to before it scrolls, from 1 to
+  50 — 6 by default, as before. However high it is set, the box never takes more
+  than half the window, so the conversation above it stays in view.
+
 ## [0.11.2] — 2026-09-26
 
 **A bigger model on a smaller card, and a long page read whole.** The managed

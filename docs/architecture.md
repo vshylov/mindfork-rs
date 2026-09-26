@@ -281,7 +281,9 @@ src/
 │  │  ├─ impersonation.rs   preview of the reply written on the user's behalf (Ctrl+U)
 │  │  ├─ rag.rs             RAG indexing progress banner (RagBanner: before/name/location/after,
 │  │  │                     fitted to the row at render time — location dropped, name elided)
-│  │  └─ render.rs          screen rendering
+│  │  └─ render.rs          screen rendering; input_height: the input row grows with its
+│  │                        text up to `interface.input_max_rows`, never past half the
+│  │                        window (spec §11.5)
 │  ├─ chat_list.rs          ChatListScreen: full-screen chat list (Esc), → ChatListIntent
 │  ├─ awaited_chat.rs       AwaitedChat: the chat a screen asked for and stays in front for
 │  │                        (the list, the results, the tasks screen) — so the previous
@@ -3295,7 +3297,10 @@ Decisions recorded in ADRs:
   don't support highlighting arbitrary ranges. Our own widget gives full
   control over `Enter`/`Shift+Enter`, scrolling, spellcheck underlining
   (per-span `UNDERLINED`), visual `↑/↓` navigation across wrapped rows, and a
-  single-line mode for settings fields.
+  single-line mode for settings fields. The widget draws into whatever height
+  it is given and scrolls past it; how tall the chat's box is — its text, up to
+  `interface.input_max_rows`, within half the window — is the chat screen's
+  layout (`screens/chat/render.rs::input_height`, spec §11.5).
 - **Our own markdown renderer** ([ADR 0003](decisions/0003-own-markdown-renderer.md)):
   a walker over `pulldown-cmark` events (`render(input, width, palette)`).
   Supports tables (box-drawing, "water-fill" column layout), delimiter-scoped

@@ -272,7 +272,9 @@ Eight sections, and these four are the ones worth a visit early.
 - **Memory** — the context window when the engine cannot say it, what triggers
   compaction, and how much of the knowledge base a turn may pull in.
 - **Interface** — theme, whether the model's name is shown in the reply header,
-  mouse capture, and the OSC 52 clipboard mode for sessions over SSH.
+  how tall the input box grows before it scrolls (6 rows by default; it never
+  takes more than half the window), mouse capture, and the OSC 52 clipboard mode
+  for sessions over SSH.
 
 Every field has a description under the list, and `/` opens a search across every
 setting in every section.

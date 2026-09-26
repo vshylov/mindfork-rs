@@ -1702,6 +1702,27 @@ pub struct InterfaceSettings {
     /// spec §17.7). `NewestFirst` by default — the last thing the assistant
     /// noticed is the one a person opens that screen for.
     pub self_model_note_order: NoteOrder,
+    /// How many text rows the chat's input box grows to before it scrolls
+    /// (spec §11.5). A wish, not a guarantee: the box also never takes more
+    /// than half the window, so the feed stays in view. Read through
+    /// [`Self::input_rows_ceiling`], which also bounds a hand-edited value.
+    pub input_max_rows: u16,
+}
+
+/// The input box's default row ceiling — the value that was hard-coded before
+/// `interface.input_max_rows` existed (spec §11.5).
+pub const DEFAULT_INPUT_MAX_ROWS: u16 = 6;
+/// The largest ceiling the setting accepts: past it the half-window cap
+/// decides on any real terminal anyway.
+pub const INPUT_MAX_ROWS_LIMIT: u16 = 50;
+
+impl InterfaceSettings {
+    /// `input_max_rows` brought into `1..=INPUT_MAX_ROWS_LIMIT` — a `0` or a
+    /// huge number typed into `settings.json` by hand must not collapse the
+    /// box or reach the layout unbounded.
+    pub fn input_rows_ceiling(&self) -> u16 {
+        self.input_max_rows.clamp(1, INPUT_MAX_ROWS_LIMIT)
+    }
 }
 
 impl Default for InterfaceSettings {
@@ -1719,6 +1740,7 @@ impl Default for InterfaceSettings {
             clipboard_osc52: crate::shared::osc52::Osc52Mode::default(),
             auto_title: AutoTitleMode::default(),
             self_model_note_order: NoteOrder::default(),
+            input_max_rows: DEFAULT_INPUT_MAX_ROWS,
         }
     }
 }
@@ -2765,6 +2787,11 @@ mod tests {
         let old: AppConfig = serde_json::from_str(r#"{"interface":{"theme":"dark"}}"#).unwrap();
         assert_eq!(old.interface.theme, Theme::Dark);
         assert_eq!(old.interface.self_model_note_order, NoteOrder::NewestFirst);
+        // The input box keeps the six-row ceiling it had before the setting
+        // existed (spec §11.5) — on a fresh config and under an old section alike.
+        assert_eq!(c.interface.input_max_rows, DEFAULT_INPUT_MAX_ROWS);
+        assert_eq!(DEFAULT_INPUT_MAX_ROWS, 6);
+        assert_eq!(old.interface.input_max_rows, DEFAULT_INPUT_MAX_ROWS);
         // Old-terminal compatibility mode is off by default.
         assert!(!c.interface.terminal_compat);
         // Markdown-table row separators are off by default.
@@ -3071,12 +3098,35 @@ mod tests {
                 clipboard_osc52: crate::shared::osc52::Osc52Mode::Always,
                 auto_title: AutoTitleMode::AfterUserMessage,
                 self_model_note_order: NoteOrder::OldestFirst,
+                input_max_rows: 12,
             },
             ..Default::default()
         };
         let json = serde_json::to_string_pretty(&c).unwrap();
         let back: AppConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(c, back);
+    }
+
+    /// `interface.input_max_rows` is read through a clamp: the settings row
+    /// bounds what it stores, but `settings.json` is also edited by hand, and a
+    /// `0` there would leave a box with no text row at all (spec §11.5).
+    #[test]
+    fn input_rows_ceiling_bounds_a_hand_edited_value() {
+        let with = |rows: u16| InterfaceSettings {
+            input_max_rows: rows,
+            ..Default::default()
+        };
+        assert_eq!(with(0).input_rows_ceiling(), 1);
+        assert_eq!(with(1).input_rows_ceiling(), 1);
+        assert_eq!(with(17).input_rows_ceiling(), 17);
+        assert_eq!(
+            with(INPUT_MAX_ROWS_LIMIT).input_rows_ceiling(),
+            INPUT_MAX_ROWS_LIMIT
+        );
+        assert_eq!(with(u16::MAX).input_rows_ceiling(), INPUT_MAX_ROWS_LIMIT);
+        let hand: AppConfig =
+            serde_json::from_str(r#"{"interface":{"input_max_rows":0}}"#).unwrap();
+        assert_eq!(hand.interface.input_rows_ceiling(), 1);
     }
 
     /// `cloud_ref`/`cloud_mut` index per-provider arrays by [`CloudProvider::index`],

@@ -1631,6 +1631,7 @@
   "ui.settings.field.table_separators": "Table row separators",
   "ui.settings.field.mermaid": "Mermaid diagrams",
   "ui.settings.field.model_name": "Model name in the feed",
+  "ui.settings.field.input_rows": "Input box height",
   "ui.settings.field.spell": "Spell check",
   "ui.settings.field.dicts": "Dictionaries (comma-separated)",
   "ui.settings.field.confirm_keys": "Confirm regenerate / delete",
@@ -1736,6 +1737,11 @@
     "names the model that actually answered — not the one selected now. A",
     "message stored without that information (or with no model named) shows",
     "nothing. Off by default."
+  ],
+  "ui.settings.desc.input_rows": [
+    "How many text rows the chat's input box grows to before it scrolls",
+    "(1–50, 6 by default). It never takes more than half the window, so the",
+    "feed stays in view: in a small window the limit is lower than set."
   ],
   "ui.settings.desc.confirm_keys": "Ask for confirmation before regenerating the last reply and before deleting the last exchange — both discard what is already written and are irreversible in the UI. Off — both act immediately.",
   "ui.settings.desc.copy_thoughts": "When copying the conversation (F5) include the assistant's «thoughts» block (CoT). By default only message text is copied.",

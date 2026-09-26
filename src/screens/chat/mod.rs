@@ -856,6 +856,20 @@ impl ChatScreen {
             .unwrap_or_default()
     }
 
+    /// How many text rows the input box grows to (`interface.input_max_rows`,
+    /// spec §11.5), bounded by [`InterfaceSettings::input_rows_ceiling`]. Read
+    /// from the last settings snapshot on every frame, so a change made on the
+    /// settings screen applies at once; before the first `Settings` event the
+    /// default applies.
+    ///
+    /// [`InterfaceSettings::input_rows_ceiling`]: crate::shared::config::InterfaceSettings::input_rows_ceiling
+    pub(super) fn input_rows_ceiling(&self) -> u16 {
+        self.settings_snapshot.as_ref().map_or(
+            crate::shared::config::DEFAULT_INPUT_MAX_ROWS,
+            |(config, ..)| config.interface.input_rows_ceiling(),
+        )
+    }
+
     /// Which end of the narrative the self-model screen (`F3`) lists observations
     /// from (`interface.self_model_note_order`, spec §17.7). Read from the last
     /// settings snapshot, like [`Self::clipboard_osc52`] — before the first

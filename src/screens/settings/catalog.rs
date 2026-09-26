@@ -1524,6 +1524,13 @@ impl SettingsScreen {
                 // `builtin_bundles_have_no_duplicate_keys` guards the class.
                 .describe(loc.t("ui.settings.desc.show_model_name")),
                 row(
+                    FieldId::IInputRows,
+                    loc.t("ui.settings.field.input_rows"),
+                    // The effective value: a hand-edited `0` reads as the 1 it acts as.
+                    FieldKind::Text(i.input_rows_ceiling().to_string()),
+                )
+                .describe(loc.t("ui.settings.desc.input_rows")),
+                row(
                     FieldId::IClipboardOsc52,
                     loc.t("ui.settings.field.osc52"),
                     FieldKind::Choice(osc52_label(i.clipboard_osc52, loc)),

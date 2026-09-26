@@ -177,7 +177,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-26, version 0.11.2)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3458 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **3463 unit tests
 green, 202 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
@@ -190,6 +190,8 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **The input box's height is a setting** — `interface.input_max_rows`, capped at
+  half the window ([docs/journal/ui-input.md](docs/journal/ui-input.md), spec §11.5).
 - **A fetched page is searchable in its birth turn — track complete** (2026-09-26).
   Stage 1: no search promised before it exists, a cut says where, ceiling 1 000 000;
   stage 2: the index starts at the round's end (`IndexBoard`) and a search waits, 6/6

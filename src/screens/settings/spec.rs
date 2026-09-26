@@ -664,6 +664,15 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
                 c.compaction.page_tokens = v;
             }
         }),
+        // Clamped rather than rejected, like `CompactThreshold`: `0` would leave
+        // a box with no text row, and past the limit the half-window cap decides
+        // anyway (spec §11.5); unparsable — unchanged.
+        IInputRows => int(|c, t| {
+            if let Ok(v) = t.parse::<u32>() {
+                let limit = crate::shared::config::INPUT_MAX_ROWS_LIMIT;
+                c.interface.input_max_rows = v.clamp(1, u32::from(limit)) as u16;
+            }
+        }),
         IDicts => text(|c, t| {
             c.interface.selected_dictionaries = t
                 .split(',')
