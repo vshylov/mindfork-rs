@@ -1413,8 +1413,9 @@ the whole page" and an attachment whose last page ended mid-word.
   output's characters once per block; measured on the Rust book's `print.html` (4 698
   blocks), 87 ms against 17 ms at the new ceiling in release (28 against 15 at the old) — the
   research doc's "seconds" was an estimate and was wrong by thirty times, corrected there;
-  it is a running count now anyway. `PRIVACY.md` (and its translation and the site page)
-  names the new figure, dated 2026-09-26.
+  it is a running count now anyway. `PRIVACY.md` (and its translation, the site page and
+  the Windows installer's two privacy pages) names the new figure, dated 2026-09-26 — the
+  installer pages were first left stale, which CI's `wizard_rtf` gate caught (lessons §1).
 - **F5** — `PageText.verbatim`: a body that is text is described as text, not as "extracted
   from HTML". **Found while testing it**: `text/markdown` went down the HTML path, found no
   `<p>` and failed as "no readable text"; any `text/*` that is not HTML/XML is text now.
