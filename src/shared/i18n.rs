@@ -31,7 +31,8 @@
 //! array of strings**. An array is joined with **one space** (`join(" ")`): long
 //! prompts in code are `\`-joined one-liners, and splitting into word fragments in
 //! JSON gives the same text (readable, no `\n` escapes). An actual line break is an
-//! explicit `\n` inside a fragment.
+//! explicit `\n` inside a fragment. Since the join supplies the space, a fragment
+//! carries none at a seam — a gate test holds the built-in bundles to it.
 
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
@@ -946,6 +947,54 @@ mod tests {
     /// fields' texts, and the cloud "Model" row showed the show-model-name
     /// toggle's description — no key gate could see it, because the key both
     /// exists and is used; only the duplicate itself is the defect.
+    /// The array elements that bring a space of their own to a seam, as
+    /// `(key, index)`: one that ends with a space before the next element, or
+    /// starts with one after the previous. The join supplies exactly one space,
+    /// so either renders as two. The value's outer edges are not seams — a
+    /// leading space there is indentation, as in the plain strings.
+    fn seam_spaces(src: &str) -> Vec<(String, usize)> {
+        let raw: HashMap<String, serde_json::Value> =
+            serde_json::from_str(src).expect("bundle JSON parses");
+        let mut found = Vec::new();
+        for (key, value) in raw {
+            let Some(parts) = value.as_array() else {
+                continue;
+            };
+            for (i, part) in parts.iter().enumerate() {
+                let text = part.as_str().unwrap_or_default();
+                if (i > 0 && text.starts_with(' ')) || (i + 1 < parts.len() && text.ends_with(' '))
+                {
+                    found.push((key.clone(), i));
+                }
+            }
+        }
+        found.sort();
+        found
+    }
+
+    /// Gate: no array element in a built-in bundle doubles the joining space.
+    /// Found on the settings screen: the ru Batch hint's first three fragments
+    /// ended with a space, so the hint showed two spaces at each of three joins.
+    /// A `\n` at a seam is a line break, not a space, and is not this defect.
+    #[test]
+    fn builtin_arrays_bring_no_space_to_a_seam() {
+        // The detector must see planted seams, and only seams: an outer edge
+        // and a plain string's indentation are not defects.
+        assert_eq!(
+            seam_spaces(
+                r#"{"a":["one ","two"],"b":["x"," y"],"c":[" in","ok "],"d":"  s ","e":["\n","z"]}"#
+            ),
+            [("a".to_string(), 0), ("b".to_string(), 1)]
+        );
+        for &lang in Lang::ALL.iter() {
+            let found = seam_spaces(lang.bundle_src());
+            assert!(
+                found.is_empty(),
+                "{lang:?}: array fragments that double the joining space: {found:?}"
+            );
+        }
+    }
+
     #[test]
     fn builtin_bundles_have_no_duplicate_keys() {
         // The detector must see a planted duplicate — a gate that cannot go
