@@ -153,7 +153,9 @@ mindfork setup --llama vulkan --sandbox --model ~/models/chat.gguf --ctx 16384 -
 
 The model itself is a **GGUF** file, which llama.cpp does not ship — Hugging Face
 hosts them; search the model's name with `GGUF` and fetch it with `hf download`
-(install.md §3.4).
+(install.md §3.4). Whatever llama.cpp takes that the settings have no field for
+goes in the section's **Extra arguments** — `--n-cpu-moe 20`, say, to fit a large
+mixture-of-experts model on a smaller card (install.md §3).
 
 Embeddings (memory, RAG, attachment search) use a **separate** server, configured
 in the same section's Embeddings tab; without one those features decline politely

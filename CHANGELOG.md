@@ -14,7 +14,27 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Added
+- **Extra arguments for the managed `llama-server`.** Each managed section —
+  the assistant's, impersonation's and the embedder's — ends with an *Extra
+  arguments* field: anything llama.cpp takes that the settings have no field
+  for, added to the end of the launch line. A large mixture-of-experts model
+  now fits a smaller card without leaving managed mode — measured, `--n-cpu-moe
+  20` took gemma-4-26B-A4B from 17.3 GB of VRAM to 8.4 GB. A flag one of the
+  section's own fields sets is refused with the field named, and so are flags
+  that would lock the app out of its own server, give the server a shell for
+  whoever reaches its port (`--tools`, `--agent`) or have it download models
+  (`-hf`) — for those, run `llama-server` yourself in external mode.
+
 ### Fixed
+- **A managed server that will not start says why.** When `llama-server`
+  refuses its arguments, the status now shows its own message — *"refused to
+  start: error: invalid argument: …"* — instead of guessing at a corrupt model
+  or a lack of memory.
+- **`LLAMA_API_KEY` in your environment no longer locks the app out of its own
+  server.** The managed servers inherited it, came up reporting ready, and
+  refused every request. They no longer receive it, nor the other llama.cpp
+  variables for the options the new field refuses.
 - **Links no longer underline the wrong line while a file is indexed.** In
   Windows Terminal, hovering the line under a link during indexing underlined
   that line and showed `Invalid URI`: the indexing spinner redrew the screen so

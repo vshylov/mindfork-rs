@@ -175,10 +175,10 @@ Backend selection: `MINDFORK_ENGINE_URL` (external, any OpenAI server) OR
 rented instead of hosted — `python tools/e2e_hf.py run`, see
 `docs/history/remote-e2e-hf.md`.
 
-## Status (2026-09-23, version 0.11.1)
+## Status (2026-09-26, version 0.11.1)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3411 unit tests
-green, 197 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **3434 unit tests
+green, 199 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -190,6 +190,12 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **Raw `llama-server` arguments in managed settings** — an *Extra arguments* field
+  per managed section (`--n-cpu-moe` fits a 26B MoE in 8.4 GB); a field's flag, the
+  connection's, `--tools`/`--agent` and `-hf` refused, their `LLAMA_*` scrubbed from
+  the child, a refused launch said in llama.cpp's words. Live **GO**
+  ([docs/research/managed-extra-args.md](docs/research/managed-extra-args.md),
+  spec §3.4, [docs/journal/engine.md](docs/journal/engine.md)).
 - **A spinner repaints when its glyph changes, not every tick** — a frame per 50 ms
   tick never gave Windows Terminal the 100 ms of quiet it re-finds URLs in, so during
   indexing a hover underlined the line under a link (`Invalid URI`)

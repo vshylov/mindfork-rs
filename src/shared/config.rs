@@ -439,6 +439,13 @@ pub struct ManagedSettings {
     /// Bind interface (`--host`), e.g. `127.0.0.1` or `0.0.0.0`.
     pub host: String,
     pub port: u16,
+    /// Raw `llama-server` arguments appended to the line the fields above build
+    /// (spec §3.4) — for what has no field: `--n-cpu-moe 20`, `-ot …=CPU`, `-t 8`.
+    /// Edited as one command line (`shared::cmdline`); a flag one of these fields
+    /// writes, or one that would lock the app out, arm the server with tools or
+    /// have it fetch models, is refused (`shared::api::llama_args`,
+    /// docs/research/managed-extra-args.md). Changing it restarts the server.
+    pub extra_args: Vec<String>,
 }
 
 impl Default for ManagedSettings {
@@ -463,6 +470,7 @@ impl Default for ManagedSettings {
             draft_n_min: None,
             host: "127.0.0.1".to_string(),
             port: 8000,
+            extra_args: Vec::new(),
         }
     }
 }
@@ -867,6 +875,11 @@ pub struct ManagedEmbedSettings {
     /// GPU layers (`-ngl`).
     pub gpu_layers: i32,
     pub port: u16,
+    /// Raw `llama-server` arguments for the embedding server — as
+    /// [`ManagedSettings::extra_args`], judged against this section's fields
+    /// (a model and a port), so `-c`, `-ngl` and `--pooling` are this field's
+    /// to set.
+    pub extra_args: Vec<String>,
 }
 
 impl Default for ManagedEmbedSettings {
@@ -876,6 +889,7 @@ impl Default for ManagedEmbedSettings {
             model_path: None,
             gpu_layers: DEFAULT_GPU_LAYERS,
             port: DEFAULT_EMBED_PORT,
+            extra_args: Vec::new(),
         }
     }
 }

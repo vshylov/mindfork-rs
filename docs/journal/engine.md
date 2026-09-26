@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (75)
+## Entries (76)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -87,6 +87,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the flag llama.cpp took away (done)
 - Post-M9: CUDA for Linux, refused — and a version check that stopped checking (done)
 - Post-M9: `mindfork setup` — a working managed engine from one command (done)
+- Post-M9: raw `llama-server` arguments in managed settings (done)
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
   a long time (up to the `MANAGED_READY_TIMEOUT=600s` timeout) in "server:
@@ -4858,3 +4859,120 @@ could never get — lessons §2, a fourth time; every such wait is bounded now.
   switch, path refusals in both locales, split GGUFs, `--set` reach / fallback /
   unknown key / refused keys, dead-binary clearing, `--verify`'s skips, refusals,
   busy port and facts, the handler on a scratch root; +1 live smoke).
+
+### Post-M9: raw `llama-server` arguments in managed settings (done)
+
+**What.** The roadmap item of the same name, taken on demand: `ManagedConfig.extra_args`
+had existed since the launcher and every caller passed an empty list, so managed mode
+could send only the flags that had a field. Each managed section — the assistant's,
+impersonation's and the embedder's — now ends with an *Advanced → Extra arguments* field
+(`extra_args: Vec<String>` in `ManagedSettings`/`ManagedEmbedSettings`, `#[serde(default)]`,
+edited as one command line through `shared::cmdline`), appended last to the line. Design,
+the security review and the measurements: [docs/research/managed-extra-args.md](../research/managed-extra-args.md);
+forks settled by the user on 2026-09-26 — every one at its recommendation except **F2,
+the embedder too**.
+
+**Measured first (build 11191, `4b1a27fa0`)**, because the item said "a field that can
+break a launch in ways no preflight checks" and that needed shape: an unknown flag, a bad
+value and the `--flag=value` form (which llama.cpp does not have) all exit at once with
+`error: invalid argument: …` / `error while handling argument "…": …` — on stderr, which
+reached only the log while the status blamed a corrupt GGUF; a repeated flag **silently
+wins** (`-c 1024 -c 2048` → 2048, `--port` moves the server off the port the app probes)
+and upstream now logs `W DEPRECATED: argument '--port' specified multiple times`; a
+list-valued option (`--alias`) keeps the first, so "last wins" is not even universal;
+`LLAMA_ARG_*` in the environment works and the command line beats it with a warning —
+the roadmap's untested route, real, and process-wide; and an **adjacent defect**:
+`LLAMA_API_KEY` in the app's environment, inherited by the managed child, gave `/health`
+200 and `/props`, `/v1/models`, `/v1/embeddings` 401 — ready by the probe, refused on
+everything.
+
+**The security review** (§4 there). Nobody but the owner writes the field: tool effects
+are `ChatEffect`s scoped to a chat, and no file or code tool reaches the data root
+(`reach.rs`). A restored stranger's backup can write it — but the same backup writes
+`engine.managed.binary`, which names any executable, so the field adds nothing in kind,
+and the spawn is argv-direct. What it adds is **accidents a copied command line carries
+in**, four kinds: a flag a field of the section writes (silently wins, deprecated to
+repeat, the screen showing a value that is not running); one the app's connection to its
+own child depends on (`--api-key`, `--api-prefix`, `--ssl-*`, `--embeddings` on a chat
+server); one that turns the server into an agent — `--tools` exposes `exec_shell_command`,
+`write_file`, `edit_file` over HTTP, `--agent`, `--mcp-servers-*` — a shell for whoever
+reaches the port, past the app's whole tool layer; and one that has it fetch or route
+models (`-hf` and kin, `--model-url`, `--docker-repo`, `--models-dir`), which is what
+managed mode refuses router mode for.
+
+**Built.**
+- `shared/api/llama_args.rs`: the table — each option's spellings from `--help`, its
+  `LLAMA_*` names, and a rule judged per `ManagedRole` (Assistant / Impersonation /
+  Embedder). Kinds 2–4 are one text table parsed on first use rather than `row(…)`
+  literals: those rows differ only in their strings, the shape the duplication gate
+  reads as copies (lessons §2) — the throwaway estimator found 19 repeated windows in
+  the literal form and none in the text one. The sections differ: `-np` is the assistant's *Sessions* and free on
+  the impersonation server, which shows no such field; the embedder's section shows a
+  model and a port, so its `-c`, `-ngl`, `-b` are this field's to set, while `--host` —
+  pinned to loopback for it — is a connection flag there. `check` returns the first
+  refused argument (a `--flag=value` judged by its flag), `Refused::message` for the
+  editor's title (names the field, with the path through *Spec. decode* for the draft
+  fields that only appear under a draft type), `launch_message` for the status (the
+  setting's name, and for kinds 2–4 the door: your own `llama-server` in External mode).
+- Refused twice, one function (F5): the settings editor on `Enter` (its error widened
+  from a static bundle key to a message), and `ServerHandle::launch` before anything
+  touches the disk — `settings.json`, `setup --set` and a restore never meet the editor.
+- The environment (F7): `server_command` removes `scrubbed_env(role)` — the `LLAMA_*`
+  names of the kinds 2–4 flags plus `HF_TOKEN` — so no refused flag arrives by the side
+  door, and M9's lockout is gone. Every other `LLAMA_ARG_*` stays: the process-wide
+  route, documented in install.md §3.
+- The early exit says why (F6): `ChildExit` = the exit token + the first line the output
+  readers saw starting `error` (ANSI-stripped). `supervise` wires the readers and the
+  monitor; the monitor now **awaits the readers (≤ 1 s, `OUTPUT_DRAIN`) before arming the
+  token**, because the process's exit and its last line race. The probe's and the
+  health monitor's messages both come from `ChildExit::message`.
+- `ManagedConfig.role`, set by `managed_config(s, role, lookup)` and
+  `managed_embed_config`; `mindfork setup --verify` therefore starts the line with the
+  extra arguments too.
+
+**Rejected / not built.** No `shell_syntax` check on the line: without a shell `|` is
+just a character, and an `-ot` regex alternation is exactly where it appears. No
+refusal of `--path`, `--slot-save-path`, `--media-path` — each exposes a directory the
+user names, a deliberate act, where `--tools` exposes the machine. No attempt to parse
+option arity: every token is compared, since no value llama.cpp takes is spelled like
+these flags. No `MINDFORK_LLAMA_ARGS` env override — `--set` covers the scripted case.
+
+**Tests.** Mutation-checked where it bites: dropping the drain let the refusal line miss
+the message — the first end-to-end test (a real process printing the error) **survived
+that mutant**, because a real process loses the race too rarely, so the drain is pinned
+by a reader task that takes 300 ms (killed) and its bound by a reader that never ends
+(the unbounded mutant hangs into the 5 s timeout). The spawn guard has its negative
+control (an open argument reaches `spawn`), the env scrub is asserted on
+`Command::get_envs`, and `every_flag_the_app_writes_is_judged` walks `build_args`' own
+output so a new launcher flag fails until it is judged. On the screen: argv round trip
+with a quoted `-ot` regex, per-section refusals, and every field a refusal can name
+pinned to a row of the section it names it in (the labels live in `shared`, the rows in
+`screens`). Two live smokes: `the_table_matches_the_binary_live` reads the real
+`--help` and fails on a spelling gone, an alias the row misses, or a refused option's
+variable not scrubbed — each direction mutated red; `managed_extra_args_reach_a_real_server_live`.
+
+**Live GO** (2026-09-26, llama.cpp b11191 CUDA, RTX 4090, Windows 11):
+- `managed_extra_args_reach_a_real_server_live` on gemma-4-E2B-it Q8_0: the control arm
+  (`--n-cpu-mo 4`) failed in 2.0 s with *"llama-server refused to start: error: invalid
+  argument: --n-cpu-mo"*; with `LLAMA_API_KEY` set in the test's environment the server
+  came up with `--alias … --n-cpu-moe 4` and `/v1/models` answered **200** listing the
+  alias. **Control red**: with the scrub switched off the same run read `401 Invalid API
+  Key` — both ends of the channel.
+- The app's own path, `mindfork setup --model gemma-4-26B-A4B-it-Q4_1 --ctx 16384 --set
+  'engine.managed.extra_args=["--n-cpu-moe","20"]' --verify` from a scratch copy of the
+  binary: the list written to `settings.json`, the launch line ending `--n-cpu-moe 20`,
+  llama.cpp answering *"tensor overrides to CPU are used with mmap enabled"*, `ready in
+  10 s — context 16384`.
+- What the knob buys (same model, `-c 16384`, by hand): 17 264 MiB / 141.8 tok/s on the
+  GPU alone, 12 776 MiB / 44.9 with `--n-cpu-moe 10`, 8 422 MiB / 28.0 with
+  `--n-cpu-moe 20` — a 12 GB or an 8 GB card runs it.
+
+**Docs.** spec §3.4 (raw arguments, the early exit's line) and §11.6; architecture §5
+(`ChildExit`, `supervise`, `llama_args`); install.md §3; README; CHANGELOG (Added, two
+Fixed); roadmap (the item closed; the embedder-context item and F7b now point here);
+lessons §6 (a child inherits the environment, and a tool reading it as configuration
+turns an unrelated variable into a setting; a child's exit and its last output race).
+The settings screenshots were regenerated (two rows more in *Model/server*).
+
+**Gates**: fmt / clippy / test green — **3434 unit tests, 199 `#[ignore]`**
+(+23 unit tests, +2 live smokes).

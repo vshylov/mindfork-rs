@@ -483,6 +483,17 @@ mod tests {
         // still the value that was set.
         set_by_path(&mut c, "default_sampling.temperature", "0.7").unwrap();
         assert_eq!(c.default_sampling.temperature, Some(0.7));
+        // The raw server arguments are a list, typed as a JSON array; a bare
+        // line is not a list and is refused rather than guessed at.
+        set_by_path(
+            &mut c,
+            "engine.managed.extra_args",
+            r#"["--n-cpu-moe","20"]"#,
+        )
+        .unwrap();
+        assert_eq!(c.engine.managed.extra_args, ["--n-cpu-moe", "20"]);
+        let err = set_by_path(&mut c, "engine.managed.extra_args", "--n-cpu-moe 20").unwrap_err();
+        assert!(matches!(err, SetError::WrongType(_)), "{err:?}");
     }
 
     /// A literal that does not fit is tried as the text it was typed as: a model

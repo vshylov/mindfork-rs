@@ -488,6 +488,9 @@ enum FieldId {
     XDraftNMin,
     XHost,
     XPort,
+    /// Raw `llama-server` arguments for the assistant's managed server
+    /// (`engine.managed.extra_args`, spec §3.4) — edited as one command line.
+    XExtraArgs,
     /// How many request streams may be open against the assistant engine at
     /// once (`sessions` of the active mode's section — managed, external or
     /// the cloud provider). Assistant only: the impersonation engine runs no
@@ -522,6 +525,8 @@ enum FieldId {
     IxDraftNMin,
     IxHost,
     IxPort,
+    /// Raw `llama-server` arguments for the impersonation server.
+    IxExtraArgs,
     // Inference
     MaxToolRounds,
     // Sampling — a field per parameter; the subsection is encoded by the constructor.
@@ -654,6 +659,8 @@ enum FieldId {
     /// The cloud API key for the embedding server (see [`FieldId::XApiKey`]).
     EApiKey,
     EPort,
+    /// Raw `llama-server` arguments for the managed embedding server.
+    EExtraArgs,
     /// How the embedding model expects its input to be marked
     /// (`query:`/`passage:` and relatives). Independent of the mode — a property
     /// of the model. See docs/research/embedding-input-prefixes.md.
@@ -831,9 +838,10 @@ struct Editor {
     /// lines, `Shift+Enter` inserts a line break, a large popup. Other fields —
     /// single-line.
     multiline: bool,
-    /// A validation error (e.g. "need a number"): the editor doesn't close on
-    /// `Enter`, the label turns red. `None` — the input is valid.
-    error: Option<&'static str>,
+    /// A validation error (e.g. "need a number"), already in the interface
+    /// language: the editor doesn't close on `Enter`, the label turns red.
+    /// `None` — the input is valid.
+    error: Option<String>,
 }
 
 /// Focus: the left section menu or the field list on the right.

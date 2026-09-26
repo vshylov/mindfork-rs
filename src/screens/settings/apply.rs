@@ -475,11 +475,13 @@ impl SettingsScreen {
             let (field, text) = (ed.field, ed.input.text());
             // Validation without closing: an invalid value leaves the editor
             // open, the title turns red; fixing it or Esc closes it.
-            if let Some(err_key) = self
+            let error = self
                 .mcp_field_error(field, &text)
                 .or_else(|| field_validation_error(field, &text))
-            {
-                self.editor.as_mut()?.error = Some(loc.t(err_key));
+                .map(|key| loc.t(key).to_string())
+                .or_else(|| extra_args_error(field, &text, loc));
+            if let Some(error) = error {
+                self.editor.as_mut()?.error = Some(error);
                 return None;
             }
             self.editor = None;

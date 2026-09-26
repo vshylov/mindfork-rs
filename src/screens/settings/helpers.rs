@@ -3,6 +3,7 @@
 //! [super] module; split out of the settings.rs monolith (see docs/history/refactoring-god-objects.md).
 
 use super::*;
+use crate::shared::api::llama_args::ManagedRole;
 use crate::shared::config::WebProvider;
 // ---------- free functions ----------
 
@@ -114,6 +115,7 @@ pub(super) struct ManagedFieldIds {
     draft_n_min: FieldId,
     host: FieldId,
     port: FieldId,
+    extra_args: FieldId,
     /// Descriptions of `-ngl`/`--jinja` — differ between the assistant and
     /// impersonation, so they're carried here rather than inline in `managed_rows`
     /// (shared by both engines).
@@ -139,6 +141,7 @@ pub(super) const ASSISTANT_MANAGED_IDS: ManagedFieldIds = ManagedFieldIds {
     draft_n_min: FieldId::XDraftNMin,
     host: FieldId::XHost,
     port: FieldId::XPort,
+    extra_args: FieldId::XExtraArgs,
     ngl_desc: DESC_NGL_ASSISTANT,
     jinja_desc: DESC_JINJA_ASSISTANT,
 };
@@ -161,13 +164,14 @@ pub(super) const IMP_MANAGED_IDS: ManagedFieldIds = ManagedFieldIds {
     draft_n_min: FieldId::IxDraftNMin,
     host: FieldId::IxHost,
     port: FieldId::IxPort,
+    extra_args: FieldId::IxExtraArgs,
     ngl_desc: DESC_NGL_IMP,
     jinja_desc: DESC_JINJA_IMP,
 };
 
 /// Fields of the managed `llama-server` (shared by the assistant/impersonation
 /// engines), laid out into semantic groups: Server / Model / Performance /
-/// Speculative decoding.
+/// Speculative decoding / Advanced.
 pub(super) fn managed_rows(
     m: &ManagedSettings,
     ids: ManagedFieldIds,
@@ -266,7 +270,51 @@ pub(super) fn managed_rows(
         );
     }
     rows.extend(grouped(loc.t("ui.settings.group.spec"), spec));
+    rows.extend(extra_args_rows(ids.extra_args, &m.extra_args, loc));
     rows
+}
+
+/// The "Advanced" group every managed section ends with: the raw arguments
+/// (spec §3.4). Last, so everything a field can say is said before the escape
+/// hatch — and the refusal of a flag one of those fields writes points back up.
+pub(super) fn extra_args_rows(id: FieldId, args: &[String], loc: &'static Locale) -> Vec<FieldRow> {
+    let value = if args.is_empty() {
+        "—".to_string()
+    } else {
+        join_args(args)
+    };
+    grouped(
+        loc.t("ui.settings.group.advanced"),
+        vec![
+            row(
+                id,
+                loc.t("ui.settings.field.extra_args"),
+                FieldKind::Text(value),
+            )
+            .describe(loc.t("ui.settings.desc.extra_args")),
+        ],
+    )
+}
+
+/// Which managed server an extra-arguments field feeds — the section its
+/// refusals are judged against (`shared::api::llama_args`).
+pub(super) fn extra_args_role(id: FieldId) -> Option<ManagedRole> {
+    match id {
+        FieldId::XExtraArgs => Some(ManagedRole::Assistant),
+        FieldId::IxExtraArgs => Some(ManagedRole::Impersonation),
+        FieldId::EExtraArgs => Some(ManagedRole::Embedder),
+        _ => None,
+    }
+}
+
+/// The editor's refusal of an extra-arguments line — the same check the launch
+/// makes (docs/research/managed-extra-args.md F5), said while the line is still
+/// in front of the user. The door for kinds 2–4 is in the field's hint.
+pub(super) fn extra_args_error(id: FieldId, text: &str, loc: &'static Locale) -> Option<String> {
+    let role = extra_args_role(id)?;
+    crate::shared::api::llama_args::check(&parse_args(text.trim()), role)
+        .err()
+        .map(|refused| refused.message(loc))
 }
 
 /// Cloud-provider fields (model/API key/API-key env/base URL). `cloud` — the

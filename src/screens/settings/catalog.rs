@@ -548,6 +548,14 @@ impl SettingsScreen {
                         .describe(loc.t("ui.settings.desc.embed_convention")),
                     ],
                 ));
+                // The raw arguments close a managed section, as on the chat servers.
+                if e.mode == ServerMode::Managed {
+                    rows.extend(extra_args_rows(
+                        FieldId::EExtraArgs,
+                        &e.managed.extra_args,
+                        loc,
+                    ));
+                }
                 rows
             }
             ModelTab::Tts => {

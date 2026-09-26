@@ -4274,7 +4274,7 @@ fn mcp_id_must_be_a_unique_slug() {
     }
     // Taken by the other server.
     assert!(type_into(&mut s, FieldId::McpId, "fs").is_none());
-    let err = s.editor.as_ref().unwrap().error.unwrap();
+    let err = s.editor.as_ref().unwrap().error.clone().unwrap();
     assert!(err.contains("занят"), "{err}");
     s.handle_key(key(KeyCode::Esc));
     // A free one commits, and keeping its own id is not a duplicate.
@@ -5424,4 +5424,177 @@ fn a_late_answer_is_filed_under_the_provider_it_was_asked_about() {
         "the answer belonged to openai, and gemini has not been asked"
     );
     assert!(s.picker.as_ref().expect("open").all.is_empty());
+}
+
+// ---- raw llama-server arguments (spec §3.4, docs/research/managed-extra-args.md) ----
+
+/// A screen with every managed section on — assistant, impersonation and the
+/// embedder — opened on the Model section.
+fn managed_everywhere() -> SettingsScreen {
+    let mut s = screen();
+    s.config.engine.mode = ServerMode::Managed;
+    s.config.impersonation_engine.mode = ImpersonationMode::Managed;
+    s.config.embed.mode = ServerMode::Managed;
+    goto_section(&mut s, Section::Model);
+    s
+}
+
+/// The editor's refusal, or `None` when the line committed.
+fn extra_args_refusal(s: &mut SettingsScreen, id: FieldId, line: &str) -> Option<String> {
+    let intent = type_into(s, id, line);
+    let error = s.editor.as_ref().and_then(|e| e.error.clone());
+    if error.is_some() {
+        s.handle_key(key(KeyCode::Esc));
+    } else {
+        assert!(
+            matches!(intent, Some(SettingsIntent::SaveConfig(_))),
+            "{line}: {intent:?}"
+        );
+    }
+    error
+}
+
+/// The line is stored as argv — the quoted `-ot` pattern one argument — and a
+/// flag one of the section's own fields writes is refused with the editor left
+/// open, naming the flag and the field, and not stored.
+#[test]
+fn extra_arguments_commit_as_argv_and_a_fields_flag_is_refused() {
+    let mut s = managed_everywhere();
+    let line = r#"--n-cpu-moe 20 -ot "blk\.(1[0-9])\.ffn_.*_exps\.=CPU""#;
+    assert_eq!(extra_args_refusal(&mut s, FieldId::XExtraArgs, line), None);
+    let stored = vec![
+        "--n-cpu-moe".to_string(),
+        "20".into(),
+        "-ot".into(),
+        r"blk\.(1[0-9])\.ffn_.*_exps\.=CPU".into(),
+    ];
+    assert_eq!(s.config.engine.managed.extra_args, stored);
+    assert!(s.config.impersonation_engine.managed.extra_args.is_empty());
+
+    let err = extra_args_refusal(&mut s, FieldId::XExtraArgs, "-t 8 --ctx-size 8192")
+        .expect("a field's flag is refused");
+    assert!(
+        err.contains("--ctx-size") && err.contains(s.loc().t("ui.settings.field.context")),
+        "{err}"
+    );
+    assert_eq!(s.config.engine.managed.extra_args, stored, "nothing stored");
+
+    // Emptying the field clears the list.
+    assert_eq!(extra_args_refusal(&mut s, FieldId::XExtraArgs, ""), None);
+    assert!(s.config.engine.managed.extra_args.is_empty());
+}
+
+/// Each section judges the line against its own fields: `-np` is the
+/// assistant's Sessions and free on the impersonation server, which has no
+/// such field; the embedder's context and GPU layers are this field's to set,
+/// its model and port are not. Kinds 2–4 are refused everywhere.
+#[test]
+fn each_section_judges_extra_arguments_against_its_own_fields() {
+    let mut s = managed_everywhere();
+    assert!(extra_args_refusal(&mut s, FieldId::XExtraArgs, "-np 2").is_some());
+
+    s.model_sub = ModelTab::Impersonation;
+    assert_eq!(
+        extra_args_refusal(&mut s, FieldId::IxExtraArgs, "-np 2"),
+        None
+    );
+    assert_eq!(
+        s.config.impersonation_engine.managed.extra_args,
+        ["-np", "2"]
+    );
+    assert!(extra_args_refusal(&mut s, FieldId::IxExtraArgs, "--tools all").is_some());
+
+    s.model_sub = ModelTab::Embeddings;
+    assert_eq!(
+        extra_args_refusal(&mut s, FieldId::EExtraArgs, "-c 4096 -ngl 0"),
+        None
+    );
+    assert_eq!(
+        s.config.embed.managed.extra_args,
+        ["-c", "4096", "-ngl", "0"]
+    );
+    assert!(extra_args_refusal(&mut s, FieldId::EExtraArgs, "--port 9001").is_some());
+    assert!(extra_args_refusal(&mut s, FieldId::EExtraArgs, "--api-key k").is_some());
+}
+
+/// Every field a refusal names is a row of the section it names it in. The
+/// labels are spelled in `shared::api::llama_args` (the launch says them too),
+/// the rows here — this is what keeps the two from drifting apart. A draft
+/// field is named by its path: the speculative type, then the field.
+#[test]
+fn every_field_a_refusal_names_is_a_row_of_that_section() {
+    use crate::shared::api::llama_args::{ManagedRole, OwnField};
+    let mut s = managed_everywhere();
+    s.config.engine.managed.spec_type = SpecType::DraftSimple;
+    s.config.impersonation_engine.managed.spec_type = SpecType::DraftSimple;
+    let loc = s.loc();
+    for (tab, role) in [
+        (ModelTab::Assistant, ManagedRole::Assistant),
+        (ModelTab::Impersonation, ManagedRole::Impersonation),
+        (ModelTab::Embeddings, ManagedRole::Embedder),
+    ] {
+        let labels: Vec<String> = s
+            .model_fields_for(tab)
+            .into_iter()
+            .map(|r| r.label)
+            .collect();
+        for field in OwnField::ALL {
+            if !field.shown_in(role) {
+                continue;
+            }
+            for part in field.label(loc).split(" → ") {
+                assert!(
+                    labels.iter().any(|l| l == part),
+                    "{role:?}: {field:?} names «{part}», which is not a row there"
+                );
+            }
+        }
+    }
+}
+
+/// The field follows every field of the server it may not repeat, carries its
+/// hint, and shows a stored line back as the command line it was typed as.
+#[test]
+fn the_extra_arguments_row_follows_the_servers_own_fields() {
+    let mut s = managed_everywhere();
+    s.config.engine.managed.extra_args = vec!["-ot".into(), "a b=CPU".into()];
+    for (tab, id, before) in [
+        (ModelTab::Assistant, FieldId::XExtraArgs, FieldId::XSpecType),
+        (
+            ModelTab::Impersonation,
+            FieldId::IxExtraArgs,
+            FieldId::IxSpecType,
+        ),
+        (ModelTab::Embeddings, FieldId::EExtraArgs, FieldId::EPort),
+    ] {
+        let fields = s.model_fields_for(tab);
+        let at = |id: FieldId| {
+            fields
+                .iter()
+                .position(|f| f.id == id)
+                .unwrap_or_else(|| panic!("{tab:?}: {id:?} missing"))
+        };
+        assert!(at(id) > at(before), "{tab:?}");
+        assert_eq!(
+            fields[at(id)].group,
+            s.loc().t("ui.settings.group.advanced")
+        );
+        assert!(field_desc(&s, id).is_some(), "{id:?} has no hint");
+    }
+    let row = s
+        .model_fields_for(ModelTab::Assistant)
+        .into_iter()
+        .find(|r| r.id == FieldId::XExtraArgs)
+        .unwrap();
+    assert!(matches!(&row.kind, FieldKind::Text(t) if t == r#"-ot "a b=CPU""#));
+    // The hint stays under the tallest one, which sets the panel's height on
+    // every tab (lessons §5).
+    for lang in [crate::shared::i18n::Lang::En, crate::shared::i18n::Lang::Ru] {
+        let loc = crate::shared::i18n::locale(lang);
+        let len = |key: &str| loc.t(key).chars().count();
+        assert!(
+            len("ui.settings.desc.extra_args") < len("ui.settings.desc.sub_background"),
+            "{lang:?}: the extra-arguments hint outgrew the tallest hint"
+        );
+    }
 }

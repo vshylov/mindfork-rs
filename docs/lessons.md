@@ -1433,6 +1433,25 @@ growing — and mutate the kill back to `start_kill()` to check the test can see
 the difference.
 — *the code workspace — stage 3*.
 
+**A child inherits the environment, and a program that reads its configuration from
+the environment turns an unrelated variable into a setting.** `llama-server` reads
+`LLAMA_ARG_*` for every option and `LLAMA_API_KEY` for its key, and the managed child
+inherited the app's environment: a `LLAMA_API_KEY` exported for some other tool gave a
+server whose `/health` answered 200 and whose every other request was a 401 — ready by
+the probe, refused everywhere, with nothing in the settings to explain it. When a child
+takes configuration from its environment, decide which of those variables it may see
+(`env_remove` the ones that contradict the command line you build), and prove the
+removal with a control arm that runs with the variable set and the removal off.
+— *raw `llama-server` arguments in managed settings*.
+
+**A process's exit and its last output line race.** `Child::wait` can return while the
+line that explains the exit is still in the pipe, so a monitor that announces the exit
+the moment `wait` returns reports "exited" without the reason — sometimes. Await the
+output readers after `wait`, bounded (a grandchild can hold the pipe open), and test the
+ordering with a reader you control: a real process loses the race too rarely for its
+test to fail on the mutant that drops the wait — measured, it survived.
+— *raw `llama-server` arguments in managed settings*.
+
 **Bracketed paste does not work on Windows.** `Event::Paste` is emitted only by
 crossterm's unix parser; on Windows a paste arrives as ordinary key events (interleaved
 with releases), so the loop must batch and coalesce them. A large paste also spans

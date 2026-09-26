@@ -13,6 +13,8 @@ use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio_util::sync::CancellationToken;
 
+use crate::shared::api::llama_args::ManagedRole;
+use crate::shared::api::managed::ChildExit;
 use crate::shared::api::{
     AnthropicClient, Embedder, EngineBackend, GeminiClient, ManagedConfig, OpenAiClient,
     ResponsesClient, ServerHandle, UnavailableEmbedder, retry, wait_until_ready,
@@ -192,7 +194,7 @@ impl ServerSupervisor for LlamaSupervisor {
                 loc,
             ),
             ServerMode::Managed => {
-                let cfg = managed_config(&settings.managed, &self.lookup);
+                let cfg = managed_config(&settings.managed, ManagedRole::Assistant, &self.lookup);
                 managed_chat_setup(cfg, cancel, status_tx, loc)
             }
             ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude | ServerMode::Grok => {
@@ -230,7 +232,8 @@ impl ServerSupervisor for LlamaSupervisor {
                 loc,
             ),
             ImpersonationMode::Managed => {
-                let cfg = managed_config(&settings.managed, &self.lookup);
+                let cfg =
+                    managed_config(&settings.managed, ManagedRole::Impersonation, &self.lookup);
                 managed_chat_setup(cfg, cancel, status_tx, loc)
             }
             ImpersonationMode::OpenAi
@@ -500,19 +503,26 @@ pub(crate) fn managed_embed_config(m: &ManagedEmbedSettings, binary: PathBuf) ->
         draft_n_min: None,
         host: "127.0.0.1".into(),
         port: m.port,
-        extra_args: vec![],
+        role: ManagedRole::Embedder,
+        extra_args: m.extra_args.clone(),
     }
 }
 
 /// Builds a [`ManagedConfig`] (`llama-server`) from the engine's managed subsection
-/// (shared by the assistant's chat server and the impersonation server).
+/// (shared by the assistant's chat server and the impersonation server — `role`
+/// says which, since their sections show different fields and the extra
+/// arguments are judged against them).
 ///
 /// The binary goes through [`BinaryLookup`]: an explicit path is used as
 /// written, a bare name may be found beside the application, and an empty
 /// setting resolves to the build installed last under `data/llama/`. Nothing
 /// found leaves the path empty, which `managed_chat_setup` reads as
 /// `NotConfigured` exactly as before.
-pub(crate) fn managed_config(s: &ManagedSettings, lookup: &BinaryLookup) -> ManagedConfig {
+pub(crate) fn managed_config(
+    s: &ManagedSettings,
+    role: ManagedRole,
+    lookup: &BinaryLookup,
+) -> ManagedConfig {
     ManagedConfig {
         binary: lookup.resolve(s.binary.as_deref()).unwrap_or_default(),
         model_path: s.model_path.clone(),
@@ -533,7 +543,8 @@ pub(crate) fn managed_config(s: &ManagedSettings, lookup: &BinaryLookup) -> Mana
         draft_n_min: s.draft_n_min,
         host: s.host.clone(),
         port: s.port,
-        extra_args: vec![],
+        role,
+        extra_args: s.extra_args.clone(),
     }
 }
 
@@ -746,7 +757,7 @@ impl Health {
 fn spawn_probe(
     client: Arc<OpenAiClient>,
     timeout: Duration,
-    exited: Option<CancellationToken>,
+    exited: Option<ChildExit>,
     cancel: CancellationToken,
     status_tx: UnboundedSender<ServerStatus>,
     loc: &'static Locale,
@@ -784,10 +795,8 @@ fn spawn_probe(
                 // A managed child that exited will never answer again: report at once
                 // instead of waiting out a probe, and stop — reviving it means
                 // relaunching the process, which the orchestrator does.
-                _ = wait_for_exit(&exited) => {
-                    let _ = status_tx.send(ServerStatus::Disconnected(
-                        loc.t("ui.err.managed.early_exit").to_string(),
-                    ));
+                exit = wait_for_exit(&exited) => {
+                    let _ = status_tx.send(ServerStatus::Disconnected(exit.message(loc)));
                     return;
                 }
                 _ = tokio::time::sleep(health.poll_delay()) => {}
@@ -813,9 +822,12 @@ fn spawn_probe(
 
 /// Waits for a managed child's exit signal; for a server we don't own (external)
 /// there is none, so this never resolves and simply never wins its `select!` arm.
-async fn wait_for_exit(exited: &Option<CancellationToken>) {
+async fn wait_for_exit(exited: &Option<ChildExit>) -> &ChildExit {
     match exited {
-        Some(token) => token.cancelled().await,
+        Some(exit) => {
+            exit.wait().await;
+            exit
+        }
         None => std::future::pending().await,
     }
 }
@@ -1123,10 +1135,14 @@ mod tests {
             exe_dir: None,
         };
 
-        let cfg = managed_config(&ManagedSettings::default(), &lookup);
+        let cfg = managed_config(&ManagedSettings::default(), ManagedRole::Assistant, &lookup);
         assert_eq!(cfg.binary, binary);
 
-        let bare = managed_config(&ManagedSettings::default(), &BinaryLookup::default());
+        let bare = managed_config(
+            &ManagedSettings::default(),
+            ManagedRole::Assistant,
+            &BinaryLookup::default(),
+        );
         assert!(
             bare.binary.as_os_str().is_empty(),
             "no lookup, no path — `managed_chat_setup` reads that as NotConfigured"
@@ -1676,7 +1692,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            managed_config(&managed, &BinaryLookup::default())
+            managed_config(&managed, ManagedRole::Assistant, &BinaryLookup::default())
                 .mmproj
                 .as_deref(),
             Some(MISSING),
@@ -1696,6 +1712,59 @@ mod tests {
             ServerStatus::Disconnected(msg) => {
                 let expected = ru().tf("ui.err.managed.mmproj_not_found", &[("path", MISSING)]);
                 assert!(msg.contains(&expected), "{msg}");
+            }
+            other => panic!("expected Disconnected, got {other:?}"),
+        }
+    }
+
+    /// The raw arguments reach both launch configs with the role each is judged
+    /// by, and a refused one stops the managed chat server at the supervisor's
+    /// real seam — the path `settings.json`, `--set` and a restore take, none of
+    /// which passes the settings editor (docs/research/managed-extra-args.md F5).
+    #[tokio::test]
+    async fn extra_arguments_reach_the_launch_and_a_refused_one_stops_it() {
+        let model = tempfile::NamedTempFile::new().unwrap();
+        let managed = ManagedSettings {
+            binary: Some("llama-server".into()),
+            model_path: Some(model.path().display().to_string()),
+            extra_args: vec!["--n-cpu-moe".into(), "20".into()],
+            ..Default::default()
+        };
+        let cfg = managed_config(
+            &managed,
+            ManagedRole::Impersonation,
+            &BinaryLookup::default(),
+        );
+        assert_eq!(cfg.extra_args, ["--n-cpu-moe", "20"]);
+        assert_eq!(cfg.role, ManagedRole::Impersonation);
+        let embed = ManagedEmbedSettings {
+            extra_args: vec!["-c".into(), "4096".into()],
+            ..Default::default()
+        };
+        let cfg = managed_embed_config(&embed, "llama-server".into());
+        assert_eq!(
+            (cfg.role, cfg.extra_args),
+            (ManagedRole::Embedder, embed.extra_args)
+        );
+
+        let (tx, _rx) = unbounded_channel();
+        let s = EngineSettings {
+            mode: ServerMode::Managed,
+            managed: ManagedSettings {
+                extra_args: vec!["--api-key".into(), "k".into()],
+                ..managed
+            },
+            ..Default::default()
+        };
+        let setup =
+            LlamaSupervisor::default().apply_chat(&s, None, CancellationToken::new(), tx, ru());
+        assert!(setup.backend.is_none() && setup.handle.is_none());
+        match setup.status {
+            ServerStatus::Disconnected(msg) => {
+                assert!(
+                    msg.contains("--api-key") && msg.contains("«Внешний»"),
+                    "{msg}"
+                )
             }
             other => panic!("expected Disconnected, got {other:?}"),
         }
