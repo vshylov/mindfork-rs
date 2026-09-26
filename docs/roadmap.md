@@ -565,12 +565,12 @@ An index, newest first — one line per track, with the release that shipped it
 and where its story is told. What a track left open is a bullet above, under
 its area.
 
-- **An attachment in its birth turn** — unreleased (2026-09-26), two stages:
+- **An attachment in its birth turn** — 0.11.2 (2026-09-26), two stages:
   a fetched page no longer promises a search it cannot have and a cut says where
   it ends (ceiling 1 000 000), then its index starts at the end of the round and a
   search waits for it — the birth turn finds §17.5 of the spec with one search.
   [attachment-birth-turn.md](research/attachment-birth-turn.md), spec §9.3.1, §9.7.
-- **Raw `llama-server` arguments in managed settings** — unreleased
+- **Raw `llama-server` arguments in managed settings** — 0.11.2
   (2026-09-26): an *Extra arguments* field in each managed section, the
   flags that break the app or arm the server refused, the child's `LLAMA_*`
   side door closed, and a refused launch said in llama.cpp's words.

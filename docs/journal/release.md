@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (50)
+## Entries (51)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -62,6 +62,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Release 0.11.0 (prepared)
 - Post-M9: `install.sh` failed on the first real pod — root without CAP_CHOWN (done)
 - Release 0.11.1 (prepared)
+- Release 0.11.2 (prepared)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -2864,3 +2865,34 @@ every reversible check first. Full record —
   installed`. The one thing that failed on the first pod now passes in the
   same shape; what the owner ran past it by hand (the whole `setup … --verify`
   on a 31B at 131k) is recorded above.
+
+### Release 0.11.2 (prepared)
+
+- **A release PR** per the checklist in [AGENTS.md §6](../../AGENTS.md) (branch
+  `chore/release-0.11.2`): bumped `Cargo.toml` `0.11.1 → 0.11.2` (+ `Cargo.lock`,
+  one line), `site/zola.toml` `app_version`, `CHANGELOG.md` — `[Unreleased]` →
+  `[0.11.2] — 2026-09-26` under a lead paragraph, a fresh empty `[Unreleased]`
+  opened, comparison links updated. The `v0.11.2` tag is applied by the user after
+  the merge. Gates green: 3458 unit tests (202 `#[ignore]`), `clippy -D warnings`,
+  `fmt`, every step of the Lints job by exit code, and `release_guard.py --tag
+  v0.11.2` accepting the tag — its notes the `[0.11.2]` section (the `notes.md` it
+  writes into the working tree is untracked and was removed, not committed).
+- **A PATCH, as the practice has read §6.** Two tracks since `v0.11.1` — the
+  managed server's extra arguments and the attachment birth turn — plus fixes: by
+  the letter of §6 ("MINOR — features/tracks") that is a MINOR, but 0.9.x, 0.10.1
+  and 0.10.2 all shipped `Added` under a PATCH, and the owner asked for 0.11.2.
+- **No `Data` rubric.** No schema constant moved (`git diff v0.11.1 -- src` has
+  none); the one new settings field, `extra_args` on the managed sections, is
+  additive under the struct's `#[serde(default)]` — the F12 "no bump" case of
+  [release-engineering.md](../history/release-engineering.md) — and 0.11.1 ignores it
+  (no `deny_unknown_fields`), so a downgrade reads the same file.
+- **The `CHANGELOG` section had two `### Changed` headings** — the `setup --verify`
+  port hint had been appended under a second one after `Fixed`. Merged into one
+  before the rename; the notes the release job builds are the section verbatim.
+- **The release post** leads with the two things that change what a user can do —
+  the extra-arguments table (VRAM **and** the speed it costs: 141.8 → 28.0 tok/s at
+  `--n-cpu-moe 20`, from managed-extra-args.md §7) and the page read whole and
+  searched in one call (6/6) — then the smaller fixes and the unchanged data.
+  `llms.txt` regenerated from its front matter; the site checked and built with the
+  pinned Zola 0.23.6 after `site_sync_assets.py`. `site.yml` holds the deploy until
+  the release is public, as for 0.11.0 and 0.11.1.
