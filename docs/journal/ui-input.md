@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (30)
+## Entries (31)
 
 - Post-M9: fast multiline clipboard paste (done)
 - Post-M9: `↑/↓` navigation by visual row of a wrapped line (done)
@@ -42,6 +42,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the restored message and the draft are separated by a blank line (done)
 - Post-M9: the line-break hint names the chord the terminal can deliver (done)
 - Post-M9: a stress mark is part of the word (done)
+- Post-M9: the input box's height is a setting (done)
 
 ### Post-M9: fast multiline clipboard paste (done)
 - **Symptom**: a large clipboard paste lagged in Windows Terminal, and a line break
@@ -1633,3 +1634,52 @@ Design and every measurement:
 [docs/research/spellcheck-stress-marks.md](../research/spellcheck-stress-marks.md).
 
 <!-- cyrillic-ok:end -->
+
+### Post-M9: the input box's height is a setting (done)
+- **Asked for**: the chat's input box stopped growing at six rows of text — a
+  constant in `screens/chat/render.rs` (`content_lines.clamp(1, 6) + 2`) — and a
+  long message was edited through a six-row slot. Now
+  **`interface.input_max_rows`** (Settings → Interface → Appearance, *Input box
+  height*), `6` by default so nothing moves for anyone who does not touch it.
+- **The widget needed nothing.** `InputBox` already scrolled over visual rows,
+  kept the cursor in view and drew a scrollbar on its right border once the text
+  outgrew the area; the ceiling was purely the chat layout's number. So the
+  change is a config field, a settings row and one function,
+  `render.rs::input_height`, which the impersonation preview (the same row) also
+  goes through.
+- **User's decision** (2026-09-26): the ceiling counts **rows**, not a share of
+  the window (it is what the constant was, and a person thinks of it that way);
+  range `1–50`, an entry outside it **clamped** rather than refused (the
+  `CompactThreshold` precedent) — `0` would leave a box with no text row;
+  `InterfaceSettings::input_rows_ceiling` bounds a hand-edited `settings.json`
+  the same way when read, and the settings row shows that effective value.
+- **Plus an implicit cap: never more than half the window**, border included.
+  Measured before adding it, not assumed: the feed's `Constraint::Min(3)`
+  outranks the `Length`s of the input and the status bar in ratatui-core 0.1.2
+  (`MIN_SIZE_GE` = `STRONG`×100 against `LENGTH_SIZE_EQ` = `STRONG`×10), and with
+  the cap removed a 20-row window under a ceiling of 50 gave the input 15 rows
+  (13 of text) and the feed exactly its minimum — one visible line of chat; the
+  status bar survived in that measurement, but which `Length` yields once even
+  that is not enough is the solver's call. With the cap the box stops at 10 rows
+  there. The cap binds the default only below 16 rows (`16 / 2 − 2 = 6`), where
+  the six-row box already took half the window or more.
+- **The screenshot drift gate went red, as it should**: the settings menu counts
+  a section's fields, and "Interface" went 15 → 16 in the Model/server and Tools
+  captures. Regenerated per lessons §1 — the site's woff2 faces written out as
+  TTFs, the *old* dumps re-rendered first and checked byte-identical against the
+  committed images, then the four new dumps rendered.
+
+**Tests** (+5): `config` — the default is 6 on a fresh config and under an old
+`interface` section, and `input_rows_ceiling` clamps `0`/`u16::MAX`/a JSON `0`;
+`settings` — the row is a described `Int`, commits `12`, clamps `0` → 1 and
+`1000` → 50, and shows the effective value; `screens/chat` — `input_height`
+across ceilings and window sizes (the default unchanged on every window from 16
+to 80 rows), the rendered box's text rows follow the setting (6 before any
+settings snapshot, 12 after one), and a ceiling of 50 on a 20-row window leaves
+the box at half the window with the status bar drawn under it and the feed
+above its minimum — mutation-checked: with the cap disabled it fails on 13 text
+rows. **3463 unit tests green, 202 `#[ignore]`**, clippy `-D warnings`/fmt clean.
+
+**A live model run is not required** (AGENTS.md §3) — pure layout, no engine,
+memory or tool. The rendered chat and settings screens were looked at once
+through `TestBackend` (lessons §2: a text assertion does not see composition).

@@ -5781,3 +5781,111 @@ mod tasks_stop {
         assert!(c.last_note().contains("all"), "{}", c.last_note());
     }
 }
+
+/// The input row's height (spec §11.5): the text grows the box up to the
+/// `interface.input_max_rows` ceiling, and never past half the window.
+#[test]
+fn input_height_follows_the_ceiling_within_half_the_window() {
+    use super::render::input_height;
+    // Text rows plus the two border rows.
+    assert_eq!(input_height(0, 6, 40), 3, "an empty box is one row high");
+    assert_eq!(input_height(1, 6, 40), 3);
+    assert_eq!(input_height(6, 6, 40), 8);
+    assert_eq!(
+        input_height(30, 6, 40),
+        8,
+        "past the ceiling the text scrolls"
+    );
+    assert_eq!(input_height(30, 12, 40), 14);
+    // Half the window, border included: 24 rows leave 10 for text.
+    assert_eq!(input_height(30, 50, 24), 12);
+    assert_eq!(
+        input_height(3, 50, 24),
+        5,
+        "the cap bounds, it does not pad"
+    );
+    // The default is what it always was on any window of 16 rows or more.
+    for screen_h in 16..=80 {
+        assert_eq!(input_height(30, 6, screen_h), 8, "{screen_h} rows");
+    }
+    // A window too small for even that keeps one text row.
+    assert_eq!(input_height(30, 6, 5), 3);
+    assert_eq!(input_height(30, 6, 0), 3);
+    // A ceiling of 0 cannot reach here through the config's clamp, but the
+    // function does not rely on it.
+    assert_eq!(input_height(30, 0, 40), 3);
+}
+
+/// The ceiling reaches the rendered box: the text rows the box shows are the
+/// setting's, not the old hard-coded six — and without a settings snapshot the
+/// default applies.
+#[test]
+fn input_box_grows_to_the_configured_ceiling() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    let text = (1..=30)
+        .map(|i| format!("line {i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let text_rows = |s: &mut ChatScreen| {
+        let mut term = Terminal::new(TestBackend::new(90, 40)).unwrap();
+        term.draw(|f| s.render(f)).unwrap();
+        s.input
+            .last_area_for_test()
+            .expect("the box rendered")
+            .height
+    };
+
+    let mut s = ChatScreen::new();
+    s.input.set_text(&text);
+    assert_eq!(text_rows(&mut s), 6, "the default, before any settings");
+
+    let mut cfg = AppConfig::default();
+    cfg.interface.input_max_rows = 12;
+    s.set_settings(cfg, Vec::new(), Vec::new(), Default::default(), Vec::new());
+    assert_eq!(text_rows(&mut s), 12);
+}
+
+/// A ceiling taller than the window must not squeeze the feed out: the feed's
+/// `Constraint::Min(3)` outranks the `Length`s in ratatui's solver, so without
+/// the half-window cap the input took everything but the feed's minimum — one
+/// visible line of chat (measured on this very window: 13 text rows of 20).
+/// Here the box stops at half the window, and the status bar and the feed both
+/// keep their rows.
+#[test]
+fn a_huge_input_ceiling_leaves_the_feed_and_status_bar_in_view() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    let mut s = ChatScreen::new();
+    let mut cfg = AppConfig::default();
+    cfg.interface.input_max_rows = crate::shared::config::INPUT_MAX_ROWS_LIMIT;
+    s.set_settings(cfg, Vec::new(), Vec::new(), Default::default(), Vec::new());
+    let text = (1..=80)
+        .map(|i| format!("line {i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    s.input.set_text(&text);
+
+    let (w, h) = (90u16, 20u16);
+    let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+    term.draw(|f| s.render(f)).unwrap();
+    let inner = s.input.last_area_for_test().expect("the box rendered");
+    assert_eq!(inner.height, h / 2 - 2, "half the window, border included");
+    // The box's bottom border is not the window's last row: something — the
+    // status bar — is drawn below it.
+    let bottom_border = inner.y + inner.height;
+    assert!(bottom_border < h - 1, "the status bar was squeezed out");
+    let buf = term.backend().buffer();
+    let row = |y: u16| (0..w).map(|x| buf[(x, y)].symbol()).collect::<String>();
+    assert!(
+        (bottom_border + 1..h).any(|y| !row(y).trim().is_empty()),
+        "nothing under the input box:\n{}",
+        (0..h).map(row).collect::<Vec<_>>().join("\n")
+    );
+    // ...and the feed — everything above the box's top border — keeps more
+    // than its three-row minimum (a border, one line of chat, a border).
+    let feed_rows = inner.y - 1;
+    assert!(feed_rows > 3, "the feed was squeezed to {feed_rows} rows");
+}

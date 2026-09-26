@@ -82,8 +82,9 @@ impl ChatScreen {
     pub fn render(&mut self, frame: &mut Frame) {
         let _ = self.maybe_recheck_spelling();
 
-        // The input/preview height grows to fit content with wrapping (1–6
-        // rows + border). The impersonation preview wraps by "width minus
+        // The input/preview height grows to fit content with wrapping (from 1
+        // row up to `interface.input_max_rows`, within half the window — see
+        // `input_height`). The impersonation preview wraps by "width minus
         // border" (no prompt column), while the input box has a `❯` column —
         // so its height is computed via `content_rows`, which subtracts both
         // the border and `PROMPT_W` (the same text width as at render time,
@@ -98,7 +99,11 @@ impl ChatScreen {
         } else {
             self.input.content_rows(area_w)
         };
-        let input_h = (content_lines.clamp(1, 6) + 2) as u16;
+        let input_h = input_height(
+            content_lines,
+            self.input_rows_ceiling(),
+            frame.area().height,
+        );
         // The RAG-indexing banner takes a row only when active (otherwise 0 —
         // an empty rectangle, rendering into it is harmless).
         let banner_h: u16 = if self.rag.is_some() { 1 } else { 0 };
@@ -269,6 +274,27 @@ impl ChatScreen {
             render_confirm(frame, action, &self.palette, self.loc);
         }
     }
+}
+
+/// The input row's height — text rows plus the border — for `content_rows` of
+/// wrapped text under the `ceiling` setting (`interface.input_max_rows`), in a
+/// window `screen_h` rows tall. See spec §11.5.
+///
+/// The box also never takes more than **half the window**. The setting is a
+/// wish, and the layout alone would honour it at the feed's expense: the feed's
+/// `Constraint::Min(3)` outranks the `Length`s of the input and the status bar,
+/// so the solver shrinks the feed to exactly that minimum and hands the input
+/// the rest (measured: a 20-row window with a ceiling of 50 gave the input 15
+/// rows and the chat one visible line), and which `Length` gives way once even
+/// that is not enough is the solver's call. Capping here keeps the feed in
+/// view; the text past the ceiling scrolls inside the box (`InputBox` keeps the
+/// cursor in view and draws a scrollbar), as it always did past six rows.
+pub(super) fn input_height(content_rows: usize, ceiling: u16, screen_h: u16) -> u16 {
+    const BORDER: u16 = 2;
+    let half_window = (screen_h / 2).saturating_sub(BORDER);
+    let rows = ceiling.min(half_window).max(1);
+    // `rows` bounds the result, so the narrowing cast cannot truncate.
+    content_rows.clamp(1, usize::from(rows)) as u16 + BORDER
 }
 
 /// The number of visual rows `text` will take when wrapped to `width` (for

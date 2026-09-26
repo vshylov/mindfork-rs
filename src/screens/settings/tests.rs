@@ -777,6 +777,51 @@ fn interface_has_model_name_toggle() {
     assert!(field_desc(&s, FieldId::IModelName).is_some());
 }
 
+/// The input box's row ceiling (`interface.input_max_rows`, spec §11.5): a
+/// described integer row in "Interface" that commits through the editor, and
+/// clamps an out-of-range entry instead of refusing it — `0` would leave a box
+/// with no text row, and past the limit the half-window cap decides anyway.
+#[test]
+fn interface_input_rows_commits_and_clamps() {
+    use crate::shared::config::{DEFAULT_INPUT_MAX_ROWS, INPUT_MAX_ROWS_LIMIT};
+
+    fn edit(typed: &str) -> (AppConfig, SettingsScreen) {
+        let mut s = screen();
+        goto_section(&mut s, Section::Interface);
+        goto_field(&mut s, FieldId::IInputRows);
+        s.handle_key(key(KeyCode::Enter));
+        s.handle_key(ctrl('k'));
+        for c in typed.chars() {
+            s.handle_key(key(KeyCode::Char(c)));
+        }
+        match s.handle_key(key(KeyCode::Enter)) {
+            Some(SettingsIntent::SaveConfig(c)) => (*c, s),
+            other => panic!("{typed:?}: expected SaveConfig, got {other:?}"),
+        }
+    }
+    let shown = |s: &SettingsScreen| {
+        s.interface_fields()
+            .into_iter()
+            .find(|f| f.id == FieldId::IInputRows)
+            .map(|f| value_text(&f.kind, s.loc()))
+            .expect("the input-rows row")
+    };
+
+    let s = screen();
+    assert!(field_desc(&s, FieldId::IInputRows).is_some());
+    assert_eq!(field_num_kind(FieldId::IInputRows), Some(NumKind::Int));
+    assert_eq!(shown(&s), DEFAULT_INPUT_MAX_ROWS.to_string());
+
+    let (cfg, s) = edit("12");
+    assert_eq!(cfg.interface.input_max_rows, 12);
+    assert_eq!(shown(&s), "12");
+    assert_eq!(edit("0").0.interface.input_max_rows, 1);
+    assert_eq!(
+        edit("1000").0.interface.input_max_rows,
+        INPUT_MAX_ROWS_LIMIT
+    );
+}
+
 #[test]
 fn cycle_mode_changes_server_mode() {
     let mut s = screen();
