@@ -27,6 +27,7 @@ split by subsystem.
   (`-hf`) — for those, run `llama-server` yourself in external mode.
 
 ### Fixed
+- **Double spaces in the Russian hint of the Batch field** are gone.
 - **A managed server that will not start says why.** When `llama-server`
   refuses its arguments, the status now shows its own message — *"refused to
   start: error: invalid argument: …"* — instead of guessing at a corrupt model

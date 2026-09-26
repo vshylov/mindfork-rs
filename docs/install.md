@@ -389,7 +389,9 @@ files found **on top of** the baked-in ones — you can edit text and add langua
   mindfork locales export ru -o data/locales/de.json    # a stub for a new language (translate it)
   ```
   `ru`/`en` are exported as **verbatim source** (with string arrays — convenient to
-  edit). An existing file is not overwritten — point to a new path. The full list of
+  edit; the pieces of an array are joined with one space, so a piece should not
+  begin or end with a space of its own, or the text shows two). An existing file is
+  not overwritten — point to a new path. The full list of
   keys can always be obtained this way, without having the project's source.
 - **Editing an existing language.** Place `data/locales/en.json` (or `ru.json`) — an
   **override** file: only the keys present in it are overridden, everything else is
