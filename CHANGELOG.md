@@ -35,6 +35,13 @@ split by subsystem.
   the user's colour in whatever blue the terminal had; it is now one fixed blue,
   like every other colour of a fixed theme.
 
+### Fixed
+- **Settings no longer mark a default value as changed.** With the interface in
+  English, every setting whose value is a word — the theme, the search provider,
+  the Python mode, the auto-title — carried the `•` "changed" marker at its
+  default, and `Del` on it did nothing. The marker now means what it says, and
+  `Del` resets.
+
 ### Data
 - `settings.json` gains `interface.theme_mode` (written only once a mode is
   chosen) and `interface.full_theme`. Both are additions: nothing is migrated,

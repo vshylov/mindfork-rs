@@ -1609,6 +1609,19 @@ a plausible-sounding key name, grep the bundle for it; the i18n gate
 `builtin_bundles_have_no_duplicate_keys` now bans the class.
 — *the settings hint panel — one height for every section*.
 
+**Two strings built under two locales are not equal, whatever they say.** The
+settings screen decided "is this row at its default?" by comparing the text the
+row shows with the text a row built from `AppConfig::default()` shows — and a
+default config is in the default language. Under Russian, the language the
+comparison was written in, it never failed; under English every localized value
+at its default read as changed, the footer offered a reset, and the reset,
+looking the Russian label up among English options, did nothing. It sat in the
+README's own screenshots for months. When displayed text stands in for a value
+in a comparison, both sides must be rendered under the same locale — and a test
+of anything localized runs in every built-in language, not in the one the
+author reads.
+— *a setting at its default reads as unchanged in every interface language*.
+
 **A fixed-width strip of localized labels has a budget, and only one locale finds
 out.** Adding a sixth tab to the 76-column help dialog fitted comfortably in `en` and
 overflowed `ru` by six columns — and what silently truncates is the *rightmost* tab, so

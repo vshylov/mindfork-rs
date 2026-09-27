@@ -5832,3 +5832,94 @@ fn the_extra_arguments_row_follows_the_servers_own_fields() {
         );
     }
 }
+
+/// Every section of an untouched config, in every built-in interface language:
+/// no row reads as changed, and no row offers a reset. The rows are compared
+/// as the text they show, so defaults written in another language than the
+/// screen's made every localized value at its default read as changed — under
+/// English that was the theme, the dictionaries, the auto-title, the
+/// self-model order. The language row is the one exception by design: it is
+/// measured against the default *language*, whatever the screen is in.
+#[test]
+fn a_default_config_shows_no_changed_row_in_any_interface_language() {
+    use crate::shared::i18n::Lang;
+    for lang in Lang::ALL.iter().copied() {
+        let mut config = AppConfig::default();
+        config.interface.language = lang;
+        let mut s = SettingsScreen::new(config, vec![], vec![]);
+        let mut localized = 0usize;
+        for section in SECTIONS {
+            goto_section(&mut s, section);
+            let loc = s.loc();
+            let defaults = s.default_fields();
+            for row in s.fields() {
+                let Some(default) = defaults.iter().find(|d| d.id == row.id) else {
+                    continue;
+                };
+                let (now, was) = (value_text(&row.kind, loc), value_text(&default.kind, loc));
+                if row.id == FieldId::ILanguage {
+                    assert_eq!(
+                        was,
+                        Lang::default().label(),
+                        "the language row's default is the default language"
+                    );
+                    continue;
+                }
+                assert_eq!(now, was, "{lang:?} {section:?} {:?}", row.id);
+                localized += usize::from(!now.is_ascii());
+            }
+        }
+        // The premise for the reference language: its rows do hold text that
+        // another language would spell differently.
+        if lang == Lang::Ru {
+            assert!(localized > 5, "only {localized} localized values were seen");
+        }
+    }
+}
+
+/// …and a row that *was* changed goes back, in any interface language: `Del`
+/// looks the default's label up among the options, so the label has to be in
+/// the language the options are in.
+#[test]
+fn reset_finds_the_default_in_any_interface_language() {
+    use crate::shared::config::{AutoTitleMode, Theme, ThemeMode};
+    use crate::shared::i18n::Lang;
+    for lang in Lang::ALL.iter().copied() {
+        let mut config = AppConfig::default();
+        config.interface.language = lang;
+        config.interface.theme = Theme::Light;
+        config.interface.auto_title = AutoTitleMode::Off;
+        config.interface.set_mode(ThemeMode::Full);
+        config.interface.full_theme = "light".into();
+        let mut s = SettingsScreen::new(config, vec![], vec![]);
+        goto_section(&mut s, Section::Interface);
+
+        for id in [
+            FieldId::IFullTheme,
+            FieldId::IAutoTitle,
+            FieldId::IThemeMode,
+        ] {
+            assert!(
+                matches!(s.reset_field(id), Some(SettingsIntent::SaveConfig(_))),
+                "{lang:?}: {id:?} did not reset"
+            );
+        }
+        // The system mode's row is back in view now that the mode was reset.
+        assert!(
+            matches!(
+                s.reset_field(FieldId::ITheme),
+                Some(SettingsIntent::SaveConfig(_))
+            ),
+            "{lang:?}: the theme did not reset"
+        );
+        let i = &s.config.interface;
+        assert_eq!(i.full_theme, "dark", "{lang:?}");
+        assert_eq!(i.auto_title, AutoTitleMode::default(), "{lang:?}");
+        assert_eq!(i.theme_mode, None, "{lang:?}");
+        assert_eq!(i.theme, Theme::default(), "{lang:?}");
+        assert_eq!(
+            i.language, lang,
+            "{lang:?}: a reset is not a language change"
+        );
+    }
+}
