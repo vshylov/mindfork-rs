@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (45)
+## Entries (46)
 
 - Post-M9: mouse-wheel feed scrolling (done)
 - Post-M9: own markdown renderer (tables + LaTeX + theme) (done)
@@ -57,6 +57,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: colour modes — the full mode (done)
 - Post-M9: the full colour mode, measured in a console — and a probe to measure with (done)
 - Post-M9: colour modes — the monochrome mode, and `NO_COLOR` (done)
+- Post-M9: colour modes — themes of the user's own (done)
 
 ### Post-M9: mouse-wheel feed scrolling (done)
 - **The mouse wheel scrolls the feed** on par with `PageUp/PageDown`. `ratatui::init()`
@@ -2738,4 +2739,98 @@ first to last, visible only with two quoted paragraphs that both wrap). The muta
 itself is the other lesson of the stage: stopped for being slow, the rewrite-and-restore script
 left `paint_canvas` where `finish_frame` had been; the rest were run switched at run time
 behind `crate::mutant(N)`, built once (lessons §2).
+
+
+### Post-M9: colour modes — themes of the user's own (done)
+
+Stage 3 of the colour-modes track ([docs/theme-modes.md](../theme-modes.md) §10), branch
+`feat/theme-modes-user-themes`; stages 1 and 2 were merged as PR 634 and PR 635. Fork D of
+the plan is this stage's, decided by the user on 2026-09-27: a theme that names only some
+roles gets the rest fitted to the contrast floors, and a colour it names is never altered.
+With it the track is done.
+
+**A theme is a file, `data/themes/<name>.json`** — flat JSON, a colour per role, `#rrggbb`,
+only `canvas` required. The shape is the external locales' (`shared/i18n.rs`): scanned once at
+start-up into a process-wide registry, a file that is not a theme reported and skipped, the
+rest still loading. `Palette::full(name)` asks the registry after the built-in names, and
+nothing downstream knows where a palette came from — the pass paints a user's canvas as it
+paints `dark`'s. The built-in names are **taken**: `dark.json` is reported and skipped, where a
+locale file of a built-in code overrides it. A locale override changes words; a `dark` that a
+file could replace would make "the `dark` theme" — in a bug report, in the manual — mean
+something else on every machine that has such a file.
+
+**The palette's colours are listed once**, `user_theme::ROLES`: what a file's keys are read by,
+what a report lists, what an export writes, and — through `text_roles()` — what the floor test
+of the built-in palettes measures. `code_text` and `code_comment` became roles for this: they
+were two greys picked by polarity inside the markdown renderer, right for the two canvases they
+were tuned on. On Solarized's `#002b36` the comment grey is 4.35:1 on the canvas and 3.24:1 on
+a selected row.
+
+**The fit** (`oklab::fit`): a missing text role starts as the built-in theme's colour — `dark`
+for a dark canvas, `light` for a light one, by which of white and black stands out more — and
+is moved along OKLab lightness, hue and chroma kept, in steps of 0.002, to the first value
+that clears its floor on the canvas and on the backdrop. A colour that clears is not touched:
+on the built-in canvases the fit moves nothing, which a test holds. It is the arithmetic the
+built-in palettes were retuned with by hand in stage 1, and
+`the_fit_finds_what_the_built_in_palettes_were_retuned_to` checks that it finds those colours
+— five of them, each within two steps of a channel.
+
+**Out of gamut, the chroma gives way.** The first version clipped the channels, as the
+hand-retuning script had. A saturated blue at lightness 1 then came out `#8eefff`, not white:
+a tint kept at the top of the scale, and with it a ceiling on the contrast a fit can reach —
+invisible while every colour fitted was a grey or near one. `Oklab::to_rgb` now finds the
+largest share of the chroma that is in gamut, so lightness holds and the ends of the scale are
+white and black.
+
+**Where the stage departs from the letter of fork D**: the two roles that are not text. The
+fork says a missing role is "moved along lightness until it clears the floors", and the
+selection backdrop and the plain border have no floor (a backdrop at 3:1 leaves no room for
+4.5:1 text on it) — so the rule leaves them exactly where the built-in theme has them. The
+dark theme's backdrop on Solarized's base: **1.04:1**, a selected row that cannot be seen.
+They keep the built-in theme's *distance* from its canvas instead — the user's canvas, moved
+in lightness by as much, in its own hue: 1.34:1 there, where the built-in pair is 1.22:1. The
+backdrop is settled first, named or derived, because every text role is fitted against it.
+
+**What the fit did is a value**, `ThemeReport`: per role the colour, where it came from
+(named, built-in as it was, fitted, derived), its contrast on each ground, its floor, whether
+it clears. The start-up log gets one line per theme that has something to say;
+**`mindfork themes check [NAME|FILE]`** prints the table and exits with `1` — the loop for
+whoever writes a theme, without starting the app. **`mindfork themes export NAME -o FILE`**
+writes a theme whole; an exported built-in theme read back is that theme exactly. The export
+is written by hand rather than through a JSON map, which sorts its keys and would put `accent`
+before the canvas everything else is chosen for.
+
+**Tests cannot set a process-wide `OnceLock` twice**, and a registry set once for the test
+binary would show every settings test the same user themes — the row's options are asserted
+exactly. The seam is `user_theme::with_registry`, a thread-local override `registry()`
+consults first (test-only): the harness runs each test on a thread of its own, so a test sees
+the themes it brought and no other does. Rejected: threading a registry through
+`Palette::for_interface` and the settings screen — the settings rows are `fn` pointers over
+`AppConfig`, with no screen state to carry one.
+
+**Around it**: `themes/` joined the backup's one list of directories (packed, cleared on
+restore, restored); `Paths::ensure_dirs` creates it, empty; PRIVACY.md names it.
+
+**Measured** (`tools/console_probe.py --scenario user-theme`, the inbox console host of
+Windows 11 Pro 26200): a copy of the binary started with `data/themes/probe.json` holding
+`{"canvas": "#f4ecd8"}` and the settings naming it — 3600 of 3600 cells off the console's own
+background in the first frame and on the settings screen, whose Theme row reads `probe`; the
+log has one line, for the `broken.json` put next to it, and none for the theme. The control,
+the same run with the file taken away: all 3600 cells on the dark canvas, the row still
+reading `probe`. This is the one part no unit test reaches — that `launch_tui` reads the
+directory before the first palette is built. The probe's own check had to change on the way:
+"every cell is the canvas's colour" is true of the light theme, whose backdrop reads as white
+too, and false of a sepia one, whose backdrop comes back as yellow.
+
+**Left open** (plan §10.6): a theme file is read at start-up only; a theme for the system
+mode, where the app cannot know the background it would be held against; other tools' theme
+formats; syntax colours of their own. The track's plan moves to `docs/history/` next, in a
+branch of its own.
+
+**Tests**: 3578 unit tests green, 202 ignored (+44). 36 mutants, every one killed — one only
+after a test was written for it: the direction a fit tries first, which decides nothing unless
+a floor can be cleared both ways, as it can on a ground in the middle of the scale (black on
+mid grey is 5.3:1, white 3.9:1). Run switched at run time behind `crate::mutant(N)`, built
+once, the tree fingerprinted before and after (lessons §2). All five scenarios of the console
+probe pass on this build.
 

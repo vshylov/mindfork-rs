@@ -192,16 +192,15 @@ pub(super) fn pad_code_block(lines: &mut Vec<Line<'static>>, start: usize, width
 /// Builds a syntect code-highlighting theme from the semantic [`Palette`],
 /// mapping syntax scopes to theme roles: keywords → `accent`, strings →
 /// `success`, numbers/constants → `warning`, functions → `user`, types →
-/// `assistant`, tags → `accent`. "Default" text and comments are set to an
-/// absolute gray, light on a dark background and dark on light
-/// (`palette.dark`) — so highlighting tracks the app's theme rather than
-/// living in its "own palette" (ADR 0003).
+/// `assistant`, tags → `accent`. "Default" text and comments are roles of
+/// their own (`code_text`, `code_comment`): greys, light on a dark background
+/// and dark on a light one — so highlighting tracks the app's theme rather
+/// than living in its "own palette" (ADR 0003), a user's theme included.
 ///
 /// The render pipeline (`as_24_bit_terminal_escaped(.., false)`) only carries
 /// **foreground** color, so background/bold/italic aren't set in the theme.
 pub(super) fn build_code_theme(palette: &Palette) -> Theme {
-    let (default_fg, comment) = code_greys(palette.dark);
-    let (default_fg, comment) = (gray(default_fg), gray(comment));
+    let (default_fg, comment) = (to_syn(palette.code_text), to_syn(palette.code_comment));
 
     let settings = ThemeSettings {
         foreground: Some(default_fg),
@@ -243,28 +242,6 @@ pub(super) fn build_code_theme(palette: &Palette) -> Theme {
         author: None,
         settings,
         scopes,
-    }
-}
-
-/// The two greys of a code block — `(default text, comments)` — for a dark or
-/// a light background. Greys with no adaptable ANSI counterpart, so they are
-/// chosen by the background's polarity.
-///
-/// Comments are text like any other, and are held to the same 4.5:1 floor as
-/// the palette's text roles, on the canvas and on a selected row
-/// (docs/theme-modes.md §3.1, §4.4): `128` and `110` were each under it on
-/// the selection backdrop.
-pub(super) fn code_greys(dark: bool) -> (u8, u8) {
-    if dark { (212, 138) } else { (40, 99) }
-}
-
-/// An opaque shade of gray `v` across all channels.
-pub(super) fn gray(v: u8) -> SynColor {
-    SynColor {
-        r: v,
-        g: v,
-        b: v,
-        a: 255,
     }
 }
 
@@ -492,41 +469,26 @@ mod tests {
             detected_light, fallback,
             "Auto's code highlighting must follow the detected background"
         );
-        // Only the greys move. `build_code_theme` picks them off `palette.dark`
-        // — dark text on light, light text on dark — while the role colors come
-        // from the palette and stay named ANSI under `Auto` (F1 (a)), which is
-        // why this compares the greys rather than the whole colour list.
-        let grey = |v: u8| Color::Rgb(v, v, v);
-        let (light_text, light_comment) = code_greys(false);
-        let (dark_text, dark_comment) = code_greys(true);
+        // Only the greys move. `Auto` borrows them, with the keycap trio, from
+        // the theme of the detected polarity — dark text on light, light text
+        // on dark — while the role colors stay named ANSI (F1 (a)), which is
+        // why this compares the greys rather than the whole colour list. Their
+        // contrast floor is held next to the palette (`shared/theme.rs`),
+        // where they are roles like the rest.
+        let (light, dark) = (
+            Palette::for_theme(Theme::Light),
+            Palette::for_theme(Theme::Dark),
+        );
         assert!(
-            detected_light.contains(&grey(light_text))
-                && detected_light.contains(&grey(light_comment)),
+            detected_light.contains(&light.code_text)
+                && detected_light.contains(&light.code_comment),
             "on a light terminal the greys are the ones tuned for light: {detected_light:?}"
         );
         assert!(
-            fallback.contains(&grey(dark_text)) && fallback.contains(&grey(dark_comment)),
+            fallback.contains(&dark.code_text) && fallback.contains(&dark.code_comment),
             "with nothing detected the greys stay the dark ones: {fallback:?}"
         );
-    }
-
-    /// Code is text: its two greys clear the same floor as the palette's text
-    /// roles, on the canvas and on a selected row (docs/theme-modes.md §4.4).
-    /// The palette's own roles are measured next to the palette
-    /// (`shared/theme.rs`); the greys live here, so their gate does too.
-    #[test]
-    fn code_greys_clear_the_contrast_floor() {
-        use crate::shared::theme::{FULL_THEMES, contrast_ratio};
-        for name in FULL_THEMES {
-            let p = Palette::full(name);
-            let (text, comment) = code_greys(p.dark);
-            for (what, v) in [("code text", text), ("code comment", comment)] {
-                for (ground, on) in [("canvas", p.canvas), ("selection", p.keycap_bg)] {
-                    let got = contrast_ratio(Color::Rgb(v, v, v), on);
-                    assert!(got >= 4.5, "{name}: {what} on {ground} is {got:.2}");
-                }
-            }
-        }
+        assert_ne!(light.code_text, dark.code_text);
     }
 
     #[test]

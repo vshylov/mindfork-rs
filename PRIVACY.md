@@ -1,6 +1,6 @@
 # Privacy policy
 
-Effective **2026-09-26**. It covers three things that are easy to confuse: the
+Effective **2026-09-28**. It covers three things that are easy to confuse: the
 **mindfork application**, the website **mindfork.io**, and the project's
 presence on **GitHub**. They have very different answers, so they are kept
 apart below.
@@ -60,7 +60,7 @@ machine. On Windows the profile's own permissions do that.
 | Diagnostics | `logs/` | no — see §6 |
 | The Python sandbox runtime | `sandbox/` | no |
 | llama.cpp builds downloaded by `mindfork llama setup` | `llama/` | no |
-| Spellcheck dictionaries, locales, the words you added yourself | `dictionaries/`, `locales/`, `personal_dictionary.txt` | the personal dictionary holds words you added |
+| Spellcheck dictionaries, locales, colour themes, the words you added yourself | `dictionaries/`, `locales/`, `themes/`, `personal_dictionary.txt` | the personal dictionary holds words you added |
 
 None of this is uploaded anywhere by the app. Copying the folder to another
 machine carries your chats with it — and deliberately does *not* carry usable

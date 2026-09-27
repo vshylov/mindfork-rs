@@ -96,6 +96,13 @@ pub enum CliCommand {
     LlamaRemove { id: String, force: bool },
     /// Export a locale bundle (`locales export <code> --output <file>`).
     LocalesExport { code: String, output: PathBuf },
+    /// Write a theme out whole (`themes export <name> --output <file>`): a
+    /// built-in one as a template, a user's one as fitted (spec §11.6).
+    ThemesExport { name: String, output: PathBuf },
+    /// Print what reading a theme did (`themes check [<name>|<file>]`): every
+    /// role, where it came from and its contrast. `None` — every theme in
+    /// `data/themes/`.
+    ThemesCheck { target: Option<String> },
     /// Launch the interactive demo (`demo`): a throwaway data root and a
     /// scripted engine — the app without a model.
     Demo,
@@ -162,6 +169,9 @@ pub enum HelpTopic {
     Setup,
     Locales,
     LocalesExport,
+    Themes,
+    ThemesExport,
+    ThemesCheck,
     Demo,
 }
 
@@ -188,6 +198,7 @@ pub fn parse(args: &[String], loc: &Locale) -> Result<CliCommand, String> {
         "llama" => parse_llama(rest, loc),
         "setup" => parse_setup(rest, loc),
         "locales" => parse_locales(rest, loc),
+        "themes" => parse_themes(rest, loc),
         "demo" => parse_demo(rest, loc),
         other if other.starts_with('-') => Err(unknown_option(loc, other)),
         other => Err(unknown_command(loc, other)),
@@ -623,6 +634,65 @@ fn parse_locales_export(toks: &[&str], loc: &Locale) -> Result<CliCommand, Strin
     Ok(CliCommand::LocalesExport { code, output })
 }
 
+fn parse_themes(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> {
+    let Some((&sub, rest)) = toks.split_first() else {
+        return Err(missing_subcommand(loc, "themes"));
+    };
+    match sub {
+        "-h" | "--help" => Ok(CliCommand::Help {
+            topic: Some(HelpTopic::Themes),
+        }),
+        "export" => parse_themes_export(rest, loc),
+        "check" => parse_themes_check(rest, loc),
+        other if other.starts_with('-') => Err(unknown_option(loc, other)),
+        other => Err(unknown_subcommand(loc, other, "themes")),
+    }
+}
+
+fn parse_themes_export(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> {
+    let mut name: Option<String> = None;
+    let mut output: Option<PathBuf> = None;
+    let mut i = 0;
+    while i < toks.len() {
+        let a = toks[i];
+        if a == "-h" || a == "--help" {
+            return Ok(CliCommand::Help {
+                topic: Some(HelpTopic::ThemesExport),
+            });
+        } else if let Some(v) = opt_value(toks, &mut i, loc, &["-o", "--output"])? {
+            output = Some(PathBuf::from(v));
+        } else if a.starts_with('-') {
+            return Err(unknown_option(loc, a));
+        } else if name.is_none() {
+            name = Some(a.to_string());
+            i += 1;
+        } else {
+            return Err(unexpected_arg(loc, a));
+        }
+    }
+    let name = name.ok_or_else(|| missing_arg(loc, "<name>"))?;
+    let output = output.ok_or_else(|| missing_opt(loc, "--output"))?;
+    Ok(CliCommand::ThemesExport { name, output })
+}
+
+fn parse_themes_check(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> {
+    let mut target: Option<String> = None;
+    for &a in toks {
+        if a == "-h" || a == "--help" {
+            return Ok(CliCommand::Help {
+                topic: Some(HelpTopic::ThemesCheck),
+            });
+        } else if a.starts_with('-') {
+            return Err(unknown_option(loc, a));
+        } else if target.is_none() {
+            target = Some(a.to_string());
+        } else {
+            return Err(unexpected_arg(loc, a));
+        }
+    }
+    Ok(CliCommand::ThemesCheck { target })
+}
+
 // -------- Parsing a single required positional argument (restore/import) --------
 
 enum Positional<'a> {
@@ -755,7 +825,7 @@ pub fn render_help(topic: Option<HelpTopic>, loc: &Locale) -> String {
     match topic {
         None => format!(
             "{about}\n\n{usage} mindfork [COMMAND]\n\n{commands}\n\
-             {dm:<20}{cd}\n{su:<20}{csu}\n{b:<20}{cb}\n{r:<20}{cr}\n{st:<20}{cst}\n{im:<20}{ci}\n{sb:<20}{cs}\n{ll:<20}{cll}\n{lc:<20}{cl}\n\n\
+             {dm:<20}{cd}\n{su:<20}{csu}\n{b:<20}{cb}\n{r:<20}{cr}\n{st:<20}{cst}\n{im:<20}{ci}\n{sb:<20}{cs}\n{ll:<20}{cll}\n{lc:<20}{cl}\n{th:<20}{cth}\n\n\
              {options}\n  -h, --help     {oh}\n  -V, --version  {ov}",
             about = loc.t("cli.help.about"),
             dm = "  demo",
@@ -776,6 +846,8 @@ pub fn render_help(topic: Option<HelpTopic>, loc: &Locale) -> String {
             cll = loc.t("cli.help.cmd.llama"),
             lc = "  locales",
             cl = loc.t("cli.help.cmd.locales"),
+            th = "  themes",
+            cth = loc.t("cli.help.cmd.themes"),
             oh = loc.t("cli.help.opt.help"),
             ov = loc.t("cli.help.opt.version"),
         ),
@@ -948,6 +1020,35 @@ pub fn render_help(topic: Option<HelpTopic>, loc: &Locale) -> String {
             co = loc.t("cli.help.opt.locales.output"),
             h = "  -h, --help",
             ch = loc.t("cli.help.opt.help"),
+        ),
+        Some(HelpTopic::Themes) => format!(
+            "{d}\n\n{usage} mindfork themes <COMMAND>\n\n{commands}\n{e:<12}{ce}\n{c:<12}{cc}",
+            d = loc.t("cli.help.cmd.themes"),
+            e = "  export",
+            ce = loc.t("cli.help.cmd.themes.export"),
+            c = "  check",
+            cc = loc.t("cli.help.cmd.themes.check"),
+        ),
+        Some(HelpTopic::ThemesExport) => format!(
+            "{d}\n\n{usage} mindfork themes export <NAME> --output <FILE>\n\n\
+             {arguments}\n{a:<24}{ca}\n\n{options}\n{o:<24}{co}\n{h:<24}{ch}",
+            d = loc.t("cli.help.cmd.themes.export"),
+            a = "  <NAME>",
+            ca = loc.t("cli.help.arg.themes.name"),
+            o = "  -o, --output <FILE>",
+            co = loc.t("cli.help.opt.themes.output"),
+            h = "  -h, --help",
+            ch = loc.t("cli.help.opt.help"),
+        ),
+        Some(HelpTopic::ThemesCheck) => format!(
+            "{d}\n\n{usage} mindfork themes check [NAME|FILE]\n\n\
+             {arguments}\n{a:<24}{ca}\n\n{options}\n{h:<24}{ch}\n\n{n}",
+            d = loc.t("cli.help.cmd.themes.check"),
+            a = "  [NAME|FILE]",
+            ca = loc.t("cli.help.arg.themes.target"),
+            h = "  -h, --help",
+            ch = loc.t("cli.help.opt.help"),
+            n = loc.t("cli.help.themes.check.note"),
         ),
     }
 }
@@ -1496,6 +1597,93 @@ mod tests {
         );
         assert!(p(&["locales", "export", "de"]).is_err()); // no required --output
         assert!(p(&["locales", "export"]).is_err()); // no code
+    }
+
+    #[test]
+    fn themes_export_and_check() {
+        assert_eq!(
+            p(&["themes", "export", "dark", "-o", "mine.json"]).unwrap(),
+            CliCommand::ThemesExport {
+                name: "dark".to_string(),
+                output: PathBuf::from("mine.json")
+            }
+        );
+        assert_eq!(
+            p(&["themes", "export", "--output", "a/b.json", "solarized"]).unwrap(),
+            CliCommand::ThemesExport {
+                name: "solarized".to_string(),
+                output: PathBuf::from("a/b.json")
+            }
+        );
+        assert!(p(&["themes", "export", "dark"]).is_err()); // no required --output
+        assert!(p(&["themes", "export", "-o", "x.json"]).is_err()); // no name
+        assert!(p(&["themes", "export", "a", "b", "-o", "x.json"]).is_err());
+
+        // `check` takes a name, a file, or nothing — every theme there is.
+        assert_eq!(
+            p(&["themes", "check"]).unwrap(),
+            CliCommand::ThemesCheck { target: None }
+        );
+        for target in ["solarized", "data/themes/solarized.json", "dark"] {
+            assert_eq!(
+                p(&["themes", "check", target]).unwrap(),
+                CliCommand::ThemesCheck {
+                    target: Some(target.to_string())
+                }
+            );
+        }
+        assert!(p(&["themes", "check", "a", "b"]).is_err());
+        assert!(p(&["themes", "check", "--fix"]).is_err());
+
+        assert!(p(&["themes"]).is_err(), "a subcommand is required");
+        assert!(p(&["themes", "list"]).is_err());
+        assert!(p(&["themes", "--verbose"]).is_err());
+    }
+
+    #[test]
+    fn themes_help_is_listed_and_has_its_topics() {
+        for (args, topic) in [
+            (&["themes", "--help"][..], HelpTopic::Themes),
+            (&["themes", "-h"][..], HelpTopic::Themes),
+            (&["themes", "export", "--help"][..], HelpTopic::ThemesExport),
+            (
+                &["themes", "export", "dark", "-h"][..],
+                HelpTopic::ThemesExport,
+            ),
+            (&["themes", "check", "--help"][..], HelpTopic::ThemesCheck),
+            (
+                &["themes", "check", "mine", "-h"][..],
+                HelpTopic::ThemesCheck,
+            ),
+        ] {
+            assert_eq!(
+                p(args).unwrap(),
+                CliCommand::Help { topic: Some(topic) },
+                "{args:?}"
+            );
+        }
+        for lang in [Lang::En, Lang::Ru] {
+            let loc = locale(lang);
+            let general = render_help(None, loc);
+            assert!(general.contains("  themes  "), "{lang:?}: {general}");
+            let themes = render_help(Some(HelpTopic::Themes), loc);
+            assert!(themes.contains("mindfork themes <COMMAND>"), "{themes}");
+            assert!(themes.contains("  export  ") && themes.contains("  check  "));
+            let export = render_help(Some(HelpTopic::ThemesExport), loc);
+            assert!(export.contains("mindfork themes export <NAME> --output <FILE>"));
+            assert!(export.contains("--output <FILE>  "), "{export}");
+            let check = render_help(Some(HelpTopic::ThemesCheck), loc);
+            assert!(
+                check.contains("mindfork themes check [NAME|FILE]"),
+                "{check}"
+            );
+            assert!(check.contains("[NAME|FILE]  "), "{check}");
+            // What a script needs to know: when the command says no.
+            assert!(check.contains('1'), "{lang:?}: the exit code: {check}");
+            for text in [general, themes, export, check] {
+                assert!(!text.contains("cli."), "{lang:?}: a key is showing: {text}");
+            }
+        }
     }
 
     #[test]

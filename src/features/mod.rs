@@ -43,6 +43,7 @@ pub mod sandbox_setup;
 pub mod slash;
 pub mod spellcheck;
 pub mod terminal_input;
+pub mod themes;
 pub mod tools;
 pub mod tts_command;
 pub mod ui_command;

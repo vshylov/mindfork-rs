@@ -514,6 +514,11 @@ src/
 │  │                        corruption gates, pre-migration backup, control-parse
 │  ├─ terminal_input.rs     CLI terminal input: the hidden backup-password prompt, and
 │  │                        discarding keys typed while a long command was running
+│  ├─ themes.rs             `mindfork themes export|check`: which file a name means
+│  │                        (a name is a theme of data/themes or a built-in one,
+│  │                        anything that looks like a path is that file) and the
+│  │                        table a ThemeReport is printed as, in the command's
+│  │                        language (spec §11.6)
 │  ├─ sandbox_setup.rs      Python sandbox provisioning (mindfork sandbox setup): wasmer +
 │  │                        python.webc + wheels from a lock list (sha256); cache warmup;
 │  │                        packs CPython + site-packages into packed-sandbox.webc
@@ -673,6 +678,12 @@ src/
    │                       McpConnection (transport, testable over a duplex) + McpClient
    │                       (subprocess: kill/exited monitor, Job Object kill-on-close,
    │                       .bat/.cmd forbidden). See spec §9.6, ADR 0007
+   ├─ oklab.rs             colour arithmetic for the themes: the WCAG contrast
+   │                       ratio, sRGB↔OKLab (out of gamut the chroma gives way
+   │                       and the lightness holds), `fit` — a colour moved along
+   │                       lightness by the smallest amount that clears a floor on
+   │                       every ground — and `shifted`, a background moved by a
+   │                       given distance (docs/theme-modes.md §10.2)
    ├─ net.rs               address policy for URLs the MODEL chose (fetch_url,
    │                       web_search page fetches): GuardedClient = a DNS
    │                       resolver that only returns allowed addresses (so the
@@ -773,12 +784,22 @@ src/
    │                       the helpers that say it: selected_mark, tab_label, the
    │                       bracketed keycap, and selection/search_match, the two
    │                       styles drawn on MONO_MARK (reverse video after the pass).
+   │                       Palette::full answers a built-in name first
+   │                       (Palette::built_in), then the user's themes.
    │                       Colour only: keycap/hint/hint_marked (the one place a
    │                       "dangerous" red keycap is chosen) — the grid that lays
    │                       hints out lives in ui.rs, one layer up.
    │                       Auto's polarity-dependent values (the `dark` flag and
    │                       the keycap/selection backdrop) come from a process-wide
    │                       OnceLock set once at startup — set_detected_background
+   ├─ user_theme.rs        the user's themes, data/themes/<name>.json: ROLES (the
+   │                       ONE table of the palette's colours — what a file's keys
+   │                       are read by, a report lists and an export writes),
+   │                       parse (named colours kept, the rest fitted to the
+   │                       contrast floors), ThemeReport, export, and the
+   │                       process-wide Registry read once at startup (init);
+   │                       tests bring their own through with_registry, a
+   │                       thread-local override (spec §11.6)
    ├─ osc11.rs             asking the terminal for its background (OSC 11), so Auto
    │                       can follow it: pure parse/luminance + a two-phase IO half
    │                       (begin in main.rs before Storage::open, harvest in
@@ -3298,6 +3319,18 @@ from `main.rs::launch_tui` with what `NO_COLOR` says, read back by
 `InterfaceSettings::mode`/`set_mode` (the `_under` variants are the tests' seam:
 a process-wide `OnceLock` cannot hold two values in one test binary).
 
+**User themes** are palettes too, built once: `user_theme::init` reads
+`data/themes/` from `launch_tui`, before the first palette, and
+`Palette::full(name)` looks a name up there after the built-in ones. Nothing
+downstream knows where a palette came from — the pass paints a user's canvas
+like a built-in one, and the caches a palette keys hold a user's theme like any
+other. What is specific to a user theme is how it is *made*
+(`user_theme::parse`): the colours its file names are taken as written, the
+rest are fitted to the contrast floors by `oklab::fit`, and what that did is
+kept as a `ThemeReport` for the log and for `mindfork themes check`. The
+palette's colours are listed once, in `user_theme::ROLES`; the floor test of the
+built-in palettes reads the same table.
+
 Screen enumerations are consolidated into **canonical places**: broadcasting
 the palette/locale (a theme/language change) — `ActiveScreen::set_theme`,
 routing a clipboard paste — `ActiveScreen::handle_paste` (methods next to
@@ -3512,8 +3545,10 @@ Principles:
   `setup [--sandbox] [--llama ID] [--model …] [--set K=V] [--verify]` (the
   composite, `features/provision.rs` + `app/verify.rs`; takes
   single-instance once for all of it),
-  `locales export <code> -o FILE`. Subcommands run without the TUI and exit
-  the process.
+  `locales export <code> -o FILE`,
+  `themes export <name> -o FILE` and `themes check [name|file]` (the user's
+  themes, `features/themes.rs`; `check` exits with 1 when a theme has
+  something to say). Subcommands run without the TUI and exit the process.
   - **`setup` validates, downloads, writes once, verifies — in that order**
     ([docs/research/cloud-provisioning.md](research/cloud-provisioning.md)
     §4.2). The settings half is applied to the in-memory config **before the
@@ -3611,7 +3646,7 @@ Principles:
   docs/history/i18n.md); no file → portable mode + `ru` (the old
   `location.json` is read for backward compatibility). **Backups**
   (`features/backup.rs`): a zip with configurable compression (the `TOP_DIRS`
-  chats/dictionaries/locales/files/workspace + data.db/profiles/settings/personal
+  chats/dictionaries/locales/themes/files/workspace + data.db/profiles/settings/personal
   + `*.bak` + `fs_root` if it's inside the root — one constant for both packing
   and the restore's clearing, so the two cannot drift); restore is transactional (validation → a
   pre-restore copy in `backups/` → cleanup → extraction → rollback on

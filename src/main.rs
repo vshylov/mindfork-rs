@@ -202,6 +202,11 @@ fn real_main(
             run_locales_export(&code, &output, loc)?;
             Ok(ExitCode::SUCCESS)
         }
+        CliCommand::ThemesExport { name, output } => {
+            run_themes_export(paths, &name, &output, loc)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        CliCommand::ThemesCheck { target } => run_themes_check(paths, target.as_deref(), loc),
         CliCommand::Run => run_tui(paths, loc),
         CliCommand::Demo | CliCommand::Stats { .. } => {
             unreachable!("handled above, before the real root is touched")
@@ -335,6 +340,12 @@ fn launch_tui(
     crate::shared::config::set_environment_mode(crate::shared::config::ThemeMode::for_environment(
         std::env::var_os("NO_COLOR").as_deref(),
     ));
+    // The user's themes, before the first palette is built — `interface.
+    // full_theme` may name one. The log is up by now, so what a theme file
+    // has to say goes straight into it.
+    for warning in crate::shared::user_theme::init(&paths.themes_dir()) {
+        tracing::warn!("{warning}");
+    }
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -1331,6 +1342,60 @@ fn run_locales_export(code: &str, output: &Path, loc: &Locale) -> anyhow::Result
         )
     );
     Ok(())
+}
+
+/// CLI: writes a theme out whole — a built-in one as a template, a user's one
+/// as it was fitted (spec §11.6). An existing file is not overwritten.
+fn run_themes_export(paths: &Paths, name: &str, output: &Path, loc: &Locale) -> anyhow::Result<()> {
+    if output.exists() {
+        bail!(
+            "{}",
+            loc.tf(
+                "cli.themes.file_exists",
+                &[("path", &output.display().to_string())]
+            )
+        );
+    }
+    let content = features::themes::export(name, &paths.themes_dir(), loc)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    if let Some(parent) = output.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent).with_context(|| {
+            loc.tf(
+                "cli.ctx.create_dir",
+                &[("path", &parent.display().to_string())],
+            )
+        })?;
+    }
+    std::fs::write(output, content).with_context(|| {
+        loc.tf(
+            "cli.ctx.write_file",
+            &[("path", &output.display().to_string())],
+        )
+    })?;
+    println!(
+        "{}",
+        loc.tf(
+            "cli.themes.exported",
+            &[("name", name), ("path", &output.display().to_string())]
+        )
+    );
+    Ok(())
+}
+
+/// CLI: prints what reading a theme did — every role, where it came from and
+/// its contrast. Exit code `1` when a theme has something to say: a colour
+/// below its floor, a key that names nothing, a file that is not a theme.
+fn run_themes_check(paths: &Paths, target: Option<&str>, loc: &Locale) -> anyhow::Result<ExitCode> {
+    let checked = features::themes::check(target, &paths.themes_dir(), loc)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let clean = checked.iter().all(|c| c.clean);
+    let texts: Vec<&str> = checked.iter().map(|c| c.text.as_str()).collect();
+    println!("{}", texts.join("\n\n"));
+    Ok(if clean {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(1)
+    })
 }
 
 /// A one-shot import from a mindfork-import format file (spec §12.2,

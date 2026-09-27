@@ -305,6 +305,15 @@ pub struct Palette {
     /// Widgets do not read it: they keep drawing foregrounds, and the pass
     /// over the finished frame fills in what they left at the default.
     pub canvas: Color,
+    /// Plain text inside a highlighted code block (`shared/markdown/code.rs`)
+    /// — what the syntax gives no colour of its own. A grey, light on a dark
+    /// background and dark on a light one; a role of the palette because a
+    /// user theme's canvas is not one of the two these were tuned on
+    /// (docs/theme-modes.md §10.2).
+    pub code_text: Color,
+    /// Comments in highlighted code. Text like any other, and held to the
+    /// same floor.
+    pub code_comment: Color,
     /// The **monochrome** mode (spec §11.6): the finished frame loses every
     /// colour and attribute (`shared/ui.rs::strip_styles`), so whatever
     /// styling alone would have said has to be a glyph. Widgets read it for
@@ -328,26 +337,39 @@ impl Palette {
     }
 
     /// The full mode's palette for a theme name: a built-in palette on the
-    /// canvas it was tuned against. A name nothing answers to — a theme from
-    /// another machine, a file that went away — draws as the first built-in
-    /// one and says so in the log, once.
+    /// canvas it was tuned against, or a theme of the user's
+    /// (`data/themes/<name>.json`, `shared/user_theme.rs`). A name nothing
+    /// answers to — a theme from another machine, a file that went away —
+    /// draws as the first built-in one and says so in the log, once.
     pub fn full(name: &str) -> Self {
+        if let Some(palette) = Self::built_in(name) {
+            return palette;
+        }
+        if let Some(theme) = crate::shared::user_theme::registry().get(name) {
+            return theme.palette;
+        }
+        let mut warned = WARNED_UNKNOWN_THEME
+            .lock()
+            .expect("unknown-theme set poisoned");
+        if warned.insert(name.to_string()) {
+            tracing::warn!(
+                theme = name,
+                fallback = FULL_THEMES[0],
+                "interface.full_theme names a theme that is neither built in nor in data/themes"
+            );
+        }
+        Self::dark().on_canvas(CANVAS_DARK)
+    }
+
+    /// A **built-in** full theme by its name ([`FULL_THEMES`]); `None` for
+    /// any other. What a user theme's missing roles start from, and what
+    /// [`Palette::full`] answers with before it asks the registry — a file
+    /// cannot take a built-in theme's name.
+    pub fn built_in(name: &str) -> Option<Self> {
         match name {
-            "dark" => Self::dark().on_canvas(CANVAS_DARK),
-            "light" => Self::light().on_canvas(CANVAS_LIGHT),
-            unknown => {
-                let mut warned = WARNED_UNKNOWN_THEME
-                    .lock()
-                    .expect("unknown-theme set poisoned");
-                if warned.insert(unknown.to_string()) {
-                    tracing::warn!(
-                        theme = unknown,
-                        fallback = FULL_THEMES[0],
-                        "interface.full_theme names a theme this version does not have"
-                    );
-                }
-                Self::full(FULL_THEMES[0])
-            }
+            "dark" => Some(Self::dark().on_canvas(CANVAS_DARK)),
+            "light" => Some(Self::light().on_canvas(CANVAS_LIGHT)),
+            _ => None,
         }
     }
 
@@ -433,6 +455,9 @@ impl Palette {
             keycap_fg: reference.keycap_fg,
             keycap_bg: reference.keycap_bg,
             keycap_danger: reference.keycap_danger,
+            // The same reasoning: greys with no adaptable ANSI counterpart.
+            code_text: reference.code_text,
+            code_comment: reference.code_comment,
             dark: !light,
             compat: false,
             canvas: Color::Reset,
@@ -466,6 +491,8 @@ impl Palette {
             keycap_fg: Color::Rgb(133, 139, 147), // #858b93 — quiet, and 4.5:1 on its own pill
             keycap_bg: Color::Rgb(33, 36, 42), // darker than the previous #2a2d34
             keycap_danger: Color::Rgb(232, 116, 104), // brighter than error for readability on the pill
+            code_text: Color::Rgb(212, 212, 212),
+            code_comment: Color::Rgb(138, 138, 138), // #8a8a8a — 128 was under the floor on a selected row
             dark: true,
             compat: false,
             canvas: Color::Reset,
@@ -499,6 +526,8 @@ impl Palette {
             keycap_fg: Color::Rgb(74, 78, 84), // softer than black — "keycaps" don't shout
             keycap_bg: Color::Rgb(222, 224, 228),
             keycap_danger: Color::Rgb(178, 34, 34),
+            code_text: Color::Rgb(40, 40, 40),
+            code_comment: Color::Rgb(99, 99, 99), // #636363 — 110 was under the floor on a selected row
             dark: false,
             compat: false,
             canvas: Color::Reset,
@@ -508,25 +537,17 @@ impl Palette {
 
     /// The text roles — everything that is read rather than merely seen — with
     /// the names the floor test reports them by. `border` and `keycap_bg` are
-    /// not text and are deliberately absent (docs/theme-modes.md §4.4).
+    /// not text and are deliberately absent (docs/theme-modes.md §4.4). Taken
+    /// from the table a theme file is read by, so a role added there is held
+    /// to a floor here without being listed twice.
     #[cfg(test)]
-    fn text_roles(&self) -> [(&'static str, Color); 14] {
-        [
-            ("user", self.user),
-            ("assistant", self.assistant),
-            ("tool", self.tool),
-            ("success", self.success),
-            ("warning", self.warning),
-            ("error", self.error),
-            ("accent", self.accent),
-            ("user_soft", self.user_soft),
-            ("assistant_soft", self.assistant_soft),
-            ("tool_soft", self.tool_soft),
-            ("text", self.text),
-            ("muted", self.muted),
-            ("keycap_fg", self.keycap_fg),
-            ("keycap_danger", self.keycap_danger),
-        ]
+    fn text_roles(&self) -> Vec<(&'static str, Color)> {
+        use crate::shared::user_theme::{Kind, ROLES};
+        ROLES
+            .iter()
+            .filter(|role| matches!(role.kind, Kind::Body | Kind::Text))
+            .map(|role| (role.name, (role.get)(self)))
+            .collect()
     }
 
     /// The same palette with the compatibility mode flag set (builder style;
@@ -870,6 +891,45 @@ mod tests {
             for b in &palettes[i + 1..] {
                 assert_ne!(a, b, "two listed themes draw the same palette");
             }
+        }
+    }
+
+    /// A theme of the user's answers to its name; the built-in names are
+    /// answered before the registry is asked, so a registry holding one of
+    /// them — which the loader refuses to build — still could not replace it.
+    #[test]
+    fn a_full_theme_is_built_in_or_the_users() {
+        use crate::shared::user_theme::{Registry, parse, with_registry};
+        let registry = Registry::of([
+            parse("sepia", r##"{"canvas": "#f4ecd8"}"##).unwrap(),
+            parse("dark", r##"{"canvas": "#ffffff"}"##).unwrap(),
+        ]);
+        let sepia = registry.get("sepia").unwrap().palette;
+        with_registry(registry, || {
+            assert_eq!(Palette::full("sepia"), sepia);
+            assert_eq!(Palette::full("sepia").canvas, Color::Rgb(0xf4, 0xec, 0xd8));
+            assert_eq!(Palette::full("dark").canvas, CANVAS_DARK);
+            assert_eq!(Palette::full("gruvbox"), Palette::full("dark"));
+
+            let p = Palette::for_interface(&interface(ThemeMode::Full, Theme::Dark, "sepia"));
+            assert_eq!(p, sepia);
+            // The other modes do not look at the name.
+            let p = Palette::for_interface(&interface(ThemeMode::System, Theme::Dark, "sepia"));
+            assert_eq!(p, Palette::for_theme(Theme::Dark));
+            let p = Palette::for_interface(&interface(ThemeMode::Mono, Theme::Dark, "sepia"));
+            assert_eq!(p, Palette::mono());
+        });
+        // Outside the test that brought it, the name answers to nothing.
+        assert_eq!(Palette::full("sepia"), Palette::full("dark"));
+    }
+
+    #[test]
+    fn the_built_in_themes_are_the_listed_ones() {
+        for name in FULL_THEMES {
+            assert_eq!(Palette::built_in(name), Some(Palette::full(name)), "{name}");
+        }
+        for name in ["", "Dark", "auto", "sepia", "mono"] {
+            assert_eq!(Palette::built_in(name), None, "{name:?}");
         }
     }
 

@@ -286,10 +286,11 @@ drawn in:
 - **system** (the default) — the app draws its colours over your terminal's own
   background. *Theme* is then `auto` (follows the terminal), `dark` or `light`.
 - **full** — the app paints the whole window itself: the theme's background and
-  text colour, matched to each other. *Theme* is then `dark` or `light`. Every
-  text colour keeps a contrast of at least 4.5:1 against the background and
-  against a selected row, and body text at least 7:1, whatever your terminal is
-  set to. A translucent terminal background is covered in this mode.
+  text colour, matched to each other. *Theme* is then `dark`, `light`, or a
+  theme of your own (§8.1). Every text colour keeps a contrast of at least
+  4.5:1 against the background and against a selected row, and body text at
+  least 7:1, whatever your terminal is set to. A translucent terminal
+  background is covered in this mode.
 - **monochrome** — no colours, and no bold, italic, underline or dimmed text:
   your terminal's own two colours and nothing else. There is no theme to pick.
   For a terminal that draws attributes badly, an e-ink screen, a screen reader.
@@ -323,6 +324,92 @@ the corrections.
 an empty string — [no-color.org](https://no-color.org)), the app starts in
 monochrome. A colour mode you chose in the settings wins over the variable: pick
 *system* there and the colours are back, with the variable still set.
+
+### 8.1. A theme of your own
+
+A theme of the **full** colour mode is a small file in the `themes` folder of
+your data: `themes/mine.json` is the theme `mine`, and it appears in
+*Interface → Theme* after `dark` and `light`. Start from a copy of a built-in
+one:
+
+```bash
+mindfork themes export dark -o data/themes/mine.json
+```
+
+**The file** is a list of colours, each `#rrggbb`. Only the background,
+`canvas`, has to be there:
+
+```json
+{
+  "canvas": "#002b36",
+  "text": "#a8b4b4",
+  "accent": "#b58900"
+}
+```
+
+| Colour | What it is |
+|---|---|
+| `canvas` | the background of the whole window |
+| `text` | what you read: messages, settings, lists |
+| `muted` | secondary text — dates, counts, descriptions of keys |
+| `user`, `assistant`, `tool` | the bar down the left of a message, and whatever belongs to that side |
+| `user_soft`, `assistant_soft`, `tool_soft` | the `YOU` / `ASSISTANT` headers, a tool's name |
+| `accent` | headings, links, search matches, the counter while a reply is written |
+| `success`, `warning`, `error` | states: ready, connecting, failed |
+| `keycap_bg` | the backdrop of **every selected row**, and the pill under a key |
+| `keycap_fg`, `keycap_danger` | the key's name on that pill; the same for a key that deletes |
+| `border`, `border_focus` | the frame of a panel, and of the one that has the focus |
+| `code_text`, `code_comment` | plain text and comments inside highlighted code |
+
+Code is coloured from the others — keywords take `accent`, strings `success`,
+numbers `warning`, functions `user`, types `assistant`.
+
+**What you leave out is chosen for you**, to stay readable on *your*
+background. The app takes the built-in theme's colour — the dark theme's on a
+dark background, the light theme's on a light one — and makes it lighter or
+darker, keeping its hue, only as far as it takes: text at least 4.5:1 against
+the background and against a selected row, body text 7:1. So a theme can be
+one line — `{ "canvas": "#f4ecd8" }` is a complete sepia theme.
+
+**What you write is kept as written.** If a colour of yours is hard to read on
+your background, the app tells you and leaves it alone — it is your theme.
+
+**See what came out** without starting the app:
+
+```bash
+mindfork themes check mine
+```
+
+```
+Theme mine — data/themes/mine.json
+Canvas #002b36, a dark one: the colours the file does not name start from the built-in dark theme.
+
+  role            colour   from        on canvas  on selection  floor
+  keycap_bg       #18404c  the canvas  1.34       —             —
+  text            #93a1a1  the file    5.61       4.18          7.0   BELOW
+  muted           #9fa5ac  fitted      6.04       4.50          4.5   ok
+  tool            #dcaf61  built-in    7.40       5.51          4.5   ok
+  ...
+
+Below the floor: 1 — text (the file). A colour the file names is drawn as written.
+```
+
+*the file* — your colour; *built-in* — the built-in theme's, which already
+reads well here; *fitted* — the built-in theme's, moved to read well; *the
+canvas* — made from your background. `mindfork themes check` with no name
+checks every theme, and with a path checks a file anywhere.
+
+**Good to know**
+
+- Themes are read when the app **starts**: restart it after editing one.
+- A name is letters, digits, `-` and `_`. `dark` and `light` are taken.
+- A key that starts with `_` is yours — a note to yourself, a credit.
+- A file the app cannot read as a theme is skipped, and the log says why; the
+  other themes still load. If the theme named in your settings is missing, the
+  app draws `dark` and keeps the name, so the theme is back when its file is.
+- Themes are part of a backup.
+- What a theme cannot colour is what the app does not draw: the margin your
+  terminal keeps around its grid, and the cursor.
 
 ## 9. Keys
 

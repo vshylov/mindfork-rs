@@ -6052,3 +6052,89 @@ fn the_selected_search_result_is_marked_in_the_monochrome_mode() {
     assert!(values(&mono).len() > 1, "{mono:#?}");
     assert_eq!(values(&mono), values(&system));
 }
+
+/// Two themes of the user's, as `data/themes/` would give them.
+fn two_user_themes() -> crate::shared::user_theme::Registry {
+    use crate::shared::user_theme::{Registry, parse};
+    Registry::of([
+        parse("solarized", r##"{"canvas": "#002b36"}"##).unwrap(),
+        parse("sepia", r##"{"canvas": "#f4ecd8"}"##).unwrap(),
+    ])
+}
+
+/// The Theme row of the full mode lists the built-in themes, then the user's
+/// by name — and the screen draws with the one picked, in the same keypress
+/// (spec §11.6, docs/theme-modes.md §10.3).
+#[test]
+fn the_full_theme_row_lists_the_users_themes_after_the_built_in_ones() {
+    use crate::shared::config::ThemeMode;
+    use crate::shared::theme::Palette;
+    crate::shared::user_theme::with_registry(two_user_themes(), || {
+        let mut s = screen();
+        goto_section(&mut s, Section::Interface);
+        s.config.interface.set_mode(ThemeMode::Full);
+        let loc = s.loc();
+
+        let (options, at) = s.choice_menu(FieldId::IFullTheme).unwrap();
+        assert_eq!(
+            options,
+            [
+                full_theme_label("dark", loc),
+                full_theme_label("light", loc),
+                "sepia".to_string(),
+                "solarized".to_string(),
+            ],
+            "a user's theme is shown by the name of its file"
+        );
+        assert_eq!(at, 0);
+
+        // Round the row, forward: every theme once, and back to the first.
+        let mut seen = Vec::new();
+        for _ in 0..options.len() {
+            match s.cycle_field(FieldId::IFullTheme, 1) {
+                Some(SettingsIntent::SaveConfig(c)) => seen.push(c.interface.full_theme),
+                other => panic!("expected SaveConfig, got {other:?}"),
+            }
+            let name = &s.config.interface.full_theme;
+            assert_eq!(s.palette(), Palette::full(name), "{name}");
+        }
+        assert_eq!(seen, ["light", "sepia", "solarized", "dark"]);
+        s.cycle_field(FieldId::IFullTheme, -1);
+        assert_eq!(s.config.interface.full_theme, "solarized", "and backward");
+
+        // The palette is the theme's own: its canvas, and what was fitted to it.
+        let palette = s.palette();
+        assert_eq!(palette.canvas, ratatui::style::Color::Rgb(0, 43, 54));
+        assert_ne!(palette, Palette::full("dark"));
+        assert!(palette.dark);
+
+        // `Del` goes back to the default, a built-in theme.
+        match s.reset_field(FieldId::IFullTheme) {
+            Some(SettingsIntent::SaveConfig(c)) => assert_eq!(c.interface.full_theme, "dark"),
+            other => panic!("expected SaveConfig, got {other:?}"),
+        }
+    });
+}
+
+/// A stored name nothing answers to is still listed, last — after the user's
+/// themes now — and leaving it goes to the ends of the list.
+#[test]
+fn a_lost_theme_is_listed_after_the_users_themes() {
+    crate::shared::user_theme::with_registry(two_user_themes(), || {
+        assert_eq!(
+            full_theme_names("gruvbox"),
+            ["dark", "light", "sepia", "solarized", "gruvbox"]
+        );
+        assert_eq!(
+            full_theme_names("sepia"),
+            ["dark", "light", "sepia", "solarized"],
+            "a theme that is there is listed once"
+        );
+        assert_eq!(cycle_full_theme("gruvbox", 1), "dark");
+        assert_eq!(cycle_full_theme("gruvbox", -1), "solarized");
+        assert_eq!(cycle_full_theme("light", 1), "sepia");
+    });
+    // Without user themes the row is what it was.
+    assert_eq!(full_theme_names("dark"), ["dark", "light"]);
+    assert_eq!(full_theme_names("sepia"), ["dark", "light", "sepia"]);
+}

@@ -2582,3 +2582,39 @@ fn what_crossterm_may_write_is_the_colour_modes_to_say() {
         assert!(!disabled());
     }
 }
+
+/// A theme of the user's is painted like a built-in one: to the edges, on its
+/// own canvas, under the screen and under the help dialog — the pass knows
+/// palettes, not where one came from.
+#[test]
+fn a_users_theme_is_painted_to_the_edges() {
+    use crate::shared::config::{InterfaceSettings, ThemeMode};
+    use crate::shared::user_theme::{Registry, parse, with_registry};
+
+    let registry = Registry::of([parse("sepia", r##"{"canvas": "#f4ecd8"}"##).unwrap()]);
+    let canvas = Color::Rgb(0xf4, 0xec, 0xd8);
+    with_registry(registry, || {
+        let sepia = || {
+            let mut i = InterfaceSettings {
+                full_theme: "sepia".to_string(),
+                ..Default::default()
+            };
+            i.set_mode(ThemeMode::Full);
+            i
+        };
+        for (settings_in_front, help_open) in
+            [(false, false), (false, true), (true, false), (true, true)]
+        {
+            let at = format!("settings={settings_in_front}, help={help_open}");
+            let buf = composed(sepia(), settings_in_front, help_open);
+            let bare = buf
+                .content
+                .iter()
+                .filter(|c| c.bg == Color::Reset || c.fg == Color::Reset)
+                .count();
+            assert_eq!(bare, 0, "{at}: cells left to the terminal");
+            let on_canvas = buf.content.iter().filter(|c| c.bg == canvas).count();
+            assert!(on_canvas * 2 > buf.content.len(), "{at}: {on_canvas}");
+        }
+    });
+}

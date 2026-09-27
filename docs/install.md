@@ -301,7 +301,7 @@ Three things worth knowing before relying on it:
 The archive is standard: 7-Zip, WinZip and the like open it with the password, so
 files can be pulled out by hand without the application.
 
-The archive includes: `chats/`, `dictionaries/`, `locales/`, `data.db`,
+The archive includes: `chats/`, `dictionaries/`, `locales/`, `themes/`, `data.db`,
 `personal_dictionary.txt`, `profiles.json`, `settings.json`, all `*.bak` files, and
 the file tools' "sandbox" directory (`tools.fs_root`) — **only if** it's inside the
 data directory. `backups/`, `logs/`, the disposable `cache.db` (rebuilt after a
@@ -421,6 +421,50 @@ files found **on top of** the baked-in ones — you can edit text and add langua
   Content is additionally checked against the reference: an unknown key (a typo) or
   a mismatch in `{…}` placeholders gets a warning in the log. File changes take
   effect on **restart**.
+
+### 2.4. Themes of your own (`data/themes/`)
+
+In the **full** colour mode the app paints its own background, and the theme
+that says which is a file: `data/themes/<name>.json`. Its name is the file's,
+and *Settings → Interface → Theme* lists it after the built-in `dark` and
+`light`. The directory is created automatically (empty).
+
+- **A template.** Export a built-in theme and edit the copy (no TUI needed):
+  ```bash
+  mindfork themes export dark -o data/themes/mine.json
+  ```
+  An existing file is not overwritten — point to a new path.
+- **What a theme is.** One JSON object, a colour per role, every colour
+  `#rrggbb`. Only `canvas` — the background — is required:
+  ```json
+  { "canvas": "#002b36", "accent": "#b58900" }
+  ```
+  The roles are listed in [manual.md](manual.md) §8. A key that starts with `_`
+  is yours — a note, a credit — and is not read.
+- **What you leave out is fitted.** A colour the file does not name starts as the
+  built-in theme's — `dark` for a dark canvas, `light` for a light one — and is
+  made lighter or darker, keeping its hue, just far enough to stay readable on
+  your canvas: 4.5:1 for text, 7:1 for body text, on the background and on a
+  selected row alike.
+- **What you name is yours.** A colour the file names is drawn exactly as
+  written, whatever its contrast — the app reports a low one and does not
+  correct it.
+- **Checking a theme.** Without starting the app:
+  ```bash
+  mindfork themes check mine              # a theme of data/themes, by name
+  mindfork themes check drafts/mine.json  # any file, by path
+  mindfork themes check                   # every theme there is
+  ```
+  It prints every colour, where it came from and its contrast, and exits with
+  `1` when there is something to say — a colour below its floor, a key that
+  names nothing, a file that is not a theme.
+- **Names.** Letters, digits, `-` and `_`, 32 at most. `dark` and `light` are
+  taken: a file of that name is skipped.
+- **Fault tolerance.** A file that is not a theme gets a warning in the log
+  (`logs/`) and is **skipped**; the rest still load. A theme named in the
+  settings that is not there — a file that went away, settings from another
+  machine — draws as `dark`, and the name stays in the settings. File changes
+  take effect on **restart**.
 
 ## 3. Inference engine (llama.cpp `llama-server`)
 
