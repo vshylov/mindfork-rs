@@ -1,5 +1,5 @@
 //! `mindfork themes` — the two commands for whoever writes a theme
-//! (spec §11.6, docs/theme-modes.md §10.4): `export` writes a theme out
+//! (spec §11.6, docs/history/theme-modes.md §10.4): `export` writes a theme out
 //! whole, `check` prints what reading one did. Neither starts the TUI.
 //!
 //! The reading and the fitting are `shared/user_theme.rs`; here is what is

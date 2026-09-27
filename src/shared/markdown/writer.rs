@@ -1303,7 +1303,7 @@ mod tests {
         assert!(c.contains("x²"), "{c}");
     }
 
-    // ---- the monochrome mode (spec §11.6, docs/theme-modes.md §9) ----
+    // ---- the monochrome mode (spec §11.6, docs/history/theme-modes.md §9) ----
 
     /// Render lines as strings, under a given palette.
     fn rows_in(input: &str, width: usize, palette: &Palette) -> Vec<String> {

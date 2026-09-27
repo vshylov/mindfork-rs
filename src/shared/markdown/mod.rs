@@ -183,7 +183,7 @@ fn blockquote_style() -> Style {
 /// The key is the palette, and one theme is leaked per **distinct palette the
 /// process has drawn with**: the system mode's three (auto/dark/light), each
 /// full theme, and either of them under the compatibility flag — a handful,
-/// bounded by what the settings can select (docs/theme-modes.md §8). That
+/// bounded by what the settings can select (docs/history/theme-modes.md §8). That
 /// keeps the `Box::leak` justified: `HighlightLines<'static>` needs a theme
 /// with `'static` lifetime, and a theme is a few hundred bytes that live for
 /// the whole process. The alternative (theme on `render`'s stack + a lifetime

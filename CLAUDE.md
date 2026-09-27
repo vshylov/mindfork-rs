@@ -198,7 +198,7 @@ being recent is dropped, not shortened.
   a mode was chosen. A theme of the user's is `data/themes/<name>.json`: named colours
   kept, the rest fitted to the contrast floors (`shared/user_theme.rs`, `mindfork themes
   export|check`). Measured on Windows 11's console host; other terminals are a look
-  ([docs/theme-modes.md](docs/theme-modes.md), spec §11.6,
+  ([docs/history/theme-modes.md](docs/history/theme-modes.md), spec §11.6,
   [docs/journal/ui-feed.md](docs/journal/ui-feed.md)).
 - **The input box's height is a setting** — `interface.input_max_rows`, capped at
   half the window ([docs/journal/ui-input.md](docs/journal/ui-input.md), spec §11.5).

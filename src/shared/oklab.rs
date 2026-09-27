@@ -1,4 +1,4 @@
-//! Colour arithmetic for the themes (spec §11.6, docs/theme-modes.md §10.2):
+//! Colour arithmetic for the themes (spec §11.6, docs/history/theme-modes.md §10.2):
 //! the WCAG contrast ratio the floors are stated in, and OKLab, the space a
 //! colour's lightness is moved in when it has to clear one.
 //!
@@ -6,7 +6,7 @@
 //! lightness is *perceptual*: moving `L` and keeping `a` and `b` gives the
 //! same colour, lighter — which is what "just far enough to clear the floor"
 //! means to the eye. The built-in palettes were retuned this way by hand
-//! (docs/theme-modes.md §3.1); a user theme's missing roles are fitted the
+//! (docs/history/theme-modes.md §3.1); a user theme's missing roles are fitted the
 //! same way by [`fit`].
 //!
 //! Björn Ottosson's matrices, <https://bottosson.github.io/posts/oklab/>.
@@ -206,7 +206,7 @@ pub fn fit(start: Rgb, grounds: &[Rgb], floor: f32, lighter: bool) -> Fitted {
 
 /// `background`, moved in lightness by `delta` — its own hue and chroma kept.
 /// How a role that is not text is derived for a canvas it was not chosen for:
-/// it keeps its distance from the canvas (docs/theme-modes.md §10.2).
+/// it keeps its distance from the canvas (docs/history/theme-modes.md §10.2).
 pub fn shifted(background: Rgb, delta: f32) -> Rgb {
     let lab = Oklab::from_rgb(background);
     lab.at(lab.l + delta).to_rgb()
@@ -233,7 +233,7 @@ mod tests {
         assert!((contrast_ratio(BLACK, WHITE) - 21.0).abs() < 0.01);
         assert!((contrast_ratio(WHITE, BLACK) - 21.0).abs() < 0.01, "order");
         assert!((contrast_ratio(WHITE, WHITE) - 1.0).abs() < 0.001);
-        // Measured outside the code (docs/theme-modes.md §3.1): the dark
+        // Measured outside the code (docs/history/theme-modes.md §3.1): the dark
         // palette's body text on its canvas.
         let got = contrast_ratio(rgb(201, 204, 210), rgb(15, 17, 21));
         assert!((got - 11.74).abs() < 0.01, "{got}");
@@ -303,7 +303,7 @@ mod tests {
         }
     }
 
-    /// The moves of docs/theme-modes.md §3.1 were made by hand with this
+    /// The moves of docs/history/theme-modes.md §3.1 were made by hand with this
     /// arithmetic in another language; the fit has to find the same colours.
     #[test]
     fn the_fit_finds_what_the_built_in_palettes_were_retuned_to() {

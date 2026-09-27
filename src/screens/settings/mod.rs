@@ -733,7 +733,7 @@ enum FieldId {
     NotesRecallIncludesSelf,
     // Interface
     /// The colour mode: the terminal's own background (system) or the theme's
-    /// canvas (full). See spec §11.6, docs/theme-modes.md.
+    /// canvas (full). See spec §11.6, docs/history/theme-modes.md.
     IThemeMode,
     /// The **system** mode's theme — shown while that mode is the one in effect.
     ITheme,

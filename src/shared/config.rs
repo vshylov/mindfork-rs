@@ -1604,7 +1604,7 @@ pub enum Theme {
 }
 
 /// The **colour mode** — how the interface is drawn, one level above the theme
-/// (`interface.theme_mode`, spec §11.6, docs/theme-modes.md).
+/// (`interface.theme_mode`, spec §11.6, docs/history/theme-modes.md).
 ///
 /// Deliberately **not** `Deserialize`: the field is read through
 /// [`lenient_theme_mode`], because a value this binary does not know must not
@@ -3285,7 +3285,7 @@ mod tests {
     }
 
     /// The colour mode is **additive**: a file written before it existed reads
-    /// as the system mode, with the theme it had (docs/theme-modes.md §4.1).
+    /// as the system mode, with the theme it had (docs/history/theme-modes.md §4.1).
     #[test]
     fn a_settings_file_without_a_colour_mode_reads_as_system() {
         let old: AppConfig = serde_json::from_str(r#"{"interface":{"theme":"light"}}"#).unwrap();

@@ -1,5 +1,5 @@
 //! Themes of the user's own for the **full** colour mode (spec §11.6,
-//! docs/theme-modes.md §10): `data/themes/<name>.json`.
+//! docs/history/theme-modes.md §10): `data/themes/<name>.json`.
 //!
 //! A theme file names its canvas and as many of the palette's roles as its
 //! author cares to. The rest are **fitted**: a text role starts as the
@@ -29,7 +29,7 @@ use crate::shared::oklab::{self, contrast_ratio};
 use crate::shared::osc11::Rgb;
 use crate::shared::theme::{FULL_THEMES, Palette};
 
-/// The floors of docs/theme-modes.md §4.4 — the ones the built-in palettes
+/// The floors of docs/history/theme-modes.md §4.4 — the ones the built-in palettes
 /// are held to by a test, and a user theme's fitted roles by [`parse`].
 pub const BODY_FLOOR: f32 = 7.0; // WCAG AAA
 pub const TEXT_FLOOR: f32 = 4.5; // WCAG AA
@@ -166,7 +166,7 @@ pub enum Note {
     NotAColour { role: String, value: String },
 }
 
-/// What reading a theme did (docs/theme-modes.md §10.4).
+/// What reading a theme did (docs/history/theme-modes.md §10.4).
 #[derive(Debug, Clone, PartialEq)]
 pub struct ThemeReport {
     pub name: String,

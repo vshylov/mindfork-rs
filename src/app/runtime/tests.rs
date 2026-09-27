@@ -2351,7 +2351,7 @@ fn the_help_looks_up_no_missing_key() {
 }
 
 /// When a frame erases the terminal to its canvas (the full colour mode,
-/// docs/theme-modes.md §4.6) — and, as importantly, when it does not: the
+/// docs/history/theme-modes.md §4.6) — and, as importantly, when it does not: the
 /// system mode must never pay an erase, and neither must a frame whose canvas
 /// is already under it.
 #[test]
