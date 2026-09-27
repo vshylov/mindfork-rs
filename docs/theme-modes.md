@@ -137,9 +137,11 @@ places where that is not so; they are stage 2's work list (§7).
   build on.** Windows Terminal learned to *reset* the colours (OSC 110/111/112)
   only in April 2025 (microsoft/terminal PR 18767); an app that died between
   the set and the reset would leave the user's terminal repainted.
-- **ratatui 0.30.2 does not repaint the trailing cell of a wide glyph**, and
-  conhost leaves that cell's old background in place (ratatui issue 2652; fixed
-  upstream on 2026-09-03, unreleased as of 2026-09-27). See §8.
+- **ratatui 0.30.2 never writes the trailing cell of a wide glyph** — it
+  resets it to the default style and leaves it out of the diff (ratatui issue
+  2652; fixed upstream on 2026-09-03, unreleased as of 2026-09-27). What
+  colour that cell has is therefore the terminal's decision. §8 has what the
+  one console this could be measured on decides.
 
 ## 4. Design
 
@@ -239,11 +241,13 @@ back to every other screen as a `Settings` event.
 On a change of canvas — the first frame in the full mode, a theme or mode
 switch, a terminal resize — the terminal is erased **with the new canvas as the
 current background** before the frame is drawn, and the frame is repainted in
-full. On terminals that paint both halves of a wide glyph this is cosmetic; on
-conhost it is what gives the halves ratatui never repaints (§3.3) the right
-colour to keep. `terminal.clear()` flickers and the project avoids it for
-routine repaints (lessons §5); these events are rare, and an erase is the only
-way to set the colour of a cell that is never written.
+full. A cell that no frame ever writes keeps the colour the last erase gave
+it, and there is one behind every wide glyph (§3.3). A terminal that gives
+that cell the glyph's colours itself makes the erase cosmetic — the one
+measured does (§8) — and on one that does not, the erase is what makes the
+colour it keeps the canvas. `terminal.clear()` flickers and the project avoids
+it for routine repaints (lessons §5); these events are rare, and an erase is
+the only way to set the colour of a cell that is never written.
 
 ## 5. Out of scope
 
@@ -286,7 +290,8 @@ Each is its own branch and PR.
 1. **The framework and the full mode** — §4: the fields, the two settings rows,
    the pass, the built-in themes with their canvas, the floors as a test, the
    erase on a canvas change. Go/no-go is a **live check in real terminals**
-   (§8): Windows Terminal, conhost, one Linux terminal.
+   (§8): the console host was measured; Windows Terminal and one Linux
+   terminal are a look.
 2. **Monochrome** — the pass gains its second job (drop colours and
    attributes), the 22 places of §3.2 get a glyph or, for the two fork A names,
    reverse video; `NO_COLOR`.
@@ -296,14 +301,45 @@ Each is its own branch and PR.
 
 ## 8. Risks and the live check
 
-**Wide glyphs on conhost.** ratatui resets a wide glyph's trailing cell to the
-default style and leaves it out of the diff; conhost does not repaint that cell
-with the glyph, so it keeps the background it had. Today that shows on a
-selected row. In the full mode "the background it had" is the terminal's own,
-everywhere — unless the screen was erased with the canvas first, which is what
-§4.6 does. **That the erase is enough on conhost is a hypothesis until someone
-looks at it**; the app cannot be started without a terminal, so the agent that
-wrote this cannot.
+**The cell behind a wide glyph.** ratatui resets a wide glyph's trailing cell
+to the default style and leaves it out of the diff, so its colour is whatever
+the terminal makes of it. In the full mode a terminal that left it alone would
+show its own background behind every emoji — unless the screen was erased with
+the canvas first, which is what §4.6 does.
+
+**Measured, 2026-09-27**, with `tools/console_probe.py` — the app in a hidden
+console of its own, driven by injected keys, the screen buffer read back
+through the console API. Host: the inbox console host of Windows 11 Pro, build
+26200. The light theme, because a cell's colours come back as the nearest
+legacy colour: its canvas reads as white, the console's own background as
+black.
+
+| Step | Cells not painted | Wide glyphs | Trailing cells off their glyph's background |
+|---|---|---|---|
+| launched (`mindfork demo`, system mode) | all 3600 on the console's own | — | — |
+| Settings → Colour mode `full`, Theme `light` | 0 of 3600 | — | — |
+| the chat | 0 | — | — |
+| the emoji picker over it | 0 | 44 | 0 |
+| its selection moved | 0 | 44 | 0 |
+| the picker closed | 0 | — | — |
+| the help dialog | 0 | — | — |
+| Colour mode back to `system` | all 3600 on the console's own | — | — |
+| **first frame** of a run started in `full`/`light`, 3 CJK and 2 emoji in the input box | 0 | 5 | 0 |
+| the same first frame, **the erase removed** (control) | 0 | 5 | 0 |
+
+So on this host the full mode paints to the edges through every transition,
+and the system mode gets the console's background back. **The control arm is
+the finding**: with the erase taken out, the cells behind wide glyphs in a
+first frame carry the canvas all the same — this console host gives a wide
+glyph's trailing cell the glyph's colours when it prints the glyph. The erase
+changes nothing here. It stays as the guard for a terminal that does not do
+that — Windows 10's console host is the candidate, and was not available to
+measure — at the cost of one erase per change of canvas.
+
+What the probe cannot see: the selection backdrop against the canvas and the
+dark canvas against the console's black (each pair reads as one legacy
+colour), a resize (a hidden console does not resize — the decision is
+unit-tested, the path is not exercised), and anything a person judges by eye.
 
 **What the app does not paint.** The margin a terminal keeps around its grid
 stays the terminal's colour. The cursor is the terminal's too, and Windows
@@ -315,7 +351,8 @@ says three exist. With the modes there are five; with user themes, as many as
 the user switches between in one run — a few hundred bytes each, bounded by the
 theme files on disk.
 
-The checklist for stage 1's go/no-go, per terminal:
+The checklist for stage 1's go/no-go, per terminal — what is left for a look
+in Windows Terminal and a Linux terminal, and for the eye on any of them:
 
 1. Settings → Interface → Colour mode → `full`: the whole window takes the
    canvas at once, no stripe of the old background anywhere in the grid.

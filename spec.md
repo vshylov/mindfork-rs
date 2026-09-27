@@ -3326,8 +3326,10 @@ mode, a resized terminal — the terminal is erased **with the new canvas as the
 current background** and the frame is repainted in full (`app/runtime`,
 `erase_to_canvas`). A cell that no frame ever writes keeps the colour the last
 erase gave it, and there is one behind every wide glyph: ratatui leaves a wide
-glyph's trailing cell out of the diff, and a terminal that does not repaint it
-with the glyph shows what was there. The erase is the one the project otherwise
+glyph's trailing cell out of the diff, so its colour is the terminal's to
+decide. Measured on Windows 11's console host, the terminal gives it the
+glyph's colours and the erase changes nothing; it is the guard for one that
+does not (docs/theme-modes.md §8). The erase is the one the project otherwise
 avoids (§4.4.1); it is kept to these rare moments.
 
 *In the settings*, *Appearance* opens with **Colour mode**, and the **Theme**

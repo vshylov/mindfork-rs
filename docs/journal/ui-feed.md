@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (43)
+## Entries (44)
 
 - Post-M9: mouse-wheel feed scrolling (done)
 - Post-M9: own markdown renderer (tables + LaTeX + theme) (done)
@@ -55,6 +55,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the confirmation popup shows the code it is asking about (done)
 - Post-M9: the spinner leaves the terminal a quiet gap (done)
 - Post-M9: colour modes — the full mode (done)
+- Post-M9: the full colour mode, measured in a console — and a probe to measure with (done)
 
 ### Post-M9: mouse-wheel feed scrolling (done)
 - **The mouse wheel scrolls the feed** on par with `PageUp/PageDown`. `ratatui::init()`
@@ -2568,3 +2569,73 @@ in real terminals, which the app cannot take from an agent's shell (no TTY) — 
 §8 of the plan, and it is this stage's **go/no-go**: Windows Terminal, conhost, one Linux
 terminal. Two things in it are hypotheses until then — that the erase is enough for conhost's
 wide glyphs, and that the terminal's cursor stays visible on a canvas it did not choose.
+
+### Post-M9: the full colour mode, measured in a console — and a probe to measure with (done)
+
+The entry before this one left two things as hypotheses, because the app cannot be started
+from an agent's shell: that the full mode paints a real terminal to its edges, and that
+erasing the terminal to the canvas is what keeps the cells behind wide glyphs the right
+colour. Both were measured the same day, on the same branch.
+
+**How.** `tools/console_probe.py`: the app is started in a **new, hidden console**
+(`CREATE_NEW_CONSOLE` with `SW_HIDE` — the inbox console host, nothing on the desktop, no
+hand-off to Windows Terminal), the probe attaches to it (`AttachConsole`), injects key events
+(`WriteConsoleInputW`, one key at a time — a burst is read as a paste) and reads the active
+screen buffer back (`ReadConsoleOutputW`): characters and attributes, cell by cell. A wide
+glyph's second cell carries `COMMON_LVB_TRAILING_BYTE`, so the cells ratatui never writes can
+be picked out by the console's own account. Host: the inbox console host of Windows 11 Pro,
+build 26200.
+
+**What it can see.** Colours come back as the nearest of the 16 legacy colours, which decides
+the scenario: the *light* theme, whose canvas reads as white (15) against the console's black
+(0). The selection backdrop reads as white too and the dark canvas as black, so neither can be
+told from its surroundings; a hidden console does not resize (`SetConsoleWindowInfo` returns
+success and the window stays 120x30), so a resize is not exercised; and surrogate pairs
+injected as key events are not taken as input — emoji go in through the app's own picker.
+
+**Measured** (`mindfork demo`, 120x30, 3600 cells):
+
+| Step | Cells not painted | Wide glyphs | Trailing cells off their glyph's background |
+|---|---|---|---|
+| launched, system mode | all on the console's own | — | — |
+| Settings → Colour mode `full`, Theme `light` | 0 | — | — |
+| the chat | 0 | — | — |
+| the emoji picker over it | 0 | 44 | 0 |
+| its selection moved | 0 | 44 | 0 |
+| the picker closed | 0 | — | — |
+| the help dialog | 0 | — | — |
+| Colour mode back to `system` | all on the console's own | — | — |
+
+And the case the erase was written for — cells that no frame has ever written: a scratch copy
+of the binary with its own data root, started **already in** `full`/`light`, with three CJK
+characters and two emoji restored into the input box from the saved draft, so that the wide
+glyphs are in the very first frame. Five wide glyphs, five trailing cells on the canvas.
+
+**The control arm is the finding.** The same first frame from a build with the erase taken
+out (`erase_to_canvas` replaced by `Ok(())`): five trailing cells on the canvas all the same.
+This console host gives a wide glyph's trailing cell the glyph's colours when it prints the
+glyph, so the erase changes nothing on it. That corrects the entry above and an older one: "the
+cell behind a wide glyph keeps the background it had" is not what this host does to a glyph it
+prints — the half-background this project has seen on a selected row is the *style-only*
+change of ratatui issue 2652, which this probe cannot see (backdrop and canvas read as one
+colour).
+
+**Kept anyway, and said to be a guard.** The mechanism is real — ratatui leaves those cells to
+the terminal — and the host this project supports explicitly and could not measure is Windows
+10's console. The erase costs one `ED 2` per change of canvas, inside the synchronized update,
+and on a resize it is ratatui's own erase made a moment earlier. Spec §11.6 and the plan (§8)
+now say "measured: changes nothing on Windows 11's console host; a guard for one that does not
+colour the cell", instead of naming a defect it fixes.
+
+**The probe stays in the repository**, next to `tools/osc11_probe.py`: a spike tool, run by
+hand after `cargo build`, not in CI (it needs Windows and a built binary). Two scenarios,
+`full-mode` and `first-frame`; exit code 0/1/2 — passed, a check failed, cannot run here. It is
+the first way this project has of running the TUI without a person at a terminal, and the two
+stages still ahead — monochrome, where the question is "is any attribute left on any cell",
+and user themes — can ask their questions through it.
+
+**Still a look, not a measurement**: Windows Terminal and a Linux terminal (neither is a
+console buffer the API reads), the dark theme, a resize, the cursor's visibility on a canvas
+the terminal did not choose, and the margin around the grid. The checklist is §8 of the plan.
+
+Unit tests unchanged: 3493 green, 202 ignored.

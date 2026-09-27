@@ -154,6 +154,7 @@ python tools/site_llms_txt.py --check  # /llms.txt matches the site content
 python tools/site_release_gate.py --self-test  # the gate that holds the site's deploy for a release
 python tools/actions_pin_check.py  # every workflow action is pinned to a commit
 python tools/release_guard.py --self-test  # the tag guard release.yml runs, against fixtures
+python tools/console_probe.py      # Windows: drive the TUI in a hidden console, read the screen back
 ```
 
 Running against a real server (smoke test, llama.cpp):
@@ -192,8 +193,9 @@ being recent is dropped, not shortened.
 <!-- cyrillic-ok:start -->
 - **Colour modes — stage 1, the full mode.** `interface.theme_mode = full`: the app
   paints its own canvas and text colour under the finished frame (`ui::paint_canvas`);
-  `dark`/`light` retuned and held to contrast floors by a test. Go/no-go is a look in
-  real terminals; monochrome and user themes follow
+  `dark`/`light` retuned and held to contrast floors by a test. Measured on Windows
+  11's console host; Windows Terminal and Linux are a look. Monochrome and user
+  themes follow
   ([docs/theme-modes.md](docs/theme-modes.md), spec §11.6,
   [docs/journal/ui-feed.md](docs/journal/ui-feed.md)).
 - **The input box's height is a setting** — `interface.input_max_rows`, capped at
@@ -381,8 +383,9 @@ being recent is dropped, not shortened.
   ([docs/history/gateway-images-and-continue.md](docs/history/gateway-images-and-continue.md),
   spec §6.4, [docs/journal/engine.md](docs/journal/engine.md)).
 - **A headless launch (no TTY) exits with code 2** and a one-line reason — the
-  TUI cannot be run from an agent's shell; live verification needs a real
-  terminal.
+  TUI cannot be run from an agent's shell; how it *looks* needs a real terminal
+  and a person. What a console *holds* can be measured on Windows:
+  `tools/console_probe.py` (docs/lessons.md §6).
 - Pointwise `#[allow(dead_code)]` (with a comment) marks deliberate
   ahead-of-consumer API; there is no crate-wide allow, and adding one is not the
   fix.

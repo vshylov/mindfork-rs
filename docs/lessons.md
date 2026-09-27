@@ -1451,6 +1451,23 @@ growing — and mutate the kill back to `start_kill()` to check the test can see
 the difference.
 — *the code workspace — stage 3*.
 
+**A TUI that will not start without a terminal can still be run — and read —
+from a shell that has none.** "It needs a real terminal" had made every
+terminal question a person's to answer, including the ones that are not about
+looks: is every cell painted, what colour is the cell behind a wide glyph. On
+Windows a child started with `CREATE_NEW_CONSOLE` and `SW_HIDE` gets a console
+of its own with no window on the desktop; `AttachConsole` to it, and
+`WriteConsoleInputW` presses keys while `ReadConsoleOutputW` hands back every
+cell's character and attributes (`tools/console_probe.py`). Three things to
+know before trusting it: colours come back as the **nearest legacy colour**, so
+choose a scenario whose colours differ there (a light canvas against the
+console's black — a dark one reads the same as "unpainted"); keys go in **one at
+a time**, because the app reads a burst as a paste; and it measures the inbox
+console host, not Windows Terminal. Then build the **control arm**: the erase
+this probe was written to confirm turned out to change nothing on the host
+measured — which no amount of reasoning about ratatui's diff had predicted.
+— *the full colour mode, measured in a console*.
+
 **A child inherits the environment, and a program that reads its configuration from
 the environment turns an unrelated variable into a setting.** `llama-server` reads
 `LLAMA_ARG_*` for every option and `LLAMA_API_KEY` for its key, and the managed child

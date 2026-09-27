@@ -309,8 +309,10 @@ equal weight.
   ([theme-modes.md](theme-modes.md); was "a theme from a color configuration").
   Stage 1 is done: the *full* colour mode, where the app paints its own
   background, with the built-in `dark` and `light` held to contrast floors.
-  Its go/no-go is a look in real terminals — Windows Terminal, conhost, one
-  Linux terminal — by the checklist in §8 of the plan. Next: **stage 2**, a
+  Measured on Windows 11's console host (`tools/console_probe.py`): painted to
+  the edges through every transition. Its go/no-go is what a probe cannot
+  give — a look in Windows Terminal and one Linux terminal, by the checklist in
+  §8 of the plan. Next: **stage 2**, a
   monochrome mode (no colours, no attributes; reverse video kept for a text
   selection and a search match) and `NO_COLOR`; **stage 3**, user themes in
   `data/themes/` with the missing roles fitted to the floors. Left open by

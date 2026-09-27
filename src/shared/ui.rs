@@ -89,8 +89,10 @@ pub const RESET_STYLE: &str = "\x1b[0m";
 /// Used once per change of canvas, around an erase: a cell the app never
 /// writes keeps the colour the last erase gave it, and there is such a cell
 /// behind every wide glyph — ratatui resets a wide glyph's trailing cell and
-/// leaves it out of the diff, and a terminal that does not repaint it with
-/// the glyph (conhost) shows whatever was there (docs/theme-modes.md §4.6).
+/// leaves it out of the diff, so a terminal that does not give it the
+/// glyph's colours itself shows whatever was there. Windows 11's console host
+/// does give them, measured (docs/theme-modes.md §8); this is the guard for
+/// one that does not.
 ///
 /// Built here and written by the caller, like `shared/osc52.rs`: that is what
 /// lets a test assert the exact bytes.
