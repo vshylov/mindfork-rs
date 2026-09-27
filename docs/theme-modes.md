@@ -6,7 +6,8 @@ attributes, and one where the app paints its own background and text colour,
 tuned for contrast — plus themes a user can write for the last one.
 
 §6 records the forks and the user's decisions; §7 is the stage list. **Stage 1
-(the framework and the full mode) is what the first PR implements.**
+(the framework and the full mode) and stage 2 (the monochrome mode and
+`NO_COLOR`, §9) are done; stage 3 (user themes) is what is left.**
 
 ## 1. What and why
 
@@ -30,8 +31,8 @@ The track adds a **colour mode** above the theme:
 | Mode | Background | Foreground | Attributes |
 |---|---|---|---|
 | `system` (default) | the terminal's | `interface.theme`, as today | as today |
-| `mono` (stage 2) | the terminal's | the terminal's | none |
 | `full` (stage 1) | the theme's **canvas** | the theme's | as today |
+| `mono` (stage 2) | the terminal's | the terminal's | none — reverse video for a selection and a search match |
 
 ## 2. What the code looks like today
 
@@ -127,7 +128,8 @@ the app holds **floors** (a test) and leaves the rest to themes (stage 3).
 The committed dumps, printed with every style dropped, stay readable — the
 redesign duplicated most state in glyphs (`▌` on the selected row, `[x]`,
 `‹ value ›`, `● ready`). An inventory of production rendering code found **22**
-places where that is not so; they are stage 2's work list (§7).
+places where that is not so; they are stage 2's work list, and §9.3 names each
+with what it got.
 
 ### 3.3 Terminals
 
@@ -150,7 +152,7 @@ places where that is not so; they are stage 2's work list (§7).
 ```jsonc
 "interface": {
   "theme": "auto",          // unchanged: the system mode's foreground palette
-  "theme_mode": "full",     // new, optional: "system" | "full" (| "mono", stage 2)
+  "theme_mode": "full",     // new, optional: "system" | "full" | "mono"
   "full_theme": "dark"      // new: the full mode's theme, by name
 }
 ```
@@ -159,12 +161,12 @@ places where that is not so; they are stage 2's work list (§7).
   reading a file with a value it does not know loses the *whole* configuration
   (§2), so everything new is a new field, which an older binary ignores.
 - **`theme_mode` is optional and is written only when chosen.** Absent means
-  "whatever the environment's default is" — `system` today, and the hook stage
-  2 hangs `NO_COLOR` on. The settings row stores the default as absence, so
+  "whatever the environment's default is" — `system`, or `mono` under
+  `NO_COLOR` (§9.2). The settings row stores the default as absence, so
   resetting the row really does go back to following the environment.
 - **`theme_mode` parses leniently**: a value this binary does not know reads as
-  absent, with a line in the log. Stage 2 adds `mono`; a stage-1 binary meeting
-  it must fall back to `system`, not to a default configuration.
+  absent, with a line in the log. Stage 2 added `mono`; a stage-1 binary
+  meeting it falls back to `system`, not to a default configuration.
 - **`full_theme` is a name**, not an enum: `dark` and `light` are built in, a
   user theme (stage 3) is its file's stem. An unknown name falls back to `dark`
   with a line in the log and is kept in the file.
@@ -227,10 +229,11 @@ the floors: a backdrop with 3:1 against the canvas would leave no room for
 
 *Interface → Appearance* gains one row and re-purposes one:
 
-- **Colour mode** — `system` / `full` (`mono` joins in stage 2).
+- **Colour mode** — `system` / `full` / `monochrome`.
 - **Theme** — in the system mode the row is today's (`auto` / `dark` /
   `light`); in the full mode it lists the full themes. Two fields behind one
-  label, so each mode remembers its own choice.
+  label, so each mode remembers its own choice. The monochrome mode has no
+  colours to pick, and no row.
 
 Both apply live, like the theme does today: the settings screen rebuilds its
 palette per frame from the working copy, and the saved configuration comes
@@ -287,14 +290,14 @@ contrast there is reported, not corrected.
 
 Each is its own branch and PR.
 
-1. **The framework and the full mode** — §4: the fields, the two settings rows,
-   the pass, the built-in themes with their canvas, the floors as a test, the
-   erase on a canvas change. Go/no-go is a **live check in real terminals**
-   (§8): the console host was measured; Windows Terminal and one Linux
-   terminal are a look.
-2. **Monochrome** — the pass gains its second job (drop colours and
-   attributes), the 22 places of §3.2 get a glyph or, for the two fork A names,
-   reverse video; `NO_COLOR`.
+1. **The framework and the full mode** — *done* (PR 634). §4: the fields, the
+   two settings rows, the pass, the built-in themes with their canvas, the
+   floors as a test, the erase on a canvas change. Go/no-go is a **live check
+   in real terminals** (§8): the console host was measured; Windows Terminal
+   and one Linux terminal are a look.
+2. **Monochrome** — *done*, §9. The pass gains its second job (drop colours
+   and attributes), the 22 places of §3.2 get a glyph or, for the two fork A
+   names, reverse video; `NO_COLOR`.
 3. **User themes** — `data/themes/<name>.json`, the registry, the row listing
    them, `mindfork themes export`, the directory in the backup's list, the
    contrast fit and its report, a chapter in the manual.
@@ -363,3 +366,194 @@ in Windows Terminal and a Linux terminal, and for the eye on any of them:
 5. Resize the window: the new area is canvas-coloured.
 6. The input box: the cursor is visible on both themes.
 7. Colour mode → `system`: the terminal's own background is back.
+
+## 9. Stage 2 — the monochrome mode
+
+Done on branch `feat/theme-modes-mono`. Forks A and C (§6) are this stage's.
+
+### 9.1 The pass, and the one thing it keeps
+
+```rust
+// shared/ui.rs
+pub fn strip_styles(buf: &mut Buffer, palette: &Palette);   // the monochrome mode
+pub fn finish_frame(buf: &mut Buffer, palette: &Palette);   // paint_canvas, then strip_styles
+```
+
+`finish_frame` is what `compose_frame` ends with now. `strip_styles` returns at
+once unless the palette is the monochrome one (`Palette::mono`, a flag next to
+`compat`); in that mode every cell's foreground, background and underline
+colour become the terminal's default and its attributes are dropped.
+
+A pass for the reasons of §4.2, only more so: attributes never went through the
+palette at all (57 places set one directly, §2), so a palette of "no colours"
+would have left every one of them on the screen.
+
+**Reverse video is asked for by name.** Fork A keeps it for a text selection
+and a search match. The pass cannot tell those from the reverse video a widget
+sets by hand — five popups mark their selected row with `reversed()`, an
+unhighlighted code block is a reversed rectangle — so "keep `REVERSED`" would
+have kept all of them, and made every such widget, and the next one written,
+responsible for knowing the mode. Instead a widget draws a selection or a
+match **on `MONO_MARK`** (`Palette::selection`, `Palette::search_match`), a
+background no palette uses — an indexed colour, where the palettes are named
+ANSI or RGB — and the pass turns a cell with that background into a reversed
+one. Everything else is stripped, reverse video included. What survives is
+what was asked for.
+
+**The palette is one palette**: the dark theme's colours with the flag set,
+whatever `interface.theme` and `interface.full_theme` say. Nothing of it
+reaches the terminal, and one value is one entry in each cache a palette keys.
+
+### 9.2 `NO_COLOR`
+
+- `ThemeMode::for_environment(no_color)` — monochrome when the variable is set
+  to anything but an empty string, the system mode otherwise
+  ([no-color.org](https://no-color.org): the value itself means nothing).
+- `config::set_environment_mode`, called once from `main.rs::launch_tui`,
+  records it process-wide — the shape `theme::set_detected_background` has, and
+  for its reason: one fact about the process, read from render paths.
+- `InterfaceSettings::mode()` is the chosen mode, or that one;
+  `set_mode()` stores a mode equal to it as **absence**. So with the variable
+  set, `system` is a choice and is written, and cycling back to `monochrome` —
+  or `Del` — returns the file to following the environment.
+- A test binary never sets the process-wide value, so the tests do not depend
+  on the environment they run in; they take `mode_under`/`set_mode_under`, the
+  same seam `Palette::auto_with` is for the detected background.
+
+**The variable was not being ignored** — found by the live check (§9.6), and
+the reason the roadmap's "`NO_COLOR` is ignored" was wrong. crossterm honours
+it on its own: with the variable set it writes no colour, and in place of every
+colour change it writes `ESC[;m` — a reset of every attribute. ratatui's backend
+sets a cell's attributes *before* its colours, so under `NO_COLOR` the app had
+been drawing with no colour and without whichever attribute shared a cell with
+a colour change, and with nothing in their place.
+
+So the colour mode decides what crossterm may write, per frame:
+`force_color_output(!palette.mono)` (`app/runtime`, `set_colour_output`). In
+the monochrome mode every cell's colours are the default and nothing is
+written either way; in a mode the user **chose** over the variable, colours are
+written although it is set. Without this, "a chosen mode wins" was true in
+`settings.json` and false on the screen.
+
+### 9.3 The 22 places, and what each got
+
+Everything below is the monochrome mode's only: `palette.mono` is read, and
+every other mode draws what it drew. The committed dumps did not change.
+
+| # | Where | What only styling said | In the monochrome mode |
+|---|---|---|---|
+| 1 | `widgets/profile_list.rs` | the selected profile (reverse video) | `› ` before it — `ui::mark_selected`, the list's own `highlight_symbol` |
+| 2 | `widgets/chat_link_picker.rs` | the selected reference (reverse video) | the same; the marker's columns come out of the title |
+| 3 | `widgets/emoji_picker.rs` | the selected emoji (a backdrop) | `[😀]`, in the cell's four columns |
+| 4 | `screens/settings/render.rs` | the selected result of the field search (reverse video) | `› ` before it |
+| 5 | `widgets/help_dialog.rs` | the active tab (a backdrop, bold) | `[Tab]` — `Palette::tab_label` |
+| 6 | `screens/settings/helpers.rs` | the active subsection tab — in Sampling the only thing saying whose parameters these are | `[Tab]` |
+| 7 | `widgets/input_box.rs` | a text selection (a backdrop) | **reverse video** (fork A) |
+| 8 | `widgets/input_box.rs` | a misspelled word (red underline) | not marked (fork A); `Ctrl+G` still offers corrections |
+| 9 | `widgets/message_feed.rs` | a search match in the feed (the accent) | **reverse video** (fork A) |
+| 10 | `widgets/message_feed.rs` | the message a jump landed on (the rail in the accent) | the rail `█` |
+| 11 | `screens/search.rs` | the matched words of a snippet (accent, bold) | **reverse video** (fork A) |
+| 12–14 | `shared/markdown/writer.rs` | bold, italic, strikethrough | `**…**`, `*…*`, `~~…~~` — the markers the parser took off |
+| 15 | `shared/markdown/writer.rs` | inline code (a chip) | `` `…` `` |
+| 16 | `widgets/chat_list.rs` | the open chat (a green dot, a bold title) | `●`, every other chat `○` |
+| 17 | `widgets/chat_list.rs` | a chat listed only as a match's parent (muted) | `(title)`, the parentheses out of the title's columns |
+| 18 | `screens/changes.rs` | the shown file while the diff pane has the focus (bold) | `›` before it |
+| 19 | `widgets/message_feed.rs` | a `chat://` address that opens a chat (accent, underline) | `<chat://…>` |
+| 20 | `screens/chat/render.rs` | the input is a command and will be run (the warning colour) | the word *command* in the input box's title |
+| 21 | `widgets/input_box.rs` | the placeholder is not typed text (dim) | not drawn |
+| 22 | `widgets/message_feed.rs`, `shared/markdown/writer.rs` | the wrapped rows of a thought, of the compaction summary, of a quote (muted italic) | the `│ ` / `> ` on **every** row — `wrap::wrap_hanging` |
+
+### 9.4 Beyond the list
+
+Three things the inventory had classed as "weakly duplicated" — a subtle cue
+remains — and one it had not reached:
+
+- **Keycaps.** A key and its description were told apart by the number of
+  spaces between them. `[Enter]` instead of the pill, the same width
+  (`Palette::keycap`), so no hint grid moves.
+- **Whose message a row belongs to**, once the role header has scrolled away,
+  was the rail's colour. The rail says it by shape: `▌` the user's, `║` the
+  assistant's, `│` a system message or a note.
+- **An unhighlighted code block** was a reversed rectangle, padded to be one.
+  It is left to its fences: reverse video is for the two marks, and there is
+  no background to square off.
+
+Every glyph is WGL4 (the compatibility set's repertoire), so the mode combines
+with `interface.terminal_compat`.
+
+### 9.5 Left open
+
+- **A search for a word that a marker splits finds nothing.** The feed's
+  search matches the rendered text (spec §11.3), and in this mode the rendered
+  text holds the markers: `mar**ker**` no longer contains `marker`. The index
+  still finds the message; what is lost is the mark inside it.
+- **The hanging gutter is the monochrome mode's only.** Every mode could wrap a
+  thought or a quote under its `│ ` / `> `; it would change the wrap width of
+  those rows everywhere, and the committed dumps with it — a decision for the
+  eye, not for this stage.
+- **The current match** of an in-feed search is not told from the other
+  matches in any mode (the counter and the scroll position say which).
+- What a terminal draws itself is not the app's: the cursor, and the terminal's
+  own text selection in the feed.
+
+### 9.6 Measured
+
+`tools/console_probe.py`, scenarios `mono` and `no-color` — the app in a hidden
+console, the screen buffer read back through the console API (§8 for the
+method). Host: the inbox console host of Windows 11 Pro, build 26200;
+`mindfork demo`, 3600 cells. A cell's attributes come back as the console
+keeps them: its two colours, reverse video and underline as flags. "Bare"
+below is *every cell carries the console's default attributes* (`0x07`).
+
+| Step | Colour pairs on screen | Cells not bare | In reverse video |
+|---|---|---|---|
+| launched, system mode (the control) | 4 | 575 | — |
+| Settings → Colour mode → `monochrome` | 1 | 0 | none |
+| the chat | 1 | 0 | none |
+| two characters selected in the input box | 1 | 0 | those two, `me` |
+| the selection dropped | 1 | 0 | none |
+| the help dialog | 1 | 0 | none |
+| the emoji picker (44 wide glyphs) | 1 | 0 | none |
+| Colour mode back to `system` | 6 | 1405 | — |
+| **`NO_COLOR=1`**, first frame | 1 | 0 | none |
+| `NO_COLOR=1`, Settings: the row reads `monochrome` | 1 | 0 | none |
+| `NO_COLOR=1`, `system` chosen in Settings | 6 | 1416 | — |
+| `NO_COLOR=` (empty), first frame | 4 | 575 | — |
+| `NO_COLOR` unset, first frame | 4 | 575 | — |
+
+**The row that failed first** is `NO_COLOR=1`, `system` chosen: before
+`set_colour_output` it read 2 colour pairs, not 6 — the finding of §9.2.
+
+**The control for that finding** — the build before this stage, the same
+settings screen:
+
+| | Colour pairs | Bold cells |
+|---|---|---|
+| `NO_COLOR` unset | 6 | 19 |
+| `NO_COLOR=1` | 1, and the bright half of it | 10 |
+
+No colour, and nine of the nineteen bold cells gone with it: the active
+section's title, whose cell changes colour, lost its bold; the pane's title,
+whose cell does not, kept it.
+
+The stage 1 scenarios (`full-mode`, `first-frame`) were run again on this
+build and read as in §8.
+
+What the probe cannot see here: whether a terminal *renders* reverse video
+legibly — the flag is measured, the look is not — and any host but this one.
+
+### 9.7 Tests
+
+The pass, the palette's helpers, the environment's default and every one of
+the places of §9.3–§9.4 have a test that reads what is drawn; two tests hold
+whole frames to the contract — every captured screen (`demo_shots`) and every
+composed frame, the help dialog over it included, carry no colour and no
+attribute in the monochrome mode.
+
+Checked by mutation: 65 mutants — each of the mode's decisions broken one at a
+time, in both directions where there are two ("not in the monochrome mode",
+"in every mode") — every one killed. Two survived the first run and were
+killed by tests written for them: a marker that did not open its own line
+(reachable only where no paragraph opens it — next to a block formula, in a
+tight list item after a code block), and the quoted lines wrapped first to
+last (visible only with two quoted paragraphs that both wrap).

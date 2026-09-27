@@ -56,6 +56,11 @@ pub(crate) static HELP_SECTION: HelpSection = HelpSection {
 /// since the actual list height is only known at render time.
 const PAGE_STEP: usize = 10;
 
+/// The dot of a chat that is **not** the open one, in the monochrome mode:
+/// hollow, so the filled one is the open chat's alone (spec §11.6). WGL4 —
+/// the compatibility set draws "connecting" with the same glyph.
+const DOT_NOT_OPEN: &str = "○ ";
+
 /// An action the overlay asks the upper layer to perform.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChatListAction {
@@ -879,6 +884,11 @@ impl ChatListState {
     /// A chat row: the selected row's colored rail, a dot (green for the active chat),
     /// the title on the left, and the message count right-aligned (`width` — the width
     /// of the list area). A long title is truncated with an ellipsis.
+    ///
+    /// In the monochrome mode (spec §11.6) the two things only a colour said are
+    /// said by shape: the open chat keeps the filled dot and every other gets a
+    /// hollow one, and a chat listed only as the parent of a match — muted
+    /// otherwise — has its title in parentheses.
     fn item_line(
         &self,
         row: &Row,
@@ -913,7 +923,14 @@ impl ChatListState {
         } else {
             Style::new().fg(palette.text)
         };
-        let marker = if row.is_child() { "  └ " } else { "● " };
+        let marker = if row.is_child() {
+            "  └ "
+        } else if palette.mono && !is_active {
+            DOT_NOT_OPEN
+        } else {
+            "● "
+        };
+        let bracketed = palette.mono && row.dimmed && !is_active;
 
         // A transcript that did not complete says so beside its count.
         let outcome = if row.is_child() {
@@ -947,7 +964,14 @@ impl ChatListState {
         const TRAIL: usize = 1; // right-hand margin
         // Available width for the title (a minimum 1-column gap before the counter).
         let max_title = width.saturating_sub(prefix_w + count_w + TRAIL + 1);
-        let (title, title_w) = wrap::truncate_to_width(&row.title, max_title);
+        let (title, title_w) = if bracketed {
+            // The parentheses come out of the title's columns, so the count
+            // keeps its place.
+            let (title, w) = wrap::truncate_to_width(&row.title, max_title.saturating_sub(2));
+            (format!("({title})"), w + 2)
+        } else {
+            wrap::truncate_to_width(&row.title, max_title)
+        };
         let gap = width
             .saturating_sub(prefix_w + title_w + count_w + TRAIL)
             .max(1);
@@ -2235,5 +2259,80 @@ mod tree_tests {
             !t.contains("Ctrl+O"),
             "an advertised key that does nothing is worse than no hint: {t}"
         );
+    }
+
+    /// One row's rendered text under a palette, with `active` the open chat.
+    fn row_text_in(s: &ChatListState, r: &Row, active: Option<Uuid>, palette: &Palette) -> String {
+        let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru);
+        s.item_line(r, false, active, palette, 60, loc)
+            .spans
+            .iter()
+            .map(|sp| sp.content.to_string())
+            .collect()
+    }
+
+    /// Which chat is open is said by a green dot and a bold title on the dot
+    /// every row has. Without colour or bold the open chat keeps the filled
+    /// dot and the others get a hollow one (spec §11.6).
+    #[test]
+    fn the_open_chat_is_the_one_with_the_filled_dot_without_colour() {
+        let chats = vec![ChatSummary::fixture("Alpha"), ChatSummary::fixture("Beta")];
+        let open = chats[1].id;
+        let s = ChatListState::new(chats, Some(open));
+        let rows = s.visible();
+        let (alpha, beta) = (
+            rows.iter().find(|r| r.title == "Alpha").unwrap(),
+            rows.iter().find(|r| r.title == "Beta").unwrap(),
+        );
+        let mono = Palette::mono();
+        assert!(row_text_in(&s, alpha, Some(open), &mono).starts_with("  ○ Alpha"));
+        assert!(row_text_in(&s, beta, Some(open), &mono).starts_with("  ● Beta"));
+        // With no chat open, none has the filled dot.
+        assert!(row_text_in(&s, beta, None, &mono).starts_with("  ○ Beta"));
+
+        // The dot is a column of the row either way: the count does not move.
+        let plain = Palette::default();
+        for row in [alpha, beta] {
+            let (a, b) = (
+                row_text_in(&s, row, Some(open), &mono),
+                row_text_in(&s, row, Some(open), &plain),
+            );
+            assert!(b.starts_with("  ● "), "every other mode: {b}");
+            assert_eq!(a.replace('○', "●"), b, "only the dot differs");
+        }
+    }
+
+    /// A chat listed only because one of its transcripts matched is muted —
+    /// context, not a match. Without colour its title is in parentheses, and
+    /// the parentheses come out of the title's columns.
+    #[test]
+    fn a_context_only_chat_is_parenthesized_without_colour() {
+        let mut s = ChatListState::new(family(), None);
+        for c in "Иска".chars() {
+            s.on_key(key(KeyCode::Char(c)));
+        }
+        let rows = s.visible();
+        assert!(rows[0].dimmed, "the premise: the parent is context");
+        let mono = Palette::mono();
+        let parent = row_text_in(&s, &rows[0], None, &mono);
+        assert!(parent.starts_with("  ○ (Планы) "), "{parent}");
+        let matched = row_text_in(&s, &rows[1], None, &mono);
+        assert!(matched.contains("└ Искатель"), "{matched}");
+        assert!(!matched.contains('('), "the match itself is not: {matched}");
+
+        let plain = row_text_in(&s, &rows[0], None, &Palette::default());
+        assert!(plain.starts_with("  ● Планы "), "{plain}");
+        assert_eq!(
+            display_width_str(&parent),
+            display_width_str(&plain),
+            "the row is as wide as it was"
+        );
+
+        // A title that fills the row gives up two more columns, not the count.
+        let mut long = rows[0].clone();
+        long.title = "a title far too long for the row it has to fit in, by a margin".into();
+        let cut = row_text_in(&s, &long, None, &mono);
+        assert!(cut.contains("…) "), "{cut}");
+        assert_eq!(display_width_str(&cut), display_width_str(&plain));
     }
 }

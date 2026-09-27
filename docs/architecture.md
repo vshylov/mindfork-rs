@@ -730,7 +730,13 @@ src/
    │                       colour under every cell a widget left at the terminal's
    │                       default — a no-op in the system mode) with
    │                       set_background/ERASE_SCREEN/RESET_STYLE, the bytes
-   │                       app/runtime erases the terminal to a new canvas with
+   │                       app/runtime erases the terminal to a new canvas with;
+   │                       strip_styles (the monochrome mode: the pass that takes
+   │                       every colour and attribute off the finished frame and
+   │                       leaves reverse video on the cells drawn on MONO_MARK);
+   │                       finish_frame (both passes, the one call a frame ends
+   │                       with); mark_selected (a list's `› ` marker where
+   │                       styling alone said which row is selected)
    │                       (spec §11.6, docs/theme-modes.md),
    │                       ListScroll (a list's scroll offset kept between frames —
    │                       the ONLY place a ListState is built; see spec §11.2),
@@ -748,7 +754,9 @@ src/
    │                       drift (spec §11.1,
    │                       docs/history/status-hints-unified.md)
    ├─ wrap.rs              word wrap by column (unicode-width) + width-aware truncation
-   │                       (truncate_to_width — tail, elide_middle — both ends kept)
+   │                       (truncate_to_width — tail, elide_middle — both ends kept);
+   │                       wrap_hanging — a wrap under a prefix repeated on every
+   │                       row (a quote's `> `, a gutter's `│ `; the monochrome mode)
    ├─ i18n.rs              agent scaffold language (axis A) + UI (axis B): Lang(Ru/En/Ext)/
    │                       Locale/t/tf, built-in locales/{ru,en}.json + external
    │                       data/locales/*.json (init/registry, docs/history/i18n-external-locales.md)
@@ -760,6 +768,11 @@ src/
    │                       canvas they were tuned against (CANVAS_DARK/LIGHT, the
    │                       `canvas` field; Reset = the terminal's own). The
    │                       contrast floors are tests here (spec §11.6).
+   │                       The monochrome mode is Palette::mono — the `mono` flag
+   │                       widgets read to say in glyphs what styling said, with
+   │                       the helpers that say it: selected_mark, tab_label, the
+   │                       bracketed keycap, and selection/search_match, the two
+   │                       styles drawn on MONO_MARK (reverse video after the pass).
    │                       Colour only: keycap/hint/hint_marked (the one place a
    │                       "dangerous" red keycap is chosen) — the grid that lays
    │                       hints out lives in ui.rs, one layer up.
@@ -3269,6 +3282,21 @@ previous frame drew in `Drawn` (the screen, the overlay, the canvas);
 new canvas (`erase_to_canvas`: the canvas as the current background, the erase —
 ratatui's own `autoresize` when the terminal was resized — and the reset), which
 also primes a full redraw.
+
+The **monochrome** mode is the same shape with the roles swapped: the palette
+(`Palette::mono`) carries a flag instead of a canvas, and the pass
+(`ui::strip_styles`, run by `ui::finish_frame` right after `paint_canvas`)
+*removes* — every colour, every attribute. What a widget must not lose to it, it
+says in text, reading `palette.mono`; the two things that stay reverse video it
+draws on `MONO_MARK` through `Palette::selection`/`Palette::search_match`, and
+the pass is what turns that background into the attribute. Two places wrap
+ahead of the feed in this mode, so that a prefix can be on every row
+(`wrap::wrap_hanging`): `markdown::Writer::finish` for quoted lines, and the
+feed's `push_gutter_line` for thoughts and the compaction summary. The mode
+nobody chose is the environment's — `config::set_environment_mode`, called once
+from `main.rs::launch_tui` with what `NO_COLOR` says, read back by
+`InterfaceSettings::mode`/`set_mode` (the `_under` variants are the tests' seam:
+a process-wide `OnceLock` cannot hold two values in one test binary).
 
 Screen enumerations are consolidated into **canonical places**: broadcasting
 the palette/locale (a theme/language change) — `ActiveScreen::set_theme`,

@@ -24,7 +24,7 @@ use crate::shared::i18n::{Lang, locale};
 use crate::shared::server::{ServerStatus, ServerStatuses};
 use crate::shared::shot::{self, ShotFrame};
 use crate::shared::theme::Palette;
-use crate::shared::ui::paint_canvas;
+use crate::shared::ui::finish_frame;
 
 /// One width for the whole set — the gallery reads as one terminal. The hero
 /// stands alone at its own height (room for the final exchange); the four
@@ -41,12 +41,14 @@ pub const HERO_H: u16 = 44;
 pub const PANEL_H: u16 = 33;
 
 /// What a capture is drawn with: a theme of the **system** colour mode, where
-/// the terminal supplies the background, or one of the **full** mode, where
-/// the app paints it (spec §11.6).
+/// the terminal supplies the background, one of the **full** mode, where the
+/// app paints it, or the **monochrome** mode, which has no theme (spec §11.6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Look {
     System(Theme),
     Full(&'static str),
+    /// Held to its contract by a test, never dumped — like the full mode.
+    Mono,
 }
 
 impl Look {
@@ -59,6 +61,7 @@ impl Look {
                 interface.set_mode(ThemeMode::Full);
                 interface.full_theme = name.to_string();
             }
+            Look::Mono => interface.set_mode(ThemeMode::Mono),
         }
     }
 
@@ -76,6 +79,7 @@ impl Look {
             // terminal that isn't there.
             Look::System(Theme::Auto) => unreachable!("Auto theme is not capturable"),
             Look::Full(name) => format!("full-{name}"),
+            Look::Mono => "mono".into(),
         }
     }
 }
@@ -106,11 +110,11 @@ fn capture(
 ) -> ShotFrame {
     let palette = look.palette();
     let mut term = Terminal::new(TestBackend::new(SHOT_W, height)).unwrap();
-    // The screen, then the canvas under it — what `app/runtime` does to every
-    // frame (a no-op in the system mode).
+    // The screen, then the passes over the finished frame — what
+    // `app/runtime` does to every frame (a no-op in the system mode).
     term.draw(|frame| {
         draw(frame);
-        paint_canvas(frame.buffer_mut(), &palette);
+        finish_frame(frame.buffer_mut(), &palette);
     })
     .unwrap();
     shot::capture(
@@ -401,6 +405,63 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The monochrome mode on every captured screen: not a colour and not an
+    /// attribute in any cell. None of these screens holds a text selection or
+    /// a search match, so not even reverse video — the selected rows, the
+    /// open tab and the keycaps are all said in text. The system frame of
+    /// the same screen is the control: there most of those cells are styled.
+    #[test]
+    fn the_monochrome_mode_leaves_no_styling_on_any_screen() {
+        let styled = |frame: &ShotFrame| -> usize {
+            frame
+                .rows
+                .iter()
+                .flatten()
+                .filter(|c| c.fg.is_some() || c.bg.is_some() || !c.m.is_empty())
+                .count()
+        };
+        let system = all_frames(Look::System(Theme::Dark));
+        for (mono, system) in all_frames(Look::Mono).iter().zip(&system) {
+            let at = &mono.screen;
+            assert_eq!(&mono.screen, &system.screen);
+            for (y, row) in mono.rows.iter().enumerate() {
+                for cell in row {
+                    assert_eq!(
+                        (cell.fg.as_deref(), cell.bg.as_deref(), cell.m.as_str()),
+                        (None, None, ""),
+                        "{at} row {y} {:?}",
+                        cell.s
+                    );
+                }
+            }
+            let cells: usize = system.rows.iter().map(Vec::len).sum();
+            assert!(
+                styled(system) * 4 > cells,
+                "{at}: the control — only {} of {cells} cells are styled",
+                styled(system)
+            );
+
+            // What styling said is in the text: the keycaps are bracketed…
+            let text = frame_text(mono);
+            assert!(text.contains("[F1]"), "{at}:\n{text}");
+            assert!(!frame_text(system).contains("[F1]"), "{at}");
+        }
+
+        let by_screen = |screen: &str| -> String {
+            let frames = all_frames(Look::Mono);
+            frame_text(frames.iter().find(|f| f.screen == screen).unwrap())
+        };
+        // …the feed says whose rows these are by the rail's shape, and the
+        // emphasis by its markers…
+        let chat = by_screen("chat");
+        assert!(chat.contains("\n│║ ") || chat.contains("│║ "), "{chat}");
+        assert!(chat.contains("**"), "{chat}");
+        // …and the list, which chat is the open one.
+        let list = by_screen("chat-list");
+        assert_eq!(list.matches('●').count(), 1, "{list}");
+        assert!(list.matches('○').count() >= 1, "{list}");
     }
 
     /// Regenerator for the committed dumps — run deliberately:

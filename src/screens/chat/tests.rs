@@ -5889,3 +5889,39 @@ fn a_huge_input_ceiling_leaves_the_feed_and_status_bar_in_view() {
     let feed_rows = inner.y - 1;
     assert!(feed_rows > 3, "the feed was squeezed to {feed_rows} rows");
 }
+
+/// Whether `Enter` will run the text as a command is said by the text's
+/// colour — a `/…` that is not a command goes to the model as a message. In
+/// the monochrome mode the input box's title says it (spec §11.5, §11.6).
+#[test]
+fn the_input_title_names_a_command_in_the_monochrome_mode() {
+    let word =
+        crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru).t("ui.chat.input.command");
+    let title_row = |s: &mut ChatScreen| -> String {
+        screen_rows(s, 100, 30)
+            .into_iter()
+            .rev()
+            .find(|r| r.contains("Enter"))
+            .expect("the input box's title")
+    };
+    let mut s = ChatScreen::new();
+    s.set_server_status(ready_statuses());
+    s.palette = Palette::mono();
+
+    type_str(&mut s, "/help");
+    assert!(s.input_is_command());
+    assert!(title_row(&mut s).contains(word), "{}", title_row(&mut s));
+
+    // Not a command, slash or no slash: no word.
+    s.input.clear();
+    type_str(&mut s, "/nosuchcommand at all");
+    assert!(!s.input_is_command(), "the premise");
+    assert!(!title_row(&mut s).contains(word), "{}", title_row(&mut s));
+
+    // Every other mode says it with the colour, and the title is as it was.
+    s.input.clear();
+    s.palette = Palette::default();
+    type_str(&mut s, "/help");
+    assert!(s.input_is_command());
+    assert!(!title_row(&mut s).contains(word), "{}", title_row(&mut s));
+}

@@ -14,7 +14,7 @@ use uuid::Uuid;
 
 use crate::entities::profile::ProfileSummary;
 use crate::shared::theme::Palette;
-use crate::shared::ui::ListScroll;
+use crate::shared::ui::{ListScroll, mark_selected};
 
 /// Action the overlay asks the layer above to perform.
 #[derive(Debug, Clone, PartialEq)]
@@ -111,9 +111,14 @@ impl ProfileListState {
                 )))
             })
             .collect();
-        let list = List::new(items)
-            .block(block)
-            .highlight_style(Style::new().reversed());
+        // Reverse video is all that says which profile is selected — so the
+        // monochrome mode, which has none, gets a marker (spec §11.6).
+        let list = mark_selected(
+            List::new(items)
+                .block(block)
+                .highlight_style(Style::new().reversed()),
+            palette,
+        );
         self.scroll.render(
             frame,
             list,
@@ -180,6 +185,43 @@ mod tests {
         s.on_key(key(KeyCode::Down));
         s.on_key(key(KeyCode::Down)); // can't go past the last
         assert_eq!(s.selected_id(), Some(s.profiles[1].id));
+    }
+
+    fn drawn(s: &mut ProfileListState, palette: &Palette) -> Vec<String> {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let mut term = Terminal::new(TestBackend::new(60, 12)).unwrap();
+        term.draw(|f| s.render(f, f.area(), palette, ru())).unwrap();
+        crate::shared::ui::tests::buffer_rows(term.backend().buffer())
+    }
+
+    /// Reverse video is all that says which profile is selected, and the
+    /// monochrome mode has none: the selected row gets a marker, and the
+    /// marker follows the selection (spec §11.6).
+    #[test]
+    fn the_selected_profile_is_marked_where_nothing_else_says_it() {
+        let mut s = ProfileListState::new(vec![profile("Alpha"), profile("Beta")]);
+        let row_of = |rows: &[String], name: &str| -> String {
+            rows.iter()
+                .find(|r| r.contains(name))
+                .unwrap_or_else(|| panic!("{name} is not drawn"))
+                .clone()
+        };
+
+        let mono = Palette::mono();
+        let rows = drawn(&mut s, &mono);
+        assert!(row_of(&rows, "Alpha").contains("│› Alpha"), "{rows:#?}");
+        assert!(row_of(&rows, "Beta").contains("│  Beta"), "{rows:#?}");
+
+        s.on_key(key(KeyCode::Down));
+        let rows = drawn(&mut s, &mono);
+        assert!(row_of(&rows, "Alpha").contains("│  Alpha"), "{rows:#?}");
+        assert!(row_of(&rows, "Beta").contains("│› Beta"), "{rows:#?}");
+
+        // Every other mode draws the rows it always drew.
+        let rows = drawn(&mut s, &Palette::default());
+        assert!(row_of(&rows, "Alpha").contains("│Alpha"), "{rows:#?}");
+        assert!(row_of(&rows, "Beta").contains("│Beta"), "{rows:#?}");
     }
 
     #[test]

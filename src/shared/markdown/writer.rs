@@ -74,6 +74,12 @@ pub(super) struct Writer {
     /// block's background is squared off into a rectangle once its width is
     /// known, i.e. at [`Writer::end_codeblock`] — see [`pad_code_block`].
     code_start: Option<usize>,
+    /// The monochrome mode only: the lines that carry line prefixes, as
+    /// `(index in [`Writer::lines`], how many prefix spans lead it)` —
+    /// [`Writer::finish`] wraps them with the prefix on every row. An index
+    /// stays valid because in that mode nothing re-lays the lines out
+    /// ([`pad_code_block`], the one thing that does, is not called).
+    hanging: Vec<(usize, usize)>,
 }
 
 impl Writer {
@@ -99,7 +105,26 @@ impl Writer {
             mermaid: None,
             codeblock_closed: true,
             code_start: None,
+            hanging: Vec::new(),
         }
+    }
+
+    /// The rendered lines. In the monochrome mode the quoted ones are wrapped
+    /// here, to the panel width, with their `> ` on every row: a quote's
+    /// wrapped rows are told from the prose around it by dim italic, and
+    /// where that is stripped from the frame the prefix is all there is
+    /// (spec §11.6). In every other mode the lines leave as they are and the
+    /// feed wraps them.
+    pub(super) fn finish(mut self) -> Vec<Line<'static>> {
+        // Last to first, so the indexes ahead stay where they were recorded.
+        for (at, prefixes) in std::mem::take(&mut self.hanging).into_iter().rev() {
+            let mut line = self.lines.remove(at);
+            let content = line.spans.split_off(prefixes.min(line.spans.len()));
+            let prefix = std::mem::replace(&mut line.spans, content);
+            let rows = wrap::wrap_hanging(&prefix, &line, self.width);
+            self.lines.splice(at..at, rows);
+        }
+        self.lines
     }
 
     /// Runs the event stream with byte ranges (`Parser::into_offset_iter`
@@ -188,9 +213,9 @@ impl Writer {
             Tag::CodeBlock(kind) => self.start_codeblock(kind),
             Tag::List(start_index) => self.start_list(start_index),
             Tag::Item => self.start_item(),
-            Tag::Emphasis => self.push_inline_style(Style::new().italic()),
-            Tag::Strong => self.push_inline_style(Style::new().bold()),
-            Tag::Strikethrough => self.push_inline_style(Style::new().crossed_out()),
+            Tag::Emphasis => self.open_inline(Style::new().italic(), EMPHASIS),
+            Tag::Strong => self.open_inline(Style::new().bold(), STRONG),
+            Tag::Strikethrough => self.open_inline(Style::new().crossed_out(), STRIKETHROUGH),
             Tag::Link {
                 link_type,
                 dest_url,
@@ -233,9 +258,9 @@ impl Writer {
             TagEnd::CodeBlock => self.end_codeblock(),
             TagEnd::HtmlBlock => self.end_html_block(),
             TagEnd::List(_) => self.end_list(),
-            TagEnd::Emphasis | TagEnd::Strong | TagEnd::Strikethrough => {
-                self.inline_styles.pop();
-            }
+            TagEnd::Emphasis => self.close_inline(EMPHASIS),
+            TagEnd::Strong => self.close_inline(STRONG),
+            TagEnd::Strikethrough => self.close_inline(STRIKETHROUGH),
             TagEnd::Link => self.end_link(),
             TagEnd::Image => self.end_image(),
             // Reset "marker open": in a TIGHT list, an item's content is
@@ -400,11 +425,12 @@ impl Writer {
             let theme = code_theme(&self.palette);
             self.code_highlighter = Some(HighlightLines::new(syntax, theme));
         } else {
-            self.line_styles.push(code_style());
+            self.line_styles.push(self.plain_code_style());
             // From here on the lines belong to the block's background
             // rectangle (squared off in `end_codeblock`, once its width is
             // known) — the fences included, they are its top and bottom edge.
-            self.code_start = Some(self.lines.len());
+            // The monochrome mode has no background to square off.
+            self.code_start = (!self.palette.mono).then_some(self.lines.len());
         }
         self.push_line(fence_line(format!("```{info}")));
         // The block's content must start on a new line under the opening
@@ -449,7 +475,7 @@ impl Writer {
     /// golden test `mermaid_fallback_matches_disabled_render`.
     fn emit_fenced_source(&mut self, info: &str, src: &str) {
         let start = self.lines.len();
-        self.line_styles.push(code_style());
+        self.line_styles.push(self.plain_code_style());
         self.push_line(fence_line(format!("```{info}")));
         for line in src.lines() {
             self.push_line(Line::default());
@@ -457,7 +483,20 @@ impl Writer {
         }
         self.push_line(fence_line("```".to_string()));
         self.line_styles.pop();
-        pad_code_block(&mut self.lines, start, self.width);
+        if !self.palette.mono {
+            pad_code_block(&mut self.lines, start, self.width);
+        }
+    }
+
+    /// The line style of an unhighlighted code block: the reversed rectangle,
+    /// and nothing in the monochrome mode — reverse video is kept there for a
+    /// selection and a search match, and the block has its fences.
+    fn plain_code_style(&self) -> Style {
+        if self.palette.mono {
+            Style::default()
+        } else {
+            code_style()
+        }
     }
 
     pub(super) fn text(&mut self, text: CowStr<'_>) {
@@ -501,10 +540,14 @@ impl Writer {
     }
 
     pub(super) fn code(&mut self, code: CowStr<'_>) {
-        self.push_span(Span::styled(
-            code.into_string(),
-            inline_code_style(&self.palette),
-        ));
+        // The chip is a colour pair; without colours the backticks the parser
+        // took off are what says "code" (the monochrome mode).
+        let text = if self.palette.mono {
+            format!("{INLINE_CODE}{code}{INLINE_CODE}")
+        } else {
+            code.into_string()
+        };
+        self.push_span(Span::styled(text, inline_code_style(&self.palette)));
     }
 
     /// Block formula `$$…$$`: each line of the converted content — on its own
@@ -623,12 +666,44 @@ impl Writer {
         self.inline_styles.push(merged);
     }
 
+    /// Opens an inline style — emphasis, strong, strikethrough. `marker` is
+    /// what the source wrapped the text in, which the parser took off: in the
+    /// monochrome mode it goes back in, because the style is all that said
+    /// the text was struck out, and is stripped from the frame.
+    fn open_inline(&mut self, style: Style, marker: &'static str) {
+        self.push_inline_style(style);
+        self.push_marker(marker);
+    }
+
+    /// Closes what [`Writer::open_inline`] opened.
+    fn close_inline(&mut self, marker: &'static str) {
+        self.push_marker(marker);
+        self.inline_styles.pop();
+    }
+
+    fn push_marker(&mut self, marker: &'static str) {
+        if !self.palette.mono {
+            return;
+        }
+        // An opening marker is the first thing of its text, and starts the
+        // line the text would have started (see `text`).
+        if self.needs_newline && !self.in_table_cell() {
+            self.push_line(Line::default());
+            self.needs_newline = false;
+        }
+        self.push_span(Span::styled(marker, self.current_style()));
+    }
+
     pub(super) fn push_line(&mut self, line: Line<'static>) {
         let style = self.line_styles.last().copied().unwrap_or_default();
         let mut line = line.patch_style(style);
         // Line prefixes (quotes) go at the front, in reverse stack order.
         for prefix in self.line_prefixes.iter().rev().cloned() {
             line.spans.insert(0, prefix);
+        }
+        if self.palette.mono && !self.line_prefixes.is_empty() {
+            self.hanging
+                .push((self.lines.len(), self.line_prefixes.len()));
         }
         self.lines.push(line);
     }
@@ -648,6 +723,14 @@ impl Writer {
         }
     }
 }
+
+/// The markers of the inline styles, as the monochrome mode puts them back
+/// ([`Writer::open_inline`], [`Writer::code`]) — the ones CommonMark and GFM
+/// write them with.
+const EMPHASIS: &str = "*";
+const STRONG: &str = "**";
+const STRIKETHROUGH: &str = "~~";
+const INLINE_CODE: &str = "`";
 
 /// A code block's fence line (` ```lang ` / ` ``` `). `DIM` sits on the
 /// **span**, not on the line: the line style carries the block's background
@@ -1218,5 +1301,228 @@ mod tests {
             "dollars not stripped from a real formula: {c}"
         );
         assert!(c.contains("x²"), "{c}");
+    }
+
+    // ---- the monochrome mode (spec §11.6, docs/theme-modes.md §9) ----
+
+    /// Render lines as strings, under a given palette.
+    fn rows_in(input: &str, width: usize, palette: &Palette) -> Vec<String> {
+        render(input, width, palette)
+            .lines
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect()
+    }
+
+    /// Bold, italic, strikethrough and inline code are styling and nothing
+    /// else: the parser takes their markers off. Where no styling reaches the
+    /// screen the markers go back in — struck-out text that read as stated
+    /// would say the opposite of what was written.
+    #[test]
+    fn inline_styles_are_said_by_their_markers_without_styling() {
+        let md = "a **bold** and *italic* and ~~gone~~ and `code` word";
+        assert_eq!(
+            rows_in(md, 80, &Palette::mono()).join("\n").trim(),
+            "a **bold** and *italic* and ~~gone~~ and `code` word"
+        );
+        assert_eq!(
+            rows_in(md, 80, &Palette::default()).join("\n").trim(),
+            "a bold and italic and gone and code word",
+            "every other mode says them with styling, as before"
+        );
+
+        // Nested, and written the other way: what goes back in is the
+        // canonical marker, inside out.
+        let nested = rows_in("__bold _both_ bold__", 80, &Palette::mono()).join("");
+        assert_eq!(nested.trim(), "**bold *both* bold**");
+    }
+
+    /// The markers reach every place inline text does — a heading, a list
+    /// item (tight and loose), a quote, a table cell — and a table is still
+    /// laid out to what its cells now hold.
+    #[test]
+    fn the_markers_reach_wherever_inline_text_does() {
+        let mono = Palette::mono();
+        let text = |md: &str| rows_in(md, 60, &mono).join("\n");
+
+        assert!(text("# a **loud** title").contains("# a **loud** title"));
+        let tight = text("- **first**\n- second");
+        assert!(tight.contains("- **first**"), "{tight}");
+        let loose = text("1. **first**\n\n2. second");
+        assert!(loose.contains("1. **first**"), "{loose}");
+        assert!(text("> quoted *softly*").contains("> quoted *softly*"));
+        // The marker opens its text's line even right after a block — where
+        // no paragraph opens it: next to a block formula, and in a tight list
+        // item that holds a code block. Left on the line before, the marker
+        // would be parted from the text it marks.
+        for md in ["$$x$$**next**", "- item\n  ```\n  code\n  ```\n  **next**"] {
+            let after = text(md);
+            assert!(
+                after.lines().any(|l| l.trim() == "**next**"),
+                "the marker and its text on one line of their own: {md:?} -> {after:?}"
+            );
+        }
+
+        let table = rows_in(
+            "| name | note |\n|---|---|\n| `x` | **yes** |\n| longer | no |",
+            60,
+            &mono,
+        );
+        let cells: Vec<&String> = table.iter().filter(|r| r.contains('│')).collect();
+        assert!(cells.iter().any(|r| r.contains("`x`")), "{table:#?}");
+        assert!(cells.iter().any(|r| r.contains("**yes**")), "{table:#?}");
+        let widths: Vec<usize> = table
+            .iter()
+            .filter(|r| !r.trim().is_empty())
+            .map(|r| wrap::str_width(r))
+            .collect();
+        assert!(
+            widths.windows(2).all(|w| w[0] == w[1]),
+            "the table is a rectangle with the markers in it: {table:#?}"
+        );
+    }
+
+    /// A quote's wrapped rows are told from the prose around it by dim
+    /// italic. Without it the `> ` is all there is, so it is on every row —
+    /// each quote level's — and the rows fit the panel.
+    #[test]
+    fn a_quote_keeps_its_prefix_on_every_row_without_styling() {
+        let quote = "a quotation long enough that it has to be wrapped onto several rows";
+        let width = 24;
+        let rows = rows_in(&format!("> {quote}"), width, &Palette::mono());
+        let quoted: Vec<&String> = rows.iter().filter(|r| !r.is_empty()).collect();
+        assert!(quoted.len() > 2, "the premise: it wraps: {rows:#?}");
+        for row in &quoted {
+            assert!(row.starts_with("> "), "{row:?}");
+            assert!(wrap::str_width(row) <= width, "{row:?}");
+        }
+        let text: Vec<&str> = quoted
+            .iter()
+            .flat_map(|r| r.trim_start_matches("> ").split_whitespace())
+            .collect();
+        assert_eq!(text, quote.split_whitespace().collect::<Vec<_>>());
+
+        // Two paragraphs that both wrap: the second is found where it is
+        // after the first has grown — the lines are wrapped last to first.
+        let twice = rows_in(&format!("> {quote}\n>\n> {quote}"), width, &Palette::mono());
+        let quoted: Vec<&String> = twice.iter().filter(|r| !r.is_empty()).collect();
+        for row in &quoted {
+            assert!(row.starts_with('>'), "{row:?}");
+            assert!(wrap::str_width(row) <= width, "{row:?} in {twice:#?}");
+        }
+        let text: Vec<&str> = quoted
+            .iter()
+            .flat_map(|r| r.trim_start_matches('>').split_whitespace())
+            .collect();
+        let both = format!("{quote} {quote}");
+        assert_eq!(text, both.split_whitespace().collect::<Vec<_>>());
+
+        let nested = rows_in(&format!("> outer\n>\n> > {quote}"), width, &Palette::mono());
+        let inner: Vec<&String> = nested.iter().filter(|r| r.contains("> > ")).collect();
+        assert!(inner.len() > 2, "{nested:#?}");
+        assert!(inner.iter().all(|r| r.starts_with("> > ")), "{nested:#?}");
+        assert!(inner.iter().all(|r| wrap::str_width(r) <= width));
+
+        // Every other mode leaves the wrap to the feed, as before: one line.
+        let plain = rows_in(&format!("> {quote}"), width, &Palette::default());
+        assert!(plain.contains(&format!("> {quote}")), "{plain:#?}");
+    }
+
+    /// An unhighlighted code block is a reversed rectangle. Reverse video is
+    /// kept for a selection and a search match, so the block is left to its
+    /// fences: no reverse, and no padding squaring off a background that is
+    /// not there.
+    #[test]
+    fn a_plain_code_block_is_left_to_its_fences_without_styling() {
+        let md = "```nolang\nshort\na longer line of it\n```";
+        let reversed = |text: &Text<'_>| {
+            text.lines.iter().any(|l| {
+                l.style.add_modifier.contains(Modifier::REVERSED)
+                    || l.spans
+                        .iter()
+                        .any(|s| s.style.add_modifier.contains(Modifier::REVERSED))
+            })
+        };
+        let plain = render(md, 40, &Palette::default());
+        assert!(reversed(&plain), "the premise: the block is reversed");
+
+        let mono = render(md, 40, &Palette::mono());
+        assert!(!reversed(&mono));
+        let rows = rows_in(md, 40, &Palette::mono());
+        assert_eq!(rows, ["```nolang", "short", "a longer line of it", "```"]);
+    }
+
+    /// The same block by the other road: a ```mermaid block that could not be
+    /// drawn falls back to its source, through a code path of its own.
+    #[test]
+    fn a_mermaid_fallback_is_left_to_its_fences_without_styling() {
+        let md = "```mermaid
+not a diagram at all
+```";
+        let opts = RenderOpts {
+            render_mermaid: true,
+            ..Default::default()
+        };
+        let rows = |palette: &Palette| -> Vec<String> {
+            render_with(md, 40, palette, opts)
+                .lines
+                .iter()
+                .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+                .collect()
+        };
+        let mono = render_with(md, 40, &Palette::mono(), opts);
+        assert!(
+            mono.lines
+                .iter()
+                .all(|l| !l.style.add_modifier.contains(Modifier::REVERSED)),
+            "{mono:?}"
+        );
+        assert_eq!(
+            rows(&Palette::mono()),
+            ["```mermaid", "not a diagram at all", "```"]
+        );
+        // The premise: elsewhere the fallback is the padded rectangle.
+        assert!(rows(&Palette::default()).iter().any(|r| r.ends_with(' ')));
+    }
+
+    /// The wrap of the quoted lines is done over the finished list, by index
+    /// — so nothing may have moved a line in between. A document with one of
+    /// everything reads the same in both modes, markers and padding aside.
+    #[test]
+    fn the_monochrome_render_is_the_same_document_in_the_same_order() {
+        let md = "\
+# Title
+
+Prose with **bold**.
+
+> quoted first
+>
+> ```nolang
+> code in a quote
+> ```
+>
+> quoted last
+
+- item one
+- item two
+
+| a | b |
+|---|---|
+| 1 | 2 |
+
+```rust
+fn main() {}
+```
+
+> a second quote
+
+The end.";
+        let normal = |palette: &Palette| -> Vec<String> {
+            rows_in(md, 120, palette)
+                .into_iter()
+                .map(|r| r.replace("**", "").trim_end().to_string())
+                .collect()
+        };
+        assert_eq!(normal(&Palette::mono()), normal(&Palette::default()));
     }
 }

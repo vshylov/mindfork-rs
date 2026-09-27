@@ -9,10 +9,11 @@ use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Clear, List, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap,
+    Clear, HighlightSpacing, List, ListState, Paragraph, Scrollbar, ScrollbarOrientation,
+    ScrollbarState, Wrap,
 };
 
-use crate::shared::theme::Palette;
+use crate::shared::theme::{MONO_MARK, Palette};
 
 /// Dims the whole screen (the `DIM` modifier on every buffer cell), so a popup
 /// drawn on top doesn't blend into the background. Call **before**
@@ -71,6 +72,63 @@ pub fn paint_canvas(buf: &mut Buffer, palette: &Palette) {
         if cell.fg == Color::Reset {
             cell.fg = palette.text;
         }
+    }
+}
+
+/// Takes every colour and every text attribute off a **finished** frame — the
+/// monochrome mode (spec §11.6, docs/theme-modes.md §9). What is left is the
+/// terminal's own two colours, and reverse video on the cells a widget drew
+/// on [`MONO_MARK`]: a text selection and a search match, the two things with
+/// no glyph to fall back on. In any other mode nothing is touched.
+///
+/// A pass for the reason [`paint_canvas`] is one, only more so: attributes
+/// never went through the palette at all — widgets set bold, dim, italic,
+/// underline and reverse directly — and the logo and highlighted code bring
+/// colours of their own. Stripping the frame is the one way that cannot miss
+/// any of them, including the ones not written yet.
+///
+/// Reverse video is opt-in **by name**: a popup's `reversed()` row and an
+/// unhighlighted code block lose theirs here like everything else. Which is
+/// why the pass is only half of the mode — where styling was the only thing
+/// saying something, the widget has to say it with a glyph
+/// ([`Palette::mono`]).
+pub fn strip_styles(buf: &mut Buffer, palette: &Palette) {
+    if !palette.mono {
+        return;
+    }
+    for cell in buf.content.iter_mut() {
+        let marked = cell.bg == MONO_MARK;
+        cell.fg = Color::Reset;
+        cell.bg = Color::Reset;
+        cell.underline_color = Color::Reset;
+        cell.modifier = if marked {
+            Modifier::REVERSED
+        } else {
+            Modifier::empty()
+        };
+    }
+}
+
+/// The passes over a finished frame, in one call: the canvas of the full
+/// mode, the stripping of the monochrome one. Each is a no-op outside its
+/// mode, and a palette is never in both. Call it **last** — after the screen
+/// and after any overlay.
+pub fn finish_frame(buf: &mut Buffer, palette: &Palette) {
+    paint_canvas(buf, palette);
+    strip_styles(buf, palette);
+}
+
+/// Gives a list the marker of its selected row where the mode needs one
+/// ([`Palette::selected_mark`]): the rows that say which one is selected by
+/// styling alone — a `highlight_style` and nothing else — say it with a
+/// glyph in the monochrome mode. Every row gives up the marker's width, so
+/// the list does not shift as the selection moves.
+pub fn mark_selected<'a>(list: List<'a>, palette: &Palette) -> List<'a> {
+    match palette.selected_mark() {
+        Some(mark) => list
+            .highlight_symbol(mark)
+            .highlight_spacing(HighlightSpacing::Always),
+        None => list,
     }
 }
 
@@ -635,7 +693,7 @@ pub fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
@@ -1057,6 +1115,19 @@ mod tests {
         .unwrap();
     }
 
+    /// A buffer as the rows of text it shows — for the tests that read what a
+    /// widget drew, here and in the widgets.
+    pub(crate) fn buffer_rows(buf: &Buffer) -> Vec<String> {
+        let area = buf.area;
+        (area.top()..area.bottom())
+            .map(|y| {
+                (area.left()..area.right())
+                    .map(|x| buf[(x, y)].symbol())
+                    .collect()
+            })
+            .collect()
+    }
+
     /// A small frame holding one of everything the pass has to tell apart: bare
     /// text, a role colour, a selection backdrop, reverse video, a wide glyph
     /// and empty cells.
@@ -1151,6 +1222,123 @@ mod tests {
         assert_eq!(buf[(3, 1)].bg, Color::Reset, "the premise: Clear resets");
         paint_canvas(&mut buf, &palette);
         assert!(buf.content.iter().all(|c| c.bg != Color::Reset));
+    }
+
+    #[test]
+    fn the_monochrome_pass_leaves_nothing_but_the_mark() {
+        use crate::shared::theme::MONO_MARK;
+        use ratatui::widgets::Widget;
+        let palette = Palette::mono();
+        let mut buf = mixed_frame(&palette);
+        // What the two marks draw, on top of whatever styling was under them
+        // — and an attribute the frame above does not have.
+        Paragraph::new(Line::from(vec![
+            Span::styled(
+                "m",
+                palette.search_match(Style::new().bold().fg(Color::Red)),
+            ),
+            Span::styled("s", palette.selection(Style::new().underlined())),
+            Span::styled("u", Style::new().underlined().underline_color(Color::Red)),
+        ]))
+        .render(Rect::new(8, 2, 3, 1), &mut buf);
+        let drawn = buf.clone();
+        assert_eq!(drawn[(8, 2)].bg, MONO_MARK, "the premise: a mark is drawn");
+        assert!(drawn[(4, 1)].modifier.contains(Modifier::REVERSED));
+
+        strip_styles(&mut buf, &palette);
+
+        for (before, after) in drawn.content.iter().zip(&buf.content) {
+            let what = before.symbol();
+            assert_eq!(after.symbol(), what, "the text is not the pass's");
+            assert_eq!(after.fg, Color::Reset, "{what:?}");
+            assert_eq!(after.bg, Color::Reset, "{what:?}");
+            assert_eq!(after.underline_color, Color::Reset, "{what:?}");
+            let want = if before.bg == MONO_MARK {
+                Modifier::REVERSED
+            } else {
+                Modifier::empty()
+            };
+            assert_eq!(after.modifier, want, "{what:?}");
+        }
+        // By name, so a vacuous loop cannot pass for them: the two marks are
+        // reverse video and nothing else…
+        assert_eq!(buf[(8, 2)].modifier, Modifier::REVERSED, "a search match");
+        assert_eq!(buf[(9, 2)].modifier, Modifier::REVERSED, "a selection");
+        // …and reverse video a widget set by hand is gone with the rest.
+        assert_eq!(buf[(4, 1)].modifier, Modifier::empty(), "a popup's row");
+        assert_eq!(buf[(0, 1)].bg, Color::Reset, "the selection backdrop");
+    }
+
+    #[test]
+    fn only_the_monochrome_mode_is_stripped() {
+        let mut palettes = vec![Palette::default()];
+        palettes.extend(crate::shared::theme::FULL_THEMES.map(Palette::full));
+        for palette in palettes {
+            let drawn = mixed_frame(&palette);
+            let mut passed = drawn.clone();
+            strip_styles(&mut passed, &palette);
+            assert_eq!(passed, drawn);
+            // The two passes in one call: what the canvas does, and no more.
+            let mut finished = drawn.clone();
+            finish_frame(&mut finished, &palette);
+            let mut painted = drawn.clone();
+            paint_canvas(&mut painted, &palette);
+            assert_eq!(finished, painted);
+        }
+        let mono = Palette::mono();
+        let mut finished = mixed_frame(&mono);
+        finish_frame(&mut finished, &mono);
+        assert!(
+            finished
+                .content
+                .iter()
+                .all(|c| c.fg == Color::Reset && c.bg == Color::Reset && c.modifier.is_empty()),
+            "the monochrome palette paints no canvas and is stripped"
+        );
+    }
+
+    #[test]
+    fn a_popup_over_the_frame_is_stripped_with_it() {
+        // The pass runs after the overlay, so a dimmed background and a
+        // popup's own styling go the same way as the screen's.
+        use ratatui::widgets::{Block, Widget};
+        let palette = Palette::mono();
+        let mut buf = mixed_frame(&palette);
+        for cell in buf.content.iter_mut() {
+            cell.modifier |= Modifier::DIM; // what `dim_background` does
+        }
+        let popup = Rect::new(2, 0, 6, 3);
+        Clear.render(popup, &mut buf);
+        Block::bordered()
+            .border_style(palette.border_style(true))
+            .render(popup, &mut buf);
+        strip_styles(&mut buf, &palette);
+        assert!(buf.content.iter().all(|c| c.modifier.is_empty()));
+        assert!(buf.content.iter().all(|c| c.fg == Color::Reset));
+        assert_eq!(buf[(2, 0)].symbol(), "┌", "the border is what is left");
+    }
+
+    #[test]
+    fn a_list_gets_its_marker_only_in_the_monochrome_mode() {
+        use ratatui::widgets::StatefulWidget;
+        let rows = |palette: &Palette| -> Vec<String> {
+            let area = Rect::new(0, 0, 8, 3);
+            let mut buf = Buffer::empty(area);
+            let list = mark_selected(
+                List::new(["one", "two", "three"]).highlight_style(Style::new().reversed()),
+                palette,
+            );
+            let mut state = ListState::default().with_selected(Some(1));
+            StatefulWidget::render(list, area, &mut buf, &mut state);
+            buffer_rows(&buf)
+        };
+        assert_eq!(
+            rows(&Palette::default()),
+            ["one     ", "two     ", "three   "]
+        );
+        // The rows do not shift as the selection moves: the unselected ones
+        // are indented by the marker's width.
+        assert_eq!(rows(&Palette::mono()), ["  one   ", "› two   ", "  three "]);
     }
 
     #[test]

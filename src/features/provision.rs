@@ -577,20 +577,20 @@ mod tests {
         // Both spellings of the default: by name, and as "not chosen".
         set_by_path(&mut c, "interface.theme_mode", "system").unwrap();
         assert_eq!(c.interface.mode(), ThemeMode::System);
-        set_by_path(&mut c, "interface.theme_mode", "full").unwrap();
+        set_by_path(&mut c, "interface.theme_mode", "mono").unwrap();
+        assert_eq!(c.interface.mode(), ThemeMode::Mono);
         set_by_path(&mut c, "interface.theme_mode", "null").unwrap();
         assert_eq!(c.interface.theme_mode, None);
 
         let before = c.clone();
-        for wrong in ["mono", "Full", "7", "true"] {
+        for wrong in ["sepia", "Full", "7", "true"] {
             let err = set_by_path(&mut c, "interface.theme_mode", wrong).unwrap_err();
             let SetError::WrongType(detail) = err else {
                 panic!("{wrong}: {err:?}")
             };
-            assert!(
-                detail.contains("system") && detail.contains("full"),
-                "{wrong}: {detail}"
-            );
+            for mode in ThemeMode::ALL {
+                assert!(detail.contains(mode.name()), "{wrong}: {detail}");
+            }
         }
         assert_eq!(c, before, "a refused value changes nothing");
     }

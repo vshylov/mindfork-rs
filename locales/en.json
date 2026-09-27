@@ -736,6 +736,7 @@
   "ui.status.chip.imp": "imp",
   "ui.chat.input.generating": "input · generating… Esc cancel",
   "ui.chat.input.idle": "input · Enter send · {newline} newline",
+  "ui.chat.input.command": "command",
   "ui.chat.input.read_only": "subagent transcript · read-only · commands only",
   "ui.chat.read_only": "{what} is not available here: this is a subagent transcript, read-only. It belongs to the chat «{parent}» — work there; it goes away with the exchange that made it (Ctrl+E / Ctrl+R in that chat).",
   "ui.chat.read_only.sending": "Sending a message",
@@ -1274,6 +1275,7 @@
   "ui.settings.choice.theme_light": "light",
   "ui.settings.choice.mode_system": "system",
   "ui.settings.choice.mode_full": "full",
+  "ui.settings.choice.mode_mono": "monochrome",
   "ui.settings.choice.python_wasmer": "Wasmer sandbox",
   "ui.settings.choice.python_local": "local interpreter",
   "ui.settings.choice.video_res_low": "low (cheaper)",
@@ -1730,7 +1732,10 @@
   "ui.settings.desc.theme_mode": [
     "system draws text colours over your terminal's own background. full paints the",
     "whole window itself - the theme's background and text colour - so the contrast",
-    "is the theme's to keep, whatever the terminal is set to. Applied immediately."
+    "is the theme's to keep, whatever the terminal is set to. monochrome uses no",
+    "colours and no bold, italic or underline: marks say what styling said, and only",
+    "a text selection and a search match are inverted. It is also what the app starts",
+    "in when NO_COLOR is set and no mode was chosen here. Applied immediately."
   ],
   "ui.settings.desc.full_theme": [
     "The theme of the full colour mode: its own background with colours matched to",

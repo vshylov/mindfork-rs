@@ -1610,9 +1610,9 @@ pub enum Theme {
 /// [`lenient_theme_mode`], because a value this binary does not know must not
 /// fail the parse. `settings.json` is read with `unwrap_or_default()`, so one
 /// unparsable value costs the user the whole configuration — and this enum
-/// grows (`mono` is the track's next stage), which is exactly how an older
-/// binary meets such a value. For the same reason the modes are a field of
-/// their own rather than new values of [`Theme`].
+/// grows (`mono` joined it a stage after `full`), which is exactly how an
+/// older binary meets such a value. For the same reason the modes are a field
+/// of their own rather than new values of [`Theme`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ThemeMode {
@@ -1625,18 +1625,56 @@ pub enum ThemeMode {
     /// contrast is the theme's to guarantee. The theme is
     /// [`InterfaceSettings::full_theme`].
     Full,
+    /// No colours and no text attributes: the terminal's own two colours, and
+    /// nothing else (`shared/ui.rs::strip_styles`). What styling alone used to
+    /// say is said by a glyph; reverse video is kept for the two things that
+    /// have none to fall back on — a text selection and a search match. No
+    /// theme applies. The mode `NO_COLOR` starts the app in
+    /// ([`ThemeMode::for_environment`]).
+    Mono,
+}
+
+/// The mode in effect when the settings name none — decided by the
+/// environment, once, at start-up ([`set_environment_mode`]). Process-wide
+/// for the reason `shared/theme.rs::DETECTED_BACKGROUND` is: one fact about
+/// the process, read from render paths. Never set in a test binary, where it
+/// reads as [`ThemeMode::System`] whatever the environment holds — the tests
+/// take the `_under` seams of [`InterfaceSettings`] instead.
+static ENVIRONMENT_MODE: std::sync::OnceLock<ThemeMode> = std::sync::OnceLock::new();
+
+/// Records the environment's colour mode. Called once, from start-up; later
+/// calls are ignored.
+pub fn set_environment_mode(mode: ThemeMode) {
+    let _ = ENVIRONMENT_MODE.set(mode);
 }
 
 impl ThemeMode {
     /// Every mode, in the order the settings row cycles through them.
-    pub const ALL: [ThemeMode; 2] = [ThemeMode::System, ThemeMode::Full];
+    pub const ALL: [ThemeMode; 3] = [ThemeMode::System, ThemeMode::Full, ThemeMode::Mono];
 
     /// The name a mode has in `settings.json`.
     pub fn name(self) -> &'static str {
         match self {
             ThemeMode::System => "system",
             ThemeMode::Full => "full",
+            ThemeMode::Mono => "mono",
         }
+    }
+
+    /// The mode the environment asks for: monochrome when `NO_COLOR` is set
+    /// to anything but an empty string (no-color.org — the value itself means
+    /// nothing), the system mode otherwise. `no_color` is the variable as the
+    /// process found it.
+    pub fn for_environment(no_color: Option<&std::ffi::OsStr>) -> Self {
+        match no_color {
+            Some(value) if !value.is_empty() => ThemeMode::Mono,
+            _ => ThemeMode::System,
+        }
+    }
+
+    /// The mode in effect when none was chosen — see [`ENVIRONMENT_MODE`].
+    pub fn environment_default() -> Self {
+        ENVIRONMENT_MODE.get().copied().unwrap_or_default()
     }
 
     /// The mode by its `settings.json` name; `None` for one this binary does
@@ -1721,8 +1759,8 @@ pub struct InterfaceSettings {
     /// [`ThemeMode`] for why they are not new values here.
     pub theme: Theme,
     /// The colour mode, **when one was chosen** (spec §11.6). Absent — and
-    /// left out of the file — means "the default", which is what lets a
-    /// default depend on the environment (`NO_COLOR`, the track's stage 2)
+    /// left out of the file — means "the default", which is what lets the
+    /// default depend on the environment (`NO_COLOR` makes it monochrome)
     /// without overriding a choice made here. Read through [`Self::mode`],
     /// written through [`Self::set_mode`].
     #[serde(
@@ -1812,16 +1850,29 @@ impl InterfaceSettings {
         self.input_max_rows.clamp(1, INPUT_MAX_ROWS_LIMIT)
     }
 
-    /// The colour mode in effect: the chosen one, or the default.
+    /// The colour mode in effect: the chosen one, or the environment's
+    /// ([`ThemeMode::environment_default`]).
     pub fn mode(&self) -> ThemeMode {
-        self.theme_mode.unwrap_or_default()
+        self.mode_under(ThemeMode::environment_default())
     }
 
     /// Chooses a colour mode. The default is stored as **absence**, so going
     /// back to it — cycling the row round, or resetting it — returns to
-    /// following the default rather than pinning today's value of it.
+    /// following the environment rather than pinning today's value of it.
     pub fn set_mode(&mut self, mode: ThemeMode) {
-        self.theme_mode = (mode != ThemeMode::default()).then_some(mode);
+        self.set_mode_under(mode, ThemeMode::environment_default());
+    }
+
+    /// [`Self::mode`] for an explicitly given environment default. The seam
+    /// exists for the tests: the real default lives in a process-wide
+    /// `OnceLock`, which cannot hold two values in one test binary.
+    pub(crate) fn mode_under(&self, default: ThemeMode) -> ThemeMode {
+        self.theme_mode.unwrap_or(default)
+    }
+
+    /// [`Self::set_mode`] for an explicitly given environment default.
+    pub(crate) fn set_mode_under(&mut self, mode: ThemeMode, default: ThemeMode) {
+        self.theme_mode = (mode != default).then_some(mode);
     }
 }
 
@@ -3272,11 +3323,12 @@ mod tests {
 
     /// The reason the mode is parsed leniently. `settings.json` is loaded with
     /// `unwrap_or_default()`, so a value that fails the parse takes **every**
-    /// setting with it — and the next stage adds a mode this binary has never
-    /// heard of. The control arm is `theme`, a plain enum, which does fail.
+    /// setting with it — and the enum grows: `mono` was such a value to the
+    /// binary that only knew `full`. The control arm is `theme`, a plain enum,
+    /// which does fail.
     #[test]
     fn a_colour_mode_from_a_newer_version_does_not_cost_the_config() {
-        for foreign in [r#""mono""#, r#""FULL""#, "7", "true", r#"{"a":1}"#] {
+        for foreign in [r#""sepia""#, r#""FULL""#, "7", "true", r#"{"a":1}"#] {
             let json = format!(
                 r#"{{"max_tool_rounds":3,"interface":{{"theme":"dark","theme_mode":{foreign}}}}}"#
             );
@@ -3301,6 +3353,7 @@ mod tests {
     fn colour_modes_have_stable_names_and_cycle_both_ways() {
         assert_eq!(ThemeMode::System.name(), "system");
         assert_eq!(ThemeMode::Full.name(), "full");
+        assert_eq!(ThemeMode::Mono.name(), "mono");
         for mode in ThemeMode::ALL {
             assert_eq!(ThemeMode::from_name(mode.name()), Some(mode));
             assert_eq!(
@@ -3310,9 +3363,65 @@ mod tests {
             );
             assert_eq!(mode.cycle(1).cycle(-1), mode);
         }
+        // `full` stays one step from `system`, where it was before `mono`
+        // joined: a new mode goes to the end of the row.
         assert_eq!(ThemeMode::System.cycle(1), ThemeMode::Full);
-        assert_eq!(ThemeMode::System.cycle(-1), ThemeMode::Full, "wraps");
-        assert_eq!(ThemeMode::from_name("mono"), None);
+        assert_eq!(ThemeMode::Full.cycle(1), ThemeMode::Mono);
+        assert_eq!(ThemeMode::System.cycle(-1), ThemeMode::Mono, "wraps");
+        assert_eq!(ThemeMode::from_name("sepia"), None);
+    }
+
+    /// `NO_COLOR` (no-color.org): set to anything but an empty string it asks
+    /// for no colour, and the value itself means nothing — `0` and `false`
+    /// included.
+    #[test]
+    fn no_color_asks_for_monochrome_unless_it_is_empty() {
+        use std::ffi::OsStr;
+        assert_eq!(ThemeMode::for_environment(None), ThemeMode::System);
+        assert_eq!(
+            ThemeMode::for_environment(Some(OsStr::new(""))),
+            ThemeMode::System,
+            "an empty NO_COLOR is an unset one"
+        );
+        for value in ["1", "0", "false", "yes", " "] {
+            assert_eq!(
+                ThemeMode::for_environment(Some(OsStr::new(value))),
+                ThemeMode::Mono,
+                "{value:?}"
+            );
+        }
+        // Nothing sets the process-wide default in a test binary, so the
+        // tests do not depend on the environment they are run in.
+        assert_eq!(ThemeMode::environment_default(), ThemeMode::System);
+    }
+
+    /// Fork C (user's decision, 2026-09-27): the environment decides the mode
+    /// nobody chose, and a mode chosen in settings wins over it — which takes
+    /// `system` being *storable* once the default is something else.
+    #[test]
+    fn the_environment_decides_only_the_mode_nobody_chose() {
+        let mono = ThemeMode::Mono;
+        let mut i = InterfaceSettings::default();
+        assert_eq!(i.mode_under(mono), ThemeMode::Mono, "nothing chosen");
+
+        // Choosing `system` under `NO_COLOR` is a choice, and is written.
+        i.set_mode_under(ThemeMode::System, mono);
+        assert_eq!(i.theme_mode, Some(ThemeMode::System));
+        assert_eq!(i.mode_under(mono), ThemeMode::System);
+        assert_eq!(serde_json::to_value(&i).unwrap()["theme_mode"], "system");
+
+        // Going back to the environment's mode is going back to absence, so
+        // the file follows the environment again — here and without it.
+        i.set_mode_under(ThemeMode::Mono, mono);
+        assert_eq!(i.theme_mode, None);
+        assert_eq!(i.mode_under(ThemeMode::System), ThemeMode::System);
+
+        // A mode chosen without the variable holds when it appears.
+        i.set_mode_under(ThemeMode::Full, ThemeMode::System);
+        assert_eq!(i.mode_under(mono), ThemeMode::Full);
+        i.set_mode_under(ThemeMode::Mono, ThemeMode::System);
+        assert_eq!(i.theme_mode, Some(ThemeMode::Mono), "chosen, so written");
+        assert_eq!(i.mode_under(ThemeMode::System), ThemeMode::Mono);
     }
 
     /// `cloud_ref`/`cloud_mut` index per-provider arrays by [`CloudProvider::index`],

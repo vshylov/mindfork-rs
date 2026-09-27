@@ -32,8 +32,8 @@ evidence. Adding or closing an item is part of every task's documentation step
 the user on 2026-09-27). The pain: the app draws over whatever background the
 terminal has, so the contrast of its text is nobody's to guarantee, styling
 cannot be turned off, and a palette of one's own cannot be brought. Stage 1 —
-the full colour mode — is done and waits for its look in real terminals;
-monochrome and user themes follow (the bullet under *Feed and rendering*).
+the full colour mode — and stage 2 — the monochrome mode and `NO_COLOR` — are
+done; user themes are what is left (the bullet under *Feed and rendering*).
 
 The tracks this section carried before — the first public release, images,
 retry/backoff, the prompt-caching measurement and the attachment birth turn —
@@ -312,13 +312,17 @@ equal weight.
   Measured on Windows 11's console host (`tools/console_probe.py`): painted to
   the edges through every transition. Its go/no-go is what a probe cannot
   give — a look in Windows Terminal and one Linux terminal, by the checklist in
-  §8 of the plan. Next: **stage 2**, a
-  monochrome mode (no colours, no attributes; reverse video kept for a text
-  selection and a search match) and `NO_COLOR`; **stage 3**, user themes in
-  `data/themes/` with the missing roles fitted to the floors. Left open by
+  §8 of the plan. Stage 2 is done: the *monochrome* mode (no colours, no
+  attributes; reverse video kept for a text selection and a search match, a
+  glyph for everything else styling alone used to say) and `NO_COLOR`, which
+  starts the app in it when no mode was chosen. Next: **stage 3**, user themes
+  in `data/themes/` with the missing roles fitted to the floors. Left open by
   stage 1, pending that look: the margin a terminal keeps around its grid and
   the cursor's colour, neither of which is a cell the app can paint; a softer
-  light canvas.
+  light canvas. Left open by stage 2 (plan §9.5): a search in the feed for a
+  word that emphasis splits finds nothing in the monochrome mode; the hanging
+  gutter of thoughts and quotes is the monochrome mode's only — every mode
+  could have it.
 
 ### Input, keys and the terminal
 
@@ -454,7 +458,7 @@ equal weight.
   crates.io page links.
 - **Small things from the public-release audit** — **on demand**
   ([public-release-readiness.md §2.4](research/public-release-readiness.md),
-  "nice to have"): a "terminal too small" message (`NO_COLOR` moved to the
+  "nice to have"): a "terminal too small" message (`NO_COLOR` was done in the
   colour-modes track, stage 2); a port-in-use
   diagnosis for the managed server (only `setup --verify` refuses a busy port
   today); per-release debuginfo; the commit hash in `--version`; a demo

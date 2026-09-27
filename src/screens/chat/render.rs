@@ -232,6 +232,15 @@ impl ChatScreen {
                 && self.chat_links.is_none()
                 && self.confirm.is_none();
             let command = self.input_is_command();
+            // Whether `Enter` will run the text as a command is said by its
+            // colour; where there is none, by a word in the title — a `/…`
+            // that is not a command goes to the model as a message, so the
+            // slash alone does not answer it (spec §11.5, §11.6).
+            let input_title = if command && self.palette.mono {
+                format!("{} · {input_title}", self.loc.t("ui.chat.input.command"))
+            } else {
+                input_title
+            };
             self.input.render(
                 frame,
                 input_area,

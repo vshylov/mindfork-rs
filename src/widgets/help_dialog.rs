@@ -519,7 +519,8 @@ pub fn render_help(
 /// Tab strip for the help dialog: `About │ Hotkeys │ …`. The active tab sits on
 /// a muted backdrop, bold (like the selected settings tab); the `│` separator
 /// and the content are WGL4-safe. The dialog is always modal (in focus), so the
-/// active tab's highlight is always the "focused" one.
+/// active tab's highlight is always the "focused" one. In the monochrome mode
+/// the active tab is bracketed instead (`Palette::tab_label`).
 pub fn help_tab_strip(active: HelpTab, palette: &Palette, loc: &'static Locale) -> Line<'static> {
     let mut spans: Vec<Span<'static>> = vec![Span::raw(" ")];
     for (i, tab) in HelpTab::ALL.iter().enumerate() {
@@ -532,7 +533,10 @@ pub fn help_tab_strip(active: HelpTab, palette: &Palette, loc: &'static Locale) 
         } else {
             palette.muted_style()
         };
-        spans.push(Span::styled(format!(" {label} "), style));
+        spans.push(Span::styled(
+            palette.tab_label(label, *tab == active),
+            style,
+        ));
     }
     Line::from(spans)
 }
@@ -1277,6 +1281,33 @@ mod tests {
             out.push('\n');
         }
         out
+    }
+
+    /// The active tab sits on a backdrop, bold — and in the monochrome mode,
+    /// which has neither, in brackets. The strip is the same text otherwise,
+    /// column for column, so nothing moves when the tab changes (spec §11.6).
+    #[test]
+    fn the_active_tab_is_bracketed_where_there_is_no_backdrop() {
+        let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::En);
+        let text =
+            |line: &Line<'_>| -> String { line.spans.iter().map(|s| s.content.as_ref()).collect() };
+        let label = |tab: HelpTab| loc.t(tab.label_key());
+        let mono = Palette::mono();
+        let plain = text(&help_tab_strip(HelpTab::Hotkeys, &Palette::default(), loc));
+        assert!(!plain.contains('['), "{plain}");
+
+        for active in HelpTab::ALL {
+            let strip = text(&help_tab_strip(active, &mono, loc));
+            for tab in HelpTab::ALL {
+                let bracketed = strip.contains(&format!("[{}]", label(tab)));
+                assert_eq!(bracketed, tab == active, "{tab:?} in {strip}");
+            }
+            assert_eq!(
+                strip.replace(['[', ']'], " "),
+                plain,
+                "the brackets take the columns of the tab's own padding"
+            );
+        }
     }
 
     fn commands_tab_text() -> String {

@@ -28,6 +28,18 @@ use crate::shared::wrap;
 /// a space (redesign: "Role rails — colored ▌ in the gutter"). Width — 2 columns.
 const RAIL: &str = "▌ ";
 
+/// The rails of the **monochrome** mode (spec §11.6), where the bar has no
+/// colour to say whose message a row belongs to — or that it is the one a
+/// jump landed on — and says it by shape. All WGL4, all as wide as [`RAIL`].
+const RAIL_MONO_USER: &str = RAIL;
+const RAIL_MONO_ASSISTANT: &str = "║ ";
+const RAIL_MONO_QUIET: &str = "│ ";
+const RAIL_MONO_MARKED: &str = "█ ";
+
+/// The gutter of a foldable block's content — thoughts, the compaction
+/// summary: `│ ` before every source line.
+const GUTTER: &str = "│ ";
+
 /// Role of a feed item (a UI projection). A chat's own system message is
 /// never shown; `System` is the bubble a **sub-agent transcript** opens with —
 /// the persona its parent composed is the point of reading one (spec §11.3).
@@ -1042,7 +1054,7 @@ impl MessageFeed {
                 let from = at + self.cache[idx].content_from;
                 // `lines[from..]` is this block's tail: later blocks are not
                 // appended yet, so the slice cannot reach them.
-                highlight_block_tail(&mut lines, from, query, palette.accent, &mut found);
+                highlight_block_tail(&mut lines, from, query, palette, &mut found);
             }
         }
         self.matches = found;
@@ -1124,14 +1136,14 @@ fn highlight_block_tail(
     lines: &mut [Line<'static>],
     from: usize,
     query: &str,
-    accent: Color,
+    palette: &Palette,
     found: &mut Vec<usize>,
 ) {
     for (i, line) in lines[from..].iter_mut().enumerate() {
         // One entry per occurrence, in document order: a single line
         // can hold several, and next/prev steps through matches, not
         // lines.
-        for _ in 0..highlight_line(line, query, accent) {
+        for _ in 0..highlight_line(line, query, palette) {
             found.push(from + i);
         }
     }
@@ -1170,15 +1182,7 @@ fn build_message_block(
 ) -> BuiltBlock {
     // Content width under the rail (rail = 2 columns).
     let inner = width.saturating_sub(RAIL.chars().count()).max(1);
-    let rail = if marked {
-        palette.accent
-    } else {
-        match item.role {
-            FeedRole::User => palette.user,
-            FeedRole::Assistant => palette.assistant,
-            FeedRole::System | FeedRole::Note => palette.muted,
-        }
-    };
+    let rail = rail_of(item.role, marked, palette);
     // Build the message body without a rail, at width `inner`.
     let mut body: Vec<Line<'static>> = Vec::new();
     // Where the message's own content starts, i.e. past the role header. The
@@ -1214,7 +1218,14 @@ fn build_message_block(
                 palette,
             ));
             content_from = body.len();
-            push_thoughts(&mut body, &item.thoughts, view.thoughts, palette, loc);
+            push_thoughts(
+                &mut body,
+                &item.thoughts,
+                view.thoughts,
+                inner,
+                palette,
+                loc,
+            );
             push_assistant_body(&mut body, item, palette, inner, view.tools, opts, loc);
         }
         // The persona of a sub-agent transcript: headed like a role, body as
@@ -1266,7 +1277,7 @@ fn build_message_block(
         // where a per-row scan would no longer see it whole.
         links.extend(style_chat_links(&mut line, known_chats, palette));
         for wrapped in wrap::wrap_line(&line, inner) {
-            out.push(prepend_rail(wrapped, rail));
+            out.push(prepend_rail(wrapped, &rail));
         }
     }
     // A header-only block never reaches the index above.
@@ -1305,6 +1316,12 @@ struct BuiltBlock {
 /// Two consequences worth stating rather than discovering: an address inside a
 /// code block is styled too (it is on screen and it does resolve), and an
 /// address for a conversation that does not exist here is left as plain text.
+///
+/// In the monochrome mode the link style is stripped from the frame, and an
+/// address that resolves is told from one that does not by the angle brackets
+/// plain text has always put around a URI: `<chat://1a2b3c4d>`. The click map
+/// reads the drawn rows again ([`visible_link_hits`]) and finds the address
+/// inside them where it is.
 fn style_chat_links(line: &mut Line<'static>, known: &[Uuid], palette: &Palette) -> Vec<Uuid> {
     let (text, found) = chat_links_in(line, known);
     if found.is_empty() {
@@ -1314,7 +1331,49 @@ fn style_chat_links(line: &mut Line<'static>, known: &[Uuid], palette: &Palette)
     restyle_ranges(line, &text, &ranges, |style| {
         style.fg(palette.accent).add_modifier(Modifier::UNDERLINED)
     });
+    if palette.mono {
+        bracket_ranges(line, &text, &ranges);
+    }
     found.into_iter().map(|l| l.chat).collect()
+}
+
+/// Puts `<` before and `>` after every range of a line — the ranges being
+/// byte offsets into `text`, the line's spans concatenated, sorted and not
+/// overlapping. Each bracket takes the style of the span it lands in.
+fn bracket_ranges(line: &mut Line<'static>, text: &str, ranges: &[std::ops::Range<usize>]) {
+    let marks: Vec<(usize, &'static str)> = ranges
+        .iter()
+        .flat_map(|r| [(r.start, "<"), (r.end, ">")])
+        .collect();
+    let spans = std::mem::take(&mut line.spans);
+    let mut out: Vec<Span<'static>> = Vec::with_capacity(spans.len() + marks.len() * 2);
+    let mut next = 0usize;
+    // Byte offset of the current span within `text`.
+    let mut at = 0usize;
+    let mut last_style = Style::default();
+    for span in spans {
+        let (start, end) = (at, at + span.content.len());
+        at = end;
+        let mut from = start;
+        // A mark at a span's very end belongs to the next span's start — or,
+        // after the last span, to the tail below — so it is placed once.
+        while let Some(&(pos, mark)) = marks.get(next).filter(|(pos, _)| *pos < end) {
+            if pos > from {
+                out.push(Span::styled(text[from..pos].to_string(), span.style));
+            }
+            out.push(Span::styled(mark, span.style));
+            from = pos;
+            next += 1;
+        }
+        if end > from {
+            out.push(Span::styled(text[from..end].to_string(), span.style));
+        }
+        last_style = span.style;
+    }
+    for &(_, mark) in &marks[next..] {
+        out.push(Span::styled(mark, last_style));
+    }
+    line.spans = out;
 }
 
 /// One line's text (its spans concatenated) together with the resolvable
@@ -1387,8 +1446,9 @@ fn visible_link_hits(
     hits
 }
 
-/// Recolors every occurrence of `query` in one **rendered** line to `color`,
-/// splitting spans at the match boundaries.
+/// Marks every occurrence of `query` in one **rendered** line as a search
+/// match ([`Palette::search_match`] — the accent colour, or reverse video in
+/// the monochrome mode), splitting spans at the match boundaries.
 ///
 /// **Post-render matching** (fork **S3(b)**, docs/history/chat-search-stage2.md
 /// §1.4 and §4a): the FTS5 index addresses `Message.text`, but the renderer
@@ -1409,16 +1469,16 @@ fn visible_link_hits(
 /// - conversely, an occurrence in content the index does not cover (thoughts, a
 ///   tool card) *is* highlighted — it is on screen and it is the user's word.
 ///
-/// Only `fg` is patched: the span's markdown styling (bold, italic, code
+/// Only the mark is patched: the span's markdown styling (bold, italic, code
 /// coloring) has to survive, or highlighting a word inside a heading would
 /// flatten the heading.
-fn highlight_line(line: &mut Line<'static>, query: &str, color: Color) -> usize {
+fn highlight_line(line: &mut Line<'static>, query: &str, palette: &Palette) -> usize {
     let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
     let ranges = crate::features::chat_search::match_ranges(&text, query);
     if ranges.is_empty() {
         return 0;
     }
-    restyle_ranges(line, &text, &ranges, |style| style.fg(color));
+    restyle_ranges(line, &text, &ranges, |style| palette.search_match(style));
     ranges.len()
 }
 
@@ -1542,7 +1602,39 @@ fn role_header(text: &str, color: Color, model: Option<&str>, palette: &Palette)
     Line::from(spans)
 }
 
-/// Prepends the colored gutter rail [`RAIL`] to a line, preserving the source line's
+/// A message's rail: the glyph and its colour. The colour says the role — and
+/// the accent, that this is the message a jump landed on; in the monochrome
+/// mode, where no colour reaches the screen, the glyph says both.
+struct Rail {
+    glyph: &'static str,
+    color: Color,
+}
+
+fn rail_of(role: FeedRole, marked: bool, palette: &Palette) -> Rail {
+    let color = if marked {
+        palette.accent
+    } else {
+        match role {
+            FeedRole::User => palette.user,
+            FeedRole::Assistant => palette.assistant,
+            FeedRole::System | FeedRole::Note => palette.muted,
+        }
+    };
+    let glyph = if !palette.mono {
+        RAIL
+    } else if marked {
+        RAIL_MONO_MARKED
+    } else {
+        match role {
+            FeedRole::User => RAIL_MONO_USER,
+            FeedRole::Assistant => RAIL_MONO_ASSISTANT,
+            FeedRole::System | FeedRole::Note => RAIL_MONO_QUIET,
+        }
+    };
+    Rail { glyph, color }
+}
+
+/// Prepends the colored gutter rail ([`Rail`]) to a line, preserving the source line's
 /// style and alignment.
 ///
 /// The line-level style (`line.style`) is **folded into the content spans**, and
@@ -1550,9 +1642,12 @@ fn role_header(text: &str, color: Color, model: Option<&str>, palette: &Palette)
 /// on `───` dividers and table borders, see `shared::markdown`) would leak onto
 /// the rail itself (its span only sets `fg`, not touching modifiers), making it
 /// look a different color next to such lines.
-fn prepend_rail(line: Line<'static>, rail: Color) -> Line<'static> {
+fn prepend_rail(line: Line<'static>, rail: &Rail) -> Line<'static> {
     let mut spans = Vec::with_capacity(line.spans.len() + 1);
-    spans.push(Span::styled(RAIL.to_string(), Style::new().fg(rail)));
+    spans.push(Span::styled(
+        rail.glyph.to_string(),
+        Style::new().fg(rail.color),
+    ));
     // The span's final style = line.style.patch(span.style); we fold the same into
     // the span itself, so the rail doesn't depend on the line's style.
     for span in line.spans {
@@ -1624,21 +1719,40 @@ fn push_compaction_boundary(
         return;
     }
     for t in summary.lines() {
-        lines.push(Line::from(Span::styled(
-            format!("│ {t}"),
-            muted.add_modifier(Modifier::ITALIC),
-        )));
+        push_gutter_line(lines, t, width, palette);
     }
     // Keep the summary from gluing onto the role header of the message below.
     lines.push(Line::from(""));
 }
 
+/// One source line of a foldable block's content, on its [`GUTTER`] — muted
+/// italic, left for the feed to wrap.
+///
+/// In the monochrome mode the line is wrapped **here**, to `width`, with the
+/// gutter on every row: muted italic is what tells a wrapped row of a thought
+/// from the reply under it, and where that is stripped the gutter is all
+/// there is — so it cannot stop at the first row (spec §11.6).
+fn push_gutter_line(lines: &mut Vec<Line<'static>>, text: &str, width: usize, palette: &Palette) {
+    let style = palette.muted_style().add_modifier(Modifier::ITALIC);
+    if !palette.mono {
+        lines.push(Line::from(Span::styled(format!("{GUTTER}{text}"), style)));
+        return;
+    }
+    lines.extend(wrap::wrap_hanging(
+        &[Span::styled(GUTTER, style)],
+        &Line::from(Span::styled(text.to_string(), style)),
+        width,
+    ));
+}
+
 /// Adds the "thoughts" block: collapsed — a "pill" with a line count and a key hint,
-/// expanded — content on the `│` gutter.
+/// expanded — content on the `│` gutter ([`push_gutter_line`]; `width` is the
+/// content width under the rail).
 fn push_thoughts(
     lines: &mut Vec<Line<'static>>,
     thoughts: &str,
     expanded: bool,
+    width: usize,
     palette: &Palette,
     loc: &'static Locale,
 ) {
@@ -1668,10 +1782,7 @@ fn push_thoughts(
         muted.add_modifier(Modifier::ITALIC),
     )));
     for t in thoughts.lines() {
-        lines.push(Line::from(Span::styled(
-            format!("│ {t}"),
-            muted.add_modifier(Modifier::ITALIC),
-        )));
+        push_gutter_line(lines, t, width, palette);
     }
 }
 
@@ -4646,5 +4757,255 @@ mod tests {
             .iter()
             .map(|s| wrap::display_width(&s.content.chars().collect::<Vec<_>>()))
             .sum()
+    }
+
+    // ---- the monochrome mode (spec §11.6, docs/theme-modes.md §9) ----
+
+    /// The rail of every row of a built feed — its first span.
+    fn rails(lines: &[Line<'static>]) -> Vec<String> {
+        lines
+            .iter()
+            .filter(|l| l.spans.len() > 1)
+            .map(|l| l.spans[0].content.to_string())
+            .collect()
+    }
+
+    /// The rail's colour is what says whose message a row belongs to once its
+    /// header has scrolled away. Without colours the rail says it by shape —
+    /// and keeps its two columns, so nothing under it moves.
+    #[test]
+    fn the_rail_says_the_role_by_shape_where_it_has_no_colour() {
+        let one = |role: FeedRole, palette: &Palette| -> Vec<String> {
+            let messages = vec![msg(role, "first line\n\nsecond line", "")];
+            let mut rails = rails(&MessageFeed::new().build_lines(&messages, palette, 40, ru()));
+            rails.dedup();
+            rails
+        };
+        let mono = Palette::mono();
+        assert_eq!(one(FeedRole::User, &mono), [RAIL_MONO_USER]);
+        assert_eq!(one(FeedRole::Assistant, &mono), [RAIL_MONO_ASSISTANT]);
+        assert_eq!(one(FeedRole::System, &mono), [RAIL_MONO_QUIET]);
+        assert_eq!(one(FeedRole::Note, &mono), [RAIL_MONO_QUIET]);
+
+        let shapes = [
+            RAIL_MONO_USER,
+            RAIL_MONO_ASSISTANT,
+            RAIL_MONO_QUIET,
+            RAIL_MONO_MARKED,
+        ];
+        for (i, a) in shapes.iter().enumerate() {
+            assert_eq!(wrap::str_width(a), wrap::str_width(RAIL), "{a:?}");
+            for b in &shapes[i + 1..] {
+                assert_ne!(a, b, "two roles under one rail");
+            }
+        }
+
+        // Every other mode draws the one rail it always drew.
+        for role in [FeedRole::User, FeedRole::Assistant, FeedRole::Note] {
+            assert_eq!(one(role, &Palette::default()), [RAIL], "{role:?}");
+        }
+    }
+
+    /// The message a jump landed on is marked by its rail's colour — by the
+    /// rail's shape where there is none — and the word that was searched for
+    /// is reverse video inside it (fork A: a search match is one of the two
+    /// things that keep it).
+    #[test]
+    fn a_jump_marks_its_message_and_its_match_without_colour() {
+        use crate::shared::theme::MONO_MARK;
+        let palette = Palette::mono();
+        let messages = vec![
+            msg(FeedRole::User, "nothing to see", ""),
+            msg(FeedRole::Assistant, "here is the **marker** you wanted", ""),
+        ];
+        let mut feed = MessageFeed::new();
+        feed.focus_message(&messages, messages[1].message_ids[0], Some("marker"));
+        let lines = feed.build_lines(&messages, &palette, 60, ru());
+
+        let mut seen = rails(&lines);
+        seen.dedup();
+        assert_eq!(seen, [RAIL_MONO_USER, RAIL_MONO_MARKED]);
+
+        let marked: Vec<&Span> = lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .filter(|s| s.style.bg == Some(MONO_MARK))
+            .collect();
+        let text: String = marked.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(text, "marker");
+        for span in marked {
+            assert_ne!(
+                span.style.fg,
+                Some(palette.accent),
+                "the mark is the backdrop, the text keeps its own style"
+            );
+            assert!(
+                span.style.add_modifier.contains(Modifier::BOLD),
+                "what was under the match is left under it"
+            );
+        }
+        // …and the emphasis around the word is said in text.
+        assert!(
+            joined(&lines).contains("the **marker** you"),
+            "{}",
+            joined(&lines)
+        );
+    }
+
+    /// In-feed search (`Ctrl+F`) marks every match in the chat the same way.
+    #[test]
+    fn in_feed_search_marks_every_match_without_colour() {
+        use crate::shared::theme::MONO_MARK;
+        let messages = vec![
+            msg(FeedRole::User, "a needle here", ""),
+            msg(FeedRole::Assistant, "and a needle there", ""),
+        ];
+        let count = |palette: &Palette| -> (usize, usize) {
+            let mut feed = MessageFeed::new();
+            feed.set_search(Some("needle"));
+            let lines = feed.build_lines(&messages, palette, 60, ru());
+            let on_mark = lines
+                .iter()
+                .flat_map(|l| l.spans.iter())
+                .filter(|s| s.style.bg == Some(MONO_MARK) && s.content == "needle")
+                .count();
+            (on_mark, accented(&lines, palette).len())
+        };
+        assert_eq!(count(&Palette::mono()).0, 2);
+        assert_eq!(count(&Palette::default()), (0, 2), "colour, and no mark");
+    }
+
+    /// A `chat://` address that opens a chat is a link, one that does not is
+    /// text — and the link style is all that says which. Without it the
+    /// address is bracketed, and the click map still finds it.
+    #[test]
+    fn a_resolvable_address_is_bracketed_where_it_cannot_be_styled() {
+        let id = chat_uuid(1);
+        let unknown = "chat://0badc0de";
+        let text = format!(
+            "see {} and also {unknown}, then **{}**.",
+            crate::features::chat_links::uri(id),
+            crate::features::chat_links::uri(id),
+        );
+        let msgs = vec![msg(FeedRole::Assistant, &text, "")];
+        let built = |palette: &Palette| -> (String, Vec<Uuid>, MessageFeed) {
+            let mut feed = MessageFeed::new();
+            feed.set_known_chats(vec![id]);
+            let lines = feed.build_lines(&msgs, palette, 100, ru());
+            (flatten(&lines), feed.chat_links(), feed)
+        };
+
+        let (mono, links, _) = built(&Palette::mono());
+        assert!(mono.contains("see <chat://1a2b3c4d> and"), "{mono}");
+        assert!(
+            mono.contains("**<chat://1a2b3c4d>**."),
+            "inside a styled span, and at its very end: {mono}"
+        );
+        assert!(
+            mono.contains(&format!("also {unknown},")),
+            "an address that opens nothing stays as written: {mono}"
+        );
+        assert_eq!(mono.matches('<').count(), 2, "{mono}");
+        assert_eq!(mono.matches('>').count(), 2, "{mono}");
+        assert_eq!(links, vec![id], "the picker lists what the feed marks");
+
+        let (plain, links, _) = built(&Palette::default());
+        assert!(!plain.contains('<') && !plain.contains('>'), "{plain}");
+        assert_eq!(links, vec![id]);
+    }
+
+    /// The click map is rebuilt from the drawn rows, so the brackets around
+    /// an address shift where it is clicked — by the one column of the `<`.
+    #[test]
+    fn a_bracketed_address_is_clicked_where_it_is_drawn() {
+        let id = chat_uuid(1);
+        let text = format!("see {}", crate::features::chat_links::uri(id));
+        let msgs = vec![msg(FeedRole::Assistant, &text, "")];
+        let hit = |palette: &Palette| -> LinkHit {
+            let mut feed = MessageFeed::new();
+            feed.set_known_chats(vec![id]);
+            let lines = feed.build_lines(&msgs, palette, 60, ru());
+            let hits = visible_link_hits(&lines, Rect::new(0, 0, 60, 10), 0, &[id]);
+            assert_eq!(hits.len(), 1, "{hits:?}");
+            hits[0]
+        };
+        let (plain, mono) = (hit(&Palette::default()), hit(&Palette::mono()));
+        assert_eq!(mono.chat, id);
+        assert_eq!(mono.row, plain.row);
+        assert_eq!(mono.start, plain.start + 1, "past the opening bracket");
+        assert_eq!(mono.end - mono.start, plain.end - plain.start);
+    }
+
+    /// Muted italic is what tells a wrapped row of a thought from the reply
+    /// under it. Without it the gutter is all there is, so it is on every
+    /// row — and the rows still fit the panel.
+    #[test]
+    fn a_thought_keeps_its_gutter_on_every_row_without_styling() {
+        let thought =
+            "a long thought that certainly does not fit on a single row of a narrow panel";
+        let messages = vec![msg(FeedRole::Assistant, "the reply", thought)];
+        let built = |palette: &Palette, width: usize| -> Vec<String> {
+            let mut feed = MessageFeed::new();
+            feed.toggle_thoughts();
+            row_texts(&feed.build_lines(&messages, palette, width, ru()))
+        };
+        let width = 30;
+        let label = ru().t("ui.feed.thoughts");
+
+        let rows = built(&Palette::mono(), width);
+        let from = rows.iter().position(|r| r.contains(label)).unwrap() + 1;
+        let to = rows.iter().position(|r| r.contains("the reply")).unwrap();
+        let thought_rows: Vec<&String> = rows[from..to]
+            .iter()
+            .filter(|r| !r.trim().is_empty())
+            .collect();
+        assert!(thought_rows.len() > 2, "the premise: it wraps: {rows:#?}");
+        for row in &thought_rows {
+            assert!(
+                row.starts_with(&format!("{RAIL_MONO_ASSISTANT}{GUTTER}")),
+                "a row of the thought without its gutter: {row:?}"
+            );
+            assert!(wrap::str_width(row) <= width, "{row:?}");
+        }
+        let text: String = thought_rows
+            .iter()
+            .map(|r| r.trim_start_matches(&format!("{RAIL_MONO_ASSISTANT}{GUTTER}")))
+            .collect::<Vec<_>>()
+            .join("");
+        assert_eq!(
+            text.split_whitespace().collect::<Vec<_>>(),
+            thought.split_whitespace().collect::<Vec<_>>(),
+            "nothing of the thought is lost to the wrap"
+        );
+
+        // Every other mode builds the line it always built: one gutter, and
+        // the wrap left to the feed.
+        let rows = built(&Palette::default(), 200);
+        assert!(
+            rows.contains(&format!("{RAIL}{GUTTER}{thought}")),
+            "{rows:#?}"
+        );
+    }
+
+    /// The compaction summary is the same kind of block on the same gutter.
+    #[test]
+    fn the_compaction_summary_keeps_its_gutter_on_every_row_without_styling() {
+        let summary = "earlier the two of them discussed a great many things at length";
+        let messages = numbered(3);
+        let mut feed = MessageFeed::new();
+        feed.set_compaction(Some((messages[1].message_ids[0], summary.into())));
+        feed.toggle_thoughts();
+        let width = 28;
+        let rows = row_texts(&feed.build_lines(&messages, &Palette::mono(), width, ru()));
+        let at = divider_row(&rows).expect("the divider must be drawn");
+        let summary_rows: Vec<&String> = rows[at + 1..]
+            .iter()
+            .take_while(|r| !r.trim().is_empty())
+            .collect();
+        assert!(summary_rows.len() > 2, "the premise: it wraps: {rows:#?}");
+        for row in &summary_rows {
+            assert!(row.starts_with(GUTTER), "{row:?}");
+            assert!(wrap::str_width(row) <= width, "{row:?}");
+        }
     }
 }

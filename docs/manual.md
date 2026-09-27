@@ -280,8 +280,8 @@ Eight sections, and these four are the ones worth a visit early.
 Every field has a description under the list, and `/` opens a search across every
 setting in every section.
 
-**Colour mode.** *Interface → Colour mode* decides whose background the text
-sits on:
+**Colour mode.** *Interface → Colour mode* decides whose colours the screen is
+drawn in:
 
 - **system** (the default) — the app draws its colours over your terminal's own
   background. *Theme* is then `auto` (follows the terminal), `dark` or `light`.
@@ -290,10 +290,39 @@ sits on:
   text colour keeps a contrast of at least 4.5:1 against the background and
   against a selected row, and body text at least 7:1, whatever your terminal is
   set to. A translucent terminal background is covered in this mode.
+- **monochrome** — no colours, and no bold, italic, underline or dimmed text:
+  your terminal's own two colours and nothing else. There is no theme to pick.
+  For a terminal that draws attributes badly, an e-ink screen, a screen reader.
 
-Each mode remembers its own theme, and both apply as you pick them. What the
+Each mode remembers its own theme, and all apply as you pick them. What the
 app cannot paint is the margin your terminal keeps around its grid and the
 cursor's colour — those stay the terminal's.
+
+**What monochrome looks like.** Whatever the colours used to say is said with a
+mark instead:
+
+| You see | It means |
+|---|---|
+| `[Enter]`, `[F1]` | a key, in the hint bars |
+| `[Hotkeys]` among the tabs | the tab you are on |
+| `› ` before a row of a list | the selected row |
+| `▌` / `║` / `│` down the left of the feed | your message / the assistant's / a system message or a note |
+| `█` down the left of a message | the message a search or a link brought you to |
+| `**bold**`, `*italic*`, `~~struck out~~`, `` `code` `` | the markdown as it was written |
+| `<chat://1a2b3c4d>` | a reference that opens a chat (`Ctrl+L` lists them) |
+| `●` among `○` in the chat list | the chat that is open |
+| `(a title)` in the chat list | a chat shown only because one of its sub-agent transcripts matched the filter |
+| *command* in the input box's title | `Enter` will run the text as a command, not send it |
+
+Two things are shown in **reverse video**, because they have no mark to be
+shown with: the text you selected in an input box, and the matches of a search.
+Misspelled words are not marked in this mode; `Ctrl+G` on a word still offers
+the corrections.
+
+**`NO_COLOR`.** If the `NO_COLOR` environment variable is set (to anything but
+an empty string — [no-color.org](https://no-color.org)), the app starts in
+monochrome. A colour mode you chose in the settings wins over the variable: pick
+*system* there and the colours are back, with the variable still set.
 
 ## 9. Keys
 

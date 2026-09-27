@@ -22,8 +22,14 @@
 //! the palette is foregrounds only and the terminal supplies the background.
 //! In the *full* mode the palette also names a **canvas**
 //! ([`Palette::canvas`]), which `shared/ui.rs::paint_canvas` puts under every
-//! cell of the finished frame. [`Palette::for_interface`] is the one place
-//! that turns the settings into a palette.
+//! cell of the finished frame. In the *monochrome* mode
+//! ([`Palette::mono`]) nothing of the palette's colours reaches the terminal —
+//! `shared/ui.rs::strip_styles` drops every colour and attribute from the
+//! finished frame — and the palette's job is the other half: the **glyphs**
+//! that say what styling said ([`Palette::selected_mark`],
+//! [`Palette::tab_label`], the bracketed [`Palette::keycap`]) and the one mark
+//! that stays reverse video ([`MONO_MARK`]). [`Palette::for_interface`] is
+//! the one place that turns the settings into a palette.
 
 use std::collections::HashSet;
 use std::sync::{LazyLock, Mutex, OnceLock};
@@ -208,6 +214,24 @@ pub const CANVAS_LIGHT: Color = Color::Rgb(250, 250, 252);
 /// name nothing answers to.
 pub const FULL_THEMES: [&str; 2] = ["dark", "light"];
 
+/// What a cell is drawn on to stay **reverse video** in the monochrome mode
+/// (fork A of docs/theme-modes.md §6: a text selection and a search match —
+/// the two things with no glyph to fall back on). Not a colour anybody sees:
+/// `shared/ui.rs::strip_styles` turns a cell with this background into a
+/// reversed one and drops the styling of every other cell, so reverse video
+/// is something a widget asks for by name ([`Palette::selection`],
+/// [`Palette::search_match`]) rather than something that survives by
+/// accident — a popup's `reversed()` row and an unhighlighted code block are
+/// stripped like the rest. An indexed colour because nothing else in the app
+/// is one: the palettes are named ANSI or RGB, and highlighted code is RGB.
+pub const MONO_MARK: Color = Color::Indexed(255);
+
+/// The marker of a selected row, where the row is a list's and styling alone
+/// said which one ([`Palette::selected_mark`]). The glyph the settings
+/// screen's choice popups already mark theirs with; WGL4, so it needs no
+/// compatibility twin.
+pub const SELECTED_MARK: &str = "› ";
+
 /// Full-theme names already reported as unknown — [`Palette::for_interface`]
 /// runs per frame on the settings screen, and the log wants one line per name,
 /// not one per frame (the `shared/i18n.rs` missing-key precedent).
@@ -281,6 +305,12 @@ pub struct Palette {
     /// Widgets do not read it: they keep drawing foregrounds, and the pass
     /// over the finished frame fills in what they left at the default.
     pub canvas: Color,
+    /// The **monochrome** mode (spec §11.6): the finished frame loses every
+    /// colour and attribute (`shared/ui.rs::strip_styles`), so whatever
+    /// styling alone would have said has to be a glyph. Widgets read it for
+    /// that — through the helpers below where one fits — and keep setting
+    /// their colours as always: those are dropped after them.
+    pub mono: bool,
 }
 
 impl Palette {
@@ -292,6 +322,7 @@ impl Palette {
         let palette = match interface.mode() {
             ThemeMode::System => Self::for_theme(interface.theme),
             ThemeMode::Full => Self::full(&interface.full_theme),
+            ThemeMode::Mono => Self::mono(),
         };
         palette.with_compat(interface.terminal_compat)
     }
@@ -317,6 +348,17 @@ impl Palette {
                 }
                 Self::full(FULL_THEMES[0])
             }
+        }
+    }
+
+    /// The monochrome mode's palette. Its colours never reach the terminal,
+    /// so they are one fixed set — the dark theme's — whatever
+    /// `interface.theme` says: one palette, and one entry in each cache a
+    /// palette keys.
+    pub fn mono() -> Self {
+        Self {
+            mono: true,
+            ..Self::dark()
         }
     }
 
@@ -394,6 +436,7 @@ impl Palette {
             dark: !light,
             compat: false,
             canvas: Color::Reset,
+            mono: false,
         }
     }
 
@@ -426,6 +469,7 @@ impl Palette {
             dark: true,
             compat: false,
             canvas: Color::Reset,
+            mono: false,
         }
     }
 
@@ -458,6 +502,7 @@ impl Palette {
             dark: false,
             compat: false,
             canvas: Color::Reset,
+            mono: false,
         }
     }
 
@@ -501,6 +546,43 @@ impl Palette {
         }
     }
 
+    // ---- What the monochrome mode says with glyphs ----
+
+    /// The marker a list puts before its selected row, where styling alone
+    /// said which row that is — `None` outside the monochrome mode. The
+    /// unselected rows are indented by as much (`shared/ui.rs::mark_selected`).
+    pub fn selected_mark(&self) -> Option<&'static str> {
+        self.mono.then_some(SELECTED_MARK)
+    }
+
+    /// A tab's label as the strip draws it: ` label `, and `[label]` for the
+    /// active tab in the monochrome mode — the same width, so the strip does
+    /// not move when the tab changes.
+    pub fn tab_label(&self, label: &str, active: bool) -> String {
+        if self.mono && active {
+            format!("[{label}]")
+        } else {
+            format!(" {label} ")
+        }
+    }
+
+    /// `style` as the **text selection** draws it: on the selection backdrop,
+    /// or — monochrome — on the mark that stays reverse video.
+    pub fn selection(&self, style: Style) -> Style {
+        style.bg(if self.mono { MONO_MARK } else { self.keycap_bg })
+    }
+
+    /// `style` as a **search match** draws it: recoloured to the accent, or —
+    /// monochrome — on the mark that stays reverse video. Only that is
+    /// patched, so the markdown styling under a match survives.
+    pub fn search_match(&self, style: Style) -> Style {
+        if self.mono {
+            style.bg(MONO_MARK)
+        } else {
+            style.fg(self.accent)
+        }
+    }
+
     // ---- Convenient style constructors (foreground by role) ----
     pub fn success_style(&self) -> Style {
         Style::new().fg(self.success)
@@ -541,9 +623,21 @@ impl Palette {
     /// mockup).
     pub fn keycap(&self, label: impl Into<String>) -> Span<'static> {
         Span::styled(
-            format!(" {} ", label.into()),
+            self.keycap_text(&label.into()),
             Style::new().fg(self.keycap_fg).bg(self.keycap_bg),
         )
+    }
+
+    /// A keycap's text: the label with a column of the pill on either side,
+    /// and in the monochrome mode — where there is no pill — in brackets, the
+    /// same width. Without them a hint bar is keys and descriptions told
+    /// apart by the number of spaces between them.
+    fn keycap_text(&self, label: &str) -> String {
+        if self.mono {
+            format!("[{label}]")
+        } else {
+            format!(" {label} ")
+        }
     }
 
     /// A hotkey hint: "keycap" + a muted description. Returns spans to insert
@@ -587,7 +681,7 @@ impl Palette {
         }
         vec![
             Span::styled(
-                format!(" {key} "),
+                self.keycap_text(key),
                 Style::new().fg(self.keycap_danger).bg(self.keycap_bg),
             ),
             Span::styled(format!(" {desc}"), self.muted_style()),
@@ -791,6 +885,105 @@ mod tests {
                 .unwrap()
                 .contains(&"gruvbox".to_string())
         );
+    }
+
+    #[test]
+    fn the_monochrome_mode_is_one_palette_whatever_the_themes_say() {
+        // Its colours never reach the terminal, so there is nothing for a
+        // theme to choose — and one palette is one entry in the caches it
+        // keys, not one per theme passed through.
+        let mono = Palette::mono();
+        assert!(mono.mono);
+        assert_eq!(mono.canvas, Color::Reset, "it paints no background");
+        for theme in [Theme::Auto, Theme::Dark, Theme::Light] {
+            for full in ["dark", "light", "gruvbox"] {
+                let p = Palette::for_interface(&interface(ThemeMode::Mono, theme, full));
+                assert_eq!(p, mono, "{theme:?} / {full}");
+            }
+        }
+        // The other modes are not monochrome, and differ from it.
+        for mode in [ThemeMode::System, ThemeMode::Full] {
+            let p = Palette::for_interface(&interface(mode, Theme::Dark, "dark"));
+            assert!(!p.mono, "{mode:?}");
+            assert_ne!(p, mono, "{mode:?}");
+        }
+    }
+
+    #[test]
+    fn the_mark_is_a_colour_no_palette_has() {
+        // `strip_styles` reads "drawn on the mark" off a cell's background:
+        // a palette that used the value for anything else would get reverse
+        // video it did not ask for.
+        let palettes = [
+            Palette::auto_with(None),
+            Palette::auto_with(Some(Background::Light)),
+            Palette::dark(),
+            Palette::light(),
+            Palette::mono(),
+        ];
+        for p in palettes {
+            let all = p.text_roles().into_iter().chain([
+                ("border", p.border),
+                ("border_focus", p.border_focus),
+                ("keycap_bg", p.keycap_bg),
+                ("canvas", p.canvas),
+            ]);
+            for (role, color) in all {
+                assert_ne!(color, MONO_MARK, "{role}");
+            }
+        }
+        for canvas in [CANVAS_DARK, CANVAS_LIGHT] {
+            assert_ne!(canvas, MONO_MARK);
+        }
+    }
+
+    #[test]
+    fn a_glyph_says_in_monochrome_what_styling_says_elsewhere() {
+        let (plain, mono) = (Palette::dark(), Palette::mono());
+
+        // A list's selected row.
+        assert_eq!(plain.selected_mark(), None);
+        assert_eq!(mono.selected_mark(), Some(SELECTED_MARK));
+
+        // A tab: brackets for the active one, and no tab changes width — the
+        // strip must not move when the tab does.
+        assert_eq!(plain.tab_label("Keys", true), " Keys ");
+        assert_eq!(plain.tab_label("Keys", false), " Keys ");
+        assert_eq!(mono.tab_label("Keys", true), "[Keys]");
+        assert_eq!(mono.tab_label("Keys", false), " Keys ");
+
+        // A keycap, the dangerous one included.
+        assert_eq!(plain.keycap("Enter").content, " Enter ");
+        assert_eq!(mono.keycap("Enter").content, "[Enter]");
+        assert_eq!(plain.hint_marked("Del", "delete", true)[0].content, " Del ");
+        assert_eq!(mono.hint_marked("Del", "delete", true)[0].content, "[Del]");
+        assert_eq!(mono.hint("F1", "help")[0].content, "[F1]");
+    }
+
+    #[test]
+    fn the_two_marks_are_the_only_things_drawn_on_the_mark() {
+        let (plain, mono) = (Palette::dark(), Palette::mono());
+        let under = Style::new().bold().fg(Color::Red);
+
+        // A search match keeps what is under it, in either mode.
+        assert_eq!(plain.search_match(under), under.fg(plain.accent));
+        assert_eq!(mono.search_match(under), under.bg(MONO_MARK));
+        // A text selection.
+        assert_eq!(plain.selection(under), under.bg(plain.keycap_bg));
+        assert_eq!(mono.selection(under), under.bg(MONO_MARK));
+
+        // Nothing else the palette hands out sits on it.
+        let handed_out = [
+            mono.keycap("K").style,
+            mono.hint_marked("K", "d", true)[0].style,
+            mono.muted_style(),
+            mono.accent_style(),
+            mono.success_style(),
+            mono.border_style(true),
+        ];
+        for style in handed_out {
+            assert_ne!(style.bg, Some(MONO_MARK));
+        }
     }
 
     #[test]

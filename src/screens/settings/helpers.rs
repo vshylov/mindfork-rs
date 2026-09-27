@@ -909,6 +909,10 @@ pub(super) fn focus_marker_style(focused: bool, palette: &Palette) -> Style {
 /// The subsection tab strip: `Assistant │ Impersonation │ Embeddings`. The active tab
 /// is highlighted (a backdrop when the strip is focused, otherwise an accent color); on
 /// the right, when focused — the `←→` hint. The `│` separator and all content are WGL4-safe.
+///
+/// In the monochrome mode the active tab is bracketed (`Palette::tab_label`): in the
+/// Sampling section the tabs list the same parameters, so which tab is active is the
+/// only thing saying whose sampling is being edited.
 pub(super) fn tab_strip_line(
     tabs: &[&str],
     active: usize,
@@ -929,7 +933,7 @@ pub(super) fn tab_strip_line(
         } else {
             palette.muted_style()
         };
-        spans.push(Span::styled(format!(" {t} "), style));
+        spans.push(Span::styled(palette.tab_label(t, i == active), style));
     }
     if focused {
         spans.push(Span::styled("   ←→", palette.muted_style()));
@@ -1148,6 +1152,7 @@ pub(super) fn theme_mode_label(m: ThemeMode, loc: &'static Locale) -> String {
     loc.t(match m {
         ThemeMode::System => "ui.settings.choice.mode_system",
         ThemeMode::Full => "ui.settings.choice.mode_full",
+        ThemeMode::Mono => "ui.settings.choice.mode_mono",
     })
     .to_string()
 }
