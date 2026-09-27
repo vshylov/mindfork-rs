@@ -1763,6 +1763,64 @@ mod tests {
         );
     }
 
+    /// A settings file a person edited by hand: values of their own in four
+    /// sections — and one typo, in an enum value (`drak` for `dark`). Valid
+    /// JSON, at the current schema.
+    fn settings_with_a_typo() -> String {
+        format!(
+            r#"{{
+  "schema_version": {},
+  "max_tool_rounds": 3,
+  "engine": {{ "mode": "external", "external": {{ "url": "http://127.0.0.1:8000/v1" }} }},
+  "interface": {{ "theme": "drak", "language": "en", "input_max_rows": 12 }},
+  "tools": {{ "python_enabled": true }}
+}}"#,
+            crate::shared::config::SCHEMA_VERSION
+        )
+    }
+
+    /// **Reproduction of a defect** — what the code does today, not what it
+    /// should (docs/research/settings-typed-parse.md §1). One enum value this
+    /// binary cannot read costs the user every setting: the start-up gate reads
+    /// the file as untyped JSON and passes it, the typed load fails, and
+    /// `unwrap_or_default()` answers with the defaults. The first routine save
+    /// then writes them over the file, and the second over its only backup.
+    #[test]
+    fn repro_one_bad_enum_value_resets_the_whole_config() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = Paths::with_root(tmp.path());
+        let original = settings_with_a_typo();
+        std::fs::write(paths.settings_file(), &original).unwrap();
+
+        // The gate lets the file through: it is JSON, and at the current schema.
+        features::data_migration::run(&paths, i18n::locale(Lang::En)).unwrap();
+
+        // `launch_tui`'s own line.
+        let store = JsonStore::new(paths.clone());
+        let config = store.load_config().unwrap_or_default();
+        assert_eq!(config, AppConfig::default());
+        // Not the misspelt value alone — every one of the user's.
+        assert_eq!(config.max_tool_rounds, 8, "the user's was 3");
+        assert_eq!(config.engine.mode, ServerMode::Managed);
+        assert_eq!(config.engine.external.url, None);
+        assert_eq!(config.interface.language, Lang::Ru);
+        assert_eq!(config.interface.input_max_rows, 6);
+        assert!(!config.tools.python_enabled);
+
+        // The orchestrator's first save (`remember_active_chat` fires at
+        // start-up, since a default config remembers no chat) replaces the
+        // file; the user's copy survives in `settings.bak`, one deep...
+        let bak = paths.settings_file().with_extension("bak");
+        store.save_config(&config).unwrap();
+        let on_disk = std::fs::read_to_string(paths.settings_file()).unwrap();
+        assert!(!on_disk.contains("127.0.0.1:8000"), "{on_disk}");
+        assert_eq!(std::fs::read_to_string(&bak).unwrap(), original);
+        // ...until the second save, after which it is nowhere.
+        store.save_config(&config).unwrap();
+        let backed_up = std::fs::read_to_string(&bak).unwrap();
+        assert!(!backed_up.contains("127.0.0.1:8000"), "{backed_up}");
+    }
+
     /// Precedence for the run's one effective password: the argument wins over
     /// the stored setting, and an empty value means "no password" from either
     /// source (docs/history/backup-password.md §4 F8).
