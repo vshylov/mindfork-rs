@@ -358,6 +358,10 @@ def to_interface_fields() -> None:
     press("enter")
 
 
+def open_emoji_picker() -> None:
+    press("ctrl+b", SETTLE_REPAINT)
+
+
 def scenario_full_mode(exe: Path, report: Report) -> None:
     session = Session(exe, ["demo"])
     try:
@@ -378,7 +382,7 @@ def scenario_full_mode(exe: Path, report: Report) -> None:
         press("esc", SETTLE_REPAINT)
         report.painted("chat", read_screen())
 
-        press("ctrl+b", SETTLE_REPAINT)
+        open_emoji_picker()
         rows = read_screen()
         report.painted("emoji picker over the chat", rows)
         report.wide_glyphs("emoji picker", rows, at_least=40)
@@ -427,7 +431,7 @@ def scenario_first_frame(exe: Path, report: Report) -> None:
             report.painted("started in full / light", read_screen())
             type_text("中文字 wide ")
             for moves in (0, 3):  # two emoji, through the app's own picker
-                press("ctrl+b", SETTLE_REPAINT)
+                open_emoji_picker()
                 for _ in range(moves):
                     press("right", 0.2)
                 press("enter", SETTLE_REPAINT)
