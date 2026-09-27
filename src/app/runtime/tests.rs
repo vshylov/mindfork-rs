@@ -2505,3 +2505,80 @@ fn a_composed_frame_is_painted_to_its_edges_in_the_full_mode() {
         }
     }
 }
+
+/// In the monochrome mode no cell of a composed frame carries a colour or an
+/// attribute — under a plain screen, under the settings screen, and under
+/// the help dialog, which dims what is behind it and draws its active tab on
+/// a backdrop. The pass runs after all of them (spec §11.6).
+#[test]
+fn a_composed_frame_has_no_styling_in_the_monochrome_mode() {
+    use crate::shared::config::{InterfaceSettings, ThemeMode};
+    use ratatui::style::Modifier;
+
+    let mono = || {
+        let mut i = InterfaceSettings::default();
+        i.set_mode(ThemeMode::Mono);
+        i
+    };
+    for (settings_in_front, help_open) in
+        [(false, false), (false, true), (true, false), (true, true)]
+    {
+        let at = format!("settings={settings_in_front}, help={help_open}");
+        let buf = composed(mono(), settings_in_front, help_open);
+        for cell in &buf.content {
+            assert_eq!(
+                (cell.fg, cell.bg, cell.modifier),
+                (Color::Reset, Color::Reset, Modifier::empty()),
+                "{at}: {:?}",
+                cell.symbol()
+            );
+        }
+        // The help dialog's open tab — a backdrop otherwise — is the one in
+        // brackets; the keycaps around it are bracketed too, so it is looked
+        // for by name.
+        let text = crate::shared::ui::tests::buffer_rows(&buf).join("\n");
+        let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::default());
+        let bracketed = crate::widgets::help_dialog::HelpTab::ALL
+            .iter()
+            .filter(|tab| text.contains(&format!("[{}]", loc.t(tab.label_key()))))
+            .count();
+        assert_eq!(bracketed, usize::from(help_open), "{at}\n{text}");
+
+        // The control, and the reason the pass exists: the same frame in the
+        // system mode is styled throughout — and says the same things.
+        let system = composed(InterfaceSettings::default(), settings_in_front, help_open);
+        let styled = system
+            .content
+            .iter()
+            .filter(|c| c.fg != Color::Reset || c.bg != Color::Reset || !c.modifier.is_empty())
+            .count();
+        assert!(styled > 100, "{at}: {styled}");
+    }
+}
+
+/// crossterm honours `NO_COLOR` by itself — no colour, and an attribute reset
+/// in place of each colour change. The colour mode decides instead: a mode
+/// chosen in settings wins over the variable, and that has to reach the
+/// terminal. Measured live by `tools/console_probe.py --scenario no-color`;
+/// here, that the switch follows the palette, both ways.
+#[test]
+fn what_crossterm_may_write_is_the_colour_modes_to_say() {
+    use ratatui::crossterm::style::Colored;
+    let disabled = Colored::ansi_color_disabled_memoized;
+
+    set_colour_output(&Palette::mono());
+    assert!(disabled(), "the monochrome mode writes no colour");
+    for palette in [
+        Palette::default(),
+        Palette::full("dark"),
+        Palette::full("light"),
+    ] {
+        set_colour_output(&palette);
+        assert!(!disabled(), "a colour mode writes its colours");
+        // …whatever was the case before it, the environment included.
+        set_colour_output(&Palette::mono());
+        assert!(disabled());
+        set_colour_output(&palette);
+        assert!(!disabled());
+    }
+}

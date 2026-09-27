@@ -329,6 +329,13 @@ fn launch_tui(
     // conhost never answers. See docs/terminal-background-detection.md.
     let background_query = crate::shared::osc11::begin();
 
+    // `NO_COLOR` decides the colour mode nobody chose in settings — a chosen
+    // one wins, as the convention says (spec §11.6). Read once, before the
+    // configuration is: the settings' "no mode chosen" is resolved against it.
+    crate::shared::config::set_environment_mode(crate::shared::config::ThemeMode::for_environment(
+        std::env::var_os("NO_COLOR").as_deref(),
+    ));
+
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()

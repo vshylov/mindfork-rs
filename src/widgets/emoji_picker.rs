@@ -167,7 +167,13 @@ impl EmojiPickerState {
                         let idx = r * COLS + c;
                         // Spaces around the emoji: the glyph is width 2, plus a margin — so
                         // ` {emoji} ` gives an even cell and a "button" look for the selected one.
-                        let cell = format!(" {emoji} ");
+                        // In the monochrome mode the button has no background to be one
+                        // with, and the selected cell is bracketed instead — the same width.
+                        let cell = if palette.mono && idx == selected {
+                            format!("[{emoji}]")
+                        } else {
+                            format!(" {emoji} ")
+                        };
                         if idx == selected {
                             // A dark selection background (like the selected row in the chat
                             // list) — doesn't blend with the colored glyph, unlike
@@ -268,6 +274,60 @@ mod tests {
     fn esc_cancels() {
         let mut s = EmojiPickerState::new();
         assert_eq!(s.on_key(key(KeyCode::Esc)), EmojiPickerAction::Cancel);
+    }
+
+    /// The selected emoji sits on a backdrop, and the monochrome mode has
+    /// none: there it is bracketed, in the cell's own four columns, so the
+    /// grid does not move (spec §11.6).
+    #[test]
+    fn the_selected_emoji_is_bracketed_where_there_is_no_backdrop() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let drawn = |state: &EmojiPickerState, palette: &Palette| {
+            let mut term = Terminal::new(TestBackend::new(60, 10)).unwrap();
+            term.draw(|f| state.render(f, f.area(), palette, ru()))
+                .unwrap();
+            term.backend().buffer().clone()
+        };
+        // Where a glyph starts: the column of the emoji's own cell.
+        let column_of = |buf: &ratatui::buffer::Buffer, emoji: &str| -> (u16, u16) {
+            let area = buf.area;
+            (area.top()..area.bottom())
+                .flat_map(|y| (area.left()..area.right()).map(move |x| (x, y)))
+                .find(|&(x, y)| buf[(x, y)].symbol() == emoji)
+                .unwrap_or_else(|| panic!("{emoji} is not drawn"))
+        };
+        let around = |buf: &ratatui::buffer::Buffer, emoji: &str| -> (String, String) {
+            let (x, y) = column_of(buf, emoji);
+            (
+                buf[(x - 1, y)].symbol().to_string(),
+                buf[(x + 2, y)].symbol().to_string(),
+            )
+        };
+        let brackets = (String::from("["), String::from("]"));
+        let spaces = (String::from(" "), String::from(" "));
+
+        let mono = Palette::mono();
+        let first = drawn(&EmojiPickerState::new(), &mono);
+        assert_eq!(around(&first, EMOJIS[0]), brackets);
+        assert_eq!(around(&first, EMOJIS[1]), spaces);
+
+        let moved = drawn(&EmojiPickerState::with_selected(1), &mono);
+        assert_eq!(around(&moved, EMOJIS[0]), spaces, "the brackets moved on");
+        assert_eq!(around(&moved, EMOJIS[1]), brackets);
+        for emoji in EMOJIS {
+            assert_eq!(
+                column_of(&moved, emoji),
+                column_of(&first, emoji),
+                "{emoji} moved with the selection"
+            );
+        }
+
+        let plain = drawn(&EmojiPickerState::new(), &Palette::default());
+        assert_eq!(around(&plain, EMOJIS[0]), spaces, "no brackets elsewhere");
+        for emoji in EMOJIS {
+            assert_eq!(column_of(&plain, emoji), column_of(&first, emoji));
+        }
     }
 
     #[test]

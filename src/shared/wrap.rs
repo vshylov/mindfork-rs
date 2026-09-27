@@ -332,6 +332,28 @@ pub fn wrap_line(line: &Line<'_>, width: usize) -> Vec<Line<'static>> {
         .collect()
 }
 
+/// Wraps a styled line under a **prefix repeated on every row** — a quote's
+/// `> `, a gutter's `│ ` — into rows `width` wide, the prefix included.
+///
+/// [`wrap_line`] knows nothing of prefixes: a line that starts with one keeps
+/// it on its first row only, and the rows under it are told from ordinary
+/// text by their styling. Where there is no styling — the monochrome mode,
+/// spec §11.6 — the prefix is all a row has to say what it belongs to.
+///
+/// A panel narrower than the prefix still gets a column of text per row.
+pub fn wrap_hanging(prefix: &[Span<'static>], line: &Line<'_>, width: usize) -> Vec<Line<'static>> {
+    let prefix_w: usize = prefix.iter().map(|s| str_width(&s.content)).sum();
+    wrap_line(line, width.saturating_sub(prefix_w).max(1))
+        .into_iter()
+        .map(|mut row| {
+            let mut spans = prefix.to_vec();
+            spans.append(&mut row.spans);
+            row.spans = spans;
+            row
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -554,5 +576,45 @@ mod tests {
         assert!(str_width(&out) <= 6, "{out:?}");
         // Wide glyphs count two columns on either side of the marker.
         assert_eq!(elide_middle("🔧🔧🔧🔧", 5), "🔧…🔧");
+    }
+
+    /// A prefix is on every row, the rows are `width` wide with it, and the
+    /// styles of both survive the wrap.
+    #[test]
+    fn a_hanging_prefix_is_on_every_row() {
+        use ratatui::style::Stylize;
+        let prefix = [Span::raw("> ").dim()];
+        let line = Line::from(vec![
+            Span::raw("one two "),
+            Span::raw("three").bold(),
+            Span::raw(" four five six"),
+        ]);
+        let rows = wrap_hanging(&prefix, &line, 12);
+        let text: Vec<String> = rows
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect();
+        assert_eq!(text, ["> one two ", "> three four ", "> five six"]);
+        for row in &rows {
+            assert_eq!(row.spans[0], prefix[0], "the prefix, styled as given");
+        }
+        assert!(
+            rows[1]
+                .spans
+                .iter()
+                .any(|s| s.content == "three" && s.style == Style::new().bold()),
+            "{:?}",
+            rows[1]
+        );
+
+        // An empty line is still a row, and still under the prefix.
+        let blank = wrap_hanging(&prefix, &Line::default(), 12);
+        assert_eq!(blank.len(), 1);
+        assert_eq!(blank[0].spans, prefix.to_vec());
+
+        // A panel narrower than the prefix gets a column of text per row
+        // rather than none — the wrap must end.
+        let narrow = wrap_hanging(&prefix, &Line::from("abc"), 1);
+        assert_eq!(narrow.len(), 3);
     }
 }

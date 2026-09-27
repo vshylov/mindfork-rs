@@ -3279,9 +3279,9 @@ of them deliberate actions behind their own keys. Impersonation personas live in
 the config, so their creation/deletion *is* undoable. See
 docs/history/settings-undo.md.
 
-**Colour mode** (`interface.theme_mode`: `system` by default, `full`;
-docs/theme-modes.md). One level above the theme — *whose background the text
-sits on*.
+**Colour mode** (`interface.theme_mode`: `system` by default, `full`, `mono`;
+docs/theme-modes.md). One level above the theme — *whose colours the screen is
+drawn in*.
 
 - **`system`** — the app draws foregrounds and the terminal supplies the
   background. This is what the app has always done, and everything under
@@ -3293,6 +3293,9 @@ sits on*.
   (`#0f1115`, `#fafafc` — `shared/theme.rs::CANVAS_DARK`/`CANVAS_LIGHT`), so a
   full-mode screen is the README's screenshot of it, which was rendered on that
   same canvas.
+- **`mono`** — monochrome: no colours and no text attributes, the terminal's
+  own two colours and nothing else. No theme applies. Described under
+  **Monochrome** below; it is also the mode **`NO_COLOR`** starts the app in.
 
 *How the canvas gets there.* Widgets do not know about it: they draw
 foregrounds, as in the system mode. `shared/ui.rs::paint_canvas` walks the
@@ -3334,8 +3337,70 @@ avoids (§4.4.1); it is kept to these rare moments.
 
 *In the settings*, *Appearance* opens with **Colour mode**, and the **Theme**
 row under it is the theme of the mode in effect — `auto`/`dark`/`light` in the
-system mode, the full themes in the full one. Two fields behind one label, so
-each mode remembers its own choice. Both apply live.
+system mode, the full themes in the full one, and **no row** in the monochrome
+one. Two fields behind one label, so each mode remembers its own choice. Both
+apply live.
+
+**Monochrome** (`interface.theme_mode = mono`, docs/theme-modes.md §9). For a
+terminal that renders attributes badly, an e-ink panel, a screen reader's
+review cursor — and for `NO_COLOR`.
+
+*What reaches the terminal.* No foreground, no background, and no attribute:
+not bold, dim, italic, underline or strikethrough. **Reverse video is kept for
+two things** — a **text selection** in an input box and a **search match** (in
+the feed, and in the snippets of the search screen) — because those have no
+glyph to fall back on, reverse video is not a colour, and every terminal
+renders it. Misspelled words are not marked in this mode; the suggestions for
+the word under the cursor still open.
+
+*How.* `shared/ui.rs::strip_styles` is the second pass over the **finished**
+frame (`finish_frame` runs it after `paint_canvas`; each is a no-op outside its
+mode): every cell's colours become the terminal's default and its attributes
+are dropped. Attributes never went through the palette — widgets set them
+directly — and the logo and highlighted code bring colours of their own, so a
+pass is the one place that cannot miss any. Reverse video is **asked for by
+name**: a widget draws a selection or a match on `MONO_MARK`
+(`Palette::selection`, `Palette::search_match`), a background no palette uses,
+and the pass turns exactly those cells into reversed ones. A `reversed()` a
+widget set by hand — a popup's selected row, an unhighlighted code block — is
+stripped like everything else.
+
+*What styling alone used to say is said in text.* `Palette::mono` is the flag
+the widgets read; everywhere below, every other mode draws what it always drew.
+
+| Where | In the monochrome mode |
+|---|---|
+| A list popup whose selected row was reverse video alone — the profile picker, the `chat://` picker, the settings field search | `› ` before the selected row, the others indented by as much (`ui::mark_selected`); the choice and model popups had it already |
+| The emoji picker's selected cell | `[😀]` in the cell's own four columns |
+| The active tab — the help dialog, the settings subsections | `[Tab]`, the strip column for column the same |
+| A keycap in any hint bar | `[Enter]` instead of the pill, the same width |
+| Whose message a feed row belongs to, once its header scrolled away | the rail's shape: `▌` user, `║` assistant, `│` system and notes |
+| The message a jump landed on | the rail `█` |
+| A `chat://` address that opens a chat | `<chat://1a2b3c4d>`; one that opens nothing stays as written |
+| Thoughts, the compaction summary, a block quote | their `│ ` / `> ` on **every** wrapped row, not only the first |
+| Markdown bold, italic, strikethrough, inline code | the markers the parser took off: `**…**`, `*…*`, `~~…~~`, `` `…` `` |
+| An unhighlighted code block | its fences; no reversed rectangle |
+| The open chat in the chat list | the filled dot `●`; every other chat has `○` |
+| A chat listed only as the parent of a matching transcript | its title in parentheses |
+| The file whose diff is shown, while the diff pane has the focus | `›` before it |
+| Whether `Enter` will run the input as a command | the word *command* in the input box's title |
+| The input box's placeholder | not drawn |
+
+All the glyphs are WGL4, so the mode combines with the legacy-terminal
+compatibility below.
+
+*`NO_COLOR`* ([no-color.org](https://no-color.org)). Set to anything but an
+empty string, the variable makes monochrome the mode **nobody chose**:
+`theme_mode` absent from `settings.json` then reads as `mono` instead of
+`system`. A mode chosen in the settings wins over the variable, as the
+convention says — including `system`, which under `NO_COLOR` is a choice and is
+written. The row stores the environment's mode as absence, so `Del` on it goes
+back to following the environment. The variable is read once, at start-up
+(`config::set_environment_mode`).
+
+*A limit.* A search matches the **rendered** text (§11.3), and in this mode the
+rendered text holds the markers: a query that spans a marker — a word whose
+second half is bold — finds nothing in the feed.
 
 **Theme** (`interface.theme`: `auto` by default, `dark`, `light`) — the
 **system** mode's. `dark` and `light` are fixed palettes and ignore the

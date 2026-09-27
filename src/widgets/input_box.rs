@@ -175,7 +175,9 @@ impl KeyOutcome {
 
 /// Input-box render parameters — a bundle instead of six positional arguments
 /// (a precedent — `StatusModel`, SOLID stage 4a). `title` — the border's title;
-/// `focused` places the cursor and (on an empty field) hides the placeholder;
+/// `focused` places the cursor and (on an empty field) hides the placeholder
+/// — which the monochrome mode does not draw at all: there it would be dim
+/// text with the dimming taken off, a message nobody typed;
 /// `command` colors the whole text `warning` and mutes spellcheck underlines
 /// (the input is recognized as a `/rag …` command); `placeholder` — gray text on
 /// an empty, **un**focused field. The placeholder used to be hardcoded ("type a
@@ -1411,7 +1413,7 @@ impl InputBox {
                 styled_line(sub, mis.as_deref(), sel, base_fg, palette)
             })
             .collect();
-        let show_placeholder = self.is_empty() && !focused;
+        let show_placeholder = self.is_empty() && !focused && !palette.mono;
         let text = if show_placeholder {
             Text::from(Line::from(placeholder).dim())
         } else {
@@ -1498,7 +1500,7 @@ impl InputBox {
         }
         let sub = &line[start..end];
 
-        let show_placeholder = self.is_empty() && !focused;
+        let show_placeholder = self.is_empty() && !focused && !palette.mono;
         let text = if show_placeholder {
             Text::from(Line::from(placeholder).dim())
         } else {
@@ -1707,10 +1709,14 @@ fn clip_ranges(ranges: &[(usize, usize)], start: usize, end: usize) -> Vec<(usiz
 
 /// Builds a line, composing three per-character styles: spelling-error
 /// underlines (`misspelled`, `UNDERLINED` + the error color), a selection
-/// background (`selection`, `keycap_bg`), and a base command color (`base_fg`,
-/// the whole text). Ranges are row-local `[start, end)` in characters;
-/// selection and errors can overlap (they stack: underlined AND on a
-/// background). A fast path — when there's nothing to style.
+/// background (`selection`, [`Palette::selection`]), and a base command color
+/// (`base_fg`, the whole text). Ranges are row-local `[start, end)` in
+/// characters; selection and errors can overlap (they stack: underlined AND
+/// on a background). A fast path — when there's nothing to style.
+///
+/// In the monochrome mode the selection is the one of the three that reaches
+/// the screen, as reverse video; the underline and the command colour are
+/// stripped from the finished frame with the rest (spec §11.6).
 fn styled_line(
     chars: &[char],
     misspelled: Option<&[(usize, usize)]>,
@@ -1736,7 +1742,7 @@ fn styled_line(
     }
     if let Some((s, e)) = selection {
         for st in styles.iter_mut().take(e.min(n)).skip(s.min(n)) {
-            *st = st.bg(palette.keycap_bg);
+            *st = palette.selection(*st);
         }
     }
     // Merge adjacent characters with the same style into spans.
@@ -3050,6 +3056,110 @@ mod tests {
             has_sel_bg,
             "the selection isn't drawn with a keycap_bg background"
         );
+    }
+
+    /// In the monochrome mode the selection is drawn on the mark that stays
+    /// reverse video — and is what is left of the row's styling once the
+    /// frame is finished: a misspelled word's underline is stripped with
+    /// everything else (spec §11.6, fork A).
+    #[test]
+    fn a_selection_is_reverse_video_in_the_monochrome_mode() {
+        use crate::shared::theme::MONO_MARK;
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        use ratatui::style::Modifier;
+        let mut ib = InputBox::new();
+        ib.set_text("hello wrold");
+        ib.set_misspelled(vec![vec![(6, 11)]]);
+        // Select "hello": from the start, five characters to the right.
+        ib.on_key(k(KeyCode::Home));
+        for _ in 0..5 {
+            ib.on_key(KeyEvent::new(KeyCode::Right, KeyModifiers::SHIFT));
+        }
+        assert!(ib.has_selection());
+        let pal = Palette::mono();
+        let mut term = Terminal::new(TestBackend::new(24, 3)).unwrap();
+        term.draw(|f| {
+            ib.render(
+                f,
+                f.area(),
+                RenderOpts {
+                    title: "input",
+                    focused: true,
+                    command: false,
+                    placeholder: "",
+                },
+                &pal,
+            )
+        })
+        .unwrap();
+        let mut buf = term.backend().buffer().clone();
+        let text_at = |buf: &ratatui::buffer::Buffer, what: &str| -> (u16, u16) {
+            let rows = crate::shared::ui::tests::buffer_rows(buf);
+            let y = rows.iter().position(|r| r.contains(what)).unwrap();
+            // A byte offset into the row; the border and the prompt before
+            // it are one column each, whatever they take in bytes.
+            let at = rows[y].find(what).unwrap();
+            (rows[y][..at].chars().count() as u16, y as u16)
+        };
+        let (x, y) = text_at(&buf, "hello");
+        for dx in 0..5 {
+            assert_eq!(buf[(x + dx, y)].bg, MONO_MARK, "column {dx}");
+        }
+        assert_ne!(buf[(x + 5, y)].bg, MONO_MARK, "the selection ends there");
+        assert!(
+            buf[(x + 6, y)].modifier.contains(Modifier::UNDERLINED),
+            "the premise: the widget still draws the spelling mark"
+        );
+
+        crate::shared::ui::strip_styles(&mut buf, &pal);
+        for dx in 0..11 {
+            let want = if dx < 5 {
+                Modifier::REVERSED
+            } else {
+                Modifier::empty()
+            };
+            assert_eq!(buf[(x + dx, y)].modifier, want, "column {dx}");
+        }
+        assert!(
+            buf.content
+                .iter()
+                .all(|c| c.fg == Color::Reset && c.bg == Color::Reset)
+        );
+    }
+
+    /// The placeholder is dim text; with the dimming stripped it would be a
+    /// message nobody typed, so the monochrome mode draws none.
+    #[test]
+    fn the_placeholder_is_not_drawn_in_the_monochrome_mode() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let drawn = |palette: &Palette, single_line: bool| -> String {
+            let mut ib = InputBox::new();
+            ib.set_single_line(single_line);
+            let mut term = Terminal::new(TestBackend::new(30, 3)).unwrap();
+            term.draw(|f| {
+                ib.render(
+                    f,
+                    f.area(),
+                    RenderOpts {
+                        title: "field",
+                        focused: false,
+                        command: false,
+                        placeholder: "type a message…",
+                    },
+                    palette,
+                )
+            })
+            .unwrap();
+            crate::shared::ui::tests::buffer_rows(term.backend().buffer()).join("\n")
+        };
+        for single_line in [false, true] {
+            assert!(drawn(&Palette::default(), single_line).contains("type a message"));
+            let mono = drawn(&Palette::mono(), single_line);
+            assert!(!mono.contains("type a message"), "{mono}");
+            assert!(mono.contains("field"), "the box itself is drawn: {mono}");
+        }
     }
 
     #[test]

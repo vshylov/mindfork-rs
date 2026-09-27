@@ -1462,6 +1462,19 @@ From the command line:
 mindfork setup --set interface.theme_mode=full --set interface.full_theme=light
 ```
 
+**No colours at all.** *Colour mode → monochrome* draws with the terminal's own
+two colours and no bold, italic or underline — for a terminal that renders
+attributes badly, an e-ink panel, a screen reader. The app also starts in it
+when **`NO_COLOR`** is set (to anything but an empty string) and no colour mode
+was chosen in the settings; a chosen one wins over the variable.
+
+```bash
+NO_COLOR=1 mindfork                                  # this run, if no mode was chosen
+mindfork setup --set interface.theme_mode=mono       # always
+mindfork setup --set interface.theme_mode=system     # colours, NO_COLOR or not
+mindfork setup --set interface.theme_mode=null       # back to following the environment
+```
+
 See [manual.md](manual.md) §8 and [theme-modes.md](theme-modes.md).
 
 ## 7. Live-model smoke tests

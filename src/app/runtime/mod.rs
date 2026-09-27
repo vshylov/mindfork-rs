@@ -804,6 +804,26 @@ fn erase_to_canvas(
     erased.and(reset)
 }
 
+/// Tells crossterm whether it may write colours — by the **colour mode**, not
+/// by the environment (spec §11.6).
+///
+/// crossterm honours `NO_COLOR` on its own: with the variable set it writes no
+/// colour at all, and in place of every colour change it writes `ESC[;m` — a
+/// reset of every attribute, the ones ratatui's backend set for that same cell
+/// a moment earlier included. Left to itself that made `NO_COLOR` a mode of
+/// its own, nobody's design: no colours, and whichever bold shared a cell with
+/// a colour gone too. Here the variable decides only the mode nobody chose
+/// (`ThemeMode::for_environment`), and a mode chosen in settings wins over it
+/// — which has to be true on the screen, not only in `settings.json`. So
+/// colours are written in every mode but the monochrome one, where no cell
+/// carries any and nothing is written either way.
+///
+/// Called for every frame: the mode changes in settings, and the call is an
+/// atomic store.
+fn set_colour_output(palette: &Palette) {
+    ratatui::crossterm::style::force_color_output(!palette.mono);
+}
+
 /// The palette of the screen in front: the settings screen draws with its
 /// **working copy** — a theme picked there is on screen before the saved
 /// configuration has come back as an event — and every other screen with the
@@ -906,6 +926,7 @@ fn draw_frame(
         palette.canvas != Color::Reset && terminal_resized(terminal),
     );
     last.canvas = palette.canvas;
+    set_colour_output(&palette);
     if requested || switched || overlay_toggled || repaint == CanvasRepaint::Erase {
         ui::prime_full_redraw(terminal.current_buffer_mut());
         terminal.swap_buffers();
@@ -952,8 +973,9 @@ fn compose_frame(
         dim_background(frame, palette);
         help_dialog::render_help(frame, state, &HELP_SECTIONS, palette, loc);
     }
-    // Last, so it also catches what the overlay's `Clear` reset.
-    ui::paint_canvas(frame.buffer_mut(), palette);
+    // Last, so it also catches what the overlay's `Clear` reset — and, in the
+    // monochrome mode, what the overlay drew.
+    ui::finish_frame(frame.buffer_mut(), palette);
 }
 
 /// One input tick: polls the terminal for [`TICK`], collects the available

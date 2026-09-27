@@ -22,7 +22,7 @@ use uuid::Uuid;
 use crate::entities::chat::ChatSummary;
 use crate::shared::i18n::Locale;
 use crate::shared::theme::Palette;
-use crate::shared::ui::ListScroll;
+use crate::shared::ui::{ListScroll, mark_selected};
 use crate::shared::wrap;
 
 /// Action the overlay asks the layer above to perform.
@@ -133,8 +133,13 @@ impl ChatLinkPickerState {
                 let date = format!("  {}", c.modified_at.format("%Y-%m-%d"));
                 let current = (self.current == Some(c.id))
                     .then(|| format!("  {}", loc.t("ui.chat_links.current")));
+                // The selection's marker (the monochrome mode) is a column of
+                // every row, and comes out of the title like the rest.
+                let mark = palette.selected_mark().map_or(0, wrap::str_width);
                 let budget = (popup.width as usize).saturating_sub(
-                    2 + wrap::str_width(&date) + current.as_deref().map_or(0, wrap::str_width),
+                    2 + mark
+                        + wrap::str_width(&date)
+                        + current.as_deref().map_or(0, wrap::str_width),
                 );
                 let (title, _) = wrap::truncate_to_width(&c.title, budget);
                 let mut spans = vec![Span::styled(title, Style::new().fg(palette.text))];
@@ -145,9 +150,12 @@ impl ChatLinkPickerState {
                 ListItem::new(Line::from(spans))
             })
             .collect();
-        let list = List::new(items)
-            .block(block)
-            .highlight_style(Style::new().reversed());
+        let list = mark_selected(
+            List::new(items)
+                .block(block)
+                .highlight_style(Style::new().reversed()),
+            palette,
+        );
         self.scroll.render(
             frame,
             list,
@@ -230,6 +238,43 @@ mod tests {
             row.contains(&chrono::Local::now().format("%Y").to_string()),
             "the date keeps its place: {row}"
         );
+    }
+
+    /// The monochrome mode marks the selected reference — reverse video was
+    /// all that said it — and the marker's columns come out of the title, so
+    /// the date and the "this conversation" label keep theirs (spec §11.6).
+    #[test]
+    fn the_selected_reference_is_marked_and_the_row_still_fits() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let long = "title that is certainly wider than this popup will ever be";
+        let chats = vec![chat(long), chat("short")];
+        let current = chats[0].id;
+        let mut s = ChatLinkPickerState::new(chats, Some(current));
+        let drawn = |s: &mut ChatLinkPickerState, palette: &Palette| -> Vec<String> {
+            let mut term = Terminal::new(TestBackend::new(60, 12)).unwrap();
+            term.draw(|f| s.render(f, f.area(), palette, ru())).unwrap();
+            crate::shared::ui::tests::buffer_rows(term.backend().buffer())
+        };
+        let year = chrono::Local::now().format("%Y").to_string();
+        let current_label = ru().t("ui.chat_links.current");
+
+        let rows = drawn(&mut s, &Palette::mono());
+        let first = rows.iter().find(|r| r.contains(current_label)).unwrap();
+        assert!(first.contains("│› tit"), "{first}");
+        assert!(first.contains('…'), "the title is what gives way: {first}");
+        assert!(first.contains(&year), "the date keeps its place: {first}");
+        assert!(first.contains(current_label), "and the label: {first}");
+        assert!(
+            first.trim_end().ends_with('│'),
+            "inside the border: {first}"
+        );
+        let second = rows.iter().find(|r| r.contains("short")).unwrap();
+        assert!(second.contains("│  short"), "{second}");
+
+        let rows = drawn(&mut s, &Palette::default());
+        let first = rows.iter().find(|r| r.contains(current_label)).unwrap();
+        assert!(first.contains("│tit"), "no marker elsewhere: {first}");
     }
 
     /// A chat with more references than the screen can hold scrolls, and it

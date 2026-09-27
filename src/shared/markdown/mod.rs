@@ -6,6 +6,14 @@
 //! hardcoded colors), and later — native tables and math events. Code-block
 //! highlighting is `syntect` + `ansi-to-tui`. Full LaTeX and rendering to an
 //! image are deliberately NOT implemented.
+//!
+//! **The monochrome mode** (`Palette::mono`, spec §11.6). Bold, italic,
+//! strikethrough and inline code are styling and nothing else — the parser
+//! takes their markers off — so where no styling reaches the screen the
+//! writer puts the markers back: `**bold**`, `*italic*`, `~~struck~~`,
+//! `` `code` ``. A quote's `> ` is repeated on every wrapped row, and an
+//! unhighlighted code block is left to its fences. Headings, lists, links
+//! and tables already say what they are in text.
 
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -98,7 +106,7 @@ pub fn render_with(
     // code block apart from one truncated mid-stream (the mermaid path, see
     // fenced_block_is_closed).
     writer.run(&normalized, parser.into_offset_iter());
-    Text::from(writer.lines)
+    Text::from(writer.finish())
 }
 
 /// Highlights a code block `code` in language `lang` **with no enclosing

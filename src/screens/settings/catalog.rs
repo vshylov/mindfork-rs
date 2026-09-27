@@ -1481,87 +1481,93 @@ impl SettingsScreen {
         let i = &self.config.interface;
         // One "Theme" row, two fields behind it: the theme of the colour mode
         // in effect. Each mode keeps its own choice, so switching the mode
-        // there and back restores what was picked (spec §11.6).
+        // there and back restores what was picked (spec §11.6). The
+        // monochrome mode has no colours to pick and no row.
         let theme = match i.mode() {
-            ThemeMode::System => row(
-                FieldId::ITheme,
-                loc.t("ui.settings.field.theme"),
-                FieldKind::Choice(theme_label(i.theme, loc)),
-            )
-            .describe(loc.t("ui.settings.desc.theme")),
-            ThemeMode::Full => row(
-                FieldId::IFullTheme,
-                loc.t("ui.settings.field.theme"),
-                FieldKind::Choice(full_theme_label(&i.full_theme, loc)),
-            )
-            .describe(loc.t("ui.settings.desc.full_theme")),
+            ThemeMode::System => Some(
+                row(
+                    FieldId::ITheme,
+                    loc.t("ui.settings.field.theme"),
+                    FieldKind::Choice(theme_label(i.theme, loc)),
+                )
+                .describe(loc.t("ui.settings.desc.theme")),
+            ),
+            ThemeMode::Full => Some(
+                row(
+                    FieldId::IFullTheme,
+                    loc.t("ui.settings.field.theme"),
+                    FieldKind::Choice(full_theme_label(&i.full_theme, loc)),
+                )
+                .describe(loc.t("ui.settings.desc.full_theme")),
+            ),
+            ThemeMode::Mono => None,
         };
-        let mut rows = grouped(
-            loc.t("ui.settings.group.appearance"),
-            vec![
-                row(
-                    FieldId::IThemeMode,
-                    loc.t("ui.settings.field.theme_mode"),
-                    FieldKind::Choice(theme_mode_label(i.mode(), loc)),
-                )
-                .describe(loc.t("ui.settings.desc.theme_mode")),
-                theme,
-                row(
-                    FieldId::ILanguage,
-                    loc.t("ui.settings.field.language"),
-                    FieldKind::Choice(i.language.label().to_string()),
-                )
-                .describe(loc.t("ui.settings.desc.language")),
-                row(
-                    FieldId::ICompat,
-                    loc.t("ui.settings.field.compat"),
-                    FieldKind::Toggle(i.terminal_compat),
-                )
-                .describe(loc.t("ui.settings.desc.compat")),
-                row(
-                    FieldId::ITableSeparators,
-                    loc.t("ui.settings.field.table_separators"),
-                    FieldKind::Toggle(i.table_row_separators),
-                )
-                .describe(loc.t("ui.settings.desc.table_separators")),
-                row(
-                    FieldId::IMermaid,
-                    loc.t("ui.settings.field.mermaid"),
-                    FieldKind::Toggle(i.render_mermaid),
-                )
-                .describe(loc.t("ui.settings.desc.mermaid")),
-                row(
-                    FieldId::IModelName,
-                    loc.t("ui.settings.field.model_name"),
-                    FieldKind::Toggle(i.show_model_name),
-                )
-                // NOT `desc.model_name` — that key describes the *cloud model
-                // name* field: reusing it here duplicated the key in the
-                // bundles, and JSON parsing silently keeps the later entry, so
-                // both fields showed this toggle's text. The bundle gate
-                // `builtin_bundles_have_no_duplicate_keys` guards the class.
-                .describe(loc.t("ui.settings.desc.show_model_name")),
-                row(
-                    FieldId::IInputRows,
-                    loc.t("ui.settings.field.input_rows"),
-                    // The effective value: a hand-edited `0` reads as the 1 it acts as.
-                    FieldKind::Text(i.input_rows_ceiling().to_string()),
-                )
-                .describe(loc.t("ui.settings.desc.input_rows")),
-                row(
-                    FieldId::IClipboardOsc52,
-                    loc.t("ui.settings.field.osc52"),
-                    FieldKind::Choice(osc52_label(i.clipboard_osc52, loc)),
-                )
-                .describe(loc.t("ui.settings.desc.osc52")),
-                row(
-                    FieldId::ISmNoteOrder,
-                    loc.t("ui.settings.field.sm_note_order"),
-                    FieldKind::Choice(note_order_label(i.self_model_note_order, loc)),
-                )
-                .describe(loc.t("ui.settings.desc.sm_note_order")),
-            ],
-        );
+        let mut appearance = vec![
+            row(
+                FieldId::IThemeMode,
+                loc.t("ui.settings.field.theme_mode"),
+                FieldKind::Choice(theme_mode_label(i.mode(), loc)),
+            )
+            .describe(loc.t("ui.settings.desc.theme_mode")),
+        ];
+        appearance.extend(theme);
+        appearance.extend([
+            row(
+                FieldId::ILanguage,
+                loc.t("ui.settings.field.language"),
+                FieldKind::Choice(i.language.label().to_string()),
+            )
+            .describe(loc.t("ui.settings.desc.language")),
+            row(
+                FieldId::ICompat,
+                loc.t("ui.settings.field.compat"),
+                FieldKind::Toggle(i.terminal_compat),
+            )
+            .describe(loc.t("ui.settings.desc.compat")),
+            row(
+                FieldId::ITableSeparators,
+                loc.t("ui.settings.field.table_separators"),
+                FieldKind::Toggle(i.table_row_separators),
+            )
+            .describe(loc.t("ui.settings.desc.table_separators")),
+            row(
+                FieldId::IMermaid,
+                loc.t("ui.settings.field.mermaid"),
+                FieldKind::Toggle(i.render_mermaid),
+            )
+            .describe(loc.t("ui.settings.desc.mermaid")),
+            row(
+                FieldId::IModelName,
+                loc.t("ui.settings.field.model_name"),
+                FieldKind::Toggle(i.show_model_name),
+            )
+            // NOT `desc.model_name` — that key describes the *cloud model
+            // name* field: reusing it here duplicated the key in the
+            // bundles, and JSON parsing silently keeps the later entry, so
+            // both fields showed this toggle's text. The bundle gate
+            // `builtin_bundles_have_no_duplicate_keys` guards the class.
+            .describe(loc.t("ui.settings.desc.show_model_name")),
+            row(
+                FieldId::IInputRows,
+                loc.t("ui.settings.field.input_rows"),
+                // The effective value: a hand-edited `0` reads as the 1 it acts as.
+                FieldKind::Text(i.input_rows_ceiling().to_string()),
+            )
+            .describe(loc.t("ui.settings.desc.input_rows")),
+            row(
+                FieldId::IClipboardOsc52,
+                loc.t("ui.settings.field.osc52"),
+                FieldKind::Choice(osc52_label(i.clipboard_osc52, loc)),
+            )
+            .describe(loc.t("ui.settings.desc.osc52")),
+            row(
+                FieldId::ISmNoteOrder,
+                loc.t("ui.settings.field.sm_note_order"),
+                FieldKind::Choice(note_order_label(i.self_model_note_order, loc)),
+            )
+            .describe(loc.t("ui.settings.desc.sm_note_order")),
+        ]);
+        let mut rows = grouped(loc.t("ui.settings.group.appearance"), appearance);
         rows.extend(grouped(
             loc.t("ui.settings.group.spelling"),
             vec![

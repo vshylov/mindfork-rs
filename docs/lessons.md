@@ -610,6 +610,21 @@ deadline; and in production, anything a `Drop` hands to the pool at exit needs a
 that does not depend on it running — here, the sweep of stale job directories.
 — *a test that believed a runtime's drop waits for its blocking pool*.
 
+**A mutation script that rewrites a source file and restores it in `finally`
+does not restore it when the run is stopped.** Stopped at its sixth mutant for
+being slow, such a run left `paint_canvas` where `finish_frame` had been — a line
+that compiles, reads plausibly, and is precisely the defect the tests exist to
+catch, sitting in the working tree with nothing to say it was not written on
+purpose. Two habits. Fingerprint the tree before (`git diff | sha1sum`) and
+compare after, whatever the script reports. And switch mutants at **run time**
+where they can be: every one written in at once, each behind a
+`crate::mutant(N)` that reads an environment variable, so the crate is built
+once — 25 seconds a mutant instead of 150 — and there is one restore, from a
+copy, at the end. A mutant that cannot be an expression under a switch is rarer
+than it looks: a deleted statement is `if !mutant(N) { … }`, a flipped guard is
+`guard && !mutant(N)`.
+— *colour modes — the monochrome mode*.
+
 ## 3. Measure; do not assume
 
 **A measured fact about someone else's release has a date on it — and a check
@@ -979,6 +994,23 @@ build with **that** version: the locally installed one was a major version behin
 could not parse the site's own syntax at all, so it would have reported nothing either
 way — a green run from the wrong toolchain is not evidence.
 — *structured data, authorship and dates a crawler can read*.
+
+**Before adding support for an environment convention, run the app with the
+variable set: a dependency may have been honouring it all along — its own
+way.** The roadmap carried "`NO_COLOR` is ignored" for months. It was not:
+crossterm reads the variable itself and, when it is set, writes no colour — and
+in place of every colour change writes `ESC[;m`, which resets every attribute.
+So under `NO_COLOR` the app had been drawing without colours *and* without
+whichever bold happened to be set in the same cell as a colour, with nothing
+said in their place: the selected row's backdrop, the open chat, the active tab
+were simply gone. Nobody had run it that way. What found it was the control arm
+of a live check written for something else — "with `NO_COLOR` set, choose
+`system` in settings; the frame must be coloured" — which came back with two
+colour pairs where the same screen has six. And it changes the feature: a mode
+chosen in settings has to flip the dependency's switch as well
+(`force_color_output`), or "a chosen mode wins over the variable" is true in
+`settings.json` and false on the screen.
+— *colour modes — the monochrome mode*.
 
 ## 4. The recurring defect class: a message must close the door
 

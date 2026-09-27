@@ -429,6 +429,8 @@ impl SearchScreen {
 }
 
 /// Splits a snippet into styled spans: matched runs accented, the rest plain.
+/// In the monochrome mode a matched run is reverse video instead
+/// ([`Palette::search_match`]) — a match has no glyph to be marked with.
 ///
 /// The ranges are **byte** ranges into `snippet.text` (see
 /// [`crate::features::chat_search::build_snippet`]) — slicing on anything else
@@ -451,7 +453,7 @@ fn highlight_spans(snippet: &Snippet, palette: &Palette) -> Vec<Span<'static>> {
         }
         spans.push(Span::styled(
             snippet.text[range.clone()].to_string(),
-            Style::new().fg(palette.accent).bold(),
+            palette.search_match(Style::new().fg(palette.text).bold()),
         ));
         at = range.end;
     }
@@ -818,5 +820,69 @@ mod tests {
         assert!(format_ts("2026-07-29T10:00:00+00:00").starts_with("2026-07-29"));
         assert_eq!(role_label("странная роль", ru()), "странная роль");
         assert_ne!(role_label("user", ru()), "user");
+    }
+
+    /// A matched word is accent and bold; in the monochrome mode, which has
+    /// neither, it is drawn on the mark that stays reverse video — on a
+    /// selected row as on any other (spec §11.6, fork A).
+    #[test]
+    fn a_matched_word_is_reverse_video_in_the_monochrome_mode() {
+        use crate::shared::theme::MONO_MARK;
+        use ratatui::style::{Color, Modifier};
+        let snippet = Snippet {
+            text: "one needle here and a needle there".into(),
+            matches: vec![4..10, 22..28],
+        };
+        let mono = Palette::mono();
+        let spans = highlight_spans(&snippet, &mono);
+        let texts: Vec<&str> = spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(
+            texts,
+            ["one ", "needle", " here and a ", "needle", " there"]
+        );
+        for (i, span) in spans.iter().enumerate() {
+            let want = (i % 2 == 1).then_some(MONO_MARK);
+            assert_eq!(span.style.bg, want, "{:?}", span.content);
+        }
+        // Every other mode: the accent, bold, and no mark.
+        let plain = highlight_spans(&snippet, &Palette::default());
+        assert_eq!(plain[1].style.fg, Some(Palette::default().accent));
+        assert_eq!(plain[1].style.bg, None);
+        assert!(plain[1].style.add_modifier.contains(Modifier::BOLD));
+
+        // On the screen, under the pass: the matches are what is reversed,
+        // the selected row's backdrop is gone, and its rail is what marks it.
+        let mut s = screen();
+        s.set_palette(mono);
+        let mut term = Terminal::new(TestBackend::new(80, 20)).unwrap();
+        term.draw(|f| {
+            s.render(f);
+            crate::shared::ui::finish_frame(f.buffer_mut(), &mono);
+        })
+        .unwrap();
+        let buf = term.backend().buffer();
+        let reversed: String = buf
+            .content
+            .iter()
+            .filter(|c| c.modifier.contains(Modifier::REVERSED))
+            .map(|c| c.symbol())
+            .collect();
+        assert_eq!(reversed.to_lowercase(), "маркер".repeat(3), "{reversed}");
+        assert!(
+            buf.content
+                .iter()
+                .all(|c| c.fg == Color::Reset && c.bg == Color::Reset)
+        );
+        assert!(
+            buf.content
+                .iter()
+                .all(|c| (c.modifier - Modifier::REVERSED).is_empty())
+        );
+        let rows = crate::shared::ui::tests::buffer_rows(buf);
+        assert_eq!(
+            rows.iter().filter(|r| r.contains("▌ ")).count(),
+            1,
+            "one selected hit, marked by its rail: {rows:#?}"
+        );
     }
 }

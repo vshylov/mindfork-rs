@@ -381,8 +381,10 @@ impl SettingsScreen {
             palette,
         );
 
-        // The results list: "breadcrumb   value" (the value muted).
-        let inner_w = list_area.width.saturating_sub(2) as usize;
+        // The results list: "breadcrumb   value" (the value muted). The
+        // selection's marker (the monochrome mode) is a column of every row.
+        let mark_w = palette.selected_mark().map_or(0, label_width);
+        let inner_w = (list_area.width.saturating_sub(2) as usize).saturating_sub(mark_w);
         let items: Vec<ListItem> = if results.is_empty() {
             vec![ListItem::new(Line::styled(
                 loc.t("ui.settings.ui.nothing_found"),
@@ -412,9 +414,14 @@ impl SettingsScreen {
             .panel(loc.t("ui.settings.ui.search_footer"), false)
             .border_style(palette.border_style(true));
         let rows = items.len();
-        let list = List::new(items)
-            .block(block)
-            .highlight_style(Style::new().reversed());
+        // Reverse video is all that says which result is selected; the choice
+        // and model popups above carry a `›` of their own in every mode.
+        let list = mark_selected(
+            List::new(items)
+                .block(block)
+                .highlight_style(Style::new().reversed()),
+            palette,
+        );
         // The whole settings index can be in this list, so it scrolls in earnest.
         let view_h = list_area.height.saturating_sub(2) as usize; // the panel's borders
         let st = self.search.as_mut().unwrap();

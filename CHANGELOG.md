@@ -22,6 +22,16 @@ split by subsystem.
   colour keeps a contrast of at least 4.5:1, on the background and on a selected
   row alike, and body text at least 7:1. The default, `system`, is what the app
   has always done, and each mode remembers its own theme.
+- **A monochrome mode, and `NO_COLOR`.** Settings → Interface → *Colour mode* →
+  `monochrome`: no colours and no bold, italic or underline — the terminal's own
+  two colours, for a terminal that draws attributes badly, an e-ink screen, a
+  screen reader. What the colours said is said with marks instead: keys are
+  `[Enter]`, the tab you are on is `[Hotkeys]`, the selected row of a list has
+  `›` before it, the feed's left bar tells your messages from the assistant's by
+  its shape, markdown keeps its `**` and its backticks, and the open chat is the
+  one filled dot in the list. Only selected text and the matches of a search are
+  inverted. With the `NO_COLOR` environment variable set the app starts in this
+  mode; a colour mode chosen in the settings wins over the variable.
 - **The input box's height is a setting.** Settings → Interface → *Input box
   height*: how many rows of text the box grows to before it scrolls, from 1 to
   50 — 6 by default, as before. However high it is set, the box never takes more
@@ -45,7 +55,9 @@ split by subsystem.
 ### Data
 - `settings.json` gains `interface.theme_mode` (written only once a mode is
   chosen) and `interface.full_theme`. Both are additions: nothing is migrated,
-  and an older version reading the file ignores them.
+  and an older version reading the file ignores them. `theme_mode` takes
+  `system`, `full` or `mono`; a value a version does not know reads as "not
+  chosen" rather than costing the file.
 
 ## [0.11.2] — 2026-09-26
 

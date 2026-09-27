@@ -662,12 +662,62 @@ fn interface_has_the_colour_mode_choice() {
     }
     assert_eq!(
         seen,
-        vec![None, Some(ThemeMode::Full), None],
+        vec![None, Some(ThemeMode::Full), Some(ThemeMode::Mono), None],
         "round to the default is back to absence, not to a pinned `system`"
     );
     // …and the other way round the ring.
     s.cycle_field(FieldId::IThemeMode, -1);
-    assert_eq!(s.config.interface.mode(), ThemeMode::Full);
+    assert_eq!(s.config.interface.mode(), ThemeMode::Mono);
+
+    // Every mode is in the popup, under a name of its own.
+    let (options, at) = s.choice_menu(FieldId::IThemeMode).unwrap();
+    assert_eq!(options.len(), ThemeMode::ALL.len());
+    assert_eq!(options[at], theme_mode_label(ThemeMode::Mono, s.loc()));
+    let mut names = options.clone();
+    names.dedup();
+    assert_eq!(names, options, "two modes under one label");
+}
+
+/// The monochrome mode has no colours to pick, so it has no theme row — and
+/// leaving it brings back the row of the mode entered, with the theme that
+/// mode had (spec §11.6).
+#[test]
+fn the_monochrome_mode_has_no_theme_row() {
+    use crate::shared::config::{Theme, ThemeMode};
+    let mut s = screen();
+    goto_section(&mut s, Section::Interface);
+    s.config.interface.theme = Theme::Light;
+    s.config.interface.full_theme = "light".into();
+    let theme_rows = |s: &SettingsScreen| -> Vec<FieldId> {
+        s.interface_fields()
+            .into_iter()
+            .map(|r| r.id)
+            .filter(|id| matches!(id, FieldId::ITheme | FieldId::IFullTheme))
+            .collect()
+    };
+    let rows_before = s.interface_fields().len();
+
+    s.config.interface.set_mode(ThemeMode::Mono);
+    assert_eq!(theme_rows(&s), Vec::<FieldId>::new());
+    assert_eq!(
+        s.interface_fields().len(),
+        rows_before - 1,
+        "only the theme row goes"
+    );
+    assert!(s.palette().mono, "the screen draws in the mode it shows");
+    // The row that is left still knows its default, and `Del` goes back to it.
+    match s.reset_field(FieldId::IThemeMode) {
+        Some(SettingsIntent::SaveConfig(c)) => assert_eq!(c.interface.theme_mode, None),
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+    assert_eq!(theme_rows(&s), vec![FieldId::ITheme]);
+    assert_eq!(s.config.interface.theme, Theme::Light, "kept through it");
+
+    s.config.interface.set_mode(ThemeMode::Mono);
+    s.cycle_field(FieldId::IThemeMode, -1);
+    assert_eq!(theme_rows(&s), vec![FieldId::IFullTheme]);
+    assert_eq!(s.config.interface.full_theme, "light", "kept through it");
+    assert!(!s.palette().mono);
 }
 
 /// One "Theme" row, two fields behind it: the row shows the theme of the mode
@@ -716,7 +766,7 @@ fn the_theme_row_is_the_theme_of_the_colour_mode_in_effect() {
         other => panic!("expected SaveConfig, got {other:?}"),
     }
     // …and going back to the system mode leaves the full one's.
-    s.cycle_field(FieldId::IThemeMode, 1);
+    s.cycle_field(FieldId::IThemeMode, -1);
     assert_eq!(theme_row(&s).0, FieldId::ITheme);
     assert_eq!(s.config.interface.full_theme, "light");
     s.cycle_field(FieldId::IThemeMode, 1);
@@ -741,8 +791,15 @@ fn the_working_copy_palette_follows_the_colour_mode() {
     s.cycle_field(FieldId::IFullTheme, 1);
     assert_eq!(s.palette().canvas, CANVAS_LIGHT);
     assert!(!s.palette().dark);
+    assert!(!s.palette().mono);
+    // Monochrome paints nothing and strips the rest…
     s.cycle_field(FieldId::IThemeMode, 1);
     assert_eq!(s.palette().canvas, Color::Reset);
+    assert!(s.palette().mono);
+    // …and the system mode is neither.
+    s.cycle_field(FieldId::IThemeMode, 1);
+    assert_eq!(s.palette().canvas, Color::Reset);
+    assert!(!s.palette().mono);
 }
 
 /// The full-mode theme has no row in a default config — that config is in the
@@ -5922,4 +5979,76 @@ fn reset_finds_the_default_in_any_interface_language() {
             "{lang:?}: a reset is not a language change"
         );
     }
+}
+
+/// The subsection tabs of Sampling list the same parameters, so the active
+/// tab's highlight is all that says whose sampling is being edited. Without
+/// it the tab is bracketed — focused or not — and the strip keeps its columns.
+#[test]
+fn the_active_subsection_tab_is_bracketed_in_the_monochrome_mode() {
+    use crate::shared::theme::Palette;
+    let text =
+        |line: &Line<'_>| -> String { line.spans.iter().map(|s| s.content.as_ref()).collect() };
+    let tabs = ["Assistant", "Impersonation", "Embeddings"];
+    let mono = Palette::mono();
+    for focused in [true, false] {
+        let plain = text(&tab_strip_line(&tabs, 1, focused, &Palette::default()));
+        assert!(!plain.contains('['), "{plain}");
+        for active in 0..tabs.len() {
+            let strip = text(&tab_strip_line(&tabs, active, focused, &mono));
+            for (i, tab) in tabs.iter().enumerate() {
+                assert_eq!(
+                    strip.contains(&format!("[{tab}]")),
+                    i == active,
+                    "{tab} in {strip}"
+                );
+            }
+            assert_eq!(strip.replace(['[', ']'], " "), plain);
+        }
+    }
+}
+
+/// The field search marks its selected result with reverse video alone; in
+/// the monochrome mode it gets the marker the choice popups have, and the
+/// rows give its columns up rather than run under the border.
+#[test]
+fn the_selected_search_result_is_marked_in_the_monochrome_mode() {
+    use crate::shared::config::ThemeMode;
+    let drawn = |mode: ThemeMode| -> Vec<String> {
+        let mut s = screen();
+        s.config.interface.set_mode(mode);
+        s.handle_key(key(KeyCode::Char('/')));
+        for c in "тем".chars() {
+            s.handle_key(key(KeyCode::Char(c)));
+        }
+        assert!(s.search.as_ref().unwrap().results.len() > 1, "the premise");
+        s.handle_key(key(KeyCode::Down));
+        let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
+        term.draw(|f| s.render(f)).unwrap();
+        crate::shared::ui::tests::buffer_rows(term.backend().buffer())
+    };
+    let mono = drawn(ThemeMode::Mono);
+    let marked: Vec<&String> = mono.iter().filter(|r| r.contains("│› ")).collect();
+    assert_eq!(marked.len(), 1, "one selected result: {mono:#?}");
+    let at = mono.iter().position(|r| r.contains("│› ")).unwrap();
+    assert!(
+        mono[at - 1].contains("│  "),
+        "the result above it is indented by the marker's width: {:?}",
+        mono[at - 1]
+    );
+    let system = drawn(ThemeMode::System);
+    assert!(!system.iter().any(|r| r.contains("│› ")), "{system:#?}");
+
+    // The marker's columns come out of the breadcrumb: the value at the end
+    // of every result is whole, as it is without the marker.
+    let values = |rows: &[String]| -> Vec<String> {
+        rows.iter()
+            // The popup's own columns: what is between its borders (the
+            // right one is the scrollbar's thumb on some rows).
+            .filter_map(|r| r.split(['│', '█']).find(|part| part.contains(" › ")))
+            .filter_map(|inside| inside.split_whitespace().last().map(str::to_string))
+            .collect()
+    };
+    assert!(values(&mono).len() > 1, "{mono:#?}");
+    assert_eq!(values(&mono), values(&system));
 }

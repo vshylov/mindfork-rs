@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (44)
+## Entries (45)
 
 - Post-M9: mouse-wheel feed scrolling (done)
 - Post-M9: own markdown renderer (tables + LaTeX + theme) (done)
@@ -56,6 +56,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the spinner leaves the terminal a quiet gap (done)
 - Post-M9: colour modes — the full mode (done)
 - Post-M9: the full colour mode, measured in a console — and a probe to measure with (done)
+- Post-M9: colour modes — the monochrome mode, and `NO_COLOR` (done)
 
 ### Post-M9: mouse-wheel feed scrolling (done)
 - **The mouse wheel scrolls the feed** on par with `PageUp/PageDown`. `ratatui::init()`
@@ -2639,3 +2640,102 @@ console buffer the API reads), the dark theme, a resize, the cursor's visibility
 the terminal did not choose, and the margin around the grid. The checklist is §8 of the plan.
 
 Unit tests unchanged: 3493 green, 202 ignored.
+
+### Post-M9: colour modes — the monochrome mode, and `NO_COLOR` (done)
+
+Stage 2 of the colour-modes track ([docs/theme-modes.md](../theme-modes.md) §9), branch
+`feat/theme-modes-mono`; stage 1 was merged as PR 634. Forks A and C of the plan are this
+stage's, both decided by the user on 2026-09-27: monochrome drops colours **and** attributes,
+with reverse video kept for a text selection and a search match only; `NO_COLOR` starts the
+app in it when no mode was chosen.
+
+**The mechanism is the second pass over the finished frame.** `shared::ui::strip_styles`:
+every cell's foreground, background and underline colour become the terminal's default and
+its attributes are dropped. `finish_frame` runs `paint_canvas` and then it, and is what
+`compose_frame` ends with; each pass is a no-op outside its mode. A pass rather than a
+palette of "no colours" because attributes never went through the palette — 57 places set
+one directly — and the logo and highlighted code bring colours of their own.
+
+**Reverse video is asked for by name, not kept.** The obvious rule — strip everything but
+`REVERSED` — would have kept the reverse video five popups mark their selected row with and
+the reversed rectangle of an unhighlighted code block, and made each of those widgets, and
+the next one written, responsible for knowing the mode. Instead a selection and a search
+match are drawn **on `MONO_MARK`** (`Palette::selection`, `Palette::search_match`), a
+background no palette has — an indexed colour, where palettes are named ANSI or RGB and
+highlighted code is RGB — and the pass turns a cell on that background into a reversed one.
+Rejected with it: a marker attribute (`SLOW_BLINK` as "keep me") — a frame that missed the
+pass would blink. `the_mark_is_a_colour_no_palette_has` holds the premise.
+
+**A pass only removes.** Twenty-two places said something by styling alone (the inventory of
+stage 1, plan §9.3 for the list), and stripping them silently would have been the defect
+class of lessons §4 in a new medium. Each got a glyph, read off `palette.mono`, in the
+columns it already had where that was possible: a list popup's `› ` (ratatui's own
+`highlight_symbol`, through `ui::mark_selected`), `[😀]` in the emoji cell's four columns,
+`[Tab]` for the padding of ` Tab `, `●` among `○` in the chat list, `(title)` for a chat that
+is only context, `<chat://…>` for an address that resolves, the word *command* in the input
+box's title, and the markdown markers the parser takes off — `**`, `*`, `~~`, the backtick —
+put back. Struck-out text that read as stated would have said the opposite of what was
+written. Every other mode draws what it drew: the drift gate over the committed dumps stayed
+green through the whole stage, and no screenshot was regenerated.
+
+**Three places wrap ahead of the feed**, so that a prefix can be on every row
+(`wrap::wrap_hanging`): a thought and the compaction summary on their `│ ` gutter
+(`push_gutter_line`), and a quote on its `> ` (`markdown::Writer::finish`). Muted italic was
+what told a wrapped row of a thought from the reply under it. The quote is wrapped over the
+finished list of lines, by index, last to first — which holds because in this mode nothing
+re-lays the lines out: `pad_code_block`, the one thing that does, squares off a background
+the mode does not have and is not called.
+
+**Beyond the list**: keycaps are `[Enter]` instead of a pill (a key and its description were
+told apart by the number of spaces between them); the feed's rail says whose row it is by
+shape — `▌` user, `║` assistant, `│` system and notes, `█` the message a jump landed on —
+since its colour was all that said it once the header had scrolled away.
+
+**`NO_COLOR`.** `ThemeMode::for_environment` (set to anything but an empty string →
+monochrome), recorded once at start-up in a process-wide `OnceLock`
+(`config::set_environment_mode`, from `launch_tui`, so the demo honours it too).
+`InterfaceSettings::mode()` resolves "not chosen" against it and `set_mode()` stores a mode
+equal to it as absence — so under the variable `system` is a choice and is written, and `Del`
+on the row goes back to following the environment. The tests take `mode_under`/
+`set_mode_under`: a `OnceLock` cannot hold two values in one test binary, and a suite that
+read the real environment would pass or fail by the shell it was run from.
+
+**Found by the live check: the variable was never being ignored.** The probe's control arm —
+with `NO_COLOR=1`, choose `system` in settings, the frame must be coloured — came back with
+two colour pairs where that screen has six. crossterm honours `NO_COLOR` on its own
+(`Colored::ansi_color_disabled`): it writes no colour, and `SetColors` becomes `ESC[;m`, a
+reset of every attribute. ratatui's backend sets a cell's attributes before its colours, so
+under the variable the app had been drawing with no colour **and** without whichever bold
+shared a cell with a colour change — on the settings screen the group headers kept theirs
+(same colour as the border before them, no colour change) and the active section's title
+lost it — with nothing in their place. The roadmap had carried "`NO_COLOR` is ignored" since
+the public-release audit. Fix: the colour mode decides what crossterm may write, per frame —
+`force_color_output(!palette.mono)`, `app/runtime::set_colour_output`.
+
+**Measured** (`tools/console_probe.py`, the new scenarios `mono` and `no-color`; the inbox
+console host of Windows 11 Pro 26200, `mindfork demo`, 3600 cells). In the monochrome mode
+every cell carries the console's default attributes — on the settings screen, the chat, under
+the help dialog and the emoji picker (44 wide glyphs) — and two characters selected in the
+input box are the only reverse video on the screen, gone again with the selection. With
+`NO_COLOR=1` the very first frame is bare and the settings row reads `monochrome`; with
+`system` chosen there the frame has its six colour pairs — **two before the fix**. `NO_COLOR=`
+(empty) and no variable at all both start coloured. The control for the finding, the build
+before this stage on the same settings screen: six colour pairs and 19 bold cells without the
+variable, no colour and 10 bold cells with it. The probe's own first run failed on exactly 44
+cells — the console marks the *leading* half of a wide glyph too (`0x0100`), which a check
+for "default attributes" has to mask along with the trailing one. Both stage 1 scenarios were
+run again and read as before.
+
+**Left open** (plan §9.5): a search for a word that a marker splits finds nothing in this
+mode (the feed matches rendered text, and `mar**ker**` does not contain `marker`); the hanging
+gutter is the monochrome mode's only, though every mode could have it — that changes the wrap
+of those rows everywhere and is a decision for the eye.
+
+**Tests**: 3534 unit tests green, 202 ignored (+41). 65 mutants, every one killed — two only
+after tests were written for them (a marker that did not open its own line, reachable only
+next to a block formula or in a tight list item after a code block; the quoted lines wrapped
+first to last, visible only with two quoted paragraphs that both wrap). The mutation run
+itself is the other lesson of the stage: stopped for being slow, the rewrite-and-restore script
+left `paint_canvas` where `finish_frame` had been; the rest were run switched at run time
+behind `crate::mutant(N)`, built once (lessons §2).
+

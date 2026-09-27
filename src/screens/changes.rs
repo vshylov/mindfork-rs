@@ -367,7 +367,14 @@ impl ChangesScreen {
                 break;
             }
             let selected = i == self.selected;
-            let marker = if selected && focused { "▌" } else { " " };
+            // With the diff pane focused the selected file is said by bold
+            // alone — which the monochrome mode does not have, so there it
+            // keeps a marker, a lighter one than the focused pane's rail.
+            let marker = match (selected, focused) {
+                (true, true) => "▌",
+                (true, false) if p.mono => "›",
+                _ => " ",
+            };
             // The name is what identifies a row, so it is what survives a narrow
             // pane: the directory is trimmed from the left, not the file name
             // from the right.
@@ -901,5 +908,35 @@ mod tests {
         press(&mut s, KeyCode::Tab);
         press(&mut s, KeyCode::Down);
         assert_eq!(s.selected, 1);
+    }
+
+    /// With the diff pane focused, which file the diff belongs to is said by
+    /// a bold name alone. The monochrome mode has no bold, and keeps a marker
+    /// on the file — a lighter one than the focused pane's rail, which still
+    /// says where the focus is (spec §11.6).
+    #[test]
+    fn the_shown_file_stays_marked_while_the_diff_has_the_focus() {
+        let file_row = |s: &mut ChangesScreen, name: &str| -> String {
+            text(s)
+                .lines()
+                .find(|l| l.contains(name))
+                .unwrap_or_else(|| panic!("{name} is not drawn"))
+                .to_string()
+        };
+        let mut s = screen(vec![modified("src/a.rs"), modified("src/b.rs")]);
+        s.set_palette(Palette::mono());
+        assert!(file_row(&mut s, "src/a.rs").contains("▌src/a.rs"));
+        assert!(file_row(&mut s, "src/b.rs").contains(" src/b.rs"));
+
+        press(&mut s, KeyCode::Tab);
+        assert!(file_row(&mut s, "src/a.rs").contains("›src/a.rs"));
+        assert!(!file_row(&mut s, "src/b.rs").contains('›'));
+
+        // Every other mode: the rail while the pane has the focus, and bold
+        // after it.
+        s.set_palette(Palette::default());
+        assert!(!file_row(&mut s, "src/a.rs").contains('›'));
+        press(&mut s, KeyCode::Tab);
+        assert!(file_row(&mut s, "src/a.rs").contains("▌src/a.rs"));
     }
 }
