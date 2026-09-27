@@ -410,7 +410,7 @@ impl Paths {
 
     /// The user's themes (`themes/`): `<name>.json` is a theme of the full
     /// colour mode, listed in settings by its name (spec §11.6,
-    /// docs/theme-modes.md §10). Read once at startup.
+    /// docs/history/theme-modes.md §10). Read once at startup.
     pub fn themes_dir(&self) -> PathBuf {
         self.root.join("themes")
     }

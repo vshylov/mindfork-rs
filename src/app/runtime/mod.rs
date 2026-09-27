@@ -740,7 +740,7 @@ impl Drawn {
 }
 
 /// What a frame has to do about the canvas before it draws (the full colour
-/// mode, spec §11.6, docs/theme-modes.md §4.6).
+/// mode, spec §11.6, docs/history/theme-modes.md §4.6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CanvasRepaint {
     /// The terminal already has this frame's canvas under it.

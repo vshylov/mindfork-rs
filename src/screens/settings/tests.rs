@@ -634,7 +634,7 @@ fn interface_has_terminal_compat_toggle() {
     assert!(field_desc(&s, FieldId::ICompat).is_some());
 }
 
-/// The colour mode (spec §11.6, docs/theme-modes.md): a row of its own, above
+/// The colour mode (spec §11.6, docs/history/theme-modes.md): a row of its own, above
 /// the theme, saved on every step like any other choice.
 #[test]
 fn interface_has_the_colour_mode_choice() {
@@ -6064,7 +6064,7 @@ fn two_user_themes() -> crate::shared::user_theme::Registry {
 
 /// The Theme row of the full mode lists the built-in themes, then the user's
 /// by name — and the screen draws with the one picked, in the same keypress
-/// (spec §11.6, docs/theme-modes.md §10.3).
+/// (spec §11.6, docs/history/theme-modes.md §10.3).
 #[test]
 fn the_full_theme_row_lists_the_users_themes_after_the_built_in_ones() {
     use crate::shared::config::ThemeMode;

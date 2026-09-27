@@ -28,18 +28,10 @@ evidence. Adding or closing an item is part of every task's documentation step
 
 ## Most valuable next
 
-**Colour modes and user themes** ([theme-modes.md](theme-modes.md), asked for by
-the user on 2026-09-27). The pain: the app draws over whatever background the
-terminal has, so the contrast of its text is nobody's to guarantee, styling
-cannot be turned off, and a palette of one's own cannot be brought. **Done**, in
-three stages: the full colour mode, the monochrome mode with `NO_COLOR`, and
-themes of the user's own. What each left open is in the bullet under *Feed and
-rendering*; the plan moves to `docs/history/` next.
-
-The tracks this section carried before — the first public release, images,
-retry/backoff, the prompt-caching measurement and the attachment birth turn —
-have all closed; apart from the one above, the lists below are an idea bank of
-equal weight.
+No track is open. The ones this section carried before — the first public
+release, images, retry/backoff, the prompt-caching measurement, the attachment
+birth turn, and colour modes with user themes — have all closed
+([Closed](#closed)); the lists below are an idea bank of equal weight.
 
 ## Open
 
@@ -306,29 +298,18 @@ equal weight.
   (`Ctrl+L` still follows it) — carrying link identity through the wrap is a
   span-metadata problem ratatui gives no room for. Other organs' schemes
   (`note://`, `attachment://`) — until there is a second live consumer.
-- **Colour modes and user themes** — **done**, three stages
-  ([theme-modes.md](theme-modes.md); was "a theme from a color configuration").
-  Stage 1 is done: the *full* colour mode, where the app paints its own
-  background, with the built-in `dark` and `light` held to contrast floors.
-  Measured on Windows 11's console host (`tools/console_probe.py`): painted to
-  the edges through every transition. Its go/no-go is what a probe cannot
-  give — a look in Windows Terminal and one Linux terminal, by the checklist in
-  §8 of the plan. Stage 2 is done: the *monochrome* mode (no colours, no
-  attributes; reverse video kept for a text selection and a search match, a
-  glyph for everything else styling alone used to say) and `NO_COLOR`, which
-  starts the app in it when no mode was chosen. Stage 3 is done: **user
-  themes**, `data/themes/<name>.json` — the colours a file names kept as
-  written, the rest fitted to the contrast floors, `mindfork themes
-  export|check`, the directory in the backup. Left open by
-  stage 1, pending that look: the margin a terminal keeps around its grid and
-  the cursor's colour, neither of which is a cell the app can paint; a softer
-  light canvas. Left open by stage 2 (plan §9.5): a search in the feed for a
+- **Colour modes and user themes — leftovers** (the track is closed,
+  [theme-modes.md](history/theme-modes.md)) — **idea**, apart from the first.
+  **A look in Windows Terminal and one Linux terminal**, by the checklist in §8
+  of the plan, is what a probe of the console host cannot give, and is still
+  owed. Pending that look, from stage 1: the margin a terminal keeps around its
+  grid and the cursor's colour, neither of which is a cell the app can paint; a
+  softer light canvas. From stage 2 (plan §9.5): a search in the feed for a
   word that emphasis splits finds nothing in the monochrome mode; the hanging
   gutter of thoughts and quotes is the monochrome mode's only — every mode
-  could have it. Left open by stage 3 (plan §10.6): a theme file is read at
-  start-up only — picking up a change without a restart; a theme for the
-  system mode; reading other tools' theme formats; syntax colours of their
-  own.
+  could have it. From stage 3 (plan §10.6): a theme file is read at start-up
+  only — picking up a change without a restart; a theme for the system mode;
+  reading other tools' theme formats; syntax colours of their own.
 
 ### Input, keys and the terminal
 
@@ -594,6 +575,13 @@ An index, newest first — one line per track, with the release that shipped it
 and where its story is told. What a track left open is a bullet above, under
 its area.
 
+- **Colour modes and user themes** — unreleased (2026-09-28), three stages:
+  the *full* mode, where the app paints its own canvas and the built-in `dark`
+  and `light` are held to contrast floors; the *monochrome* mode, with
+  `NO_COLOR` starting the app in it; and themes of the user's own,
+  `data/themes/<name>.json`, fitted to the same floors (`mindfork themes
+  export|check`). Was "a theme from a color configuration".
+  [theme-modes.md](history/theme-modes.md), spec §11.6.
 - **An attachment in its birth turn** — 0.11.2 (2026-09-26), two stages:
   a fetched page no longer promises a search it cannot have and a cut says where
   it ends (ceiling 1 000 000), then its index starts at the end of the round and a

@@ -3280,7 +3280,7 @@ the config, so their creation/deletion *is* undoable. See
 docs/history/settings-undo.md.
 
 **Colour mode** (`interface.theme_mode`: `system` by default, `full`, `mono`;
-docs/theme-modes.md). One level above the theme — *whose colours the screen is
+docs/history/theme-modes.md). One level above the theme — *whose colours the screen is
 drawn in*.
 
 - **`system`** — the app draws foregrounds and the terminal supplies the
@@ -3332,7 +3332,7 @@ erase gave it, and there is one behind every wide glyph: ratatui leaves a wide
 glyph's trailing cell out of the diff, so its colour is the terminal's to
 decide. Measured on Windows 11's console host, the terminal gives it the
 glyph's colours and the erase changes nothing; it is the guard for one that
-does not (docs/theme-modes.md §8). The erase is the one the project otherwise
+does not (docs/history/theme-modes.md §8). The erase is the one the project otherwise
 avoids (§4.4.1); it is kept to these rare moments.
 
 *In the settings*, *Appearance* opens with **Colour mode**, and the **Theme**
@@ -3341,7 +3341,7 @@ system mode, the full themes in the full one, and **no row** in the monochrome
 one. Two fields behind one label, so each mode remembers its own choice. Both
 apply live.
 
-**Monochrome** (`interface.theme_mode = mono`, docs/theme-modes.md §9). For a
+**Monochrome** (`interface.theme_mode = mono`, docs/history/theme-modes.md §9). For a
 terminal that renders attributes badly, an e-ink panel, a screen reader's
 review cursor — and for `NO_COLOR`.
 
@@ -3402,7 +3402,7 @@ back to following the environment. The variable is read once, at start-up
 rendered text holds the markers: a query that spans a marker — a word whose
 second half is bold — finds nothing in the feed.
 
-**User themes** (`data/themes/<name>.json`, docs/theme-modes.md §10;
+**User themes** (`data/themes/<name>.json`, docs/history/theme-modes.md §10;
 `shared/user_theme.rs`). A theme of the **full** mode is a file; its name is
 the file's stem, `interface.full_theme` holds it, and the Theme row lists the
 user's themes by name after the built-in ones. One JSON object, a colour per

@@ -2453,7 +2453,7 @@ link itself.
 
 ### Post-M9: colour modes — the full mode (done)
 
-Stage 1 of the colour-modes track ([docs/theme-modes.md](../theme-modes.md)), branch
+Stage 1 of the colour-modes track ([docs/history/theme-modes.md](../history/theme-modes.md)), branch
 `feat/theme-modes-full`. Asked for by the user on 2026-09-27: three ways of drawing the
 interface — the one the app has (*system*), one with no colours and no attributes
 (*monochrome*), one where the app paints its own background and text colour (*full*) — and
@@ -2644,7 +2644,7 @@ Unit tests unchanged: 3493 green, 202 ignored.
 
 ### Post-M9: colour modes — the monochrome mode, and `NO_COLOR` (done)
 
-Stage 2 of the colour-modes track ([docs/theme-modes.md](../theme-modes.md) §9), branch
+Stage 2 of the colour-modes track ([docs/history/theme-modes.md](../history/theme-modes.md) §9), branch
 `feat/theme-modes-mono`; stage 1 was merged as PR 634. Forks A and C of the plan are this
 stage's, both decided by the user on 2026-09-27: monochrome drops colours **and** attributes,
 with reverse video kept for a text selection and a search match only; `NO_COLOR` starts the
@@ -2743,7 +2743,7 @@ behind `crate::mutant(N)`, built once (lessons §2).
 
 ### Post-M9: colour modes — themes of the user's own (done)
 
-Stage 3 of the colour-modes track ([docs/theme-modes.md](../theme-modes.md) §10), branch
+Stage 3 of the colour-modes track ([docs/history/theme-modes.md](../history/theme-modes.md) §10), branch
 `feat/theme-modes-user-themes`; stages 1 and 2 were merged as PR 634 and PR 635. Fork D of
 the plan is this stage's, decided by the user on 2026-09-27: a theme that names only some
 roles gets the rest fitted to the contrast floors, and a colour it names is never altered.

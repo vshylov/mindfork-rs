@@ -683,7 +683,7 @@ src/
    │                       and the lightness holds), `fit` — a colour moved along
    │                       lightness by the smallest amount that clears a floor on
    │                       every ground — and `shifted`, a background moved by a
-   │                       given distance (docs/theme-modes.md §10.2)
+   │                       given distance (docs/history/theme-modes.md §10.2)
    ├─ net.rs               address policy for URLs the MODEL chose (fetch_url,
    │                       web_search page fetches): GuardedClient = a DNS
    │                       resolver that only returns allowed addresses (so the
@@ -748,7 +748,7 @@ src/
    │                       finish_frame (both passes, the one call a frame ends
    │                       with); mark_selected (a list's `› ` marker where
    │                       styling alone said which row is selected)
-   │                       (spec §11.6, docs/theme-modes.md),
+   │                       (spec §11.6, docs/history/theme-modes.md),
    │                       ListScroll (a list's scroll offset kept between frames —
    │                       the ONLY place a ListState is built; see spec §11.2),
    │                       prime_full_redraw (full-redraw sentinel — space +
@@ -3289,7 +3289,7 @@ the built-ins (`BUILTIN` LazyLock), behavior unchanged. UI language selectors
 and `present.rs::exit_labels` use the registry-aware `Lang::all()`; gate
 tests use the built-in `Lang::ALL`.
 
-**Colour modes (spec §11.6, docs/theme-modes.md).** The palette is built in one
+**Colour modes (spec §11.6, docs/history/theme-modes.md).** The palette is built in one
 place — `Palette::for_interface(&config.interface)` — called by the chat screen
 (`set_settings`), the settings screen (per frame, from its working copy) and the
 broadcast to the overlay screens. In the **full** mode it carries a canvas;

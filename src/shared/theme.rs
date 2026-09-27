@@ -18,7 +18,7 @@
 //! Unicode characters are replaced with safe ones, and rounded borders with
 //! straight ones.
 //!
-//! **Colour modes** (spec §11.6, docs/theme-modes.md). In the *system* mode
+//! **Colour modes** (spec §11.6, docs/history/theme-modes.md). In the *system* mode
 //! the palette is foregrounds only and the terminal supplies the background.
 //! In the *full* mode the palette also names a **canvas**
 //! ([`Palette::canvas`]), which `shared/ui.rs::paint_canvas` puts under every
@@ -197,7 +197,7 @@ pub static COMPAT_GLYPHS: GlyphSet = GlyphSet {
 };
 
 /// The backgrounds the Dark/Light palettes are tuned against — and, in the
-/// **full** colour mode, the ones the app paints (docs/theme-modes.md §4.4).
+/// **full** colour mode, the ones the app paints (docs/history/theme-modes.md §4.4).
 ///
 /// They began as the canvas of the generated screenshots
 /// (docs/history/demo-screenshots.md): in the system mode the app paints no
@@ -215,7 +215,7 @@ pub const CANVAS_LIGHT: Color = Color::Rgb(250, 250, 252);
 pub const FULL_THEMES: [&str; 2] = ["dark", "light"];
 
 /// What a cell is drawn on to stay **reverse video** in the monochrome mode
-/// (fork A of docs/theme-modes.md §6: a text selection and a search match —
+/// (fork A of docs/history/theme-modes.md §6: a text selection and a search match —
 /// the two things with no glyph to fall back on). Not a colour anybody sees:
 /// `shared/ui.rs::strip_styles` turns a cell with this background into a
 /// reversed one and drops the styling of every other cell, so reverse video
@@ -309,7 +309,7 @@ pub struct Palette {
     /// — what the syntax gives no colour of its own. A grey, light on a dark
     /// background and dark on a light one; a role of the palette because a
     /// user theme's canvas is not one of the two these were tuned on
-    /// (docs/theme-modes.md §10.2).
+    /// (docs/history/theme-modes.md §10.2).
     pub code_text: Color,
     /// Comments in highlighted code. Text like any other, and held to the
     /// same floor.
@@ -471,7 +471,7 @@ impl Palette {
     /// Tuned against [`CANVAS_DARK`], and held to the contrast floors by a
     /// test (`built_in_palettes_clear_the_contrast_floors`): `muted` and
     /// `keycap_fg` were each a shade lighter in the mockup and fell under
-    /// 4.5:1 on a selected row (docs/theme-modes.md §3.1).
+    /// 4.5:1 on a selected row (docs/history/theme-modes.md §3.1).
     fn dark() -> Self {
         Self {
             user: Color::Rgb(121, 169, 219),           // blue
@@ -506,7 +506,7 @@ impl Palette {
     /// [`Palette::dark`]. Every colour is absolute: `user` used to be the
     /// named ANSI blue, the one value here that a terminal chose — which a
     /// "fixed" palette should not have, and a palette that owns its background
-    /// cannot (docs/theme-modes.md §3.1).
+    /// cannot (docs/history/theme-modes.md §3.1).
     fn light() -> Self {
         Self {
             user: Color::Rgb(0, 55, 218), // #0037da — the blue Windows Terminal draws for ANSI blue
@@ -537,7 +537,7 @@ impl Palette {
 
     /// The text roles — everything that is read rather than merely seen — with
     /// the names the floor test reports them by. `border` and `keycap_bg` are
-    /// not text and are deliberately absent (docs/theme-modes.md §4.4). Taken
+    /// not text and are deliberately absent (docs/history/theme-modes.md §4.4). Taken
     /// from the table a theme file is read by, so a role added there is held
     /// to a floor here without being listed twice.
     #[cfg(test)]
@@ -1093,7 +1093,7 @@ mod tests {
         }
     }
 
-    /// The floors of docs/theme-modes.md §4.4, as the gate they were written
+    /// The floors of docs/history/theme-modes.md §4.4, as the gate they were written
     /// to be. Every text role is measured on the canvas **and** on the
     /// selection backdrop, because any row can be the selected one.
     #[test]
@@ -1132,7 +1132,7 @@ mod tests {
         assert!((contrast_ratio(black, white) - 21.0).abs() < 0.01);
         assert!((contrast_ratio(white, black) - 21.0).abs() < 0.01, "order");
         assert!((contrast_ratio(white, white) - 1.0).abs() < 0.001);
-        // A value measured outside the code (docs/theme-modes.md §3.1): the
+        // A value measured outside the code (docs/history/theme-modes.md §3.1): the
         // dark palette's body text on its canvas.
         let got = contrast_ratio(Color::Rgb(201, 204, 210), CANVAS_DARK);
         assert!((got - 11.74).abs() < 0.01, "{got}");

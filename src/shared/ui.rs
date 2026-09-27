@@ -45,7 +45,7 @@ pub fn dim_background(frame: &mut Frame, palette: &Palette) {
 }
 
 /// Puts the palette's canvas under a **finished** frame — the full colour mode
-/// (spec §11.6, docs/theme-modes.md §4.2). Every cell whose background is
+/// (spec §11.6, docs/history/theme-modes.md §4.2). Every cell whose background is
 /// still the terminal's default gets the canvas, and every cell whose
 /// foreground is gets the palette's text colour; a colour a widget set is left
 /// exactly as it is. In the system mode the palette has no canvas and nothing
@@ -76,7 +76,7 @@ pub fn paint_canvas(buf: &mut Buffer, palette: &Palette) {
 }
 
 /// Takes every colour and every text attribute off a **finished** frame — the
-/// monochrome mode (spec §11.6, docs/theme-modes.md §9). What is left is the
+/// monochrome mode (spec §11.6, docs/history/theme-modes.md §9). What is left is the
 /// terminal's own two colours, and reverse video on the cells a widget drew
 /// on [`MONO_MARK`]: a text selection and a search match, the two things with
 /// no glyph to fall back on. In any other mode nothing is touched.
@@ -149,7 +149,7 @@ pub const RESET_STYLE: &str = "\x1b[0m";
 /// behind every wide glyph — ratatui resets a wide glyph's trailing cell and
 /// leaves it out of the diff, so a terminal that does not give it the
 /// glyph's colours itself shows whatever was there. Windows 11's console host
-/// does give them, measured (docs/theme-modes.md §8); this is the guard for
+/// does give them, measured (docs/history/theme-modes.md §8); this is the guard for
 /// one that does not.
 ///
 /// Built here and written by the caller, like `shared/osc52.rs`: that is what

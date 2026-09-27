@@ -4759,7 +4759,7 @@ mod tests {
             .sum()
     }
 
-    // ---- the monochrome mode (spec §11.6, docs/theme-modes.md §9) ----
+    // ---- the monochrome mode (spec §11.6, docs/history/theme-modes.md §9) ----
 
     /// The rail of every row of a built feed — its first span.
     fn rails(lines: &[Line<'static>]) -> Vec<String> {

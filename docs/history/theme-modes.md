@@ -5,6 +5,14 @@ the interface — the one the app has today, one with no colours and no text
 attributes, and one where the app paints its own background and text colour,
 tuned for contrast — plus themes a user can write for the last one.
 
+**Status:** the track is **closed**. Stage 1 merged as PR 634 on 2026-09-27,
+stage 2 as PR 635 and stage 3 as PR 636 on 2026-09-28, each measured on
+Windows 11's console host (§8, §9.6, §10.7). The four forks were the user's,
+all decided as recommended (§6); the one place a stage departs from the letter
+of a decision is said where it happens (§10.2). What the track left open sits
+on the roadmap (§9.5, §10.6); how the modes look in Windows Terminal and on
+Linux remains a look.
+
 §6 records the forks and the user's decisions; §7 is the stage list. **All
 three stages are done**: the framework and the full mode (§4), the monochrome
 mode and `NO_COLOR` (§9), user themes (§10).
@@ -295,10 +303,10 @@ Each is its own branch and PR.
    floors as a test, the erase on a canvas change. Go/no-go is a **live check
    in real terminals** (§8): the console host was measured; Windows Terminal
    and one Linux terminal are a look.
-2. **Monochrome** — *done*, §9. The pass gains its second job (drop colours
+2. **Monochrome** — *done* (PR 635), §9. The pass gains its second job (drop colours
    and attributes), the 22 places of §3.2 get a glyph or, for the two fork A
    names, reverse video; `NO_COLOR`.
-3. **User themes** — *done*, §10. `data/themes/<name>.json`, the registry, the
+3. **User themes** — *done* (PR 636), §10. `data/themes/<name>.json`, the registry, the
    row listing them, `mindfork themes export`, the directory in the backup's
    list, the contrast fit and its report (`mindfork themes check`), a chapter
    in the manual.

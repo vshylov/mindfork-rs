@@ -1519,7 +1519,7 @@ mindfork setup --set interface.theme_mode=system     # colours, NO_COLOR or not
 mindfork setup --set interface.theme_mode=null       # back to following the environment
 ```
 
-See [manual.md](manual.md) §8 and [theme-modes.md](theme-modes.md).
+See [manual.md](manual.md) §8 and [history/theme-modes.md](history/theme-modes.md).
 
 ## 7. Live-model smoke tests
 

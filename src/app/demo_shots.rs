@@ -357,7 +357,7 @@ mod tests {
     }
 
     /// **The full colour mode is the screenshots, with the canvas painted in**
-    /// (spec §11.6, docs/theme-modes.md §4.4). Every screen of the capture set,
+    /// (spec §11.6, docs/history/theme-modes.md §4.4). Every screen of the capture set,
     /// drawn in the full mode, must be the system mode's frame cell for cell —
     /// the same text, the same attributes, the same colour wherever a widget
     /// chose one — and must carry the canvas or the text colour wherever the
