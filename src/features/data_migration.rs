@@ -9,7 +9,9 @@
 //!
 //! Flow (release-engineering.md F9-F11): read each file as `Value` → detect the
 //! version → `> current` — **refuse to start** (data newer than the app, F10); a corrupt
-//! `settings.json`/`profiles.json` — **refuse** (F11), a corrupt `chats/<id>.json` — skip
+//! `settings.json`/`profiles.json` — **refuse** (F11), and so is one at the current version
+//! that does not parse into its typed structure (docs/research/settings-typed-parse.md);
+//! a corrupt `chats/<id>.json` — skip
 //! with a `warn`; `< current` — into the plan. A non-empty plan → **one** backup before any write
 //! (a failure → the migration doesn't start) → run the steps + control-parse + an atomic write.
 //!
@@ -77,7 +79,10 @@ fn run_with(
         settings,
         Kind::Settings,
         loc,
-        "migrate.err.settings_corrupt",
+        &RefusalKeys {
+            corrupt: "migrate.err.settings_corrupt",
+            invalid: "migrate.err.settings_invalid",
+        },
     )? {
         plan.push(p);
     }
@@ -86,7 +91,10 @@ fn run_with(
         profiles,
         Kind::Profiles,
         loc,
-        "migrate.err.profiles_corrupt",
+        &RefusalKeys {
+            corrupt: "migrate.err.profiles_corrupt",
+            invalid: "migrate.err.profiles_invalid",
+        },
     )? {
         plan.push(p);
     }
@@ -189,46 +197,75 @@ fn run_with(
     Ok(())
 }
 
-/// The backup password stored in the settings, read straight from the raw JSON.
+/// The backup password stored in the settings, read straight from the raw JSON
+/// ([`backup::backup_settings`]).
 ///
 /// Runs before storage opens and before any migration, so the typed `AppConfig`
-/// isn't available — `api_keys` is pulled out of the `Value` instead. Every
-/// failure (no file, corrupt JSON, no entry, a foreign machine's entry) reads as
-/// "no password", which is the pre-existing behaviour.
+/// isn't available. Every failure (no file, corrupt JSON, no entry, a foreign
+/// machine's entry) reads as "no password", which is the pre-existing behaviour.
 fn stored_backup_password(paths: &Paths) -> Option<String> {
-    let value: Value = json::read_json(&paths.settings_file()).ok()??;
-    let entries: Vec<crate::shared::secrets::ApiKeyEntry> =
-        serde_json::from_value(value.get("api_keys")?.clone()).ok()?;
-    crate::shared::secrets::stored_key(&entries, crate::shared::secrets::BACKUP_PASSWORD_KEY)
+    backup::backup_settings(paths).ok()?.stored_password
+}
+
+/// The two refusals a file can earn by what it holds: it is not JSON
+/// (`corrupt`), or it is JSON at the current version and not the structure the
+/// app reads it into (`invalid`).
+struct RefusalKeys {
+    corrupt: &'static str,
+    invalid: &'static str,
 }
 
 /// Assesses one file: `Ok(None)` — no file, or already current; `Ok(Some)` — into the plan;
-/// `Err` — corrupt (via the `corrupt_key`) or a downgrade (data newer than the app).
+/// `Err` — corrupt, invalid (both via `keys`) or a downgrade (data newer than the app).
+///
+/// A file at the current version is parsed into its **typed** structure here,
+/// not only as a `Value`: it is what the app is about to load, and a value the
+/// structure refuses — a misspelt enum value, a newer version's one, a string
+/// where a number belongs — fails the whole file. Loaded with a fallback to the
+/// defaults, that cost the user every setting and then the file itself
+/// (docs/research/settings-typed-parse.md); so the refusal is made here, before
+/// anything is opened, in serde's words — they name the value, what would have
+/// been accepted, and the line.
 fn assess_file(
     path: &Path,
     art: &JsonArtifact,
     kind: Kind,
     loc: &Locale,
-    corrupt_key: &str,
+    keys: &RefusalKeys,
 ) -> Result<Option<Planned>> {
-    match json::read_json::<Value>(path) {
-        Ok(None) => Ok(None),
-        Ok(Some(v)) => match art.assess(&v) {
-            Assessment::UpToDate => Ok(None),
-            Assessment::Migrate { from } => Ok(Some(Planned {
-                path: path.to_path_buf(),
-                kind,
-                from,
-                value: v,
-            })),
-            Assessment::Downgrade { from } => {
-                bail!(downgrade_msg(loc, art.name, from, art.current))
-            }
-        },
-        Err(_) => bail!(
-            "{}",
-            loc.tf(corrupt_key, &[("path", &path.display().to_string())])
-        ),
+    let shown = path.display().to_string();
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => bail!("{}", loc.tf(keys.corrupt, &[("path", &shown)])),
+    };
+    let Ok(v) = serde_json::from_slice::<Value>(&bytes) else {
+        bail!("{}", loc.tf(keys.corrupt, &[("path", &shown)]))
+    };
+    match art.assess(&v) {
+        Assessment::UpToDate => {
+            // From the bytes, not from `v`: only there does the error carry a position.
+            control_parse(kind, &mut serde_json::Deserializer::from_slice(&bytes)).map_err(
+                |e| {
+                    tracing::error!(file = %shown, error = %e,
+                        "startup refused: the file holds a value this version cannot read");
+                    anyhow!(
+                        "{}",
+                        loc.tf(keys.invalid, &[("path", &shown), ("err", &e.to_string())])
+                    )
+                },
+            )?;
+            Ok(None)
+        }
+        Assessment::Migrate { from } => Ok(Some(Planned {
+            path: path.to_path_buf(),
+            kind,
+            from,
+            value: v,
+        })),
+        Assessment::Downgrade { from } => {
+            bail!(downgrade_msg(loc, art.name, from, art.current))
+        }
     }
 }
 
@@ -244,20 +281,18 @@ fn downgrade_msg(loc: &Locale, file: &str, found: u32, current: u32) -> String {
     )
 }
 
-/// Validates a migrated value via typed parsing (without writing).
-fn control_parse(kind: Kind, v: &Value) -> Result<()> {
+/// Validates via typed parsing (without writing). Generic over the source: a
+/// migrated `Value`, or the bytes of a file that needed no migration.
+fn control_parse<'de, D>(kind: Kind, de: D) -> Result<(), D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
     match kind {
-        Kind::Settings => {
-            serde_json::from_value::<AppConfig>(v.clone())?;
-        }
-        Kind::Profiles => {
-            serde_json::from_value::<Vec<Profile>>(v.clone())?;
-        }
-        Kind::Chat => {
-            serde_json::from_value::<Chat>(v.clone())?;
-        }
+        Kind::Settings => AppConfig::deserialize(de).map(drop),
+        Kind::Profiles => Vec::<Profile>::deserialize(de).map(drop),
+        Kind::Chat => Chat::deserialize(de).map(drop),
     }
-    Ok(())
 }
 
 /// All `chats/*.json` (sorted for determinism). No directory → empty.
@@ -421,6 +456,108 @@ mod tests {
             err.contains("настроек") && err.contains("повреждён"),
             "{err}"
         );
+    }
+
+    fn en() -> &'static Locale {
+        locale(Lang::En)
+    }
+
+    /// A root holding `settings.json` and `profiles.json` as given, and nothing else.
+    fn root_with(settings: &str, profiles: &str) -> (tempfile::TempDir, Paths) {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::with_root(dir.path());
+        write(&paths.settings_file(), settings);
+        write(&paths.profiles_file(), profiles);
+        (dir, paths)
+    }
+
+    /// Whether anything was written next to `file`: its `.bak`, or a
+    /// pre-migration backup.
+    fn nothing_was_written(paths: &Paths, file: &Path) -> bool {
+        !file.with_extension("bak").exists() && !paths.backups_dir().exists()
+    }
+
+    /// JSON at the current schema that `AppConfig` refuses is refused **here**,
+    /// naming the file and the value: loaded with a fallback to the defaults it
+    /// cost the user every setting, and the next save the file
+    /// (docs/research/settings-typed-parse.md). The three ways to hold such a
+    /// value — a typo, a newer version's value, a wrong type.
+    #[test]
+    fn run_refuses_settings_holding_a_value_the_config_cannot_read() {
+        for (field, serde_says) in [
+            (
+                r#""interface": {"theme": "drak"}"#,
+                "unknown variant `drak`",
+            ),
+            (
+                r#""engine": {"mode": "bedrock"}"#,
+                "unknown variant `bedrock`",
+            ),
+            (r#""max_tool_rounds": "3""#, "expected u32"),
+        ] {
+            let raw = format!(
+                "{{\n  \"schema_version\": {},\n  \"tools\": {{\"python_enabled\": true}},\n  {field}\n}}",
+                schema::SETTINGS_SCHEMA
+            );
+            let (_dir, paths) = root_with(&raw, "[]");
+
+            let err = run(&paths, en()).unwrap_err().to_string();
+
+            let file = paths.settings_file();
+            assert!(err.contains(&file.display().to_string()), "{err}");
+            assert!(err.contains(serde_says), "{field}: {err}");
+            // Where in the file: the position survives only a parse from bytes.
+            assert!(err.contains("at line 4 column"), "{field}: {err}");
+            assert_eq!(fs::read_to_string(&file).unwrap(), raw, "{field}");
+            assert!(nothing_was_written(&paths, &file), "{field}");
+        }
+    }
+
+    /// The refusal is a bundle text, not serde's sentence alone.
+    #[test]
+    fn the_refusal_of_an_unreadable_value_is_localized() {
+        let raw = format!(
+            r#"{{"schema_version": {}, "interface": {{"theme": "drak"}}}}"#,
+            schema::SETTINGS_SCHEMA
+        );
+        let (_dir, paths) = root_with(&raw, "[]");
+        let err = run(&paths, ru()).unwrap_err().to_string();
+        assert!(err.contains("не может прочитать"), "{err}");
+        assert!(err.contains("`drak`"), "{err}");
+    }
+
+    /// The same gate over `profiles.json` (fork F3): a refusal that names the
+    /// file, where the orchestrator's failed load ended the session pointing at
+    /// the log.
+    #[test]
+    fn run_refuses_profiles_holding_a_value_a_profile_cannot_read() {
+        let mut list = serde_json::to_value(vec![Profile::new("A", "s")]).unwrap();
+        list[0]["is_hidden"] = json!("yes");
+        let raw = serde_json::to_string_pretty(&list).unwrap();
+        let (_dir, paths) = root_with(&valid_settings_json(), &raw);
+
+        let err = run(&paths, en()).unwrap_err().to_string();
+
+        let file = paths.profiles_file();
+        assert!(err.contains(&file.display().to_string()), "{err}");
+        assert!(err.contains("profiles file"), "{err}");
+        assert!(err.contains("expected a boolean"), "{err}");
+        assert_eq!(fs::read_to_string(&file).unwrap(), raw);
+        assert!(nothing_was_written(&paths, &file));
+    }
+
+    /// The control arm: what the gate refuses is decided by the typed parse and
+    /// by nothing of its own. A field read leniently (`interface.theme_mode`,
+    /// spec §11.6) and a key this version does not have both still start.
+    #[test]
+    fn a_value_the_config_reads_leniently_passes_the_gate() {
+        let raw = format!(
+            r#"{{"schema_version": {}, "interface": {{"theme_mode": "sepia"}}, "a_newer_key": 1}}"#,
+            schema::SETTINGS_SCHEMA
+        );
+        let (_dir, paths) = root_with(&raw, "[]");
+        run(&paths, en()).unwrap();
+        assert_eq!(fs::read_to_string(paths.settings_file()).unwrap(), raw);
     }
 
     #[test]

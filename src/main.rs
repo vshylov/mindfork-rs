@@ -361,17 +361,7 @@ fn launch_tui(
     let (cmd_tx, cmd_rx) = unbounded_channel::<AppCommand>();
     let (evt_tx, evt_rx) = unbounded_channel::<AppEvent>();
 
-    // Config from settings.json + seeding via environment variables (dev-workflow contract §9).
-    // A fresh install (no settings.json) → interface language from defaults.json (axis B,
-    // docs/i18n-ui.md §3.2); an old settings.json without the field → Ru via serde-default.
-    let fresh_config = !paths.settings_file().exists();
-    let mut config = storage.json().load_config().unwrap_or_default();
-    if fresh_config {
-        config.interface.language = paths.default_language();
-    }
-    if apply_env {
-        apply_env_overrides(&mut config);
-    }
+    let config = startup_config(paths, storage.json(), apply_env, loc)?;
 
     // The handle is kept rather than dropped: when the UI loop ends because its
     // event channel closed (D1), this is what holds the reason — a panic payload
@@ -432,6 +422,37 @@ fn launch_tui(
     result.map(|()| ExitCode::SUCCESS)
 }
 
+/// The configuration a session starts with: `settings.json` + seeding via
+/// environment variables (dev-workflow contract §9). A fresh install (no
+/// settings.json) → interface language from defaults.json (axis B,
+/// docs/i18n-ui.md §3.2); an old settings.json without the field → Ru via
+/// serde-default.
+///
+/// A file that cannot be read **ends the launch**. It used to read as the
+/// defaults, which the orchestrator's first save then wrote over the file —
+/// every setting and every stored key, for one value the parse refused
+/// (docs/research/settings-typed-parse.md). The start-up gate
+/// (`features::data_migration`) refuses such a file first and in better words;
+/// this is what holds when the gate was not run, or the file changed after it.
+fn startup_config(
+    paths: &Paths,
+    store: &JsonStore,
+    apply_env: bool,
+    loc: &Locale,
+) -> anyhow::Result<AppConfig> {
+    let fresh_config = !paths.settings_file().exists();
+    let mut config = store
+        .load_config()
+        .with_context(|| loc.t("cli.ctx.load_settings").to_string())?;
+    if fresh_config {
+        config.interface.language = paths.default_language();
+    }
+    if apply_env {
+        apply_env_overrides(&mut config);
+    }
+    Ok(config)
+}
+
 /// CLI interface language: explicit from `settings.json` (the strongest signal),
 /// otherwise the resolved default language (`default_language` from `defaults.json`,
 /// or, absent that, the one detected from the OS locale in [`Paths::resolve`]). A fresh
@@ -441,13 +462,25 @@ fn cli_lang(settings_language: Option<Lang>, default_language: Lang) -> Lang {
     settings_language.unwrap_or(default_language)
 }
 
-/// The interface language from `settings.json`, if the file exists and parses. `None`
-/// when it's missing/corrupt (the same leniency as `load_config().unwrap_or_default()`,
-/// but distinguishes "no file" from "there is one" — needed for choosing the CLI language).
+/// The interface language from `settings.json`, if the file exists and says one —
+/// or is a file that would read as the default one. `None` when it's missing, is
+/// not JSON, or holds something other than a language there.
+///
+/// Read from the raw JSON, not through `AppConfig`: this is the language a
+/// refusal **about this very file** is printed in, so it has to survive a value
+/// elsewhere in the file that the typed parse rejects.
 fn try_settings_language(settings_file: &Path) -> Option<Lang> {
     let bytes = std::fs::read(settings_file).ok()?;
-    let cfg: AppConfig = serde_json::from_slice(&bytes).ok()?;
-    Some(cfg.interface.language)
+    let raw: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    // What the typed config reads an absent section or field as.
+    let unset = || Some(crate::shared::config::InterfaceSettings::default().language);
+    let Some(interface) = raw.as_object()?.get("interface") else {
+        return unset();
+    };
+    match interface.as_object()?.get("language") {
+        None => unset(),
+        Some(code) => code.as_str().map(Lang::from_code),
+    }
 }
 
 /// Prints an error in the given language: `{localized prefix}: {chain of causes}`
@@ -478,24 +511,27 @@ fn acquire_cli_guard(loc: &Locale, action: &str) -> anyhow::Result<instance::Ins
     }
 }
 
-/// What the backup/restore commands need out of the config: the file-tools
-/// sandbox (for inclusion/cleanup) and the stored backup password.
-struct BackupConfig {
-    fs_root: Option<PathBuf>,
-    stored_password: Option<String>,
-}
-
-fn backup_config(paths: &Paths) -> BackupConfig {
-    let config = JsonStore::new(paths.clone())
-        .load_config()
-        .unwrap_or_default();
-    BackupConfig {
-        fs_root: config.tools.fs_root.map(PathBuf::from),
-        stored_password: crate::shared::secrets::stored_key(
-            &config.api_keys,
-            crate::shared::secrets::BACKUP_PASSWORD_KEY,
-        ),
-    }
+/// What the backup/restore commands need out of the settings
+/// ([`backup::backup_settings`] — read from the raw JSON, so that a settings file
+/// the app refuses to start on can still be backed up, and encrypted).
+///
+/// A file the two values cannot be had from does not stop the command: a backup
+/// that happens is worth more than one that was refused (spec §12.3). It is
+/// **said**, though — without the stored password a backup is written in
+/// plaintext, and that must not be found out from the archive.
+fn backup_config(paths: &Paths, loc: &Locale) -> backup::BackupSettings {
+    backup::backup_settings(paths).unwrap_or_else(|err| {
+        tracing::warn!(error = %format!("{err:#}"),
+            "the settings could not be read for a backup command");
+        eprintln!(
+            "{}",
+            loc.tf(
+                "cli.backup.settings_unreadable",
+                &[("path", &paths.settings_file().display().to_string())]
+            )
+        );
+        backup::BackupSettings::default()
+    })
 }
 
 /// The run's one effective password: the argument wins over the stored setting
@@ -513,7 +549,7 @@ fn run_backup(
     loc: &Locale,
 ) -> anyhow::Result<()> {
     let _instance = acquire_cli_guard(loc, loc.t("cli.guard.action.backup"))?;
-    let cfg = backup_config(paths);
+    let cfg = backup_config(paths, loc);
     let password = effective_password(password, cfg.stored_password);
     let out = backup::create_backup(
         paths,
@@ -605,7 +641,7 @@ fn stats_of_archive(
     password: Option<String>,
     loc: &Locale,
 ) -> anyhow::Result<features::data_stats::DataStats> {
-    let stored = backup_config(paths).stored_password;
+    let stored = backup_config(paths, loc).stored_password;
     eprintln!(
         "{}",
         loc.tf(
@@ -715,7 +751,7 @@ fn run_restore(
     loc: &Locale,
 ) -> anyhow::Result<()> {
     let _instance = acquire_cli_guard(loc, loc.t("cli.guard.action.restore"))?;
-    let cfg = backup_config(paths);
+    let cfg = backup_config(paths, loc);
     let password = resolve_restore_password(archive, password, cfg.stored_password, loc)?;
 
     // Warn if the backup was made by a newer version of the app: the data is intact, but
@@ -1206,12 +1242,8 @@ fn run_llama_remove(paths: &Paths, id: &str, force: bool, loc: &Locale) -> anyho
         );
     };
 
-    let config = JsonStore::new(paths.clone())
-        .load_config()
-        .unwrap_or_default();
-    let uses = llama::binary_uses(&config, &install.dir);
-    if !uses.is_empty() && !force {
-        bail!("{}", llama::render_in_use(&uses, &install, loc));
+    if !force {
+        refuse_a_build_in_use(paths, &install, loc)?;
     }
 
     println!(
@@ -1227,6 +1259,35 @@ fn run_llama_remove(paths: &Paths, id: &str, force: bool, loc: &Locale) -> anyho
     llama::remove_install(&install.dir, loc)?;
     for line in llama::render_removed(&install, &root, paths.exe_dir(), loc) {
         println!("{line}");
+    }
+    Ok(())
+}
+
+/// The in-use check of `llama remove`: a build the settings point at is
+/// refused. So is one the settings cannot be asked about — read with a fallback
+/// to the defaults, a settings file holding one unreadable value named no
+/// binary at all, and the build it did name was removed unasked
+/// (docs/research/settings-typed-parse.md §2.4). `--force` skips the check, and
+/// with it the need for the file.
+fn refuse_a_build_in_use(
+    paths: &Paths,
+    install: &features::llama_setup::Install,
+    loc: &Locale,
+) -> anyhow::Result<()> {
+    use crate::features::llama_setup as llama;
+
+    let config = JsonStore::new(paths.clone()).load_config().map_err(|e| {
+        anyhow!(
+            "{}",
+            loc.tf(
+                "llamacpp.remove.settings_unreadable",
+                &[("err", &format!("{e:#}"))]
+            )
+        )
+    })?;
+    let uses = llama::binary_uses(&config, &install.dir);
+    if !uses.is_empty() {
+        bail!("{}", llama::render_in_use(&uses, install, loc));
     }
     Ok(())
 }
@@ -1419,7 +1480,10 @@ fn run_import(paths: &Paths, file: &Path, loc: &Locale) -> anyhow::Result<()> {
 
     // Carry over the source's global settings (only fields that are set — a partial
     // transfer doesn't overwrite the user's settings).
-    let mut config = storage.json().load_config().unwrap_or_default();
+    let mut config = storage
+        .json()
+        .load_config()
+        .with_context(|| loc.t("cli.ctx.load_settings").to_string())?;
     if let Some(sampling) = result.sampling {
         config.default_sampling = sampling;
     }
@@ -1779,46 +1843,195 @@ mod tests {
         )
     }
 
-    /// **Reproduction of a defect** — what the code does today, not what it
-    /// should (docs/research/settings-typed-parse.md §1). One enum value this
-    /// binary cannot read costs the user every setting: the start-up gate reads
-    /// the file as untyped JSON and passes it, the typed load fails, and
-    /// `unwrap_or_default()` answers with the defaults. The first routine save
-    /// then writes them over the file, and the second over its only backup.
-    #[test]
-    fn repro_one_bad_enum_value_resets_the_whole_config() {
+    /// A root holding [`settings_with_a_typo`], and the file's text.
+    fn root_with_a_typo() -> (tempfile::TempDir, Paths, String) {
         let tmp = tempfile::tempdir().unwrap();
         let paths = Paths::with_root(tmp.path());
         let original = settings_with_a_typo();
         std::fs::write(paths.settings_file(), &original).unwrap();
+        (tmp, paths, original)
+    }
 
-        // The gate lets the file through: it is JSON, and at the current schema.
-        features::data_migration::run(&paths, i18n::locale(Lang::En)).unwrap();
+    /// That the file is what it was, and that nothing was saved over it — a
+    /// save leaves a `settings.bak` behind.
+    fn assert_settings_untouched(paths: &Paths, original: &str) {
+        assert_eq!(
+            std::fs::read_to_string(paths.settings_file()).unwrap(),
+            original
+        );
+        assert!(!paths.settings_file().with_extension("bak").exists());
+    }
 
-        // `launch_tui`'s own line.
+    /// One value the typed parse refuses used to cost the user every setting:
+    /// the gate passed the file as JSON, the load fell back to the defaults,
+    /// and the orchestrator's first save — at start-up — wrote them over it
+    /// (docs/research/settings-typed-parse.md §1). Now both halves of the
+    /// start refuse, each on its own: the gate, and the load `launch_tui`
+    /// makes, which is what holds if the gate was not run.
+    #[test]
+    fn one_unreadable_value_refuses_the_start_and_costs_nothing() {
+        let (_tmp, paths, original) = root_with_a_typo();
+        let loc = i18n::locale(Lang::En);
+
+        let gate = features::data_migration::run(&paths, loc).unwrap_err();
+        assert!(
+            gate.to_string().contains("unknown variant `drak`"),
+            "{gate}"
+        );
+
         let store = JsonStore::new(paths.clone());
-        let config = store.load_config().unwrap_or_default();
-        assert_eq!(config, AppConfig::default());
-        // Not the misspelt value alone — every one of the user's.
-        assert_eq!(config.max_tool_rounds, 8, "the user's was 3");
-        assert_eq!(config.engine.mode, ServerMode::Managed);
-        assert_eq!(config.engine.external.url, None);
-        assert_eq!(config.interface.language, Lang::Ru);
-        assert_eq!(config.interface.input_max_rows, 6);
-        assert!(!config.tools.python_enabled);
+        let load = startup_config(&paths, &store, false, loc).unwrap_err();
+        let said = format!("{load:#}");
+        assert!(said.contains("reading the settings"), "{said}");
+        assert!(said.contains("unknown variant `drak`"), "{said}");
 
-        // The orchestrator's first save (`remember_active_chat` fires at
-        // start-up, since a default config remembers no chat) replaces the
-        // file; the user's copy survives in `settings.bak`, one deep...
-        let bak = paths.settings_file().with_extension("bak");
-        store.save_config(&config).unwrap();
-        let on_disk = std::fs::read_to_string(paths.settings_file()).unwrap();
-        assert!(!on_disk.contains("127.0.0.1:8000"), "{on_disk}");
-        assert_eq!(std::fs::read_to_string(&bak).unwrap(), original);
-        // ...until the second save, after which it is nowhere.
-        store.save_config(&config).unwrap();
-        let backed_up = std::fs::read_to_string(&bak).unwrap();
-        assert!(!backed_up.contains("127.0.0.1:8000"), "{backed_up}");
+        assert_settings_untouched(&paths, &original);
+    }
+
+    /// The control arm: the same file with the typo corrected starts, with
+    /// every one of the user's values.
+    #[test]
+    fn the_same_settings_without_the_typo_start_with_the_users_values() {
+        let (_tmp, paths, original) = root_with_a_typo();
+        let corrected = original.replace("drak", "dark");
+        std::fs::write(paths.settings_file(), &corrected).unwrap();
+        let loc = i18n::locale(Lang::En);
+
+        features::data_migration::run(&paths, loc).unwrap();
+        let store = JsonStore::new(paths.clone());
+        let config = startup_config(&paths, &store, false, loc).unwrap();
+
+        assert_eq!(config.max_tool_rounds, 3);
+        assert_eq!(config.engine.mode, ServerMode::External);
+        assert_eq!(
+            config.engine.external.url.as_deref(),
+            Some("http://127.0.0.1:8000/v1")
+        );
+        assert_eq!(config.interface.theme, crate::shared::config::Theme::Dark);
+        assert_eq!(config.interface.language, Lang::En);
+        assert_eq!(config.interface.input_max_rows, 12);
+        assert!(config.tools.python_enabled);
+        assert_settings_untouched(&paths, &corrected);
+    }
+
+    /// A fresh root starts on the defaults in the installer's language, and
+    /// loading creates no file.
+    #[test]
+    fn a_fresh_root_starts_on_the_defaults_in_the_installers_language() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = Paths::with_root(tmp.path()).with_default_language(Lang::En);
+        let store = JsonStore::new(paths.clone());
+        let config = startup_config(&paths, &store, false, i18n::locale(Lang::En)).unwrap();
+        let mut expected = AppConfig::default();
+        expected.interface.language = Lang::En;
+        assert_eq!(config, expected);
+        assert!(!paths.settings_file().exists());
+    }
+
+    /// The refusal about a settings file is printed in that file's language:
+    /// the one field is read from the raw JSON, so a value the typed parse
+    /// rejects elsewhere does not take the language with it.
+    #[test]
+    fn the_cli_language_survives_a_value_the_config_cannot_read() {
+        let (_tmp, paths, _) = root_with_a_typo();
+        let file = paths.settings_file();
+        assert_eq!(try_settings_language(&file), Some(Lang::En));
+
+        let cases: [(&str, Option<Lang>); 6] = [
+            // What the typed config reads an absent field or section as.
+            (r#"{"max_tool_rounds": 3}"#, Some(Lang::Ru)),
+            (r#"{"interface": {"theme": "dark"}}"#, Some(Lang::Ru)),
+            (r#"{"interface": {"language": "ru"}}"#, Some(Lang::Ru)),
+            // Nothing there to read a language from.
+            (r#"{"interface": {"language": 7}}"#, None),
+            (r#"{"interface": "en"}"#, None),
+            ("{ this is not json", None),
+        ];
+        for (text, expected) in cases {
+            std::fs::write(&file, text).unwrap();
+            assert_eq!(try_settings_language(&file), expected, "{text}");
+        }
+        std::fs::remove_file(&file).unwrap();
+        assert_eq!(try_settings_language(&file), None);
+    }
+
+    /// `import` saves the settings it loaded, so it must not load the
+    /// defaults in place of a file it could not read.
+    #[test]
+    fn import_refuses_settings_it_cannot_read_and_writes_nothing() {
+        let (tmp, paths, original) = root_with_a_typo();
+        let err = run_import(
+            &paths,
+            &tmp.path().join("never-read.json"),
+            i18n::locale(Lang::En),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("unknown variant `drak`"), "{err}");
+        assert_settings_untouched(&paths, &original);
+        assert!(!paths.profiles_file().exists());
+    }
+
+    fn a_build_in(dir: &Path) -> features::llama_setup::Install {
+        features::llama_setup::Install {
+            backend: "cpu".into(),
+            tag: "b1".into(),
+            dir: dir.to_path_buf(),
+            bytes: 0,
+            binary_ok: true,
+        }
+    }
+
+    /// `llama remove` cannot ask settings it cannot read whether they use the
+    /// build, and says so with the way round it. Read as the defaults, they
+    /// named no binary, and the build was removed unasked.
+    #[test]
+    fn llama_remove_refuses_when_the_settings_cannot_be_asked() {
+        let (tmp, paths, original) = root_with_a_typo();
+        let install = a_build_in(&tmp.path().join("llama").join("cpu-b1"));
+        let err = refuse_a_build_in_use(&paths, &install, i18n::locale(Lang::En)).unwrap_err();
+        let said = err.to_string();
+        assert!(said.contains("unknown variant `drak`"), "{said}");
+        assert!(said.contains("--force"), "{said}");
+        assert_settings_untouched(&paths, &original);
+    }
+
+    /// The check itself, through the same seam: a build the settings name is
+    /// refused, one they do not name is not.
+    #[test]
+    fn llama_remove_refuses_a_build_the_settings_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = Paths::with_root(tmp.path());
+        let loc = i18n::locale(Lang::En);
+        let named = tmp.path().join("llama").join("cpu-b1");
+        let config = AppConfig {
+            engine: crate::shared::config::EngineSettings {
+                managed: crate::shared::config::ManagedSettings {
+                    binary: Some(named.join("llama-server").to_string_lossy().into_owned()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        JsonStore::new(paths.clone()).save_config(&config).unwrap();
+
+        let err = refuse_a_build_in_use(&paths, &a_build_in(&named), loc).unwrap_err();
+        assert!(err.to_string().contains("cpu-b1"), "{err}");
+        let other = tmp.path().join("llama").join("cpu-b2");
+        refuse_a_build_in_use(&paths, &a_build_in(&other), loc).unwrap();
+    }
+
+    /// A settings file that is not JSON does not stop a backup command: it
+    /// runs on the defaults (and says so on stderr).
+    #[test]
+    fn a_backup_command_runs_on_settings_that_are_not_json() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = Paths::with_root(tmp.path());
+        std::fs::write(paths.settings_file(), b"{ this is not json").unwrap();
+        assert_eq!(
+            backup_config(&paths, i18n::locale(Lang::En)),
+            backup::BackupSettings::default()
+        );
     }
 
     /// Precedence for the run's one effective password: the argument wins over

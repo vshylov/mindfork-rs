@@ -978,6 +978,56 @@ fn fs_root_under_root(root: &Path, fs_root: Option<&Path>) -> Option<(PathBuf, S
     Some((fs_c, prefix))
 }
 
+/// What a backup or a restore needs out of `settings.json`: the file-tools
+/// sandbox (for inclusion/cleanup) and the stored backup password.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct BackupSettings {
+    pub fs_root: Option<PathBuf>,
+    pub stored_password: Option<String>,
+}
+
+/// Reads [`BackupSettings`] out of the **raw** JSON of `settings.json`, not
+/// through `AppConfig`.
+///
+/// A settings file holding one value the typed parse refuses is a file the app
+/// will not start on (`features::data_migration`), and the person it has just
+/// refused is the one who wants a backup before repairing anything — so these
+/// commands must not need the whole file to be readable, only their two values
+/// (docs/research/settings-typed-parse.md F2). Read through the typed config
+/// with a fallback to the defaults, such a file gave *no password*, and a
+/// backup the settings call encrypted was written in plaintext.
+///
+/// No file — the defaults. `Err` — there is a file and the two values cannot be
+/// had from it: it is not JSON, or its key list is not one.
+pub fn backup_settings(paths: &Paths) -> Result<BackupSettings> {
+    use crate::shared::secrets;
+
+    let file = paths.settings_file();
+    let bytes = match fs::read(&file) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(BackupSettings::default()),
+        Err(e) => return Err(e).with_context(|| format!("reading {}", file.display())),
+    };
+    let raw: serde_json::Value =
+        serde_json::from_slice(&bytes).with_context(|| format!("parsing {}", file.display()))?;
+    let stored_password = match raw.get("api_keys") {
+        None => None,
+        Some(list) => {
+            let entries = Vec::<secrets::ApiKeyEntry>::deserialize(list)
+                .with_context(|| format!("parsing api_keys in {}", file.display()))?;
+            secrets::stored_key(&entries, secrets::BACKUP_PASSWORD_KEY)
+        }
+    };
+    let fs_root = raw
+        .pointer("/tools/fs_root")
+        .and_then(serde_json::Value::as_str)
+        .map(PathBuf::from);
+    Ok(BackupSettings {
+        fs_root,
+        stored_password,
+    })
+}
+
 /// Auto-name for an archive in `backups/`: `<prefix>-YYYYMMDD-HHMMSS.zip`.
 pub(crate) fn default_backup_path(paths: &Paths, prefix: &str) -> PathBuf {
     let stamp = Local::now().format("%Y%m%d-%H%M%S");
@@ -993,6 +1043,65 @@ mod tests {
     /// signature matters; ru byte-for-byte with the previous strings).
     fn ru() -> &'static Locale {
         locale(Lang::Ru)
+    }
+
+    /// A settings file the app refuses to start on still gives a backup its
+    /// two values (docs/research/settings-typed-parse.md F2). Through the typed
+    /// config such a file read as the defaults — *no password* — and a backup
+    /// the settings called encrypted was written in plaintext.
+    #[test]
+    fn backup_settings_survive_a_value_the_config_cannot_read() {
+        use crate::shared::config::AppConfig;
+        use crate::shared::secrets;
+        if !secrets::scheme_available() {
+            return; // no machine-id: there is no stored password to lose
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::with_root(dir.path());
+        let mut config = AppConfig::default();
+        secrets::put_key(
+            &mut config.api_keys,
+            secrets::BACKUP_PASSWORD_KEY,
+            "a pass phrase",
+            || "test".into(),
+        )
+        .unwrap();
+        config.tools.fs_root = Some("sandbox-files".into());
+        let mut raw = serde_json::to_value(&config).unwrap();
+        raw["interface"]["theme"] = "drak".into();
+        let bytes = serde_json::to_vec_pretty(&raw).unwrap();
+        fs::write(paths.settings_file(), &bytes).unwrap();
+        // The file is the kind this is about: the typed parse refuses it.
+        assert!(serde_json::from_slice::<AppConfig>(&bytes).is_err());
+
+        assert_eq!(
+            backup_settings(&paths).unwrap(),
+            BackupSettings {
+                fs_root: Some(PathBuf::from("sandbox-files")),
+                stored_password: Some("a pass phrase".into()),
+            }
+        );
+    }
+
+    /// No file is a fresh root — the defaults, and no complaint. A file the
+    /// values cannot be had from is an error for the caller to report: not
+    /// JSON, or a key list that is not one.
+    #[test]
+    fn backup_settings_tell_no_file_from_an_unreadable_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::with_root(dir.path());
+        assert_eq!(backup_settings(&paths).unwrap(), BackupSettings::default());
+
+        for unreadable in ["{ this is not json", r#"{"api_keys": "none"}"#] {
+            fs::write(paths.settings_file(), unreadable).unwrap();
+            let err = backup_settings(&paths).unwrap_err();
+            let said = format!("{err:#}");
+            assert!(said.contains("settings.json"), "{unreadable}: {said}");
+        }
+
+        // Neither value set: a file that says nothing about them.
+        fs::write(paths.settings_file(), r#"{"tools": {"fs_root": null}}"#).unwrap();
+        assert_eq!(backup_settings(&paths).unwrap(), BackupSettings::default());
     }
 
     /// Prepares a root with a typical set of user data.
