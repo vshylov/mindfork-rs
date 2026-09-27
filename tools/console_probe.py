@@ -369,10 +369,18 @@ class Report:
         ]
         self.check(not bare, f"{title}: every cell is painted ({len(bare)} are not: {bare[:6]})")
 
-    def bare(self, title: str, rows: list[list[tuple[str, int]]], reversed_text: str = "") -> None:
+    def bare(
+        self,
+        title: str,
+        rows: list[list[tuple[str, int]]],
+        reversed_text: str = "",
+        shows: tuple[str, ...] = (),
+    ) -> None:
         """No cell is styled: each carries the attributes of the one cell the
         app never draws anything but a space into — the console's default.
-        `reversed_text` is what must be in reverse video, and nothing else."""
+        `reversed_text` is what must be in reverse video, and nothing else;
+        `shows` is what must be on the screen in text — the glyphs that say
+        what the styling said."""
         plain = Counter(a & ~NOT_STYLING & ~REVERSE_VIDEO for row in rows for _, a in row)
         default = plain.most_common(1)[0][0]
         print(
@@ -393,16 +401,15 @@ class Report:
             reverse == reversed_text,
             f"{title}: in reverse video — {reverse!r} (expected {reversed_text!r})",
         )
+        drawn = "\n".join("".join(char for char, _ in row) for row in rows)
+        for text in shows:
+            self.check(text in drawn, f"{title}: {text!r} is on the screen")
 
     def coloured(self, title: str, rows: list[list[tuple[str, int]]]) -> None:
         """The control of `bare`: the same kind of frame, styled."""
         colours = Counter(a & COLOURS for row in rows for _, a in row)
         print(f"- {title}: colours { {hex(a): n for a, n in sorted(colours.items())} }")
         self.check(len(colours) > 2, f"{title}: the frame is coloured ({len(colours)} colour pairs)")
-
-    def shows(self, title: str, rows: list[list[tuple[str, int]]], text: str) -> None:
-        drawn = "\n".join("".join(char for char, _ in row) for row in rows)
-        self.check(text in drawn, f"{title}: {text!r} is on the screen")
 
     def wide_glyphs(self, title: str, rows: list[list[tuple[str, int]]], at_least: int) -> None:
         """The cell behind each wide glyph has the glyph's own background."""
@@ -533,16 +540,11 @@ def scenario_mono(exe: Path, report: Report) -> None:
 
         to_interface_fields()  # the first field is "Colour mode"
         press("left", SETTLE_REPAINT)  # system -> monochrome, the long way round
-        rows = read_screen()
-        report.bare("settings, monochrome", rows)
-        report.shows("settings, monochrome", rows, "monochrome")
-        report.shows("settings, monochrome", rows, "[Esc]")
+        report.bare("settings, monochrome", read_screen(), shows=("monochrome", "[Esc]"))
 
         press("esc")
         press("esc", SETTLE_REPAINT)
-        rows = read_screen()
-        report.bare("chat", rows)
-        report.shows("chat", rows, "║ ")
+        report.bare("chat", read_screen(), shows=("║ ",))
 
         type_text("select me")
         for _ in range(2):
@@ -553,16 +555,13 @@ def scenario_mono(exe: Path, report: Report) -> None:
         report.bare("chat, the selection dropped", read_screen())
 
         press("f1", SETTLE_REPAINT)
-        rows = read_screen()
-        report.bare("help dialog over the chat", rows)
-        report.shows("help dialog over the chat", rows, "[")
+        report.bare("help dialog over the chat", read_screen(), shows=("[",))
         press("esc", SETTLE_REPAINT)
 
         open_emoji_picker()
         rows = read_screen()
-        report.bare("emoji picker over the chat", rows)
+        report.bare("emoji picker over the chat", rows, shows=("[",))
         report.wide_glyphs("emoji picker", rows, at_least=40)
-        report.shows("emoji picker", rows, "[")
         press("esc", SETTLE_REPAINT)
 
         to_interface_fields()
@@ -584,14 +583,11 @@ def scenario_no_color(exe: Path, report: Report) -> None:
         try:
             rows = read_screen()
             if bare:
-                report.bare(f"{title}, first frame", rows)
-                report.shows(f"{title}, first frame", rows, "[F1]")
+                report.bare(f"{title}, first frame", rows, shows=("[F1]",))
                 # The mode is the environment's, not a stored choice: the row
                 # says it, and choosing `system` there wins over the variable.
                 to_interface_fields()
-                rows = read_screen()
-                report.bare(f"{title}, settings", rows)
-                report.shows(f"{title}, settings", rows, "monochrome")
+                report.bare(f"{title}, settings", read_screen(), shows=("monochrome",))
                 press("right", SETTLE_REPAINT)  # monochrome -> system
                 report.coloured(f"{title}, system chosen in settings", read_screen())
                 press("esc")
