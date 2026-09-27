@@ -1479,15 +1479,33 @@ impl SettingsScreen {
     pub(super) fn interface_fields(&self) -> Vec<FieldRow> {
         let loc = self.loc();
         let i = &self.config.interface;
+        // One "Theme" row, two fields behind it: the theme of the colour mode
+        // in effect. Each mode keeps its own choice, so switching the mode
+        // there and back restores what was picked (spec §11.6).
+        let theme = match i.mode() {
+            ThemeMode::System => row(
+                FieldId::ITheme,
+                loc.t("ui.settings.field.theme"),
+                FieldKind::Choice(theme_label(i.theme, loc)),
+            )
+            .describe(loc.t("ui.settings.desc.theme")),
+            ThemeMode::Full => row(
+                FieldId::IFullTheme,
+                loc.t("ui.settings.field.theme"),
+                FieldKind::Choice(full_theme_label(&i.full_theme, loc)),
+            )
+            .describe(loc.t("ui.settings.desc.full_theme")),
+        };
         let mut rows = grouped(
             loc.t("ui.settings.group.appearance"),
             vec![
                 row(
-                    FieldId::ITheme,
-                    loc.t("ui.settings.field.theme"),
-                    FieldKind::Choice(theme_label(i.theme, loc)),
+                    FieldId::IThemeMode,
+                    loc.t("ui.settings.field.theme_mode"),
+                    FieldKind::Choice(theme_mode_label(i.mode(), loc)),
                 )
-                .describe(loc.t("ui.settings.desc.theme")),
+                .describe(loc.t("ui.settings.desc.theme_mode")),
+                theme,
                 row(
                     FieldId::ILanguage,
                     loc.t("ui.settings.field.language"),

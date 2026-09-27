@@ -15,10 +15,30 @@ split by subsystem.
 ## [Unreleased]
 
 ### Added
+- **A full colour mode.** Settings → Interface → *Colour mode* → `full`: the app
+  paints the whole window itself — its own background and its own text colour —
+  instead of drawing over whatever background the terminal has. Two themes,
+  `dark` and `light`, each with colours matched to its background: every text
+  colour keeps a contrast of at least 4.5:1, on the background and on a selected
+  row alike, and body text at least 7:1. The default, `system`, is what the app
+  has always done, and each mode remembers its own theme.
 - **The input box's height is a setting.** Settings → Interface → *Input box
   height*: how many rows of text the box grows to before it scrolls, from 1 to
   50 — 6 by default, as before. However high it is set, the box never takes more
   than half the window, so the conversation above it stays in view.
+
+### Changed
+- **The `dark` and `light` themes are a shade more legible.** Secondary text,
+  the key labels in the footer and comments in code were under 4.5:1 on a
+  selected row; in `light`, so were the assistant's and the tools' colours. Each
+  moved just far enough to clear it — the hues are the same. `light` also drew
+  the user's colour in whatever blue the terminal had; it is now one fixed blue,
+  like every other colour of a fixed theme.
+
+### Data
+- `settings.json` gains `interface.theme_mode` (written only once a mode is
+  chosen) and `interface.full_theme`. Both are additions: nothing is migrated,
+  and an older version reading the file ignores them.
 
 ## [0.11.2] — 2026-09-26
 

@@ -791,8 +791,7 @@ impl ChatScreen {
         mcp: crate::features::tools::mcp::McpSnapshot,
         secrets_present: Vec<crate::shared::secrets::SecretKey>,
     ) {
-        self.palette = Palette::for_theme(config.interface.theme)
-            .with_compat(config.interface.terminal_compat);
+        self.palette = Palette::for_interface(&config.interface);
         self.loc = locale(config.interface.language);
         self.confirm_destructive = config.interface.confirm_destructive_keys;
         self.feed_view

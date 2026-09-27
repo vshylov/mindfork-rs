@@ -634,6 +634,195 @@ fn interface_has_terminal_compat_toggle() {
     assert!(field_desc(&s, FieldId::ICompat).is_some());
 }
 
+/// The colour mode (spec §11.6, docs/theme-modes.md): a row of its own, above
+/// the theme, saved on every step like any other choice.
+#[test]
+fn interface_has_the_colour_mode_choice() {
+    use crate::shared::config::ThemeMode;
+    let mut s = screen();
+    let rows = s.interface_fields();
+    let ids: Vec<FieldId> = rows.iter().map(|r| r.id).collect();
+    let at = |id| ids.iter().position(|x| *x == id);
+    assert!(
+        at(FieldId::IThemeMode) < at(FieldId::ITheme),
+        "the mode decides what the theme row is, so it comes first: {ids:?}"
+    );
+    assert!(field_desc(&s, FieldId::IThemeMode).is_some());
+
+    // System by default, and the default is *absence* in the file.
+    assert_eq!(s.config.interface.mode(), ThemeMode::System);
+    assert_eq!(s.config.interface.theme_mode, None);
+
+    let mut seen = vec![s.config.interface.theme_mode];
+    for _ in 0..ThemeMode::ALL.len() {
+        match s.cycle_field(FieldId::IThemeMode, 1) {
+            Some(SettingsIntent::SaveConfig(c)) => seen.push(c.interface.theme_mode),
+            other => panic!("expected SaveConfig, got {other:?}"),
+        }
+    }
+    assert_eq!(
+        seen,
+        vec![None, Some(ThemeMode::Full), None],
+        "round to the default is back to absence, not to a pinned `system`"
+    );
+    // …and the other way round the ring.
+    s.cycle_field(FieldId::IThemeMode, -1);
+    assert_eq!(s.config.interface.mode(), ThemeMode::Full);
+}
+
+/// One "Theme" row, two fields behind it: the row shows the theme of the mode
+/// in effect, and each mode keeps its own choice.
+#[test]
+fn the_theme_row_is_the_theme_of_the_colour_mode_in_effect() {
+    use crate::shared::config::{Theme, ThemeMode};
+    let mut s = screen();
+    let theme_row = |s: &SettingsScreen| -> (FieldId, String, String) {
+        let rows: Vec<FieldRow> = s
+            .interface_fields()
+            .into_iter()
+            .filter(|r| matches!(r.id, FieldId::ITheme | FieldId::IFullTheme))
+            .collect();
+        assert_eq!(rows.len(), 1, "exactly one theme row at a time");
+        let row = rows.into_iter().next().unwrap();
+        let value = value_text(&row.kind, s.loc());
+        (row.id, row.label, value)
+    };
+
+    // System: today's row, untouched.
+    s.config.interface.theme = Theme::Light;
+    let (id, system_label, value) = theme_row(&s);
+    assert_eq!(id, FieldId::ITheme);
+    assert_eq!(value, theme_label(Theme::Light, s.loc()));
+
+    // Full: the other field, under the same label, with a hint of its own.
+    s.cycle_field(FieldId::IThemeMode, 1);
+    assert_eq!(s.config.interface.mode(), ThemeMode::Full);
+    let (id, full_label, value) = theme_row(&s);
+    assert_eq!(id, FieldId::IFullTheme);
+    assert_eq!(full_label, system_label, "one row to the eye");
+    assert_eq!(value, full_theme_label("dark", s.loc()));
+    assert_ne!(
+        field_desc(&s, FieldId::IFullTheme),
+        None,
+        "the full theme explains itself"
+    );
+
+    // Picking a full theme leaves the system mode's theme where it was…
+    match s.cycle_field(FieldId::IFullTheme, 1) {
+        Some(SettingsIntent::SaveConfig(c)) => {
+            assert_eq!(c.interface.full_theme, "light");
+            assert_eq!(c.interface.theme, Theme::Light);
+        }
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+    // …and going back to the system mode leaves the full one's.
+    s.cycle_field(FieldId::IThemeMode, 1);
+    assert_eq!(theme_row(&s).0, FieldId::ITheme);
+    assert_eq!(s.config.interface.full_theme, "light");
+    s.cycle_field(FieldId::IThemeMode, 1);
+    assert_eq!(theme_row(&s).2, full_theme_label("light", s.loc()));
+}
+
+/// The settings screen draws with its working copy, so a mode or a theme
+/// picked there is on screen with the same keypress — canvas included, since
+/// the render loop takes the canvas from this palette.
+#[test]
+fn the_working_copy_palette_follows_the_colour_mode() {
+    use crate::shared::theme::{CANVAS_DARK, CANVAS_LIGHT};
+    use ratatui::style::Color;
+    let mut s = screen();
+    assert_eq!(
+        s.palette().canvas,
+        Color::Reset,
+        "system: the terminal's own"
+    );
+    s.cycle_field(FieldId::IThemeMode, 1);
+    assert_eq!(s.palette().canvas, CANVAS_DARK);
+    s.cycle_field(FieldId::IFullTheme, 1);
+    assert_eq!(s.palette().canvas, CANVAS_LIGHT);
+    assert!(!s.palette().dark);
+    s.cycle_field(FieldId::IThemeMode, 1);
+    assert_eq!(s.palette().canvas, Color::Reset);
+}
+
+/// The full-mode theme has no row in a default config — that config is in the
+/// system mode — so without its own default the row would carry no `•` and
+/// `Del` would do nothing (`default_fields`).
+#[test]
+fn the_full_theme_and_the_colour_mode_reset_to_their_defaults() {
+    use crate::shared::config::ThemeMode;
+    let mut s = screen();
+    // Defaults and resets are the current section's.
+    goto_section(&mut s, Section::Interface);
+    s.cycle_field(FieldId::IThemeMode, 1);
+    s.cycle_field(FieldId::IFullTheme, 1);
+    assert_eq!(s.config.interface.full_theme, "light");
+
+    let defaults = s.default_fields();
+    let loc = s.loc();
+    let default_of = |id| {
+        defaults
+            .iter()
+            .find(|r| r.id == id)
+            .map(|r| value_text(&r.kind, loc))
+    };
+    assert_eq!(
+        default_of(FieldId::IFullTheme),
+        Some(full_theme_label("dark", loc))
+    );
+    // The mode's own default is the plain one — were it carried over with the
+    // current mode, the row could never read as changed.
+    assert_eq!(
+        default_of(FieldId::IThemeMode),
+        Some(theme_mode_label(ThemeMode::System, loc))
+    );
+
+    match s.reset_field(FieldId::IFullTheme) {
+        Some(SettingsIntent::SaveConfig(c)) => assert_eq!(c.interface.full_theme, "dark"),
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+    assert_eq!(s.reset_field(FieldId::IFullTheme), None, "already there");
+
+    match s.reset_field(FieldId::IThemeMode) {
+        Some(SettingsIntent::SaveConfig(c)) => assert_eq!(c.interface.theme_mode, None),
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+    assert_eq!(s.reset_field(FieldId::IThemeMode), None, "already there");
+}
+
+/// A theme name nothing answers to — from another machine, or a newer version
+/// — is what the file says, so the row says it too; and it can be left in
+/// either direction and from the popup.
+#[test]
+fn a_full_theme_nothing_answers_to_is_listed_and_can_be_left() {
+    let mut s = screen();
+    s.cycle_field(FieldId::IThemeMode, 1);
+    let lost = |s: &mut SettingsScreen| s.config.interface.full_theme = "gruvbox".into();
+
+    lost(&mut s);
+    let (options, at) = s.choice_menu(FieldId::IFullTheme).unwrap();
+    assert_eq!(options.last().map(String::as_str), Some("gruvbox"));
+    assert_eq!(at, options.len() - 1);
+    // It draws as the first built-in theme until then.
+    assert_eq!(s.palette(), crate::shared::theme::Palette::full("dark"));
+
+    s.cycle_field(FieldId::IFullTheme, 1);
+    assert_eq!(s.config.interface.full_theme, "dark", "forward: the first");
+    lost(&mut s);
+    s.cycle_field(FieldId::IFullTheme, -1);
+    assert_eq!(s.config.interface.full_theme, "light", "backward: the last");
+
+    // The popup steps forward from the current entry to the picked one, so the
+    // menu's order has to be the cycle's — picking the first one from the
+    // stray entry is the case that would otherwise be a no-op.
+    lost(&mut s);
+    s.apply_choice(FieldId::IFullTheme, 0);
+    assert_eq!(s.config.interface.full_theme, "dark");
+    // Once left, it is off the list.
+    let (options, _) = s.choice_menu(FieldId::IFullTheme).unwrap();
+    assert!(!options.contains(&"gruvbox".to_string()), "{options:?}");
+}
+
 #[test]
 fn interface_has_the_osc52_choice() {
     let mut s = screen();

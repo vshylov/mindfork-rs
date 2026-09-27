@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (42)
+## Entries (43)
 
 - Post-M9: mouse-wheel feed scrolling (done)
 - Post-M9: own markdown renderer (tables + LaTeX + theme) (done)
@@ -54,6 +54,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the bar's hint grid becomes everyone's (done)
 - Post-M9: the confirmation popup shows the code it is asking about (done)
 - Post-M9: the spinner leaves the terminal a quiet gap (done)
+- Post-M9: colour modes — the full mode (done)
 
 ### Post-M9: mouse-wheel feed scrolling (done)
 - **The mouse wheel scrolls the feed** on par with `PageUp/PageDown`. `ratatui::init()`
@@ -2446,3 +2447,124 @@ UI and terminal I/O. What stands in for one is a look in Windows Terminal — ho
 an index is being built — which the app cannot take from an agent's shell (no TTY): taken by the
 reporter on the same chat with the banner up (`322/1447`), **GO** — the underline sits on the
 link itself.
+
+### Post-M9: colour modes — the full mode (done)
+
+Stage 1 of the colour-modes track ([docs/theme-modes.md](../theme-modes.md)), branch
+`feat/theme-modes-full`. Asked for by the user on 2026-09-27: three ways of drawing the
+interface — the one the app has (*system*), one with no colours and no attributes
+(*monochrome*), one where the app paints its own background and text colour (*full*) — and
+themes of the user's own for the last. This stage is the framework and the full mode.
+
+**User's decisions, 2026-09-27** — all four forks as recommended. **A**: monochrome drops
+colours and attributes, reverse video kept for a text selection and a search match only.
+**B**: the shipped `dark`/`light` are retuned and shared by both modes rather than kept and
+duplicated. **C**: `NO_COLOR` starts the app in monochrome when no mode was chosen. **D**: a
+user theme that names some roles gets the rest fitted to the contrast floors, and a colour
+it names is never altered. A and C are stage 2's, D is stage 3's; B is this one.
+
+**What the code looked like.** Every role colour already went through `Palette`; what did
+not was the logo's two brand colours, highlighted code (built from the palette, emitted as
+24-bit ANSI) and every text attribute — 57 places set one directly. A palette was built in
+three places and a frame drawn in one. Nothing painted a background under the text: in the
+committed dumps 0.8–12.9 % of a frame's cells carry one, all of it `keycap_bg`.
+
+**The mechanism is a pass over the finished frame**, `shared::ui::paint_canvas`: a cell whose
+background is still `Reset` gets the palette's canvas, one whose foreground is gets its text
+colour, and a colour a widget chose is left alone. `Palette` gained one field, `canvas`
+(`Reset` — the terminal's own — in the system mode, where the pass returns at once). It runs
+last in `app/runtime::compose_frame`, after the screen and after the help dialog. Rejected: **a
+base style under every widget** — `Clear` resets a popup's cells, the logo and highlighted
+code never ask the palette, and the next widget would have to remember; the pass cannot be
+forgotten, and `dim_background` was already the same walk. Rejected: **asking the terminal to
+change its own background** (OSC 11) — Windows Terminal learned to reset it (OSC 111) only in
+April 2025 (microsoft/terminal PR 18767), and an app that died in between would leave the
+user's terminal repainted.
+
+**The settings' shape was decided by a defect found on the way.** `settings.json` is read with
+`load_config().unwrap_or_default()`, and the start-up gate parses a current-version file only
+as untyped JSON — so one value the binary cannot parse replaces the whole configuration with
+defaults, in silence. A new value of `Theme` would have done that to every older binary that
+met it. So: `interface.theme` is untouched; `interface.theme_mode` is a new **optional** field,
+written only when chosen (absent = the default, which is what lets stage 2's default depend on
+`NO_COLOR` without overriding a choice) and read **leniently** (`lenient_theme_mode`: an
+unknown value is "not chosen" plus a line in the log); `interface.full_theme` is a **name**, so
+a theme this binary does not have is kept in the file, listed in its row and drawn as `dark`.
+No schema step. `mindfork setup --set interface.theme_mode=…` is strict where the file is
+lenient, and refuses a wrong mode as a wrong *value* naming the right ones — the round trip
+alone would have called it an unknown key. The defect itself is out of this track's scope and
+was handed on as a task of its own.
+
+**Measured: the shipped palettes against their canvases** (WCAG 2.x; canvas / selection
+backdrop, since any row can be the selected one). `dark`: `text` 11.74 / 9.66, `muted` 5.00 /
+**4.12**, `keycap_fg` 5.43 / **4.47**, code comments 4.78 / **3.94**. `light`: `text` 15.65 /
+12.34, `muted` 4.52 / **3.57**, `assistant` 4.93 / **3.89**, `tool` 4.67 / **3.68**, `tool_soft`
+5.12 / **4.04**, code comments 4.89 / **3.86**. Body text was fine; what fell under 4.5:1 was
+secondary text on a selected row, and in `light` two role colours. Each was moved along OKLab
+lightness, hue and chroma kept, just far enough to clear 4.5:1 on both grounds — three roles of
+sixteen in `dark`, seven in `light`, the largest move 0.054. `light`'s `user` was the named
+ANSI blue, the one colour of a "fixed" palette that a terminal chose; it is `#0037da` now, the
+blue Windows Terminal draws for it. The floors are a test —
+`built_in_palettes_clear_the_contrast_floors`, and `code_greys_clear_the_contrast_floor` next
+to the greys: body text 7:1,
+every other text role 4.5:1, the focused border 3:1. The plain border (1.66) and the backdrop
+against the canvas (1.22) are outside them on purpose — a backdrop at 3:1 leaves no room for
+4.5:1 text on it, and the selected row has its `▌` rail. **There is no "optimal" contrast to
+aim at**: body text in palettes people pick for being easy on the eyes runs from 4.13:1
+(Solarized Light) to 13.36:1 (Dracula), so the app holds floors and leaves the rest to themes.
+
+**The full mode is the screenshots.** The canvases are the ones the palettes were tuned
+against, until now test-only constants of the capture pipeline (`CANVAS_DARK`/`CANVAS_LIGHT`).
+A test draws all five captured screens in both modes and holds the full-mode frame to the
+system-mode one cell for cell — same text, same attributes, same colour wherever a widget chose
+one, the canvas or the text colour wherever the terminal used to. So the capture set stays in
+the system mode and needed no dumps of the full one.
+
+**When the canvas changes** — the first full-mode frame, another theme or mode, a resize — the
+terminal is erased with the new canvas as the current background, then repainted in full.
+ratatui leaves a wide glyph's trailing cell out of the diff, and conhost does not repaint it
+with the glyph (ratatui issue 2652; fixed upstream 2026-09-03, 0.30.2 is still the newest
+release), so such a cell keeps whatever the last erase gave it; without this, in the full mode
+that is the terminal's own background behind every emoji. Not `terminal.clear()` — it asks the
+terminal for the cursor's position first, a round trip — but the three sequences written by
+hand (`set_background`, `ERASE_SCREEN`, `RESET_STYLE`) plus the sentinel redraw; on a resize,
+ratatui's own `autoresize`, called early so that *its* erase runs with the canvas current.
+`canvas_repaint` is the decision, apart from the terminal it is carried out on. The frame's
+palette is the one of the screen **in front** (`front_palette`): the settings screen draws from
+its working copy, and with the chat's palette under it a mode picked there would have shown
+its colours one frame before its background.
+
+**Settings.** *Appearance* opens with **Colour mode**; the **Theme** row under it is one label
+over two fields (`ITheme`, `IFullTheme`), so each mode remembers its choice. A row that exists
+only under a non-default mode had no counterpart in the default config and would have gone
+without its `•` and its `Del`: `default_fields` now adds the rows the default config shows
+*under the current mode*, while the mode's own row keeps the plain default. A stored theme name
+nothing answers to is listed last, and leaving it — either way, or from the popup — takes it
+off the list.
+
+**The screenshots moved**, as fork B said they would: ten dumps, twenty images. The diff of the
+dumps is the retuned colours and one character — the section menu's `Interface 16` became `17`;
+no row moved, the hint panel kept its height. The renderer was first checked against the
+committed images from the committed dumps: 20 of 20 byte-identical.
+
+**Tests.** `shared::config`: a file without a mode reads as system; a mode is written only when
+chosen and the default goes back to absence; five foreign values of `theme_mode` leave the rest
+of the file intact, with `theme` — a plain enum — as the control that does fail.
+`shared::theme`: the system mode is `for_theme` exactly; the full mode is the shared palette
+plus its canvas and nothing else; every colour of a full palette is absolute; the floors.
+`shared::ui`: the pass leaves a system frame alone, fills only what was at the default, and
+catches a popup `Clear`ed over a painted frame; the erase's exact bytes. `app::runtime`: a
+composed frame — chat or settings in front, help open or not, both themes — has no cell left
+to the terminal, with the system mode as the control; the erase decision; the frame's palette.
+`screens::settings`: the two rows, the reset, the stray name. `features::provision`: the mode
+from the command line. Ten mutations — the pass not called, the pass run before the help
+dialog, foregrounds not filled, no default row for the full theme, the default mode pinned
+instead of absent, `light`'s old `muted`, the old comment greys, the settings screen's canvas
+taken from the chat, a resize not noticed, the lenient reader made strict — each killed.
+Unit: 3491 green, 202 ignored.
+
+**No live run** in the engine sense: pure UI and terminal I/O. What stands in for one is a look
+in real terminals, which the app cannot take from an agent's shell (no TTY) — the checklist is
+§8 of the plan, and it is this stage's **go/no-go**: Windows Terminal, conhost, one Linux
+terminal. Two things in it are hypotheses until then — that the erase is enough for conhost's
+wide glyphs, and that the terminal's cursor stays visible on a canvas it did not choose.

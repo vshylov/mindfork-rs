@@ -162,7 +162,23 @@ impl SettingsScreen {
         tmp.sampling_sub = self.sampling_sub;
         tmp.profile_sub = self.profile_sub;
         tmp.profile_idx = self.profile_idx;
-        tmp.fields()
+        let mut rows = tmp.fields();
+        // The theme row is one of two fields, picked by the colour mode, and a
+        // default config is in the default mode — so the other mode's field has
+        // no row there, and would go without its `•` marker and its `Del`.
+        // Its default is the default config *seen under the current mode*; the
+        // mode's own row keeps the plain default above, or it could never read
+        // as changed.
+        let mode = self.config.interface.mode();
+        if mode != tmp.config.interface.mode() {
+            tmp.config.interface.set_mode(mode);
+            for row in tmp.fields() {
+                if !rows.iter().any(|r| r.id == row.id) {
+                    rows.push(row);
+                }
+            }
+        }
+        rows
     }
 
     /// Resets a config field to its default value. Profile fields and values already

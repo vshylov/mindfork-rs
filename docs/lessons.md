@@ -1672,6 +1672,20 @@ a tolerance: an `f32` field returns the nearest `f32`, and `0.7` is not
 compatibility the attribute is there for.
 — *`mindfork setup --set`, 2026-09-21*.
 
+**A new field is additive; a new *value* of an existing enum is not.** An
+unknown key is ignored, but an unknown value fails the parse — and
+`settings.json` is read as a whole, with `load_config().unwrap_or_default()`, so
+one value an older binary does not know costs the user **every** setting, in
+silence, and the next save writes the defaults over the file. The start-up gate
+does not catch it: a file at the current schema version is only parsed as
+untyped JSON. So a setting that will grow — a mode, a provider, a policy — is
+either a new field, or an enum read leniently from its first release (unknown →
+the default, with a line in the log), or a schema bump, which is what makes an
+older binary refuse instead of guess. Adding `mono` to `Theme` would have been
+the four-character version of this mistake; the colour mode is a field of its
+own, parsed by `lenient_theme_mode`, for that reason.
+— *colour modes — the full mode*.
+
 **Additive is free; a value rewrite is a migration.** A new `#[serde(default)]` field, a
 `CREATE TABLE IF NOT EXISTS`, or a guarded `ALTER TABLE … ADD COLUMN` needs no schema
 bump (ADR 0006 F12) — every query names its columns, so an older binary ignores the new

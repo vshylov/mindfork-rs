@@ -8,10 +8,12 @@ use super::*;
 impl SettingsScreen {
     // ---------- rendering ----------
 
-    /// The palette from the working config copy: theme + terminal compatibility mode.
-    pub(super) fn palette(&self) -> Palette {
-        Palette::for_theme(self.config.interface.theme)
-            .with_compat(self.config.interface.terminal_compat)
+    /// The palette from the working config copy: the colour mode, its theme and
+    /// the terminal compatibility mode. Public for the render loop, which
+    /// paints the canvas under this screen from the same palette the screen
+    /// draws with (`app/runtime`, spec §11.6).
+    pub fn palette(&self) -> Palette {
+        Palette::for_interface(&self.config.interface)
     }
 
     /// The interface locale from the working config copy (axis B, docs/i18n-ui.md).

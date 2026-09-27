@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     Clear, List, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap,
@@ -40,6 +40,66 @@ pub fn dim_background(frame: &mut Frame, palette: &Palette) {
                 cell.modifier |= Modifier::DIM;
             }
         }
+    }
+}
+
+/// Puts the palette's canvas under a **finished** frame — the full colour mode
+/// (spec §11.6, docs/theme-modes.md §4.2). Every cell whose background is
+/// still the terminal's default gets the canvas, and every cell whose
+/// foreground is gets the palette's text colour; a colour a widget set is left
+/// exactly as it is. In the system mode the palette has no canvas and nothing
+/// is touched.
+///
+/// Call it **last** — after the screen and after any overlay. That is the
+/// point of doing this as a pass rather than as a base style under every
+/// widget: a popup's `Clear` resets its cells to the terminal's default, the
+/// logo and highlighted code never ask the palette, and the next widget
+/// somebody writes will not remember either. Whatever reached the buffer
+/// without a colour is caught here.
+///
+/// Attributes are not read: `REVERSED` over a filled cell swaps the canvas and
+/// the text colour, which is what it did with the terminal's own two.
+pub fn paint_canvas(buf: &mut Buffer, palette: &Palette) {
+    let canvas = palette.canvas;
+    if canvas == Color::Reset {
+        return;
+    }
+    for cell in buf.content.iter_mut() {
+        if cell.bg == Color::Reset {
+            cell.bg = canvas;
+        }
+        if cell.fg == Color::Reset {
+            cell.fg = palette.text;
+        }
+    }
+}
+
+/// Erase the whole screen (`ED 2`). Terminals erase **with the current
+/// background** — which is the whole reason [`set_background`] exists.
+pub const ERASE_SCREEN: &str = "\x1b[2J";
+
+/// Back to the terminal's default colours and attributes (`SGR 0`). ratatui's
+/// backend assumes exactly that state at the start of every draw, so nothing
+/// that sets a colour by hand may leave it set.
+pub const RESET_STYLE: &str = "\x1b[0m";
+
+/// The sequence that makes `canvas` the terminal's current background, or
+/// nothing for `Color::Reset` (the terminal's own is already current).
+///
+/// Used once per change of canvas, around an erase: a cell the app never
+/// writes keeps the colour the last erase gave it, and there is such a cell
+/// behind every wide glyph — ratatui resets a wide glyph's trailing cell and
+/// leaves it out of the diff, and a terminal that does not repaint it with
+/// the glyph (conhost) shows whatever was there (docs/theme-modes.md §4.6).
+///
+/// Built here and written by the caller, like `shared/osc52.rs`: that is what
+/// lets a test assert the exact bytes.
+pub fn set_background(canvas: Color) -> String {
+    match canvas {
+        Color::Rgb(r, g, b) => format!("\x1b[48;2;{r};{g};{b}m"),
+        // A canvas is absolute or absent (`Palette::canvas`); anything else
+        // has no business being painted, and saying nothing is the safe half.
+        _ => String::new(),
     }
 }
 
@@ -993,6 +1053,117 @@ mod tests {
             assert!(!cell.modifier.contains(Modifier::DIM));
         })
         .unwrap();
+    }
+
+    /// A small frame holding one of everything the pass has to tell apart: bare
+    /// text, a role colour, a selection backdrop, reverse video, a wide glyph
+    /// and empty cells.
+    fn mixed_frame(palette: &Palette) -> Buffer {
+        use ratatui::widgets::Widget;
+        let area = Rect::new(0, 0, 12, 3);
+        let mut buf = Buffer::empty(area);
+        Paragraph::new(vec![
+            Line::from(vec![
+                Span::raw("bare "),
+                Span::styled("role", Style::new().fg(palette.user)),
+            ]),
+            Line::from(vec![
+                Span::styled("sel", Style::new().bg(palette.keycap_bg)),
+                Span::styled(" rev", Style::new().add_modifier(Modifier::REVERSED)),
+            ]),
+            Line::from("a 😀 b"),
+        ])
+        .render(area, &mut buf);
+        buf
+    }
+
+    #[test]
+    fn the_system_mode_leaves_the_frame_alone() {
+        // The regression guard for the default: no canvas, no pass — the
+        // buffer is what the widgets drew, cell for cell.
+        for theme in [
+            crate::shared::config::Theme::Auto,
+            crate::shared::config::Theme::Dark,
+            crate::shared::config::Theme::Light,
+        ] {
+            let palette = Palette::for_theme(theme);
+            let drawn = mixed_frame(&palette);
+            let mut painted = drawn.clone();
+            paint_canvas(&mut painted, &palette);
+            assert_eq!(painted, drawn, "{theme:?}");
+        }
+    }
+
+    #[test]
+    fn the_full_mode_fills_what_the_widgets_left_at_the_default() {
+        for name in crate::shared::theme::FULL_THEMES {
+            let palette = Palette::full(name);
+            let drawn = mixed_frame(&palette);
+            let mut painted = drawn.clone();
+            paint_canvas(&mut painted, &palette);
+
+            for (before, after) in drawn.content.iter().zip(&painted.content) {
+                // Nothing is left for the terminal to colour — the empty cells
+                // and a wide glyph's trailing cell included.
+                assert_ne!(after.bg, Color::Reset, "{name}: {:?}", after.symbol());
+                assert_ne!(after.fg, Color::Reset, "{name}: {:?}", after.symbol());
+                // A colour a widget chose is kept; only the default is filled.
+                let want_bg = if before.bg == Color::Reset {
+                    palette.canvas
+                } else {
+                    before.bg
+                };
+                let want_fg = if before.fg == Color::Reset {
+                    palette.text
+                } else {
+                    before.fg
+                };
+                assert_eq!((after.fg, after.bg), (want_fg, want_bg), "{name}");
+                // The text and its attributes are none of the pass's business.
+                assert_eq!(after.symbol(), before.symbol(), "{name}");
+                assert_eq!(after.modifier, before.modifier, "{name}");
+            }
+            // The three cases by name, so a vacuous loop cannot pass for them.
+            let cell = |x: u16, y: u16| &painted[(x, y)];
+            assert_eq!(cell(0, 0).fg, palette.text, "{name}: bare text");
+            assert_eq!(cell(5, 0).fg, palette.user, "{name}: a role colour");
+            assert_eq!(cell(0, 1).bg, palette.keycap_bg, "{name}: the backdrop");
+            assert!(cell(4, 1).modifier.contains(Modifier::REVERSED), "{name}");
+            assert_eq!(cell(11, 2).bg, palette.canvas, "{name}: an empty cell");
+        }
+    }
+
+    #[test]
+    fn a_popup_cleared_over_the_frame_gets_the_canvas_back() {
+        // The case a base style under the widgets would have missed: `Clear`
+        // resets its area to the terminal's default, and the popup drawn into
+        // it would sit on the terminal's background in the middle of the
+        // canvas. The pass runs after it.
+        use ratatui::widgets::{Block, Widget};
+        let palette = Palette::full("light");
+        let mut buf = mixed_frame(&palette);
+        paint_canvas(&mut buf, &palette);
+        let popup = Rect::new(2, 0, 6, 3);
+        Clear.render(popup, &mut buf);
+        Block::bordered().render(popup, &mut buf);
+        assert_eq!(buf[(3, 1)].bg, Color::Reset, "the premise: Clear resets");
+        paint_canvas(&mut buf, &palette);
+        assert!(buf.content.iter().all(|c| c.bg != Color::Reset));
+    }
+
+    #[test]
+    fn the_erase_sets_the_canvas_and_the_reset_gives_it_back() {
+        // The exact bytes: 24-bit background, erase display, reset.
+        let canvas = crate::shared::theme::CANVAS_DARK;
+        assert_eq!(set_background(canvas), "\x1b[48;2;15;17;21m");
+        assert_eq!(ERASE_SCREEN, "\x1b[2J");
+        assert_eq!(RESET_STYLE, "\x1b[0m");
+        // Going back to the system mode erases with the terminal's own
+        // background, which is what is current when nothing was set.
+        assert_eq!(set_background(Color::Reset), "");
+        // A named colour is not a canvas: nothing is written rather than a
+        // shade the terminal would pick.
+        assert_eq!(set_background(Color::Blue), "");
     }
 
     const FRAMES: &[char] = &['a', 'b', 'c'];

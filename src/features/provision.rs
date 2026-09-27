@@ -226,6 +226,7 @@ pub fn set_by_path(config: &mut AppConfig, key: &str, raw: &str) -> Result<Value
     }
     let literal =
         serde_json::from_str::<Value>(raw).unwrap_or_else(|_| Value::String(raw.to_string()));
+    refuse_what_the_file_would_forgive(&segments, &literal)?;
     match try_set(config, &segments, &literal) {
         Ok(next) => {
             *config = next;
@@ -245,6 +246,28 @@ pub fn set_by_path(config: &mut AppConfig, key: &str, raw: &str) -> Result<Value
         }
         Err(e) => Err(e),
     }
+}
+
+/// A field the **file** reads leniently is strict **here**.
+///
+/// `interface.theme_mode` takes a value it does not know as "not chosen"
+/// instead of failing the parse, because a `settings.json` written by a newer
+/// version must not cost the user every other setting (spec §11.6). A value
+/// typed into a command has no such excuse — and without this the round trip
+/// below would refuse it as an *unknown key*, the one thing it is not.
+fn refuse_what_the_file_would_forgive(segments: &[&str], value: &Value) -> Result<(), SetError> {
+    use crate::shared::config::ThemeMode;
+    if segments != ["interface", "theme_mode"] || value.is_null() {
+        return Ok(());
+    }
+    if value.as_str().and_then(ThemeMode::from_name).is_some() {
+        return Ok(());
+    }
+    let known: Vec<&str> = ThemeMode::ALL.iter().map(|m| m.name()).collect();
+    Err(SetError::WrongType(format!(
+        "expected one of: {}",
+        known.join(", ")
+    )))
 }
 
 /// `config` with `value` at `segments`, if that is a config.
@@ -537,6 +560,39 @@ mod tests {
             );
         }
         assert_eq!(c, before, "a refused key changes nothing");
+    }
+
+    /// The colour mode from the command line (spec §11.6): the two fields are
+    /// reachable by their paths, and a mode that does not exist is refused for
+    /// what it is — a wrong value, named with the right ones — although the
+    /// file would read the same value as "not chosen".
+    #[test]
+    fn the_colour_mode_is_settable_and_a_wrong_one_is_refused_as_a_value() {
+        use crate::shared::config::ThemeMode;
+        let mut c = AppConfig::default();
+        set_by_path(&mut c, "interface.theme_mode", "full").unwrap();
+        set_by_path(&mut c, "interface.full_theme", "light").unwrap();
+        assert_eq!(c.interface.mode(), ThemeMode::Full);
+        assert_eq!(c.interface.full_theme, "light");
+        // Both spellings of the default: by name, and as "not chosen".
+        set_by_path(&mut c, "interface.theme_mode", "system").unwrap();
+        assert_eq!(c.interface.mode(), ThemeMode::System);
+        set_by_path(&mut c, "interface.theme_mode", "full").unwrap();
+        set_by_path(&mut c, "interface.theme_mode", "null").unwrap();
+        assert_eq!(c.interface.theme_mode, None);
+
+        let before = c.clone();
+        for wrong in ["mono", "Full", "7", "true"] {
+            let err = set_by_path(&mut c, "interface.theme_mode", wrong).unwrap_err();
+            let SetError::WrongType(detail) = err else {
+                panic!("{wrong}: {err:?}")
+            };
+            assert!(
+                detail.contains("system") && detail.contains("full"),
+                "{wrong}: {detail}"
+            );
+        }
+        assert_eq!(c, before, "a refused value changes nothing");
     }
 
     #[test]

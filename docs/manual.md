@@ -271,13 +271,29 @@ Eight sections, and these four are the ones worth a visit early.
   for that reason.
 - **Memory** — the context window when the engine cannot say it, what triggers
   compaction, and how much of the knowledge base a turn may pull in.
-- **Interface** — theme, whether the model's name is shown in the reply header,
+- **Interface** — the colour mode and its theme (below), whether the model's
+  name is shown in the reply header,
   how tall the input box grows before it scrolls (6 rows by default; it never
   takes more than half the window), mouse capture, and the OSC 52 clipboard mode
   for sessions over SSH.
 
 Every field has a description under the list, and `/` opens a search across every
 setting in every section.
+
+**Colour mode.** *Interface → Colour mode* decides whose background the text
+sits on:
+
+- **system** (the default) — the app draws its colours over your terminal's own
+  background. *Theme* is then `auto` (follows the terminal), `dark` or `light`.
+- **full** — the app paints the whole window itself: the theme's background and
+  text colour, matched to each other. *Theme* is then `dark` or `light`. Every
+  text colour keeps a contrast of at least 4.5:1 against the background and
+  against a selected row, and body text at least 7:1, whatever your terminal is
+  set to. A translucent terminal background is covered in this mode.
+
+Each mode remembers its own theme, and both apply as you pick them. What the
+app cannot paint is the margin your terminal keeps around its grid and the
+cursor's colour — those stay the terminal's.
 
 ## 9. Keys
 

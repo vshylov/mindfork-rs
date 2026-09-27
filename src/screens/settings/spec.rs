@@ -199,6 +199,24 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
             |c, _dir| c.interface.theme = cycle_theme(c.interface.theme),
             |c, loc| index_menu(&THEMES, c.interface.theme, |t| theme_label(t, loc)),
         ),
+        // The colour mode. Written through `set_mode`, which stores the default
+        // as absence — so cycling round to it, or `Del`, goes back to following
+        // the default instead of pinning it (spec §11.6).
+        IThemeMode => choice(
+            |c, dir| {
+                let next = c.interface.mode().cycle(dir);
+                c.interface.set_mode(next);
+            },
+            |c, loc| {
+                index_menu(&ThemeMode::ALL, c.interface.mode(), |m| {
+                    theme_mode_label(m, loc)
+                })
+            },
+        ),
+        IFullTheme => choice(
+            |c, dir| c.interface.full_theme = cycle_full_theme(&c.interface.full_theme, dir),
+            |c, loc| full_theme_menu(&c.interface.full_theme, loc),
+        ),
         // Interface language (axis B): each language shown in its own name (`Lang::label`),
         // not translated by the UI language. The list — all known ones (built-in + external).
         ILanguage => choice(

@@ -3223,8 +3223,8 @@ section and subsection), `Esc` — cancel.
   header. A tool that's **disabled by a global gate** (web/python/files) but
   enabled in the profile is marked in the warning color with a "disabled
   globally" hint — honestly showing that it's unavailable to the model.
-- **Interface**: the *Appearance* group (theme, **legacy-terminal compatibility** —
-  see below, table row separators, Mermaid diagrams, **the model's name next to the
+- **Interface**: the *Appearance* group (**colour mode** and theme — see below,
+  **legacy-terminal compatibility** — see below, table row separators, Mermaid diagrams, **the model's name next to the
   assistant's header** — `show_model_name`, off by default, §11.3, **the input box's
   height** — `input_max_rows`, 6 rows by default, §11.5, OSC 52 clipboard,
   **which end the self-model screen lists observations from** —
@@ -3279,8 +3279,65 @@ of them deliberate actions behind their own keys. Impersonation personas live in
 the config, so their creation/deletion *is* undoable. See
 docs/history/settings-undo.md.
 
-**Theme** (`interface.theme`: `auto` by default, `dark`, `light`). `dark` and
-`light` are fixed palettes and ignore the terminal. **`auto` follows the
+**Colour mode** (`interface.theme_mode`: `system` by default, `full`;
+docs/theme-modes.md). One level above the theme — *whose background the text
+sits on*.
+
+- **`system`** — the app draws foregrounds and the terminal supplies the
+  background. This is what the app has always done, and everything under
+  **Theme** below describes it.
+- **`full`** — the app paints its own background and text colour, so the
+  contrast is the theme's to guarantee whatever the terminal is set to.
+  `interface.full_theme` names the theme: `dark` (default) or `light`. Each is
+  the system mode's palette of that name on the **canvas** it was tuned against
+  (`#0f1115`, `#fafafc` — `shared/theme.rs::CANVAS_DARK`/`CANVAS_LIGHT`), so a
+  full-mode screen is the README's screenshot of it, which was rendered on that
+  same canvas.
+
+*How the canvas gets there.* Widgets do not know about it: they draw
+foregrounds, as in the system mode. `shared/ui.rs::paint_canvas` walks the
+**finished** frame — the last thing `app/runtime::compose_frame` does, after the
+screen and after the help dialog — and gives every cell whose background is
+still the terminal's default the canvas, and every cell whose foreground is the
+theme's text colour. A pass rather than a base style under each widget, because
+a base style is forgotten: a popup's `Clear` resets its cells, the logo and
+highlighted code never ask the palette. In the system mode the palette has no
+canvas (`Palette::canvas == Color::Reset`) and the frame is left byte for byte.
+
+*Contrast is a gate, not a claim.* A test holds the built-in palettes to floors
+on the canvas **and** on the selection backdrop, since any row can be the
+selected one: body text 7:1, every other text role and the two code greys 4.5:1,
+the focused border 3:1 against the canvas. The plain border and the backdrop
+itself are outside the floors on purpose — a backdrop at 3:1 would leave no room
+for 4.5:1 text on it, and the selected row is marked by its `▌` rail.
+
+*The settings' shape.* `theme_mode` is **optional** and is written only when a
+mode other than the default was chosen, so "not chosen" survives a save and a
+default may later depend on the environment. It is read **leniently**: a value
+this version does not know (a mode from a newer one) reads as not chosen and is
+logged — `settings.json` is loaded as a whole, and a value that failed the parse
+would cost every other setting. That is also why the modes are a field of their
+own and not new values of `theme`. `full_theme` is a name for the same reason: a
+theme this version does not have is kept in the file, listed in its row, and
+drawn as `dark`.
+
+*When the canvas changes* — the first full-mode frame, another theme, another
+mode, a resized terminal — the terminal is erased **with the new canvas as the
+current background** and the frame is repainted in full (`app/runtime`,
+`erase_to_canvas`). A cell that no frame ever writes keeps the colour the last
+erase gave it, and there is one behind every wide glyph: ratatui leaves a wide
+glyph's trailing cell out of the diff, and a terminal that does not repaint it
+with the glyph shows what was there. The erase is the one the project otherwise
+avoids (§4.4.1); it is kept to these rare moments.
+
+*In the settings*, *Appearance* opens with **Colour mode**, and the **Theme**
+row under it is the theme of the mode in effect — `auto`/`dark`/`light` in the
+system mode, the full themes in the full one. Two fields behind one label, so
+each mode remembers its own choice. Both apply live.
+
+**Theme** (`interface.theme`: `auto` by default, `dark`, `light`) — the
+**system** mode's. `dark` and `light` are fixed palettes and ignore the
+terminal: every colour in them is absolute. **`auto` follows the
 terminal**, in two distinct ways. Its role colours are *named ANSI*, so their
 shades are whatever the terminal's own palette says — that half has always
 adapted. The rest cannot be expressed in named ANSI and needs to know the

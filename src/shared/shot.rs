@@ -18,7 +18,7 @@ use ratatui::style::{Color, Modifier};
 use serde::Serialize;
 use unicode_width::UnicodeWidthStr;
 
-use crate::shared::theme::{Palette, SHOT_CANVAS_DARK, SHOT_CANVAS_LIGHT};
+use crate::shared::theme::{CANVAS_DARK, CANVAS_LIGHT, Palette};
 
 /// One occupied cell. Trailing halves of wide glyphs are not emitted — the
 /// renderer advances by `w` columns instead.
@@ -53,7 +53,7 @@ pub struct ShotFrame {
     pub locale: String,
     pub width: u16,
     pub height: u16,
-    /// Canvas background (`theme::SHOT_CANVAS_*`) — what a cell without an
+    /// Canvas background (`theme::CANVAS_*`) — what a cell without an
     /// explicit background renders on.
     pub canvas_bg: String,
     /// Default text color — what a cell without an explicit foreground uses.
@@ -71,10 +71,13 @@ pub fn capture(
     locale: &str,
 ) -> ShotFrame {
     let area = buffer.area();
-    let canvas_bg = if palette.dark {
-        SHOT_CANVAS_DARK
-    } else {
-        SHOT_CANVAS_LIGHT
+    // A full-mode palette names its canvas; a system-mode one has none (the
+    // terminal supplies it), so the capture stands it on the canvas its
+    // polarity was tuned against.
+    let canvas_bg = match palette.canvas {
+        Color::Reset if palette.dark => CANVAS_DARK,
+        Color::Reset => CANVAS_LIGHT,
+        canvas => canvas,
     };
     // Dark/Light palettes define `text` as concrete RGB; Auto (never captured,
     // design plan §5) would fall through to a readable default.
@@ -109,7 +112,7 @@ pub fn capture(
         locale: locale.into(),
         width: area.width,
         height: area.height,
-        canvas_bg: hex(canvas_bg).expect("canvas constants are RGB"),
+        canvas_bg: hex(canvas_bg).expect("a canvas is an absolute colour"),
         canvas_fg,
         rows,
     }
@@ -118,7 +121,7 @@ pub fn capture(
 /// `Color` → `#rrggbb`. `Reset` → `None` (the frame's canvas supplies it).
 /// Named ANSI colors map to the xterm defaults so a dump never depends on a
 /// terminal that isn't there; the capturable palettes are RGB throughout
-/// except `light().user == Color::Blue`.
+/// (a test in `shared/theme.rs` holds the built-in ones to that).
 fn hex(color: Color) -> Option<String> {
     let (r, g, b) = match color {
         Color::Reset => return None,

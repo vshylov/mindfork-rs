@@ -25,7 +25,7 @@ use crate::features::tools::meta::{ToolGate, ToolInfo};
 use crate::shared::config::{
     AppConfig, AutoTitleMode, CloudProvider, CloudSettings, FlashAttn, ImpersonationMode,
     ManagedSettings, McpServerConfig, MediaResolution, NoteOrder, PythonMode, SecretSlot,
-    ServerMode, SpecType, Theme, TtsCloudSettings, TtsMode,
+    ServerMode, SpecType, Theme, ThemeMode, TtsCloudSettings, TtsMode,
 };
 use crate::shared::embed_prefix::EmbedConvention;
 use crate::shared::i18n::Locale;
@@ -34,7 +34,7 @@ use crate::shared::mcp::valid_server_id as valid_mcp_server_id;
 use crate::shared::osc52::Osc52Mode;
 use crate::shared::secrets::SecretKey;
 use crate::shared::server::{ServerStatus, ServerStatuses};
-use crate::shared::theme::Palette;
+use crate::shared::theme::{FULL_THEMES, Palette};
 use crate::shared::ui::{ListScroll, dim_background, render_scrollbar, screen_chrome};
 use crate::widgets::help_dialog::{HelpContext, HelpSection};
 use crate::widgets::input_box::{InputBox, RenderOpts};
@@ -730,7 +730,15 @@ enum FieldId {
     NotesAutoConsolidate,
     NotesRecallIncludesSelf,
     // Interface
+    /// The colour mode: the terminal's own background (system) or the theme's
+    /// canvas (full). See spec §11.6, docs/theme-modes.md.
+    IThemeMode,
+    /// The **system** mode's theme — shown while that mode is the one in effect.
     ITheme,
+    /// The **full** mode's theme — the row that takes `ITheme`'s place, under
+    /// the same label, while the full mode is in effect. Two fields rather
+    /// than one re-bound: each mode remembers its own choice.
+    IFullTheme,
     /// Hand a copy to the terminal's clipboard too (OSC 52).
     IClipboardOsc52,
     /// Automatic chat titling: after the user's message / after the reply / off.
