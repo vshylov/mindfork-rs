@@ -32,6 +32,15 @@ split by subsystem.
   one filled dot in the list. Only selected text and the matches of a search are
   inverted. With the `NO_COLOR` environment variable set the app starts in this
   mode; a colour mode chosen in the settings wins over the variable.
+- **Themes of your own.** A theme of the full colour mode is a file,
+  `data/themes/<name>.json`, listed in Settings → Interface → *Theme* by its
+  name. Only the background has to be in it: the colours you leave out are
+  chosen to stay readable on *your* background — the built-in theme's colour,
+  made lighter or darker only as far as it takes — and the colours you write
+  are kept exactly as written. `mindfork themes export dark -o FILE` writes a
+  template; `mindfork themes check` shows every colour of a theme, where it
+  came from and its contrast, without starting the app. Themes are read at
+  start-up and are part of a backup.
 - **The input box's height is a setting.** Settings → Interface → *Input box
   height*: how many rows of text the box grows to before it scrolls, from 1 to
   50 — 6 by default, as before. However high it is set, the box never takes more
@@ -58,6 +67,8 @@ split by subsystem.
   and an older version reading the file ignores them. `theme_mode` takes
   `system`, `full` or `mono`; a value a version does not know reads as "not
   chosen" rather than costing the file.
+- A new folder in the data root, `themes/`, created empty. It is packed into a
+  backup and replaced by a restore, like `locales/`.
 
 ## [0.11.2] — 2026-09-26
 

@@ -52,6 +52,13 @@ Scenarios (`--scenario`):
 * `no-color` — `mindfork demo` three times: with `NO_COLOR=1`, where the very
   first frame must already be bare; with `NO_COLOR=` (empty), which is an
   unset one; and without it.
+* `user-theme` — a copy of the binary in a scratch directory whose
+  `data/themes/` holds a theme of one colour (a light canvas) next to a file
+  that is not a theme, with the settings naming that theme. The first frame
+  must be painted with it, the settings row must show its name, and the log
+  must say what the other file was. The control is the same run with the
+  theme taken away: the name then answers to nothing and the canvas is the
+  dark one. Takes the single-instance lock, like `first-frame`.
 
 It is a **spike tool**, not part of the app and not run in CI: run it by hand
 after `cargo build`, and paste its output into the journal entry.
@@ -62,6 +69,7 @@ Usage:
     python tools/console_probe.py --scenario first-frame
     python tools/console_probe.py --scenario mono
     python tools/console_probe.py --scenario no-color
+    python tools/console_probe.py --scenario user-theme
     python tools/console_probe.py --exe target/release/mindfork.exe
 
 Exit code: 0 — every check passed, 1 — a check failed, 2 — cannot run here.
@@ -369,6 +377,28 @@ class Report:
         ]
         self.check(not bare, f"{title}: every cell is painted ({len(bare)} are not: {bare[:6]})")
 
+    def covered(
+        self, title: str, rows: list[list[tuple[str, int]]], shows: tuple[str, ...] = ()
+    ) -> None:
+        """No cell is left on the console's own background. What `painted` is
+        for a theme whose backdrop does not read as its canvas: a sepia
+        canvas comes back as white and its selection backdrop as yellow, and
+        both are the theme's."""
+        self.screen(title, rows)
+        bare = [
+            (x, y)
+            for y, row in enumerate(rows)
+            for x, (_, attributes) in enumerate(row)
+            if background(attributes) == BLACK
+        ]
+        self.check(not bare, f"{title}: no cell is the console's own ({len(bare)} are: {bare[:6]})")
+        self.says(title, rows, shows)
+
+    def says(self, title: str, rows: list[list[tuple[str, int]]], shows: tuple[str, ...]) -> None:
+        drawn = "\n".join("".join(char for char, _ in row) for row in rows)
+        for text in shows:
+            self.check(text in drawn, f"{title}: {text!r} is on the screen")
+
     def bare(
         self,
         title: str,
@@ -401,9 +431,7 @@ class Report:
             reverse == reversed_text,
             f"{title}: in reverse video — {reverse!r} (expected {reversed_text!r})",
         )
-        drawn = "\n".join("".join(char for char, _ in row) for row in rows)
-        for text in shows:
-            self.check(text in drawn, f"{title}: {text!r} is on the screen")
+        self.says(title, rows, shows)
 
     def coloured(self, title: str, rows: list[list[tuple[str, int]]]) -> None:
         """The control of `bare`: the same kind of frame, styled."""
@@ -598,11 +626,70 @@ def scenario_no_color(exe: Path, report: Report) -> None:
         report.check(code == 0, f"{title}: the app exited with code {code}")
 
 
+def scenario_user_theme(exe: Path, report: Report) -> None:
+    theme = "probe"
+    with tempfile.TemporaryDirectory(prefix="mindfork-probe-") as scratch:
+        root = Path(scratch)
+        copy = root / exe.name
+        shutil.copy(exe, copy)
+        themes = root / "data" / "themes"
+        themes.mkdir(parents=True)
+        # A theme of its canvas alone: everything else is fitted to it.
+        theme_file = themes / f"{theme}.json"
+        theme_file.write_text(json.dumps({"canvas": "#f4ecd8"}), encoding="utf-8")
+        (themes / "broken.json").write_text("{", encoding="utf-8")
+        settings = {
+            "schema_version": 3,
+            "interface": {"language": "en", "theme_mode": "full", "full_theme": theme},
+        }
+        (root / "data" / "settings.json").write_text(json.dumps(settings), encoding="utf-8")
+
+        print("first run: the theme is in data/themes")
+        session = Session(copy, [], cwd=root)
+        try:
+            report.covered("started in a theme of the user's", read_screen())
+            to_interface_fields()
+            report.covered("settings, the theme by its name", read_screen(), shows=(theme,))
+            press("esc")
+        finally:
+            code = session.close()
+        report.check(code == 0, f"the app exited with code {code}")
+        log = "\n".join(
+            path.read_text(encoding="utf-8", errors="replace")
+            for path in (root / "data" / "logs").glob("*")
+            if path.is_file()
+        )
+        said = [line for line in log.splitlines() if "broken.json" in line]
+        report.check(
+            len(said) == 1 and "skipping" in said[0],
+            f"the log says what the other file was ({len(said)} line(s))",
+        )
+        report.check(theme_file.name not in log, "and nothing about a theme with nothing to say")
+
+        print("second run (the control): the theme is gone, its name is still in the settings")
+        theme_file.unlink()
+        session = Session(copy, [], cwd=root)
+        try:
+            rows = read_screen()
+            report.screen("started with a name nothing answers to", rows)
+            report.check(
+                all(background(a) == BLACK for row in rows for _, a in row),
+                "the canvas is the dark one",
+            )
+            to_interface_fields()
+            report.says("settings, the lost theme", read_screen(), shows=(theme,))
+            press("esc")
+        finally:
+            code = session.close()
+        report.check(code == 0, f"the app exited with code {code} the second time")
+
+
 SCENARIOS = {
     "full-mode": scenario_full_mode,
     "first-frame": scenario_first_frame,
     "mono": scenario_mono,
     "no-color": scenario_no_color,
+    "user-theme": scenario_user_theme,
 }
 
 

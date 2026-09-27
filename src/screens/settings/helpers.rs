@@ -1157,13 +1157,14 @@ pub(super) fn theme_mode_label(m: ThemeMode, loc: &'static Locale) -> String {
     .to_string()
 }
 
-/// The full mode's themes as the row offers them: the built-in ones, and —
-/// last — a stored name nothing answers to (a theme from another machine, or
-/// from a newer version). It is listed because it is what the file says; it
-/// draws as the first built-in theme ([`Palette::full`]), and leaving it
-/// takes it off the list.
+/// The full mode's themes as the row offers them: the built-in ones, the
+/// user's (`data/themes/`, by name), and — last — a stored name nothing
+/// answers to (a theme from another machine, a file that went away). It is
+/// listed because it is what the file says; it draws as the first built-in
+/// theme ([`Palette::full`]), and leaving it takes it off the list.
 pub(super) fn full_theme_names(current: &str) -> Vec<&str> {
     let mut names: Vec<&str> = FULL_THEMES.to_vec();
+    names.extend(crate::shared::user_theme::registry().names());
     if !names.contains(&current) {
         names.push(current);
     }

@@ -3292,7 +3292,7 @@ drawn in*.
   the system mode's palette of that name on the **canvas** it was tuned against
   (`#0f1115`, `#fafafc` — `shared/theme.rs::CANVAS_DARK`/`CANVAS_LIGHT`), so a
   full-mode screen is the README's screenshot of it, which was rendered on that
-  same canvas.
+  same canvas. A theme of the user's own is a file — **User themes** below.
 - **`mono`** — monochrome: no colours and no text attributes, the terminal's
   own two colours and nothing else. No theme applies. Described under
   **Monochrome** below; it is also the mode **`NO_COLOR`** starts the app in.
@@ -3401,6 +3401,76 @@ back to following the environment. The variable is read once, at start-up
 *A limit.* A search matches the **rendered** text (§11.3), and in this mode the
 rendered text holds the markers: a query that spans a marker — a word whose
 second half is bold — finds nothing in the feed.
+
+**User themes** (`data/themes/<name>.json`, docs/theme-modes.md §10;
+`shared/user_theme.rs`). A theme of the **full** mode is a file; its name is
+the file's stem, `interface.full_theme` holds it, and the Theme row lists the
+user's themes by name after the built-in ones. One JSON object, a colour per
+role, every colour `#rrggbb`:
+
+```json
+{ "canvas": "#002b36", "text": "#93a1a1", "accent": "#b58900" }
+```
+
+| Role | What it colours | Held to |
+|---|---|---|
+| `canvas` | the background the app paints — **required** | — |
+| `text` | body text | 7:1 |
+| `muted` | secondary text, hint descriptions | 4.5:1 |
+| `user`, `assistant`, `tool` | the role rails and what is drawn in a role's colour | 4.5:1 |
+| `user_soft`, `assistant_soft`, `tool_soft` | the role headers, a tool's name | 4.5:1 |
+| `success`, `warning`, `error`, `accent` | states, and the accent of headings, links and matches | 4.5:1 |
+| `keycap_fg`, `keycap_danger` | the text of a key in a hint bar, and of a dangerous one | 4.5:1 |
+| `code_text`, `code_comment` | plain text and comments in highlighted code | 4.5:1 |
+| `border_focus` | the border of the focused panel | 3:1, on the canvas |
+| `border` | the border of any other panel | — |
+| `keycap_bg` | the pill under a key — and **the backdrop of every selected row** | — |
+
+A text role is measured on the canvas **and** on the backdrop, since any row
+can be the selected one. Syntax colours are not roles: highlighting derives
+from `accent`, `success`, `warning`, `user` and `assistant`.
+
+*What the file leaves out is fitted* (the user's decision, 2026-09-27). The
+theme's polarity is its canvas's — dark when white stands out against it more
+than black does — and picks the built-in theme the missing roles start from. A
+missing **text** role is that theme's colour, moved along OKLab lightness, hue
+and chroma kept, by the smallest amount that clears its floor on both grounds;
+a colour that already clears is taken as it is. The two roles with no floor —
+the backdrop and the plain border — keep the built-in theme's **distance** from
+its canvas instead: the user's canvas, moved in lightness by as much, in its
+own hue. The backdrop is settled first, because the text is fitted against it.
+
+*What the file names is never altered.* A named colour below its floor is
+reported and drawn as written.
+
+*What a file gets wrong.* No `canvas`, or one that is not a colour: not a
+theme. A key that is no role's name: reported and ignored (one that starts
+with `_` is the author's own and is not read). A value that is not a colour:
+reported, and the role fitted. `dark.json`/`light.json`: reported and skipped
+— the built-in names are taken. A name is letters, digits, `-` and `_`, 32 at
+most. A file that is not a theme is skipped and the rest still load.
+
+*When.* The directory is read once, at start-up, into a process-wide registry
+(`user_theme::init`, from `launch_tui`); a changed file is read at the next
+start. A stored name nothing answers to draws as `dark`, is logged once, stays
+in `settings.json` and is listed in its row, last.
+
+*The report* (`ThemeReport`) is per role: the colour, where it came from — the
+file, the built-in theme as it was, fitted, derived from the canvas — its
+contrast on each ground, its floor, whether it clears. Each theme's shortfalls
+go to the log at start-up, one line per theme. Two commands, neither of which
+starts the TUI:
+
+- `mindfork themes check [NAME|FILE]` prints the table — a theme of
+  `data/themes/` by name, any file by path, every theme with no argument — and
+  exits with `1` when a theme has something to say.
+- `mindfork themes export NAME -o FILE` writes a theme out whole, every role
+  named: a built-in one as a template, a user's one as fitted. A built-in
+  theme exported and read back is that theme exactly. An existing file is not
+  overwritten.
+
+`themes/` is one of the directories a backup packs and a restore replaces
+([§12.3](#123-backup-and-deletion)).
 
 **Theme** (`interface.theme`: `auto` by default, `dark`, `light`) — the
 **system** mode's. `dark` and `light` are fixed palettes and ignore the
@@ -4232,7 +4302,7 @@ not the runs.
 
 - **Soft delete is mandatory** (`is_hidden`; cascading profile→chats→notes/RAG).
 - A chat-file backup on save (atomic write-rename).
-- **Backing up/restoring all data** — a TUI-free CLI (`features/backup.rs`): `mindfork backup [-o FILE] [-c 0..9] [-p PASSWORD]` (zips the data directory: `chats/`, `dictionaries/`, `locales/`, `files/`, `workspace/`, `data.db`, `profiles.json`, `settings.json`, `personal_dictionary.txt`, every `*.bak`, and `tools.fs_root` if it's inside the data directory; excluding `backups/`/`logs/`/`defaults.json`/`location.json`; compression level 0–9) and `mindfork restore <archive> [-p PASSWORD]`. The directory list is **one constant** for both halves — what a backup packs is what a restore clears — so a directory cannot be packed and then survive a restore, or be cleared and never come back. Two of them hold bytes nothing can recompute: `files/`, what `python_exec` saved for a chat ([§9.7](#97-chat-file-attachments-file-attach)), and `workspace/`, the pre-image of every file the assistant edited in a chat's project ([§9.12](#912-the-code-workspace-project-and-the-code_-tools)) — without the latter a restored chat can still show what changed but no longer put it back. The commands take the single-instance lock (protecting `data.db` from a race). **Restore is transactional**: archive validation (anti-zip-slip) before any destructive action → if data exists, an automatic pre-restore copy into `backups/` → clearing → unpacking; if unpacking fails — roll back to the pre-restore copy. The outcome is reported to the console.
+- **Backing up/restoring all data** — a TUI-free CLI (`features/backup.rs`): `mindfork backup [-o FILE] [-c 0..9] [-p PASSWORD]` (zips the data directory: `chats/`, `dictionaries/`, `locales/`, `themes/`, `files/`, `workspace/`, `data.db`, `profiles.json`, `settings.json`, `personal_dictionary.txt`, every `*.bak`, and `tools.fs_root` if it's inside the data directory; excluding `backups/`/`logs/`/`defaults.json`/`location.json`; compression level 0–9) and `mindfork restore <archive> [-p PASSWORD]`. The directory list is **one constant** for both halves — what a backup packs is what a restore clears — so a directory cannot be packed and then survive a restore, or be cleared and never come back. Two of them hold bytes nothing can recompute: `files/`, what `python_exec` saved for a chat ([§9.7](#97-chat-file-attachments-file-attach)), and `workspace/`, the pre-image of every file the assistant edited in a chat's project ([§9.12](#912-the-code-workspace-project-and-the-code_-tools)) — without the latter a restored chat can still show what changed but no longer put it back. The commands take the single-instance lock (protecting `data.db` from a race). **Restore is transactional**: archive validation (anti-zip-slip) before any destructive action → if data exists, an automatic pre-restore copy into `backups/` → clearing → unpacking; if unpacking fails — roll back to the pre-restore copy. The outcome is reported to the console.
 - **The archive can be password-protected.** The password comes either from `--password` on `backup`/`restore` or from the settings ("Data" section), where it is stored **encrypted and bound to this machine**, exactly like a cloud API key ([ADR 0008](docs/decisions/0008-api-key-storage.md)); the argument wins over the setting, an empty value means "no password". With one set, every data entry is encrypted with **WinZip AES-256** (`manifest.json` deliberately stays readable — it holds no user data, so the "backup from a newer version" warning still works without the password), and the archive remains openable by 7-Zip/WinZip. Restore accepts an encrypted **and** an unencrypted archive with no mode switch: the zip layer discards a password an entry doesn't need. A missing or wrong password is refused **before** anything is deleted — the password is verified when an entry is opened, so the pre-flight validation above covers it; on an interactive terminal `restore` prompts for it (up to three attempts) instead of failing, which is the case when restoring an archive from another machine. The copies the app makes on its own — the pre-restore copy and the pre-migration backup ([§12.2](#122-schema-versioning-and-migration)) — are encrypted too, so the setting has no exception that quietly writes a plaintext copy of everything. **What it does not protect** ([docs/history/backup-password.md](docs/history/backup-password.md) §2): entry names, sizes and the directory structure stay visible (ZIP AES encrypts content only); the key derivation is fixed by the format at PBKDF2-HMAC-SHA1/1000, which is weak against offline brute force of a short password — hence the hint asking for a passphrase; and a password known only to a dead machine makes its archives unreadable, so it has to be recorded elsewhere.
 - **Both commands narrate what they are doing.** Packing or unpacking a real data root takes seconds (compaction, then a few hundred entries), and a command that prints nothing until it is finished is indistinguishable from one that has hung — most of all right after the `restore` password prompt, where the echo-less input leaves the user unsure it was taken at all. So each phase announces itself **before** it runs (checking the archive → the pre-restore copy → compacting → packing → clearing → unpacking), and the two entry loops count themselves out (`N of M`, no more often than twice a second, so a small data root still finishes in silence). Keystrokes typed while the command was working are **discarded** on the way out (`features/terminal_input.rs`): they were typed at us, and without that the shell inherits them on exit and replays them as its own command line — which is what an impatient `Enter` at the password prompt used to do.
 - **The database is compacted on both paths.** `data.db` accumulates free pages (deleted notes, `/rag remove`d chunks, an attachment index dropped with its chat) that SQLite never returns to the file system on its own. A backup packs a `VACUUM INTO` copy instead of the live file — smaller, and self-contained, so the `-wal`/`-shm` sidecars are folded in rather than packed; a restore compacts what it unpacked, which is what an archive made before this existed (or by another tool) needs. Both are **best effort**: a file that isn't a readable database is packed / left raw, because a backup that happens is worth more than a compact one. The backup path never modifies the source — it is refused before SQLite ever opens it if the header isn't a database's, and opened read-only otherwise; both guards are there because opening a database can make SQLite delete a stale sidecar next to it.

@@ -3,7 +3,7 @@
 {\*\comment Generated from PRIVACY.md by tools/wizard_rtf.py - do not edit.}
 \viewkind4\f0\fs18
 \pard\sb0\sa100\b\fs26 Privacy policy\b0\fs18\par
-\pard\sa120 Effective {\b 2026-09-26}. It covers three things that are easy to confuse: the {\b mindfork application}, the website {\b mindfork.io}, and the project's presence on {\b GitHub}. They have very different answers, so they are kept apart below.\par
+\pard\sa120 Effective {\b 2026-09-28}. It covers three things that are easy to confuse: the {\b mindfork application}, the website {\b mindfork.io}, and the project's presence on {\b GitHub}. They have very different answers, so they are kept apart below.\par
 \pard\sa120 {\b The short version.} mindfork is a local program. It has no telemetry, no analytics, no crash reporting, no update check and no account. Nothing it does reports back to the author, and there is no server of this project's for it to report to. Everything it stores stays in its data folder on your computer (\u167?2), apart from the short-lived working files listed in \u167?8. It talks to the network for the model you configured, for the tools that are switched on and for the setup commands you run \u8212? and where it does, your data goes to {\i that} provider, under {\i their} policy, never through anything of ours.\par
 \pard\sa120 The rest of this document is the detailed version, written from the code rather than from a template, including the parts that are on by default. Its companions: SECURITY.md (what the app promises, and how to report a break), DISCLAIMER.md \u167?5 (what it means, legally, that a request leaves your machine), and docs/install.md (where the data directory is on each platform).\par
 \pard\sb200\sa100\b\fs22 1. Who is responsible for what\b0\fs18\par
@@ -23,7 +23,7 @@
 \pard\fi-280\li280\sa80 \bullet\tab {\b Diagnostics} \u8212? {\i Where:} {\f1 logs/} \u8212? {\i Holds your conversations:} no \u8212? see \u167?6\par
 \pard\fi-280\li280\sa80 \bullet\tab {\b The Python sandbox runtime} \u8212? {\i Where:} {\f1 sandbox/} \u8212? {\i Holds your conversations:} no\par
 \pard\fi-280\li280\sa80 \bullet\tab {\b llama.cpp builds downloaded by {\f1 mindfork llama setup}} \u8212? {\i Where:} {\f1 llama/} \u8212? {\i Holds your conversations:} no\par
-\pard\fi-280\li280\sa80 \bullet\tab {\b Spellcheck dictionaries, locales, the words you added yourself} \u8212? {\i Where:} {\f1 dictionaries/}, {\f1 locales/}, {\f1 personal_dictionary.txt} \u8212? {\i Holds your conversations:} the personal dictionary holds words you added\par
+\pard\fi-280\li280\sa80 \bullet\tab {\b Spellcheck dictionaries, locales, colour themes, the words you added yourself} \u8212? {\i Where:} {\f1 dictionaries/}, {\f1 locales/}, {\f1 themes/}, {\f1 personal_dictionary.txt} \u8212? {\i Holds your conversations:} the personal dictionary holds words you added\par
 \pard\sa120 None of this is uploaded anywhere by the app. Copying the folder to another machine carries your chats with it \u8212? and deliberately does {\i not} carry usable secrets (\u167?7).\par
 \pard\sb200\sa100\b\fs22 3. What leaves your machine\b0\fs18\par
 \pard\sa120 Every outbound connection is to an endpoint {\b you} configured, to a tool endpoint that is part of a feature that is switched on, or to the download host of a setup command you ran. There is no destination the app contacts on its own initiative, and no request is ever made about you, your machine or your usage. What follows is the complete list.\par

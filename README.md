@@ -77,9 +77,9 @@ drift from what the app renders
 - **A real TUI.** Markdown with tables and LaTeX, Mermaid drawn as text
   graphics, streamed "thoughts" in a foldable block, images in and out, search
   across every conversation, spellcheck, emoji, mouse, themes — over your
-  terminal's own background, painted whole with the contrast held for you, or
-  no colours at all (`NO_COLOR` is honoured) — and an interface in English or
-  Russian.
+  terminal's own background, painted whole with the contrast held for you
+  (a theme of your own is a file of one colour or of twenty), or no colours at
+  all (`NO_COLOR` is honoured) — and an interface in English or Russian.
 - **Private by construction.** No telemetry, no update check, no account.
   Everything lives in a `data/` folder next to the binary — take the folder, or
   the USB stick it is on, and it comes with you. API keys are encrypted and bound

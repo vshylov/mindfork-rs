@@ -163,7 +163,14 @@ const DB_FILES: &[&str] = &["data.db", "data.db-wal", "data.db-shm"];
 ///
 /// One list for both halves — what a backup packs and what a restore clears — so a
 /// directory cannot be packed and then survive a restore, or be cleared and not come back.
-const TOP_DIRS: &[&str] = &["chats", "dictionaries", "locales", "files", "workspace"];
+const TOP_DIRS: &[&str] = &[
+    "chats",
+    "dictionaries",
+    "locales",
+    "themes",
+    "files",
+    "workspace",
+];
 
 /// A packing entry: the source's absolute path + its name inside the archive (with `/`).
 struct Entry {
@@ -1002,6 +1009,12 @@ mod tests {
         fs::write(root.join("dictionaries").join("en.dic"), b"x").unwrap();
         fs::create_dir_all(root.join("locales")).unwrap();
         fs::write(root.join("locales").join("en.json"), b"{}").unwrap();
+        fs::create_dir_all(root.join("themes")).unwrap();
+        fs::write(
+            root.join("themes").join("mine.json"),
+            b"{\"canvas\":\"#002b36\"}",
+        )
+        .unwrap();
         fs::create_dir_all(root.join("files").join("c1")).unwrap();
         fs::write(root.join("files").join("c1").join("chart.png"), b"png").unwrap();
         fs::create_dir_all(root.join("workspace").join("c1")).unwrap();
@@ -1088,6 +1101,9 @@ mod tests {
             "chats/a.bak",
             "dictionaries/en.dic",
             "locales/en.json",
+            // The user's themes: a file somebody wrote, like a locale
+            // (spec §11.6, §12.3).
+            "themes/mine.json",
             "files/c1/chart.png",
             // The pre-images of what the assistant edited in a chat's project: the one
             // thing that track stores which cannot be recomputed (spec §9.12).
@@ -1156,6 +1172,9 @@ mod tests {
         seed_data(dst.path());
         fs::write(dst.path().join("settings.json"), b"{\"v\":999}").unwrap();
         fs::write(dst.path().join("chats").join("stale.json"), b"{}").unwrap();
+        // A theme the archive does not carry, and a changed one it does.
+        fs::write(dst.path().join("themes").join("stale.json"), b"{}").unwrap();
+        fs::write(dst.path().join("themes").join("mine.json"), b"{}").unwrap();
         // A journal of a chat the archive knows nothing about: the clearing half has to
         // take it, or a restore would leave another conversation's baselines behind.
         fs::create_dir_all(dst.path().join("workspace").join("other")).unwrap();
@@ -1183,6 +1202,13 @@ mod tests {
         );
         // The stale chat absent from the archive was removed by the cleanup.
         assert!(!dst.path().join("chats").join("stale.json").exists());
+        // The themes are one of the directories packed and cleared together:
+        // the archive's theme is back as it was written, the other is gone.
+        assert!(!dst.path().join("themes").join("stale.json").exists());
+        assert_eq!(
+            fs::read(dst.path().join("themes").join("mine.json")).unwrap(),
+            b"{\"canvas\":\"#002b36\"}"
+        );
         // The code workspaces' change journals travel with the rest: the archive's
         // baseline is back, and the one it does not carry is gone (spec §9.12, §12.3).
         assert!(

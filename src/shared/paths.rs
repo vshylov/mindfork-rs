@@ -203,6 +203,9 @@ impl Paths {
         // escalated — external locales are optional, built-in bundles work
         // without them.
         let _ = std::fs::create_dir_all(self.locales_dir());
+        // The same for the themes: optional, and an empty directory is how a
+        // user finds where a theme goes.
+        let _ = std::fs::create_dir_all(self.themes_dir());
         self.seed_dictionaries_dir(loc);
         Ok(())
     }
@@ -405,6 +408,13 @@ impl Paths {
         self.root.join("locales")
     }
 
+    /// The user's themes (`themes/`): `<name>.json` is a theme of the full
+    /// colour mode, listed in settings by its name (spec §11.6,
+    /// docs/theme-modes.md §10). Read once at startup.
+    pub fn themes_dir(&self) -> PathBuf {
+        self.root.join("themes")
+    }
+
     /// Spellcheck personal dictionary (`personal_dictionary.txt`).
     pub fn personal_dictionary(&self) -> PathBuf {
         self.root.join("personal_dictionary.txt")
@@ -488,6 +498,27 @@ mod tests {
         let p = Paths::with_root("data-root");
         assert!(p.backups_dir().ends_with("backups"));
         assert_eq!(p.backups_dir().parent(), Some(p.root()));
+    }
+
+    #[test]
+    fn themes_dir_under_root() {
+        let p = Paths::with_root(PathBuf::from("/tmp/mindfork"));
+        assert!(p.themes_dir().ends_with("themes"));
+        assert_eq!(p.themes_dir().parent(), Some(p.root()));
+    }
+
+    /// The two directories a user puts files of their own into are there to
+    /// be found, empty, from the first run.
+    #[test]
+    fn the_directories_for_a_users_files_are_created_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = Paths::with_root(dir.path().join("data"));
+        p.ensure_dirs(crate::shared::i18n::locale(crate::shared::i18n::Lang::En))
+            .unwrap();
+        for made in [p.themes_dir(), p.locales_dir()] {
+            assert!(made.is_dir(), "{}", made.display());
+            assert_eq!(std::fs::read_dir(&made).unwrap().count(), 0);
+        }
     }
 
     #[test]

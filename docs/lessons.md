@@ -1012,6 +1012,21 @@ chosen in settings has to flip the dependency's switch as well
 `settings.json` and false on the screen.
 — *colour modes — the monochrome mode*.
 
+**A rule for "how far" is silent about whatever has no "far enough" — and the
+silence is implemented as "leave it".** A user theme's missing colours were
+decided to be "the built-in theme's, moved along lightness until they clear the
+contrast floors". Two of the palette's colours have no floor, on purpose: the
+selection backdrop and the plain border. Read to the letter, the rule leaves
+them where the built-in theme has them — and the dark theme's backdrop on
+another dark canvas, Solarized's, is 1.04:1: every selected row in the app
+invisible, in a theme that passes every check the rule defines. Nothing in the
+decision was wrong; it was written about text. Before implementing a rule over
+a list, walk the list for the members the rule's condition cannot be asked of,
+and measure what "unchanged" does to them. Here they keep their *distance* from
+the canvas rather than their colour, and the design document says where that
+departs from the decision as worded.
+— *colour modes — themes of the user's own*.
+
 ## 4. The recurring defect class: a message must close the door
 
 **Never let a message describe a situation without saying what is and is not possible

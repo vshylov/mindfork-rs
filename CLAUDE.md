@@ -176,9 +176,9 @@ Backend selection: `MINDFORK_ENGINE_URL` (external, any OpenAI server) OR
 rented instead of hosted — `python tools/e2e_hf.py run`, see
 `docs/history/remote-e2e-hf.md`.
 
-## Status (2026-09-27, version 0.11.2)
+## Status (2026-09-28, version 0.11.2)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3534 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **3578 unit tests
 green, 202 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
@@ -191,12 +191,13 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
-- **Colour modes — stages 1 and 2: `full` and `mono`.** Two passes over the finished
-  frame (`ui::finish_frame`): `full` paints the theme's canvas, `mono` strips every
-  colour and attribute — reverse video kept for a selection and a search match, a glyph
-  for whatever else styling alone said (`palette.mono`). `NO_COLOR` starts the app in
-  `mono` unless a mode was chosen. Measured on Windows 11's console host; other
-  terminals are a look. User themes follow
+- **Colour modes and user themes — track complete** (2026-09-28). Two passes over the
+  finished frame (`ui::finish_frame`): `full` paints the theme's canvas, `mono` strips
+  every colour and attribute — reverse video kept for a selection and a search match, a
+  glyph for whatever else styling alone said. `NO_COLOR` starts the app in `mono` unless
+  a mode was chosen. A theme of the user's is `data/themes/<name>.json`: named colours
+  kept, the rest fitted to the contrast floors (`shared/user_theme.rs`, `mindfork themes
+  export|check`). Measured on Windows 11's console host; other terminals are a look
   ([docs/theme-modes.md](docs/theme-modes.md), spec §11.6,
   [docs/journal/ui-feed.md](docs/journal/ui-feed.md)).
 - **The input box's height is a setting** — `interface.input_max_rows`, capped at

@@ -5,9 +5,9 @@ the interface — the one the app has today, one with no colours and no text
 attributes, and one where the app paints its own background and text colour,
 tuned for contrast — plus themes a user can write for the last one.
 
-§6 records the forks and the user's decisions; §7 is the stage list. **Stage 1
-(the framework and the full mode) and stage 2 (the monochrome mode and
-`NO_COLOR`, §9) are done; stage 3 (user themes) is what is left.**
+§6 records the forks and the user's decisions; §7 is the stage list. **All
+three stages are done**: the framework and the full mode (§4), the monochrome
+mode and `NO_COLOR` (§9), user themes (§10).
 
 ## 1. What and why
 
@@ -298,9 +298,10 @@ Each is its own branch and PR.
 2. **Monochrome** — *done*, §9. The pass gains its second job (drop colours
    and attributes), the 22 places of §3.2 get a glyph or, for the two fork A
    names, reverse video; `NO_COLOR`.
-3. **User themes** — `data/themes/<name>.json`, the registry, the row listing
-   them, `mindfork themes export`, the directory in the backup's list, the
-   contrast fit and its report, a chapter in the manual.
+3. **User themes** — *done*, §10. `data/themes/<name>.json`, the registry, the
+   row listing them, `mindfork themes export`, the directory in the backup's
+   list, the contrast fit and its report (`mindfork themes check`), a chapter
+   in the manual.
 
 ## 8. Risks and the live check
 
@@ -557,3 +558,165 @@ killed by tests written for them: a marker that did not open its own line
 (reachable only where no paragraph opens it — next to a block formula, in a
 tight list item after a code block), and the quoted lines wrapped first to
 last (visible only with two quoted paragraphs that both wrap).
+
+## 10. Stage 3 — user themes
+
+Branch `feat/theme-modes-user-themes`. Fork D (§6) is this stage's: a theme
+that names only some roles gets the rest fitted to the contrast floors, and a
+colour the file names is never altered.
+
+### 10.1 The file
+
+A theme of the **full** mode is a file, `data/themes/<name>.json`; its name is
+the file's stem, and `interface.full_theme` holds it. JSON, flat, one key per
+role, every colour `#rrggbb`:
+
+```jsonc
+{
+  "_about": "anything; a key that starts with _ is not read",
+  "canvas": "#002b36",        // required: the background the app paints
+  "text": "#93a1a1",          // everything else is optional
+  "accent": "#b58900"
+}
+```
+
+The roles are `Palette`'s, by its field names: `canvas`, `text`, `muted`,
+`user`, `assistant`, `tool`, `success`, `warning`, `error`, `accent`,
+`user_soft`, `assistant_soft`, `tool_soft`, `keycap_fg`, `keycap_danger`,
+`code_text`, `code_comment` (text); `border_focus`, `border`, `keycap_bg`
+(not text — `keycap_bg` is the selection backdrop throughout the app).
+
+- **`canvas` is required.** A theme of the full mode is its background first;
+  a file without one, or with one that is not a colour, is not a theme.
+- **A key the app does not know** is reported and ignored — a typo names
+  nothing, and the role it meant is fitted like any other missing one.
+- **A value that is not a colour** is reported, and the role is fitted: there
+  is no colour there to keep.
+- **The built-in names are taken**: `dark.json` and `light.json` are reported
+  and skipped. A built-in theme a file could quietly replace would make "the
+  `dark` theme" mean something else on every machine that has such a file.
+- A name is letters, digits, `-` and `_`, 32 at most — it goes into
+  `settings.json` and onto a command line.
+
+### 10.2 The fit
+
+The theme's **polarity** is its canvas's: dark when white stands out against
+the canvas more than black does. That picks the built-in theme the missing
+roles start from, and sets `Palette::dark`.
+
+**A text role that is missing** starts as the built-in theme's colour. If that
+already clears its floor on the canvas **and** on the selection backdrop, it is
+taken as it is. Otherwise its OKLab lightness is moved — hue and chroma kept —
+away from the canvas, in steps of 0.002, to the first value that clears both;
+the smallest move that does, as the built-in palettes were retuned by hand in
+§3.1. If the whole way to white (or black) clears nothing, the other direction
+is tried, and failing both the best colour met is kept and the role is
+reported as not fitted.
+
+**The two roles that are not text** — the selection backdrop and the plain
+border — are outside the floors (§4.4), so "moved until it clears" would leave
+them exactly where the built-in theme has them: on a canvas they were not
+chosen for. `#21242a`, the dark theme's backdrop, is invisible on Solarized's
+`#002b36`. They keep the built-in theme's **distance** from its canvas
+instead: the user's canvas, moved in lightness by as much as the built-in
+backdrop (or border) stands off the built-in canvas, with the canvas's own hue.
+This is the one place the stage departs from the letter of fork D, and it does
+so for the roles fork D's rule has nothing to say about.
+
+The backdrop is settled first — named or derived — because every text role is
+then fitted against it.
+
+**A colour the file names is never altered.** Where one falls short of its
+floor it is reported, with the ratio, and drawn as written.
+
+`code_text` and `code_comment` became roles of the palette for this: until now
+they were two greys picked by polarity inside the markdown renderer, which is
+right for the two canvases they were tuned on and for no other.
+
+### 10.3 The registry
+
+Scanned once at start-up (`user_theme::init`, from `launch_tui`), process-wide,
+the shape the external locales have (§2). `Palette::full(name)` asks it after
+the built-in names; a name nothing answers to still draws as `dark`, with a
+line in the log, and stays in the file. The settings row lists the built-in
+themes, then the user's by name, then — last — a stored name nothing answers
+to.
+
+A theme file changed while the app runs is read at the next start.
+
+Tests cannot set a process-wide `OnceLock` to two things, and a registry set
+once for the whole test binary would show every settings test the same user
+themes. The seam is a thread-local override (`user_theme::with_registry`,
+test-only), which `registry()` consults first: a test sees the themes it
+brought and no other test does.
+
+### 10.4 The report
+
+What the fit did is a value, `ThemeReport`: per role — the colour, where it
+came from (the file, fitted from the built-in theme, the built-in theme as it
+was, derived from the canvas), its contrast on the canvas and on the
+backdrop, its floor, and whether it clears.
+
+- **At start-up** each theme's shortfalls go to the log, one line per theme.
+- **`mindfork themes check [NAME|FILE]`** prints the table — for a theme in
+  `data/themes/` by name, for any file by path, for every theme with no
+  argument — and exits with `1` when something is below its floor. It is the
+  loop for whoever writes a theme: edit, check, without starting the app.
+- **`mindfork themes export NAME -o FILE`** writes a theme out whole, every
+  role named — a built-in one as a template, a user's one as fitted. An
+  exported built-in theme read back is that theme exactly.
+
+### 10.5 Around it
+
+- `themes/` joins the backup's directories (`features/backup.rs::TOP_DIRS`):
+  packed, cleared on restore, restored.
+- `Paths::ensure_dirs` creates the directory, empty, like `locales/` — a place
+  to put files is the first thing a user looks for.
+- PRIVACY.md names it among what the data root holds.
+
+### 10.6 Out of scope
+
+- **A theme for the system mode.** There the terminal owns the background, and
+  a palette that cannot know it cannot be held to a floor.
+- **Syntax colours of their own** (§5): highlighting keeps deriving from the
+  roles, so a theme changes it through them.
+- **Reading a changed file without a restart.**
+- **Importing other tools' theme formats.**
+
+### 10.7 Measured, and tested
+
+**Live**, `tools/console_probe.py --scenario user-theme` — the method of §8,
+the same host (the inbox console host of Windows 11 Pro, build 26200). A copy
+of the binary in a scratch directory; `data/themes/probe.json` is
+`{"canvas": "#f4ecd8"}`, `broken.json` next to it is `{`, and the settings
+name `probe`.
+
+| Step | Cells on the console's own background | The Theme row | The log |
+|---|---|---|---|
+| first frame | 0 of 3600 | — | — |
+| Settings → Interface | 0 of 3600 | `probe` | one line, for `broken.json`; none for `probe` |
+| **the control**: the same, `probe.json` taken away, first frame | none painted light: all 3600 on the dark canvas | `probe` | — |
+
+It is the part no unit test reaches: that the directory is read before the
+first palette is built. A sepia canvas comes back as white and its derived
+backdrop as yellow — so the scenario checks that no cell is the console's own,
+where the light theme's could check that every cell is one colour.
+
+**What a theme of one line comes out as** (`mindfork themes check`), two
+canvases neither built-in theme was tuned on:
+
+| Canvas | Roles taken as built in | Fitted | Derived | Below the floor |
+|---|---|---|---|---|
+| `#002b36`, Solarized's dark base | 11 | 6 — `text`, `muted`, `error`, `keycap_fg`, `keycap_danger`, `code_comment` | 2 | 0 |
+| `#f4ecd8`, sepia | 8 | 9 | 2 | 0 |
+
+And Solarized's own palette, named: its body text `#93a1a1` is 5.61:1 on its
+base and 4.18:1 on a selected row, its red `#dc322f` 3.25:1 — reported, and
+drawn as written.
+
+**Tests.** The arithmetic (`shared/oklab.rs`), the reader and the registry
+(`shared/user_theme.rs`), the two commands (`features/themes.rs`), the settings
+row, the palette, the backup and the composed frame each have tests that read
+what comes out. Checked by mutation: 36 mutants, every one killed — one only
+after a test was written for it, the direction a fit tries first, which decides
+nothing unless a floor can be cleared both ways.
