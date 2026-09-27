@@ -1272,6 +1272,8 @@
   "ui.settings.choice.theme_auto": "auto",
   "ui.settings.choice.theme_dark": "dark",
   "ui.settings.choice.theme_light": "light",
+  "ui.settings.choice.mode_system": "system",
+  "ui.settings.choice.mode_full": "full",
   "ui.settings.choice.python_wasmer": "Wasmer sandbox",
   "ui.settings.choice.python_local": "local interpreter",
   "ui.settings.choice.video_res_low": "low (cheaper)",
@@ -1625,6 +1627,7 @@
   "ui.settings.field.sm_auto_consolidate": "Auto-consolidation (every N)",
   "ui.settings.field.sm_protocol": "Maintenance protocol",
   "ui.settings.field.theme": "Theme",
+  "ui.settings.field.theme_mode": "Colour mode",
   "ui.settings.field.language": "Interface language",
   "ui.settings.desc.language": "Interface language (menus, status bar, help, settings screen, feed role headers). Independent of the agent language — each profile has its own framework language. Applied immediately.",
   "ui.settings.field.compat": "Legacy terminal mode",
@@ -1723,6 +1726,16 @@
     "matches code blocks and the selection highlight to it. Role colours always come",
     "from the terminal's own palette. A terminal that does not answer (the legacy",
     "Windows console) is treated as dark. dark and light are fixed and ignore it."
+  ],
+  "ui.settings.desc.theme_mode": [
+    "system draws text colours over your terminal's own background. full paints the",
+    "whole window itself - the theme's background and text colour - so the contrast",
+    "is the theme's to keep, whatever the terminal is set to. Applied immediately."
+  ],
+  "ui.settings.desc.full_theme": [
+    "The theme of the full colour mode: its own background with colours matched to",
+    "it. Every text colour keeps a contrast of at least 4.5:1, on the background and",
+    "on a selected row alike, and body text at least 7:1."
   ],
   "ui.settings.desc.compat": "Compatibility mode for legacy terminal emulators (conhost Windows 10 etc.): emoji and rare characters are replaced with simple glyphs, borders — straight, the spinner — ASCII, popup background dimming — by color. Enable if you see «tofu» boxes instead of icons.",
   "ui.settings.desc.table_separators": "Horizontal lines between Markdown-table rows in the feed («grid» look). Off — compact look: a separator only under the header.",

@@ -17,14 +17,22 @@
 //! (`config.interface.terminal_compat`, spec §11.6) decorative emoji and rare
 //! Unicode characters are replaced with safe ones, and rounded borders with
 //! straight ones.
+//!
+//! **Colour modes** (spec §11.6, docs/theme-modes.md). In the *system* mode
+//! the palette is foregrounds only and the terminal supplies the background.
+//! In the *full* mode the palette also names a **canvas**
+//! ([`Palette::canvas`]), which `shared/ui.rs::paint_canvas` puts under every
+//! cell of the finished frame. [`Palette::for_interface`] is the one place
+//! that turns the settings into a palette.
 
-use std::sync::OnceLock;
+use std::collections::HashSet;
+use std::sync::{LazyLock, Mutex, OnceLock};
 
 use ratatui::style::{Color, Style};
 use ratatui::text::Span;
 use ratatui::widgets::{Block, BorderType, Borders};
 
-use crate::shared::config::Theme;
+use crate::shared::config::{InterfaceSettings, Theme, ThemeMode};
 use crate::shared::osc11::Background;
 #[cfg(test)]
 use crate::shared::wrap;
@@ -182,16 +190,29 @@ pub static COMPAT_GLYPHS: GlyphSet = GlyphSet {
     spinner: &['|', '/', '-', '\\'],
 };
 
-/// Canvas backgrounds for generated screenshots (docs/history/demo-screenshots.md).
-/// The app itself never paints a background — a real terminal supplies it —
-/// so captures need a concrete one. These are the backgrounds the Dark/Light
-/// palettes are tuned against; they live here (not in the Python renderer) so
-/// the intended canvas has one source of truth next to the palettes.
-/// Test-gated with the capture pipeline (`shared/shot.rs`).
-#[cfg(test)]
-pub const SHOT_CANVAS_DARK: Color = Color::Rgb(15, 17, 21);
-#[cfg(test)]
-pub const SHOT_CANVAS_LIGHT: Color = Color::Rgb(250, 250, 252);
+/// The backgrounds the Dark/Light palettes are tuned against — and, in the
+/// **full** colour mode, the ones the app paints (docs/theme-modes.md §4.4).
+///
+/// They began as the canvas of the generated screenshots
+/// (docs/history/demo-screenshots.md): in the system mode the app paints no
+/// background — a real terminal supplies it — so a capture needs a concrete
+/// one, and `shared/shot.rs` still takes it from here. The full mode is that
+/// same picture made true on a terminal: the palette's contrast is measured
+/// against these values (the floor tests below), so they are the ones to put
+/// under it.
+pub const CANVAS_DARK: Color = Color::Rgb(15, 17, 21);
+pub const CANVAS_LIGHT: Color = Color::Rgb(250, 250, 252);
+
+/// The full mode's built-in themes, by the name `interface.full_theme` holds,
+/// in the order the settings row lists them. The first is the fallback for a
+/// name nothing answers to.
+pub const FULL_THEMES: [&str; 2] = ["dark", "light"];
+
+/// Full-theme names already reported as unknown — [`Palette::for_interface`]
+/// runs per frame on the settings screen, and the log wants one line per name,
+/// not one per frame (the `shared/i18n.rs` missing-key precedent).
+static WARNED_UNKNOWN_THEME: LazyLock<Mutex<HashSet<String>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
 
 /// Semantic interface colors. `Copy` — cheap to pass into render by value.
 /// `Hash` — the palette serves as a cache key (e.g. the built syntect
@@ -254,10 +275,59 @@ pub struct Palette {
     /// (`shared/ui.rs::dim_background`). Not a color, but lives in the palette
     /// (like `dark`): it is already threaded through every render.
     pub compat: bool,
+    /// The background the app paints under every cell — the **full** colour
+    /// mode (spec §11.6). `Color::Reset` is the system mode: the terminal's own
+    /// background, and `shared/ui.rs::paint_canvas` leaves the frame alone.
+    /// Widgets do not read it: they keep drawing foregrounds, and the pass
+    /// over the finished frame fills in what they left at the default.
+    pub canvas: Color,
 }
 
 impl Palette {
-    /// Palette for the selected theme.
+    /// The palette the interface settings ask for: the colour mode, that
+    /// mode's theme, and the compatibility flag. The one place the settings
+    /// become a palette — the chat screen, the settings screen and the
+    /// broadcast to the overlay screens all come through here.
+    pub fn for_interface(interface: &InterfaceSettings) -> Self {
+        let palette = match interface.mode() {
+            ThemeMode::System => Self::for_theme(interface.theme),
+            ThemeMode::Full => Self::full(&interface.full_theme),
+        };
+        palette.with_compat(interface.terminal_compat)
+    }
+
+    /// The full mode's palette for a theme name: a built-in palette on the
+    /// canvas it was tuned against. A name nothing answers to — a theme from
+    /// another machine, a file that went away — draws as the first built-in
+    /// one and says so in the log, once.
+    pub fn full(name: &str) -> Self {
+        match name {
+            "dark" => Self::dark().on_canvas(CANVAS_DARK),
+            "light" => Self::light().on_canvas(CANVAS_LIGHT),
+            unknown => {
+                let mut warned = WARNED_UNKNOWN_THEME
+                    .lock()
+                    .expect("unknown-theme set poisoned");
+                if warned.insert(unknown.to_string()) {
+                    tracing::warn!(
+                        theme = unknown,
+                        fallback = FULL_THEMES[0],
+                        "interface.full_theme names a theme this version does not have"
+                    );
+                }
+                Self::full(FULL_THEMES[0])
+            }
+        }
+    }
+
+    /// The same palette, painting `canvas` under the frame.
+    fn on_canvas(mut self, canvas: Color) -> Self {
+        self.canvas = canvas;
+        self
+    }
+
+    /// Palette for the selected theme of the **system** mode: foregrounds
+    /// only, over whatever background the terminal has.
     pub fn for_theme(theme: Theme) -> Self {
         match theme {
             Theme::Auto => Self::auto(),
@@ -323,11 +393,17 @@ impl Palette {
             keycap_danger: reference.keycap_danger,
             dark: !light,
             compat: false,
+            canvas: Color::Reset,
         }
     }
 
-    /// Dark theme — exact shades from the design mockup (oklch → sRGB). Calm,
+    /// Dark theme — shades from the design mockup (oklch → sRGB). Calm,
     /// "terminal": a deep background, soft borders, saturated rails.
+    ///
+    /// Tuned against [`CANVAS_DARK`], and held to the contrast floors by a
+    /// test (`built_in_palettes_clear_the_contrast_floors`): `muted` and
+    /// `keycap_fg` were each a shade lighter in the mockup and fell under
+    /// 4.5:1 on a selected row (docs/theme-modes.md §3.1).
     fn dark() -> Self {
         Self {
             user: Color::Rgb(121, 169, 219),           // blue
@@ -341,32 +417,39 @@ impl Palette {
             assistant_soft: Color::Rgb(164, 209, 172), // greenSoft
             tool_soft: Color::Rgb(230, 201, 154),      // amberSoft
             text: Color::Rgb(201, 204, 210),           // #c9ccd2
-            muted: Color::Rgb(126, 132, 139),          // #7e848b
+            muted: Color::Rgb(133, 139, 146), // #858b92 — the mockup's #7e848b, lifted to the floor
             border: Color::Rgb(54, 58, 66), // a bit brighter than the mockup's #24272e for visibility
             border_focus: Color::Rgb(110, 117, 128), // #6e7580 (focus)
-            keycap_fg: Color::Rgb(132, 138, 146), // quieter than the previous #9aa0a7
+            keycap_fg: Color::Rgb(133, 139, 147), // #858b93 — quiet, and 4.5:1 on its own pill
             keycap_bg: Color::Rgb(33, 36, 42), // darker than the previous #2a2d34
             keycap_danger: Color::Rgb(232, 116, 104), // brighter than error for readability on the pill
             dark: true,
             compat: false,
+            canvas: Color::Reset,
         }
     }
 
     /// Light theme — darkened colors (yellow/bright ones are unreadable on white).
+    ///
+    /// Tuned against [`CANVAS_LIGHT`] and held to the same floors as
+    /// [`Palette::dark`]. Every colour is absolute: `user` used to be the
+    /// named ANSI blue, the one value here that a terminal chose — which a
+    /// "fixed" palette should not have, and a palette that owns its background
+    /// cannot (docs/theme-modes.md §3.1).
     fn light() -> Self {
         Self {
-            user: Color::Blue,
-            assistant: Color::Rgb(0, 128, 0),
-            tool: Color::Rgb(160, 100, 0),
-            success: Color::Rgb(0, 128, 0),
-            warning: Color::Rgb(160, 100, 0),
+            user: Color::Rgb(0, 55, 218), // #0037da — the blue Windows Terminal draws for ANSI blue
+            assistant: Color::Rgb(0, 116, 0), // #007400
+            tool: Color::Rgb(144, 85, 0), // #905500
+            success: Color::Rgb(0, 116, 0),
+            warning: Color::Rgb(144, 85, 0),
             error: Color::Rgb(180, 0, 0),
             accent: Color::Rgb(140, 0, 140),
             user_soft: Color::Rgb(40, 80, 170),
             assistant_soft: Color::Rgb(0, 110, 0),
-            tool_soft: Color::Rgb(150, 95, 0),
+            tool_soft: Color::Rgb(142, 87, 0), // #8e5700
             text: Color::Rgb(30, 32, 36),
-            muted: Color::Rgb(110, 116, 124),
+            muted: Color::Rgb(95, 100, 108), // #5f646c
             border: Color::Rgb(190, 193, 198),
             border_focus: Color::Rgb(120, 124, 130),
             keycap_fg: Color::Rgb(74, 78, 84), // softer than black — "keycaps" don't shout
@@ -374,7 +457,31 @@ impl Palette {
             keycap_danger: Color::Rgb(178, 34, 34),
             dark: false,
             compat: false,
+            canvas: Color::Reset,
         }
+    }
+
+    /// The text roles — everything that is read rather than merely seen — with
+    /// the names the floor test reports them by. `border` and `keycap_bg` are
+    /// not text and are deliberately absent (docs/theme-modes.md §4.4).
+    #[cfg(test)]
+    fn text_roles(&self) -> [(&'static str, Color); 14] {
+        [
+            ("user", self.user),
+            ("assistant", self.assistant),
+            ("tool", self.tool),
+            ("success", self.success),
+            ("warning", self.warning),
+            ("error", self.error),
+            ("accent", self.accent),
+            ("user_soft", self.user_soft),
+            ("assistant_soft", self.assistant_soft),
+            ("tool_soft", self.tool_soft),
+            ("text", self.text),
+            ("muted", self.muted),
+            ("keycap_fg", self.keycap_fg),
+            ("keycap_danger", self.keycap_danger),
+        ]
     }
 
     /// The same palette with the compatibility mode flag set (builder style;
@@ -488,6 +595,24 @@ impl Palette {
     }
 }
 
+/// WCAG 2.x contrast ratio of two absolute colours, 1 (none) to 21 (black on
+/// white). What the floor tests measure the built-in palettes with; stage 3 of
+/// the colour-modes track (user themes) is its first production consumer.
+///
+/// Panics on anything but `Color::Rgb`: a named ANSI colour has no contrast
+/// until a terminal picks its shade, and a test that guessed one would be
+/// measuring the guess.
+#[cfg(test)]
+pub(crate) fn contrast_ratio(a: Color, b: Color) -> f32 {
+    use crate::shared::osc11::{Rgb, relative_luminance};
+    let luminance = |c: Color| match c {
+        Color::Rgb(r, g, b) => relative_luminance(Rgb { r, g, b }),
+        other => panic!("{other:?} is not an absolute colour"),
+    };
+    let (la, lb) = (luminance(a), luminance(b));
+    (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
+}
+
 /// Visible width of a line in terminal columns. Only the glyph-set tests
 /// measure anything here now — the hint grid does its own measuring in
 /// [`crate::shared::ui`].
@@ -591,6 +716,173 @@ mod tests {
             Palette::auto_with(Some(Background::Dark)),
             Palette::auto_with(None)
         );
+    }
+
+    fn interface(mode: ThemeMode, theme: Theme, full_theme: &str) -> InterfaceSettings {
+        let mut i = InterfaceSettings {
+            theme,
+            full_theme: full_theme.to_string(),
+            ..Default::default()
+        };
+        i.set_mode(mode);
+        i
+    }
+
+    #[test]
+    fn the_system_mode_is_the_palette_it_always_was() {
+        // The regression guard for everyone who never touches the new row: the
+        // settings as they are after an upgrade give exactly `for_theme`, with
+        // no canvas — so the pass over the frame has nothing to do.
+        for theme in [Theme::Auto, Theme::Dark, Theme::Light] {
+            let p = Palette::for_interface(&interface(ThemeMode::System, theme, "light"));
+            assert_eq!(p, Palette::for_theme(theme), "{theme:?}");
+            assert_eq!(p.canvas, Color::Reset, "{theme:?} paints a background");
+        }
+        assert_eq!(
+            Palette::for_interface(&InterfaceSettings::default()),
+            Palette::default()
+        );
+    }
+
+    #[test]
+    fn the_full_mode_is_a_built_in_palette_on_its_canvas() {
+        // Fork B (user's decision, 2026-09-27): the two modes share their
+        // palettes, so the full mode is the system mode's colours plus the
+        // canvas they were tuned against — and nothing else.
+        for (name, base, canvas) in [
+            ("dark", Palette::dark(), CANVAS_DARK),
+            ("light", Palette::light(), CANVAS_LIGHT),
+        ] {
+            // `theme` is the *other* mode's field and must not leak in.
+            let p = Palette::for_interface(&interface(ThemeMode::Full, Theme::Auto, name));
+            assert_eq!(p.canvas, canvas, "{name}");
+            assert_eq!(
+                Palette {
+                    canvas: Color::Reset,
+                    ..p
+                },
+                base,
+                "{name}: the full palette differs from the shared one in more than its canvas"
+            );
+        }
+    }
+
+    #[test]
+    fn every_listed_full_theme_is_its_own_palette() {
+        // A name in the list that nothing answers to would reach the fallback
+        // and show `dark` under another label.
+        let palettes: Vec<Palette> = FULL_THEMES.iter().map(|n| Palette::full(n)).collect();
+        for (i, a) in palettes.iter().enumerate() {
+            for b in &palettes[i + 1..] {
+                assert_ne!(a, b, "two listed themes draw the same palette");
+            }
+        }
+    }
+
+    #[test]
+    fn an_unknown_full_theme_draws_as_the_first_built_in_one() {
+        assert_eq!(Palette::full("gruvbox"), Palette::full(FULL_THEMES[0]));
+        // Asked twice (the settings screen asks per frame) — same answer, and
+        // the name is remembered as reported.
+        assert_eq!(Palette::full("gruvbox"), Palette::full("dark"));
+        assert!(
+            WARNED_UNKNOWN_THEME
+                .lock()
+                .unwrap()
+                .contains(&"gruvbox".to_string())
+        );
+    }
+
+    #[test]
+    fn the_compatibility_flag_rides_on_either_mode() {
+        for mode in ThemeMode::ALL {
+            let mut i = interface(mode, Theme::Dark, "dark");
+            i.terminal_compat = true;
+            assert!(Palette::for_interface(&i).compat, "{mode:?}");
+        }
+    }
+
+    #[test]
+    fn a_full_palette_leaves_nothing_to_the_terminal() {
+        // A palette that owns its background has to own every colour on it: a
+        // named ANSI colour is whatever shade the terminal draws, picked for
+        // the terminal's background, not for this canvas.
+        for name in FULL_THEMES {
+            let p = Palette::full(name);
+            let all = p
+                .text_roles()
+                .into_iter()
+                .chain([
+                    ("border", p.border),
+                    ("border_focus", p.border_focus),
+                    ("keycap_bg", p.keycap_bg),
+                    ("canvas", p.canvas),
+                ])
+                .collect::<Vec<_>>();
+            for (role, color) in all {
+                assert!(
+                    matches!(color, Color::Rgb(..)),
+                    "{name}: {role} is {color:?}, not an absolute colour"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_canvas_is_on_the_side_its_palette_says() {
+        // `dark` drives the code-block greys; a palette claiming one polarity
+        // on a canvas of the other would put dark grey on a dark background.
+        for name in FULL_THEMES {
+            let p = Palette::full(name);
+            let is_dark = contrast_ratio(p.canvas, Color::Rgb(255, 255, 255))
+                > contrast_ratio(p.canvas, Color::Rgb(0, 0, 0));
+            assert_eq!(p.dark, is_dark, "{name}");
+        }
+    }
+
+    /// The floors of docs/theme-modes.md §4.4, as the gate they were written
+    /// to be. Every text role is measured on the canvas **and** on the
+    /// selection backdrop, because any row can be the selected one.
+    #[test]
+    fn built_in_palettes_clear_the_contrast_floors() {
+        const BODY: f32 = 7.0; // WCAG AAA
+        const TEXT: f32 = 4.5; // WCAG AA
+        const COMPONENT: f32 = 3.0; // WCAG 1.4.11, non-text
+
+        let mut short: Vec<String> = Vec::new();
+        for name in FULL_THEMES {
+            let p = Palette::full(name);
+            for (role, color) in p.text_roles() {
+                let floor = if role == "text" { BODY } else { TEXT };
+                for (ground, on) in [("canvas", p.canvas), ("selection", p.keycap_bg)] {
+                    let got = contrast_ratio(color, on);
+                    if got < floor {
+                        short.push(format!(
+                            "{name}: {role} on {ground} is {got:.2}, floor {floor}"
+                        ));
+                    }
+                }
+            }
+            let focus = contrast_ratio(p.border_focus, p.canvas);
+            if focus < COMPONENT {
+                short.push(format!(
+                    "{name}: border_focus is {focus:.2}, floor {COMPONENT}"
+                ));
+            }
+        }
+        assert!(short.is_empty(), "below the floor:\n{}", short.join("\n"));
+    }
+
+    #[test]
+    fn the_contrast_ratio_is_the_wcag_one() {
+        let (black, white) = (Color::Rgb(0, 0, 0), Color::Rgb(255, 255, 255));
+        assert!((contrast_ratio(black, white) - 21.0).abs() < 0.01);
+        assert!((contrast_ratio(white, black) - 21.0).abs() < 0.01, "order");
+        assert!((contrast_ratio(white, white) - 1.0).abs() < 0.001);
+        // A value measured outside the code (docs/theme-modes.md §3.1): the
+        // dark palette's body text on its canvas.
+        let got = contrast_ratio(Color::Rgb(201, 204, 210), CANVAS_DARK);
+        assert!((got - 11.74).abs() < 0.01, "{got}");
     }
 
     #[test]

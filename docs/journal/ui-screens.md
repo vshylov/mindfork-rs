@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (69)
+## Entries (70)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -81,6 +81,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the model row asks the provider (done)
 - Post-M9: a chat asked for from another screen arrives in one frame (done)
 - Post-M9: help keycaps are no longer looked up as locale keys (done)
+- Post-M9: a setting at its default reads as unchanged in every interface language (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -3684,3 +3685,39 @@ line apart, is exactly the drift the template removes.
 - **Gates**: fmt / clippy / test green — **3458 unit tests, 202 `#[ignore]`** (+2). Pure
   UI and a lookup path — **no live run required**.
 
+### Post-M9: a setting at its default reads as unchanged in every interface language (done)
+
+Found while rendering a preview of the colour-mode rows (the entry *colour modes — the full
+mode* in [ui-feed.md](ui-feed.md)), and fixed on the same branch, `feat/theme-modes-full`,
+because the two new rows inherited it: in an **English** interface the *Theme* row at `dark`,
+its default, carried the `•` "modified" marker, the footer offered `Del reset`, and `Del` did
+nothing.
+
+**Not the new rows' defect.** Measured with a probe over the Interface section of an untouched
+config: under Russian no row read as changed; under English five did — the colour mode, the
+theme, the self-model order, the dictionaries, the auto-title — every row whose value is a
+**localized** label. The committed screenshots had been showing it all along: three rows of
+the Tools section (*Search provider*, *Tavily API key*, *Python mode*) carry a `•` there
+although the demo config never touches them.
+
+**The cause.** `default_fields` builds a throwaway screen from `AppConfig::default()` and the
+rows are compared **as the text they show** (`value_text`). A default config is in the default
+language, so its rows spelled `auto` in Russian where the screen said "auto". The marker and the footer's
+`Del` compare the two strings; `reset_field` then looks the default's label up among the
+options, which are in the screen's language, finds nothing and returns — a key the footer
+advertised and the handler could not honour.
+
+**The fix** is one assignment: the throwaway config takes the screen's interface language
+before its rows are built. The language row is the exception, and is put back by hand — there
+the language *is* the value, and its default is the default language's own name whatever the
+screen is in. Rejected: **comparing values instead of text** — the right shape, and a rewrite
+of the row model (a `FieldKind` holds the label, not the value) for a defect one line closes.
+
+**Tests.** Every section of an untouched config, in every built-in language: no row differs
+from its default, the language row's default is the default language — with the premise
+asserted (the reference language does hold localized values, so the comparison is not
+vacuous). And the reset, in every built-in language: the full theme, the auto-title, the
+colour mode and the theme each go back, and the interface language does not move. Three
+mutations — the assignment removed (against either test), the language row not put back — each
+killed. The screenshots of the Tools section were regenerated: the three false markers are
+gone, nothing else moved. Unit: 3493 green, 202 ignored. **No live run**: pure UI.

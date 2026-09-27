@@ -1603,6 +1603,77 @@ pub enum Theme {
     Light,
 }
 
+/// The **colour mode** — how the interface is drawn, one level above the theme
+/// (`interface.theme_mode`, spec §11.6, docs/theme-modes.md).
+///
+/// Deliberately **not** `Deserialize`: the field is read through
+/// [`lenient_theme_mode`], because a value this binary does not know must not
+/// fail the parse. `settings.json` is read with `unwrap_or_default()`, so one
+/// unparsable value costs the user the whole configuration — and this enum
+/// grows (`mono` is the track's next stage), which is exactly how an older
+/// binary meets such a value. For the same reason the modes are a field of
+/// their own rather than new values of [`Theme`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ThemeMode {
+    /// Foregrounds over the **terminal's own** background (default): what the
+    /// app has always done. The palette is [`Theme`]'s.
+    #[default]
+    System,
+    /// The app paints its own background — the theme's canvas — and its own
+    /// text colour under every cell (`shared/ui.rs::paint_canvas`), so the
+    /// contrast is the theme's to guarantee. The theme is
+    /// [`InterfaceSettings::full_theme`].
+    Full,
+}
+
+impl ThemeMode {
+    /// Every mode, in the order the settings row cycles through them.
+    pub const ALL: [ThemeMode; 2] = [ThemeMode::System, ThemeMode::Full];
+
+    /// The name a mode has in `settings.json`.
+    pub fn name(self) -> &'static str {
+        match self {
+            ThemeMode::System => "system",
+            ThemeMode::Full => "full",
+        }
+    }
+
+    /// The mode by its `settings.json` name; `None` for one this binary does
+    /// not know.
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|m| m.name() == name)
+    }
+
+    /// The next mode in [`Self::ALL`], in direction `dir`, wrapping.
+    pub fn cycle(self, dir: i32) -> Self {
+        let n = Self::ALL.len() as i32;
+        let at = Self::ALL.iter().position(|m| *m == self).unwrap_or(0) as i32;
+        Self::ALL[(at + dir).rem_euclid(n) as usize]
+    }
+}
+
+/// Reads `interface.theme_mode`: a mode's name, or nothing. Anything else — a
+/// name from a newer version, a number — reads as "not chosen" and says so in
+/// the log, instead of failing the whole file (see [`ThemeMode`]).
+fn lenient_theme_mode<'de, D>(de: D) -> Result<Option<ThemeMode>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = serde_json::Value::deserialize(de)?;
+    let mode = raw.as_str().and_then(ThemeMode::from_name);
+    if mode.is_none() && !raw.is_null() {
+        tracing::warn!(
+            value = %raw,
+            "interface.theme_mode is not a colour mode this version knows — following the default"
+        );
+    }
+    Ok(mode)
+}
+
+/// The full mode's default theme (`interface.full_theme`).
+pub const DEFAULT_FULL_THEME: &str = "dark";
+
 /// When the automatic chat titling runs (`interface.auto_title`, spec §11.2):
 /// the model names a new conversation by itself, once, on its first exchange —
 /// unless the chat was renamed manually (`Chat::renamed_manually`). One
@@ -1646,7 +1717,24 @@ pub enum NoteOrder {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct InterfaceSettings {
+    /// The **system** mode's palette. Untouched by the colour modes: see
+    /// [`ThemeMode`] for why they are not new values here.
     pub theme: Theme,
+    /// The colour mode, **when one was chosen** (spec §11.6). Absent — and
+    /// left out of the file — means "the default", which is what lets a
+    /// default depend on the environment (`NO_COLOR`, the track's stage 2)
+    /// without overriding a choice made here. Read through [`Self::mode`],
+    /// written through [`Self::set_mode`].
+    #[serde(
+        deserialize_with = "lenient_theme_mode",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub theme_mode: Option<ThemeMode>,
+    /// The **full** mode's theme, by name: `dark` and `light` are built in
+    /// (`shared/theme.rs::FULL_THEMES`). A name rather than an enum, so a
+    /// theme this binary does not have is kept in the file and falls back to
+    /// `dark` on screen, instead of failing the parse.
+    pub full_theme: String,
     /// Whether input spellcheck is enabled (dictionaries load from `dictionaries/`).
     pub spellcheck_enabled: bool,
     /// Base names of the selected dictionaries (e.g. `en_US`, `ru_RU`). Empty —
@@ -1723,12 +1811,26 @@ impl InterfaceSettings {
     pub fn input_rows_ceiling(&self) -> u16 {
         self.input_max_rows.clamp(1, INPUT_MAX_ROWS_LIMIT)
     }
+
+    /// The colour mode in effect: the chosen one, or the default.
+    pub fn mode(&self) -> ThemeMode {
+        self.theme_mode.unwrap_or_default()
+    }
+
+    /// Chooses a colour mode. The default is stored as **absence**, so going
+    /// back to it — cycling the row round, or resetting it — returns to
+    /// following the default rather than pinning today's value of it.
+    pub fn set_mode(&mut self, mode: ThemeMode) {
+        self.theme_mode = (mode != ThemeMode::default()).then_some(mode);
+    }
 }
 
 impl Default for InterfaceSettings {
     fn default() -> Self {
         Self {
             theme: Theme::default(),
+            theme_mode: None,
+            full_theme: DEFAULT_FULL_THEME.to_string(),
             spellcheck_enabled: true,
             selected_dictionaries: Vec::new(),
             confirm_destructive_keys: false,
@@ -3087,6 +3189,8 @@ mod tests {
             },
             interface: InterfaceSettings {
                 theme: Theme::Dark,
+                theme_mode: Some(ThemeMode::Full),
+                full_theme: "light".into(),
                 spellcheck_enabled: false,
                 selected_dictionaries: vec!["en_US".into(), "ru_RU".into()],
                 confirm_destructive_keys: true,
@@ -3127,6 +3231,88 @@ mod tests {
         let hand: AppConfig =
             serde_json::from_str(r#"{"interface":{"input_max_rows":0}}"#).unwrap();
         assert_eq!(hand.interface.input_rows_ceiling(), 1);
+    }
+
+    /// The colour mode is **additive**: a file written before it existed reads
+    /// as the system mode, with the theme it had (docs/theme-modes.md §4.1).
+    #[test]
+    fn a_settings_file_without_a_colour_mode_reads_as_system() {
+        let old: AppConfig = serde_json::from_str(r#"{"interface":{"theme":"light"}}"#).unwrap();
+        assert_eq!(old.interface.theme_mode, None);
+        assert_eq!(old.interface.mode(), ThemeMode::System);
+        assert_eq!(old.interface.theme, Theme::Light);
+        assert_eq!(old.interface.full_theme, DEFAULT_FULL_THEME);
+    }
+
+    /// A mode that was never chosen is **not written**, and one that was is
+    /// written by name. "Absent" has to survive a save, or the first save
+    /// would pin today's default and a later default (`NO_COLOR`) would never
+    /// apply to anyone.
+    #[test]
+    fn a_colour_mode_is_written_only_when_chosen() {
+        let untouched = serde_json::to_value(InterfaceSettings::default()).unwrap();
+        assert!(
+            untouched.get("theme_mode").is_none(),
+            "the default mode must stay out of the file: {untouched}"
+        );
+        assert_eq!(untouched["full_theme"], "dark");
+
+        let mut chosen = InterfaceSettings::default();
+        chosen.set_mode(ThemeMode::Full);
+        let written = serde_json::to_value(&chosen).unwrap();
+        assert_eq!(written["theme_mode"], "full");
+        let back: InterfaceSettings = serde_json::from_value(written).unwrap();
+        assert_eq!(back.mode(), ThemeMode::Full);
+
+        // Going back to the default is going back to absence — through the
+        // setter the settings row uses, not only on a fresh config.
+        chosen.set_mode(ThemeMode::System);
+        assert_eq!(chosen.theme_mode, None);
+    }
+
+    /// The reason the mode is parsed leniently. `settings.json` is loaded with
+    /// `unwrap_or_default()`, so a value that fails the parse takes **every**
+    /// setting with it — and the next stage adds a mode this binary has never
+    /// heard of. The control arm is `theme`, a plain enum, which does fail.
+    #[test]
+    fn a_colour_mode_from_a_newer_version_does_not_cost_the_config() {
+        for foreign in [r#""mono""#, r#""FULL""#, "7", "true", r#"{"a":1}"#] {
+            let json = format!(
+                r#"{{"max_tool_rounds":3,"interface":{{"theme":"dark","theme_mode":{foreign}}}}}"#
+            );
+            let c: AppConfig = serde_json::from_str(&json)
+                .unwrap_or_else(|e| panic!("theme_mode={foreign} failed the parse: {e}"));
+            assert_eq!(c.interface.mode(), ThemeMode::System, "{foreign}");
+            // …and the rest of the file is what it said.
+            assert_eq!(c.interface.theme, Theme::Dark, "{foreign}");
+            assert_eq!(c.max_tool_rounds, 3, "{foreign}");
+        }
+        // A theme name this binary does not have is kept, not refused.
+        let c: AppConfig =
+            serde_json::from_str(r#"{"interface":{"full_theme":"gruvbox"}}"#).unwrap();
+        assert_eq!(c.interface.full_theme, "gruvbox");
+        // The control: an ordinary enum holding a foreign value fails the file,
+        // which is what the lenient reader is there to avoid.
+        assert!(serde_json::from_str::<AppConfig>(r#"{"interface":{"theme":"mono"}}"#).is_err());
+    }
+
+    /// The names are the file format, and the cycle is the settings row.
+    #[test]
+    fn colour_modes_have_stable_names_and_cycle_both_ways() {
+        assert_eq!(ThemeMode::System.name(), "system");
+        assert_eq!(ThemeMode::Full.name(), "full");
+        for mode in ThemeMode::ALL {
+            assert_eq!(ThemeMode::from_name(mode.name()), Some(mode));
+            assert_eq!(
+                serde_json::to_value(mode).unwrap(),
+                mode.name(),
+                "what is written is what is read back"
+            );
+            assert_eq!(mode.cycle(1).cycle(-1), mode);
+        }
+        assert_eq!(ThemeMode::System.cycle(1), ThemeMode::Full);
+        assert_eq!(ThemeMode::System.cycle(-1), ThemeMode::Full, "wraps");
+        assert_eq!(ThemeMode::from_name("mono"), None);
     }
 
     /// `cloud_ref`/`cloud_mut` index per-provider arrays by [`CloudProvider::index`],

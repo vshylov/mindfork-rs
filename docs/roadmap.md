@@ -28,11 +28,17 @@ evidence. Adding or closing an item is part of every task's documentation step
 
 ## Most valuable next
 
-**Nothing is called out right now.** The tracks this section carried — the
-first public release, images, retry/backoff, the prompt-caching measurement and
-the attachment birth turn — have all closed. When a track is next chosen it is
-named here with the user pain or the saving it answers; until then the lists
-below are an idea bank of equal weight.
+**Colour modes and user themes** ([theme-modes.md](theme-modes.md), asked for by
+the user on 2026-09-27). The pain: the app draws over whatever background the
+terminal has, so the contrast of its text is nobody's to guarantee, styling
+cannot be turned off, and a palette of one's own cannot be brought. Stage 1 —
+the full colour mode — is done and waits for its look in real terminals;
+monochrome and user themes follow (the bullet under *Feed and rendering*).
+
+The tracks this section carried before — the first public release, images,
+retry/backoff, the prompt-caching measurement and the attachment birth turn —
+have all closed; apart from the one above, the lists below are an idea bank of
+equal weight.
 
 ## Open
 
@@ -299,8 +305,20 @@ below are an idea bank of equal weight.
   (`Ctrl+L` still follows it) — carrying link identity through the wrap is a
   span-metadata problem ratatui gives no room for. Other organs' schemes
   (`note://`, `attachment://`) — until there is a second live consumer.
-- **A theme from a color configuration** — **idea**. A user palette layered
-  over auto/dark/light; today `Theme` is those three, each a built-in palette.
+- **Colour modes and user themes** — **in progress**
+  ([theme-modes.md](theme-modes.md); was "a theme from a color configuration").
+  Stage 1 is done: the *full* colour mode, where the app paints its own
+  background, with the built-in `dark` and `light` held to contrast floors.
+  Measured on Windows 11's console host (`tools/console_probe.py`): painted to
+  the edges through every transition. Its go/no-go is what a probe cannot
+  give — a look in Windows Terminal and one Linux terminal, by the checklist in
+  §8 of the plan. Next: **stage 2**, a
+  monochrome mode (no colours, no attributes; reverse video kept for a text
+  selection and a search match) and `NO_COLOR`; **stage 3**, user themes in
+  `data/themes/` with the missing roles fitted to the floors. Left open by
+  stage 1, pending that look: the margin a terminal keeps around its grid and
+  the cursor's colour, neither of which is a cell the app can paint; a softer
+  light canvas.
 
 ### Input, keys and the terminal
 
@@ -436,7 +454,8 @@ below are an idea bank of equal weight.
   crates.io page links.
 - **Small things from the public-release audit** — **on demand**
   ([public-release-readiness.md §2.4](research/public-release-readiness.md),
-  "nice to have"): `NO_COLOR`; a "terminal too small" message; a port-in-use
+  "nice to have"): a "terminal too small" message (`NO_COLOR` moved to the
+  colour-modes track, stage 2); a port-in-use
   diagnosis for the managed server (only `setup --verify` refuses a busy port
   today); per-release debuginfo; the commit hash in `--version`; a demo
   recording; `linguist-vendored` for the vendored grammars; a warning that

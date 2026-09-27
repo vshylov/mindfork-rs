@@ -364,11 +364,11 @@ fn refresh_settings_screens(
             settings.set_mcp(mcp.clone());
             settings.set_secrets_present(secrets_present.to_vec());
         }
-        // The theme/compatibility mode/UI language may have changed — refresh the
-        // palette and locale of open overlay screens (list/self-model) in one broadcast.
+        // The colour mode/theme/compatibility mode/UI language may have changed —
+        // refresh the palette and locale of open overlay screens (list/self-model)
+        // in one broadcast.
         other => other.set_theme(
-            Palette::for_theme(config.interface.theme)
-                .with_compat(config.interface.terminal_compat),
+            Palette::for_interface(&config.interface),
             crate::shared::i18n::locale(config.interface.language),
         ),
     }

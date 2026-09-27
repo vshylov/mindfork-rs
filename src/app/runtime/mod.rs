@@ -27,6 +27,7 @@ use ratatui::crossterm::execute;
 #[cfg(unix)]
 use ratatui::crossterm::terminal::supports_keyboard_enhancement;
 use ratatui::crossterm::terminal::{BeginSynchronizedUpdate, EndSynchronizedUpdate};
+use ratatui::style::Color;
 use tokio::sync::mpsc::error::TryRecvError;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use uuid::Uuid;
@@ -41,7 +42,7 @@ use crate::screens::self_model::{SelfModelIntent, SelfModelScreen};
 use crate::screens::settings::{SettingsIntent, SettingsScreen};
 use crate::screens::tasks::{TasksIntent, TasksScreen};
 use crate::shared::theme::Palette;
-use crate::shared::ui::{SPINNER_STEP, dim_background};
+use crate::shared::ui::{self, SPINNER_STEP, dim_background};
 use crate::widgets::help_dialog::{
     self, DEFAULT_HELP_TAB, HelpContext, HelpKeyOutcome, HelpSection, HelpState, HelpTab,
 };
@@ -562,14 +563,9 @@ fn run_loop(
     // one timer-driven animation is a spinner, and it asks for a frame only when its
     // glyph changes (`spinner_frame_needed`), so idle ticks don't repaint. See spec §11.
     let mut dirty = true;
-    // Which screen was DRAWN in the previous frame: a switch requires a full
-    // repaint (see below, at `prime_full_redraw`). We track this by the actual draw —
-    // switching "there and back" between frames changes nothing visually.
-    let mut last_screen = std::mem::discriminant(&active);
-    // Whether the help overlay was drawn in the previous frame — its toggle is
-    // a screen switch for repaint purposes (the dialog's arrows/keycaps are
-    // exactly the wide-glyph risk group a cell diff leaves artifacts of).
-    let mut last_overlay = false;
+    // What the previous frame DREW — the facts a full repaint is decided from
+    // (see `Drawn`, and below, at `prime_full_redraw`).
+    let mut drawn = Drawn::nothing_yet(&active);
     // Set when the event channel turns out to be **closed** rather than empty (see
     // [`Drain`]).
     let mut backend_gone = false;
@@ -614,8 +610,7 @@ fn run_loop(
                 &mut active,
                 &mut help,
                 &back,
-                &mut last_screen,
-                &mut last_overlay,
+                &mut drawn,
             )?;
             dirty = false;
         }
@@ -720,9 +715,109 @@ fn refresh_task_rows(active: &ActiveScreen, cmd_tx: &UnboundedSender<AppCommand>
     }
 }
 
+/// What the previous frame put on the terminal — tracked by the actual draw, so
+/// switching "there and back" between two frames changes nothing.
+struct Drawn {
+    /// Which screen was drawn: a switch requires a full repaint.
+    screen: std::mem::Discriminant<ActiveScreen>,
+    /// Whether the help overlay was drawn — its toggle is a screen switch for
+    /// repaint purposes (the dialog's arrows/keycaps are exactly the wide-glyph
+    /// risk group a cell diff leaves artifacts of).
+    overlay: bool,
+    /// The canvas the terminal was last erased to (`Color::Reset` — its own
+    /// background, which is what `ratatui::init` leaves). See [`canvas_repaint`].
+    canvas: Color,
+}
+
+impl Drawn {
+    fn nothing_yet(active: &ActiveScreen) -> Self {
+        Self {
+            screen: std::mem::discriminant(active),
+            overlay: false,
+            canvas: Color::Reset,
+        }
+    }
+}
+
+/// What a frame has to do about the canvas before it draws (the full colour
+/// mode, spec §11.6, docs/theme-modes.md §4.6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CanvasRepaint {
+    /// The terminal already has this frame's canvas under it.
+    None,
+    /// The canvas changed — the first full-mode frame, another theme, another
+    /// mode: erase the terminal to the new one and repaint every cell.
+    Erase,
+    /// The terminal was resized while a canvas is painted: ratatui is about to
+    /// erase it, and the erase has to be made with the canvas current, or the
+    /// cells it never writes come out in the terminal's own colour.
+    Resize,
+}
+
+/// The decision, apart from the terminal it is carried out on. A resize wins
+/// over a change: ratatui's resize erases the screen and resets its buffers,
+/// which is everything a change of canvas needs as well.
+fn canvas_repaint(last: Color, canvas: Color, resized: bool) -> CanvasRepaint {
+    if resized && canvas != Color::Reset {
+        CanvasRepaint::Resize
+    } else if canvas != last {
+        CanvasRepaint::Erase
+    } else {
+        CanvasRepaint::None
+    }
+}
+
+/// Whether the terminal is no longer the size ratatui last laid a frame out
+/// for — what `Terminal::draw` is about to find out and erase the screen over.
+fn terminal_resized(terminal: &mut DefaultTerminal) -> bool {
+    let known = terminal.get_frame().area();
+    terminal
+        .size()
+        .is_ok_and(|now| (now.width, now.height) != (known.width, known.height))
+}
+
+/// Erases the terminal with `canvas` as the current background, so that every
+/// cell — the ones no frame ever writes included — starts from it.
+///
+/// `terminal.clear()` is what the project does not use for a repaint (it
+/// flickers, docs/lessons.md §5); this is an erase of the same kind, kept to
+/// the rare moments the canvas itself changes, because it is the only way to
+/// colour a cell that is never written. The style is reset whatever happened:
+/// ratatui's backend starts every draw assuming a reset terminal.
+fn erase_to_canvas(
+    terminal: &mut DefaultTerminal,
+    canvas: Color,
+    repaint: CanvasRepaint,
+) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut out = stdout();
+    out.write_all(ui::set_background(canvas).as_bytes())?;
+    let erased = match repaint {
+        // ratatui's own erase, made now rather than inside `draw` — where it
+        // would run with the terminal's default background current.
+        CanvasRepaint::Resize => out.flush().and_then(|()| terminal.autoresize()),
+        CanvasRepaint::Erase | CanvasRepaint::None => out.write_all(ui::ERASE_SCREEN.as_bytes()),
+    };
+    let reset = out
+        .write_all(ui::RESET_STYLE.as_bytes())
+        .and_then(|()| out.flush());
+    erased.and(reset)
+}
+
+/// The palette of the screen in front: the settings screen draws with its
+/// **working copy** — a theme picked there is on screen before the saved
+/// configuration has come back as an event — and every other screen with the
+/// palette the chat screen holds, which the same event keeps in step.
+fn front_palette(active: &ActiveScreen, screen: &ChatScreen) -> Palette {
+    match active {
+        ActiveScreen::Settings(settings) => settings.palette(),
+        _ => screen.palette(),
+    }
+}
+
 /// Draws one frame for the active screen (the `dirty` branch of [`run_loop`]'s
-/// tick): the `Esc` hint, the full-repaint decision (`last_screen` tracks which
-/// screen was drawn in the previous frame), and the draw itself wrapped in
+/// tick): the `Esc` hint, the full-repaint decision ([`Drawn`] tracks what the
+/// previous frame put on the terminal), and the draw itself wrapped in
 /// synchronized output. The comments inside are load-bearing.
 fn draw_frame(
     terminal: &mut DefaultTerminal,
@@ -730,8 +825,7 @@ fn draw_frame(
     active: &mut ActiveScreen,
     help: &mut HelpOverlay,
     back: &Option<Back>,
-    last_screen: &mut std::mem::Discriminant<ActiveScreen>,
-    last_overlay: &mut bool,
+    last: &mut Drawn,
 ) -> Result<()> {
     // The status bar's `Esc` hint, derived from the back-stack for this
     // frame (see `esc_target`). The stash only ever changes while
@@ -780,6 +874,11 @@ fn draw_frame(
     //    (which triggers this same repaint). Confirmed by
     //    `ui::screen_switch_emits_vs16_tail_without_full_redraw`.
     //
+    //  * a CHANGE OF CANVAS (the full colour mode, spec §11.6) — every cell of
+    //    the frame gets another background, and the terminal is erased to it
+    //    first (`erase_to_canvas`), so the diff's idea of what is on the
+    //    screen is void.
+    //
     // Outside these cases, plain text always goes through the regular diff.
     // See spec §11.3, §11.5.
     let requested = if matches!(active, ActiveScreen::Chat) {
@@ -788,42 +887,73 @@ fn draw_frame(
         false
     };
     let now_screen = std::mem::discriminant(active);
-    let switched = now_screen != *last_screen;
-    *last_screen = now_screen;
+    let switched = now_screen != last.screen;
+    last.screen = now_screen;
     // The help overlay's toggle is a screen switch for repaint purposes: the
     // dialog appearing or vanishing changes the frame wholesale, and its
     // keycap/arrow glyphs are the risk group the cell diff mishandles.
     let overlay = help.open.is_some();
-    let overlay_toggled = overlay != *last_overlay;
-    *last_overlay = overlay;
-    if requested || switched || overlay_toggled {
-        crate::shared::ui::prime_full_redraw(terminal.current_buffer_mut());
+    let overlay_toggled = overlay != last.overlay;
+    last.overlay = overlay;
+    // The palette of this frame: the screen in front, the help dialog over it
+    // and the canvas under both are drawn with the same one.
+    let palette = front_palette(active, screen);
+    let repaint = canvas_repaint(
+        last.canvas,
+        palette.canvas,
+        // Asked only while a canvas is painted: in the system mode ratatui's
+        // own erase on a resize is already the right one.
+        palette.canvas != Color::Reset && terminal_resized(terminal),
+    );
+    last.canvas = palette.canvas;
+    if requested || switched || overlay_toggled || repaint == CanvasRepaint::Erase {
+        ui::prime_full_redraw(terminal.current_buffer_mut());
         terminal.swap_buffers();
     }
     let _ = execute!(stdout(), BeginSynchronizedUpdate);
-    // One draw closure: the active screen, then — modal above every one of
-    // them — the help dialog (spec §11.7; theme and locale come from the chat
-    // screen, the base that always exists and receives every settings event).
-    let palette = screen.palette();
-    let loc = screen.loc();
-    let drawn = terminal.draw(|frame| {
-        match active {
-            ActiveScreen::Chat => screen.render(frame),
-            ActiveScreen::ChatList(list) => list.render(frame),
-            ActiveScreen::Settings(settings) => settings.render(frame),
-            ActiveScreen::SelfModel(view) => view.render(frame),
-            ActiveScreen::Search(search) => search.render(frame),
-            ActiveScreen::Changes(changes) => changes.render(frame),
-            ActiveScreen::Tasks(tasks) => tasks.render(frame),
-        }
-        if let Some(state) = help.open.as_mut() {
-            dim_background(frame, &palette);
-            help_dialog::render_help(frame, state, &HELP_SECTIONS, &palette, loc);
-        }
-    });
+    // Inside the synchronized update, so a terminal that honours it shows the
+    // erase and the frame as one step.
+    let erased = match repaint {
+        CanvasRepaint::None => Ok(()),
+        _ => erase_to_canvas(terminal, palette.canvas, repaint),
+    };
+    let drawn = terminal.draw(|frame| compose_frame(frame, screen, active, help, &palette));
     let _ = execute!(stdout(), EndSynchronizedUpdate);
+    erased?;
     drawn?;
     Ok(())
+}
+
+/// What one frame is made of, in the order it is drawn: the active screen,
+/// then — modal above every one of them — the help dialog (spec §11.7), then
+/// the canvas under everything either of them left at the terminal's default
+/// (the full colour mode, spec §11.6). Apart from [`draw_frame`] because that
+/// needs a real terminal, and the order is the part worth a test.
+fn compose_frame(
+    frame: &mut ratatui::Frame,
+    screen: &mut ChatScreen,
+    active: &mut ActiveScreen,
+    help: &mut HelpOverlay,
+    palette: &Palette,
+) {
+    // The locale comes from the chat screen, the base that always exists and
+    // receives every settings event.
+    let loc = screen.loc();
+    match active {
+        ActiveScreen::Chat => screen.render(frame),
+        ActiveScreen::ChatList(list) => list.render(frame),
+        ActiveScreen::Settings(settings) => settings.render(frame),
+        ActiveScreen::SelfModel(view) => view.render(frame),
+        ActiveScreen::Search(search) => search.render(frame),
+        ActiveScreen::Changes(changes) => changes.render(frame),
+        ActiveScreen::Tasks(tasks) => tasks.render(frame),
+    }
+    if let Some(state) = help.open.as_mut() {
+        dim_background(frame, palette);
+        help_dialog::render_help(frame, state, &HELP_SECTIONS, palette, loc);
+    }
+    // Last, so it also catches what the overlay's `Clear` reset.
+    ui::paint_canvas(frame.buffer_mut(), palette);
 }
 
 /// One input tick: polls the terminal for [`TICK`], collects the available

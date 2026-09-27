@@ -2349,3 +2349,159 @@ fn the_help_looks_up_no_missing_key() {
         }
     }
 }
+
+/// When a frame erases the terminal to its canvas (the full colour mode,
+/// docs/theme-modes.md §4.6) — and, as importantly, when it does not: the
+/// system mode must never pay an erase, and neither must a frame whose canvas
+/// is already under it.
+#[test]
+fn the_terminal_is_erased_only_when_its_canvas_changes() {
+    use crate::shared::theme::{CANVAS_DARK, CANVAS_LIGHT};
+    let own = Color::Reset;
+
+    // The system mode, resized or not: ratatui's own handling is the right one.
+    assert_eq!(canvas_repaint(own, own, false), CanvasRepaint::None);
+    assert_eq!(canvas_repaint(own, own, true), CanvasRepaint::None);
+
+    // The first full-mode frame, another theme, and back to the system mode.
+    assert_eq!(
+        canvas_repaint(own, CANVAS_DARK, false),
+        CanvasRepaint::Erase
+    );
+    assert_eq!(
+        canvas_repaint(CANVAS_DARK, CANVAS_LIGHT, false),
+        CanvasRepaint::Erase
+    );
+    assert_eq!(
+        canvas_repaint(CANVAS_LIGHT, own, false),
+        CanvasRepaint::Erase
+    );
+
+    // The same canvas as the frame before: the ordinary diff.
+    assert_eq!(
+        canvas_repaint(CANVAS_DARK, CANVAS_DARK, false),
+        CanvasRepaint::None
+    );
+
+    // A resize under a canvas is ratatui's erase, made with the canvas
+    // current — whether or not the canvas changed in the same frame.
+    assert_eq!(
+        canvas_repaint(CANVAS_DARK, CANVAS_DARK, true),
+        CanvasRepaint::Resize
+    );
+    assert_eq!(
+        canvas_repaint(CANVAS_DARK, CANVAS_LIGHT, true),
+        CanvasRepaint::Resize
+    );
+    // Leaving the full mode in the frame that also resized: the terminal's own
+    // background is current already, so it is a plain change.
+    assert_eq!(canvas_repaint(CANVAS_DARK, own, true), CanvasRepaint::Erase);
+}
+
+/// The settings screen is drawn with its working copy, so the canvas under it
+/// has to come from the same place — or a mode picked there would show its
+/// colours one frame before its background.
+#[test]
+fn the_frame_palette_is_the_one_the_screen_in_front_draws_with() {
+    use crate::shared::config::{AppConfig, ThemeMode};
+    let chat = ChatScreen::new();
+    assert_eq!(front_palette(&ActiveScreen::Chat, &chat), chat.palette());
+
+    let mut config = AppConfig::default();
+    config.interface.set_mode(ThemeMode::Full);
+    config.interface.full_theme = "light".into();
+    let settings = ActiveScreen::Settings(Box::new(SettingsScreen::new(
+        config,
+        Vec::new(),
+        Vec::new(),
+    )));
+    let front = front_palette(&settings, &chat);
+    assert_eq!(front, Palette::full("light"));
+    assert_ne!(front, chat.palette(), "the chat has not heard yet");
+}
+
+/// A frame as the render loop composes it, for the interface settings given:
+/// the chat screen (or the settings screen) with the help dialog over it when
+/// asked, drawn into a test terminal.
+fn composed(
+    interface: crate::shared::config::InterfaceSettings,
+    settings_in_front: bool,
+    help_open: bool,
+) -> ratatui::buffer::Buffer {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    let config = crate::shared::config::AppConfig {
+        interface,
+        ..Default::default()
+    };
+    let mut screen = ChatScreen::new();
+    screen.set_settings(
+        config.clone(),
+        Vec::new(),
+        Vec::new(),
+        Default::default(),
+        Vec::new(),
+    );
+    let mut active = if settings_in_front {
+        ActiveScreen::Settings(Box::new(SettingsScreen::new(
+            config,
+            Vec::new(),
+            Vec::new(),
+        )))
+    } else {
+        ActiveScreen::Chat
+    };
+    let mut help = HelpOverlay::new();
+    if help_open {
+        help.open_for(help_context(&active));
+    }
+    let palette = front_palette(&active, &screen);
+    let mut term = Terminal::new(TestBackend::new(100, 30)).unwrap();
+    term.draw(|frame| compose_frame(frame, &mut screen, &mut active, &mut help, &palette))
+        .unwrap();
+    term.backend().buffer().clone()
+}
+
+/// In the full colour mode no cell of a composed frame is left to the terminal
+/// — under a plain screen, under the settings screen, and under the help
+/// dialog, whose `Clear` resets its area *after* the screen was drawn. The
+/// system mode is the control: there the same frames do leave cells to it.
+#[test]
+fn a_composed_frame_is_painted_to_its_edges_in_the_full_mode() {
+    use crate::shared::config::{InterfaceSettings, ThemeMode};
+    use crate::shared::theme::{CANVAS_DARK, CANVAS_LIGHT};
+
+    let full = |theme: &str| {
+        let mut i = InterfaceSettings {
+            full_theme: theme.to_string(),
+            ..Default::default()
+        };
+        i.set_mode(ThemeMode::Full);
+        i
+    };
+    for (theme, canvas) in [("dark", CANVAS_DARK), ("light", CANVAS_LIGHT)] {
+        for (settings_in_front, help_open) in
+            [(false, false), (false, true), (true, false), (true, true)]
+        {
+            let at = format!("{theme}, settings={settings_in_front}, help={help_open}");
+            let buf = composed(full(theme), settings_in_front, help_open);
+            let bare = buf
+                .content
+                .iter()
+                .filter(|c| c.bg == Color::Reset || c.fg == Color::Reset)
+                .count();
+            assert_eq!(bare, 0, "{at}: cells left to the terminal");
+            // Most of any frame is plain canvas — so the canvas is the one
+            // that was asked for, not merely "some colour".
+            let on_canvas = buf.content.iter().filter(|c| c.bg == canvas).count();
+            assert!(on_canvas * 2 > buf.content.len(), "{at}: {on_canvas}");
+
+            let system = composed(InterfaceSettings::default(), settings_in_front, help_open);
+            assert!(
+                system.content.iter().any(|c| c.bg == Color::Reset),
+                "{at}: the control — the system mode paints no canvas"
+            );
+        }
+    }
+}

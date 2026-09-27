@@ -1452,6 +1452,18 @@ Choosing `dark`/`light` in *Settings → Interface → Theme* does the same thin
 permanently. See spec §11.6 and
 [terminal-background-detection.md](terminal-background-detection.md).
 
+All of that is the **system** colour mode, where the terminal supplies the
+background. *Settings → Interface → Colour mode → full* has the app paint its
+own — background and text colour together, with the contrast held by the theme
+rather than by whatever the terminal is set to — and asks the terminal nothing.
+From the command line:
+
+```bash
+mindfork setup --set interface.theme_mode=full --set interface.full_theme=light
+```
+
+See [manual.md](manual.md) §8 and [theme-modes.md](theme-modes.md).
+
 ## 7. Live-model smoke tests
 
 Unit tests don't need a server. Scenarios against a real server are marked

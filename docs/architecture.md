@@ -725,6 +725,13 @@ src/
    │                       interface language → the detector's hint)
    │                       (docs/research/local-file-encoding.md §3)
    ├─ ui.rs                small rendering helpers: dim_background, scrollbar,
+   │                       paint_canvas (the full colour mode: the pass over a
+   │                       FINISHED frame that puts the palette's canvas and text
+   │                       colour under every cell a widget left at the terminal's
+   │                       default — a no-op in the system mode) with
+   │                       set_background/ERASE_SCREEN/RESET_STYLE, the bytes
+   │                       app/runtime erases the terminal to a new canvas with
+   │                       (spec §11.6, docs/theme-modes.md),
    │                       ListScroll (a list's scroll offset kept between frames —
    │                       the ONLY place a ListState is built; see spec §11.2),
    │                       prime_full_redraw (full-redraw sentinel — space +
@@ -746,6 +753,13 @@ src/
    │                       Locale/t/tf, built-in locales/{ru,en}.json + external
    │                       data/locales/*.json (init/registry, docs/history/i18n-external-locales.md)
    ├─ theme.rs             Palette (user/assistant/tool/… roles), auto/dark/light.
+   │                       Palette::for_interface — the ONE place the interface
+   │                       settings become a palette: the colour mode, its theme,
+   │                       the compatibility flag. The full mode's palettes
+   │                       (Palette::full, FULL_THEMES) are dark/light on the
+   │                       canvas they were tuned against (CANVAS_DARK/LIGHT, the
+   │                       `canvas` field; Reset = the terminal's own). The
+   │                       contrast floors are tests here (spec §11.6).
    │                       Colour only: keycap/hint/hint_marked (the one place a
    │                       "dangerous" red keycap is chosen) — the grid that lays
    │                       hints out lives in ui.rs, one layer up.
@@ -3240,6 +3254,21 @@ before `Storage::open`) populates the registry (`OnceLock`): built-in bundles
 the built-ins (`BUILTIN` LazyLock), behavior unchanged. UI language selectors
 and `present.rs::exit_labels` use the registry-aware `Lang::all()`; gate
 tests use the built-in `Lang::ALL`.
+
+**Colour modes (spec §11.6, docs/theme-modes.md).** The palette is built in one
+place — `Palette::for_interface(&config.interface)` — called by the chat screen
+(`set_settings`), the settings screen (per frame, from its working copy) and the
+broadcast to the overlay screens. In the **full** mode it carries a canvas;
+widgets never read it. A frame is composed by `app/runtime::compose_frame` —
+the active screen, the help dialog over it, then `ui::paint_canvas` under both —
+with the palette of the screen **in front** (`front_palette`: the settings
+screen's working copy, otherwise the chat's), so a mode picked in settings shows
+its background in the same frame as its colours. `draw_frame` keeps what the
+previous frame drew in `Drawn` (the screen, the overlay, the canvas);
+`canvas_repaint` decides from it whether the terminal must first be erased to a
+new canvas (`erase_to_canvas`: the canvas as the current background, the erase —
+ratatui's own `autoresize` when the terminal was resized — and the reset), which
+also primes a full redraw.
 
 Screen enumerations are consolidated into **canonical places**: broadcasting
 the palette/locale (a theme/language change) — `ActiveScreen::set_theme`,

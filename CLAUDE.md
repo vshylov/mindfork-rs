@@ -154,6 +154,7 @@ python tools/site_llms_txt.py --check  # /llms.txt matches the site content
 python tools/site_release_gate.py --self-test  # the gate that holds the site's deploy for a release
 python tools/actions_pin_check.py  # every workflow action is pinned to a commit
 python tools/release_guard.py --self-test  # the tag guard release.yml runs, against fixtures
+python tools/console_probe.py      # Windows: drive the TUI in a hidden console, read the screen back
 ```
 
 Running against a real server (smoke test, llama.cpp):
@@ -175,9 +176,9 @@ Backend selection: `MINDFORK_ENGINE_URL` (external, any OpenAI server) OR
 rented instead of hosted — `python tools/e2e_hf.py run`, see
 `docs/history/remote-e2e-hf.md`.
 
-## Status (2026-09-26, version 0.11.2)
+## Status (2026-09-27, version 0.11.2)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3463 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **3493 unit tests
 green, 202 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
@@ -190,6 +191,13 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **Colour modes — stage 1, the full mode.** `interface.theme_mode = full`: the app
+  paints its own canvas and text colour under the finished frame (`ui::paint_canvas`);
+  `dark`/`light` retuned and held to contrast floors by a test. Measured on Windows
+  11's console host; Windows Terminal and Linux are a look. Monochrome and user
+  themes follow
+  ([docs/theme-modes.md](docs/theme-modes.md), spec §11.6,
+  [docs/journal/ui-feed.md](docs/journal/ui-feed.md)).
 - **The input box's height is a setting** — `interface.input_max_rows`, capped at
   half the window ([docs/journal/ui-input.md](docs/journal/ui-input.md), spec §11.5).
 - **A fetched page is searchable in its birth turn — track complete** (2026-09-26).
@@ -374,33 +382,10 @@ being recent is dropped, not shortened.
   so there is nothing to build
   ([docs/history/gateway-images-and-continue.md](docs/history/gateway-images-and-continue.md),
   spec §6.4, [docs/journal/engine.md](docs/journal/engine.md)).
-- **The endpoint is asked what the model can do** — a gateway serves no `/props`,
-  so automatic compaction had no window and never fired (measured: 22 567 tokens,
-  nothing folded), while the sampling screen offered the whole llama.cpp set of
-  which a gateway drops half — `repeat_penalty` worst of all, spelled
-  `repetition_penalty` there and so set but inert. The catalogue the app already
-  fetches for the model's *name* carries both answers, so one request now feeds
-  both: `EngineBackend::model_capabilities` (default `None`, overridden only by
-  `OpenAiClient`, delegated by the retry decorator with the test lessons §9
-  demands), one background task landing one `EngineFacts`, and the registry
-  rebuilt only when the published set really changed. **Silence is never a
-  claim** — no catalogue, an empty list, a blank model field, a llama.cpp that
-  lists ids and nothing else all leave behaviour exactly as it shipped; the
-  window sits *after* `/props` (a running server describes this turn's process, a
-  catalogue the model in the abstract) and an explicit setting still beats both.
-  The narrowing reaches the settings screen, `set_sampling`'s schema and the
-  metadata snapshot — **not** the wire, since the list is per model while the
-  route that serves the request is per provider, and dropping a field ourselves
-  on that evidence would trade their silent drop for ours. Live **GO** on R1: 64 000 for the
-  window a gateway never had, and thirty offered fields down to ten — with
-  `repeat_penalty` surviving under the catalogue's own `repetition_penalty`, which
-  is the alias table earning its place. The local stack is measured unchanged:
-  `/props` first, the catalogue not even asked
-  ([docs/history/gateway-capabilities.md](docs/history/gateway-capabilities.md), spec §6.7, §8.1,
-  [docs/journal/engine.md](docs/journal/engine.md)).
 - **A headless launch (no TTY) exits with code 2** and a one-line reason — the
-  TUI cannot be run from an agent's shell; live verification needs a real
-  terminal.
+  TUI cannot be run from an agent's shell; how it *looks* needs a real terminal
+  and a person. What a console *holds* can be measured on Windows:
+  `tools/console_probe.py` (docs/lessons.md §6).
 - Pointwise `#[allow(dead_code)]` (with a comment) marks deliberate
   ahead-of-consumer API; there is no crate-wide allow, and adding one is not the
   fix.

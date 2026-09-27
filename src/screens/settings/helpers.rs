@@ -1143,6 +1143,56 @@ pub(super) fn theme_label(t: Theme, loc: &'static Locale) -> String {
     .to_string()
 }
 
+/// The colour mode's label (`interface.theme_mode`).
+pub(super) fn theme_mode_label(m: ThemeMode, loc: &'static Locale) -> String {
+    loc.t(match m {
+        ThemeMode::System => "ui.settings.choice.mode_system",
+        ThemeMode::Full => "ui.settings.choice.mode_full",
+    })
+    .to_string()
+}
+
+/// The full mode's themes as the row offers them: the built-in ones, and —
+/// last — a stored name nothing answers to (a theme from another machine, or
+/// from a newer version). It is listed because it is what the file says; it
+/// draws as the first built-in theme ([`Palette::full`]), and leaving it
+/// takes it off the list.
+pub(super) fn full_theme_names(current: &str) -> Vec<&str> {
+    let mut names: Vec<&str> = FULL_THEMES.to_vec();
+    if !names.contains(&current) {
+        names.push(current);
+    }
+    names
+}
+
+/// A full theme's label: the built-in ones are localized (they share the
+/// system mode's `dark`/`light`), any other name is shown as it is written.
+pub(super) fn full_theme_label(name: &str, loc: &'static Locale) -> String {
+    match name {
+        "dark" => loc.t("ui.settings.choice.theme_dark").to_string(),
+        "light" => loc.t("ui.settings.choice.theme_light").to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// The full-theme row's option menu: labels and the index of the stored name.
+pub(super) fn full_theme_menu(current: &str, loc: &'static Locale) -> (Vec<String>, usize) {
+    let names = full_theme_names(current);
+    let at = names.iter().position(|n| *n == current).unwrap_or(0);
+    (names.iter().map(|n| full_theme_label(n, loc)).collect(), at)
+}
+
+/// Cyclically shifts the full theme through [`full_theme_names`],
+/// direction-aware. From a name nothing answers to, forward is the first
+/// built-in theme and backward the last — the order the menu lists them in,
+/// which is what picking from the popup relies on (`apply_choice`).
+pub(super) fn cycle_full_theme(current: &str, dir: i32) -> String {
+    let names = full_theme_names(current);
+    let at = names.iter().position(|n| *n == current).unwrap_or(0) as i32;
+    let n = names.len() as i32;
+    names[(at + dir).rem_euclid(n) as usize].to_string()
+}
+
 pub(super) fn python_mode_label(m: PythonMode, loc: &'static Locale) -> String {
     loc.t(match m {
         PythonMode::Wasmer => "ui.settings.choice.python_wasmer",

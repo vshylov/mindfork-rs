@@ -20,8 +20,6 @@ use crate::entities::self_model::{Goal, GoalStatus, NarrativeSegment, SelfModel,
 use crate::entities::subagent::{RunKind, RunOutcome, SubagentRun};
 use crate::features::tools::default_tool_ids;
 use crate::shared::api::contract::{ChatChunk, FinishReason, TokenUsage};
-#[cfg(test)]
-use crate::shared::config::Theme;
 use crate::shared::config::{AppConfig, ServerMode};
 use crate::shared::i18n::Lang;
 use crate::shared::storage::Storage;
@@ -176,9 +174,8 @@ pub fn profile() -> Profile {
 /// context the hero chat recommends). Capture-only — the interactive demo
 /// boots [`demo_config`] instead.
 #[cfg(test)]
-pub fn app_config(theme: Theme) -> AppConfig {
+pub fn app_config() -> AppConfig {
     let mut c = AppConfig::default();
-    c.interface.theme = theme;
     c.interface.language = Lang::En;
     c.engine.managed.binary = Some("C:\\llama.cpp\\llama-server.exe".into());
     c.engine.managed.model_path = Some("C:\\models\\gemma-4-12B-it-Q5_K_M.gguf".into());

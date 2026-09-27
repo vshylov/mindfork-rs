@@ -1451,6 +1451,23 @@ growing — and mutate the kill back to `start_kill()` to check the test can see
 the difference.
 — *the code workspace — stage 3*.
 
+**A TUI that will not start without a terminal can still be run — and read —
+from a shell that has none.** "It needs a real terminal" had made every
+terminal question a person's to answer, including the ones that are not about
+looks: is every cell painted, what colour is the cell behind a wide glyph. On
+Windows a child started with `CREATE_NEW_CONSOLE` and `SW_HIDE` gets a console
+of its own with no window on the desktop; `AttachConsole` to it, and
+`WriteConsoleInputW` presses keys while `ReadConsoleOutputW` hands back every
+cell's character and attributes (`tools/console_probe.py`). Three things to
+know before trusting it: colours come back as the **nearest legacy colour**, so
+choose a scenario whose colours differ there (a light canvas against the
+console's black — a dark one reads the same as "unpainted"); keys go in **one at
+a time**, because the app reads a burst as a paste; and it measures the inbox
+console host, not Windows Terminal. Then build the **control arm**: the erase
+this probe was written to confirm turned out to change nothing on the host
+measured — which no amount of reasoning about ratatui's diff had predicted.
+— *the full colour mode, measured in a console*.
+
 **A child inherits the environment, and a program that reads its configuration from
 the environment turns an unrelated variable into a setting.** `llama-server` reads
 `LLAMA_ARG_*` for every option and `LLAMA_API_KEY` for its key, and the managed child
@@ -1609,6 +1626,19 @@ a plausible-sounding key name, grep the bundle for it; the i18n gate
 `builtin_bundles_have_no_duplicate_keys` now bans the class.
 — *the settings hint panel — one height for every section*.
 
+**Two strings built under two locales are not equal, whatever they say.** The
+settings screen decided "is this row at its default?" by comparing the text the
+row shows with the text a row built from `AppConfig::default()` shows — and a
+default config is in the default language. Under Russian, the language the
+comparison was written in, it never failed; under English every localized value
+at its default read as changed, the footer offered a reset, and the reset,
+looking the Russian label up among English options, did nothing. It sat in the
+README's own screenshots for months. When displayed text stands in for a value
+in a comparison, both sides must be rendered under the same locale — and a test
+of anything localized runs in every built-in language, not in the one the
+author reads.
+— *a setting at its default reads as unchanged in every interface language*.
+
 **A fixed-width strip of localized labels has a budget, and only one locale finds
 out.** Adding a sixth tab to the 76-column help dialog fitted comfortably in `en` and
 overflowed `ru` by six columns — and what silently truncates is the *rightmost* tab, so
@@ -1671,6 +1701,20 @@ a tolerance: an `f32` field returns the nearest `f32`, and `0.7` is not
 `0.699999988`). `deny_unknown_fields` is not the fix; it would break the forward
 compatibility the attribute is there for.
 — *`mindfork setup --set`, 2026-09-21*.
+
+**A new field is additive; a new *value* of an existing enum is not.** An
+unknown key is ignored, but an unknown value fails the parse — and
+`settings.json` is read as a whole, with `load_config().unwrap_or_default()`, so
+one value an older binary does not know costs the user **every** setting, in
+silence, and the next save writes the defaults over the file. The start-up gate
+does not catch it: a file at the current schema version is only parsed as
+untyped JSON. So a setting that will grow — a mode, a provider, a policy — is
+either a new field, or an enum read leniently from its first release (unknown →
+the default, with a line in the log), or a schema bump, which is what makes an
+older binary refuse instead of guess. Adding `mono` to `Theme` would have been
+the four-character version of this mistake; the colour mode is a field of its
+own, parsed by `lenient_theme_mode`, for that reason.
+— *colour modes — the full mode*.
 
 **Additive is free; a value rewrite is a migration.** A new `#[serde(default)]` field, a
 `CREATE TABLE IF NOT EXISTS`, or a guarded `ALTER TABLE … ADD COLUMN` needs no schema

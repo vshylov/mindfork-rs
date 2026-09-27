@@ -148,9 +148,21 @@ impl SettingsScreen {
     /// Fields of the current section/subsection built from the **default** config
     /// (for the "modified" marker and reset). Profiles are the same (they have no
     /// config default).
+    ///
+    /// The rows are compared **as the text they show**, so the defaults are
+    /// written in the language this screen is in. A default config is in the
+    /// default language, and a row built from it spells `auto` in Russian
+    /// where the screen says "auto" — so under any other interface language
+    /// every localized value at its default read as changed, and `Del`,
+    /// looking for the default's label among the options, found nothing to go
+    /// back to. The language row alone keeps the default language's own name:
+    /// there the language *is* the value.
     pub(super) fn default_fields(&self) -> Vec<FieldRow> {
+        let mut defaults = AppConfig::default();
+        let default_language = defaults.interface.language;
+        defaults.interface.language = self.config.interface.language;
         let mut tmp = SettingsScreen::new(
-            AppConfig::default(),
+            defaults,
             self.profiles.clone(),
             self.language_locked.clone(),
         );
@@ -162,7 +174,28 @@ impl SettingsScreen {
         tmp.sampling_sub = self.sampling_sub;
         tmp.profile_sub = self.profile_sub;
         tmp.profile_idx = self.profile_idx;
-        tmp.fields()
+        let mut rows = tmp.fields();
+        // The theme row is one of two fields, picked by the colour mode, and a
+        // default config is in the default mode — so the other mode's field has
+        // no row there, and would go without its `•` marker and its `Del`.
+        // Its default is the default config *seen under the current mode*; the
+        // mode's own row keeps the plain default above, or it could never read
+        // as changed.
+        let mode = self.config.interface.mode();
+        if mode != tmp.config.interface.mode() {
+            tmp.config.interface.set_mode(mode);
+            for row in tmp.fields() {
+                if !rows.iter().any(|r| r.id == row.id) {
+                    rows.push(row);
+                }
+            }
+        }
+        for row in &mut rows {
+            if row.id == FieldId::ILanguage {
+                row.kind = FieldKind::Choice(default_language.label().to_string());
+            }
+        }
+        rows
     }
 
     /// Resets a config field to its default value. Profile fields and values already
