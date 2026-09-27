@@ -5,6 +5,7 @@
 //! The reading and the fitting are `shared/user_theme.rs`; here is what is
 //! around them — which file a name means, and the table a report is shown as.
 
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use crate::shared::i18n::Locale;
@@ -92,7 +93,7 @@ pub fn check(arg: Option<&str>, dir: &Path, loc: &Locale) -> Result<Vec<Checked>
             let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
                 .map(|entries| entries.flatten().map(|e| e.path()).collect())
                 .unwrap_or_default();
-            files.retain(|p| p.extension().and_then(|e| e.to_str()) == Some("json"));
+            files.retain(|p| p.extension().and_then(OsStr::to_str) == Some("json"));
             files.sort();
             if files.is_empty() {
                 return Ok(vec![Checked {
@@ -143,10 +144,7 @@ fn check_one(target: &Target, dir: &Path, loc: &Locale) -> Result<Checked, Theme
 
 fn read(path: &Path, dir: &Path, loc: &Locale) -> Result<UserTheme, ThemesError> {
     let shown = path.display().to_string();
-    let name = path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or_default();
+    let name = path.file_stem().and_then(OsStr::to_str).unwrap_or_default();
     let src = match std::fs::read_to_string(path) {
         Ok(src) => src,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
