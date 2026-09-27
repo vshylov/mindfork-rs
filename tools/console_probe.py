@@ -24,6 +24,11 @@ What it can and cannot see:
 * It measures the **inbox console host of the machine it runs on**. Windows
   Terminal and other hosts are not console buffers the API can read.
 * A hidden console does not resize, so a resize cannot be exercised here.
+* Attributes other than colour come back as the console keeps them: reverse
+  video is a flag of the cell (`COMMON_LVB_REVERSE_VIDEO`), underline another;
+  bold reads as the bright half of the colour, dim and italic are not kept.
+  So "no styling" is measurable as *every cell carries the console's default
+  attributes*, which is what the monochrome scenarios check.
 
 Scenarios (`--scenario`):
 
@@ -39,6 +44,14 @@ Scenarios (`--scenario`):
   glyph's trailing cell out of the diff), so this is where a terminal's own
   choice shows. Takes the app's single-instance lock: close a running mindfork
   first.
+* `mono` — `mindfork demo`: the launch frame as the control (the system mode
+  is coloured), then Settings → Interface → Colour mode → monochrome; the
+  settings screen, the chat, the help dialog and the emoji picker must carry
+  the console's default attributes in every cell, and a text selected in the
+  input box must be the only reverse video on the screen.
+* `no-color` — `mindfork demo` three times: with `NO_COLOR=1`, where the very
+  first frame must already be bare; with `NO_COLOR=` (empty), which is an
+  unset one; and without it.
 
 It is a **spike tool**, not part of the app and not run in CI: run it by hand
 after `cargo build`, and paste its output into the journal entry.
@@ -47,6 +60,8 @@ Usage:
 
     python tools/console_probe.py
     python tools/console_probe.py --scenario first-frame
+    python tools/console_probe.py --scenario mono
+    python tools/console_probe.py --scenario no-color
     python tools/console_probe.py --exe target/release/mindfork.exe
 
 Exit code: 0 — every check passed, 1 — a check failed, 2 — cannot run here.
@@ -57,6 +72,7 @@ from __future__ import annotations
 import argparse
 import ctypes
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -80,9 +96,18 @@ OPEN_EXISTING = 3
 INVALID_HANDLE = wt.HANDLE(-1).value
 KEY_EVENT = 0x0001
 LEFT_CTRL_PRESSED = 0x0008
+SHIFT_PRESSED = 0x0010
 ENHANCED_KEY = 0x0100
-# A wide glyph takes two cells: the console marks the second one.
+# A wide glyph takes two cells, and the console marks both: the first as the
+# leading one, the second as the trailing one.
+LEADING_CELL = 0x0100
 TRAILING_CELL = 0x0200
+# Reverse video, as the console keeps it: a flag of the cell.
+REVERSE_VIDEO = 0x4000
+# The part of a cell's attributes that is its colours.
+COLOURS = 0x00FF
+# What in a cell's attributes is not styling: which half of a wide glyph it is.
+NOT_STYLING = LEADING_CELL | TRAILING_CELL
 # Legacy colour indexes, as `ReadConsoleOutputW` reports a background.
 BLACK = 0
 BRIGHT_WHITE = 15
@@ -177,6 +202,7 @@ KEYS = {
     "right": (0x27, "\0", ENHANCED_KEY),
     "down": (0x28, "\0", ENHANCED_KEY),
     "f1": (0x70, "\0", 0),
+    "shift+left": (0x25, "\0", ENHANCED_KEY | SHIFT_PRESSED),
     "ctrl+b": (0x42, "\x02", LEFT_CTRL_PRESSED),
     "ctrl+p": (0x50, "\x10", LEFT_CTRL_PRESSED),
     "ctrl+q": (0x51, "\x11", LEFT_CTRL_PRESSED),
@@ -272,13 +298,25 @@ def background(attributes: int) -> int:
 class Session:
     """The app in its own hidden console, with this process attached to it."""
 
-    def __init__(self, exe: Path, args: list[str], cwd: Path | None = None):
+    def __init__(
+        self,
+        exe: Path,
+        args: list[str],
+        cwd: Path | None = None,
+        no_color: str | None = None,
+    ):
         startup = subprocess.STARTUPINFO()
         startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         startup.wShowWindow = 0  # SW_HIDE
+        # `NO_COLOR` is the scenario's to decide, not the shell's the probe
+        # happens to be run from.
+        env = {k: v for k, v in os.environ.items() if k.upper() != "NO_COLOR"}
+        if no_color is not None:
+            env["NO_COLOR"] = no_color
         self.process = subprocess.Popen(
             [str(exe), *args],
             cwd=cwd,
+            env=env,
             creationflags=subprocess.CREATE_NEW_CONSOLE,
             startupinfo=startup,
         )
@@ -330,6 +368,41 @@ class Report:
             if background(attributes) != BRIGHT_WHITE
         ]
         self.check(not bare, f"{title}: every cell is painted ({len(bare)} are not: {bare[:6]})")
+
+    def bare(self, title: str, rows: list[list[tuple[str, int]]], reversed_text: str = "") -> None:
+        """No cell is styled: each carries the attributes of the one cell the
+        app never draws anything but a space into — the console's default.
+        `reversed_text` is what must be in reverse video, and nothing else."""
+        plain = Counter(a & ~NOT_STYLING & ~REVERSE_VIDEO for row in rows for _, a in row)
+        default = plain.most_common(1)[0][0]
+        print(
+            f"- {title}: {len(rows[0])}x{len(rows)}, attributes "
+            f"{ {hex(a): n for a, n in sorted(plain.items())} }"
+        )
+        styled = [
+            (x, y, hex(attributes))
+            for y, row in enumerate(rows)
+            for x, (_, attributes) in enumerate(row)
+            if attributes & ~NOT_STYLING & ~REVERSE_VIDEO != default
+        ]
+        self.check(not styled, f"{title}: no cell is styled ({len(styled)} are: {styled[:6]})")
+        reverse = "".join(
+            char for row in rows for char, attributes in row if attributes & REVERSE_VIDEO
+        )
+        self.check(
+            reverse == reversed_text,
+            f"{title}: in reverse video — {reverse!r} (expected {reversed_text!r})",
+        )
+
+    def coloured(self, title: str, rows: list[list[tuple[str, int]]]) -> None:
+        """The control of `bare`: the same kind of frame, styled."""
+        colours = Counter(a & COLOURS for row in rows for _, a in row)
+        print(f"- {title}: colours { {hex(a): n for a, n in sorted(colours.items())} }")
+        self.check(len(colours) > 2, f"{title}: the frame is coloured ({len(colours)} colour pairs)")
+
+    def shows(self, title: str, rows: list[list[tuple[str, int]]], text: str) -> None:
+        drawn = "\n".join("".join(char for char, _ in row) for row in rows)
+        self.check(text in drawn, f"{title}: {text!r} is on the screen")
 
     def wide_glyphs(self, title: str, rows: list[list[tuple[str, int]]], at_least: int) -> None:
         """The cell behind each wide glyph has the glyph's own background."""
@@ -453,7 +526,88 @@ def scenario_first_frame(exe: Path, report: Report) -> None:
         report.check(code == 0, f"the app exited with code {code}")
 
 
-SCENARIOS = {"full-mode": scenario_full_mode, "first-frame": scenario_first_frame}
+def scenario_mono(exe: Path, report: Report) -> None:
+    session = Session(exe, ["demo"])
+    try:
+        report.coloured("as launched (system mode)", read_screen())
+
+        to_interface_fields()  # the first field is "Colour mode"
+        press("left", SETTLE_REPAINT)  # system -> monochrome, the long way round
+        rows = read_screen()
+        report.bare("settings, monochrome", rows)
+        report.shows("settings, monochrome", rows, "monochrome")
+        report.shows("settings, monochrome", rows, "[Esc]")
+
+        press("esc")
+        press("esc", SETTLE_REPAINT)
+        rows = read_screen()
+        report.bare("chat", rows)
+        report.shows("chat", rows, "║ ")
+
+        type_text("select me")
+        for _ in range(2):
+            press("shift+left")
+        time.sleep(SETTLE)
+        report.bare("chat, two characters selected", read_screen(), reversed_text="me")
+        press("right")
+        report.bare("chat, the selection dropped", read_screen())
+
+        press("f1", SETTLE_REPAINT)
+        rows = read_screen()
+        report.bare("help dialog over the chat", rows)
+        report.shows("help dialog over the chat", rows, "[")
+        press("esc", SETTLE_REPAINT)
+
+        open_emoji_picker()
+        rows = read_screen()
+        report.bare("emoji picker over the chat", rows)
+        report.wide_glyphs("emoji picker", rows, at_least=40)
+        report.shows("emoji picker", rows, "[")
+        press("esc", SETTLE_REPAINT)
+
+        to_interface_fields()
+        press("right", SETTLE_REPAINT)  # monochrome -> system
+        report.coloured("back in the system mode", read_screen())
+        press("esc")
+    finally:
+        code = session.close()
+    report.check(code == 0, f"the app exited with code {code}")
+
+
+def scenario_no_color(exe: Path, report: Report) -> None:
+    for no_color, title, bare in (
+        ("1", "NO_COLOR=1", True),
+        ("", "NO_COLOR= (empty)", False),
+        (None, "NO_COLOR unset", False),
+    ):
+        session = Session(exe, ["demo"], no_color=no_color)
+        try:
+            rows = read_screen()
+            if bare:
+                report.bare(f"{title}, first frame", rows)
+                report.shows(f"{title}, first frame", rows, "[F1]")
+                # The mode is the environment's, not a stored choice: the row
+                # says it, and choosing `system` there wins over the variable.
+                to_interface_fields()
+                rows = read_screen()
+                report.bare(f"{title}, settings", rows)
+                report.shows(f"{title}, settings", rows, "monochrome")
+                press("right", SETTLE_REPAINT)  # monochrome -> system
+                report.coloured(f"{title}, system chosen in settings", read_screen())
+                press("esc")
+            else:
+                report.coloured(f"{title}, first frame", rows)
+        finally:
+            code = session.close()
+        report.check(code == 0, f"{title}: the app exited with code {code}")
+
+
+SCENARIOS = {
+    "full-mode": scenario_full_mode,
+    "first-frame": scenario_first_frame,
+    "mono": scenario_mono,
+    "no-color": scenario_no_color,
+}
 
 
 def main() -> int:
