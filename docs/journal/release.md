@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (51)
+## Entries (52)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -63,6 +63,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: `install.sh` failed on the first real pod — root without CAP_CHOWN (done)
 - Release 0.11.1 (prepared)
 - Release 0.11.2 (prepared)
+- Release 0.12.0 (prepared)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -2925,3 +2926,51 @@ every reversible check first. Full record —
   green, the deploy skipped. From outside: the post answers 200, the home page's
   structured data says `"softwareVersion": "0.11.2"`, `/llms.txt` lists the post,
   and `releases/latest` — the README's install line — resolves to `v0.11.2`.
+
+### Release 0.12.0 (prepared)
+
+- **A release PR** per the checklist in [AGENTS.md §6](../../AGENTS.md) (on the
+  session's assigned branch, `claude/affectionate-mccarthy-gus3mq`, in the place
+  of a `chore/release-0.12.0`): bumped `Cargo.toml` `0.11.2 → 0.12.0` (+
+  `Cargo.lock`, one line), `site/zola.toml` `app_version`, `CHANGELOG.md` —
+  `[Unreleased]` → `[0.12.0] — 2026-09-28` under a lead paragraph, a fresh empty
+  `[Unreleased]` opened, comparison links updated; the closed-tracks index of
+  `docs/roadmap.md` names the release on the colour-modes track. The `v0.12.0` tag
+  is applied by the user after the merge. Gates green, on Linux this time: **3600
+  passed, 195 `#[ignore]`** — CLAUDE.md's 3602/202 is the Windows count of PR 640,
+  and the gap is the platform-gated tests (the seven Windows-only `#[ignore]`
+  smokes are exactly the ignored difference) — `clippy -D warnings`, `fmt`, every
+  Python step of the Lints job by exit code, and `release_guard.py --tag v0.12.0`
+  accepting the tag — its notes the `[0.12.0]` section (the `notes.md` it writes
+  into the working tree is untracked and was removed, not committed).
+- **A MINOR, by the letter of §6 and as the owner asked** ("release 0.12"). Since
+  `v0.11.2`: the colour-modes track — three stages, PRs 634–636, its plan moved to
+  history in 637 — the input box's height as a setting (633), the typed settings
+  gate (638), `Ctrl+←/→` at punctuation (640), and the pod probe's shell findings
+  (639, no user-visible effect). The first MINOR since 0.11.0; 0.11.2 had shipped a
+  track under a PATCH, and the entry above says why.
+- **The `Data` rubric is filled, and no schema constant moved.**
+  `config::SCHEMA_VERSION` stays 3 (`git diff 39fa402..HEAD -- src` reaches it
+  only from tests); `interface.theme_mode` and `interface.full_theme` are additive
+  under `#[serde(default)]` — the F12 "no bump" case of
+  [release-engineering.md](../history/release-engineering.md) — and 0.11.2 ignores
+  them (no `deny_unknown_fields`). Worth spelling out because of what 0.11.2 does
+  with a *value* it does not know — the defect PR 638 fixed resets the file to the
+  defaults: neither field is one 0.11.2 reads, and `interface.theme` keeps its
+  three values (a user theme's name lives in `full_theme`), so a downgrade reads
+  the file as before. The `themes/` folder is created empty and packed into a
+  backup.
+- **The release post** leads with what changes what a user sees — the three modes
+  in a table, the contrast floors with the count of colours that moved (three in
+  `dark`, seven in `light`, theme-modes.md §3.1), the probe's 3 600 cells (§8) and
+  the one-line Solarized theme (§10.7) — then the typed gate with its 289-of-289
+  measurement (settings-typed-parse.md), then the smaller things and the data.
+  `llms.txt` regenerated from its front matter; the site checked and built with the
+  pinned Zola 0.23.6 after `site_sync_assets.py` — the post renders at
+  `blog/mindfork-0-12-0/`, the home page's structured data says `0.12.0`.
+  `site.yml` holds the deploy until the release is public, as for 0.11.x.
+- **The gates needed ALSA first.** The session's Linux container had no
+  `libasound2-dev`, and `alsa-sys` — the `/tts` playback — fails its build script
+  without it, before a single test runs; it is the package CI's test job installs
+  and the one `docs/install.md` names for a source build. Installed, and the gates
+  run after it.

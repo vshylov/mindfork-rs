@@ -14,6 +14,18 @@ split by subsystem.
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-09-28
+
+**The app can paint its own window, and a theme can be yours.** Three ways of
+drawing the interface now: the one it has always had, one where the app paints
+its own background and text colour with every colour held to a contrast floor,
+and one with no colours at all — for a terminal that draws attributes badly, an
+e-ink screen, a screen reader, or a `NO_COLOR` in your environment. A theme is a
+file with only the background in it, and the colours you leave out are fitted to
+stay readable on it. And one misspelt value in `settings.json` no longer costs
+every setting, the stored API keys included: the app refuses to start and names
+the value and the line instead.
+
 ### Added
 - **A full colour mode.** Settings → Interface → *Colour mode* → `full`: the app
   paints the whole window itself — its own background and its own text colour —
@@ -2764,7 +2776,8 @@ history is in the [docs/journal/](docs/journal/) log).
   (notes/RAG/self-model, sqlite-vec, per-profile isolation). Schema format is
   v1; schema versioning and migrations are formalized in later releases.
 
-[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.11.2...HEAD
+[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/vshylov/mindfork-rs/compare/v0.11.2...v0.12.0
 [0.11.2]: https://github.com/vshylov/mindfork-rs/compare/v0.11.1...v0.11.2
 [0.11.1]: https://github.com/vshylov/mindfork-rs/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/vshylov/mindfork-rs/compare/v0.10.2...v0.11.0
