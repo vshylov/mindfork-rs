@@ -2008,6 +2008,14 @@ Invariants:
 - **hardened reads**: a corrupt `settings.json`/`profiles.json` → refuse to
   start; a corrupt `chats/<id>.json` → skipped with a `warn`, the file is left
   untouched (`json.rs::load_chats`);
+- **the typed gate**: `assess_file` gives a `settings.json`/`profiles.json` at
+  the current version the same `control_parse` a migrated one gets — over the
+  file's **bytes**, where serde's error keeps its line and column — and a value
+  the structure refuses ends the start (`migrate.err.*_invalid`). No reader of
+  `settings.json` answers a failed parse with the defaults: `main.rs::
+  startup_config`, `run_import` and `refuse_a_build_in_use` propagate, and
+  `backup::backup_settings` reads its two values from the raw JSON
+  ([research/settings-typed-parse.md](research/settings-typed-parse.md));
 - the first real step is `settings_to_v2` (`schema.rs`): `tools.subagent_timeout_secs`
   → `subagent_run_timeout_secs`, dropping a value left at the old default and
   carrying a changed one over, and dropping a `subagent_max_tokens` left at
@@ -3561,7 +3569,9 @@ Principles:
     nothing to do: it prints its help and exits `2`.
   - **`llama remove` reads `settings.json` and never writes it**: a build a
     managed field points at is refused unless `--force`, so a delete cannot
-    quietly leave three fields aiming at nothing.
+    quietly leave three fields aiming at nothing. Settings that cannot be read
+    are refused the same way (`refuse_a_build_in_use`) — the check cannot be
+    made — and `--force` skips the read along with the check.
   - **The CLI writers of user data share their precautions.**
     `sandbox setup --enable-python`, `llama setup --set-binary` and `setup` all go
     through `open_config_for_cli_write` — `data_migration::run` (the ADR 0006

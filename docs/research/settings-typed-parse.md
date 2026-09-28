@@ -1,7 +1,10 @@
 # Research: a settings file that is JSON but not settings
 
-**Status:** reproduction and measurements done, 2026-09-28. The forks in §4
-**await the user's decision**; nothing but the reproducing test is written.
+**Status:** implemented. Reproduction and measurements done 2026-09-28; the §4
+forks decided by the user the same day, each at the recommendation —
+**F1(a)** refuse to start, **F2(b)** best effort for the backup commands,
+**F3(a)** `profiles.json` under the same gate. What was built, the mutation
+check and the live run are in [docs/journal/storage.md](../journal/storage.md).
 
 Found in passing during the colour-modes track, which worked around it for one
 field (`interface.theme_mode`, `lenient_theme_mode`) and wrote the trap down
@@ -32,11 +35,12 @@ Two realistic ways to get such a file: a hand edit with a typo
 this binary does not know — an additive change needs no schema bump, so the
 downgrade guard does not fire.
 
-Reproduced by `main.rs::tests::repro_one_bad_enum_value_resets_the_whole_config`:
-four sections of the user's values and one typo in; `AppConfig::default()` out,
-and after two saves the user's values are in neither `settings.json` nor
-`settings.bak`. The test asserts the defect and passes on today's code; the fix
-turns it over.
+Reproduced first, by a test that asserted the defect and passed on the code as
+it was (`repro_one_bad_enum_value_resets_the_whole_config`, in the branch's
+first commit): four sections of the user's values and one typo in;
+`AppConfig::default()` out, and after two saves the user's values were in
+neither `settings.json` nor `settings.bak`. The fix turned it over — it is
+`main.rs::tests::one_unreadable_value_refuses_the_start_and_costs_nothing` now.
 
 ## 2. Measurements
 
@@ -162,7 +166,7 @@ names the file and the value instead of a session that ends pointing at the log.
 
 **(b) No** — settings only; profiles keep today's behaviour.
 
-## 5. Plan, for the recommended answers
+## 5. Plan, for the answers given
 
 One pull request, `fix/settings-typed-parse`. No engine, memory or tool path is
 touched, so no live run is owed.
