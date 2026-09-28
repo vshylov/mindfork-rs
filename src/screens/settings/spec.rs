@@ -95,6 +95,7 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
             toggle(|c| c.notes.recall_includes_self = !c.notes.recall_includes_self)
         }
         CompactEnabled => toggle(|c| c.compaction.enabled = !c.compaction.enabled),
+        GatewayAttribution => toggle(|c| c.openrouter.attribution = !c.openrouter.attribution),
         ICopyThoughts => toggle(|c| c.copy.copy_thoughts = !c.copy.copy_thoughts),
         ICopyToolCalls => toggle(|c| c.copy.copy_tool_calls = !c.copy.copy_tool_calls),
         ICopyToolResults => toggle(|c| c.copy.copy_tool_results = !c.copy.copy_tool_results),

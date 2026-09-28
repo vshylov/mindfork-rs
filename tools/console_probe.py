@@ -528,7 +528,7 @@ def scenario_first_frame(exe: Path, report: Report) -> None:
         shutil.copy(exe, copy)
         (root / "data").mkdir()
         settings = {
-            "schema_version": 3,
+            "schema_version": 4,
             "interface": {"language": "en", "theme_mode": "full", "full_theme": "light"},
         }
         (root / "data" / "settings.json").write_text(json.dumps(settings), encoding="utf-8")
@@ -639,7 +639,7 @@ def scenario_user_theme(exe: Path, report: Report) -> None:
         theme_file.write_text(json.dumps({"canvas": "#f4ecd8"}), encoding="utf-8")
         (themes / "broken.json").write_text("{", encoding="utf-8")
         settings = {
-            "schema_version": 3,
+            "schema_version": 4,
             "interface": {"language": "en", "theme_mode": "full", "full_theme": theme},
         }
         (root / "data" / "settings.json").write_text(json.dumps(settings), encoding="utf-8")

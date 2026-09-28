@@ -93,6 +93,18 @@ pub struct MessageMetadata {
     pub mode: ServerMode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// The company that served the request, where the endpoint names one — a
+    /// gateway does (`"Amazon Bedrock"` behind an Anthropic slug). Recorded and
+    /// not yet shown (docs/research/openrouter-mode.md, fork F11). Additive
+    /// (ADR 0006): absent from every message written before it, and from every
+    /// engine that is not a gateway.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    /// What **this round's** request cost on the gateway's own meter, in
+    /// billionths of a dollar. One round, not the turn: a turn's tool rounds
+    /// are requests of their own. Additive, like `provider`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_nanos: Option<u64>,
     /// How this reply's generation ended. See [`MessageFinish`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub finish: Option<MessageFinish>,
@@ -308,6 +320,8 @@ mod tests {
             sampling: Default::default(),
             mode: Default::default(),
             model: None,
+            provider: None,
+            cost_nanos: None,
             finish: None,
         };
         let js = serde_json::to_string(&md).unwrap();

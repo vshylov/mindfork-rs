@@ -336,6 +336,23 @@ impl Prefill {
     }
 }
 
+/// Who served a request and what it cost, where the endpoint says so — a
+/// **gateway** does (OpenRouter names the routed provider on every chunk and
+/// puts its own meter's figure on the last one); nothing else does.
+///
+/// Recorded on the message and not yet shown anywhere
+/// (docs/research/openrouter-mode.md, fork F11): the provider is what a "the
+/// model went mad" report turns on, since through a gateway the tool-call
+/// parsing belongs to whoever was routed to.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Served {
+    /// The routed provider, as the gateway spells it (`"Amazon Bedrock"`).
+    pub provider: Option<String>,
+    /// The request's cost in billionths of a dollar — an integer, so that it
+    /// sums and compares exactly.
+    pub cost_nanos: Option<u64>,
+}
+
 /// A tool-call delta from the stream (accumulated by `index`). See spec §6.3.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ToolCallDelta {
@@ -366,6 +383,10 @@ pub enum ChatChunk {
     ToolCall(ToolCallDelta),
     /// The token counter (`usage`) — usually a separate chunk before finishing.
     Usage(TokenUsage),
+    /// Who served the request and what it cost ([`Served`]) — a gateway's
+    /// answer, sent once, beside the token counter. Carries no content, so a
+    /// consumer may ignore it.
+    Served(Served),
     /// The turn failed **after** the stream was already open.
     ///
     /// This is the stream's error channel, and it exists because such a failure

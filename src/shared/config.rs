@@ -9,7 +9,7 @@ use crate::shared::gguf::display_name;
 use crate::shared::secrets::{ExternalSlot, SecretKey};
 
 /// Current config schema version.
-pub const SCHEMA_VERSION: u32 = 3;
+pub const SCHEMA_VERSION: u32 = 4;
 
 /// Inference-engine connection mode. Local (`Managed`/`External`) and cloud
 /// providers (`OpenAi`/`Gemini`) are equal-footing variants of a single selector
@@ -37,6 +37,14 @@ pub enum ServerMode {
     /// reasoning (`delta.reasoning_content`) and needs no thinking-signature
     /// round-trip. See docs/research/grok-xai-provider.md.
     Grok,
+    /// The OpenRouter gateway (`openrouter.ai`): one key in front of every
+    /// vendor's models, spoken to as Chat Completions (`OpenAiClient`) in the
+    /// gateway's own dialect. A mode of its own rather than a URL typed into
+    /// `external`, so that the local server and the gateway each keep their
+    /// settings and one key serves every slot. See
+    /// docs/research/openrouter-mode.md.
+    #[serde(rename = "openrouter")]
+    OpenRouter,
 }
 
 /// Inference cloud provider. `OpenAi`/`Gemini` speak the OpenAI protocol,
@@ -47,17 +55,19 @@ pub enum CloudProvider {
     Gemini,
     Claude,
     Grok,
+    OpenRouter,
 }
 
 impl CloudProvider {
     /// Every provider, in the order the per-provider arrays taken by
     /// [`cloud_ref`]/[`cloud_mut`] are indexed (and the order the settings UI
     /// cycles through them).
-    pub const ALL: [CloudProvider; 4] = [
+    pub const ALL: [CloudProvider; 5] = [
         CloudProvider::OpenAi,
         CloudProvider::Gemini,
         CloudProvider::Claude,
         CloudProvider::Grok,
+        CloudProvider::OpenRouter,
     ];
 
     /// Position in [`Self::ALL`]. Adding a provider then costs one array element
@@ -70,6 +80,7 @@ impl CloudProvider {
             CloudProvider::Gemini => 1,
             CloudProvider::Claude => 2,
             CloudProvider::Grok => 3,
+            CloudProvider::OpenRouter => 4,
         }
     }
     /// Base URL for **embeddings**/compat access (an OpenAI-compatible
@@ -84,6 +95,9 @@ impl CloudProvider {
             // xAI has no embedding models at all (docs/research/grok-xai-provider.md
             // §2.7) — this URL only serves as the chat base, which is the same path.
             CloudProvider::Grok => "https://api.x.ai/v1",
+            // One base for chat, embeddings, the catalogue and the key check
+            // (docs/research/openrouter-mode.md §3.1).
+            CloudProvider::OpenRouter => "https://openrouter.ai/api/v1",
         }
     }
 
@@ -94,7 +108,10 @@ impl CloudProvider {
     pub fn chat_base_url(self) -> &'static str {
         match self {
             CloudProvider::Gemini => "https://generativelanguage.googleapis.com/v1beta",
-            CloudProvider::OpenAi | CloudProvider::Claude | CloudProvider::Grok => self.base_url(),
+            CloudProvider::OpenAi
+            | CloudProvider::Claude
+            | CloudProvider::Grok
+            | CloudProvider::OpenRouter => self.base_url(),
         }
     }
 
@@ -108,6 +125,7 @@ impl CloudProvider {
             CloudProvider::Gemini => "gemini",
             CloudProvider::Claude => "claude",
             CloudProvider::Grok => "grok",
+            CloudProvider::OpenRouter => "openrouter",
         }
     }
 
@@ -123,6 +141,7 @@ impl CloudProvider {
             CloudProvider::Gemini => "Gemini",
             CloudProvider::Claude => "Claude",
             CloudProvider::Grok => "Grok",
+            CloudProvider::OpenRouter => "OpenRouter",
         }
     }
 }
@@ -135,6 +154,7 @@ impl ServerMode {
             ServerMode::Gemini => Some(CloudProvider::Gemini),
             ServerMode::Claude => Some(CloudProvider::Claude),
             ServerMode::Grok => Some(CloudProvider::Grok),
+            ServerMode::OpenRouter => Some(CloudProvider::OpenRouter),
             ServerMode::Managed | ServerMode::External => None,
         }
     }
@@ -150,6 +170,7 @@ impl ServerMode {
             ServerMode::Gemini => "gemini",
             ServerMode::Claude => "claude",
             ServerMode::Grok => "grok",
+            ServerMode::OpenRouter => "openrouter",
         }
     }
 
@@ -159,13 +180,14 @@ impl ServerMode {
     }
 
     /// Every mode, in the settings UI's order.
-    pub const ALL: [ServerMode; 6] = [
+    pub const ALL: [ServerMode; 7] = [
         ServerMode::Managed,
         ServerMode::External,
         ServerMode::OpenAi,
         ServerMode::Gemini,
         ServerMode::Claude,
         ServerMode::Grok,
+        ServerMode::OpenRouter,
     ];
 
     /// Whether `/continue` can resume a partial reply in this mode and, for
@@ -191,8 +213,13 @@ impl ServerMode {
     /// OpenAI restart, which the echo filter would glue onto the partial
     /// (docs/history/gateway-images-and-continue.md §1.3, fork H2). Without a catalogue
     /// `external` answers as it always did.
+    ///
+    /// `OpenRouter` is that gateway by name, so it asks the slug whether or not
+    /// the catalogue has answered yet: there is no llama.cpp behind this mode
+    /// for silence to mean (docs/research/openrouter-mode.md §2.3).
     pub fn supports_continuation(self, model: Option<&str>, catalogued: bool) -> bool {
         match self {
+            ServerMode::OpenRouter => model.is_some_and(gateway_model_continues),
             ServerMode::External if catalogued => model.is_some_and(gateway_model_continues),
             ServerMode::Managed | ServerMode::External | ServerMode::Gemini => true,
             ServerMode::Claude => model.is_some_and(anthropic_model_continues),
@@ -567,6 +594,7 @@ pub fn named_key_env_vars(cfg: &AppConfig) -> Vec<String> {
             e.gemini.api_key_env.clone(),
             e.claude.api_key_env.clone(),
             e.grok.api_key_env.clone(),
+            e.openrouter.api_key_env.clone(),
         ]
     };
     let imp = &cfg.impersonation_engine;
@@ -579,11 +607,13 @@ pub fn named_key_env_vars(cfg: &AppConfig) -> Vec<String> {
             imp.gemini.api_key_env.clone(),
             imp.claude.api_key_env.clone(),
             imp.grok.api_key_env.clone(),
+            imp.openrouter.api_key_env.clone(),
             embed.external.api_key_env.clone(),
             embed.openai.api_key_env.clone(),
             embed.gemini.api_key_env.clone(),
             embed.claude.api_key_env.clone(),
             embed.grok.api_key_env.clone(),
+            embed.openrouter.api_key_env.clone(),
             cfg.tts.openai.api_key_env.clone(),
             cfg.tts.gemini.api_key_env.clone(),
             cfg.tts.external.api_key_env.clone(),
@@ -606,6 +636,7 @@ pub struct EngineSettings {
     pub gemini: CloudSettings,
     pub claude: CloudSettings,
     pub grok: CloudSettings,
+    pub openrouter: CloudSettings,
 }
 
 impl EngineSettings {
@@ -613,7 +644,13 @@ impl EngineSettings {
     pub fn cloud(&self) -> Option<&CloudSettings> {
         cloud_ref(
             self.mode.cloud_provider(),
-            [&self.openai, &self.gemini, &self.claude, &self.grok],
+            [
+                &self.openai,
+                &self.gemini,
+                &self.claude,
+                &self.grok,
+                &self.openrouter,
+            ],
         )
     }
 
@@ -626,6 +663,7 @@ impl EngineSettings {
                 &mut self.gemini,
                 &mut self.claude,
                 &mut self.grok,
+                &mut self.openrouter,
             ],
         )
     }
@@ -637,9 +675,11 @@ impl EngineSettings {
         let n = match self.mode {
             ServerMode::Managed => self.managed.sessions,
             ServerMode::External => self.external.sessions,
-            ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude | ServerMode::Grok => {
-                self.cloud().map_or(DEFAULT_SESSIONS, |c| c.sessions)
-            }
+            ServerMode::OpenAi
+            | ServerMode::Gemini
+            | ServerMode::Claude
+            | ServerMode::Grok
+            | ServerMode::OpenRouter => self.cloud().map_or(DEFAULT_SESSIONS, |c| c.sessions),
         };
         n.max(1)
     }
@@ -652,7 +692,11 @@ impl EngineSettings {
         let n = match self.mode {
             ServerMode::Managed => self.managed.concurrent_calls,
             ServerMode::External => self.external.concurrent_calls,
-            ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude | ServerMode::Grok => self
+            ServerMode::OpenAi
+            | ServerMode::Gemini
+            | ServerMode::Claude
+            | ServerMode::Grok
+            | ServerMode::OpenRouter => self
                 .cloud()
                 .map_or(DEFAULT_CONCURRENT_CALLS_CLOUD, |c| c.concurrent_calls),
         };
@@ -668,7 +712,11 @@ impl EngineSettings {
         match self.mode {
             ServerMode::Managed => self.managed.model_path.as_deref().and_then(display_name),
             ServerMode::External => self.external.model_name.clone().filter(|m| !m.is_empty()),
-            ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude | ServerMode::Grok => self
+            ServerMode::OpenAi
+            | ServerMode::Gemini
+            | ServerMode::Claude
+            | ServerMode::Grok
+            | ServerMode::OpenRouter => self
                 .cloud()
                 .and_then(|c| c.model_name.clone())
                 .filter(|m| !m.is_empty()),
@@ -783,6 +831,10 @@ pub enum ImpersonationMode {
     Claude,
     /// xAI cloud (Grok, OpenAI Chat Completions).
     Grok,
+    /// The OpenRouter gateway — on the key every slot of this provider
+    /// shares, with a model of its own.
+    #[serde(rename = "openrouter")]
+    OpenRouter,
 }
 
 impl ImpersonationMode {
@@ -793,6 +845,7 @@ impl ImpersonationMode {
             ImpersonationMode::Gemini => Some(CloudProvider::Gemini),
             ImpersonationMode::Claude => Some(CloudProvider::Claude),
             ImpersonationMode::Grok => Some(CloudProvider::Grok),
+            ImpersonationMode::OpenRouter => Some(CloudProvider::OpenRouter),
             ImpersonationMode::Shared
             | ImpersonationMode::Managed
             | ImpersonationMode::External => None,
@@ -816,6 +869,7 @@ pub struct ImpersonationEngineSettings {
     pub gemini: CloudSettings,
     pub claude: CloudSettings,
     pub grok: CloudSettings,
+    pub openrouter: CloudSettings,
 }
 
 impl Default for ImpersonationEngineSettings {
@@ -832,6 +886,7 @@ impl Default for ImpersonationEngineSettings {
             gemini: CloudSettings::default(),
             claude: CloudSettings::default(),
             grok: CloudSettings::default(),
+            openrouter: CloudSettings::default(),
         }
     }
 }
@@ -841,7 +896,13 @@ impl ImpersonationEngineSettings {
     pub fn cloud(&self) -> Option<&CloudSettings> {
         cloud_ref(
             self.mode.cloud_provider(),
-            [&self.openai, &self.gemini, &self.claude, &self.grok],
+            [
+                &self.openai,
+                &self.gemini,
+                &self.claude,
+                &self.grok,
+                &self.openrouter,
+            ],
         )
     }
 
@@ -854,6 +915,7 @@ impl ImpersonationEngineSettings {
                 &mut self.gemini,
                 &mut self.claude,
                 &mut self.grok,
+                &mut self.openrouter,
             ],
         )
     }
@@ -908,6 +970,7 @@ pub struct EmbedSettings {
     pub gemini: CloudSettings,
     pub claude: CloudSettings,
     pub grok: CloudSettings,
+    pub openrouter: CloudSettings,
     /// How the active model expects its input to be marked (`query:`/`passage:`
     /// and relatives). Independent of the mode — it is a property of the *model*,
     /// not of where it runs. Default [`EmbedConvention::None`], and switching it
@@ -921,7 +984,13 @@ impl EmbedSettings {
     pub fn cloud(&self) -> Option<&CloudSettings> {
         cloud_ref(
             self.mode.cloud_provider(),
-            [&self.openai, &self.gemini, &self.claude, &self.grok],
+            [
+                &self.openai,
+                &self.gemini,
+                &self.claude,
+                &self.grok,
+                &self.openrouter,
+            ],
         )
     }
 
@@ -934,6 +1003,7 @@ impl EmbedSettings {
                 &mut self.gemini,
                 &mut self.claude,
                 &mut self.grok,
+                &mut self.openrouter,
             ],
         )
     }
@@ -952,7 +1022,11 @@ impl EmbedSettings {
         match self.mode {
             ServerMode::Managed => self.managed.model_path.as_deref().and_then(display_name),
             ServerMode::External => self.external.model_name.clone().filter(|m| !m.is_empty()),
-            ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude | ServerMode::Grok => self
+            ServerMode::OpenAi
+            | ServerMode::Gemini
+            | ServerMode::Claude
+            | ServerMode::Grok
+            | ServerMode::OpenRouter => self
                 .cloud()
                 .and_then(|c| c.model_name.clone())
                 .filter(|m| !m.is_empty()),
@@ -2225,7 +2299,9 @@ impl TtsSettings {
             CloudProvider::Gemini => Some(&self.gemini),
             // Neither has a TTS API (and `TtsMode` has no variant for them
             // anyway — these arms exist only to keep the match exhaustive).
-            CloudProvider::Claude | CloudProvider::Grok => None,
+            // OpenRouter has one; its speech mode is a later stage of the track
+            // (docs/research/openrouter-mode.md §7).
+            CloudProvider::Claude | CloudProvider::Grok | CloudProvider::OpenRouter => None,
         }
     }
 
@@ -2250,7 +2326,9 @@ impl TtsSettings {
             CloudProvider::Gemini => Some(&mut self.gemini),
             // Neither has a TTS API (and `TtsMode` has no variant for them
             // anyway — these arms exist only to keep the match exhaustive).
-            CloudProvider::Claude | CloudProvider::Grok => None,
+            // OpenRouter has one; its speech mode is a later stage of the track
+            // (docs/research/openrouter-mode.md §7).
+            CloudProvider::Claude | CloudProvider::Grok | CloudProvider::OpenRouter => None,
         }
     }
 }
@@ -2299,6 +2377,26 @@ impl ImpersonationProfile {
     }
 }
 
+/// What is set once for the OpenRouter gateway, whichever slot speaks to it —
+/// unlike a model or a key's variable, which each slot's own section holds.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct OpenRouterSettings {
+    /// Send the two attribution headers — `HTTP-Referer` and
+    /// `X-OpenRouter-Title` — with every request to the gateway. They name the
+    /// **application**, never the user, and are what the gateway's public
+    /// rankings count by; PRIVACY.md says what they hold. On by default, and a
+    /// switch because it is the one thing this app says about itself to a
+    /// provider (docs/research/openrouter-mode.md, fork F5).
+    pub attribution: bool,
+}
+
+impl Default for OpenRouterSettings {
+    fn default() -> Self {
+        Self { attribution: true }
+    }
+}
+
 /// Global application configuration.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -2319,6 +2417,8 @@ pub struct AppConfig {
     pub impersonation_profiles: Vec<ImpersonationProfile>,
     /// Dedicated embedding-server settings (RAG, ADR 0002).
     pub embed: EmbedSettings,
+    /// What is provider-wide about the OpenRouter gateway.
+    pub openrouter: OpenRouterSettings,
     /// Round limit for the client-side agentic loop (spec §6.3).
     pub max_tool_rounds: u32,
     /// Global switches for external tools.
@@ -2393,6 +2493,7 @@ impl Default for AppConfig {
             impersonation_engine: ImpersonationEngineSettings::default(),
             impersonation_profiles: Vec::new(),
             embed: EmbedSettings::default(),
+            openrouter: OpenRouterSettings::default(),
             max_tool_rounds: 8,
             tools: ToolSettings::default(),
             workspace: WorkspaceSettings::default(),

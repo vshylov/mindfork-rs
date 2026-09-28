@@ -1524,6 +1524,9 @@ struct RoundOutput {
     /// Reasoning tokens ("thoughts") for the round from `usage` (`0` — the provider
     /// doesn't separate them).
     reasoning_tokens: u32,
+    /// Who served the round and what it cost, where the endpoint said — a
+    /// gateway does ([`Served`](crate::shared::api::contract::Served)).
+    served: Option<crate::shared::api::contract::Served>,
 }
 
 /// Launches the client-side agentic-loop task (spec §6.3): stream → on
@@ -5239,6 +5242,8 @@ async fn stream_round(
     let mut usage_prefill: Option<crate::shared::api::contract::Prefill> = None;
     // The round's reasoning tokens (from `usage`; `0` — the provider doesn't separate them).
     let mut round_reasoning: u32 = 0;
+    // Who served the round, and for how much — a gateway's own two facts.
+    let mut round_served: Option<crate::shared::api::contract::Served> = None;
 
     // The reply counter: `context: None` leaves the prior conversation estimate
     // untouched (emitted by start_generation); the exact `context` only comes from the server's usage.
@@ -5314,6 +5319,9 @@ async fn stream_round(
                             context_exact: true,
                         });
                     }
+                    // Recorded on the message, shown nowhere yet
+                    // (docs/research/openrouter-mode.md, fork F11).
+                    ChatChunk::Served(served) => round_served = Some(served),
                     // The engine is waiting before another attempt (spec §6.8). Not
                     // a failure yet, so nothing is recorded — only shown, and only
                     // while it lasts.
@@ -5382,6 +5390,7 @@ async fn stream_round(
         prompt_tokens: usage_prompt,
         prefill: usage_prefill,
         reasoning_tokens: round_reasoning,
+        served: round_served,
     }
 }
 
@@ -5601,6 +5610,8 @@ fn finalize_message(
         sampling: sampling.retain_supported(mode.cloud_provider(), endpoint_fields),
         mode,
         model: model.clone(),
+        provider: out.served.as_ref().and_then(|s| s.provider.clone()),
+        cost_nanos: out.served.as_ref().and_then(|s| s.cost_nanos),
         finish: Some(match out.reason {
             FinishReason::Length => MessageFinish::Length,
             FinishReason::Cancelled => MessageFinish::Cancelled,
@@ -5663,6 +5674,7 @@ fn cancelled_round() -> RoundOutput {
         prompt_tokens: None,
         prefill: None,
         reasoning_tokens: 0,
+        served: None,
     }
 }
 

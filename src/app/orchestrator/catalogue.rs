@@ -95,7 +95,7 @@ impl Orchestrator {
         let stored = secret
             .and_then(|k| crate::shared::secrets::stored_key(&cfg.api_keys, &k.storage_name()));
         let key = crate::app::supervisor::resolve_api_key(stored.as_deref(), env.as_deref()).ok();
-        source(mode, external, cloud, key)
+        source(slot, mode, external, cloud, key)
     }
 }
 
@@ -110,6 +110,7 @@ fn impersonation_mode(mode: ImpersonationMode) -> Option<ServerMode> {
         ImpersonationMode::Gemini => Some(ServerMode::Gemini),
         ImpersonationMode::Claude => Some(ServerMode::Claude),
         ImpersonationMode::Grok => Some(ServerMode::Grok),
+        ImpersonationMode::OpenRouter => Some(ServerMode::OpenRouter),
     }
 }
 
@@ -120,7 +121,13 @@ fn impersonation_mode(mode: ImpersonationMode) -> Option<ServerMode> {
 /// **except for Gemini**, whose override addresses the OpenAI-compatible path
 /// used for embeddings while the catalogue worth reading is the native one: it
 /// is the only Gemini list that publishes `supportedGenerationMethods` (§2.2).
+///
+/// `slot` matters to one provider: the OpenRouter gateway keeps its embedding
+/// models in a list of their own, and its catalogues are public — so that slot
+/// is the one cloud whose picker opens before a key was entered
+/// (docs/research/openrouter-mode.md, fork F7).
 fn source(
+    slot: ModelSlot,
     mode: ServerMode,
     external: &ExternalSettings,
     cloud: Option<&CloudSettings>,
@@ -147,13 +154,31 @@ fn source(
                 key,
             })
         }
+        ServerMode::OpenRouter => {
+            let shape = match slot {
+                ModelSlot::Embedder => CatalogueShape::OpenRouterEmbeddings,
+                ModelSlot::Assistant | ModelSlot::Impersonation => CatalogueShape::OpenRouter,
+            };
+            let base = cloud
+                .and_then(|c| c.url.as_deref())
+                .map(str::trim)
+                .filter(|u| !u.is_empty())
+                .unwrap_or_else(|| mode_base(mode))
+                .to_string();
+            Ok(CatalogueRequest { shape, base, key })
+        }
         ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude | ServerMode::Grok => {
             let provider = mode.cloud_provider().ok_or(CatalogueError::NotConfigured)?;
             let shape = match mode {
                 ServerMode::Gemini => CatalogueShape::Gemini,
                 ServerMode::Claude => CatalogueShape::Anthropic,
                 ServerMode::Grok => CatalogueShape::Xai,
-                _ => CatalogueShape::OpenAi,
+                // Named rather than left to `_`: a provider added later must
+                // choose its shape here, not inherit this one in silence.
+                ServerMode::OpenAi => CatalogueShape::OpenAi,
+                ServerMode::Managed | ServerMode::External | ServerMode::OpenRouter => {
+                    return Err(CatalogueError::NotConfigured);
+                }
             };
             // Every cloud needs a key, and asking without one buys a `401` the
             // user cannot read as "add a key".
@@ -175,9 +200,20 @@ fn source(
     }
 }
 
+/// The provider's own chat base for a cloud mode (empty for a mode that has
+/// none, which no caller passes).
+fn mode_base(mode: ServerMode) -> &'static str {
+    mode.cloud_provider()
+        .map(|p| p.chat_base_url())
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The slot every test below asks for unless it is about the slot.
+    const CHAT: ModelSlot = ModelSlot::Assistant;
 
     fn external(url: Option<&str>) -> ExternalSettings {
         ExternalSettings {
@@ -189,7 +225,7 @@ mod tests {
     #[test]
     fn a_managed_slot_has_no_catalogue() {
         assert_eq!(
-            source(ServerMode::Managed, &external(None), None, None),
+            source(CHAT, ServerMode::Managed, &external(None), None, None),
             Err(CatalogueError::NotConfigured),
             "the managed row is a file on this machine, not a name"
         );
@@ -198,6 +234,7 @@ mod tests {
     #[test]
     fn an_external_slot_asks_its_own_url_with_no_key_of_its_own() {
         let req = source(
+            CHAT,
             ServerMode::External,
             &external(Some(" http://127.0.0.1:8000/v1 ")),
             None,
@@ -217,7 +254,13 @@ mod tests {
     #[test]
     fn an_external_slot_without_an_address_has_nothing_to_ask() {
         assert_eq!(
-            source(ServerMode::External, &external(Some("   ")), None, None),
+            source(
+                CHAT,
+                ServerMode::External,
+                &external(Some("   ")),
+                None,
+                None
+            ),
             Err(CatalogueError::NotConfigured)
         );
     }
@@ -225,7 +268,7 @@ mod tests {
     #[test]
     fn a_cloud_without_a_key_says_so_instead_of_buying_a_401() {
         assert_eq!(
-            source(ServerMode::OpenAi, &external(None), None, None),
+            source(CHAT, ServerMode::OpenAi, &external(None), None, None),
             Err(CatalogueError::NoKey)
         );
     }
@@ -250,7 +293,8 @@ mod tests {
             ),
             (ServerMode::Grok, CatalogueShape::Xai, "https://api.x.ai/v1"),
         ] {
-            let req = source(mode, &external(None), None, Some("k".into())).expect("a request");
+            let req =
+                source(CHAT, mode, &external(None), None, Some("k".into())).expect("a request");
             assert_eq!((req.shape, req.base.as_str()), (shape, base), "{mode:?}");
         }
     }
@@ -262,6 +306,7 @@ mod tests {
             ..CloudSettings::default()
         };
         let openai = source(
+            CHAT,
             ServerMode::OpenAi,
             &external(None),
             Some(&proxy),
@@ -273,6 +318,7 @@ mod tests {
             "a gateway serves its own catalogue — that is what the override is for"
         );
         let gemini = source(
+            CHAT,
             ServerMode::Gemini,
             &external(None),
             Some(&proxy),

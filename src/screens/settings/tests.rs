@@ -5432,6 +5432,7 @@ fn cat(id: &str, display: Option<&str>, role: ModelRole) -> CatalogModel {
         display: display.map(str::to_string),
         role,
         retiring: None,
+        facts: Default::default(),
     }
 }
 

@@ -338,9 +338,20 @@ impl SettingsScreen {
     /// The id first, because the id is what the field takes; then the name the
     /// endpoint published for people, and the day it stops serving the model —
     /// both only when it published them.
+    ///
+    /// Where the endpoint published **facts** — the window, the price, whether
+    /// the model takes tools — those take the name's place: on the gateway that
+    /// publishes them the name repeats the id (`Anthropic: Claude Haiku 4.5` for
+    /// `anthropic/claude-haiku-4.5`), and the row is one line. The name is still
+    /// what the filter searches.
     pub(super) fn picker_label(&self, m: &CatalogModel) -> String {
         let mut line = m.id.clone();
-        if let Some(display) = m.display.as_deref().filter(|d| *d != m.id) {
+        if !m.facts.is_empty() {
+            for fact in self.picker_facts(m) {
+                line.push_str(" · ");
+                line.push_str(&fact);
+            }
+        } else if let Some(display) = m.display.as_deref().filter(|d| *d != m.id) {
             line.push_str(" — ");
             line.push_str(display);
         }
@@ -355,6 +366,63 @@ impl SettingsScreen {
     }
 }
 
+impl SettingsScreen {
+    /// What the catalogue said about a model, as the row's pieces, in the order
+    /// a choice is made in: does it fit, what does it cost, can it act.
+    fn picker_facts(&self, m: &CatalogModel) -> Vec<String> {
+        let loc = self.loc();
+        let mut facts = Vec::new();
+        if let Some(window) = m.facts.context_length {
+            facts.push(loc.tf(
+                "ui.settings.models.window",
+                &[("size", &compact_tokens(window))],
+            ));
+        }
+        match (m.facts.prompt_price, m.facts.completion_price) {
+            (Some(0), Some(0)) => facts.push(loc.t("ui.settings.models.price_free").to_string()),
+            (Some(input), Some(output)) => facts.push(loc.tf(
+                "ui.settings.models.price",
+                &[("input", &dollars(input)), ("output", &dollars(output))],
+            )),
+            _ => {}
+        }
+        if m.facts.tools == Some(false) {
+            facts.push(loc.t("ui.settings.models.no_tools").to_string());
+        }
+        facts
+    }
+}
+
+/// A token count the way a catalogue row has room for it: `200K`, `1M`,
+/// `1.05M`. Rounded **down**, since this is a ceiling somebody will plan
+/// against — a window shown larger than it is would be the wrong side to err on.
+pub(super) fn compact_tokens(n: u32) -> String {
+    if n >= 1_000_000 {
+        let hundredths = n / 10_000;
+        let (whole, frac) = (hundredths / 100, hundredths % 100);
+        match frac {
+            0 => format!("{whole}M"),
+            f if f % 10 == 0 => format!("{whole}.{}M", f / 10),
+            f => format!("{whole}.{f:02}M"),
+        }
+    } else if n >= 1000 {
+        format!("{}K", n / 1000)
+    } else {
+        n.to_string()
+    }
+}
+
+/// A price of a million tokens, from millionths of a dollar: two decimals from
+/// ten cents up, three below — where two would round a real price to `0.00`.
+pub(super) fn dollars(micros: u64) -> String {
+    let value = micros as f64 / 1e6;
+    if micros >= 100_000 {
+        format!("{value:.2}")
+    } else {
+        format!("{value:.3}")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -366,6 +434,7 @@ mod tests {
             display: display.map(str::to_string),
             role: ModelRole::Unstated,
             retiring: None,
+            facts: Default::default(),
         }
     }
 

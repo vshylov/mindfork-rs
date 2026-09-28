@@ -12,7 +12,10 @@
 //! `#[serde(default)]`, a new table/column with a default) — **no bump**, as before;
 //! a breaking one (renaming/moving/changing semantics/removing a field) — bump the
 //! constant + a migration step + a golden fixture of the old format + a CHANGELOG
-//! entry (the "Data" rubric).
+//! entry (the "Data" rubric). **A new value of an existing enum is breaking**,
+//! though nothing in the file moves: an older binary fails the parse of the
+//! whole file on a value it does not know (docs/lessons.md §8), so the bump is
+//! what makes its refusal say "a newer version" — see [`settings_to_v4`].
 
 use std::cmp::Ordering;
 
@@ -22,7 +25,7 @@ use serde_json::Value;
 /// Schema version of `settings.json`. Matches [`crate::shared::config::SCHEMA_VERSION`]
 /// (the default of the `AppConfig.schema_version` field) — the invariant is checked by
 /// a test.
-pub const SETTINGS_SCHEMA: u32 = 3;
+pub const SETTINGS_SCHEMA: u32 = 4;
 /// Schema version of `profiles.json`.
 pub const PROFILES_SCHEMA: u32 = 1;
 /// Schema version of a chat file `chats/<id>.json`.
@@ -184,6 +187,26 @@ fn settings_to_v3(mut v: Value) -> Result<Value> {
     Ok(v)
 }
 
+/// `settings.json` 3→4: **nothing in the file changes** — the version is what
+/// changes. 4 is the first schema in which a slot's `mode` may read
+/// `"openrouter"` (docs/research/openrouter-mode.md, fork F3), and a mode is a
+/// strict enum: a binary that does not know the value fails the parse of the
+/// whole file. What such a binary then does depends on its age — since 0.12.0 it
+/// refuses to start naming an unknown variant, and up to 0.11.2 it fell back to
+/// the defaults in silence and wrote them over the file, stored keys included
+/// (docs/lessons.md §8). With the version raised, every one of them that has the
+/// downgrade guard (ADR 0006 §4) refuses **before** it reads a value, and says
+/// why: the data was written by a newer version.
+///
+/// The step stamps the version whether or not any slot uses the new mode. A
+/// file stamped only once it holds the value would be read by an older binary
+/// until the day the mode was selected — and then not, with nothing about the
+/// application having changed that day.
+fn settings_to_v4(mut v: Value) -> Result<Value> {
+    v["schema_version"] = Value::from(4);
+    Ok(v)
+}
+
 const SETTINGS_STEPS: &[Step] = &[
     Step {
         to: 2,
@@ -195,9 +218,14 @@ const SETTINGS_STEPS: &[Step] = &[
         summary: "the default reply budget rises to cover a model's reasoning",
         apply: settings_to_v3,
     },
+    Step {
+        to: 4,
+        summary: "a slot's mode may name the OpenRouter gateway",
+        apply: settings_to_v4,
+    },
 ];
 
-/// The registry of artifacts. `settings.json` is at 3 (two steps), the chat files
+/// The registry of artifacts. `settings.json` is at 4 (three steps), the chat files
 /// at 4; `profiles.json` is still at 1 with no steps.
 pub fn settings_artifact() -> JsonArtifact {
     JsonArtifact {
@@ -337,15 +365,17 @@ mod tests {
 
     #[test]
     fn real_registry_versions_and_steps() {
-        // Settings took two real steps (the sub-agent's timeout, then the reply
-        // budget that has to cover reasoning); chats took three (the dialogue-run
+        // Settings took three real steps (the sub-agent's timeout, the reply
+        // budget that has to cover reasoning, then the version that lets a mode
+        // name the OpenRouter gateway); chats took three (the dialogue-run
         // stamp, spec §9.13, then the cut run titles, spec §11.2); profiles
         // are still dormant.
         let settings = settings_artifact();
-        assert_eq!(settings.current, 3);
-        assert_eq!(settings.steps.len(), 2);
+        assert_eq!(settings.current, 4);
+        assert_eq!(settings.steps.len(), 3);
         assert_eq!(settings.steps[0].to, 2);
         assert_eq!(settings.steps[1].to, 3);
+        assert_eq!(settings.steps[2].to, 4);
         let chats = chat_artifact();
         assert_eq!(chats.current, 4);
         assert_eq!(chats.steps.len(), 3);
@@ -378,7 +408,8 @@ mod tests {
         let out = settings_artifact()
             .apply_steps(v1_settings(60, 1024), 1)
             .unwrap();
-        assert_eq!(out["schema_version"], json!(3));
+        // The chain runs to its end, wherever that has moved to since.
+        assert_eq!(out["schema_version"], json!(SETTINGS_SCHEMA));
         let tools = out["tools"].as_object().unwrap();
         assert!(!tools.contains_key("subagent_timeout_secs"));
         assert!(!tools.contains_key("subagent_run_timeout_secs"));
@@ -418,7 +449,7 @@ mod tests {
         let out = settings_artifact()
             .apply_steps(json!({"schema_version": 1}), 1)
             .unwrap();
-        assert_eq!(out["schema_version"], json!(3));
+        assert_eq!(out["schema_version"], json!(SETTINGS_SCHEMA));
     }
 
     /// 2→3: a reply budget left at the old default is dropped so the new one
@@ -432,7 +463,7 @@ mod tests {
                 2,
             )
             .unwrap();
-        assert_eq!(at_the_old_default["schema_version"], json!(3));
+        assert_eq!(at_the_old_default["schema_version"], json!(SETTINGS_SCHEMA));
         let sampling = at_the_old_default["default_sampling"].as_object().unwrap();
         assert_eq!(sampling["max_tokens"], json!(16384), "{sampling:?}");
         // The neighbour a user may well have turned off stays as it was.
@@ -464,7 +495,65 @@ mod tests {
         let bare = settings_artifact()
             .apply_steps(json!({"schema_version": 2}), 2)
             .unwrap();
-        assert_eq!(bare["schema_version"], json!(3));
+        assert_eq!(bare["schema_version"], json!(SETTINGS_SCHEMA));
         assert!(bare.get("default_sampling").is_none());
+    }
+    /// `settings.json` as 0.12.0 wrote it: the golden v3 shape, with a gateway
+    /// typed into `external` the way install.md described it.
+    const V3_SETTINGS: &str = include_str!("fixtures/settings_v3.json");
+
+    /// 3→4 moves nothing. What it changes is what an **older** binary says about
+    /// the file, and that is the version alone.
+    #[test]
+    fn settings_step_to_v4_stamps_the_version_and_touches_nothing_else() {
+        let before: Value = serde_json::from_str(V3_SETTINGS).unwrap();
+        let after = settings_artifact().apply_steps(before.clone(), 3).unwrap();
+        assert_eq!(after["schema_version"], json!(4));
+        let mut restamped = after.clone();
+        restamped["schema_version"] = json!(3);
+        assert_eq!(restamped, before, "every other value is where it was");
+
+        // And it is what today's config reads: `external` still holds the
+        // gateway the user typed — nothing is moved into the new mode for them
+        // (docs/research/openrouter-mode.md, fork F12).
+        let cfg: crate::shared::config::AppConfig = serde_json::from_value(after).unwrap();
+        assert_eq!(cfg.engine.mode, crate::shared::config::ServerMode::External);
+        assert_eq!(
+            cfg.engine.external.url.as_deref(),
+            Some("https://openrouter.ai/api/v1")
+        );
+        assert_eq!(cfg.engine.openrouter, Default::default());
+        assert!(cfg.openrouter.attribution, "on unless switched off");
+    }
+
+    /// The reason for the bump, from the other side: a file the new mode was
+    /// written into is one the previous schema's reader refuses **by version**,
+    /// before it meets the value it cannot parse.
+    #[test]
+    fn a_file_naming_the_gateway_is_a_newer_version_to_the_previous_schema() {
+        let mut cfg = crate::shared::config::AppConfig::default();
+        cfg.engine.mode = crate::shared::config::ServerMode::OpenRouter;
+        cfg.impersonation_engine.mode = crate::shared::config::ImpersonationMode::OpenRouter;
+        let written = serde_json::to_value(&cfg).unwrap();
+        assert_eq!(written["engine"]["mode"], json!("openrouter"));
+        assert_eq!(written["impersonation_engine"]["mode"], json!("openrouter"));
+        assert_eq!(written["schema_version"], json!(4));
+
+        // The reader 0.12.0 ships: the same artifact, one step shorter.
+        let previous = JsonArtifact {
+            name: "settings.json",
+            current: 3,
+            detect: detect_settings,
+            steps: &SETTINGS_STEPS[..2],
+        };
+        assert_eq!(
+            previous.assess(&written),
+            Assessment::Downgrade { from: 4 },
+            "refused as newer, not parsed into an unknown variant"
+        );
+        // Today's reader takes it as it is.
+        assert_eq!(settings_artifact().assess(&written), Assessment::UpToDate);
+        let back: crate::shared::config::AppConfig = serde_json::from_value(written).unwrap();
+        assert_eq!(back, cfg);
     }
 }

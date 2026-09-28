@@ -48,6 +48,11 @@ pub(super) const DESC_EXT_API_KEY_ENV: &str = "ui.settings.desc.ext_api_key_env"
 pub(super) const DESC_EXT_API_KEY: &str = "ui.settings.desc.ext_api_key";
 /// Key: the subsection selector (Model/Sampling/Profiles tab strip).
 pub(super) const DESC_SUBSECTION: &str = "ui.settings.desc.subsection";
+/// The attribution switch: what the two headers hold, and who reads them.
+pub(super) const DESC_GATEWAY_ATTRIBUTION: &str = "ui.settings.desc.gateway_attribution";
+/// Shown under an `external` URL that is the OpenRouter gateway: there is a
+/// mode for it.
+pub(super) const DESC_EXTERNAL_IS_GATEWAY: &str = "ui.settings.desc.external_is_gateway";
 /// Key: the profile's scaffold language (axis A).
 pub(super) const DESC_PROFILE_LANGUAGE: &str = "ui.settings.desc.profile_language";
 /// Key: `-ngl` for the assistant engine (text differs from impersonation).
@@ -344,6 +349,59 @@ pub(super) fn cloud_rows(
             .describe(loc.t(DESC_API_KEY_ENV)),
         text_row(url, loc.t("ui.settings.field.base_url"), &c.url),
     ]
+}
+
+/// What a provider's section holds besides [`cloud_rows`]: for the OpenRouter
+/// gateway, the switch that is the provider's rather than the slot's.
+pub(super) fn provider_wide_rows(
+    provider: Option<CloudProvider>,
+    config: &AppConfig,
+    loc: &'static Locale,
+) -> Vec<FieldRow> {
+    match provider {
+        Some(CloudProvider::OpenRouter) => vec![
+            row(
+                FieldId::GatewayAttribution,
+                loc.t("ui.settings.field.gateway_attribution"),
+                FieldKind::Toggle(config.openrouter.attribution),
+            )
+            .describe(loc.t(DESC_GATEWAY_ATTRIBUTION)),
+        ],
+        _ => Vec::new(),
+    }
+}
+
+/// Whether an address is the OpenRouter gateway's — its host, or a subdomain
+/// of it. Read off the host alone: a path or a query that merely mentions the
+/// name is somebody else's server.
+pub(super) fn is_gateway_url(url: &str) -> bool {
+    let rest = url.trim();
+    let rest = rest.split_once("://").map_or(rest, |(_, r)| r);
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    // `user:pass@host:port` — the host is what is left between the two.
+    let host = authority.rsplit('@').next().unwrap_or_default();
+    let host = host
+        .split(':')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    host == "openrouter.ai" || host.ends_with(".openrouter.ai")
+}
+
+/// The URL row of an `external` section. It says nothing about itself — the
+/// mode's own description covers it — unless the address is the gateway's:
+/// then it says there is a mode for that, and changes nothing by itself
+/// (docs/research/openrouter-mode.md, fork F12).
+pub(super) fn external_url_row(
+    id: FieldId,
+    url: &Option<String>,
+    loc: &'static Locale,
+) -> FieldRow {
+    let row = text_row(id, "URL (external)", url);
+    match url.as_deref() {
+        Some(u) if is_gateway_url(u) => row.describe(loc.t(DESC_EXTERNAL_IS_GATEWAY)),
+        _ => row,
+    }
 }
 
 /// An input field holding a **secret** itself — a cloud API key or the backup
@@ -1105,13 +1163,15 @@ pub(super) fn mode_label(m: ServerMode) -> String {
         ServerMode::Gemini => "gemini".into(),
         ServerMode::Claude => "claude".into(),
         ServerMode::Grok => "grok".into(),
+        ServerMode::OpenRouter => "openrouter".into(),
     }
 }
 
-/// Cyclically changes the engine mode (6 values, direction-aware ←/→).
+/// Cyclically changes the engine mode (direction-aware ←/→), in
+/// [`SERVER_MODES`]' order — one list, so the popup and the arrows cannot
+/// disagree about what comes next.
 pub(super) fn cycle_mode(m: ServerMode, dir: i32) -> ServerMode {
-    use ServerMode::*;
-    let order = [Managed, External, OpenAi, Gemini, Claude, Grok];
+    let order = SERVER_MODES;
     let idx = order.iter().position(|x| *x == m).unwrap_or(0) as i32;
     let n = order.len() as i32;
     order[(((idx + dir) % n + n) % n) as usize]
@@ -1126,13 +1186,14 @@ pub(super) fn imp_mode_label(m: ImpersonationMode) -> String {
         ImpersonationMode::Gemini => "gemini".into(),
         ImpersonationMode::Claude => "claude".into(),
         ImpersonationMode::Grok => "grok".into(),
+        ImpersonationMode::OpenRouter => "openrouter".into(),
     }
 }
 
-/// Cyclically changes the impersonation mode (7 values, direction-aware).
+/// Cyclically changes the impersonation mode (direction-aware), in
+/// [`IMP_MODES`]' order.
 pub(super) fn cycle_imp_mode(m: ImpersonationMode, dir: i32) -> ImpersonationMode {
-    use ImpersonationMode::*;
-    let order = [Shared, Managed, External, OpenAi, Gemini, Claude, Grok];
+    let order = IMP_MODES;
     let idx = order.iter().position(|x| *x == m).unwrap_or(0) as i32;
     let n = order.len() as i32;
     order[(((idx + dir) % n + n) % n) as usize]
@@ -1342,18 +1403,14 @@ pub(super) fn field_validation_error(id: FieldId, text: &str) -> Option<&'static
     }
 }
 
-/// The order of engine-mode options (for the Choice popup; matches `cycle_mode`).
-pub(super) const SERVER_MODES: [ServerMode; 6] = [
-    ServerMode::Managed,
-    ServerMode::External,
-    ServerMode::OpenAi,
-    ServerMode::Gemini,
-    ServerMode::Claude,
-    ServerMode::Grok,
-];
+/// The order of engine-mode options — for the Choice popup and for
+/// `cycle_mode`, which reads this list. The same order as
+/// [`ServerMode::ALL`], which a test pins.
+pub(super) const SERVER_MODES: [ServerMode; 7] = ServerMode::ALL;
 
-/// The order of impersonation-mode options (matches `cycle_imp_mode`).
-pub(super) const IMP_MODES: [ImpersonationMode; 7] = [
+/// The order of impersonation-mode options — for the popup and for
+/// `cycle_imp_mode`.
+pub(super) const IMP_MODES: [ImpersonationMode; 8] = [
     ImpersonationMode::Shared,
     ImpersonationMode::Managed,
     ImpersonationMode::External,
@@ -1361,6 +1418,7 @@ pub(super) const IMP_MODES: [ImpersonationMode; 7] = [
     ImpersonationMode::Gemini,
     ImpersonationMode::Claude,
     ImpersonationMode::Grok,
+    ImpersonationMode::OpenRouter,
 ];
 
 /// The order of OSC-52 modes (matches `cycle_osc52`).

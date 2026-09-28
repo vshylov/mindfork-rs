@@ -15,7 +15,8 @@ use crate::app::events::{ServerStatus, ServerStatuses};
 use crate::app::supervisor::ServerSupervisor;
 use crate::shared::api::{Embedder, EngineBackend, ServerHandle};
 use crate::shared::config::{
-    EmbedSettings, EngineSettings, ImpersonationEngineSettings, ImpersonationMode, SecretSlot,
+    CloudProvider, EmbedSettings, EngineSettings, ImpersonationEngineSettings, ImpersonationMode,
+    OpenRouterSettings, SecretSlot,
 };
 use crate::shared::i18n::Locale;
 use crate::shared::secrets::{ApiKeyEntry, SecretKey};
@@ -30,6 +31,25 @@ use crate::shared::secrets::{ApiKeyEntry, SecretKey};
 fn stored_key(api_keys: &[ApiKeyEntry], key: Option<SecretKey>) -> Option<String> {
     crate::shared::secrets::stored_key(api_keys, &key?.storage_name())
 }
+
+/// The gateway's provider-wide settings **as far as one slot is concerned**:
+/// `Some` only while the slot speaks to the gateway.
+///
+/// This is what is compared to decide whether a server is current. Were the
+/// settings compared for every slot, switching the attribution off would
+/// relaunch a managed `llama-server` that has nothing to do with it — and a
+/// relaunch there is a GGUF killed and loaded again.
+fn gateway_for(
+    provider: Option<CloudProvider>,
+    gateway: &OpenRouterSettings,
+) -> Option<OpenRouterSettings> {
+    (provider == Some(CloudProvider::OpenRouter)).then(|| gateway.clone())
+}
+
+/// What a slot was last launched with: its settings, the key blob they were
+/// resolved from, and the gateway's settings where they applied
+/// ([`gateway_for`]).
+type Applied<S> = (S, Vec<ApiKeyEntry>, Option<OpenRouterSettings>);
 
 /// Max relaunches of one managed server within [`RESTART_WINDOW`]; beyond that it
 /// stays `Disconnected` until manual intervention (editing settings re-applies it).
@@ -121,9 +141,9 @@ pub(super) struct EngineManager {
     /// `None` before the first apply, so the initial launch always happens.
     ///
     /// [`Orchestrator::flush_restarts`]: super::Orchestrator::flush_restarts
-    applied_chat: Option<(EngineSettings, Vec<ApiKeyEntry>)>,
-    applied_embed: Option<(EmbedSettings, Vec<ApiKeyEntry>)>,
-    applied_imp: Option<(ImpersonationEngineSettings, Vec<ApiKeyEntry>)>,
+    applied_chat: Option<Applied<EngineSettings>>,
+    applied_embed: Option<Applied<EmbedSettings>>,
+    applied_imp: Option<Applied<ImpersonationEngineSettings>>,
     /// The chat-server status channel for the supervisor's background probe.
     status_tx: UnboundedSender<ServerStatus>,
     /// The impersonation-server status channel (background probe).
@@ -182,13 +202,17 @@ impl EngineManager {
     /// (Re-)raises the chat server from settings: kills the previous managed process,
     /// asks the supervisor to set up a new one, stores the immediate status. The caller
     /// takes the status snapshot for the UI via [`Self::statuses`]. `api_keys` —
-    /// stored keys from the config (see [`stored_key`]).
+    /// stored keys from the config (see [`stored_key`]). `gateway` — what is
+    /// provider-wide about OpenRouter, told to the supervisor before it builds
+    /// anything ([`ServerSupervisor::set_gateway`]).
     pub(super) fn apply_chat(
         &mut self,
         settings: &EngineSettings,
         api_keys: &[ApiKeyEntry],
+        gateway: &OpenRouterSettings,
         loc: &'static Locale,
     ) {
+        self.supervisor.set_gateway(gateway);
         self.chat_handle = None; // drop the old managed process (kill_on_drop)
         // Invalidate the previous server's probe and raise a new token.
         if let Some(tok) = self.chat_probe_cancel.take() {
@@ -207,7 +231,11 @@ impl EngineManager {
         self.backend = setup.backend;
         self.chat_handle = setup.handle;
         self.server_status = setup.status;
-        self.applied_chat = Some((settings.clone(), api_keys.to_vec()));
+        self.applied_chat = Some((
+            settings.clone(),
+            api_keys.to_vec(),
+            gateway_for(settings.mode.cloud_provider(), gateway),
+        ));
     }
 
     /// (Re-)raises the embedding server from settings. Like [`Self::apply_chat`]: the
@@ -217,8 +245,10 @@ impl EngineManager {
         &mut self,
         settings: &EmbedSettings,
         api_keys: &[ApiKeyEntry],
+        gateway: &OpenRouterSettings,
         loc: &'static Locale,
     ) {
+        self.supervisor.set_gateway(gateway);
         self.embed_handle = None; // drop the old managed process (kill_on_drop)
         if let Some(tok) = self.embed_probe_cancel.take() {
             tok.cancel();
@@ -236,7 +266,11 @@ impl EngineManager {
         self.embedder = setup.embedder;
         self.embed_handle = setup.handle;
         self.embed_status = setup.status;
-        self.applied_embed = Some((settings.clone(), api_keys.to_vec()));
+        self.applied_embed = Some((
+            settings.clone(),
+            api_keys.to_vec(),
+            gateway_for(settings.mode.cloud_provider(), gateway),
+        ));
     }
 
     /// (Re-)raises the impersonation server. In `shared` mode a separate server isn't
@@ -245,8 +279,10 @@ impl EngineManager {
         &mut self,
         settings: &ImpersonationEngineSettings,
         api_keys: &[ApiKeyEntry],
+        gateway: &OpenRouterSettings,
         loc: &'static Locale,
     ) {
+        self.supervisor.set_gateway(gateway);
         self.imp_handle = None; // drop the previous managed process (kill_on_drop)
         // Invalidate the previous impersonation server's probe (as with the chat server).
         if let Some(tok) = self.imp_probe_cancel.take() {
@@ -275,7 +311,11 @@ impl EngineManager {
         }
         // Recorded for both arms: `shared` mode is a state the server can be *in*, so
         // switching away from it and back must not read as "nothing to do".
-        self.applied_imp = Some((settings.clone(), api_keys.to_vec()));
+        self.applied_imp = Some((
+            settings.clone(),
+            api_keys.to_vec(),
+            gateway_for(settings.mode.cloud_provider(), gateway),
+        ));
     }
 
     /// Whether a server is already running exactly this configuration — i.e. whether
@@ -285,26 +325,43 @@ impl EngineManager {
     /// inside `apply_*`, so equal settings with a different blob still warrant a
     /// relaunch. Comparing the stored ciphertext (never the plaintext) is deliberate —
     /// it errs towards restarting, which is the safe direction.
-    pub(super) fn chat_is_current(&self, s: &EngineSettings, keys: &[ApiKeyEntry]) -> bool {
+    ///
+    /// The gateway's provider-wide settings count only for a slot that speaks to
+    /// the gateway ([`gateway_for`]).
+    pub(super) fn chat_is_current(
+        &self,
+        s: &EngineSettings,
+        keys: &[ApiKeyEntry],
+        gateway: &OpenRouterSettings,
+    ) -> bool {
+        let wanted = gateway_for(s.mode.cloud_provider(), gateway);
         self.applied_chat
             .as_ref()
-            .is_some_and(|(a, k)| a == s && k == keys)
+            .is_some_and(|(a, k, g)| a == s && k == keys && *g == wanted)
     }
 
-    pub(super) fn embed_is_current(&self, s: &EmbedSettings, keys: &[ApiKeyEntry]) -> bool {
+    pub(super) fn embed_is_current(
+        &self,
+        s: &EmbedSettings,
+        keys: &[ApiKeyEntry],
+        gateway: &OpenRouterSettings,
+    ) -> bool {
+        let wanted = gateway_for(s.mode.cloud_provider(), gateway);
         self.applied_embed
             .as_ref()
-            .is_some_and(|(a, k)| a == s && k == keys)
+            .is_some_and(|(a, k, g)| a == s && k == keys && *g == wanted)
     }
 
     pub(super) fn impersonation_is_current(
         &self,
         s: &ImpersonationEngineSettings,
         keys: &[ApiKeyEntry],
+        gateway: &OpenRouterSettings,
     ) -> bool {
+        let wanted = gateway_for(s.mode.cloud_provider(), gateway);
         self.applied_imp
             .as_ref()
-            .is_some_and(|(a, k)| a == s && k == keys)
+            .is_some_and(|(a, k, g)| a == s && k == keys && *g == wanted)
     }
 
     /// Updates the chat-server status (from the background monitor).

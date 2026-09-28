@@ -254,7 +254,10 @@ async fn run_attempt(
                 head.push(chunk);
                 return Attempt::Started { head, rest: stream };
             }
-            chunk @ (ChatChunk::Usage(_) | ChatChunk::Retry { .. }) => head.push(chunk),
+            // `Served` rides with `Usage` and commits nothing either.
+            chunk @ (ChatChunk::Usage(_) | ChatChunk::Served(_) | ChatChunk::Retry { .. }) => {
+                head.push(chunk)
+            }
         }
     }
     // A stream that ended without a terminator: nothing failed, so hand over what

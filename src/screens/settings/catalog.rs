@@ -276,7 +276,7 @@ impl SettingsScreen {
                     ServerMode::External => rows.extend(grouped(
                         loc.t("ui.settings.group.server"),
                         vec![
-                            text_row(FieldId::XUrl, "URL (external)", &x.external.url),
+                            external_url_row(FieldId::XUrl, &x.external.url, loc),
                             text_row(
                                 FieldId::XModelName,
                                 loc.t("ui.settings.field.model_opt"),
@@ -299,9 +299,9 @@ impl SettingsScreen {
                     ServerMode::OpenAi
                     | ServerMode::Gemini
                     | ServerMode::Claude
-                    | ServerMode::Grok => rows.extend(grouped(
-                        loc.t("ui.settings.group.provider"),
-                        cloud_rows(
+                    | ServerMode::Grok
+                    | ServerMode::OpenRouter => {
+                        let mut provider = cloud_rows(
                             x.cloud().zip(x.mode.cloud_provider()),
                             FieldId::XModelName,
                             FieldId::XApiKey,
@@ -309,8 +309,14 @@ impl SettingsScreen {
                             FieldId::XUrl,
                             self.secret_field_present(FieldId::XApiKey),
                             loc,
-                        ),
-                    )),
+                        );
+                        provider.extend(provider_wide_rows(
+                            x.mode.cloud_provider(),
+                            &self.config,
+                            loc,
+                        ));
+                        rows.extend(grouped(loc.t("ui.settings.group.provider"), provider))
+                    }
                 }
                 // Parallel sessions — the assistant engine only (spec §11.6): the
                 // value lives in the active mode's own section, and the slot
@@ -330,7 +336,8 @@ impl SettingsScreen {
                     ServerMode::OpenAi
                     | ServerMode::Gemini
                     | ServerMode::Claude
-                    | ServerMode::Grok => (
+                    | ServerMode::Grok
+                    | ServerMode::OpenRouter => (
                         x.cloud().map_or(1, |c| c.sessions),
                         x.cloud().map_or(1, |c| c.concurrent_calls),
                         None,
@@ -399,7 +406,7 @@ impl SettingsScreen {
                     ImpersonationMode::External => rows.extend(grouped(
                         loc.t("ui.settings.group.server"),
                         vec![
-                            text_row(FieldId::IxUrl, "URL (external)", &x.external.url),
+                            external_url_row(FieldId::IxUrl, &x.external.url, loc),
                             text_row(
                                 FieldId::IxModelName,
                                 loc.t("ui.settings.field.model_opt"),
@@ -422,9 +429,9 @@ impl SettingsScreen {
                     ImpersonationMode::OpenAi
                     | ImpersonationMode::Gemini
                     | ImpersonationMode::Claude
-                    | ImpersonationMode::Grok => rows.extend(grouped(
-                        loc.t("ui.settings.group.provider"),
-                        cloud_rows(
+                    | ImpersonationMode::Grok
+                    | ImpersonationMode::OpenRouter => {
+                        let mut provider = cloud_rows(
                             x.cloud().zip(x.mode.cloud_provider()),
                             FieldId::IxModelName,
                             FieldId::IxApiKey,
@@ -432,8 +439,14 @@ impl SettingsScreen {
                             FieldId::IxUrl,
                             self.secret_field_present(FieldId::IxApiKey),
                             loc,
-                        ),
-                    )),
+                        );
+                        provider.extend(provider_wide_rows(
+                            x.mode.cloud_provider(),
+                            &self.config,
+                            loc,
+                        ));
+                        rows.extend(grouped(loc.t("ui.settings.group.provider"), provider))
+                    }
                 }
                 rows
             }
@@ -474,7 +487,7 @@ impl SettingsScreen {
                     ServerMode::External => rows.extend(grouped(
                         loc.t("ui.settings.group.server"),
                         vec![
-                            text_row(FieldId::EUrl, "URL (external)", &e.external.url),
+                            external_url_row(FieldId::EUrl, &e.external.url, loc),
                             text_row(
                                 FieldId::EModelName,
                                 loc.t("ui.settings.field.model_opt"),
@@ -500,38 +513,38 @@ impl SettingsScreen {
                     ServerMode::OpenAi
                     | ServerMode::Gemini
                     | ServerMode::Claude
-                    | ServerMode::Grok => {
+                    | ServerMode::Grok
+                    | ServerMode::OpenRouter => {
                         let none = CloudSettings::default();
                         let c = e.cloud().unwrap_or(&none);
                         let name = e.mode.cloud_provider().map(CloudProvider::display_name);
-                        rows.extend(grouped(
-                            loc.t("ui.settings.group.provider"),
-                            vec![
-                                text_row(
-                                    FieldId::EModelName,
-                                    loc.t("ui.settings.field.model"),
-                                    &c.model_name,
-                                )
-                                .describe(loc.t(DESC_MODEL_NAME)),
-                                api_key_row(
-                                    FieldId::EApiKey,
-                                    self.secret_field_present(FieldId::EApiKey),
-                                    name,
-                                    loc,
-                                ),
-                                text_row(
-                                    FieldId::EApiKeyEnv,
-                                    &api_key_env_label(name, loc),
-                                    &c.api_key_env,
-                                )
-                                .describe(loc.t(DESC_API_KEY_ENV)),
-                                text_row(
-                                    FieldId::EUrl,
-                                    loc.t("ui.settings.field.base_url"),
-                                    &c.url,
-                                ),
-                            ],
-                        ))
+                        let mut provider = vec![
+                            text_row(
+                                FieldId::EModelName,
+                                loc.t("ui.settings.field.model"),
+                                &c.model_name,
+                            )
+                            .describe(loc.t(DESC_MODEL_NAME)),
+                            api_key_row(
+                                FieldId::EApiKey,
+                                self.secret_field_present(FieldId::EApiKey),
+                                name,
+                                loc,
+                            ),
+                            text_row(
+                                FieldId::EApiKeyEnv,
+                                &api_key_env_label(name, loc),
+                                &c.api_key_env,
+                            )
+                            .describe(loc.t(DESC_API_KEY_ENV)),
+                            text_row(FieldId::EUrl, loc.t("ui.settings.field.base_url"), &c.url),
+                        ];
+                        provider.extend(provider_wide_rows(
+                            e.mode.cloud_provider(),
+                            &self.config,
+                            loc,
+                        ));
+                        rows.extend(grouped(loc.t("ui.settings.group.provider"), provider))
                     }
                 }
                 // Independent of the mode: the input convention is a property of

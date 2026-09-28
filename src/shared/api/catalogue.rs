@@ -15,6 +15,7 @@
 //! | Gemini | `GET {base}/models` (native) | `supportedGenerationMethods` |
 //! | Anthropic | `GET {base}/v1/models` | the route itself: the Messages API has only chat models |
 //! | xAI | `GET {base}/language-models` | the route itself: the language half of a catalogue that also holds image and video models |
+//! | OpenRouter | `GET {base}/models/user`, `/models`, `/embeddings/models` | `architecture.output_modalities` — and the window, the price and the parameters besides |
 //!
 //! Hence [`ModelRole::Unstated`], which is **not** "it does nothing": where the
 //! endpoint publishes no claim, none is invented, and every model it lists is
@@ -54,6 +55,15 @@ pub enum CatalogueShape {
     Anthropic,
     /// `{"models": [{"id": …}]}` — xAI's language-only half of its catalogue.
     Xai,
+    /// The OpenRouter gateway's list of models that answer with **text**:
+    /// `/models/user` with a key — narrowed by the account's own privacy and
+    /// provider settings — and the public `/models` without one. The one cloud
+    /// catalogue that needs no key, and the one that says per model what the
+    /// window is, what a token costs and which parameters are taken
+    /// (docs/research/openrouter-mode.md §3.2).
+    OpenRouter,
+    /// The same gateway's `/embeddings/models`.
+    OpenRouterEmbeddings,
 }
 
 /// What the endpoint said a model is for.
@@ -108,6 +118,33 @@ pub struct CatalogModel {
     /// stating its own model is on the way out — the very staleness D7 is about,
     /// from the only party that knows.
     pub retiring: Option<String>,
+    /// What else the endpoint published about the model. Empty for every
+    /// catalogue that publishes names alone.
+    pub facts: ModelFacts,
+}
+
+/// What a catalogue says about a model besides its name — each field the
+/// **endpoint's** claim, and `None` where it made none. Integers throughout, so
+/// that an entry compares exactly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ModelFacts {
+    /// The context window, in tokens.
+    pub context_length: Option<u32>,
+    /// What a million **prompt** tokens cost, in millionths of a dollar.
+    pub prompt_price: Option<u64>,
+    /// What a million **completion** tokens cost, in millionths of a dollar.
+    pub completion_price: Option<u64>,
+    /// Whether the model takes tool schemas: `Some(false)` — the entry lists
+    /// its parameters and `tools` is not among them. This application is driven
+    /// by tools, so a model without them chats and does nothing else.
+    pub tools: Option<bool>,
+}
+
+impl ModelFacts {
+    /// Whether the endpoint said anything at all.
+    pub fn is_empty(&self) -> bool {
+        *self == ModelFacts::default()
+    }
 }
 
 /// Why there is no list. Every arm leaves the row exactly as it is today — a
@@ -176,6 +213,10 @@ impl CatalogueRequest {
             // `/v1/messages` itself), so the catalogue appends its own.
             CatalogueShape::Anthropic => format!("{base}/v1/models?limit={PAGE_SIZE}"),
             CatalogueShape::Xai => format!("{base}/language-models"),
+            // The account's own list where there is an account to ask about.
+            CatalogueShape::OpenRouter if self.key.is_some() => format!("{base}/models/user"),
+            CatalogueShape::OpenRouter => format!("{base}/models"),
+            CatalogueShape::OpenRouterEmbeddings => format!("{base}/embeddings/models"),
         }
     }
 }
@@ -247,6 +288,7 @@ pub fn parse(shape: CatalogueShape, body: &str) -> Result<Vec<CatalogModel>, Cat
                             display: None,
                             role: ModelRole::Unstated,
                             retiring: e.shutdown_date.filter(|d| !d.is_empty()),
+                            facts: ModelFacts::default(),
                         },
                     )
                 })
@@ -282,6 +324,7 @@ pub fn parse(shape: CatalogueShape, body: &str) -> Result<Vec<CatalogModel>, Cat
                         display: e.display_name.filter(|d| !d.is_empty()),
                         role: gemini_role(&e.supported_generation_methods),
                         retiring: None,
+                        facts: ModelFacts::default(),
                     })
                 })
                 .collect()
@@ -303,6 +346,7 @@ pub fn parse(shape: CatalogueShape, body: &str) -> Result<Vec<CatalogModel>, Cat
                             // so the route itself is the claim (§2.3).
                             role: ModelRole::Chat,
                             retiring: None,
+                            facts: ModelFacts::default(),
                         },
                     )
                 })
@@ -328,9 +372,26 @@ pub fn parse(shape: CatalogueShape, body: &str) -> Result<Vec<CatalogModel>, Cat
                             // under `/models` only (§2.4).
                             role: ModelRole::Chat,
                             retiring: None,
+                            facts: ModelFacts::default(),
                         },
                     )
                 })
+                .collect();
+            v.sort_by_key(|(created, _)| std::cmp::Reverse(*created));
+            v.into_iter().map(|(_, m)| m).collect()
+        }
+        CatalogueShape::OpenRouter | CatalogueShape::OpenRouterEmbeddings => {
+            let list: GatewayList = serde_json::from_str(body).map_err(unreadable)?;
+            let mut v: Vec<_> = list
+                .data
+                .into_iter()
+                // A `:batch` slug is the gateway's Batch API under a model's
+                // name: asked to chat it answers `404 … cannot be used with the
+                // chat/completions endpoint` (measured,
+                // docs/research/openrouter-mode.md §2.4, D2). The refusal is the
+                // endpoint's own, so leaving these out narrows on its claim.
+                .filter(|e| !e.id.is_empty() && !e.id.ends_with(":batch"))
+                .map(|e| (e.created.unwrap_or(0), e.into_model()))
                 .collect();
             v.sort_by_key(|(created, _)| std::cmp::Reverse(*created));
             v.into_iter().map(|(_, m)| m).collect()
@@ -491,6 +552,96 @@ struct AnthropicEntry {
 struct XaiList {
     #[serde(default)]
     models: Vec<XaiEntry>,
+}
+
+#[derive(Deserialize)]
+struct GatewayList {
+    #[serde(default)]
+    data: Vec<GatewayEntry>,
+}
+
+/// One entry of the gateway's catalogue. Everything but the id is optional and
+/// read leniently: a field that changes its shape costs that one fact, never the
+/// list.
+#[derive(Deserialize)]
+struct GatewayEntry {
+    id: String,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    created: Option<i64>,
+    #[serde(default)]
+    context_length: Option<serde_json::Value>,
+    #[serde(default)]
+    pricing: Option<serde_json::Value>,
+    #[serde(default)]
+    architecture: Option<serde_json::Value>,
+    #[serde(default)]
+    supported_parameters: Option<Vec<String>>,
+    #[serde(default)]
+    expiration_date: Option<String>,
+}
+
+impl GatewayEntry {
+    fn into_model(self) -> CatalogModel {
+        let outputs: Vec<&str> = self
+            .architecture
+            .as_ref()
+            .and_then(|a| a.get("output_modalities"))
+            .and_then(|o| o.as_array())
+            .map(|list| list.iter().filter_map(|m| m.as_str()).collect())
+            .unwrap_or_default();
+        let role = if outputs.is_empty() {
+            ModelRole::Unstated
+        } else if outputs.contains(&"text") {
+            ModelRole::Chat
+        } else if outputs.contains(&"embeddings") {
+            ModelRole::Embedding
+        } else {
+            ModelRole::Other
+        };
+        let price = |key: &str| {
+            self.pricing
+                .as_ref()
+                .and_then(|p| p.get(key))
+                .and_then(price_per_million)
+        };
+        let facts = ModelFacts {
+            context_length: self
+                .context_length
+                .as_ref()
+                .and_then(serde_json::Value::as_u64)
+                .and_then(|n| u32::try_from(n).ok())
+                .filter(|&n| n > 0),
+            prompt_price: price("prompt"),
+            completion_price: price("completion"),
+            tools: self
+                .supported_parameters
+                .as_ref()
+                .filter(|p| !p.is_empty())
+                .map(|p| p.iter().any(|x| x == "tools")),
+        };
+        CatalogModel {
+            id: self.id,
+            display: self.name.filter(|n| !n.is_empty()),
+            role,
+            retiring: self.expiration_date.filter(|d| !d.is_empty()),
+            facts,
+        }
+    }
+}
+
+/// The gateway's price of **one token**, in dollars — published as a string
+/// (`"0.000001"`) — as the price of a million, in millionths of a dollar.
+/// `None` for anything that is not a number, and for a negative one: the
+/// gateway's router models publish `-1` to say "it depends".
+fn price_per_million(per_token: &serde_json::Value) -> Option<u64> {
+    let dollars = match per_token {
+        serde_json::Value::String(s) => s.trim().parse::<f64>().ok()?,
+        serde_json::Value::Number(n) => n.as_f64()?,
+        _ => return None,
+    };
+    (dollars.is_finite() && dollars >= 0.0).then(|| (dollars * 1e12).round() as u64)
 }
 
 #[derive(Deserialize)]

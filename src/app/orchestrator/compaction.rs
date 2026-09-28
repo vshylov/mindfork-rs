@@ -772,7 +772,7 @@ pub(super) async fn collect_roll(
             // The client hands the usage over before `Finished` — it reads on
             // past `finish_reason` for exactly this chunk.
             ChatChunk::Usage(u) => c.usage = Some(u),
-            ChatChunk::ThoughtsSignature(_) | ChatChunk::ToolCall(_) => {}
+            ChatChunk::ThoughtsSignature(_) | ChatChunk::ToolCall(_) | ChatChunk::Served(_) => {}
         }
     }
     if let Some(err) = failure {

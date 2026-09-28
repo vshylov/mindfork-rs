@@ -64,6 +64,21 @@ impl Orchestrator {
         if self.config.embed != old.embed {
             self.restarts.mark_embed();
         }
+        // What is provider-wide about the gateway reaches every slot that speaks
+        // to it — and no other: `flush_restarts` compares it per slot, so a
+        // managed server is not reloaded over a header it never sends.
+        if self.config.openrouter != old.openrouter {
+            let gateway = Some(CloudProvider::OpenRouter);
+            if self.config.engine.mode.cloud_provider() == gateway {
+                self.restarts.mark_chat();
+            }
+            if self.config.impersonation_engine.mode.cloud_provider() == gateway {
+                self.restarts.mark_impersonation();
+            }
+            if self.config.embed.mode.cloud_provider() == gateway {
+                self.restarts.mark_embed();
+            }
+        }
         // An MCP-servers settings change — a deferred re-raise (a debounce, like
         // the engines): killing/spawning processes is an expensive operation.
         if self.config.mcp != old.mcp {
@@ -185,6 +200,7 @@ impl Orchestrator {
         let (chat, embed, imp, mcp) = self.restarts.take();
         let loc = self.ui_locale();
         let keys = &self.config.api_keys;
+        let gateway = &self.config.openrouter;
         // The flag only says "something was edited"; whether a restart is *worth doing*
         // is decided here, against what each server is actually running. An edit and its
         // undo (`Ctrl+Z`) both raise the flag, and the final config then equals the
@@ -192,24 +208,41 @@ impl Orchestrator {
         // has, and for a managed one that means killing and reloading a GGUF for
         // nothing. See docs/history/settings-undo.md §5.1.
         let mut applied_any = false;
-        if chat && !self.engines.chat_is_current(&self.config.engine, keys) {
-            self.engines.apply_chat(&self.config.engine, keys, loc);
+        let chat_applied = chat
+            && !self
+                .engines
+                .chat_is_current(&self.config.engine, keys, gateway);
+        if chat_applied {
+            self.engines
+                .apply_chat(&self.config.engine, keys, gateway, loc);
             applied_any = true;
         }
-        if embed && !self.engines.embed_is_current(&self.config.embed, keys) {
-            self.engines.apply_embed(&self.config.embed, keys, loc);
+        if embed
+            && !self
+                .engines
+                .embed_is_current(&self.config.embed, keys, gateway)
+        {
+            self.engines
+                .apply_embed(&self.config.embed, keys, gateway, loc);
             applied_any = true;
         }
         if imp
-            && !self
-                .engines
-                .impersonation_is_current(&self.config.impersonation_engine, keys)
+            && !self.engines.impersonation_is_current(
+                &self.config.impersonation_engine,
+                keys,
+                gateway,
+            )
         {
             self.engines
-                .apply_impersonation(&self.config.impersonation_engine, keys, loc);
+                .apply_impersonation(&self.config.impersonation_engine, keys, gateway, loc);
             applied_any = true;
         }
-        if mcp && !self.mcp.is_current(&self.config.mcp, keys) {
+        // Decided while `keys` is still borrowed; what follows takes `self` whole.
+        let mcp_stale = mcp && !self.mcp.is_current(&self.config.mcp, keys);
+        if chat_applied {
+            self.refresh_chat_engine();
+        }
+        if mcp_stale {
             self.apply_mcp_settings();
         }
         if applied_any {
@@ -222,8 +255,29 @@ impl Orchestrator {
     /// go through the `restarts` debounce queue → [`Self::flush_restarts`].
     pub(super) fn apply_chat_settings(&mut self) {
         let loc = self.ui_locale();
-        self.engines
-            .apply_chat(&self.config.engine, &self.config.api_keys, loc);
+        self.engines.apply_chat(
+            &self.config.engine,
+            &self.config.api_keys,
+            &self.config.openrouter,
+            loc,
+        );
+        self.refresh_chat_engine();
+        self.emit_server_status();
+    }
+
+    /// Everything that was learned from the chat engine is asked again: it has
+    /// just been replaced.
+    ///
+    /// Called by **every** path that applies one — the start-up and the settings
+    /// edit alike. Until the second one did, what was learned survived any
+    /// switch that flipped no status: a managed or external server announces
+    /// itself through its probe, which lands here by way of
+    /// [`Self::handle_chat_status`], but a cloud is ready at once and says
+    /// nothing, so the previous engine's window went on deciding when
+    /// compaction fired (docs/research/openrouter-mode.md §4.1, §9 A2) — and a
+    /// gateway, where another model is one field away, would have kept the
+    /// previous model's window and sampling list.
+    fn refresh_chat_engine(&mut self) {
         // A different engine has a different context window, and an answer from
         // the previous one must not be carried over — nor an in-flight one
         // applied when it lands (spec §6.7). Asked again at once, not at the first
@@ -234,7 +288,6 @@ impl Orchestrator {
         self.refresh_model_name();
         // And its slot count: the hint must not describe the previous server.
         self.refresh_engine_slots();
-        self.emit_server_status();
     }
 
     /// The chat server's readiness flipped. A method rather than the loop's arm so
@@ -262,8 +315,12 @@ impl Orchestrator {
     /// (the embeddings chip in the status line appears/disappears based on the setting).
     pub(super) fn apply_embed_settings(&mut self) {
         let loc = self.ui_locale();
-        self.engines
-            .apply_embed(&self.config.embed, &self.config.api_keys, loc);
+        self.engines.apply_embed(
+            &self.config.embed,
+            &self.config.api_keys,
+            &self.config.openrouter,
+            loc,
+        );
         // Two decorators, and the order is load-bearing:
         //
         //   EmbedGuard { PrefixedEmbedder { real embedder } }
@@ -318,15 +375,23 @@ impl Orchestrator {
         let chat_managed = self.config.engine.mode == ServerMode::Managed;
         if chat_managed && self.needs_relaunch(Server::Chat, now) {
             tracing::warn!("managed chat server is down — relaunching");
-            self.engines
-                .apply_chat(&self.config.engine, &self.config.api_keys, loc);
+            self.engines.apply_chat(
+                &self.config.engine,
+                &self.config.api_keys,
+                &self.config.openrouter,
+                loc,
+            );
             relaunched = true;
         }
         if self.config.embed.mode == ServerMode::Managed && self.needs_relaunch(Server::Embed, now)
         {
             tracing::warn!("managed embedding server is down — relaunching");
-            self.engines
-                .apply_embed(&self.config.embed, &self.config.api_keys, loc);
+            self.engines.apply_embed(
+                &self.config.embed,
+                &self.config.api_keys,
+                &self.config.openrouter,
+                loc,
+            );
             relaunched = true;
         }
         if self.config.impersonation_engine.mode == ImpersonationMode::Managed
@@ -336,6 +401,7 @@ impl Orchestrator {
             self.engines.apply_impersonation(
                 &self.config.impersonation_engine,
                 &self.config.api_keys,
+                &self.config.openrouter,
                 loc,
             );
             relaunched = true;
@@ -371,6 +437,7 @@ impl Orchestrator {
         self.engines.apply_impersonation(
             &self.config.impersonation_engine,
             &self.config.api_keys,
+            &self.config.openrouter,
             loc,
         );
         self.emit_server_status();

@@ -1,0 +1,82 @@
+{
+  "schema_version": 3,
+  "default_sampling": {
+    "temperature": 0.7,
+    "max_tokens": 16384,
+    "repeat_penalty": 1.1,
+    "thinking": true
+  },
+  "impersonation_sampling": {
+    "max_tokens": 1024,
+    "thinking": false
+  },
+  "engine": {
+    "mode": "external",
+    "managed": {
+      "model_path": "D:/models/gemma-4-31b-it.gguf",
+      "gpu_layers": 99,
+      "context_size": 16384,
+      "port": 8000,
+      "sessions": 1,
+      "concurrent_calls": 1
+    },
+    "external": {
+      "url": "https://openrouter.ai/api/v1",
+      "model_name": "anthropic/claude-haiku-4.5",
+      "sessions": 2,
+      "concurrent_calls": 4,
+      "api_key_env": "OPENROUTER_API_KEY"
+    },
+    "openai": {
+      "model_name": null,
+      "api_key_env": null,
+      "url": null,
+      "sessions": 1,
+      "concurrent_calls": 4
+    },
+    "gemini": {
+      "model_name": "gemini-3.5-flash",
+      "api_key_env": "GEMINI_API_KEY",
+      "url": null,
+      "sessions": 1,
+      "concurrent_calls": 4
+    },
+    "claude": {
+      "model_name": null,
+      "api_key_env": null,
+      "url": null,
+      "sessions": 1,
+      "concurrent_calls": 4
+    },
+    "grok": {
+      "model_name": "grok-4.6",
+      "api_key_env": null,
+      "url": null,
+      "sessions": 1,
+      "concurrent_calls": 4
+    }
+  },
+  "impersonation_engine": {
+    "mode": "shared"
+  },
+  "embed": {
+    "mode": "managed",
+    "managed": {
+      "model_path": "D:/models/bge-m3-Q8_0.gguf",
+      "gpu_layers": 99,
+      "port": 8001
+    },
+    "convention": "none"
+  },
+  "max_tool_rounds": 32,
+  "tools": {
+    "web_enabled": true
+  },
+  "tts": {
+    "mode": "gemini",
+    "speed": 1.0
+  },
+  "interface": {
+    "input_max_rows": 6
+  }
+}

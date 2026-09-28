@@ -325,7 +325,9 @@ fn spawn_title(
                             );
                             sample = u.prefill;
                         }
-                        ChatChunk::ThoughtsSignature(_) | ChatChunk::ToolCall(_) => {}
+                        ChatChunk::ThoughtsSignature(_)
+                        | ChatChunk::ToolCall(_)
+                        | ChatChunk::Served(_) => {}
                     }
                 }
                 Ok::<Collected, anyhow::Error>((text, thoughts, cancelled, sample))

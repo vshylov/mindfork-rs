@@ -1108,6 +1108,8 @@ fn merge_continuation_appends_in_place_and_keeps_the_model_name() {
         sampling: Default::default(),
         mode: Default::default(),
         model: Some(model.into()),
+        provider: None,
+        cost_nanos: None,
         finish: Some(finish),
     };
     let mut seed = Message::assistant("Начало было длинным и обстоятельным");
@@ -1459,6 +1461,8 @@ async fn continue_refusals_answer_with_the_route_that_works() {
         sampling: Default::default(),
         mode: Default::default(),
         model: None,
+        provider: None,
+        cost_nanos: None,
         finish: Some(MessageFinish::Stop),
     });
     orch.chat_mut(chat_id).unwrap().push_message(done);
@@ -1549,6 +1553,8 @@ async fn continue_through_a_gateway_follows_the_route_table() {
         sampling: Default::default(),
         mode: Default::default(),
         model: None,
+        provider: None,
+        cost_nanos: None,
         finish: Some(MessageFinish::Cancelled),
     });
     chat.push_message(partial);

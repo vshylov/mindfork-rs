@@ -35,7 +35,11 @@ pub(super) fn pool_for(
         ServerMode::External => reported_slots
             .filter(|&n| n > 1)
             .and_then(|_| context_budget()),
-        ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude | ServerMode::Grok => None,
+        ServerMode::OpenAi
+        | ServerMode::Gemini
+        | ServerMode::Claude
+        | ServerMode::Grok
+        | ServerMode::OpenRouter => None,
     }
 }
 

@@ -243,7 +243,12 @@ pub const SETTABLE_SAMPLING_FIELDS: &[&str] = &[
 ///   `400` ("Model grok-4.5 does not support parameter presencePenalty"), while
 ///   `top_k`/`min_p`/`repeat_penalty` and every llama.cpp extension are **silently
 ///   dropped** — they aren't in xAI's request schema, so offering them would be a
-///   lie rather than an error. No `verbosity` (OpenAI-Responses-specific).
+///   lie rather than an error. No `verbosity` (OpenAI-Responses-specific);
+/// - **OpenRouter** — what the gateway's own schema reads, measured by sending
+///   each field with a value of the wrong type
+///   (docs/research/openrouter-mode.md §3.5). This list is the **ceiling**, and
+///   the one a model's catalogue entry narrows ([`available_sampling_fields`]):
+///   which of these a given model takes is the entry's to say.
 ///
 /// This is the single source of truth for the settings UI (`cloud_supported_param`)
 /// and the `get_sampling`/`set_sampling` tools (show/change only what's available).
@@ -292,14 +297,16 @@ fn catalogue_aliases(field: &str) -> &'static [&'static str] {
 /// [`supported_sampling_fields`] exactly, which is what every local
 /// `llama-server` and every cloud gets. A **cloud** provider ignores the list
 /// outright: its table is a compile-time fact about that protocol (ADR 0004), not
-/// something a gateway's catalogue has standing to trim.
+/// something a gateway's catalogue has standing to trim. The one exception is
+/// the cloud that **is** a gateway: behind OpenRouter there is a different
+/// model per slug, and the catalogue is the only thing that knows which.
 pub fn available_sampling_fields(
     provider: Option<CloudProvider>,
     endpoint: Option<&[String]>,
 ) -> Vec<&'static str> {
     let base = supported_sampling_fields(provider);
     let Some(published) = endpoint
-        .filter(|_| provider.is_none())
+        .filter(|_| matches!(provider, None | Some(CloudProvider::OpenRouter)))
         .filter(|p| !p.is_empty())
     else {
         return base.to_vec();
@@ -335,6 +342,19 @@ pub fn supported_sampling_fields(provider: Option<CloudProvider>) -> &'static [&
             "top_p",
             "max_tokens",
             "seed",
+            "thinking",
+            "reasoning_effort",
+        ],
+        Some(CloudProvider::OpenRouter) => &[
+            "temperature",
+            "top_k",
+            "top_p",
+            "min_p",
+            "max_tokens",
+            "seed",
+            "frequency_penalty",
+            "presence_penalty",
+            "repeat_penalty",
             "thinking",
             "reasoning_effort",
         ],

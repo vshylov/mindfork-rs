@@ -9,12 +9,14 @@ use serde::{Deserialize, Serialize};
 use crate::entities::sampling::{ReasoningEffort, SamplingConfig};
 use crate::shared::api::contract::{ApiMessage, ApiRole, ChatRequest};
 
-// The only consumer of this client is the local/external llama.cpp `llama-server`
-// (managed/external). The clouds moved to their own protocols: OpenAI → Responses
+// This client's first consumer is the local/external llama.cpp `llama-server`
+// (managed/external): everything set is sent, since llama.cpp ignores what it
+// does not know. The clouds moved to their own protocols — OpenAI → Responses
 // ([`ResponsesClient`](super::ResponsesClient)), Gemini → native
 // [`GeminiClient`](crate::shared::api::gemini::GeminiClient), Claude → Anthropic
-// Messages. So there's no longer a sampling dialect/filter — send everything set
-// (llama.cpp ignores unknown fields). See ADR 0004.
+// Messages (ADR 0004) — except the two that speak Chat Completions: xAI, which
+// takes the body as it is, and the OpenRouter gateway, which has a dialect of
+// its own ([`ChatCompletionRequest::for_gateway`]).
 
 // ---------- chat request ----------
 
@@ -61,6 +63,12 @@ pub struct ChatCompletionRequest {
     pub presence_penalty: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repeat_penalty: Option<f32>,
+    /// The same knob under the name a **gateway** reads. Never set by
+    /// [`build_chat_request`]; [`ChatCompletionRequest::for_gateway`] moves
+    /// `repeat_penalty` here, because through OpenRouter the llama.cpp spelling
+    /// reaches no model (docs/research/openrouter-mode.md §2.4, D1).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repetition_penalty: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repeat_last_n: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -387,6 +395,7 @@ pub fn build_chat_request(
         frequency_penalty: s.frequency_penalty,
         presence_penalty: s.presence_penalty,
         repeat_penalty: s.repeat_penalty,
+        repetition_penalty: None,
         repeat_last_n: s.repeat_last_n,
         dry_multiplier: s.dry_multiplier,
         dry_base: s.dry_base,
@@ -413,6 +422,99 @@ pub fn build_chat_request(
         tools,
         tool_choice,
     }
+}
+
+impl ChatCompletionRequest {
+    /// The body as the **OpenRouter gateway** reads it
+    /// (docs/research/openrouter-mode.md §3.5, measured by sending each field with
+    /// a value of the wrong type):
+    ///
+    /// - `repeat_penalty` travels as `repetition_penalty` — the gateway's schema
+    ///   has the second name and drops the first unread;
+    /// - every field that is llama.cpp's own is left out: the gateway drops them,
+    ///   so sending them says nothing to the model and misdescribes the request
+    ///   to anyone reading it. `thinking` and `reasoning_budget` are among them —
+    ///   reasoning is asked for as `reasoning_effort` and `reasoning`, which the
+    ///   client fills from the catalogue ([`gateway_muted_effort`],
+    ///   [`gateway_reasoning`]);
+    /// - `/continue`'s explicit pair goes too: a gateway continues a trailing
+    ///   assistant message or does not, by the routed vendor, and the pair is not
+    ///   what decides (docs/history/gateway-images-and-continue.md §1.3).
+    ///
+    /// `top_k` and `min_p` stay: the gateway reads both, and the catalogue says
+    /// per model whether the provider takes them.
+    pub fn for_gateway(mut self) -> Self {
+        self.repetition_penalty = self.repeat_penalty.take();
+        self.repeat_last_n = None;
+        self.dynatemp_range = None;
+        self.dynatemp_exponent = None;
+        self.top_n_sigma = None;
+        self.typical_p = None;
+        self.adaptive_target = None;
+        self.adaptive_decay = None;
+        self.dry_multiplier = None;
+        self.dry_base = None;
+        self.dry_allowed_length = None;
+        self.dry_penalty_last_n = None;
+        self.dry_sequence_breakers = None;
+        self.xtc_probability = None;
+        self.xtc_threshold = None;
+        self.mirostat = None;
+        self.mirostat_tau = None;
+        self.mirostat_eta = None;
+        self.samplers = None;
+        self.thinking = None;
+        self.reasoning_budget = None;
+        self.chat_template_kwargs = None;
+        self.continue_final_message = None;
+        self.add_generation_prompt = None;
+        self
+    }
+}
+
+/// The efforts a gateway's catalogue may list, lowest first. `none` is not among
+/// them: it is the request to turn reasoning off, which is a different question.
+const GATEWAY_EFFORTS: [&str; 6] = ["minimal", "low", "medium", "high", "xhigh", "max"];
+
+/// Whether the request asks for reasoning to be **off**: an effort of `none`, a
+/// zero budget, or the thinking switch set to off with no effort chosen — the
+/// three ways the orchestrator and the settings say it.
+pub fn asks_reasoning_off(sampling: &SamplingConfig) -> bool {
+    match sampling.reasoning_effort {
+        Some(effort) => effort == ReasoningEffort::None,
+        None => sampling.reasoning_budget == Some(0) || sampling.thinking == Some(false),
+    }
+}
+
+/// The effort a **muted** turn asks for on a model that cannot be muted, or
+/// `None` to send the request as built.
+///
+/// Measured through OpenRouter (docs/research/openrouter-mode.md §4.1): a model
+/// whose catalogue entry says `reasoning.mandatory: true` answers both
+/// `reasoning_effort: "none"` and `reasoning: {enabled: false}` with a `400`
+/// ("Reasoning is mandatory for this endpoint and cannot be disabled"), and the
+/// lowest effort it lists with a `200` — on Gemini 3.5 Flash zero reasoning
+/// tokens and a thirtieth of the cost of its default. So the silent turns — the
+/// title, the compaction roll, impersonation — ask for that instead of being
+/// refused, re-sent and billed at the default depth.
+///
+/// `mandatory` also covers a server that has already refused (`off_refused`): a
+/// catalogue that said nothing, or said `false` wrongly, is corrected by the
+/// refusal itself. A model that lists no efforts gets `None` — there is nothing
+/// lower to ask for — and the caller sends no reasoning field at all.
+pub fn gateway_muted_effort(
+    sampling: &SamplingConfig,
+    entry: Option<&ModelEntry>,
+    off_refused: bool,
+) -> Option<&'static str> {
+    if !asks_reasoning_off(sampling) {
+        return None;
+    }
+    let mandatory = off_refused || entry.and_then(ModelEntry::reasoning_mandatory) == Some(true);
+    if !mandatory {
+        return None;
+    }
+    entry?.lowest_effort()
 }
 
 /// The body of a gateway's `reasoning` object — the switch alone; an effort keeps
@@ -467,6 +569,11 @@ pub fn gateway_reasoning(
 pub struct ChatCompletionChunk {
     #[serde(default)]
     pub choices: Vec<ChatChoiceChunk>,
+    /// The company that served the request, as a **gateway** names it on every
+    /// chunk (OpenRouter: `"Amazon Bedrock"` for an Anthropic model). Absent from
+    /// every server that is not a gateway.
+    #[serde(default)]
+    pub provider: Option<String>,
     /// The token counter: sent as the final chunk when
     /// `stream_options.include_usage=true` (such a chunk's `choices` is usually empty).
     #[serde(default)]
@@ -557,6 +664,20 @@ pub struct Usage {
     pub completion_tokens: u32,
     #[serde(default)]
     pub completion_tokens_details: CompletionTokensDetails,
+    /// What the request cost, in dollars — a gateway's own meter (OpenRouter puts
+    /// it on the stream's last chunk). Absent everywhere else.
+    #[serde(default)]
+    pub cost: Option<f64>,
+}
+
+impl Usage {
+    /// [`Self::cost`] in billionths of a dollar — an integer, so that what is
+    /// stored compares and sums exactly. `None` for no figure, a negative one or
+    /// one that is not a number.
+    pub fn cost_nanos(&self) -> Option<u64> {
+        let cost = self.cost.filter(|c| c.is_finite() && *c >= 0.0)?;
+        Some((cost * 1e9).round() as u64)
+    }
 }
 
 /// Token breakdown of the Chat Completions response (only reasoning tokens matter).
@@ -636,6 +757,16 @@ pub struct ModelList {
     pub data: Vec<ModelEntry>,
 }
 
+/// `GET /model/{author}/{slug}` — OpenRouter's answer about **one** model: the
+/// same entry the catalogue lists, under `data`. Two kilobytes where the whole
+/// catalogue is three quarters of a megabyte, and the gateway resolves a
+/// `:variant` suffix and a `~…-latest` alias itself, which the list cannot
+/// (docs/research/openrouter-mode.md §4.1).
+#[derive(Debug, Deserialize)]
+pub struct ModelEnvelope {
+    pub data: ModelEntry,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct ModelEntry {
     #[serde(default)]
@@ -695,6 +826,20 @@ impl ModelEntry {
     /// catalogue did not say.
     pub fn reasoning_mandatory(&self) -> Option<bool> {
         self.reasoning.as_ref()?.get("mandatory")?.as_bool()
+    }
+
+    /// The lowest effort `reasoning.supported_efforts` lists, in the spelling the
+    /// request takes. `None` — no list, an empty one, or one that names nothing
+    /// this client knows the order of.
+    pub fn lowest_effort(&self) -> Option<&'static str> {
+        let listed = self
+            .reasoning
+            .as_ref()?
+            .get("supported_efforts")?
+            .as_array()?;
+        GATEWAY_EFFORTS
+            .into_iter()
+            .find(|effort| listed.iter().any(|l| l.as_str() == Some(effort)))
     }
 }
 

@@ -503,6 +503,11 @@ enum FieldId {
     /// docs/research/concurrent-tools.md §4.4). Beside `XSessions`, routed
     /// the same way; assistant only, like it.
     XConcurrent,
+    /// Whether requests to the OpenRouter gateway name the application
+    /// (`openrouter.attribution`). **One** field under three tabs: it is the
+    /// provider's, not a slot's, so every tab whose mode is the gateway shows
+    /// the same switch (docs/research/openrouter-mode.md, fork F5).
+    GatewayAttribution,
     // Model/server — Impersonation
     IxMode,
     IxUrl,

@@ -136,6 +136,8 @@ mod tests {
             sampling: SamplingConfig::default(),
             mode,
             model: model.map(Into::into),
+            provider: None,
+            cost_nanos: None,
             finish: None,
         });
         msg
@@ -230,6 +232,8 @@ mod tests {
             sampling: SamplingConfig::default(),
             mode: ServerMode::OpenAi,
             model: Some("not-a-reply".into()),
+            provider: None,
+            cost_nanos: None,
             finish: None,
         });
         let chat = chat_of(

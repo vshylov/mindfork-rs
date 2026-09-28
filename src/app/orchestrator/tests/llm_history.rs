@@ -15,6 +15,8 @@ fn reply(model: Option<&str>, mode: ServerMode, finish: MessageFinish) -> Messag
         sampling: SamplingConfig::default(),
         mode,
         model: model.map(Into::into),
+        provider: None,
+        cost_nanos: None,
         finish: Some(finish),
     });
     msg
