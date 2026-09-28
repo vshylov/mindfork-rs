@@ -66,6 +66,9 @@ OPTIONAL = ["privacy", "disclaimer", "license", "code-signing-policy"]
 #: repository is not a content file and has no front matter to read it from.
 REPO_NOTE = "the source, the issue tracker and the releases"
 
+#: The same for the crate's page, the header's other link off the site.
+CRATE_NOTE = "the published crate, for `cargo install --locked mindfork`"
+
 
 class Refusal(Exception):
     """A condition the caller must fix; the message is the whole explanation."""
@@ -176,6 +179,7 @@ def render(root: Path) -> str:
     out += ["## Start here", ""]
     out.append(f"- [Install]({base}/install/): {install['description']}")
     out.append(f"- [Source on GitHub]({conf('github')}): {REPO_NOTE}")
+    out.append(f"- [mindfork on crates.io]({conf('crates')}): {CRATE_NOTE}")
     out.append("")
 
     for heading, folder, by in [("Articles", "articles", "weight"),
@@ -204,7 +208,8 @@ def self_test() -> int:
         (content / "blog").mkdir(parents=True)
         (tmp / "site" / "zola.toml").write_text(
             'base_url = "https://example.test"\ntitle = "proj"\n'
-            'description = "a summary"\ngithub = "https://github.com/o/r"\n',
+            'description = "a summary"\ngithub = "https://github.com/o/r"\n'
+            'crates = "https://crates.io/crates/c"\n',
             encoding="utf-8",
         )
         (content / INDEX_FILE).write_text(
@@ -238,6 +243,7 @@ def self_test() -> int:
             ("date stripped from the post URL", "/blog/2026-02-01-new/" not in text),
             ("Optional section last", text.rindex("## Optional") > text.rindex("## News")),
             ("repository listed", "https://github.com/o/r" in text),
+            ("crate listed", "https://crates.io/crates/c" in text),
             ("draft left out", "Unfinished" not in text),
         ]
         for label, ok in checks:

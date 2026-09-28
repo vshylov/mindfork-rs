@@ -6,8 +6,9 @@ Run local models through llama.cpp — or bring OpenAI, Anthropic, Gemini and Gr
 
 ## Start here
 
-- [Install](https://mindfork.io/install/): Download mindfork for Windows or Linux: the installer, the packages, the portable archives — what each one is for, how to verify it, and what to do first.
+- [Install](https://mindfork.io/install/): Get mindfork for Windows or Linux: the installer, the packages, the portable archives or crates.io — what each one is for, how to verify it, and what to do first.
 - [Source on GitHub](https://github.com/vshylov/mindfork-rs): the source, the issue tracker and the releases
+- [mindfork on crates.io](https://crates.io/crates/mindfork): the published crate, for `cargo install --locked mindfork`
 
 ## Articles
 

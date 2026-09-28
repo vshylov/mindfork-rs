@@ -25,6 +25,6 @@
     "priceCurrency": "USD"
   },
   "author": { "@id": "{{ config.base_url }}/#author" },
-  "sameAs": {{ config.extra.github | json_encode | safe }}
+  "sameAs": {{ [config.extra.github, config.extra.crates] | json_encode | safe }}
 }
 </script>
