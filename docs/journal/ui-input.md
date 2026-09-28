@@ -1711,8 +1711,9 @@ through `TestBackend` (lessons §2: a text assertion does not see composition).
   "InputBox refinements" entry). `wrap::cluster_starts` lists the cluster
   starts in one pass: asking `prev_boundary` per cluster rebuilds the string
   each time, which is quadratic over a long run of one class (a pasted blob).
-- **Decided without asking, and said in the PR** — each is the conventional
-  answer and each is one line to reverse:
+- **User's decision** (2026-09-28) — the request named movement only, so these
+  were taken as the conventional answers, said in the PR, and **confirmed by
+  the user** after trying the build:
   - *Deletion and selection follow.* `Ctrl+Backspace/Delete` and
     `Ctrl+Shift+←/→` go through the same two functions, so deleting by word
     removes exactly what moving by word would have crossed. Leaving deletion on
