@@ -2218,6 +2218,21 @@ one line and is the cheapest cross-check on all of it.
 *SonarQube follow-up — the screenshots SVG writer*, *command-only control —
 stage 2*, *public release readiness — stage 3, the release pipeline*.
 
+**A `tools/*.sh` is analysed by Sonar's shell rules, and nothing makes you look.**
+`sonar.sources` holds `tools/`, so a script there is scored on `[[` over `[`
+(`shelldre:S7688`), an explicit `return` closing every function (`S7682`) and `$1`
+named by a `local` before use (`S7679`) — while `packaging/linux/*.sh`, outside the
+sources, is never looked at. The findings are maintainability-class: the PR
+analysis records them and the gate stays green, so they land on `main` as a
+backlog, and the snippet analyzer takes no shell to catch them sooner. Twice now:
+`install_nfpm.sh` (fixed on its own PR, which a security finding elsewhere had
+reddened), and `pod_probe.sh` — 20 findings merged green with #609 and open on `main` a
+week later. Write a new one in that shape from the start — `tools/install_nfpm.sh`
+is the model — and when an existing one is reshaped, a stub `PATH` (fake `curl`,
+the binary, the server) run against the old and the new copy with the two reports
+diffed is how "no behaviour changed" is measured for a script that cannot run here.
+— *SonarQube follow-up — the pod probe's shell findings*.
+
 **An invariant enforced only where data is *written* is not enforced.** The code
 workspace's journal reset lived inside `Journal::record` — correct, and useless for the
 window it mattered in: re-attaching a chat to another project left the old journal in

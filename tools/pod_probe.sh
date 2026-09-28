@@ -33,8 +33,8 @@ PORT=8011
 mkdir -p "$APP" || { echo "cannot create $APP"; exit 1; }
 : > "$REPORT"
 
-say() { printf '%s\n' "$*" | tee -a "$REPORT"; }
-section() { say ""; say "== $*"; }
+say() { printf '%s\n' "$*" | tee -a "$REPORT"; return 0; }
+section() { say ""; say "== $*"; return 0; }
 # Runs a command, its output and its exit code both into the report.
 run() {
     say "\$ $*"
@@ -63,7 +63,7 @@ say "tools: $(for t in curl tar tmux unzip sha256sum apt-get python3; do command
 
 # ---------------------------------------------------------------- P8 machine-id
 section "P8 /etc/machine-id (compare the hash prefix across a stop/start)"
-if [ -e /etc/machine-id ]; then
+if [[ -e /etc/machine-id ]]; then
     say "size: $(wc -c < /etc/machine-id) bytes, sha256 prefix: $(sha256sum < /etc/machine-id | cut -c1-12)"
 else
     say "absent"
@@ -84,7 +84,7 @@ TAG="$(curl -fsSI "https://github.com/$REPO/releases/latest" | tr -d '\r' \
 say "latest release (from the redirect, no API call): ${TAG:-UNRESOLVED}"
 ARCHIVE="mindfork-rs-${TAG}-x86_64-linux.tar.gz"
 BASE="https://github.com/$REPO/releases/download/$TAG"
-if [ -n "$TAG" ] && [ ! -x "$APP/mindfork" ]; then
+if [[ -n "$TAG" && ! -x "$APP/mindfork" ]]; then
     run curl -fL --retry 5 --no-progress-meter -o "$DIR/$ARCHIVE" "$BASE/$ARCHIVE"
     run curl -fL --retry 5 --no-progress-meter -o "$DIR/sha256sums.txt" "$BASE/sha256sums.txt"
     ( cd "$DIR" && grep -F "$ARCHIVE" sha256sums.txt | sha256sum -c - ) 2>&1 | tee -a "$REPORT"
@@ -94,7 +94,7 @@ say "-- before any package is installed:"
 run "$APP/mindfork" --version
 if ! ldconfig -p 2>/dev/null | grep -q 'libasound\.so\.2'; then
     say "-- libasound.so.2 is absent; installing it (this is the measurement)"
-    if [ "$(id -u)" = 0 ] && command -v apt-get >/dev/null; then
+    if [[ "$(id -u)" == 0 ]] && command -v apt-get >/dev/null; then
         SECONDS=0
         apt-get update -qq >/dev/null 2>&1
         if apt-get install -y -qq --no-install-recommends libasound2t64 >/dev/null 2>&1; then
@@ -130,7 +130,7 @@ run "$APP/mindfork" llama backends
 section "P3 the official CUDA build"
 BACKEND="$("$APP/mindfork" llama backends 2>/dev/null | awk '$1 ~ /^cuda-12/{print $1; exit}')"
 say "backend picked from the list: ${BACKEND:-NONE}"
-if [ -n "$BACKEND" ]; then
+if [[ -n "$BACKEND" ]]; then
     say "-- without --no-cudart (0.10.2 REFUSES this; a release with the fix installs it):"
     run "$APP/mindfork" llama setup --backend "$BACKEND"
     say "-- with --no-cudart (the host's own CUDA libraries):"
@@ -140,19 +140,20 @@ LLAMA="$(find "$APP/data/llama" -maxdepth 2 -name llama-server -type f 2>/dev/nu
 LLAMA_DIR="$(dirname "${LLAMA:-/nonexistent/x}")"
 say "installed: ${LLAMA:-NOTHING}"
 cuda_links() { # which libcudart/libcublas the CUDA backend resolves to
-    local lib
-    lib="$(find "$1" -maxdepth 1 -name 'libggml-cuda*.so*' | head -1)"
-    [ -n "$lib" ] && ldd "$lib" 2>&1 | grep -E 'cudart|cublas|not found' | tee -a "$REPORT"
+    local build_dir="$1" lib
+    lib="$(find "$build_dir" -maxdepth 1 -name 'libggml-cuda*.so*' | head -1)"
+    [[ -n "$lib" ]] && ldd "$lib" 2>&1 | grep -E 'cudart|cublas|not found' | tee -a "$REPORT"
+    return 0
 }
-if [ -n "$LLAMA" ]; then
+if [[ -n "$LLAMA" ]]; then
     run "$LLAMA" --list-devices
     cuda_links "$LLAMA_DIR"
-    if [ -z "${SKIP_CUDART:-}" ]; then
+    if [[ -z "${SKIP_CUDART:-}" ]]; then
         ID="$(basename "$LLAMA_DIR")"; LTAG="${ID##*-}"; LBACK="${ID%-*}"
         RT="cudart-llama-${LTAG}-bin-ubuntu-${LBACK}-x64.tar.gz"
         WITH="$DIR/llama-with-cudart"
         say "-- the same build with upstream's runtime archive beside it ($RT):"
-        if [ ! -d "$WITH" ]; then
+        if [[ ! -d "$WITH" ]]; then
             cp -a "$LLAMA_DIR" "$WITH"
             run curl -fL --retry 5 -C - --no-progress-meter -o "$DIR/$RT" \
                 "https://github.com/ggml-org/llama.cpp/releases/download/$LTAG/$RT"
@@ -168,28 +169,29 @@ fi
 
 # ---------------------------------------------------------------- P4 + P7
 section "P4 time to ready, cold then warm; P7 the volume"
-if [ -n "$LLAMA" ]; then
-    [ -f "$MODEL" ] || run curl -fL --retry 10 --retry-all-errors --http1.1 -C - \
+if [[ -n "$LLAMA" ]]; then
+    [[ -f "$MODEL" ]] || run curl -fL --retry 10 --retry-all-errors --http1.1 -C - \
         --no-progress-meter -o "$MODEL" "$EMBED_URL"
     say "model: $(wc -c < "$MODEL" 2>/dev/null) bytes"
     say "-- P7 sequential read, bypassing the page cache:"
     dd if="$MODEL" of=/dev/null bs=4M iflag=direct 2>&1 | tail -1 | tee -a "$REPORT"
     export CUDA_CACHE_PATH="$DIR/cuda-cache"
-    ready() { # $1 — label. Whole seconds: the question is a JIT's minutes.
-        local code="" i pid
+    ready() { # label. Whole seconds: the question is a JIT's minutes.
+        local label="$1" code="" i pid
         SECONDS=0
         "$LLAMA" -m "$MODEL" --embeddings -ngl 99 -c 8192 -ub 8192 -b 8192 \
-            --host 127.0.0.1 --port "$PORT" > "$DIR/server-$1.log" 2>&1 &
+            --host 127.0.0.1 --port "$PORT" > "$DIR/server-$label.log" 2>&1 &
         pid=$!
         for i in $(seq 1 1200); do
             code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/health")"
-            [ "$code" = 200 ] && break
+            [[ "$code" == 200 ]] && break
             kill -0 "$pid" 2>/dev/null || { code="exited"; break; }
             sleep 0.5
         done
-        say "ready[$1]: $code after ${SECONDS}s"
-        grep -iE 'found [0-9]+ CUDA|offloaded|error|failed' "$DIR/server-$1.log" | head -6 | tee -a "$REPORT"
+        say "ready[$label]: $code after ${SECONDS}s"
+        grep -iE 'found [0-9]+ CUDA|offloaded|error|failed' "$DIR/server-$label.log" | head -6 | tee -a "$REPORT"
         kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+        return 0
     }
     ready cold
     ready warm
@@ -200,7 +202,7 @@ fi
 
 # ---------------------------------------------------------------- P5 sandbox
 section "P5 the Python sandbox in this container"
-if [ -z "${SKIP_SANDBOX:-}" ]; then
+if [[ -z "${SKIP_SANDBOX:-}" ]]; then
     SECONDS=0
     run "$APP/mindfork" sandbox setup --enable-python
     say "wall time: ${SECONDS}s; on disk: $(du -sh "$APP/data/sandbox" 2>/dev/null | cut -f1)"
