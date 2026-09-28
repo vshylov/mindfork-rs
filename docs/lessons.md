@@ -1751,17 +1751,33 @@ compatibility the attribute is there for.
 
 **A new field is additive; a new *value* of an existing enum is not.** An
 unknown key is ignored, but an unknown value fails the parse — and
-`settings.json` is read as a whole, with `load_config().unwrap_or_default()`, so
-one value an older binary does not know costs the user **every** setting, in
-silence, and the next save writes the defaults over the file. The start-up gate
-does not catch it: a file at the current schema version is only parsed as
-untyped JSON. So a setting that will grow — a mode, a provider, a policy — is
-either a new field, or an enum read leniently from its first release (unknown →
-the default, with a line in the log), or a schema bump, which is what makes an
-older binary refuse instead of guess. Adding `mono` to `Theme` would have been
-the four-character version of this mistake; the colour mode is a field of its
-own, parsed by `lenient_theme_mode`, for that reason.
-— *colour modes — the full mode*.
+`settings.json` is read as a whole, so one value an older binary does not know
+fails **the file**. Since *a settings file the typed parse refuses* that is a
+refusal to start; in every release up to 0.11.2 it was worse — the load fell
+back to the defaults, in silence, and the next save wrote them over the file.
+Either way an older binary cannot run on the newer file. So a setting that will
+grow — a mode, a provider, a policy — is either a new field, or an enum read
+leniently from its first release (unknown → the default, with a line in the
+log), or a schema bump, which makes the refusal say "newer version" instead of
+"unknown variant". Adding `mono` to `Theme` would have been the four-character
+version of this mistake; the colour mode is a field of its own, parsed by
+`lenient_theme_mode`, for that reason.
+— *colour modes — the full mode*, *a settings file the typed parse refuses*.
+
+**A fallback to the defaults on a read is a write in waiting.**
+`load_config().unwrap_or_default()` reads as "be forgiving", and what it does is
+hold the defaults in memory under the name of the user's data until something
+saves them — here the orchestrator, at start-up, remembering the open chat. One
+misspelt value cost every setting and every stored key, and the second save
+took the one-deep `.bak`. The same line in four other places had four other
+costs, none of them visible from the line: a backup written in **plaintext**
+(the stored password read as none), a build removed without the in-use check,
+an import saving the defaults over the file. Before writing `unwrap_or_default`
+on a load, follow the value to where it is saved or acted on; if it is, the
+error is the answer and the defaults are a guess. And a gate that reads a file
+as an untyped `Value` has checked that it is JSON, not that it is *the file* —
+the typed parse is the only check that knows what the loader knows.
+— *a settings file the typed parse refuses*.
 
 **Additive is free; a value rewrite is a migration.** A new `#[serde(default)]` field, a
 `CREATE TABLE IF NOT EXISTS`, or a guarded `ALTER TABLE … ADD COLUMN` needs no schema

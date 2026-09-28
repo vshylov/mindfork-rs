@@ -60,6 +60,21 @@ split by subsystem.
   the Python mode, the auto-title — carried the `•` "changed" marker at its
   default, and `Del` on it did nothing. The marker now means what it says, and
   `Del` resets.
+- **One unreadable value in `settings.json` no longer costs all the settings.**
+  A settings file with a misspelt value (`"theme": "drak"`), a number where text
+  belongs, or a value written by a newer version used to start the app on the
+  defaults without a word — and the defaults were then saved over the file,
+  stored API keys included. The app now refuses to start instead: it names the
+  file, the value, the values it would have accepted and the line, and changes
+  nothing. `profiles.json` is checked the same way.
+- **A backup stays encrypted when the settings cannot be read in full.** With
+  such a file the stored backup password read as "none", and `mindfork backup`
+  wrote the archive unencrypted. `backup`, `restore` and `stats` now find the
+  password in the file regardless — so a settings file the app refuses to start
+  on can still be backed up first — and say so when they cannot.
+- **`mindfork llama remove` no longer removes a build it could not check.** With
+  a settings file it could not read, a build the settings point at was removed
+  without `--force`. It is refused now, and `--force` is the way round.
 
 ### Data
 - `settings.json` gains `interface.theme_mode` (written only once a mode is

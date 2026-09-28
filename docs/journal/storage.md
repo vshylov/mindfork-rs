@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (16)
+## Entries (17)
 
 - Post-M9: persisting the input-box draft in the chat file (done)
 - Post-M9: persisting deleted exchanges in the chat file (`Ctrl+E`/`Ctrl+R`) (done)
@@ -28,6 +28,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: safe defaults 2b — the data root is the owner's alone on unix (done)
 - Post-M9: `mindfork stats` — which copy of the data is the newest (done)
 - Post-M9: `mindfork stats --compare` — what each copy holds that the other lacks (done)
+- Post-M9: a settings file the typed parse refuses (done)
 
 ### Post-M9: persisting the input-box draft in the chat file (done)
 - **Unsaved input-box text is stored on the chat and restored on
@@ -937,3 +938,80 @@ discards is recoverable from `backups/`.
   file and the command to run. 0.24 s against a snapshot in a debug build.
 - No merge (G8) — it is on the roadmap as its own track. 3379 unit tests (+20), 196
   `#[ignore]`.
+
+### Post-M9: a settings file the typed parse refuses (done)
+- **The defect.** A `settings.json` that is valid JSON and fails deserialization into
+  `AppConfig` — a misspelt enum value (`"theme": "drak"`), a newer version's value, a
+  string where a number belongs — reset the **whole** configuration to the defaults, in
+  silence. The start-up gate read the file as an untyped `Value`, found it at the current
+  schema and passed it (only a *migrated* file got the typed `control_parse`);
+  `launch_tui` loaded with `load_config().unwrap_or_default()`; and the orchestrator's
+  first save wrote the defaults over the file. Found in passing on the colour-modes
+  track, which worked around it for one field and wrote the trap into lessons §8.
+  Design note with the measurements and the forks:
+  [docs/research/settings-typed-parse.md](../research/settings-typed-parse.md).
+- **Reproduced before anything was changed**, by a test asserting the defect: four
+  sections of the user's values and one typo in, `AppConfig::default()` out, and after
+  two saves the values in neither `settings.json` nor the one-deep `settings.bak`. It
+  passed on the code as it was, **failed at the gate** once the fix was in, and was then
+  turned over.
+- **Three things the report did not know.** The overwrite happens **at start-up**, not
+  "at the next routine save": a default config remembers no chat, so activating the
+  first one is a switch and `remember_active_chat` saves. The stored secrets go with the
+  settings — `api_keys` holds the cloud keys and the backup password. And
+  `mindfork backup` wrote a **plaintext** archive for a user whose settings said
+  "encrypted", because through the defaulted config the stored password read as none.
+- **Measured** (a scratch probe over a default config, not committed): **289** leaves,
+  and **289 of 289** fail the whole file when given a value of the wrong type; **20**
+  fields over 15 enum types are the "unknown value" case proper; one field was read
+  leniently. So this was never about themes — any value in the file was one keystroke
+  from costing all of them.
+- **User's decisions, 2026-09-28, each at the recommendation.** **F1(a)** refuse to
+  start (against loading leniently, and against a hybrid): it is what the gate does next
+  to it for corrupt JSON and a newer schema, it tells the person who has just edited the
+  file the value, the accepted values and the line, and it guesses nothing —
+  `engine.mode` falling back to `managed` would start a local server nobody asked for.
+  **F2(b)** best effort for `backup`/`restore`/`stats`. **F3(a)** `profiles.json` under
+  the same gate.
+- **What was built.**
+  - `data_migration::assess_file` gives a file at the current version the typed parse.
+    `control_parse` became generic over the deserializer so that one function serves a
+    migrated `Value` and a file's **bytes** — and it is the bytes here, because only
+    there does serde's error keep its position: `unknown variant `drak`, expected one of
+    `auto`, `dark`, `light` at line 5 column 32`. Two keys per locale,
+    `migrate.err.settings_invalid` / `profiles_invalid`.
+  - `main.rs`: the start-up load is a function, `startup_config`, that returns the
+    error — what holds if the gate was not run; `run_import` propagates;
+    `run_llama_remove`'s check moved into `refuse_a_build_in_use`, which refuses settings
+    it cannot ask and names `--force` (which now skips the read along with the check).
+  - `backup::backup_settings` reads the stored password and `tools.fs_root` from the
+    **raw JSON**; the pre-migration backup's own raw reader now goes through it. A file
+    that cannot give them at all does not stop the command — it says on stderr that the
+    stored password is unavailable.
+  - `try_settings_language` reads its one field from the raw JSON, so the refusal about
+    a settings file is printed in the language that file names. It used to parse the
+    whole `AppConfig` for it, and fell back to the installer's language exactly when
+    there was something to say.
+- **Not changed, and why.** The on-disk format and the schema version. A chat file that
+  does not parse is still skipped with a warning. A file *below* the current schema that
+  holds such a value is still reported by `migrate.err.control_parse`, whose words blame
+  the migration: it cannot be typed-parsed before its steps run, the case needs an old
+  file edited by hand and never opened since, and nothing is written either way.
+- **Mutation check — 12 of 12 killed**, by the recipe of lessons §2 (every mutant written
+  in at once behind a run-time switch, one build, the sources restored from a copy and
+  the tree's fingerprint compared): the gate skipping the typed parse; parsing the
+  `Value` instead of the bytes (caught by the `at line 4 column` assertion alone); the
+  refusal in the corrupt file's words; the start-up load, `llama remove` and the backup
+  settings each going back to the defaults; the in-use check never refusing; a key list
+  that is not one reading as "no password"; the language through the typed config, and
+  an absent language reading as nothing; `import` skipping the gate; a fresh root not
+  given the installer's language. One line has no mutant that a test can tell apart:
+  `run_import`'s own propagated load sits behind the gate, which refuses first.
+- **Live run — GO** (no engine involved; the real binary, a copy in a scratch directory
+  with a data root of its own holding the typo). `mindfork import` from a shell, with the
+  file naming `en` and then `ru`: exit 1, the refusal in **that** language, the file
+  byte-identical, no `settings.bak`. The full-screen start in a hidden console
+  (`tools/console_probe.py`'s `Session`): the refusal on the screen with serde's line
+  and column, *Press Enter to close this window* under it, exit 1 after `Enter`, the file
+  untouched.
+- 3592 unit tests (+14), 202 `#[ignore]`.

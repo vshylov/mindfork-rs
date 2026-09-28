@@ -1608,11 +1608,13 @@ pub enum Theme {
 ///
 /// Deliberately **not** `Deserialize`: the field is read through
 /// [`lenient_theme_mode`], because a value this binary does not know must not
-/// fail the parse. `settings.json` is read with `unwrap_or_default()`, so one
-/// unparsable value costs the user the whole configuration — and this enum
-/// grows (`mono` joined it a stage after `full`), which is exactly how an
-/// older binary meets such a value. For the same reason the modes are a field
-/// of their own rather than new values of [`Theme`].
+/// fail the parse. `settings.json` is read as a whole, so one unparsable value
+/// fails the file — the app refuses to start on it
+/// (`features::data_migration`), and before that refusal existed it cost the
+/// user the whole configuration — and this enum grows (`mono` joined it a
+/// stage after `full`), which is exactly how an older binary meets such a
+/// value. For the same reason the modes are a field of their own rather than
+/// new values of [`Theme`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ThemeMode {
@@ -3321,11 +3323,11 @@ mod tests {
         assert_eq!(chosen.theme_mode, None);
     }
 
-    /// The reason the mode is parsed leniently. `settings.json` is loaded with
-    /// `unwrap_or_default()`, so a value that fails the parse takes **every**
-    /// setting with it — and the enum grows: `mono` was such a value to the
-    /// binary that only knew `full`. The control arm is `theme`, a plain enum,
-    /// which does fail.
+    /// The reason the mode is parsed leniently. `settings.json` is read as a
+    /// whole, so a value that fails the parse fails the file — a refusal to
+    /// start today, **every** setting lost before the typed gate — and the
+    /// enum grows: `mono` was such a value to the binary that only knew
+    /// `full`. The control arm is `theme`, a plain enum, which does fail.
     #[test]
     fn a_colour_mode_from_a_newer_version_does_not_cost_the_config() {
         for foreign in [r#""sepia""#, r#""FULL""#, "7", "true", r#"{"a":1}"#] {

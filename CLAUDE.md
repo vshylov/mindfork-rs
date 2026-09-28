@@ -178,7 +178,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-28, version 0.11.2)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3578 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **3592 unit tests
 green, 202 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
@@ -191,6 +191,12 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **A settings file the typed parse refuses ends the start, not the settings** —
+  one misspelt value reset the whole config, which the first save wrote over the
+  file. The gate parses typed, no reader falls back to the defaults, a backup
+  reads its password from the raw JSON
+  ([docs/research/settings-typed-parse.md](docs/research/settings-typed-parse.md),
+  spec §12.2, [docs/journal/storage.md](docs/journal/storage.md)).
 - **Colour modes and user themes — track complete** (2026-09-28). Two passes over the
   finished frame (`ui::finish_frame`): `full` paints the theme's canvas, `mono` strips
   every colour and attribute — reverse video kept for a selection and a search match, a
