@@ -1,7 +1,7 @@
 +++
 title = "mindfork at a glance"
 description = "The shape of the app: an engine contract over OpenAI-compatible servers, a client-side agentic loop, one turn from start to finish, layered memory, boring durable storage — and where the trust boundaries are."
-updated = "2026-09-20"
+updated = "2026-09-29"
 weight = 1
 
 [extra]
@@ -23,8 +23,10 @@ mindfork does not embed an inference runtime. The engine is an
 mode the app launches and supervises a local llama.cpp `llama-server`
 itself; in external mode any OpenAI-compatible endpoint works — vLLM,
 LM Studio, Ollama, a remote box of your own. OpenAI, Anthropic, Gemini and
-Grok are sibling implementations of the same trait, so a chat can hop
-between a local Gemma and a cloud frontier model without changing shape.
+Grok are sibling implementations of the same trait, and the OpenRouter
+gateway is a mode beside them — one key in front of every vendor's models —
+so a chat can hop between a local Gemma and a cloud frontier model without
+changing shape.
 
 Two deliberate consequences follow. Embedding an inference library as a
 Rust dependency was rejected — it drags GPU toolchains into every build and

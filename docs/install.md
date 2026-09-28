@@ -660,13 +660,21 @@ Two modes (configured on the settings screen, `Ctrl+P`, "Model/server" section):
   calls"** field sits beside it, **1** by default here as on managed; the
   cloud modes default to **4**.
 
-**A cloud gateway is an `external` server too** — OpenRouter, LiteLLM, or any
-OpenAI-compatible reseller. It works, and five things are worth knowing before
-you point the app at one (the full compatibility review:
+**A cloud gateway is an `external` server too** — LiteLLM, a vLLM behind a
+proxy, or any OpenAI-compatible reseller. **OpenRouter has a mode of its own**,
+`openrouter` (§3.2), and that mode is the way to use it: one key for every slot,
+a request written in the gateway's own dialect, and nothing inferred from
+whether a catalogue happened to answer. `external` pointed at
+`https://openrouter.ai/api/v1` keeps working exactly as it did — the URL row
+then says that the mode exists, and nothing is moved for you. For every other
+gateway, and for OpenRouter kept in `external`, these are worth knowing before
+you point the app at one (the compatibility review they come from was made
+against OpenRouter:
 [docs/research/openrouter-external.md](research/openrouter-external.md)):
 
-- **the URL carries `/v1` and the model name is mandatory** — for OpenRouter,
-  `https://openrouter.ai/api/v1` and a slug such as `deepseek/deepseek-r1` in
+- **the URL carries `/v1` and the model name is mandatory** — against
+  OpenRouter, `https://openrouter.ai/api/v1` and a slug such as
+  `deepseek/deepseek-r1` in
   "Model (opt.)". The key goes into the same "API key (opt.)" field described in
   §3.2. A gateway routes on the request's `model` and refuses a request without
   one, so the field is only "optional" against a single-model server. `Enter` on
@@ -692,7 +700,11 @@ you point the app at one (the full compatibility review:
   offering the rest, and a message's "what was applied" record stops naming them
   — previously all three showed knobs that did nothing. `repeat_penalty` is the
   one to know about: gateways spell that field `repetition_penalty`, and the app
-  now recognises the two as the same knob;
+  recognises the two as the same knob **when it decides what to offer**. The
+  request itself is unchanged in `external` — that mode is also every local
+  `llama-server`, which reads llama.cpp's spelling — so through a gateway the
+  penalty is offered and, measured on OpenRouter, reaches no model. The
+  `openrouter` mode sends it under the gateway's name (§3.2);
 - **a tool's images and `/continue` depend on the provider the gateway routes
   to**, so the app adapts where the catalogue shows it is talking to a gateway.
   A picture a tool returns (a `python_exec` chart, an MCP screenshot) is sent in
@@ -727,7 +739,10 @@ attach is refused with a message pointing at the `--mmproj` field. A server that
 reports no `modalities` at all (vLLM, LM Studio, a proxy, any cloud) is treated as
 "cannot say" and the attach is allowed: a send-time provider error is a better
 outcome than refusing a setup that works. The four cloud providers answer
-"supported" outright — every current-generation model on them takes images.
+"supported" outright — every current-generation model on them takes images. In
+the `openrouter` mode the answer is the model's own entry in the gateway's
+catalogue, in both directions: an entry that lists image input attaches
+silently, one that does not refuses the attach.
 
 Example of a manual launch (external):
 
@@ -847,7 +862,9 @@ resolving to is the one that just went away.
 ### 3.2. Cloud providers and API keys
 
 Besides a local server, the engine can be a cloud: **OpenAI**, **Google Gemini**,
-**Claude** (Anthropic), or **Grok** (xAI). The mode is chosen in settings
+**Claude** (Anthropic), **Grok** (xAI), or the **OpenRouter** gateway — one
+account in front of every vendor's models, described under its own heading
+below. The mode is chosen in settings
 (`Ctrl+P` → "Model/server" → "Mode" field), where the model name is also set.
 **`Enter` on the model field asks the provider what it serves** and offers that
 list — type to filter it, `Ctrl+R` asks again, and the list's first row is the
@@ -857,8 +874,8 @@ names no model, and cannot recommend one that has since been retired. (For xAI,
 keys are issued at `console.x.ai`.)
 
 Neither Anthropic nor xAI offers embeddings, so under a `claude`/`grok` engine
-RAG needs a separate embedder (a local `llama-server --embeddings`, OpenAI, or
-Gemini) — set it in the same section's "Embeddings" tab.
+RAG needs a separate embedder (a local `llama-server --embeddings`, OpenAI,
+Gemini, or OpenRouter) — set it in the same section's "Embeddings" tab.
 
 **The key is entered right in settings** — the API-key field under the model
 name, labelled with the provider it belongs to ("OpenAI API key", "Gemini API
@@ -872,7 +889,9 @@ computer** (Windows — the system DPAPI; Linux — a key derived from
   moving back to the original computer the original key reads again;
 - a saved key **cannot be viewed or copied** from the app — editing means re-entering
   it; the field only shows "configured (this computer)";
-- one key serves **chat, impersonation, embeddings and speech** for that provider.
+- one key serves **chat, impersonation, embeddings and speech** for that provider
+  (for OpenRouter: chat, impersonation and embeddings — it has no speech mode
+  yet).
 
 The key is protected against moving/copying the file, but not against programs
 running under your own user account on the same computer (this is how browser
@@ -885,7 +904,8 @@ settings takes priority; the env one is used if no key was entered.
 
 **An external server's key works the same way.** In `external` mode — connecting to
 an OpenAI-compatible server you run or rent (a local `llama-server`, vLLM, LM Studio,
-or a gateway like LiteLLM or OpenRouter) — the same "API key (opt.)" field appears
+or a gateway like LiteLLM — or OpenRouter, if you keep it in `external`) — the same
+"API key (opt.)" field appears
 above "API key (env, opt.)", with the same behaviour and the same encrypted storage.
 Two differences from a cloud key:
 
@@ -896,6 +916,109 @@ Two differences from a cloud key:
   "Impersonation", "Embeddings" and "Speech" tabs each hold their own external URL, so
   each holds its own key. A cloud gateway for chat beside a local embedding server is
   the normal case, and sharing one key would send the gateway's token to localhost.
+
+#### The OpenRouter gateway (`openrouter`)
+
+OpenRouter is one account and one key in front of several hundred models from
+many vendors. It is a mode of its own on three tabs — **Assistant**,
+**Impersonation** and **Embeddings** — next to `managed`, `external` and the four
+clouds, so a local server and the gateway each keep their settings and switching
+between them retypes nothing. Design and measurements:
+[docs/research/openrouter-mode.md](research/openrouter-mode.md).
+
+**Setting it up.**
+
+1. `Ctrl+P` → "Model/server" → set **Mode** to `openrouter`.
+2. Enter the key in "OpenRouter API key" — or name the environment variable that
+   holds it (`OPENROUTER_API_KEY`, say) in the field below; no variable name is
+   assumed. **One stored key serves every tab in this mode**: the impersonation
+   and embedding slots need no key of their own, only a model.
+3. `Enter` on the **Model** row lists the gateway's catalogue. Each row is the
+   model's id, its context window, the price of a million tokens in and out
+   (`free` where both are zero) and `no tools` for a model that lists none —
+   this application is driven by tools, so such a model chats and does nothing
+   else. With a key the list is the **account's own** (`/models/user` — what
+   your account's privacy and provider settings leave), without one the public
+   list: this is the one cloud whose picker opens before a key is entered. The
+   Embeddings tab lists the gateway's embedding models. `:batch` slugs are left
+   out, because the gateway itself refuses them for chat. A slug can still be
+   typed by hand — the list's first row — a `:free`-style variant suffix or a
+   `~…-latest` alias included: the gateway resolves both when the app asks it
+   about the model.
+4. "Base URL (opt.)" stays empty unless you reach the gateway through a proxy;
+   the default is `https://openrouter.ai/api/v1`.
+
+**The status chip.** When the engine is applied — at start-up and after an edit
+of this section — the app asks the gateway **once** whether the key is good
+(`GET /key`, a request that spends nothing), and shows "connecting…" for the
+moment that takes:
+
+| The gateway's answer | Status |
+|---|---|
+| the key is accepted | ready |
+| the key is refused (`401`/`403`) | unavailable, in the gateway's words — *"OpenRouter refused the API key: User not found."* |
+| an outage or a rate limit — the key was not judged | ready: a request will speak for itself |
+| no answer at all (no network, DNS, TLS) | the reason, and the question repeats every 5 s until something answers |
+
+After the first answer nothing is asked periodically. The check belongs to the
+assistant's and impersonation's engines; the embedder is ready as soon as it has
+a key and a model, and a bad key there surfaces on the first embedding call.
+
+**What the app learns from the gateway.** The model's context window (what
+automatic compaction measures against), the sampling parameters it takes, whether
+it takes images and how it reasons all come from the gateway's entry for that one
+model (`GET /model/<slug>`), asked when the engine is applied. llama.cpp's
+`/health` and `/props` are never asked here, so the "Parallel sessions" hint is
+blank. A number typed into Settings → Memory → Context still wins over the
+catalogue's.
+
+**Sampling.** The screen offers what the gateway reads — temperature, top-k,
+top-p, min-p, max_tokens, seed, the frequency and presence penalties, the repeat
+penalty, thinking and the reasoning effort — narrowed to what the chosen model's
+entry lists. The repeat penalty is sent as `repetition_penalty`, the gateway's
+name for it. llama.cpp's own knobs (dynamic temperature, typical-p, top-n-sigma,
+adaptive-p, mirostat, DRY, XTC, the sampler order, `repeat_last_n`) are neither
+offered nor sent.
+
+**Reasoning.** A chosen effort travels as `reasoning_effort`, and the thinking
+switch as the gateway's own `reasoning` field where the model's entry lists
+reasoning. The turns the app makes silently — a chat's title, the compaction
+summary, impersonation — ask for reasoning to be off; on a model whose entry says
+it **must** reason they ask for the lowest effort that entry lists instead
+(`minimal` on Gemini 3.5 Flash), since such a model refuses "off" with a `400`.
+
+**Tool images and `/continue`** behave as described for a gateway in §3, without
+waiting for a catalogue to answer: a picture a tool returns is sent in a user
+message right after the tool's result, and `/continue` resumes a reply on Claude
+up to the 4.5 generation and on Gemini, and refuses on every other model.
+
+**The app names itself to OpenRouter.** Requests the engine makes to the gateway
+— chat, embeddings, the key check and the question about the model — carry two
+headers: `HTTP-Referer: https://mindfork.io` and `X-OpenRouter-Title: mindfork`.
+They name the application and say nothing about you; by OpenRouter's own
+description, it counts its public application rankings by them. The request that
+lists models for the picker carries neither. On by default; **"Name the app to
+OpenRouter"**, in the provider's group on any tab whose mode is `openrouter`,
+turns them off for every slot at once ([PRIVACY.md](../PRIVACY.md) §3.1).
+
+**Embeddings.** The Embeddings tab in this mode sends the same request the other
+cloud embedders do. Two things are not there yet: a request the routed provider
+answers with a rate limit is not retried, and a very large document is sent as
+one request, which a provider may refuse for its size — both surface as the
+call's error.
+
+**Not there yet.** Speech (`/tts`) and watching a YouTube video have no
+`openrouter` mode: the Speech tab and the video tool keep their own providers
+(§4.3, §4.4).
+
+**Coming from `external`.** An `external` section whose URL is on `openrouter.ai`
+shows a hint that this mode exists. Nothing is moved automatically: set the mode,
+enter the key once, pick the model.
+
+**Older versions and `settings.json`.** This version writes `settings.json` at
+schema 4. A mindfork older than it refuses to start on that file, saying the data
+was created by a newer version; the copy made before the upgrade,
+`backups/pre-migrate-<date>.zip`, is the way back.
 
 ### 3.3. Everything in one go (`mindfork setup`)
 

@@ -42,13 +42,14 @@ you like the shape of the thing.
 ### Connecting a model
 
 Open settings — `Ctrl+P` (or type `/settings`) — and go to **Model/server**. The
-**Mode** field cycles through the six modes with `←/→`:
+**Mode** field cycles through the seven modes with `←/→`:
 
 | Mode | What it is |
 |---|---|
 | `managed` | the app launches its own `llama-server` child process from a binary and a GGUF file on this machine |
-| `external` | any OpenAI-compatible server you already run: llama.cpp, vLLM, LM Studio, Ollama, or a gateway such as OpenRouter or LiteLLM |
+| `external` | any OpenAI-compatible server you already run: llama.cpp, vLLM, LM Studio, Ollama, or a gateway such as LiteLLM |
 | `openai` · `gemini` · `claude` · `grok` | the cloud providers, each with its own key and model |
+| `openrouter` | the OpenRouter gateway: one key in front of every vendor's models, the same key for the assistant, impersonation and embeddings |
 
 For a cloud mode, fill in the API key (it is stored encrypted and bound to this
 machine, and never shown back) and then the **model**: press `Enter` on that
@@ -57,6 +58,17 @@ filter it, `Ctrl+R` asks again, and the first row of the list is the old way —
 typing a name by hand. Where a provider says which of its models are for chat,
 the list is narrowed to those; where it says nothing, everything it lists is
 offered with the likely ones first.
+
+In the `openrouter` mode that list says more, because the gateway publishes
+more: each row carries the model's context window, the price of a million tokens
+in and out, and `no tools` for a model that cannot call them — which, in an app
+driven by tools, means it can only chat. The list opens **before** a key is
+entered (the gateway's catalogue is public); with a key it is your account's own
+list, narrowed by the privacy and provider settings you made there. The key
+itself is checked once, when the engine is applied: a key the gateway refuses
+shows in the status chip, in the gateway's words, instead of failing your first
+message. Setup in full, and what the app tells OpenRouter about itself —
+[install.md §3.2](install.md).
 
 For `managed`, the **Binary** field may be left empty — the app then uses the
 build `mindfork llama setup` installed last, or a `llama-server` sitting next to
@@ -263,10 +275,15 @@ Eight sections, and these four are the ones worth a visit early.
   Besides the mode and the model: **Sessions (parallel streams)**, how many
   requests may be open at once (1 by default, so the assistant and its subagents
   take turns), and **Parallel tool calls**, how many of one reply's read-only
-  calls run together (1 on a local engine, 4 on a cloud).
+  calls run together (1 on a local engine, 4 on a cloud). A tab whose mode is
+  `openrouter` also has **Name the app to OpenRouter**: on by default, it adds
+  two headers naming the application — never you — to the requests the engine
+  makes to the gateway, and off, they are not sent.
 - **Sampling** — temperature and the rest, per slot. What the screen offers is
   narrowed to what the endpoint says it accepts, so a gateway stops showing knobs
-  it would silently drop. The **reply budget** (`max_tokens`) covers the model's
+  it would silently drop; in the `openrouter` mode the list starts from what the
+  gateway reads at all and narrows to what the chosen model takes. The **reply
+  budget** (`max_tokens`) covers the model's
   reasoning as well as its answer; the default of 16384 is deliberately generous
   for that reason.
 - **Memory** — the context window when the engine cannot say it, what triggers
@@ -494,7 +511,7 @@ the keys for itself:
 | `/rename [title]` · `/clone` · `/copy` | `F2` · `Ctrl+D` · `F5` | this chat: rename, clone, copy the conversation |
 | `/autotitle` | `Ctrl+R` in the list | have the model title this chat |
 | `/regen` · `/retry` · `/takeback` | `Ctrl+R` · `Ctrl+E` | regenerate the last reply / take back the last exchange |
-| `/continue` | — | resume the last interrupted reply from where it stopped — local and external engines, Gemini, and Claude up to the 4.5 generation |
+| `/continue` | — | resume the last interrupted reply from where it stopped — local and external engines, Gemini, and Claude up to the 4.5 generation; through OpenRouter or another gateway, only those same two — Gemini models, and Claude up to 4.5 |
 | `/impersonate [text]` | `Ctrl+U` | the model writes your next message, continuing the text you give it |
 | `/stop` | `Esc` | cancel the running generation |
 | `/find [text]` · `/search <text>` | `Ctrl+F` · `Ctrl+G` | find in this conversation / find messages across every chat |

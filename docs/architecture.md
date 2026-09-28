@@ -31,7 +31,8 @@ sources of truth:
 
 > Terminology: **engine** = the inference provider behind the `EngineBackend`
 > trait — a local OpenAI-compatible server (llama.cpp `llama-server`) **or** the
-> cloud (OpenAI / Gemini / Anthropic, [ADR 0004](decisions/0004-engine-contract-multi-provider.md));
+> cloud (OpenAI / Gemini / Anthropic / xAI, or the OpenRouter gateway in front of
+> them, [ADR 0004](decisions/0004-engine-contract-multi-provider.md));
 > **application** = `mindfork-rs`, the engine's HTTP client. The agentic loop is
 > **client-side** — the application's orchestrator runs it.
 
@@ -42,7 +43,8 @@ sources of truth:
 `mindfork-rs` is a single Rust binary crate (edition 2024) organized by
 **Feature-Sliced Design (FSD)**. The application itself **contains no ML stack**:
 inference is done by an external engine — a local `llama-server` process (managed
-subprocess or external) or a cloud API (OpenAI / Gemini / Anthropic) — and the
+subprocess or external) or a cloud API (OpenAI / Gemini / Anthropic / xAI, or
+the OpenRouter gateway) — and the
 application talks to it over HTTP (SSE streaming, `/v1/embeddings` for RAG; see
 §6 and ADR 0004).
 
@@ -312,7 +314,9 @@ src/
 │     ├─ picker.rs          model picker: the provider's catalogue behind a model row
 │     │                     (Enter) with a filter line and "type a name by hand" first —
 │     │                     the one screen-initiated network question (AppCommand::ListModels
-│     │                     → AppEvent::ModelCatalogue), docs/research/model-picker.md
+│     │                     → AppEvent::ModelCatalogue), docs/research/model-picker.md;
+│     │                     a row whose entry carries ModelFacts (the OpenRouter gateway's)
+│     │                     shows the window, the price and "no tools" in the name's place
 │     ├─ search.rs          field search overlay (`/`): index/filter/jump
 │     ├─ render.rs          rendering: menu, tab strip, field list, popups
 │     └─ helpers.rs         free functions: row builders, descriptions, parsers
@@ -567,14 +571,18 @@ src/
    ├─ api/                  inference engine layer (contract + per-family implementations, ADR 0004)
    │  ├─ contract.rs        EngineBackend, Embedder, ChatRequest/Chunk, ThinkingRef, ToolCallAccumulator (agnostic)
    │  ├─ openai/            OpenAI family:
-   │  │  ├─ client.rs+wire.rs   Chat Completions: OpenAiClient (reqwest+SSE, /health probe, embed; local/external/proxy; no dialect — sampling sent as-is)
+   │  │  ├─ client.rs+wire.rs   Chat Completions: OpenAiClient (reqwest+SSE, /health probe, embed; local/external/proxy and xAI — sampling sent as-is;
+   │  │  │                      the OpenRouter gateway — `for_openrouter`: the gateway's dialect, GET /model/{slug}, GET /key, attribution headers)
+   │  │  ├─ gateway_tests.rs    #[cfg(test)]: the gateway client against a local stub — dialect, muted effort, headers, key verdicts
    │  │  └─ responses/          Responses API: ResponsesClient + wire (OpenAI cloud, /v1/responses — reasoning summaries, effort, verbosity)
    │  ├─ gemini/            native Gemini: client.rs + wire.rs (generateContent, x-goog-api-key — thought summaries, thinkingLevel/Budget, per-tool-call thoughtSignature)
    │  ├─ anthropic/         Anthropic Messages API: client.rs + wire.rs (Claude, /v1/messages)
-   │  ├─ catalogue.rs       the provider's model catalogue behind the settings picker: four
+   │  ├─ catalogue.rs       the provider's model catalogue behind the settings picker: six
    │  │                     endpoint shapes (OpenAI-compatible / Gemini native / Anthropic /
-   │  │                     xAI language-models) into one CatalogModel carrying the role the
-   │  │                     endpoint claimed — Unstated where it claimed none
+   │  │                     xAI language-models / OpenRouter's text models / OpenRouter's
+   │  │                     embedding models) into one CatalogModel carrying the role the
+   │  │                     endpoint claimed — Unstated where it claimed none — and
+   │  │                     ModelFacts (window, price, tools) where it published them
    │  ├─ managed.rs         ServerHandle (managed llama-server process), ManagedConfig, wait_until_ready, ChildExit
    │  ├─ llama_args.rs      the user's raw server arguments: which are refused per ManagedRole
    │  │                     (a field's flag, the connection, an agent, a fetch) and which LLAMA_*
@@ -925,7 +933,11 @@ chat and can therefore order the matches by real chat position),
 rolling summary — §6.7 of the spec), `ListModels` (**the only question the UI
 asks the network**: the settings screen's model picker asking a provider for its
 catalogue, and it carries the *slot*, not a key — the orchestrator holds the
-config and the secrets; docs/research/model-picker.md), `Quit`.
+config and the secrets, and `orchestrator/catalogue.rs::source` turns the slot's
+mode into a `CatalogueRequest`: for the OpenRouter gateway the slot also picks
+the list (`/embeddings/models` for the embedder; `/models/user` with a key and
+the public `/models` without one for the two chat slots), the one cloud that is
+asked without a key; docs/research/model-picker.md), `Quit`.
 
 `AppEvent` (orchestrator → UI) includes: `ServerStatus`, `ChatList`,
 `ChatRenamed`, `ChatSearchResults` (the reply to `SearchChats`: the chats with at
@@ -1393,10 +1405,15 @@ Details:
   interruption (or absent, for pre-field data) goes back out as the request's
   trailing assistant message with `ChatRequest.continue_final` set, a
   tool-result tail resumes the loop with no prefill, and everything else is a
-  localized refusal. The gate is `ServerMode::supports_continuation(model)` —
+  localized refusal. The gate is `ServerMode::supports_continuation(model,
+  catalogued)` —
   managed/external and Gemini unconditionally, Anthropic by an
   allowlist-by-version over the model id (≤4.5 continues, 4.6+ rejects,
-  unparseable refuses), OpenAI/Grok never; the Anthropic wire additionally
+  unparseable refuses), OpenAI/Grok never; a **gateway** is answered by the
+  slug's vendor against that same table (`gateway_model_continues`: Anthropic
+  ≤4.5 and Gemini continue, everything else refuses) — `external` once its
+  catalogue has answered for the model, `openrouter` always, since that mode is
+  the gateway by name; the Anthropic wire additionally
   drops the thinking block and right-trims the trailing prefill on a
   continuation request. `finalize_message` records the end state
   (`MessageFinish`) that makes the eligibility readable; the turn carries a
@@ -1427,8 +1444,8 @@ spec §6.8. The rest is laid out by family
 ([ADR 0004](decisions/0004-engine-contract-multi-provider.md)): **`contract`**
 (provider-agnostic traits and types), **`openai`** (two protocols in the
 family: `client`+`wire` — Chat Completions for local/external `llama-server`/
-a proxy **and for the xAI Grok cloud**; `responses` — the Responses API for the
-OpenAI cloud), **`gemini`** (native `generateContent` for the Google Gemini
+a proxy, **for the xAI Grok cloud and for the OpenRouter gateway**; `responses`
+— the Responses API for the OpenAI cloud), **`gemini`** (native `generateContent` for the Google Gemini
 cloud), **`anthropic`** (Claude, Messages API), **`managed`** (launching a child
 `llama-server`).
 
@@ -1449,7 +1466,9 @@ classDiagram
     class OpenAiClient {
         openai/: Chat Completions, reqwest + SSE
         +probe() /health
-        local/external/proxy, Bearer, embed
+        +check_key() /key (gateway)
+        local/external/proxy, xAI, OpenRouter
+        Bearer, embed
     }
     class ResponsesClient {
         openai/responses/: /v1/responses
@@ -1480,7 +1499,9 @@ classDiagram
 ```
 
 The provider is picked in settings via a single mode selector (`managed`/
-`external`/`openai`/`gemini`/`claude`); the API key is either **entered in
+`external`/`openai`/`gemini`/`claude`/`grok`/`openrouter` — `ServerMode::ALL`,
+the one list the settings popup and `←/→` both read; five of the seven are a
+`CloudProvider`); the API key is either **entered in
 settings** (stored encrypted with the machine key, `shared/secrets.rs` — see
 §12) or given as an **env-variable name** (fallback); the secret never lands on
 disk in plaintext. The `model` field is required for the cloud — the backend
@@ -1493,10 +1514,13 @@ between mode and backend/protocol:
 | **gemini** | **`GeminiClient`** | **native `generateContent`** | `temperature`/`top_p`/`top_k`/penalties/`seed`/`max_tokens`+`thinking`/`reasoning_effort` |
 | **openai** | **`ResponsesClient`** | **Responses (`/v1/responses`)** | `max_tokens`+`thinking`+`reasoning_effort`+`verbosity` |
 | claude | `AnthropicClient` | Messages (`/v1/messages`) | `max_tokens`+`thinking`+`reasoning_effort` |
+| grok | `OpenAiClient` (`with_effort_none_omitted`) | Chat Completions | `temperature`/`top_p`/`max_tokens`/`seed`+`thinking`/`reasoning_effort` |
+| **openrouter** | **`OpenAiClient` (`for_openrouter`)** | **Chat Completions, the gateway's dialect** | `temperature`/`top_k`/`top_p`/`min_p`/`max_tokens`/`seed`/penalties/`repeat_penalty`+`thinking`/`reasoning_effort` — the ceiling, narrowed per model by the catalogue |
 
-**Chat Completions sampling** (`OpenAiClient`): there's no more dialect/filtering
-— all fields are sent as-is (llama.cpp ignores what it doesn't know; the clouds
-moved to their own protocols, `WireDialect` was removed). The **OpenAI** cloud
+**Chat Completions sampling** (`OpenAiClient`): for llama.cpp and xAI there is
+no dialect or filtering — all fields are sent as-is (llama.cpp ignores what it
+doesn't know; the other clouds moved to their own protocols, `WireDialect` was
+removed). The one dialect is the OpenRouter gateway's, below. The **OpenAI** cloud
 runs on Responses (`ResponsesClient`): the system message → top-level
 `instructions`, history → an `input` array of elements,
 `max_tokens`→`max_output_tokens`, `store:false`, a flat function-tool with
@@ -1516,9 +1540,53 @@ thinking signature at all, so `cloud_chat_setup` hands it a plain `OpenAiClient`
 `reasoning_effort:"none"` the auxiliary turns ask for). `supported_sampling_fields(Grok)`
 = `temperature`/`top_p`/`max_tokens`/`seed` + reasoning: the penalties are a hard
 `400` there and `top_k`/`min_p` are dropped silently. See
-docs/research/grok-xai-provider.md. Anthropic, xAI and Responses have no
+docs/research/grok-xai-provider.md.
+
+The **OpenRouter gateway** (`openrouter`) is the second cloud on
+`OpenAiClient`, and the first that the client is **told** about rather than
+left to infer: `cloud_chat_setup` and `cloud_embed_setup` build it with
+`for_openrouter(attribution)`, which sets `OpenAiClient.gateway`. `external`
+recognises a gateway only once `GET /models` has answered for the configured
+model, and five behaviours hang on that one lookup; with the field set they are
+the mode's own (docs/research/openrouter-mode.md §2.3, §4.1):
+
+- **the dialect** — `send_chat` passes the body through
+  `ChatCompletionRequest::for_gateway`: `repeat_penalty` moves to
+  `repetition_penalty`, every llama.cpp-only field is cleared (`dynatemp_*`,
+  `typical_p`, `top_n_sigma`, `adaptive_*`, `mirostat*`, `dry_*`, `xtc_*`,
+  `samplers`, `repeat_last_n`, `thinking`, `reasoning_budget`,
+  `chat_template_kwargs`, `continue_final_message`/`add_generation_prompt`),
+  `top_k` and `min_p` stay;
+- **a muted turn** — `muted_effort` → `wire::gateway_muted_effort`: on a model
+  whose entry says `reasoning.mandatory: true` (or on a server that has already
+  refused) the request carries the lowest effort `ModelEntry::lowest_effort`
+  finds in `reasoning.supported_efforts` and no `reasoning` object;
+  `omit_effort_none_for` keeps `"none"` off the wire for such a model, so one
+  that lists no efforts is asked nothing. The `400` recovery
+  (`reasoning_off_refused`) stays underneath;
+- **the model's facts** — `fetch_catalogue_entry` asks `fetch_gateway_entry`,
+  `GET /model/{slug}` (`wire::ModelEnvelope`), one entry instead of the list;
+  `props()` and `listed_models()` return `None` without a request, so
+  `context_budget`, `parallel_slots` and `model_id` cost nothing and `vision`
+  and `model_capabilities` read the entry;
+- **a tool's images** — `shaped_for_endpoint` re-homes them into a user message
+  on every request that carries one, without waiting for the catalogue;
+- **attribution** — `auth` adds `HTTP-Referer` and `X-OpenRouter-Title`
+  (`ATTRIBUTION_REFERER`, `ATTRIBUTION_TITLE`) to every request this client
+  makes — chat, embeddings, `/key`, `/model/{slug}` — when the switch is on.
+  The settings picker's list request is `catalogue::fetch`, a client of its
+  own, and carries neither.
+
+`check_key` (`GET /key`) answers a `KeyVerdict` — `Accepted`, `Refused` (`401`/
+`403`, the gateway's words), `Unjudged` (any other status), `NoAnswer` (no HTTP
+answer) — which the supervisor turns into the slot's status (below). The stream
+parser reads two more fields a gateway sends — `provider` on a chunk and
+`usage.cost` on the last — and yields them as `ChatChunk::Served`.
+
+Anthropic, xAI and Responses have no
 embeddings — only `OpenAiClient` implements `Embedder` (RAG uses a separate one,
-ADR 0002). **External** authenticates like a cloud: its Bearer key (for an
+ADR 0002), which is how the gateway's embeddings ride with its chat mode.
+**External** authenticates like a cloud: its Bearer key (for an
 OpenAI-compatible proxy or gateway) is either entered in settings — stored per
 **slot**, `secrets::ExternalSlot`, since each slot's `external` URL is a server of
 its own — or named by `api_key_env`, resolved through the same
@@ -1549,14 +1617,22 @@ its own — or named by `api_key_env`, resolved through the same
   goes. A **tool result** may carry images too (spec §9.10): there the result
   text leads and the images follow it, inside the tool result itself — except on
   **Gemini**, whose multimodal `functionResponse` is a hard `400`, so its builder
-  emits them as user parts immediately after the response. The choice is static
+  emits them as user parts immediately after the response, and through a
+  **gateway**, where `OpenAiClient::shaped_for_endpoint` re-homes them into one
+  user message after the run of tool results (`wire::rehome_tool_images`): in
+  `external` once the catalogue has answered for the model, in `openrouter` on
+  every such request. The choice is static
   per provider; a request with no images serializes byte-identically to before in
   all four formats, each with its own test.
 - **`EngineBackend::vision() -> VisionSupport`** (`Unknown` by default,
   `Supported`/`Unsupported`) — the same "engine knowledge belongs on the engine
   contract" shape as `context_budget`, and delegated by `RetryBackend` for the
   same reason. `OpenAiClient` answers from the `/props` fetch it already makes
-  (`modalities.vision`); the clouds answer statically; anything without `/props`
+  (`modalities.vision`) and, where that says nothing, from the catalogue entry
+  for the configured model (`ModelEntry::takes_images`,
+  `architecture.input_modalities`) — which in the `openrouter` mode is the only
+  source and is asked without a `/props` request; the clouds with a client of
+  their own answer statically; anything that says nothing either way
   stays `Unknown`, which the orchestrator treats optimistically. Managed servers
   gain `--mmproj` (`ManagedConfig`, with the missing-file preflight `-md` has).
 - **`EngineBackend::model_id() -> Option<String>`** (`None` by default) — the
@@ -1600,7 +1676,13 @@ its own — or named by `api_key_env`, resolved through the same
   that landing, from `handle_title_result` and from `handle_imp_done`, turns it,
   through `launched_batch`/`prefill_hold` in `shared/api/managed.rs`, into one
   `Notice` per chat-server session (`EngineManager.prefill_noted`, cleared at
-  `Ready`; docs/research/slow-prefill-detection.md §3) — | `Error{message,transient}` |
+  `Ready`; docs/research/slow-prefill-detection.md §3) — | `Served(Served)` — who
+  served the request and what it cost, where the endpoint says so: a gateway
+  names the routed provider on every chunk and puts its meter's figure on the
+  last, and `stream_round` keeps the pair for `finalize_message`, which records
+  it as `MessageMetadata.provider`/`cost_nanos` (billionths of a dollar, per
+  round; additive, shown nowhere yet — spec §6.1); every other consumer of a
+  stream ignores the chunk — | `Error{message,transient}` |
   `Finished`. `Error` is the stream's error channel: a failure that arrives after
   the response cannot be an `Err` (the caller holds the stream), so each client
   yields it right before `Finished(Error)` — Anthropic's in-stream `error` event,
@@ -1620,7 +1702,8 @@ its own — or named by `api_key_env`, resolved through the same
   the supervisor to the **cloud** and **external** backends only (`cloud_chat_setup`
   and `external_chat_setup`; managed is left bare — the health monitor and
   `RestartBudget` own its recovery). It re-issues a request only while the turn is
-  *uncommitted* — nothing but `Usage` has been yielded — so a round that emitted a
+  *uncommitted* — nothing but `Usage` (and `Served`, which rides with it) has
+  been yielded — so a round that emitted a
   tool call can never be replayed, and tool effects cannot double-fire. Attempt 1
   runs **eagerly**, before the stream is returned, which is what preserves the
   pre-decorator contract: a failure that will not be retried is still an `Err` for a
@@ -1735,6 +1818,42 @@ invalidated by a per-server `CancellationToken` (a quick sequence of settings
 edits mustn't let the previous server's late verdict overwrite the new one's).
 The **cloud** has nothing to load and no `/health` — it's `Ready` at once, with
 no monitor.
+
+**The OpenRouter gateway is the one cloud that is asked first.**
+`cloud_chat_setup` returns `Connecting` for it and hands the client to
+`spawn_key_check`, which asks `OpenAiClient::check_key` (`GET /key`) **once** and
+posts the verdict to the slot's status channel, under the same per-server
+`CancellationToken` a probe runs under: `Accepted` → `Ready`; `Refused` →
+`Disconnected` with the gateway's words (`ui.err.server.key_refused`);
+`Unjudged` — an outage, a rate limit — → `Ready`, since the key was not refused
+and a request will speak for itself; `NoAnswer` → `Disconnected` with the
+transport's reason, said once, and the question again every `RECHECK_POLL` until
+something answers. The task ends at the first answer: nothing about a cloud is
+periodic, and `/health` is never asked of this host. It serves the assistant's
+and impersonation's engines (`apply_chat`, `apply_impersonation`);
+`cloud_embed_setup` builds the gateway's embedder `Ready` like the other cloud
+embedders, with no check (spec §3.4; docs/research/openrouter-mode.md §3.3,
+fork F6).
+
+What is provider-wide about the gateway — `AppConfig.openrouter`
+(`OpenRouterSettings { attribution }`) — belongs to no slot, so it reaches the
+supervisor through a method of its own, `ServerSupervisor::set_gateway`, which
+`EngineManager::apply_*` calls before it builds anything. `EngineManager`
+remembers what each slot was last applied with as `(settings, keys, gateway)`,
+where the third is `Some` **only while the slot speaks to the gateway**
+(`gateway_for`): `*_is_current` compares it, so switching the attribution
+re-applies the gateway's slots and leaves a managed `llama-server` — which a
+comparison of the whole section would have killed and reloaded — alone.
+
+**The chat engine's facts are asked again by every path that applies it.**
+`Orchestrator::refresh_chat_engine` — the context window and catalogue entry
+(`refresh_engine_facts`), the model's name, the slot count — is called by
+`apply_chat_settings` (start-up) and by `flush_restarts` when it applied the chat
+engine (a settings edit). Before the second call existed the facts survived any
+switch that flipped no status: a managed or external server announces itself
+through its probe (`handle_chat_status`), a cloud is ready at once and says
+nothing, so after a change to a cloud provider the previous engine's window went
+on deciding when compaction fired (docs/research/openrouter-mode.md §4.1, §9 A2).
 
 The monitor doesn't stop at the first verdict — it keeps watching, so a status
 describes the present rather than the moment the server was configured
@@ -1971,8 +2090,8 @@ Storage invariants:
 ### Schema versioning and migrations ([ADR 0006](decisions/0006-data-schema-versioning.md))
 
 Each artifact has its own schema version (per-artifact — they change at
-different rates; `settings.json` and the chat files are at **2** since the
-subagent track's two steps, `profiles.json` at 1). Ownership map:
+different rates; `settings.json` and the chat files are each at **4**,
+`profiles.json` at 1 — the steps are listed in spec §12.2). Ownership map:
 
 - **`shared/storage/schema.rs`** — a pure Value-level scaffold (no I/O):
   constants `SETTINGS_SCHEMA`/`PROFILES_SCHEMA`/`CHAT_SCHEMA`/`DB_SCHEMA`,
@@ -2030,7 +2149,18 @@ Invariants:
   (`Uuid::new_v5(SUBAGENT_NS, "<chat>/<call>")`) — then `v = 2`. Idempotent
   (a record with a run is skipped), additive in content, pinned by a golden
   v1 fixture and an end-to-end `data_migration` test (one backup, a second
-  start finds the file current).
+  start finds the file current);
+- **a new value of an existing enum is a breaking change**, though nothing in
+  the file moves — an older binary fails the parse of the whole file on a value
+  it does not know (lessons §8). `settings_to_v4` is that case and the step
+  that changes nothing but the version: 4 is the first schema in which a slot's
+  `mode` may read `"openrouter"`, and with the version raised an older binary's
+  refusal is the downgrade guard's, made before it reads a value. The step
+  stamps every file, whether or not a slot uses the mode. Pinned by the golden
+  `fixtures/settings_v3.json` (every other value is where it was; an `external`
+  section holding the gateway's URL stays `external`) and by a test that reads
+  a file naming the gateway with the previous schema's reader and gets
+  `Assessment::Downgrade` (spec §12.2).
 
 The SQLite branch (`db/mod.rs::migrate`, version-aware): `baseline_ddl`
 (`CREATE … IF NOT EXISTS`) runs **every time** — an additive mechanism for
@@ -3598,15 +3728,19 @@ Principles:
     the language is known) are in English (the boundary noted in §7 above).
 - **Configuration** (`shared/config.rs`): `AppConfig` with sections
   `EngineSettings`, `EmbedSettings`, `ToolSettings`, `InterfaceSettings`,
-  `ImpersonationEngineSettings`, `impersonation_sampling`, global sampling.
-  All fields under `#[serde(default)]` — old `settings.json` files are read
-  without migration. Backend choice via settings or env
+  `ImpersonationEngineSettings`, `impersonation_sampling`, global sampling, and
+  `openrouter: OpenRouterSettings` — what is set once for the gateway, whichever
+  slot speaks to it (`attribution`, on by default).
+  All fields under `#[serde(default)]` — an old `settings.json` reads without a
+  step for every **additive** change; a new value of an existing enum is not one
+  (§7, "Schema versioning"). Backend choice via settings or env
   (`MINDFORK_ENGINE_URL` external / `MINDFORK_LLAMA_BIN` + `MINDFORK_MODEL`…
   managed; similarly `MINDFORK_EMBED_*`).
   - **The engine config is nested by mode/provider:** `EngineSettings`/
     `ImpersonationEngineSettings`/`EmbedSettings` carry `mode` + subsections
     `managed: ManagedSettings`, `external: ExternalSettings`, and one
-    `CloudSettings` per cloud provider (`openai`/`gemini`/`claude`; for
+    `CloudSettings` per cloud provider (`openai`/`gemini`/`claude`/`grok`/
+    `openrouter`, in `CloudProvider::ALL`'s order; for
     embeddings' managed mode — `ManagedEmbedSettings`). Each mode has its
     own fields, so switching mode/provider doesn't lose the other's values.
     `cloud()`/`cloud_mut()` accessors return the active cloud substructure
@@ -3638,7 +3772,8 @@ Principles:
   mode, `SecretKey::External(slot)` in `external`, `None` for managed — one source
   consulted by both the orchestrator and the settings screen, so a row cannot
   address a different secret than the server resolves. A cloud key is shared by
-  chat/impersonation/embeddings/speech of that provider; the four **external**
+  chat/impersonation/embeddings/speech of that provider (the gateway's, stored
+  as `openrouter`, by the three slots that have the mode); the four **external**
   slots each have their own, because their four URLs are four independent servers.
   Only the orchestrator writes keys (`AppCommand::SetSecret`); they never land
   in the config snapshot sent to the UI. This protects the **file**

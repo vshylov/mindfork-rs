@@ -54,8 +54,9 @@ drift from what the app renders
 
 - **Any engine, one contract.** A managed `llama-server` the app launches
   itself, any OpenAI-compatible server you already run (vLLM, LM Studio, Ollama,
-  a gateway like OpenRouter), or the **OpenAI**, **Gemini**, **Claude** and
-  **Grok** clouds — each with its own settings, all configured at once, and
+  a gateway like LiteLLM), the **OpenAI**, **Gemini**, **Claude** and
+  **Grok** clouds, or the **OpenRouter** gateway — one key in front of every
+  vendor's models — each with its own settings, all configured at once, and
   switching loses nothing.
 - **Memory that persists.** A **self-model** the assistant maintains about
   itself and about you (`F3`), notes it writes and links into a graph, and a
@@ -120,10 +121,22 @@ cargo build --release          # binary lands in target/release/
 Three routes, and they can all stay configured side by side.
 
 **A cloud provider.** Open settings (`Ctrl+P`, or `/settings`), pick the mode —
-`openai` / `gemini` / `claude` / `grok` — paste your API key right there (stored
-encrypted and machine-bound, never shown back), and choose the **model**: `Enter`
-on that field asks the provider what it serves and offers the list, filtered as
-you type.
+`openai` / `gemini` / `claude` / `grok` / `openrouter` — paste your API key right
+there (stored encrypted and machine-bound, never shown back), and choose the
+**model**: `Enter` on that field asks the provider what it serves and offers the
+list, filtered as you type.
+
+**The OpenRouter gateway** is the `openrouter` mode: one key serves the
+assistant, impersonation and embeddings, each with a model of its own. Its model
+list opens before a key is entered and shows, per model, the context window, the
+price per million tokens in and out, and a mark on a model that takes no tools.
+The key is checked once when the engine is applied, so a refused key is the
+engine's status rather than the first message's error; the context window, the
+sampling fields on offer and image support are read from the gateway's own entry
+for the model. The engine's requests to the gateway carry two headers that name
+the application — never you — and a switch in the same section turns them off
+([PRIVACY.md](PRIVACY.md) §3.1). Speech and YouTube video through the gateway
+are not there yet. Details: [install.md](docs/install.md) §3.2.
 
 **An external server.** Run any OpenAI-compatible server and point the app at it
 (mode `external`, the URL includes `/v1`):
@@ -136,7 +149,8 @@ llama-server -m google_gemma-4-E4B-it-Q4_1.gguf \
 
 A gateway or an authenticated server takes its key in the field below the URL,
 and its model name in the one above — that name is what a multi-model endpoint
-routes on, while a single-model server ignores it.
+routes on, while a single-model server ignores it. (OpenRouter works this way
+too, as it always did; its own mode above is the better road to it.)
 
 **A managed server.** The app launches and supervises `llama-server` itself, and
 can fetch one for your machine:
@@ -180,10 +194,11 @@ listed *by screen*.
 
 The app is an HTTP client to an inference engine behind the **`EngineBackend`**
 trait — it deliberately embeds no ML stack
-([ADR 0004](docs/decisions/0004-engine-contract-multi-provider.md)). Five
+([ADR 0004](docs/decisions/0004-engine-contract-multi-provider.md)). Six
 providers live behind that one contract: a local OpenAI-compatible server, the
 OpenAI Responses API, native Gemini `generateContent`, the Anthropic Messages
-API, and xAI (which needed no client of its own).
+API, xAI (which needed no client of its own), and the OpenRouter gateway (the
+same client again, writing the request in the gateway's dialect).
 
 Decisions that shape the code: the **agentic loop is client-side** — tools return
 a result plus effects, and the orchestrator, sole owner of `Chat`, applies them,

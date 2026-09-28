@@ -2,11 +2,11 @@
 # Generated from PRIVACY.md by tools/site_legal_pages.py - do not edit.
 title = "Privacy policy"
 description = "What mindfork keeps on your machine, what leaves it and only on which setting of yours, and what reaches its author — which is nothing."
-updated = "2026-09-28"
+updated = "2026-09-29"
 template = "doc.html"
 +++
 
-Effective **2026-09-28**. It covers three things that are easy to confuse: the
+Effective **2026-09-29**. It covers three things that are easy to confuse: the
 **mindfork application**, the website **mindfork.io**, and the project's
 presence on **GitHub**. They have very different answers, so they are kept
 apart below.
@@ -57,7 +57,7 @@ machine. On Windows the profile's own permissions do that.
 |---|---|---|
 | Settings, and the encrypted secrets map — each stored key labelled with the name of the computer it was entered on | `settings.json` | no |
 | Profiles, system prompts, per-profile tool lists | `profiles.json` | your prompts |
-| Chats | `chats/<uuid>.json` — messages, model thoughts, tool calls and their results, sub-agent transcripts, attached images inline, attachment text | **yes** |
+| Chats | `chats/<uuid>.json` — messages, model thoughts, tool calls and their results, sub-agent transcripts, attached images inline, attachment text; for a reply that came through the OpenRouter gateway, also the name of the provider that served it and what the request cost | **yes** |
 | Notes, the RAG knowledge base and their embedding vectors, the self-model, the record of which model ran when | `data.db` (SQLite) | **yes** |
 | The full-text search index | `cache.db` (SQLite) | **yes** — derived; delete it and it rebuilds |
 | Pre-images of every project file the assistant edited, for the `F4` diff and revert | `workspace/<chat-id>/` | your source code |
@@ -97,10 +97,39 @@ Where your conversation goes depends on the engine mode you chose:
   [Anthropic](https://www.anthropic.com/legal/privacy),
   [xAI](https://x.ai/legal/privacy-policy) — and their retention and
   training-on-your-data rules are theirs, not ours. Read them.
+- **The OpenRouter gateway** — `openrouter.ai`, or a different base URL if you
+  set one. A request sent through a gateway is processed by **two** parties: by
+  the gateway itself, under [OpenRouter's policy](https://openrouter.ai/privacy),
+  **and** by the provider the gateway routes the request to, under that
+  provider's. Which provider that is depends on the model you chose and on the
+  gateway's routing, and it can differ from one request to the next; which
+  providers your requests may reach, and on what terms for your data, is set in
+  your OpenRouter account, not in this app, which sends no routing preference of
+  its own. The gateway names the provider that served each reply and states
+  what the request cost; the app stores both with the message (§2) and shows
+  them nowhere yet.
 
 **Impersonation** — the model drafting your next message — has an engine setting
 of its own. By default it shares the chat engine; pointed elsewhere, it sends the
-conversation to that external server or cloud provider instead.
+conversation to that external server, cloud provider or gateway instead.
+
+**What the app says about itself.** To OpenRouter, and to no other provider, the
+requests the app makes as your engine in the `openrouter` mode — chat,
+embeddings, and the two questions listed under "Probes" below — carry two
+headers:
+
+- `HTTP-Referer: https://mindfork.io`
+- `X-OpenRouter-Title: mindfork`
+
+That is their whole content: the address of this project's website and the name
+of the program, identical in every copy of the app. They hold nothing about you —
+no name, no identifier, no machine, no text. By OpenRouter's own description,
+it counts by them which application its traffic comes from and shows those
+counts in its public application rankings. They are **on by default**. To stop sending them: Settings →
+Model/server → any tab whose mode is `openrouter` → "Name the app to OpenRouter".
+It is one switch for every slot that uses the gateway, and with it off neither
+header is sent. An `external` engine pointed at the same address never sends
+them, and neither does the request for the model list described below.
 
 The `MINDFORK_ENGINE_URL`, `MINDFORK_LLAMA_BIN`, `MINDFORK_EMBED_URL` and
 `MINDFORK_EMBED_BIN` environment variables, when set, replace the chat or
@@ -129,11 +158,42 @@ window, image support and accepted parameters. The Grok cloud is asked the same
 `/props` and `/models`, with your key, when the engine is set up and when you
 attach an image. The OpenAI, Gemini and Anthropic clouds are not probed.
 
+The OpenRouter gateway is asked two things, both with your key:
+
+- **`GET /key` — whether the key is accepted.** Asked **once** each time the
+  chat engine or the impersonation engine is set up in the `openrouter` mode:
+  when the app starts, and after you change that engine's settings, the key or
+  the switch above. Only if nothing answers at all — no network — is it asked
+  again, every 5 seconds, until something does; after the first answer it is not
+  repeated. The answer also describes the key (its limit and its usage); the app
+  reads whether the key was accepted and nothing else, and keeps none of it. The
+  embedding engine does not ask.
+- **`GET /model/<the model you chose>` — that one model's entry** in the
+  gateway's catalogue: its context window, the parameters it accepts, whether it
+  takes images, how it reasons. Asked when the chat engine is set up, and by the
+  impersonation engine when it is first used; the answer is kept until that
+  engine is set up again, and a question the gateway did not answer is asked
+  again the next time the answer is needed.
+
+In this mode `/health`, `/props` and the full model list are never requested by
+the engine.
+
+**The model list.** `Enter` on a model row of the settings screen asks that
+tab's provider or server for the list of models it serves — when you press it,
+and again on `Ctrl+R`; the answer is kept while the screen is open. The request
+carries your key where one is configured, and nothing else of yours. For
+OpenRouter it is your account's own list (`/models/user`) when a key is
+configured and the public list (`/models`) when none is — the one case in which
+the app contacts a cloud before you have given it a key — and
+`/embeddings/models` on the Embeddings tab.
+
 ### 3.2 Embeddings (notes, RAG, search reranking)
 
 The embedding endpoint is a **separate setting** from the chat one: it can be a
-local server, an external URL, or a cloud provider — which may well be a
-*different* vendor from the one running your chat.
+local server, an external URL, a cloud provider or the OpenRouter gateway —
+which may well be a *different* vendor from the one running your chat. Through
+the gateway, what is embedded reaches the gateway and the provider it routes to,
+as a chat request does (§3.1).
 
 What gets embedded, and therefore sent there: note text, self-model traits,
 chunks of documents you added to the knowledge base (including text extracted
@@ -295,6 +355,8 @@ text passes through whatever is between you and the host.
 - **showing the model the images a tool produced** — charts from Python, images
   from MCP tools — once those tools are on;
 - **network access inside the Python sandbox**, once Python is enabled;
+- the two headers that **name the application to OpenRouter**, once an engine is
+  in the `openrouter` mode (§3.1);
 - the cloud as the **default speech provider** — though nothing is spoken until
   you invoke `/tts`;
 - the ordinary local tools: notes, the knowledge base, the time, and so on.
@@ -306,6 +368,15 @@ error reporting, no update check, no version ping, no license check, no account
 and no server operated by this project. The addresses of the website, the
 repository and the crates.io page that appear in the "About" dialog are text on
 a screen; nothing fetches them.
+
+One thing is worth stating beside that, because it is the only place where the
+program is counted at all. If you use the `openrouter` mode and leave its
+attribution on (§3.1), your requests name this application to OpenRouter, which
+by its own description counts such requests and shows totals per application in
+its public rankings. Those totals are OpenRouter's, they are public, and the
+author can read them where anyone can; they say nothing about who made the
+requests. Nothing is sent to the author by OpenRouter or by the app, and with the
+switch in §3.1 off your requests do not name the application at all.
 
 ## 6. Logs
 
