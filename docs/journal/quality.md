@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (27)
+## Entries (28)
 
 - Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - Post-M9: SonarQube Cloud analysis in CI (done)
@@ -39,6 +39,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: SonarQube follow-up — the file launcher's two closures (done)
 - Post-M9: the quality-gate badge, and the one Dependabot badge that is not a claim (done)
 - Post-M9: SonarQube follow-up — the IndexNow tool's three findings (done)
+- Post-M9: SonarQube follow-up — the pod probe's shell findings (done)
 
 ### Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - **28 relative links in the docs pointed at nothing**, and had for a while.
@@ -1559,3 +1560,47 @@ structure (AGENTS.md §3).
   `--self-test`) and the three documentation gates green, and `--submit
   --dry-run` builds the same body as before. No CHANGELOG entry: internal
   tooling (§4).
+
+### Post-M9: SonarQube follow-up — the pod probe's shell findings (done)
+
+- **Twenty open findings on `main`, all in `tools/pod_probe.sh`, the gate green
+  and no hotspots** (read through the Sonar MCP on 2026-09-28; branch
+  `refactor/sonar-pod-probe-shell`). They date from 2026-09-21, the merge of #609
+  that brought the provisioning probe in: the PR analysis saw them, and being
+  maintainability-class they could not move a rating, so the gate passed them
+  through — the shape [lessons.md](../lessons.md) now records for `tools/*.sh`.
+- **Three rules, all mechanical.** `shelldre:S7688` ×13 — every `[` test is a
+  `[[` one, the two tests of P1's download guard joined into a single
+  `[[ -n "$TAG" && ! -x "$APP/mindfork" ]]`, and the string compares written
+  `==` as `tools/install_nfpm.sh` writes them. `shelldre:S7682` ×4 — `say`,
+  `section`, `cuda_links` and `ready` end in `return 0` (`run` already returned
+  its command's code). `shelldre:S7679` ×3 — `ready` names its argument `label`;
+  `cuda_links` names its `build_dir` too, though Sonar raised nothing on its
+  `$1` (the one that sits inside a `$(…)`), so the two helpers read alike.
+- **`return 0` changes two exit statuses, and no caller reads either.**
+  `cuda_links` used to return 1 when a build had no CUDA library (its last line
+  was `[ -n "$lib" ] && …`), and `say` returned `tee`'s status. The script
+  deliberately runs without `set -e` (its header, property 1) and never tests a
+  helper's status, so nothing downstream can tell.
+- **Measured, not argued: the old and the new script under the same stubs,
+  reports diffed.** The probe needs a rented GPU pod, so a scratch harness put a
+  fake `curl` (the release redirect, a real archive and a matching
+  `sha256sums.txt`, a cudart tarball, a `/health` that answers 200 only while
+  the fake server is up), a fake `mindfork` (`--version`, `llama backends`,
+  `llama setup` that installs a fake `llama-server`, `sandbox setup`), and `id`,
+  `apt-get` and `ldconfig` stubs that make P1 take its root/install branch first
+  on `PATH`. Five scenarios, chosen so each rewritten condition runs both ways:
+  a fresh directory; a re-run over it (binary, model and the cudart copy
+  already there); `SKIP_CUDART` + `SKIP_SANDBOX` with no CUDA library and a
+  server that dies (`ready[…]: exited`); no CUDA backend listed (P3/P4 skipped);
+  and an unresolvable release tag (P1 skipped, the early exit). Reports
+  identical in all five once the date, the `df` lines, second counts and the
+  work directory's name are normalised; the one other difference is the
+  script's own path inside bash's `No such file or directory` message, which
+  still cites the same line. Not reached by the harness: `/etc/machine-id`
+  present and a non-root `id` — plain `-e` and `==` tests whose meaning `[[`
+  does not change.
+- No Rust touched — test totals unchanged (fmt, clippy `-D warnings` and the
+  suite green on the branch); `bash -n` clean, the documentation gates green.
+  No CHANGELOG entry: internal tooling (§4). No live run: the probe is a pod
+  measurement, not an engine path (AGENTS.md §3).
