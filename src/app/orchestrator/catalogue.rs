@@ -330,4 +330,126 @@ mod tests {
             "Gemini's override addresses the compat path, which publishes no methods"
         );
     }
+
+    // ---------- the OpenRouter mode (docs/research/openrouter-mode.md, fork F7) ----------
+
+    const GATEWAY_BASE: &str = "https://openrouter.ai/api/v1";
+
+    /// What the gateway mode asks for a slot, with the section and the key it
+    /// was given.
+    fn gateway(
+        slot: ModelSlot,
+        cloud: Option<&CloudSettings>,
+        key: Option<&str>,
+    ) -> Result<CatalogueRequest, CatalogueError> {
+        let external = external(Some("http://127.0.0.1:8000/v1"));
+        let key = key.map(str::to_string);
+        source(slot, ServerMode::OpenRouter, &external, cloud, key)
+    }
+
+    /// The gateway's catalogue is public (§3.2: `GET /models` needs no key), so
+    /// its picker opens **before** a key was entered — choosing a model is how
+    /// one decides to get a key. Every other cloud keeps answering "no key"
+    /// without a request, since asking would buy a `401`.
+    #[test]
+    fn the_gateways_catalogue_is_asked_before_a_key_was_entered() {
+        assert_eq!(
+            gateway(CHAT, None, None),
+            Ok(CatalogueRequest {
+                shape: CatalogueShape::OpenRouter,
+                base: GATEWAY_BASE.to_string(),
+                key: None,
+            })
+        );
+        // A key, once there is one, travels: it is what makes the list the
+        // account's own.
+        let keyed = gateway(CHAT, None, Some("k")).expect("a request");
+        assert_eq!(keyed.key.as_deref(), Some("k"));
+
+        let keyless: Vec<_> = ServerMode::ALL
+            .into_iter()
+            .filter(|mode| {
+                source(CHAT, *mode, &external(None), None, None) == Err(CatalogueError::NoKey)
+            })
+            .collect();
+        assert_eq!(
+            keyless,
+            [
+                ServerMode::OpenAi,
+                ServerMode::Gemini,
+                ServerMode::Claude,
+                ServerMode::Grok
+            ],
+            "the modes that refuse to ask without a key"
+        );
+    }
+
+    /// The gateway keeps its embedding models in a list of their own, so the
+    /// slot decides the shape — for this provider alone: another cloud's
+    /// embedder row reads the one catalogue that cloud has.
+    #[test]
+    fn the_embedder_slot_asks_the_gateway_for_its_embedding_models() {
+        let shape = |slot| gateway(slot, None, None).map(|req| req.shape);
+        assert_eq!(shape(ModelSlot::Assistant), Ok(CatalogueShape::OpenRouter));
+        assert_eq!(
+            shape(ModelSlot::Impersonation),
+            Ok(CatalogueShape::OpenRouter)
+        );
+        assert_eq!(
+            shape(ModelSlot::Embedder),
+            Ok(CatalogueShape::OpenRouterEmbeddings)
+        );
+        let openai = source(
+            ModelSlot::Embedder,
+            ServerMode::OpenAi,
+            &external(None),
+            None,
+            Some("k".into()),
+        );
+        assert_eq!(openai.map(|req| req.shape), Ok(CatalogueShape::OpenAi));
+    }
+
+    /// The section's base URL moves the gateway's catalogue with the chat — a
+    /// regional host or a proxy in front of it serves its own list — while a
+    /// blank override is no override, and the `external` section's address,
+    /// which belongs to another mode, is never what is asked.
+    #[test]
+    fn an_override_moves_the_gateways_catalogue_and_a_blank_one_does_not() {
+        let section = |url: &str| CloudSettings {
+            url: Some(url.to_string()),
+            ..CloudSettings::default()
+        };
+        let base = |url: &str, slot| gateway(slot, Some(&section(url)), None).map(|req| req.base);
+        for slot in [CHAT, ModelSlot::Embedder] {
+            assert_eq!(
+                base(" https://eu.openrouter.ai/api/v1 ", slot).as_deref(),
+                Ok("https://eu.openrouter.ai/api/v1"),
+                "{slot:?}"
+            );
+            assert_eq!(base("   ", slot).as_deref(), Ok(GATEWAY_BASE), "{slot:?}");
+        }
+        let unset = gateway(CHAT, Some(&CloudSettings::default()), None);
+        assert_eq!(unset.map(|req| req.base).as_deref(), Ok(GATEWAY_BASE));
+    }
+
+    /// Impersonation carries a mode enum of its own, and the picker reads it
+    /// through this mapping — so a variant mapped to a neighbour would ask
+    /// another provider's catalogue for the impersonation row. The two enums
+    /// spell one engine the same way, so each mode is read from the word the
+    /// settings file holds and has to come back as the engine of that word;
+    /// `shared` has no engine, and no row.
+    #[test]
+    fn impersonation_names_the_engine_its_own_mode_names() {
+        let engine = |word: &str| {
+            let mode: ImpersonationMode =
+                serde_json::from_value(serde_json::json!(word)).expect(word);
+            impersonation_mode(mode).map(ServerMode::key)
+        };
+        assert_eq!(engine("shared"), None);
+        let named: Vec<&str> = ServerMode::ALL.into_iter().map(ServerMode::key).collect();
+        assert_eq!(named.last(), Some(&"openrouter"), "the mode under test");
+        for word in named {
+            assert_eq!(engine(word), Some(word));
+        }
+    }
 }

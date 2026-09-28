@@ -3661,4 +3661,278 @@ mod tests {
         assert_eq!(old.engine.openai.api_key_env, None);
         assert_eq!(old.engine.managed.binary, None);
     }
+
+    // ---------- the OpenRouter mode (docs/research/openrouter-mode.md) ----------
+
+    /// Fork F3: the mode's name is storage — `settings.json`, every chat's
+    /// `metadata.mode` and `data.db` hold it — so it is one word in both enums
+    /// that carry it, and no neighbouring spelling reads as it: a typed parse
+    /// that fell back would be an engine switched in silence
+    /// (docs/research/settings-typed-parse.md).
+    #[test]
+    fn the_gateway_mode_is_one_word_in_both_enums_that_carry_it() {
+        let written = |mode: serde_json::Value| mode.as_str().map(str::to_string);
+        assert_eq!(
+            written(serde_json::to_value(ServerMode::OpenRouter).unwrap()).as_deref(),
+            Some("openrouter")
+        );
+        assert_eq!(
+            written(serde_json::to_value(ImpersonationMode::OpenRouter).unwrap()).as_deref(),
+            Some("openrouter")
+        );
+        assert_eq!(
+            serde_json::from_str::<ServerMode>(r#""openrouter""#).ok(),
+            Some(ServerMode::OpenRouter)
+        );
+        assert_eq!(
+            serde_json::from_str::<ImpersonationMode>(r#""openrouter""#).ok(),
+            Some(ImpersonationMode::OpenRouter)
+        );
+        assert_eq!(
+            ServerMode::from_key("openrouter"),
+            Some(ServerMode::OpenRouter)
+        );
+        for other in ["open_router", "open-router", "OpenRouter", "openrouter.ai"] {
+            let json = format!("\"{other}\"");
+            assert!(
+                serde_json::from_str::<ServerMode>(&json).is_err(),
+                "{other}"
+            );
+            assert!(
+                serde_json::from_str::<ImpersonationMode>(&json).is_err(),
+                "{other}"
+            );
+            assert_eq!(ServerMode::from_key(other), None, "{other}");
+        }
+    }
+
+    /// The fifth provider sits where [`CloudProvider::ALL`] says, and in each of
+    /// the three settings structs that position is the `openrouter` section,
+    /// read and written. `provider_index_matches_its_slot_in_all` pins the
+    /// index; this pins what the three hand-written arrays put **at** it, where
+    /// a swap with the neighbour would hand the gateway xAI's model and key
+    /// with no type error to catch it.
+    #[test]
+    fn each_slot_hands_the_gateway_mode_its_own_section() {
+        const SLUG: &str = "anthropic/claude-haiku-4.5";
+        const PICKED: &str = "google/gemini-3.5-flash";
+        assert_eq!(
+            CloudProvider::ALL.get(CloudProvider::OpenRouter.index()),
+            Some(&CloudProvider::OpenRouter)
+        );
+        macro_rules! own_section {
+            ($slot:literal, $settings:expr) => {{
+                let mut s = $settings;
+                s.grok.model_name = Some("grok-4.5".into());
+                s.openrouter.model_name = Some(SLUG.into());
+                let read = s.cloud().and_then(|c| c.model_name.clone());
+                assert_eq!(read.as_deref(), Some(SLUG), "{}: read", $slot);
+                s.cloud_mut().expect("a cloud mode").model_name = Some(PICKED.into());
+                assert_eq!(
+                    (
+                        s.openrouter.model_name.as_deref(),
+                        s.grok.model_name.as_deref()
+                    ),
+                    (Some(PICKED), Some("grok-4.5")),
+                    "{}: written to the gateway's section and to no neighbour",
+                    $slot
+                );
+                s
+            }};
+        }
+        let engine = own_section!(
+            "engine",
+            EngineSettings {
+                mode: ServerMode::OpenRouter,
+                ..Default::default()
+            }
+        );
+        assert_eq!(engine.active_model_name().as_deref(), Some(PICKED));
+        assert_eq!(
+            engine.secret_key(),
+            Some(SecretKey::Provider(CloudProvider::OpenRouter))
+        );
+        let imp = own_section!(
+            "impersonation",
+            ImpersonationEngineSettings {
+                mode: ImpersonationMode::OpenRouter,
+                ..Default::default()
+            }
+        );
+        assert_eq!(imp.secret_key(), engine.secret_key(), "one key, every slot");
+        let embed = own_section!(
+            "embed",
+            EmbedSettings {
+                mode: ServerMode::OpenRouter,
+                ..Default::default()
+            }
+        );
+        assert_eq!(embed.active_model_name().as_deref(), Some(PICKED));
+        assert_eq!(embed.secret_key(), engine.secret_key());
+    }
+
+    /// A `settings.json` written before the mode existed still loads, every
+    /// gateway section at its defaults — the no-migration invariant the Grok
+    /// mode's test pins for its own sections. The schema step 3 → 4 changes no
+    /// value (fork F3), so this is what a migrated file reads as.
+    #[test]
+    fn config_without_openrouter_sections_still_loads() {
+        let old = r#"{"engine":{"mode":"grok","grok":{"model_name":"grok-4.5"}}}"#;
+        let c: AppConfig = serde_json::from_str(old).unwrap();
+        assert_eq!(c.engine.mode, ServerMode::Grok);
+        assert_eq!(c.engine.grok.model_name.as_deref(), Some("grok-4.5"));
+        assert_eq!(c.engine.openrouter, CloudSettings::default());
+        assert_eq!(c.impersonation_engine.openrouter, CloudSettings::default());
+        assert_eq!(c.embed.openrouter, CloudSettings::default());
+        assert_eq!(c.openrouter, OpenRouterSettings::default());
+    }
+
+    /// Fork F5, adopted (b): the application is named to the gateway **until
+    /// somebody turns that off** — so the default is on, a file that never
+    /// heard of the switch reads as on, and an "off" that was written stays
+    /// off through a save and a load.
+    #[test]
+    fn attribution_is_on_until_somebody_turns_it_off() {
+        assert!(AppConfig::default().openrouter.attribution);
+        for silent in ["{}", r#"{"openrouter":{}}"#] {
+            let c: AppConfig =
+                serde_json::from_str(silent).unwrap_or_else(|e| panic!("{silent} must load: {e}"));
+            assert!(c.openrouter.attribution, "{silent}");
+        }
+        let off: AppConfig =
+            serde_json::from_str(r#"{"openrouter":{"attribution":false}}"#).unwrap();
+        assert!(!off.openrouter.attribution);
+        let saved = serde_json::to_value(&off).unwrap();
+        assert_eq!(saved["openrouter"]["attribution"], false, "{saved}");
+        let back: AppConfig = serde_json::from_value(saved).unwrap();
+        assert!(!back.openrouter.attribution, "off survives the round trip");
+    }
+
+    /// The file's own words for the mode: each slot keeps its gateway section
+    /// under `openrouter`, beside the provider-wide one at the top level — the
+    /// layout the settings migration, the docs and a hand-edited file rely on.
+    #[test]
+    fn a_config_on_the_gateway_round_trips_in_the_files_own_words() {
+        let section = |model: &str, env: &str| CloudSettings {
+            model_name: Some(model.into()),
+            api_key_env: Some(env.into()),
+            ..Default::default()
+        };
+        let mut c = AppConfig::default();
+        c.engine.mode = ServerMode::OpenRouter;
+        c.engine.openrouter = section("anthropic/claude-haiku-4.5", "CHAT_KEY");
+        c.impersonation_engine.mode = ImpersonationMode::OpenRouter;
+        c.impersonation_engine.openrouter = section("qwen/qwen3.6-27b", "IMP_KEY");
+        c.embed.mode = ServerMode::OpenRouter;
+        c.embed.openrouter = section("baai/bge-m3", "EMBED_KEY");
+        c.openrouter.attribution = false;
+
+        let json = serde_json::to_value(&c).unwrap();
+        let said: Vec<serde_json::Value> = "/engine/mode /engine/openrouter/model_name \
+            /impersonation_engine/mode /impersonation_engine/openrouter/api_key_env \
+            /embed/mode /embed/openrouter/model_name /openrouter/attribution"
+            .split_whitespace()
+            .map(|path| json.pointer(path).cloned().unwrap_or_default())
+            .collect();
+        let written: serde_json::Value = serde_json::from_str(
+            r#"["openrouter", "anthropic/claude-haiku-4.5", "openrouter", "IMP_KEY",
+                "openrouter", "baai/bge-m3", false]"#,
+        )
+        .unwrap();
+        assert_eq!(serde_json::Value::Array(said), written, "{json}");
+        let back: AppConfig = serde_json::from_value(json).unwrap();
+        assert_eq!(back, c);
+    }
+
+    /// A variable the user named as the gateway's key is a secret whatever it
+    /// is called, in whichever slot it was typed — so all three reach the list
+    /// that model-driven children are started without
+    /// (docs/research/safe-defaults.md D5). A slot left out would hand a
+    /// `python_exec` child the gateway's key.
+    #[test]
+    fn a_variable_named_for_the_gateways_key_is_kept_from_children() {
+        let mut c = AppConfig::default();
+        c.engine.openrouter.api_key_env = Some("MY_ROUTER_CHAT".into());
+        c.impersonation_engine.openrouter.api_key_env = Some(" MY_ROUTER_IMP ".into());
+        c.embed.openrouter.api_key_env = Some("MY_ROUTER_EMBED".into());
+        let named = named_key_env_vars(&c);
+        let missing: Vec<&str> = ["MY_ROUTER_CHAT", "MY_ROUTER_IMP", "MY_ROUTER_EMBED"]
+            .into_iter()
+            .filter(|name| !named.iter().any(|n| n == name))
+            .collect();
+        assert!(missing.is_empty(), "not named: {missing:?} in {named:?}");
+    }
+
+    /// `/continue` through the mode follows the routed vendor, as it does
+    /// through `external` with a catalogue — and **without** one too: the mode
+    /// is the gateway by name, so there is no llama.cpp for silence to mean
+    /// (docs/research/openrouter-mode.md §2.3). Columns: the slug, whether it
+    /// continues, why. One literal, not tuple rows (lessons §2).
+    const GATEWAY_CONTINUES: &str = "
+        anthropic/claude-haiku-4.5        yes | Anthropic up to 4.5 continues
+        anthropic/claude-sonnet-4.6       no  | ...and refuses prefill from 4.6 on
+        google/gemini-3.5-flash           yes | a Gemini continues
+        openai/gpt-5.5                    no  | OpenAI restarts
+        qwen/qwen3.6-27b                  no  | every open-weight route restarts
+        anthropic/claude-haiku-4.5:nitro  yes | a variant answers as its base
+        anthropic/claude-sonnet-4.6:nitro no  | ...and must not hide the minor version
+    ";
+
+    #[test]
+    fn the_gateway_mode_asks_the_slug_whether_or_not_the_catalogue_answered() {
+        let mut wrong = Vec::new();
+        for row in GATEWAY_CONTINUES.lines().filter(|l| !l.trim().is_empty()) {
+            let (columns, why) = row.split_once('|').unwrap();
+            let c: Vec<&str> = columns.split_whitespace().collect();
+            for catalogued in [false, true] {
+                let got = ServerMode::OpenRouter.supports_continuation(Some(c[0]), catalogued);
+                if got != (c[1] == "yes") {
+                    wrong.push(format!(
+                        "{} (catalogued: {catalogued}) — {}",
+                        c[0],
+                        why.trim()
+                    ));
+                }
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+        for catalogued in [false, true] {
+            assert!(
+                !ServerMode::OpenRouter.supports_continuation(None, catalogued),
+                "no model named — nothing to allow by"
+            );
+        }
+        // `external` is unchanged: the same slug is judged only once the
+        // endpoint has said it is a gateway.
+        assert!(ServerMode::External.supports_continuation(Some("openai/gpt-5.5"), false));
+        assert!(!ServerMode::External.supports_continuation(Some("openai/gpt-5.5"), true));
+    }
+
+    /// Speech through the gateway is stage 3 of the track
+    /// (docs/research/openrouter-mode.md §7), so stage 1 leaves the speech slot
+    /// exactly as it was: no mode of that name — a file that asks for one is
+    /// refused rather than read as another provider — no section, and no speech
+    /// mode that reads the gateway's key.
+    #[test]
+    fn the_speech_slot_has_no_gateway_mode() {
+        assert!(serde_json::from_str::<TtsSettings>(r#"{"mode":"openrouter"}"#).is_err());
+        let written = serde_json::to_value(TtsSettings::default()).unwrap();
+        assert!(written.get("openrouter").is_none(), "{written}");
+        for mode in TtsMode::ALL {
+            let tts = TtsSettings {
+                mode,
+                ..Default::default()
+            };
+            assert_ne!(
+                tts.provider(),
+                Some(CloudProvider::OpenRouter),
+                "{mode:?} must not read the gateway's key"
+            );
+            assert_eq!(
+                tts.cloud().is_some(),
+                mode != TtsMode::External,
+                "{mode:?} keeps its own section"
+            );
+        }
+    }
 }

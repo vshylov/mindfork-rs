@@ -626,4 +626,142 @@ mod tests {
         // Chat takes priority over the profile, the profile — over the global.
         assert_eq!(resolve(Some(&chat), None, &global), chat);
     }
+
+    // ---------- the OpenRouter mode (docs/research/openrouter-mode.md) ----------
+
+    const GATEWAY: Option<CloudProvider> = Some(CloudProvider::OpenRouter);
+
+    /// What the gateway's own schema reads, of the fields this application
+    /// names (docs/research/openrouter-mode.md §3.5, measured by sending each
+    /// with a value of the wrong type) — `repeat_penalty` among them, since it
+    /// travels as the `repetition_penalty` the schema has.
+    const READ_BY_THE_GATEWAY: &str = "temperature top_k top_p min_p max_tokens seed \
+        frequency_penalty presence_penalty repeat_penalty thinking reasoning_effort";
+
+    fn words(list: &str) -> Vec<&str> {
+        list.split_whitespace().collect()
+    }
+
+    fn published(list: &str) -> Vec<String> {
+        list.split_whitespace().map(str::to_string).collect()
+    }
+
+    /// The mode's ceiling is a partition of everything that can be set: a field
+    /// the gateway reads is offered, and a field that is llama.cpp's own — every
+    /// one answered `200` to a wrong type, which is to say dropped — is not.
+    /// Asserted over the whole settable list, so a field added later has to be
+    /// put on one side here instead of being offered by accident.
+    #[test]
+    fn the_gateway_is_offered_what_its_schema_reads_and_nothing_else() {
+        let read = words(READ_BY_THE_GATEWAY);
+        let offered = supported_sampling_fields(GATEWAY);
+        let misplaced: Vec<&str> = SETTABLE_SAMPLING_FIELDS
+            .iter()
+            .copied()
+            .filter(|field| offered.contains(field) != read.contains(field))
+            .collect();
+        assert!(misplaced.is_empty(), "{misplaced:?} in {offered:?}");
+        assert_eq!(
+            offered.len(),
+            read.len(),
+            "nothing offered twice: {offered:?}"
+        );
+    }
+
+    /// Behind the gateway there is a different model per slug, so its catalogue
+    /// entry narrows the ceiling — the one cloud where that holds. Each row is
+    /// what an entry publishes and what is then offered; the two alias rows are
+    /// defect D1's other half: **their** word for our knob has to keep it, and
+    /// ours, which no gateway publishes, keeps nothing. One literal, not tuple
+    /// rows (lessons §2).
+    const NARROWED_BY_AN_ENTRY: &str = "
+        include_reasoning max_tokens reasoning temperature tools top_k top_p \
+            => temperature top_k top_p max_tokens thinking reasoning_effort | Claude Haiku 4.5, as measured
+        repetition_penalty => repeat_penalty           | their word for the penalty keeps ours
+        repeat_penalty     =>                          | our word is not a claim of theirs
+        reasoning          => thinking reasoning_effort | one entry, both switches
+        include_reasoning  => thinking reasoning_effort | ...under either of its names
+        tools response_format stop =>                  | an entry that lists nothing of ours
+    ";
+
+    #[test]
+    fn a_models_catalogue_entry_narrows_what_the_gateway_is_offered() {
+        let mut wrong = Vec::new();
+        for row in NARROWED_BY_AN_ENTRY
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+        {
+            let (columns, why) = row.split_once('|').unwrap();
+            let (entry, kept) = columns.split_once("=>").unwrap();
+            let got = available_sampling_fields(GATEWAY, Some(&published(entry)));
+            if got != words(kept) {
+                wrong.push(format!("{}: {got:?}", why.trim()));
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    /// Silence is never a claim: an entry with no list, and one whose list is
+    /// empty, leave the mode's ceiling exactly as it is — an empty list read as
+    /// "takes nothing" would empty the sampling section for such a model.
+    #[test]
+    fn a_gateway_entry_that_lists_nothing_narrows_nothing() {
+        let ceiling = supported_sampling_fields(GATEWAY).to_vec();
+        assert_eq!(available_sampling_fields(GATEWAY, None), ceiling);
+        assert_eq!(available_sampling_fields(GATEWAY, Some(&[])), ceiling);
+    }
+
+    /// The exception is the gateway's alone. Every other cloud's table is a
+    /// fact about its protocol (ADR 0004), so a list that would cut it to one
+    /// field — or to none — cuts nothing, provider by provider.
+    #[test]
+    fn no_other_cloud_lets_a_catalogue_trim_its_table() {
+        for provider in CloudProvider::ALL {
+            if Some(provider) == GATEWAY {
+                continue;
+            }
+            for entry in ["max_tokens", "tools"] {
+                assert_eq!(
+                    available_sampling_fields(Some(provider), Some(&published(entry))),
+                    supported_sampling_fields(Some(provider)).to_vec(),
+                    "{provider:?}, an entry listing {entry}"
+                );
+            }
+        }
+    }
+
+    /// The snapshot stored on a message is "what was applied", so through the
+    /// gateway it holds what the gateway reads and, once the model's entry has
+    /// spoken, what that model takes — never a llama.cpp field the dialect left
+    /// out of the request.
+    #[test]
+    fn what_was_applied_through_the_gateway_is_what_it_reads() {
+        let set = SamplingConfig {
+            temperature: Some(0.7),
+            min_p: Some(0.05),
+            repeat_penalty: Some(1.15),
+            typical_p: Some(0.9),
+            mirostat: Some(2),
+            samplers: Some(vec!["top_k".into()]),
+            thinking: Some(true),
+            verbosity: Some(Verbosity::Low),
+            ..Default::default()
+        };
+        let ceiling = SamplingConfig {
+            temperature: Some(0.7),
+            min_p: Some(0.05),
+            repeat_penalty: Some(1.15),
+            thinking: Some(true),
+            ..Default::default()
+        };
+        assert_eq!(set.retain_supported(GATEWAY, None), ceiling);
+
+        let entry = published("temperature reasoning tools");
+        let narrowed = SamplingConfig {
+            temperature: Some(0.7),
+            thinking: Some(true),
+            ..Default::default()
+        };
+        assert_eq!(set.retain_supported(GATEWAY, Some(&entry)), narrowed);
+    }
 }

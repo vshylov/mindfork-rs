@@ -458,4 +458,171 @@ mod tests {
             )
         );
     }
+
+    // ---------- a row with facts (docs/research/openrouter-mode.md, fork F7) ----------
+
+    use crate::shared::api::catalogue::ModelFacts;
+
+    /// Runs a table — a number, what is shown for it, `|`, why — through
+    /// `shown`, and returns the rows that came out otherwise, each with what
+    /// did come out. A row that cannot be read is one of them.
+    fn misprinted<N: std::str::FromStr>(table: &str, shown: fn(N) -> String) -> Vec<String> {
+        let rows = table.lines().filter(|l| !l.trim().is_empty());
+        rows.filter_map(|row| {
+            let c: Vec<&str> = row.split_whitespace().collect();
+            let got = c[0].parse().map(shown).ok();
+            (got.as_deref() != Some(c[1])).then(|| format!("{} => {got:?}", row.trim()))
+        })
+        .collect()
+    }
+
+    /// A window is a ceiling somebody will plan against, so it is cut, never
+    /// rounded: `999999` is not `1M`, and Gemini's `1048576` is `1.04M`. What
+    /// the cut leaves is written without a trailing zero.
+    const WINDOWS: &str = "
+        0           0      | nothing to abbreviate
+        999         999    | below a thousand, the number itself
+        1000        1K     | a thousand
+        1999        1K     | cut, not rounded to the nearest
+        8191        8K     | an embedder's window
+        200000      200K   | Claude Haiku 4.5
+        999999      999K   | not 1M: that would be a window it does not have
+        1000000     1M     | a million, with no decimals
+        1048576     1.04M  | Gemini 3.5 Flash: 1.048 is cut to 1.04
+        1050000     1.05M  | two decimals where there are two
+        1100000     1.1M   | one where the second is a zero
+        1999999     1.99M  | cut below two million
+        2000000     2M     | the router's window
+        10490000    10.49M | tens of millions
+    ";
+
+    #[test]
+    fn a_window_is_cut_to_what_the_row_has_room_for_never_rounded_up() {
+        let wrong = misprinted(WINDOWS, compact_tokens);
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    /// A price of a million tokens, from millionths of a dollar: cents from
+    /// ten cents up, and a third decimal below — where cents would show thirty
+    /// of the gateway's models as `0.0x` and the cheapest as `0.00`.
+    const PRICES: &str = "
+        1000000   1.00   | Claude Haiku 4.5, a million tokens in
+        5000000   5.00   | ...and out
+        30000000  30.00  | tens of dollars
+        300000    0.30   | Gemini 3.5 Flash
+        1236000   1.24   | rounded to the nearest cent
+        106000    0.11   | ...also just above ten cents
+        100000    0.10   | ten cents: the last price shown in cents
+        99000     0.099  | below it, the third decimal appears
+        75000     0.075  | seven and a half cents is not 0.07 or 0.08
+        20000     0.020  | an embedder: two cents
+        1600      0.002  | rounded to the nearest thousandth
+        0         0.000  | one side of a price may be free
+    ";
+
+    #[test]
+    fn a_price_below_ten_cents_keeps_a_third_decimal() {
+        let wrong = misprinted(PRICES, dollars);
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    /// A model the way the gateway's catalogue describes one: a name that
+    /// repeats the slug, and facts.
+    fn described(id: &str, facts: ModelFacts) -> CatalogModel {
+        CatalogModel {
+            role: ModelRole::Chat,
+            facts,
+            ..model(id, Some("A Vendor: A Model Name"))
+        }
+    }
+
+    fn facts(window: u32, price: Option<(u64, u64)>, tools: Option<bool>) -> ModelFacts {
+        ModelFacts {
+            context_length: Some(window),
+            prompt_price: price.map(|p| p.0),
+            completion_price: price.map(|p| p.1),
+            tools,
+        }
+    }
+
+    /// Defect D3 was 460 rows with an id and nothing to choose by. A row now
+    /// reads in the order a choice is made in — does it fit, what does it
+    /// cost, can it act — as the person choosing reads it, so the assertions
+    /// are the rows themselves, in English. The name gives its place to the
+    /// facts; a model without tools is **marked**, since this application is
+    /// driven by tools, while one with them needs no mark; and the day a
+    /// model stops being served still closes the row.
+    #[test]
+    fn a_row_with_facts_says_whether_it_fits_what_it_costs_and_whether_it_acts() {
+        let mut config = AppConfig::default();
+        config.interface.language = crate::shared::i18n::Lang::En;
+        let s = SettingsScreen::new(config, vec![], vec![]);
+        let row = |id: &str, facts: ModelFacts| s.picker_label(&described(id, facts));
+
+        assert_eq!(
+            row(
+                "anthropic/claude-haiku-4.5",
+                facts(200_000, Some((1_000_000, 5_000_000)), Some(true))
+            ),
+            "anthropic/claude-haiku-4.5 · 200K context · $1.00 in / $5.00 out per 1M tokens"
+        );
+        assert_eq!(
+            row(
+                "meta-llama/llama-3.3-70b-instruct:free",
+                facts(65_536, Some((0, 0)), Some(false))
+            ),
+            "meta-llama/llama-3.3-70b-instruct:free · 65K context · free · no tools"
+        );
+        assert_eq!(
+            row("baai/bge-m3", facts(8192, Some((10_000, 0)), None)),
+            "baai/bge-m3 · 8K context · $0.010 in / $0.000 out per 1M tokens",
+            "free on one side is a price, not the word"
+        );
+        assert_eq!(
+            row("openrouter/auto", facts(2_000_000, None, Some(true))),
+            "openrouter/auto · 2M context",
+            "a router prices itself -1, which is no price to show"
+        );
+        let leaving = CatalogModel {
+            retiring: Some("2026-11-01".into()),
+            ..described(
+                "openai/gpt-4-turbo",
+                facts(128_000, Some((10_000_000, 30_000_000)), None),
+            )
+        };
+        assert_eq!(
+            s.picker_label(&leaving),
+            "openai/gpt-4-turbo · 128K context · $10.00 in / $30.00 out per 1M tokens \
+             · retiring 2026-11-01"
+        );
+    }
+
+    /// The row from the gateway's own words: one entry of its catalogue,
+    /// parsed and drawn. What `parse` keeps in millionths per million tokens
+    /// is what the row prints in dollars, so a unit slipped on either side
+    /// shows here as a price a thousand times off.
+    #[test]
+    fn a_catalogue_entry_becomes_the_row_the_gateway_described() {
+        use crate::shared::api::catalogue::{CatalogueShape, parse};
+        let mut config = AppConfig::default();
+        config.interface.language = crate::shared::i18n::Lang::En;
+        let s = SettingsScreen::new(config, vec![], vec![]);
+        let listed = parse(
+            CatalogueShape::OpenRouter,
+            r#"{"data":[{"id":"google/gemini-3.5-flash","name":"Google: Gemini 3.5 Flash",
+                "created":1779000000,"context_length":1048576,
+                "architecture":{"output_modalities":["text"]},
+                "pricing":{"prompt":"0.0000003","completion":"0.0000025"},
+                "supported_parameters":["max_tokens","temperature"]}]}"#,
+        )
+        .expect("a catalogue");
+        let rows: Vec<String> = listed.iter().map(|m| s.picker_label(m)).collect();
+        assert_eq!(
+            rows,
+            [
+                "google/gemini-3.5-flash · 1.04M context · $0.30 in / $2.50 out per 1M tokens \
+              · no tools"
+            ]
+        );
+    }
 }

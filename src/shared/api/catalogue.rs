@@ -882,6 +882,237 @@ mod tests {
             "the Anthropic base carries no version segment"
         );
     }
+
+    // ---------- the OpenRouter gateway (docs/research/openrouter-mode.md §3.2) ----------
+
+    /// Entries in the gateway's own shape, measured 2026-09-29 and cut to the
+    /// keys this client reads, in an order that is **not** by date: a `:batch`
+    /// twin, a router that prices itself `-1`, a free model without tools, a
+    /// model on its way out, one that answers with images, and two whose fields
+    /// changed shape.
+    const GATEWAY_BODY: &str = r#"{"data":[
+        {"id":"anthropic/claude-haiku-4.5","name":"Anthropic: Claude Haiku 4.5","created":1760547638,
+         "context_length":200000,
+         "architecture":{"input_modalities":["text","image","file"],"output_modalities":["text"]},
+         "pricing":{"prompt":"0.000001","completion":"0.000005"},
+         "supported_parameters":["max_tokens","temperature","tools"],"expiration_date":null},
+        {"id":"anthropic/claude-haiku-4.5:batch","name":"Anthropic: Claude Haiku 4.5 (batch)","created":1760547638,
+         "context_length":200000,"architecture":{"output_modalities":["text"]},
+         "pricing":{"prompt":"0.0000005","completion":"0.0000025"},"supported_parameters":["tools"]},
+        {"id":"openrouter/auto","name":"Auto Router","created":1699401600,"context_length":2000000,
+         "architecture":{"output_modalities":["text"]},
+         "pricing":{"prompt":"-1","completion":"-1"},"supported_parameters":["tools"]},
+        {"id":"google/gemini-3.5-flash","name":"Google: Gemini 3.5 Flash","created":1779000000,
+         "context_length":1048576,
+         "architecture":{"input_modalities":["text","image","video"],"output_modalities":["text"]},
+         "pricing":{"prompt":"0.0000003","completion":"0.0000025"},
+         "supported_parameters":["reasoning","max_tokens","tools"],"expiration_date":""},
+        {"id":"meta-llama/llama-3.3-70b-instruct:free","name":"Meta: Llama 3.3 70B (free)","created":1733506137,
+         "context_length":65536,"architecture":{"output_modalities":["text"]},
+         "pricing":{"prompt":"0","completion":"0"},"supported_parameters":["max_tokens","temperature"]},
+        {"id":"qwen/qwen3.6-27b","name":"Qwen: Qwen3.6 27B","created":1775000000,"context_length":131072,
+         "architecture":{"output_modalities":["text"]},
+         "pricing":{"prompt":"0.00000012","completion":"0.00000048"},"supported_parameters":["tools"]},
+        {"id":"openai/gpt-4-turbo","name":"OpenAI: GPT-4 Turbo","created":1712620800,
+         "context_length":128000,"architecture":{"output_modalities":["text"]},
+         "pricing":{"prompt":0.00001,"completion":0.00003},"expiration_date":"2026-11-01"},
+        {"id":"openai/gpt-image-2","name":"","created":1770000000,"context_length":32000,
+         "architecture":{"output_modalities":["image"]},"pricing":{"prompt":"0.000005"}},
+        {"id":"odd/shapes","created":1700000000,"context_length":"large",
+         "architecture":"text->text","pricing":{"prompt":"n/a","completion":null},
+         "supported_parameters":[]},
+        {"id":"odd/window","context_length":0,"pricing":"free"}
+    ]}"#;
+
+    /// `GET /embeddings/models`: the same shape, answering with embeddings.
+    const GATEWAY_EMBEDDINGS_BODY: &str = r#"{"data":[
+        {"id":"openai/text-embedding-3-small","name":"OpenAI: Text Embedding 3 Small","created":1706000000,
+         "context_length":8191,"architecture":{"input_modalities":["text"],"output_modalities":["embeddings"]},
+         "pricing":{"prompt":"0.00000002","completion":"0"}},
+        {"id":"baai/bge-m3","name":"BAAI: bge-m3","created":1754000000,"context_length":8192,
+         "architecture":{"input_modalities":["text"],"output_modalities":["embeddings"]},
+         "pricing":{"prompt":"0.00000001","completion":"0"}}
+    ]}"#;
+
+    fn gateway() -> Vec<CatalogModel> {
+        parse(CatalogueShape::OpenRouter, GATEWAY_BODY).expect("a catalogue")
+    }
+
+    fn ids(models: &[CatalogModel]) -> Vec<&str> {
+        models.iter().map(|m| m.id.as_str()).collect()
+    }
+
+    fn named<'a>(models: &'a [CatalogModel], id: &str) -> &'a CatalogModel {
+        let found = models.iter().find(|m| m.id == id);
+        found.unwrap_or_else(|| panic!("{id} is not listed in {:?}", ids(models)))
+    }
+
+    /// Defect D2: every `:batch` slug is in the list and answers a chat with a
+    /// `404`, so the picker leaves them out — and only them: a `:free` variant
+    /// chats, and an entry whose fields changed shape costs its facts, never
+    /// its row. Newest first, by the `created` the gateway publishes; an entry
+    /// without one sorts last.
+    #[test]
+    fn the_gateway_lists_everything_but_batch_newest_first() {
+        let newest_first = "google/gemini-3.5-flash qwen/qwen3.6-27b openai/gpt-image-2 \
+            anthropic/claude-haiku-4.5 meta-llama/llama-3.3-70b-instruct:free \
+            openai/gpt-4-turbo odd/shapes openrouter/auto odd/window";
+        assert_eq!(
+            ids(&gateway()),
+            newest_first.split_whitespace().collect::<Vec<_>>()
+        );
+    }
+
+    /// Unlike every catalogue before it, this one says what a model is **for**
+    /// — by what it answers with — so the role is the gateway's claim and the
+    /// list narrows on it (fork F7). Where it said nothing readable the role is
+    /// unstated, which is silence and narrows nothing.
+    #[test]
+    fn the_gateway_says_what_a_model_is_for_by_what_it_answers_with() {
+        let models = gateway();
+        let role = |id: &str| named(&models, id).role;
+        assert_eq!(role("anthropic/claude-haiku-4.5"), ModelRole::Chat);
+        assert_eq!(role("openai/gpt-image-2"), ModelRole::Other);
+        assert_eq!(role("odd/shapes"), ModelRole::Unstated);
+        assert_eq!(role("odd/window"), ModelRole::Unstated);
+
+        let embedders = parse(
+            CatalogueShape::OpenRouterEmbeddings,
+            GATEWAY_EMBEDDINGS_BODY,
+        )
+        .expect("a list");
+        assert_eq!(
+            ids(&embedders),
+            ["baai/bge-m3", "openai/text-embedding-3-small"]
+        );
+        assert!(embedders.iter().all(|m| m.role == ModelRole::Embedding));
+
+        let chat = for_slot(models.clone(), ModelSlot::Assistant);
+        assert!(
+            !ids(&chat).contains(&"openai/gpt-image-2") && chat.len() == models.len() - 1,
+            "what answers with images alone is not offered for chat: {:?}",
+            ids(&chat)
+        );
+        assert_eq!(chat, for_slot(models.clone(), ModelSlot::Impersonation));
+        assert_eq!(
+            ids(&for_slot(models, ModelSlot::Embedder)),
+            ["odd/shapes", "odd/window"],
+            "a chat model is not offered as an embedder; silence still is"
+        );
+        assert_eq!(
+            for_slot(embedders.clone(), ModelSlot::Embedder),
+            embedders,
+            "the embedder's row gets the embedding list whole, in its order"
+        );
+        assert!(for_slot(embedders, ModelSlot::Assistant).is_empty());
+    }
+
+    /// Defect D3 was a row with an id and nothing else, from a response that
+    /// carries the window, the price and the parameters. The price arrives as
+    /// dollars **per token** in a string and is kept as millionths of a dollar
+    /// per million tokens — an integer, so a row compares exactly, and a
+    /// rounded one: twelve cents, read as a float and scaled, falls a hair
+    /// short of 120000. Columns: the id, the window, the two prices, tools,
+    /// why (`-` — the gateway made no claim).
+    const GATEWAY_FACTS: &str = "
+        anthropic/claude-haiku-4.5             200000  1000000  5000000  yes | $1 in, $5 out, as published
+        google/gemini-3.5-flash                1048576 300000   2500000  yes | thirty cents in, two and a half dollars out
+        qwen/qwen3.6-27b                       131072  120000   480000   yes | rounded, not cut: neither is 119999 or 479999
+        meta-llama/llama-3.3-70b-instruct:free 65536   0        0        no  | free is a price, and no tools is a claim
+        openai/gpt-4-turbo                     128000  10000000 30000000 -   | a price sent as a number; no parameter list
+        openrouter/auto                        2000000 -        -        yes | a router prices itself -1: it depends
+        openai/gpt-image-2                     32000   5000000  -        -   | half a price is still that half
+        odd/shapes                             -       -        -        -   | unreadable fields, an empty parameter list
+        odd/window                             -       -        -        -   | a window of zero is no window
+    ";
+
+    #[test]
+    fn the_gateways_window_price_and_tools_are_read_as_published() {
+        let models = gateway();
+        let rows: Vec<&str> = GATEWAY_FACTS
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .collect();
+        assert_eq!(rows.len(), models.len(), "every entry has its row");
+        let mut wrong = Vec::new();
+        for row in rows {
+            let (columns, why) = row.split_once('|').unwrap();
+            let c: Vec<&str> = columns.split_whitespace().collect();
+            let want = ModelFacts {
+                context_length: c[1].parse().ok(),
+                prompt_price: c[2].parse().ok(),
+                completion_price: c[3].parse().ok(),
+                tools: Some(c[4] == "yes").filter(|_| c[4] != "-"),
+            };
+            let got = named(&models, c[0]).facts;
+            if got != want {
+                wrong.push(format!("{} — {}: {got:?}", c[0], why.trim()));
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    /// The name and the last day are the gateway's to publish, and an empty
+    /// string or a `null` is not either of them — 24 of its entries carry an
+    /// `expiration_date`, the rest a `null`.
+    #[test]
+    fn the_gateways_name_and_last_day_are_kept_where_it_published_them() {
+        let models = gateway();
+        let said = |id: &str| {
+            let m = named(&models, id);
+            (m.display.as_deref(), m.retiring.as_deref())
+        };
+        assert_eq!(
+            said("anthropic/claude-haiku-4.5"),
+            (Some("Anthropic: Claude Haiku 4.5"), None)
+        );
+        assert_eq!(
+            said("openai/gpt-4-turbo"),
+            (Some("OpenAI: GPT-4 Turbo"), Some("2026-11-01"))
+        );
+        assert_eq!(
+            said("google/gemini-3.5-flash").1,
+            None,
+            "an empty date is no date"
+        );
+        assert_eq!(said("openai/gpt-image-2").0, None, "an empty name is none");
+        assert_eq!(said("odd/window"), (None, None));
+    }
+
+    /// Fork F7, the sources: the account's own list where there is an account
+    /// to ask about — `/models/user` is narrowed by its privacy and provider
+    /// settings — the public one where there is not, and the embedding models
+    /// from a list of their own, key or no key.
+    #[test]
+    fn the_gateways_route_follows_the_key_and_the_slot() {
+        let url = |shape, key: Option<&str>| {
+            CatalogueRequest {
+                shape,
+                base: "https://openrouter.ai/api/v1/".to_string(),
+                key: key.map(str::to_string),
+            }
+            .url()
+        };
+        assert_eq!(
+            url(CatalogueShape::OpenRouter, Some("k")),
+            "https://openrouter.ai/api/v1/models/user"
+        );
+        assert_eq!(
+            url(CatalogueShape::OpenRouter, None),
+            "https://openrouter.ai/api/v1/models"
+        );
+        for key in [None, Some("k")] {
+            assert_eq!(
+                url(CatalogueShape::OpenRouterEmbeddings, key),
+                "https://openrouter.ai/api/v1/embeddings/models"
+            );
+        }
+        // No other shape asks a different route for having a key.
+        assert_eq!(
+            url(CatalogueShape::OpenAi, Some("k")),
+            url(CatalogueShape::OpenAi, None)
+        );
+    }
 }
 
 /// Live smokes against the real catalogues — the measurements of §2 of

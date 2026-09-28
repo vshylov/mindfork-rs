@@ -6139,3 +6139,380 @@ fn a_lost_theme_is_listed_after_the_users_themes() {
     assert_eq!(full_theme_names("dark"), ["dark", "light"]);
     assert_eq!(full_theme_names("sepia"), ["dark", "light", "sepia"]);
 }
+
+// ---------- the OpenRouter mode (docs/research/openrouter-mode.md) ----------
+
+/// The three tabs whose slot can be the gateway, each with its mode row and
+/// the four rows of its provider section: model, key, key variable, base URL.
+const GATEWAY_TABS: [(ModelTab, FieldId, [FieldId; 4]); 3] = {
+    use FieldId::*;
+    [
+        (
+            ModelTab::Assistant,
+            XMode,
+            [XModelName, XApiKey, XApiKeyEnv, XUrl],
+        ),
+        (
+            ModelTab::Impersonation,
+            IxMode,
+            [IxModelName, IxApiKey, IxApiKeyEnv, IxUrl],
+        ),
+        (
+            ModelTab::Embeddings,
+            EMode,
+            [EModelName, EApiKey, EApiKeyEnv, EUrl],
+        ),
+    ]
+};
+
+/// The mode a tab's slot is in, in the settings file's own spelling — one
+/// reading for the two mode enums.
+fn slot_mode(c: &AppConfig, tab: ModelTab) -> String {
+    let mode = match tab {
+        ModelTab::Assistant => serde_json::to_value(c.engine.mode),
+        ModelTab::Impersonation => serde_json::to_value(c.impersonation_engine.mode),
+        _ => serde_json::to_value(c.embed.mode),
+    };
+    let mode = mode.ok().and_then(|m| m.as_str().map(str::to_string));
+    mode.unwrap_or_default()
+}
+
+/// A screen with all three slots on the gateway, opened on the Model section.
+fn gateway_everywhere() -> SettingsScreen {
+    let mut s = screen();
+    s.config.engine.mode = ServerMode::OpenRouter;
+    s.config.impersonation_engine.mode = ImpersonationMode::OpenRouter;
+    s.config.embed.mode = ServerMode::OpenRouter;
+    goto_section(&mut s, Section::Model);
+    s
+}
+
+/// Stands on a row of one of the Model section's tabs, from wherever the
+/// screen was — the tabs differ in length, so the walk starts from the top.
+fn goto_model_row(s: &mut SettingsScreen, tab: ModelTab, id: FieldId) {
+    goto_section(s, Section::Model);
+    s.model_sub = tab;
+    s.field_idx = 0;
+    goto_field(s, id);
+}
+
+/// The mode is selectable where a mode is selected, by the arrows as well as
+/// by the popup: last in the cycle on every tab, so `←` from the first mode
+/// wraps onto it, `→` from it wraps back, and walking `→` meets it after
+/// `grok` and nowhere else. The alternative the commit names — a mode that
+/// cannot be reached, or one that can on the assistant's tab alone — is a
+/// provider with a key and no slot to use it in.
+#[test]
+fn the_mode_row_reaches_the_gateway_from_either_side_on_every_tab() {
+    for (tab, mode_row, _) in GATEWAY_TABS {
+        let mut s = screen();
+        goto_model_row(&mut s, tab, mode_row);
+        let first = slot_mode(&s.config, tab);
+
+        match s.handle_key(key(KeyCode::Left)) {
+            Some(SettingsIntent::SaveConfig(c)) => {
+                assert_eq!(slot_mode(&c, tab), "openrouter", "{tab:?}: ← wraps onto it")
+            }
+            other => panic!("{tab:?}: expected SaveConfig, got {other:?}"),
+        }
+        s.handle_key(key(KeyCode::Right));
+        assert_eq!(slot_mode(&s.config, tab), first, "{tab:?}: → wraps back");
+
+        let mut walked = Vec::new();
+        for _ in 0..16 {
+            s.handle_key(key(KeyCode::Right));
+            walked.push(slot_mode(&s.config, tab));
+            if walked.last() == Some(&first) {
+                break;
+            }
+        }
+        let tail: Vec<&str> = walked.iter().rev().take(3).map(String::as_str).collect();
+        assert_eq!(
+            tail,
+            [first.as_str(), "openrouter", "grok"],
+            "{tab:?}: {walked:?}"
+        );
+        let met = walked.iter().filter(|m| *m == "openrouter").count();
+        assert_eq!(met, 1, "{tab:?}: {walked:?}");
+    }
+}
+
+/// With the mode set a tab shows the provider's section — the four rows every
+/// cloud has — and, closing it, the one switch that is the provider's rather
+/// than the slot's (fork F5). The switch carries its description: a setting
+/// that decides what the application says about itself has to say what that
+/// is, and in every interface language it names the two values that are sent.
+#[test]
+fn the_gateway_mode_shows_its_section_and_the_attribution_switch_on_every_tab() {
+    use crate::shared::api::openai::client::{ATTRIBUTION_REFERER, ATTRIBUTION_TITLE};
+    use crate::shared::i18n::Lang;
+    for lang in Lang::ALL.iter().copied() {
+        let mut s = gateway_everywhere();
+        s.config.interface.language = lang;
+        for (tab, _, section) in GATEWAY_TABS {
+            let rows = s.model_fields_for(tab);
+            let shown: Vec<FieldId> = rows
+                .iter()
+                .map(|r| r.id)
+                .filter(|id| section.contains(id) || *id == FieldId::GatewayAttribution)
+                .collect();
+            let mut want = section.to_vec();
+            want.push(FieldId::GatewayAttribution);
+            assert_eq!(shown, want, "{lang:?} {tab:?}");
+
+            let switch = rows
+                .iter()
+                .find(|r| r.id == FieldId::GatewayAttribution)
+                .expect("asserted above");
+            assert!(
+                matches!(switch.kind, FieldKind::Toggle(true)),
+                "{lang:?} {tab:?}: on by default"
+            );
+            let hint = switch.description.as_deref().unwrap_or_default();
+            assert!(
+                hint.contains(ATTRIBUTION_REFERER) && hint.contains(ATTRIBUTION_TITLE),
+                "{lang:?} {tab:?}: the hint must name what is sent: {hint:?}"
+            );
+        }
+    }
+}
+
+/// ...and no other mode shows the switch: it would be a setting about a
+/// provider the slot is not talking to.
+#[test]
+fn the_attribution_switch_belongs_to_the_gateway_mode_alone() {
+    let mut s = gateway_everywhere();
+    let shown = |s: &SettingsScreen, tab| {
+        let rows = s.model_fields_for(tab);
+        rows.iter().any(|r| r.id == FieldId::GatewayAttribution)
+    };
+    for mode in ServerMode::ALL {
+        s.config.engine.mode = mode;
+        s.config.embed.mode = mode;
+        let gateway = mode == ServerMode::OpenRouter;
+        assert_eq!(shown(&s, ModelTab::Assistant), gateway, "{mode:?}");
+        assert_eq!(shown(&s, ModelTab::Embeddings), gateway, "{mode:?}");
+    }
+    for mode in IMP_MODES {
+        s.config.impersonation_engine.mode = mode;
+        assert_eq!(
+            shown(&s, ModelTab::Impersonation),
+            mode == ImpersonationMode::OpenRouter,
+            "{mode:?}"
+        );
+    }
+    assert!(!shown(&s, ModelTab::Tts), "speech is a later stage");
+}
+
+/// The switch is **one** setting under three tabs: flipping it on any of them
+/// saves `openrouter.attribution` flipped, and the other tabs then show what
+/// was saved — not a value of their own.
+#[test]
+fn toggling_attribution_on_any_tab_saves_the_one_provider_wide_value() {
+    let mut s = gateway_everywhere();
+    let mut on = s.config.openrouter.attribution;
+    for (tab, ..) in GATEWAY_TABS {
+        goto_model_row(&mut s, tab, FieldId::GatewayAttribution);
+        on = !on;
+        match s.handle_key(key(KeyCode::Char(' '))) {
+            Some(SettingsIntent::SaveConfig(c)) => {
+                assert_eq!(c.openrouter.attribution, on, "{tab:?}")
+            }
+            other => panic!("{tab:?}: expected SaveConfig, got {other:?}"),
+        }
+        for (other, ..) in GATEWAY_TABS {
+            let rows = s.model_fields_for(other);
+            let row = rows.iter().find(|r| r.id == FieldId::GatewayAttribution);
+            assert!(
+                matches!(row.map(|r| &r.kind), Some(FieldKind::Toggle(v)) if *v == on),
+                "flipped on {tab:?}, read on {other:?}"
+            );
+        }
+    }
+}
+
+/// One key serves every slot of the provider (ADR 0008), so each tab's key row
+/// addresses the same stored secret, says whose it is — the three slots may
+/// point at three providers at once — and commits what is typed as that
+/// secret, never into the config.
+#[test]
+fn the_gateways_key_rows_name_the_provider_and_address_its_one_key() {
+    let gateway = SecretKey::Provider(CloudProvider::OpenRouter);
+    let mut s = gateway_everywhere();
+    for (tab, _, [_, key_row, env_row, _]) in GATEWAY_TABS {
+        for row in [key_row, env_row] {
+            let label = field_label(&s, row).unwrap_or_else(|| panic!("no row for {row:?}"));
+            assert!(label.contains("OpenRouter"), "{row:?}: {label:?}");
+        }
+        assert_eq!(s.secret_field_key(key_row), Some(gateway.clone()));
+
+        goto_model_row(&mut s, tab, key_row);
+        assert_eq!(
+            enter_secret(&mut s, "sk-or-v1-test"),
+            Some(SettingsIntent::SetSecret {
+                key: gateway.clone(),
+                value: "sk-or-v1-test".into()
+            }),
+            "{tab:?}"
+        );
+    }
+    let json = serde_json::to_string(&s.config).unwrap();
+    assert!(!json.contains("sk-or-v1-test"), "the key leaked: {json}");
+
+    // The status follows this provider's key and no neighbour's.
+    let status = |s: &SettingsScreen| {
+        let rows = s.model_fields_for(ModelTab::Assistant);
+        let row = rows.iter().find(|r| r.id == FieldId::XApiKey);
+        row.map(|r| value_text(&r.kind, s.loc()))
+            .unwrap_or_default()
+    };
+    let unset = status(&s);
+    s.set_secrets_present(vec![SecretKey::Provider(CloudProvider::Grok)]);
+    assert_eq!(status(&s), unset, "xAI's key is not the gateway's");
+    s.set_secrets_present(vec![gateway]);
+    assert_ne!(status(&s), unset);
+}
+
+/// Fork F12, adopted (a): a user who reached the gateway through `external`
+/// is told there is a mode for it — by the row that holds the address, on
+/// whichever tab it was typed — and nothing is moved for them. An address
+/// that is somebody else's says nothing, as before; and inside the mode
+/// itself the base-URL row does not recommend the mode it is already in.
+#[test]
+fn an_external_address_that_is_the_gateway_says_there_is_a_mode_for_it() {
+    let mut s = screen();
+    s.config.engine.mode = ServerMode::External;
+    s.config.impersonation_engine.mode = ImpersonationMode::External;
+    s.config.embed.mode = ServerMode::External;
+    let said = |s: &SettingsScreen, tab, id| {
+        let rows = s.model_fields_for(tab);
+        let row = rows.into_iter().find(|r| r.id == id);
+        row.expect("the address row").description
+    };
+    for (tab, _, [.., url_row]) in GATEWAY_TABS {
+        for (address, hinted) in [
+            (Some("https://openrouter.ai/api/v1"), true),
+            (Some("http://127.0.0.1:8000/v1"), false),
+            (None, false),
+        ] {
+            let address = address.map(str::to_string);
+            s.config.engine.external.url = address.clone();
+            s.config.impersonation_engine.external.url = address.clone();
+            s.config.embed.external.url = address.clone();
+            let hint = hinted.then(|| s.loc().t(DESC_EXTERNAL_IS_GATEWAY).to_string());
+            assert_eq!(said(&s, tab, url_row), hint, "{tab:?} {address:?}");
+        }
+    }
+
+    let mut s = gateway_everywhere();
+    s.config.engine.openrouter.url = Some("https://eu.openrouter.ai/api/v1".into());
+    assert_eq!(said(&s, ModelTab::Assistant, FieldId::XUrl), None);
+}
+
+/// The address is judged by its **host** — the gateway's, or a subdomain of
+/// it — however it was typed: a scheme, a port, credentials and capitals are
+/// not what makes it the gateway, and its name in a path, in a longer host or
+/// as the tail of another domain is somebody else's server. Columns: the
+/// address, the verdict, why.
+const GATEWAY_ADDRESSES: &str = "
+    https://openrouter.ai/api/v1              yes | the address the docs give
+    http://OPENROUTER.AI                      yes | a host is not case-sensitive
+    https://eu.openrouter.ai/api/v1           yes | a subdomain of it
+    https://user:pw@openrouter.ai:443/api/v1  yes | credentials and a port around the host
+    openrouter.ai/api/v1                      yes | typed without a scheme
+    https://openrouter.ai?x=1                 yes | a query straight after the host
+    https://example.com/openrouter.ai         no  | its name in a path
+    https://example.com/?next=openrouter.ai   no  | ...or in a query
+    https://notopenrouter.ai/v1               no  | a longer name that ends the same
+    https://openrouter.ai.example.com/v1      no  | its name as a subdomain of another
+    https://openrouter.ai@example.com/v1      no  | its name as the credentials
+    http://127.0.0.1:8000/v1                  no  | a local server
+    -                                         no  | nothing typed
+";
+
+#[test]
+fn an_address_is_the_gateways_by_its_host_alone() {
+    let mut wrong = Vec::new();
+    for row in GATEWAY_ADDRESSES.lines().filter(|l| !l.trim().is_empty()) {
+        let (columns, why) = row.split_once('|').unwrap();
+        let c: Vec<&str> = columns.split_whitespace().collect();
+        let address = c[0].trim_start_matches('-');
+        if is_gateway_url(address) != (c[1] == "yes") {
+            wrong.push(format!("{address:?} — {}", why.trim()));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+    // Pasted with the blanks around it, which a table of words cannot hold.
+    for padded in ["  openrouter.ai/api/v1", "https://openrouter.ai \t"] {
+        assert!(is_gateway_url(padded), "{padded:?}");
+    }
+}
+
+/// The same rule for an address typed **without a scheme**, which the rule
+/// accepts (`openrouter.ai/api/v1`): a proxy of the user's own that is told
+/// its upstream in the query is still the user's proxy. The scheme is what
+/// comes before the host, so a `://` further along — inside the path or the
+/// query — is not where the host starts.
+#[test]
+fn a_gateway_url_inside_a_schemeless_address_is_not_its_host() {
+    for address in [
+        "localhost:8080/v1?upstream=https://openrouter.ai/api/v1",
+        "127.0.0.1:8080/proxy/https://openrouter.ai/api/v1",
+    ] {
+        assert!(
+            !is_gateway_url(address),
+            "{address} is a local server that mentions the gateway"
+        );
+    }
+    // With the scheme typed the same two are read correctly — the control.
+    assert!(!is_gateway_url(
+        "http://localhost:8080/v1?upstream=https://openrouter.ai/api/v1"
+    ));
+}
+
+/// A gateway's row shows facts where a name was, and the name is still what
+/// people remember a model by — so the filter goes on matching it, and a
+/// pick made that way writes the slug, as every pick does.
+#[test]
+fn the_filter_matches_a_name_the_row_no_longer_shows() {
+    let mut s = on_the_model_row(ServerMode::OpenRouter);
+    assert_eq!(
+        s.handle_key(key(KeyCode::Enter)),
+        Some(SettingsIntent::ListModels(ModelSlot::Assistant)),
+        "asked with no key entered: the gateway's catalogue is public"
+    );
+    let with_facts = |id: &str, name: &str| CatalogModel {
+        facts: crate::shared::api::catalogue::ModelFacts {
+            context_length: Some(200_000),
+            ..Default::default()
+        },
+        ..cat(id, Some(name), ModelRole::Chat)
+    };
+    s.set_model_catalogue(
+        ModelSlot::Assistant,
+        Ok(vec![
+            with_facts("google/gemini-3.5-flash", "Google: Gemini 3.5 Flash"),
+            with_facts("anthropic/claude-haiku-4.5", "Anthropic: Claude Haiku 4.5"),
+        ]
+        .into()),
+    );
+    // A colon and a capital are in the name and not in the slug.
+    for c in "Anthropic: Claude".chars() {
+        s.handle_key(key(KeyCode::Char(c)));
+    }
+    let st = s.picker.as_ref().expect("still open");
+    let matched: Vec<&CatalogModel> = st.results.iter().map(|&i| &st.all[i]).collect();
+    assert_eq!(matched.len(), 1, "{matched:?}");
+    let label = s.picker_label(matched[0]);
+    assert!(
+        !label.contains("Anthropic: Claude Haiku"),
+        "the row shows facts, not the name: {label}"
+    );
+    match s.handle_key(key(KeyCode::Enter)) {
+        Some(SettingsIntent::SaveConfig(c)) => assert_eq!(
+            c.engine.openrouter.model_name.as_deref(),
+            Some("anthropic/claude-haiku-4.5")
+        ),
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+}
