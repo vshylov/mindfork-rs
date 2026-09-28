@@ -575,7 +575,7 @@ An index, newest first — one line per track, with the release that shipped it
 and where its story is told. What a track left open is a bullet above, under
 its area.
 
-- **Colour modes and user themes** — unreleased (2026-09-28), three stages:
+- **Colour modes and user themes** — 0.12.0 (2026-09-28), three stages:
   the *full* mode, where the app paints its own canvas and the built-in `dark`
   and `light` are held to contrast floors; the *monochrome* mode, with
   `NO_COLOR` starting the app in it; and themes of the user's own,
