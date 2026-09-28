@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (31)
+## Entries (32)
 
 - Post-M9: fast multiline clipboard paste (done)
 - Post-M9: `↑/↓` navigation by visual row of a wrapped line (done)
@@ -43,6 +43,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the line-break hint names the chord the terminal can deliver (done)
 - Post-M9: a stress mark is part of the word (done)
 - Post-M9: the input box's height is a setting (done)
+- Post-M9: `Ctrl+←/→` stop at punctuation (done)
 
 ### Post-M9: fast multiline clipboard paste (done)
 - **Symptom**: a large clipboard paste lagged in Windows Terminal, and a line break
@@ -1683,3 +1684,66 @@ rows. **3463 unit tests green, 202 `#[ignore]`**, clippy `-D warnings`/fmt clean
 **A live model run is not required** (AGENTS.md §3) — pure layout, no engine,
 memory or tool. The rendered chat and settings screens were looked at once
 through `TestBackend` (lessons §2: a text assertion does not see composition).
+
+### Post-M9: `Ctrl+←/→` stop at punctuation (done)
+- **Asked for**: from the end of `test1, test2,` a `Ctrl+←` went straight to
+  the start of `test2`. Wanted: the first press stops *before the comma* — the
+  end of the word — and the second before `test2`; several marks in a row are
+  passed as one, to the end of the word.
+- **Cause**: word-wise movement knew two classes, whitespace and everything
+  else (`word_left_col`/`word_right_col`), so punctuation was part of the word
+  it touched. The audit's item 14 had written that down as a known
+  simplification; this entry is where it stopped being one. The end of a word
+  that a comma follows — where a sentence is most often amended — was reachable
+  only character by character.
+- **Now three classes** (`CharClass`): whitespace, word characters (letters,
+  digits, `_`) and everything else that is drawn — punctuation, symbols, emoji.
+  A press skips whitespace, then the **one run** it meets. The line is cut into
+  runs once (`class_runs`) and both directions read the same cut: `word_left`
+  answers the start of the run the character before the cursor is in,
+  `word_right` the end of the run the character under it is in. The reported
+  line gives `12 → 7 → 5 → 0` leftward and `5 → 6 → 12 → 13` rightward.
+- **A cluster is classified by its first character.** `char::is_alphanumeric`
+  is false for a stress mark (`U+0301`), a variation selector and a skin-tone
+  modifier alike, so a per-scalar rule would have made the mark a one-character
+  punctuation run and stopped the cursor between a letter and its mark — inside
+  a grapheme cluster, where the next edit splits it (the defect class of the
+  "InputBox refinements" entry). `wrap::cluster_starts` lists the cluster
+  starts in one pass: asking `prev_boundary` per cluster rebuilds the string
+  each time, which is quadratic over a long run of one class (a pasted blob).
+- **User's decision** (2026-09-28) — the request named movement only, so these
+  were taken as the conventional answers, said in the PR, and **confirmed by
+  the user** after trying the build:
+  - *Deletion and selection follow.* `Ctrl+Backspace/Delete` and
+    `Ctrl+Shift+←/→` go through the same two functions, so deleting by word
+    removes exactly what moving by word would have crossed. Leaving deletion on
+    the old rule would have given the app two definitions of a word on
+    neighbouring keys.
+  - *No in-word connectors.* A hyphen or an apostrophe between letters is a
+    stop (`well-known` — three), the code-editor rule, and what the request
+    describes: punctuation is a run of its own. Spellcheck keeps such a word
+    whole, for its own reason — it is one dictionary entry.
+  - *`_` and digits are word characters* — `test1` in the request is one word,
+    and an identifier should be.
+- **Every `InputBox` gets it**: the chat's box, the rename field, the settings
+  editors, search, the self-model editor — they share the widget, and none of
+  them has word keys of its own.
+
+**Tests** (+10): `widgets/input_box` — the reported line leftward and its
+mirror rightward; a run of marks as one stop, and punctuation against
+punctuation (`("`); whitespace skipped before either kind of run, with leading
+and trailing whitespace ending at the line's own bounds; digits and `_` inside
+a word; a stress mark not ending its word, and emoji — a run of them as one
+stop, a keycap (a digit carrying `U+FE0F` and `U+20E3`) never entered;
+`Ctrl+Shift+←` selecting up to the same stop; deletion sharing the stops in
+both directions. `shared/wrap` — `cluster_starts`. The ladders are asserted
+whole, through `on_key`, by a helper that presses until the cursor stops.
+**Mutation-checked**: with `class_runs` classifying per scalar the stress-mark
+and the emoji tests fail. The first version of the emoji test did **not** — a
+heart with its selector and a thumbs-up with a skin tone are four scalars of
+one class, so a per-scalar rule cuts the same runs; it is the keycap, whose
+base is a word character and whose riders are not, that tells the rules apart.
+**3602 unit tests green, 202 `#[ignore]`**, clippy `-D warnings`/fmt clean.
+
+**A live model run is not required** (AGENTS.md §3) — pure input handling, no
+engine, memory or tool.

@@ -53,6 +53,13 @@ split by subsystem.
   moved just far enough to clear it — the hues are the same. `light` also drew
   the user's colour in whatever blue the terminal had; it is now one fixed blue,
   like every other colour of a fixed theme.
+- **`Ctrl+←`/`Ctrl+→` stop at punctuation.** Moving by word used to carry the
+  punctuation along with the word: from the end of `test1, test2,` one press
+  went straight to the start of `test2`. Now the first press stops before the
+  comma — at the end of the word — and the next one before `test2`; several
+  marks in a row (`?!..`) are passed in one step. `Ctrl+Shift+←/→` selects and
+  `Ctrl+Backspace`/`Ctrl+Delete` delete by the same stops, in every text field
+  of the app.
 
 ### Fixed
 - **Settings no longer mark a default value as changed.** With the interface in

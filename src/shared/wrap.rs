@@ -218,6 +218,22 @@ pub fn snap_boundary(chars: &[char], col: usize) -> usize {
     acc
 }
 
+/// Start (character index) of every grapheme cluster of the line, in order.
+/// For a caller that walks the **whole** line by clusters — word-wise movement
+/// classifies a cluster by its first character (spec §11.5): asking
+/// [`prev_boundary`]/[`next_boundary`] once per cluster would rebuild the
+/// string each time, quadratic on a long run. UAX #29, as its neighbors.
+pub fn cluster_starts(chars: &[char]) -> Vec<usize> {
+    let s: String = chars.iter().collect();
+    let mut starts = Vec::new();
+    let mut acc = 0;
+    for g in s.graphemes(true) {
+        starts.push(acc);
+        acc += g.chars().count();
+    }
+    starts
+}
+
 /// Hard break point for a long word at index `i` (the character that overflowed
 /// the row width), snapped to a grapheme-cluster boundary — so an emoji with a
 /// variation selector (`❤️`) or a flag (a pair of regional indicators) is not
@@ -456,6 +472,15 @@ mod tests {
         for i in 0..=4 {
             assert_eq!(snap_boundary(&ascii, i), i);
         }
+    }
+
+    #[test]
+    fn cluster_starts_lists_every_cluster_once() {
+        // ❤️ (base + selector), a stressed letter (base + U+0301) and a plain one.
+        let cs = chars("❤\u{FE0F}а\u{301}x");
+        assert_eq!(cluster_starts(&cs), [0, 2, 4]);
+        assert_eq!(cluster_starts(&chars("abc")), [0, 1, 2]);
+        assert!(cluster_starts(&[]).is_empty());
     }
 
     #[test]

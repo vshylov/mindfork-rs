@@ -178,7 +178,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-28, version 0.11.2)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3592 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **3602 unit tests
 green, 202 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
@@ -191,6 +191,9 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **`Ctrl+←/→` stop at punctuation** — three character classes, not two: a run of
+  marks is a stop of its own, and deletion and selection share it
+  ([docs/journal/ui-input.md](docs/journal/ui-input.md), spec §11.5).
 - **A settings file the typed parse refuses ends the start, not the settings** —
   one misspelt value reset the whole config, which the first save wrote over the
   file. The gate parses typed, no reader falls back to the defaults, a backup

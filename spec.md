@@ -3085,6 +3085,31 @@ Design record: [docs/history/in-feed-search.md](docs/history/in-feed-search.md).
   path or URL that starts with an accidental space is easier to fix from column
   0. Before the first render the wrapping isn't known (the width comes from the
   last render), so everything falls back to the logical line.
+- **Word-wise movement and deletion** (`Ctrl+←/→`, with `Shift` — selection;
+  `Ctrl+Backspace/Delete`) go by **three classes** of character: whitespace,
+  word characters (letters, digits and `_`) and everything else that is drawn
+  — punctuation, symbols, emoji. A press skips whitespace and then the **one
+  run** it meets, a word or a run of punctuation: `Ctrl+←` lands at that run's
+  start, `Ctrl+→` past its end. So from the end of `test1, test2,` the stops
+  leftward are *before the comma* (the end of `test2`), *before `test2`*,
+  *before the first comma*, *the line's start*; however many marks stand
+  together (`test2?!..`), they are one stop. The rule is the one code editors
+  use. Until 2026-09-28 there were two classes — whitespace or not — so
+  punctuation travelled with its word, and the end of a word that a comma
+  follows, the place a sentence is most often amended at, was reachable only
+  character by character. All four keys share the one definition
+  (`widgets/input_box.rs::word_left`/`word_right`): deleting by word removes
+  exactly what moving by word would have crossed. A **grapheme cluster** is
+  classified by its first character, so what rides on a base never ends a run —
+  `char::is_alphanumeric` is false for a stress mark (`U+0301`), and a
+  per-scalar rule would stop the cursor between a letter and its mark, inside a
+  cluster. This is deliberately **not** spellcheck's segmentation (above): there
+  an apostrophe or a hyphen between letters is part of the word, digits are not
+  letters and a URL is skipped whole — that answers what is looked up in a
+  dictionary, this answers where the cursor stops, so `well-known` is one
+  checked word and three stops. Movement crosses a line boundary as its own
+  step (the end of the previous line, the start of the next); deletion there
+  joins the lines, as the plain key does.
 - **Emoji picker popup** (`Ctrl+B`): a grid of popular emoji, arrow-key navigation, `Enter` inserts the selected one into the input box at the cursor (safe for multi-scalar clusters like `❤️`/`👍🏽`), `Esc` closes it; the popup remembers the last choice. Any action in the popup (moving the selection or closing it) requests a **full redraw** from the loop: a wide emoji occupies two cells, and when the glyph leaves its spot, `ratatui`'s per-cell diff doesn't repaint its **trailing** cell (in both buffers it's a default space), and the terminal doesn't clear the second half of a wide glyph itself — a "hanging" fragment was left on screen (visible via the selection background). The full redraw uses the same "sentinel buffer" technique as scrolling the feed with VS16 emoji (§11.3) — it rewrites every cell without `ESC[2J`, i.e. without flicker. **The popup's own emoji set is kept free of VS16 clusters** (`❤️`/`✌️` were replaced with `💖`/`🤞`; the "exactly 2 columns, no U+FE0F" invariant is pinned by a gate test): for VS16, `ratatui` additionally sends the glyph's trailing cell to the terminal, and the `crossterm` backend tracks position by cell number without accounting for its width — that trailing write happens without a `MoveTo`, lands one column to the right, and shifts the rest of the row (an adjacent wide emoji goes dark, the popup's border drifts). Under a full redraw, where "changed" cells are all of them, this shows up on every frame.
 - **Line breaks on unix terminals**: the legacy encoding sends the same CR for both `Shift+Enter` and `Enter`, so on a "bare" terminal a line break was unavailable. On unix, `runtime` enables the **kitty keyboard protocol** at the `DISAMBIGUATE_ESCAPE_CODES` level (`crossterm::event::PushKeyboardEnhancementFlags`) if the terminal supports it (`supports_keyboard_enhancement()`) — then modifiers on special keys (`Enter`/arrows/…) are reported, `Shift+Enter` is distinguishable from `Enter`, and `Shift`+arrows from plain arrows (bringing keyboard selection to life). Flags are cleared on exit and in the panic hook. Printable input and a lone `Shift`+character aren't touched by the protocol (text comes through as-is) → the layout-independent Ctrl-shortcut parsing and typing `?`/emoji don't regress. Not needed on Windows (the Console API reports modifiers). For terminals **without** the protocol — **`Alt+Enter`** gives the same line break (it arrives as `Enter`+`ALT` via the meta-prefix `ESC`, recognized even on legacy terminals); accepted in every multiline field (chat, the system message/greeting in settings, the self-model editor). **The footer names the chord that this terminal can deliver**, not the one we would prefer: `shared::keys::newline_chord()` answers `Shift+Enter` when a modified `Enter` is reportable (Windows, or a unix terminal that took the protocol push) and `Alt+Enter` when it is not; `app/runtime` records the answer once, next to the push decision, and the two footer strings (`ui.chat.input.idle`, `ui.editor.multiline_footer`) interpolate it as `{newline}`. The terminal that made this necessary is **Konsole**: its default keytab answers `Shift+Return` with `\EOM` (SS3 `M`), crossterm's unix parser has no arm for that final byte and its `Err` branch clears the buffer, so the keypress yields no event at all — and no released Konsole (≤ 26.04) answers `CSI ? u`, so the protocol cannot rescue it either. See [docs/journal/ui-input.md](docs/journal/ui-input.md), "the line-break hint names the chord the terminal can deliver".
 
@@ -3616,8 +3641,8 @@ docs/history/external-api-key.md.
 | `/tts [N\|all\|stop\|pause\|resume]` | speak the chat's messages / stop / pause / resume (§11.9) |
 | `Ctrl+K` | clear all text in the input box (undo it — `Ctrl+Z`) |
 | `Ctrl+Z` / `Ctrl+Y` | undo / redo an input-box edit (coalesced snapshots) |
-| `Ctrl+←`/`Ctrl+→` | move the cursor by word (across line boundaries) |
-| `Ctrl+Backspace`/`Ctrl+Delete` | delete the word left/right of the cursor |
+| `Ctrl+←`/`Ctrl+→` | move the cursor by word (across line boundaries); a run of punctuation is a stop of its own (§11.5) |
+| `Ctrl+Backspace`/`Ctrl+Delete` | delete the word — or the run of punctuation — left/right of the cursor |
 | `Home`/`End` | a ladder of stops (§11.5): `Home` — the row's text, its start, then the whole line's; `End` — the row's end, then the line's |
 | `Ctrl+Home`/`Ctrl+End` | move the cursor to the start/end of the input box's text |
 | `Ctrl+T` | collapse/expand "thoughts" in the feed (per chat, §11.3) |
