@@ -37,6 +37,12 @@ birth turn, and colour modes with user themes — have all closed
 
 ### Engine and providers
 
+- **A mode of its own for OpenRouter** — **deferred**, until its forks are
+  answered. Measured 2026-09-29 in all five slots — chat, impersonation,
+  embeddings, speech, a YouTube video — of which speech and video have no road
+  through `external` at all; four stages are proposed, the first one a provider
+  in chat and impersonation
+  ([openrouter-mode.md](research/openrouter-mode.md), forks F1–F3 and F5).
 - **Provider bridges — what remains.** The "any OpenAI-compatible endpoint"
   pattern (external + LiteLLM/OpenRouter) is documented in install.md §3,
   with the key such a gateway needs ([external-api-key.md](history/external-api-key.md))
@@ -44,14 +50,19 @@ birth turn, and colour modes with user themes — have all closed
   the OpenRouter review is closed. Left:
   - **on demand** — a **managed custom command**: the supervisor launching an
     arbitrary sidecar proxy ([plugin-system.md §6](research/plugin-system.md)).
-  - **deferred** — **embeddings through a gateway**: the `Embedder` half sends
-    `model`, so the "Embeddings" tab can point at one, but no run has
-    ([openrouter-external.md §4.1](research/openrouter-external.md)).
+  - **deferred** — **embeddings through a gateway**: measured 2026-09-29 — the
+    wire works as it is, and an index built on a local `bge-m3` stays valid
+    against the gateway's. What is missing is a retry around the embedder and a
+    cap on the batch; both ride on the OpenRouter mode's second stage
+    ([openrouter-mode.md §4.3](research/openrouter-mode.md)).
   - **on demand** — **OpenRouter's own request knobs** (`provider` routing, the
     `models` fallback, `transforms`, attribution headers, `usage.cost`) —
-    deliberately not exposed (§6 there). `provider` routing is the one with a
-    measured use: a routed provider that misses its model's tool template, whose
-    special tokens then end the turn as reply text (§8.1 there).
+    deliberately not exposed
+    ([openrouter-external.md §6](research/openrouter-external.md)). `provider`
+    routing is the one with a measured use: a routed provider that misses its
+    model's tool template, whose special tokens then end the turn as reply text
+    (§8.1 there). Where each would go in a mode of its own:
+    [openrouter-mode.md](research/openrouter-mode.md), F5 and F11.
   - **deferred** — **xAI's server-side Live Search / X Search**, and the
     Responses route as the cheap way to xAI-only features
     ([grok-xai-provider.md §5](research/grok-xai-provider.md), F1 and F6).
