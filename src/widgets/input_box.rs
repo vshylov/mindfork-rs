@@ -938,9 +938,9 @@ impl InputBox {
     }
 
     /// Left by one word (`Ctrl+Left`): skips whitespace to the left, then the
-    /// word's characters — the cursor lands at the word's start. At the start
-    /// of a logical line, moves to the end of the previous one (one press = one
-    /// boundary, as in large editors).
+    /// run it meets — a word or a run of punctuation ([`word_left`]) — and
+    /// lands at that run's start. At the start of a logical line, moves to the
+    /// end of the previous one (one press = one boundary, as in large editors).
     fn move_word_left(&mut self) {
         self.goal_col = None;
         if self.col == 0 {
@@ -954,8 +954,9 @@ impl InputBox {
     }
 
     /// Right by one word (`Ctrl+Right`): skips whitespace to the right, then the
-    /// word's characters — the cursor lands past the word's end. At the end of
-    /// a logical line, moves to the start of the next one.
+    /// run it meets — a word or a run of punctuation ([`word_right`]) — and
+    /// lands past that run's end. At the end of a logical line, moves to the
+    /// start of the next one.
     fn move_word_right(&mut self) {
         self.goal_col = None;
         if self.col >= self.lines[self.row].len() {
@@ -968,41 +969,16 @@ impl InputBox {
         self.col = self.word_right_col();
     }
 
-    /// Word boundary to the left of the cursor **within the current line** (for
-    /// word-wise movement and deletion): skips whitespace, then the word's
-    /// characters. See [`Self::move_word_left`].
-    ///
-    /// A "word" here is by the **whitespace/non-whitespace** class (punctuation
-    /// is part of the word) — this **deliberately diverges** from spellcheck
-    /// segmentation (`features/spellcheck/segment.rs`, where punctuation is a
-    /// separate class so it doesn't get dragged into the checked word). Word-wise
-    /// navigation/deletion live by editor rules, spelling by its own; no need to
-    /// reconcile them (large editors also treat punctuation as a separate class
-    /// — a known simplification, not a bug). See InputBox audit item 14.
+    /// Word boundary to the left of the cursor **within the current line** —
+    /// the one stop word-wise movement and deletion share ([`word_left`]).
     fn word_left_col(&self) -> usize {
-        let line = &self.lines[self.row];
-        let mut i = self.col;
-        while i > 0 && line[i - 1].is_whitespace() {
-            i -= 1;
-        }
-        while i > 0 && !line[i - 1].is_whitespace() {
-            i -= 1;
-        }
-        i
+        word_left(&self.lines[self.row], self.col)
     }
 
     /// Word boundary to the right of the cursor **within the current line**
-    /// (mirrors [`Self::word_left_col`]).
+    /// (mirrors [`Self::word_left_col`], [`word_right`]).
     fn word_right_col(&self) -> usize {
-        let line = &self.lines[self.row];
-        let mut i = self.col;
-        while i < line.len() && line[i].is_whitespace() {
-            i += 1;
-        }
-        while i < line.len() && !line[i].is_whitespace() {
-            i += 1;
-        }
-        i
+        word_right(&self.lines[self.row], self.col)
     }
 
     /// Deletes the word to the left of the cursor (`Ctrl+Backspace`). At the
@@ -1623,6 +1599,88 @@ fn navigation(code: KeyCode, ctrl: bool) -> Option<fn(&mut InputBox)> {
         (KeyCode::End, false) => InputBox::move_end,
         _ => return None,
     })
+}
+
+/// What a grapheme cluster is to word-wise movement and deletion (`Ctrl+←/→`,
+/// `Ctrl+Backspace/Delete`) — spec §11.5.
+///
+/// Three classes, the rule of code editors: punctuation is a run **of its own**,
+/// so from the end of `test1, test2,` the first `Ctrl+←` stops before the comma
+/// and the second before `test2`. With two classes (whitespace or not — what
+/// this was until 2026-09-28) the comma travelled with the word, and the end of
+/// a word that punctuation follows could only be reached character by character.
+///
+/// This is **not** spellcheck's segmentation (`features/spellcheck/segment.rs`),
+/// and the two are not to be reconciled: there an apostrophe or a hyphen between
+/// letters is part of the word, digits are not letters and a URL is skipped
+/// whole — it answers "what is looked up in a dictionary", this answers "where
+/// does the cursor stop".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CharClass {
+    Space,
+    /// Letters, digits and `_` — what an identifier is made of.
+    Word,
+    /// Everything else that is drawn: punctuation, symbols, emoji.
+    Punct,
+}
+
+impl CharClass {
+    fn of(c: char) -> Self {
+        if c.is_whitespace() {
+            Self::Space
+        } else if c.is_alphanumeric() || c == '_' {
+            Self::Word
+        } else {
+            Self::Punct
+        }
+    }
+}
+
+/// The line as maximal runs of one class: `(start, class)` of every run, in
+/// order. A **grapheme cluster** takes the class of its first character, so
+/// what rides on a base never ends a run: `char::is_alphanumeric` is false for
+/// a stress mark (`U+0301`), and classifying by scalar would stop the cursor
+/// between a letter and its mark — inside a cluster, where the next edit
+/// splits it.
+fn class_runs(line: &[char]) -> Vec<(usize, CharClass)> {
+    let mut runs: Vec<(usize, CharClass)> = Vec::new();
+    for start in wrap::cluster_starts(line) {
+        let class = CharClass::of(line[start]);
+        if runs.last().is_none_or(|&(_, last)| last != class) {
+            runs.push((start, class));
+        }
+    }
+    runs
+}
+
+/// Word boundary to the left of `col`: the start of the run the character
+/// before the cursor belongs to, whitespace skipped first — so the stop is the
+/// start of a word or of a run of punctuation. Leading whitespace has nothing
+/// before it and yields the line's start.
+fn word_left(line: &[char], col: usize) -> usize {
+    let runs = class_runs(line);
+    let Some(idx) = runs.iter().rposition(|&(start, _)| start < col) else {
+        return 0;
+    };
+    match runs[idx] {
+        (_, CharClass::Space) if idx > 0 => runs[idx - 1].0,
+        (start, _) => start,
+    }
+}
+
+/// Word boundary to the right of `col` (mirrors [`word_left`]): the end of the
+/// run the character under the cursor belongs to, whitespace skipped first.
+/// Trailing whitespace has nothing after it and yields the line's end.
+fn word_right(line: &[char], col: usize) -> usize {
+    let runs = class_runs(line);
+    let end_of = |idx: usize| runs.get(idx + 1).map_or(line.len(), |&(start, _)| start);
+    let Some(idx) = runs.iter().rposition(|&(start, _)| start <= col) else {
+        return line.len();
+    };
+    match runs[idx].1 {
+        CharClass::Space if idx + 1 < runs.len() => end_of(idx + 1),
+        _ => end_of(idx),
+    }
 }
 
 /// Normalizes clipboard text before pasting: `\r\n`/`\r` → `\n` (a single
@@ -2622,6 +2680,131 @@ mod tests {
         // Ctrl+→ from the end of the first line → start of the next one
         assert!(ib.on_key(ctrl(KeyCode::Right)).handled());
         assert_eq!(ib.cursor(), (1, 0));
+    }
+
+    /// Presses `key` until the cursor stops moving and returns every column it
+    /// stopped at — the whole ladder of a line in one assertion.
+    fn stops(ib: &mut InputBox, key: KeyEvent) -> Vec<usize> {
+        let mut out = Vec::new();
+        loop {
+            let before = ib.cursor();
+            ib.on_key(key);
+            if ib.cursor() == before {
+                return out;
+            }
+            out.push(ib.cursor().1);
+        }
+    }
+
+    #[test]
+    fn ctrl_left_stops_at_the_end_of_a_word_punctuation_follows() {
+        // The reported case: from the end, the first press is the comma's own
+        // stop (the end of `test2`), the second is the start of `test2`.
+        let mut ib = InputBox::new();
+        ib.set_text("test1, test2,"); // cursor at the end (col=13)
+        assert_eq!(stops(&mut ib, ctrl(KeyCode::Left)), [12, 7, 5, 0]);
+    }
+
+    #[test]
+    fn ctrl_right_mirrors_the_stops_of_ctrl_left() {
+        let mut ib = InputBox::new();
+        ib.set_text("test1, test2,");
+        ib.col = 0;
+        // past `test1`, past its comma, past `test2` (the space is skipped
+        // first), past the last comma
+        assert_eq!(stops(&mut ib, ctrl(KeyCode::Right)), [5, 6, 12, 13]);
+    }
+
+    #[test]
+    fn a_run_of_punctuation_is_one_stop() {
+        let mut ib = InputBox::new();
+        ib.set_text("test1, test2?!..");
+        // one press over the four marks, to the end of `test2`
+        assert_eq!(stops(&mut ib, ctrl(KeyCode::Left)), [12, 7, 5, 0]);
+        assert_eq!(stops(&mut ib, ctrl(KeyCode::Right)), [5, 6, 12, 16]);
+        // Punctuation against punctuation with nothing between: `("` is a run.
+        ib.set_text("say(\"hi\")");
+        assert_eq!(stops(&mut ib, ctrl(KeyCode::Left)), [7, 5, 3, 0]);
+    }
+
+    #[test]
+    fn whitespace_is_skipped_before_either_kind_of_run() {
+        let mut ib = InputBox::new();
+        // Whitespace, then punctuation: the stop is the punctuation's start.
+        ib.set_text("a --  b");
+        assert_eq!(stops(&mut ib, ctrl(KeyCode::Left)), [6, 2, 0]);
+        assert_eq!(stops(&mut ib, ctrl(KeyCode::Right)), [1, 4, 7]);
+        // Leading and trailing whitespace have no run beyond them — the line's
+        // own start and end are the stops.
+        ib.set_text("  ab  ");
+        assert_eq!(stops(&mut ib, ctrl(KeyCode::Left)), [2, 0]);
+        assert_eq!(stops(&mut ib, ctrl(KeyCode::Right)), [4, 6]);
+    }
+
+    #[test]
+    fn digits_and_the_underscore_are_word_characters() {
+        let mut ib = InputBox::new();
+        ib.set_text("snake_case2 v3.14");
+        assert_eq!(stops(&mut ib, ctrl(KeyCode::Left)), [15, 14, 12, 0]);
+    }
+
+    #[test]
+    fn a_stress_mark_does_not_end_the_word() {
+        // `U+0301` is not alphanumeric; classified by scalar it would be a
+        // punctuation run of its own and the cursor would stop inside the
+        // cluster, between the letter and its mark.
+        let mut ib = InputBox::new();
+        ib.set_text("за\u{301}мок, да"); // з а ◌́ м о к , ␠ д а
+        assert_eq!(stops(&mut ib, ctrl(KeyCode::Left)), [8, 6, 0]);
+        assert_eq!(stops(&mut ib, ctrl(KeyCode::Right)), [6, 7, 10]);
+    }
+
+    #[test]
+    fn emoji_are_a_run_and_a_cluster_is_never_split() {
+        // ❤️ = base + U+FE0F, then a thumbs-up with a skin tone: four scalars,
+        // two clusters, one run.
+        let mut ib = InputBox::new();
+        ib.set_text("ok ❤\u{FE0F}👍\u{1F3FD} go");
+        assert_eq!(stops(&mut ib, ctrl(KeyCode::Left)), [8, 3, 0]);
+        assert_eq!(stops(&mut ib, ctrl(KeyCode::Right)), [2, 7, 10]);
+        // A keycap is a digit carrying U+FE0F and U+20E3. The digit makes the
+        // cluster a word character; what it carries is no run of its own, or
+        // the cursor would stop at column 2 — inside the cluster.
+        ib.set_text("a1\u{FE0F}\u{20E3} b");
+        assert_eq!(stops(&mut ib, ctrl(KeyCode::Left)), [5, 0]);
+        assert_eq!(stops(&mut ib, ctrl(KeyCode::Right)), [4, 6]);
+    }
+
+    #[test]
+    fn ctrl_shift_left_selects_up_to_the_same_stop() {
+        let mut ib = InputBox::new();
+        ib.set_text("test1, test2,");
+        ib.on_key(ctrl_shift(KeyCode::Left));
+        assert_eq!(ib.selected_text().as_deref(), Some(","));
+        ib.on_key(ctrl_shift(KeyCode::Left));
+        assert_eq!(ib.selected_text().as_deref(), Some("test2,"));
+    }
+
+    #[test]
+    fn word_deletion_shares_the_stops_of_word_movement() {
+        let mut ib = InputBox::new();
+        ib.set_text("test1, test2,");
+        assert!(ib.on_key(ctrl(KeyCode::Backspace)).handled());
+        assert_eq!(ib.text(), "test1, test2");
+        assert!(ib.on_key(ctrl(KeyCode::Backspace)).handled());
+        assert_eq!(ib.text(), "test1, ");
+        // whitespace goes with the run before it, as it always did
+        assert!(ib.on_key(ctrl(KeyCode::Backspace)).handled());
+        assert_eq!(ib.text(), "test1");
+
+        ib.set_text("test1, test2,");
+        ib.col = 0;
+        assert!(ib.on_key(ctrl(KeyCode::Delete)).handled());
+        assert_eq!(ib.text(), ", test2,");
+        assert!(ib.on_key(ctrl(KeyCode::Delete)).handled());
+        assert_eq!(ib.text(), " test2,");
+        assert!(ib.on_key(ctrl(KeyCode::Delete)).handled());
+        assert_eq!(ib.text(), ",");
     }
 
     #[test]
