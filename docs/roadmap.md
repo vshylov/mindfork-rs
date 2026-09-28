@@ -28,21 +28,23 @@ evidence. Adding or closing an item is part of every task's documentation step
 
 ## Most valuable next
 
-No track is open. The ones this section carried before — the first public
-release, images, retry/backoff, the prompt-caching measurement, the attachment
-birth turn, and colour modes with user themes — have all closed
-([Closed](#closed)); the lists below are an idea bank of equal weight.
+**One track is open: a mode of its own for OpenRouter**
+([openrouter-mode.md](research/openrouter-mode.md)). Measured 2026-09-29 in all
+five slots — chat, impersonation, embeddings, speech, a YouTube video — of
+which speech and video have no road through `external` at all; the forks were
+decided the same day. Four stages: the provider in chat and impersonation
+(**in progress**), embeddings, speech, video; the gateway's own knobs are a
+fifth, on demand.
+
+The tracks this section carried before — the first public release, images,
+retry/backoff, the prompt-caching measurement, the attachment birth turn, and
+colour modes with user themes — have all closed ([Closed](#closed)); the lists
+below are an idea bank of equal weight.
 
 ## Open
 
 ### Engine and providers
 
-- **A mode of its own for OpenRouter** — **deferred**, until its forks are
-  answered. Measured 2026-09-29 in all five slots — chat, impersonation,
-  embeddings, speech, a YouTube video — of which speech and video have no road
-  through `external` at all; four stages are proposed, the first one a provider
-  in chat and impersonation
-  ([openrouter-mode.md](research/openrouter-mode.md), forks F1–F3 and F5).
 - **Provider bridges — what remains.** The "any OpenAI-compatible endpoint"
   pattern (external + LiteLLM/OpenRouter) is documented in install.md §3,
   with the key such a gateway needs ([external-api-key.md](history/external-api-key.md))

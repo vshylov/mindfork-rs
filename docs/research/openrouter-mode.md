@@ -1,8 +1,10 @@
 # Research: a mode of its own for OpenRouter
 
-**Status: research complete, forks open — nothing is implemented.** Measured
-against the service on **2026-09-29** with a paid account; every number below is
-from that day.
+**Status: research complete, all forks decided — the track is open, stage 1 in
+progress.** Measured against the service on **2026-09-29** with a paid account;
+every number below is from that day. **User's decision, 2026-09-29: every
+recommendation of §6 is taken as written** — a provider of its own, in all five
+slots, over the four stages of §7.
 
 **The question:**
 
@@ -477,10 +479,27 @@ the installer's page and the site's (`tools/wizard_rtf.py`,
 
 ## 6. Forks
 
-**F1, F2, F3 and F5 are the user's call.** The others are recorded with the
-recommendation they would be taken at, so that each can be overturned.
+**User's decision, 2026-09-29: all twelve at their recommendation.** F1, F2, F3
+and F5 were the user's call and were answered as recommended; the others were
+recorded with the recommendation they would be taken at, and stand. What was
+adopted, in one place:
 
-### F1. How to meet the need — **recommendation (a)**
+| fork | adopted |
+|---|---|
+| F1 | (a) a provider of its own |
+| F2 | all five slots, four stages |
+| F3 | (b) the variants and `SETTINGS_SCHEMA` 3 → 4 |
+| F4 | (a) Chat Completions for every model, a dialect on `OpenAiClient` |
+| F5 | (b) attribution on by default, a setting turns it off, PRIVACY.md says what is sent |
+| F6 | (a) `GET /key` once per apply |
+| F7 | the provider's claims: four sources, `:batch` left out, the row shows window and price |
+| F8 | the mode, a retry, a batch cap; `input_type` on demand |
+| F9 | one client, the format negotiated |
+| F10 | a selector, the evidence rule, the segment in words |
+| F11 | parse now, show later |
+| F12 | (a) a hint |
+
+### F1. How to meet the need — **adopted (a)**
 
 - **(a) a provider of its own**: a fifth `CloudProvider`, selectable in every
   slot, one key.
@@ -493,13 +512,13 @@ recommendation they would be taken at, so that each can be overturned.
 (b) and (a) do not exclude each other; (b) answers a different question — two
 local servers — and nobody has asked it.
 
-### F2. Which slots, and in what order — **recommendation: all five, four stages**
+### F2. Which slots, and in what order — **adopted: all five, four stages**
 
 Chat with impersonation, then embeddings, then speech, then video (§7). The
 alternative is stage 1 alone and the rest on demand — but speech and video are
 the two slots this gateway's users have no other road to (§2.2).
 
-### F3. A new value of an existing enum — **recommendation (b)**
+### F3. A new value of an existing enum — **adopted (b)**
 
 `engine.mode`, `embed.mode`, `impersonation_engine.mode` and `tts.mode` are
 strict enums, and [lessons.md](../lessons.md) §8 is about exactly this: a new
@@ -523,7 +542,7 @@ strict enums, and [lessons.md](../lessons.md) §8 is about exactly this: a new
 The video slot's selector is a **new field** (`video.provider`), which is
 additive either way.
 
-### F4. The wire — **recommendation (a)**
+### F4. The wire — **adopted (a)**
 
 - **(a) Chat Completions for every model**, `OpenAiClient` with a dialect.
 - (b) the model's native shape through the gateway's `/messages` and
@@ -532,7 +551,7 @@ additive either way.
   echoed across tool rounds — was measured to change nothing
   ([openrouter-external.md](openrouter-external.md) F5).
 
-### F5. Attribution headers — **recommendation (b)**
+### F5. Attribution headers — **adopted (b)**
 
 `HTTP-Referer` (the app's URL) and `X-OpenRouter-Title` make the gateway list
 the application in its public rankings and on each model's page **[docs]**; both
@@ -548,7 +567,7 @@ promises that "no request is ever made about you, your machine or your usage".
 - (d) never — the literal reading of the promise, at the price of the one free
   channel through which this gateway's users find applications.
 
-### F6. Checking the key — **recommendation (a)**
+### F6. Checking the key — **adopted (a)**
 
 - **(a) `GET /key` once, when the engine is applied**: a refused key becomes the
   slot's status instead of the first message's error, and the settings hint can
@@ -556,7 +575,7 @@ promises that "no request is ever made about you, your machine or your usage".
   line in PRIVACY.md's list of probes.
 - (b) no check, like the other clouds.
 
-### F7. The picker — **recommendation: the provider's claims, all of them**
+### F7. The picker — **adopted: the provider's claims, all of them**
 
 One shape, four sources: `/models/user` for chat and impersonation when a key is
 stored (the account's own filters) and `/models` otherwise; `/embeddings/models`;
@@ -568,7 +587,7 @@ YouTube link is **our** measurement, and a list narrows on the provider's claim,
 never on ours ([model-picker.md](model-picker.md) §3). The voice row gets a list
 of its own from `supported_voices`.
 
-### F8. Embeddings — **recommendation: the mode, a retry, a batch cap**
+### F8. Embeddings — **adopted: the mode, a retry, a batch cap**
 
 - a retry around the embedder, for every cloud embedder rather than this one;
 - requests split at a fixed number of inputs — `rag_add` is the one unbounded
@@ -576,7 +595,7 @@ of its own from `supported_voices`.
 - `input_type` as a further `EmbedConvention` — **on demand**: two of eight
   models honour it, and the prefixes the app already has cover the rest.
 
-### F9. Speech — **recommendation: one client, the format negotiated**
+### F9. Speech — **adopted: one client, the format negotiated**
 
 `OpenAiTts` gains a third constructor rather than a sibling type: ask for `pcm`,
 on a `400` naming `response_format` ask once for `mp3` and remember it for the
@@ -586,7 +605,7 @@ is sent as today and the hint says a model may ignore it; the `instructions` row
 is not shown. The per-request ceiling stays 2000 characters, as for native
 Gemini.
 
-### F10. Video — **recommendation: a selector, the evidence rule, the segment in words**
+### F10. Video — **adopted: a selector, the evidence rule, the segment in words**
 
 `video.provider` (`gemini` by default) and a section per provider, so that the
 model is not retyped on a switch. The client asks for the lowest reasoning
@@ -595,7 +614,7 @@ tokens is an error.** A segment is named in the prompt, the length gate reads
 the whole video's length, and the result says the whole video was read. The
 resolution row is hidden in this mode.
 
-### F11. The gateway's own knobs — **recommendation: parse now, show later**
+### F11. The gateway's own knobs — **adopted: parse now, show later**
 
 `provider` and `usage.cost` are two optional fields on the message's metadata —
 additive — and stage 1 can record them at no design cost. Showing them, and the
@@ -603,7 +622,7 @@ routing controls (`provider.order/only/ignore/sort`, `data_collection`, `zdr`),
 is a stage of its own, **on demand**; of those, `provider.only` has the measured
 use ([openrouter-external.md](openrouter-external.md) §8.1).
 
-### F12. A user already on `external` — **recommendation (a)**
+### F12. A user already on `external` — **adopted (a)**
 
 - **(a) a hint**: a settings row whose `external` URL is on `openrouter.ai` says
   there is a mode for it.
@@ -614,7 +633,7 @@ use ([openrouter-external.md](openrouter-external.md) §8.1).
 `external` keeps working against the gateway exactly as it does: nothing of the
 earlier three tracks is removed.
 
-## 7. The track, if F1 and F2 are taken as recommended
+## 7. The track
 
 | stage | what | go/no-go, live |
 |---|---|---|
