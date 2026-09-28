@@ -33,6 +33,9 @@ author = "Vladimir Shylov"
 author_url = "https://github.com/vshylov"
 github = "https://github.com/vshylov/mindfork-rs"
 releases = "https://github.com/vshylov/mindfork-rs/releases"
+# The crate's page — the header links it next to the repository, and the install
+# guide's `cargo install` route builds from it.
+crates = "https://crates.io/crates/mindfork"
 # The application version the prose describes — the overview reads it as
 # `config.extra.app_version`; bumped by the release PR, AGENTS.md §6.
 app_version = "0.12.0"

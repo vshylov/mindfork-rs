@@ -127,12 +127,19 @@ verified against the release's `sha256sums.txt`. As an alternative — the porta
 ### From crates.io (`cargo install`)
 
 ```bash
-cargo install mindfork
+cargo install --locked mindfork
 ```
 
-The same prerequisites as "Building from source" below — a Rust toolchain, and
-on Linux the ALSA headers. Two consequences are worth knowing before choosing
-this way in, because `cargo install` keeps **only the executable**:
+`--locked` builds the dependency versions the release was built and tested with —
+the crate carries its `Cargo.lock` (`crates-io.yml` publishes with `--locked`);
+without it cargo resolves the newest compatible ones. The same line run later
+upgrades to the newest release.
+
+The same prerequisites as "Building from source" below — **Rust 1.96 or newer**
+(the crate's `rust-version`; an older cargo refuses before compiling anything),
+and on Linux the ALSA headers plus `pkg-config`, which `alsa-sys` finds them
+with. Two consequences are worth knowing before choosing this way in, because
+`cargo install` keeps **only the executable**:
 
 - **no spellcheck dictionaries.** They are copied next to the binary at build
   time (§4), and that copy is not what gets installed — so spellcheck starts
@@ -152,9 +159,13 @@ You need **Rust** (edition 2024, a recent stable toolchain). On **Linux** you al
 need the ALSA headers — speech playback (`/tts`, §4.3) is built via `rodio`/`cpal`:
 
 ```bash
-sudo apt-get install -y libasound2-dev     # Debian/Ubuntu
-sudo dnf install -y alsa-lib-devel         # Fedora
+sudo apt-get install -y libasound2-dev pkg-config     # Debian/Ubuntu
+sudo dnf install -y alsa-lib-devel pkgconf            # Fedora
 ```
+
+(`libasound2-dev` does not depend on `pkg-config`, and `alsa-sys`'s build script
+runs it to find the headers. Without the headers the build stops there: "The
+system library `alsa` required by crate `alsa-sys` was not found".)
 
 On Windows nothing extra is needed (WASAPI via `windows-rs`). The prebuilt packages
 pull in the runtime library themselves (`libasound2t64`/`libasound2` / `alsa-lib`).

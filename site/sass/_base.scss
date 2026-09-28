@@ -238,3 +238,21 @@ section {
     height: 18px;
   }
 }
+
+// Below this the nav no longer fits beside the wordmark on one row (measured:
+// it needs 432 px with the gutters), and a phone scrolled the page sideways.
+// The nav takes a row of its own, spread across the width.
+@media (max-width: 440px) {
+  .head-row {
+    flex-wrap: wrap;
+    height: auto;
+    padding-top: 12px;
+    padding-bottom: 10px;
+    row-gap: 8px;
+  }
+  .site-nav {
+    width: 100%;
+    justify-content: space-between;
+    gap: 8px;
+  }
+}

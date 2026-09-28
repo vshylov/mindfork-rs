@@ -10,7 +10,7 @@ the reasoning behind the site, not its current shape. For the current shape
 read the research/design doc above; for the traps that recur across areas
 read [lessons.md](../lessons.md).
 
-## Entries (24)
+## Entries (25)
 
 - Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 - Post-M9: website — S2 infra: one CloudFormation stack, mindfork.io live (done)
@@ -36,6 +36,7 @@ read [lessons.md](../lessons.md).
 - Post-M9: website — /llms.txt, generated from the site rather than written (done)
 - Post-M9: website — the 0.10.2 release post (done)
 - Post-M9: website — the site waits for the release (done)
+- Post-M9: website — crates.io in the header and on the install page (done)
 
 ### Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 
@@ -1248,3 +1249,66 @@ both on `main` at `88e5ce29`, the merge of the pull request.
   structured data says `"softwareVersion": "0.11.0"`. One thing for whoever checks
   next: the post's address is `/blog/mindfork-0-11-0/` — Zola takes the date off the
   file name — so a guess built from the file name is a 404 that means nothing.
+
+### Post-M9: website — crates.io in the header and on the install page (done)
+
+- **What.** The owner asked for two things: the install page to say how to install
+  from crates.io, and a link to `https://crates.io/crates/mindfork` in the header,
+  after the repository's. The address lives once, as `config.extra.crates` in
+  `site/zola.toml`, and everything reads it: the header link in `base.html`, the
+  install page's new "From crates.io" section and its lead line (the markdown is a
+  Tera template since Zola 0.23, so `{{ config.extra.crates }}` works in content),
+  the SoftwareApplication's `sameAs` (now the repository *and* the crate — an array
+  is valid there, and the page's JSON-LD still parses), and `/llms.txt`, whose
+  "Start here" lists what the header links off the site — the generator reads the
+  key the way it reads `github`, and its self-test asserts the line. The install
+  page's description (and so its `llms.txt` line) names crates.io too.
+- **Measured before it was written.** Every sentence about `cargo install` was run
+  first, in a clean Ubuntu 24.04 container against the registry — `cargo install
+  --locked mindfork` into a scratch `--root`:
+  - with the container's default **rustc 1.94.1**, cargo refused before downloading
+    a single dependency: "it requires rustc 1.96 or newer" — the crate's
+    `rust-version`. Outside the checkout `rust-toolchain.toml` does not apply, so a
+    user's default toolchain is what decides; the page names the floor and
+    `rustup update`.
+  - with 1.96 and **no ALSA headers**, the build stopped in `alsa-sys`'s build
+    script, which asks `pkg-config` for `alsa`. `apt-cache depends libasound2-dev`
+    lists only `libasound2t64` — no `pkg-config` — so the page and the guide name
+    both packages rather than assume a developer machine has the second.
+  - with `libasound2-dev` installed: `Finished release … in 10m 18s` on 4 cores,
+    `Installed package mindfork v0.12.0`, and the binary says `mindfork 0.12.0`.
+    The install root held `bin/mindfork` and nothing else — no dictionaries, as
+    the guide says. The same line again: `Ignored package mindfork v0.12.0 is
+    already installed`, which is the page's "says the one you have is current".
+  - the data root, from the installed binary's own `mindfork stats`: `<root>/bin/data`
+    with no marker, and `~/.local/share/mindfork-rs` after the page's `echo` line
+    wrote `defaults.json` beside it — the Linux half of that paragraph, run as
+    written.
+- **`--locked`, recommended.** `crates-io.yml` publishes with `--locked`, the crate
+  carries its `Cargo.lock` (`cargo package --list`), and `--locked` builds exactly
+  that graph; without it cargo resolves the newest semver-compatible versions, which
+  is a build nobody tested. The release posts' plain `cargo install mindfork` still
+  works and was left as it is — they are dated records.
+- **What a crate install lacks**, carried over from `docs/install.md` §1: no
+  spellcheck dictionaries (only the executable is installed), and the data folder
+  next to the binary, `~/.cargo/bin/data/`. The page gives the `defaults.json` line
+  that moves it to the user folder — and for Windows it is `Set-Content -Encoding
+  ascii`, not `>`: Windows PowerShell 5.1's `>` writes UTF-16LE, `Defaults::read`
+  strips a UTF-8 BOM and nothing else, and a `defaults.json` it cannot parse is a
+  startup error by design (`shared/paths.rs`). That one is read from the code, not
+  run — there is no Windows here.
+- **The header on a phone had been scrolling sideways already.** Measured with
+  Playwright on the built site: the four-item nav needed 364 px beside the wordmark,
+  so a 360 px screen scrolled by 4 px and a 320 px one by 44; the fifth item made it
+  408 px, which a 390 px iPhone no longer fits either. Below 440 px (one row needs
+  432 px with the gutters) the nav now takes a row of its own, spread across the
+  width: no horizontal scroll at 320, 360, 390, 414, 441, 480, 560 or 800 px, the
+  header 61 → 83 px tall on a phone, desktop unchanged. `.head-row` and `.wrap` are
+  the same element, so the rule sets `padding-top`/`-bottom` only — the shorthand
+  wiped the side gutter on the first try.
+- **The guide agrees with the page.** `docs/install.md` §1: `--locked`, the 1.96
+  floor, and `pkg-config` next to the ALSA headers in "Building from source".
+- Gates: `zola check` (0.23.6, the pinned version) and a build, `site_llms_txt.py`
+  `--check` and `--self-test`, `site_legal_pages.py --check`, `cyrillic_scan`,
+  `link_check`, `doc_index_check` — green. No Rust changed, so no test count moves
+  and no CHANGELOG line: the app is the same binary.

@@ -1,7 +1,7 @@
 +++
 title = "Install"
-description = "Download mindfork for Windows or Linux: the installer, the packages, the portable archives — what each one is for, how to verify it, and what to do first."
-updated = "2026-09-18"
+description = "Get mindfork for Windows or Linux: the installer, the packages, the portable archives or crates.io — what each one is for, how to verify it, and what to do first."
+updated = "2026-09-28"
 template = "doc.html"
 
 [extra]
@@ -10,7 +10,8 @@ template = "doc.html"
 software = true
 +++
 
-Everything below is on the [releases page](https://github.com/vshylov/mindfork-rs/releases).
+Every download below is on the [releases page](https://github.com/vshylov/mindfork-rs/releases),
+and the same version is on [crates.io]({{ config.extra.crates }}) for `cargo install`.
 One binary, no runtime to install first, nothing that phones home.
 
 ## Windows
@@ -82,9 +83,59 @@ sha256sum -c sha256sums.txt --ignore-missing          # Linux
 Get-FileHash .\mindfork-rs-v<version>-x86_64-setup.exe -Algorithm SHA256   # Windows
 ```
 
+## From crates.io
+
+Every release is also published to [crates.io]({{ config.extra.crates }}) as the
+crate `mindfork` — the same tag the downloads are built from — so a machine that
+already builds Rust can install it with cargo, on Windows and Linux alike:
+
+```bash
+cargo install --locked mindfork          # the binary lands in ~/.cargo/bin
+```
+
+`--locked` builds against the exact dependency versions the release was tested
+with, from the lock file the crate carries; without it cargo resolves the newest
+compatible ones instead. The same line run later upgrades to the newest release,
+or says the one you have is current.
+
+It compiles on your machine, so it needs a toolchain: **Rust 1.96 or newer** —
+cargo refuses an older one before building anything (`rustup update` fixes that).
+On Linux, add the ALSA headers, which speech playback links against, and
+`pkg-config`, which finds them:
+
+```bash
+sudo apt install libasound2-dev pkg-config     # Debian, Ubuntu
+sudo dnf install alsa-lib-devel pkgconf        # Fedora, RHEL
+```
+
+Two things differ from the downloads above, because `cargo install` keeps only
+the executable:
+
+- **No spellcheck dictionaries.** The archives, packages and installer carry them;
+  a cargo install starts with spellcheck off. Hunspell `.aff`/`.dic` pairs dropped
+  into the data folder's `dictionaries/` turn it on.
+- **The data folder sits next to the binary** — `~/.cargo/bin/data/`, since the
+  default layout is portable. To keep it in your user folder instead
+  (`~/.local/share/mindfork-rs` on Linux, `%APPDATA%\mindfork-rs\data` on Windows),
+  put a `defaults.json` beside the binary before the first run:
+
+```bash
+echo '{ "mode": "system" }' > ~/.cargo/bin/defaults.json      # Linux
+```
+
+```powershell
+# Windows. Not `>`: Windows PowerShell writes UTF-16 with it, which the app refuses.
+$file = "$env:USERPROFILE\.cargo\bin\defaults.json"
+Set-Content $file '{ "mode": "system" }' -Encoding ascii
+```
+
+The downloads also carry every licence text and stay the recommended way in; this
+route is for a machine that has Rust on it anyway.
+
 ## Build it yourself
 
-A recent stable Rust (edition 2024) and nothing else:
+The same toolchain as for crates.io — Rust 1.96 or newer, plus the ALSA headers
+and `pkg-config` on Linux — and a clone:
 
 ```bash
 git clone https://github.com/vshylov/mindfork-rs
