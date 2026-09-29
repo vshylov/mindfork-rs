@@ -25,7 +25,7 @@ use crate::features::tools::meta::{ToolGate, ToolInfo};
 use crate::shared::config::{
     AppConfig, AutoTitleMode, CloudProvider, CloudSettings, FlashAttn, ImpersonationMode,
     ManagedSettings, McpServerConfig, MediaResolution, NoteOrder, PythonMode, SecretSlot,
-    ServerMode, SpecType, Theme, ThemeMode, TtsCloudSettings, TtsMode,
+    ServerMode, SpecType, Theme, ThemeMode, TtsCloudSettings, TtsMode, VideoProvider,
 };
 use crate::shared::embed_prefix::EmbedConvention;
 use crate::shared::i18n::Locale;
@@ -561,21 +561,24 @@ enum FieldId {
     TPythonWasmMemory,
     /// The local interpreter's memory limit per process (`tools.python_local_memory_mb`).
     TPythonLocalMemory,
-    /// The Gemini model that watches a video (`youtube_watch`). See spec §9.3,
-    /// docs/research/youtube-integration.md.
+    /// Who watches a video: Gemini by Google's own API, or the OpenRouter
+    /// gateway (`video.provider`, docs/research/openrouter-mode.md, fork F10).
+    VideoProvider,
+    /// The model that watches a video (`youtube_watch`), in the section of the
+    /// provider chosen. See spec §9.3, docs/research/youtube-integration.md.
     VideoModel,
     /// Frame-sampling detail (`generationConfig.mediaResolution`).
     VideoResolution,
     /// Ceiling on a video's length, in minutes (`0` — no ceiling).
     VideoMaxMinutes,
-    /// The **stored** Gemini key (ADR 0008), entered here rather than only in the
-    /// "Model" section: that section shows a key field only for a slot whose mode
-    /// is that cloud, so with a local/OpenAI setup there was nowhere to put a
-    /// Gemini key at all — while `youtube_watch` needs one whatever the chat
-    /// engine is.
+    /// The **stored** key of the video provider (ADR 0008) — Gemini's, or the
+    /// gateway's — entered here rather than only in the "Model" section: that
+    /// section shows a key field only for a slot whose mode is that cloud, so
+    /// with a local/OpenAI setup there was nowhere to put the key at all — while
+    /// `youtube_watch` needs one whatever the chat engine is.
     VideoApiKey,
-    /// Env-variable name with the Gemini key — a fallback when no key is stored
-    /// in settings (the shared Gemini key, ADR 0008).
+    /// Env-variable name with that provider's key — a fallback when no key is
+    /// stored in settings. Each provider's section keeps its own.
     VideoApiKeyEnv,
     TFs,
     TFsRoot,

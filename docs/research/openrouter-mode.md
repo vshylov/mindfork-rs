@@ -1,7 +1,7 @@
 # Research: a mode of its own for OpenRouter
 
-**Status: research complete, all forks decided — the track is open, stages 1
-to 3 built (§11–§13), video next.** Measured against the service on **2026-09-29** with a paid account;
+**Status: the track is complete — all four stages built (§11–§14), for the
+release 0.13.0.** Measured against the service on **2026-09-29** with a paid account;
 every number below is from that day. **User's decision, 2026-09-29: every
 recommendation of §6 is taken as written** — a provider of its own, in all five
 slots, over the four stages of §7.
@@ -654,13 +654,16 @@ departed from this table — the embedder's arm came with it — is §11.
 **Stage 3 is built** (2026-09-29), go/no-go met: §13 — with a defect of the
 player's found on the way, which was every mode's.
 
-**User's decision, 2026-09-29: the stages that are built, 1 to 3, ship in one
-release — 0.13.0.** The one step of the settings schema, 3 → 4, therefore covers
-them: no released build will have read a file of schema 4 and met a mode it
-does not know (§13.4). Stage 4 adds a field, `video.provider`, which is
-additive (F3) and owes no step whichever release carries it. The site's texts
-and the one-sentence description of the application, which name the gateway,
-go with 0.13.0, in a pull request of their own.
+**Stage 4 is built** (2026-09-29), go/no-go met: §14. The mode serves all
+five slots.
+
+**User's decision, 2026-09-29: every stage ships in one release — 0.13.0.** The
+one step of the settings schema, 3 → 4, therefore covers the track: no released
+build will have read a file of schema 4 and met a mode it does not know
+(§13.4). Stage 4's `video.provider` is a new field, additive (F3), and would
+have owed no step in any release. The site's texts and the one-sentence
+description of the application, which name the gateway, go with 0.13.0, in a
+pull request of their own.
 
 ## 8. What this does not cover
 
@@ -951,5 +954,95 @@ the voice row lists the five voices of the model named.
 | F7: a row shows the name, the window and the price | A speech model's row shows how many voices it lists, and **no price**: the catalogue's number has no unit and the unit differs by model (§13.1). "Per 1M tokens" beside it would be our claim, and for most of them a wrong one. |
 | F6: `GET /key` once per apply | Not for speech. Nothing is applied: the slot has no engine and no status, its client is built when `/tts` is typed. A refused key is said by the first request, in the gateway's sentence. |
 | F12: a hint under an `external` address that is the gateway's | The speech slot's hint is its own. The other slots' says *"this section keeps working as it is"*, which here is false: `external` asks for `wav`, and the gateway refuses it (§13.1). |
-| F3: the modes' values and `SETTINGS_SCHEMA` 3 → 4 | No step of this stage's: `tts.mode` is one of the four values F3 names, and no build with schema 4 has been released. A release that carried stage 1 without this stage would have owed a step of this stage's own; by the user's decision of 2026-09-29 stages 1 to 3 ship in one release, 0.13.0 (§7), so none is owed. |
+| F3: the modes' values and `SETTINGS_SCHEMA` 3 → 4 | No step of this stage's: `tts.mode` is one of the four values F3 names, and no build with schema 4 has been released. A release that carried stage 1 without this stage would have owed a step of this stage's own; by the user's decision of 2026-09-29 every stage ships in one release, 0.13.0 (§7), so none is owed. |
 | — | **Found by the live run**: the decoder (§13.2). Fixed for every mode that plays a container. |
+
+## 14. Measured while stage 4 was built (2026-09-29)
+
+### 14.1 The list of models that take video **[live]**
+
+| request | entries |
+|---|---|
+| `GET /models?input_modalities=video`, no key | **85** — 72 once the `:batch` twins are left out |
+| `GET /models/user?input_modalities=video`, with the key | **461** — the account's whole list |
+
+The account's list **does not take this filter**; it takes the speech one
+(§13.1), so the two were not to be assumed alike. The entries carry
+`architecture.input_modalities`, and narrowed by it the account's list is 70
+models — the public list's 72 less two the account's own settings leave out.
+That is a list narrowed on the provider's claim, made by this client because
+the provider's filter was not applied; it is not a claim of ours.
+
+Of the 85, 28 are Google's. The family opens the list: that only Gemini takes a
+YouTube **link** is this project's measurement (§4.5), which may order a list
+and never narrow it (F7).
+
+### 14.2 What an address costs when it is not read as a video **[live]**
+
+The 67-second video, `google/gemini-3.5-flash-lite`, the lowest effort:
+
+| the address | prompt tokens | of which video | cost | the answer |
+|---|---|---|---|---|
+| `youtube.com/watch?v=<id>` | 6 119 | 4 422 + 1 672 audio | $0.0019 | the first sentences of the video |
+| `youtu.be/<id>` | 6 116 | the same | $0.0005 (5 301 cached) | about the video |
+| `youtube.com/embed/<id>` | 6 116 | the same | $0.0019 | about the video |
+| `…watch?v=<id>&t=20s` | **558 136** | **0** | **$0.167** | "NO VIDEO" |
+| `…watch?v=<id>&feature=share` | **551 337** | **0** | **$0.165** | *"The video shows a NASA video detailing the plans and progress for building a moon base."* |
+| `https://example.com/` | 0 | 0 | $0.000005 | "NO VIDEO" |
+
+One more parameter in the address, and the link is not a video to the gateway:
+what is read is the page behind it — half a million tokens of it — at **ninety
+times the price**, and the answer may be a description all the same, made up
+from what the page says about the video. §4.5 had met the zero and not the
+bill.
+
+Two things follow. The address the client is given has to be the video's id
+and nothing else — which is what `youtube_watch` has always built, from the id
+it reads out of whatever was pasted. And the rule of §4.5 holds as written:
+what tells an answer about the video from an answer about the page is the
+count of video tokens, and the text is not looked at.
+
+### 14.3 The go/no-go **[live]**
+
+Through the client (`shared::video::gateway_live_tests`):
+
+| | what happened |
+|---|---|
+| the video of 2026-09-08 | watched in 4.4 s; *"This is the moment where we should all start believing again. Now, bound for the moon. America is returning to the moon to build a moon base."* — a line of what is said in it, and the client, which refuses an answer without video tokens, handed it over |
+| a link the gateway does not read | `https://example.com/`: a `200`, and the client's error — *"the gateway answered without reading the video — no video tokens among the 0 prompt tokens it counted"* |
+| a video that is not there | *"status 502 Bad Gateway: Provider returned error: The caller does not have permission"* — the gateway's words and the provider's |
+| a refused key | *"status 401 Unauthorized: User not found."* |
+| the list | 72 without a key, 70 with one; Gemini opens both |
+
+Through the tool (`features::tools::gateway_live_tests`), as the agentic loop
+calls it:
+
+- **A link as a person pastes it** — `…watch?v=IwZVXmQdX1E&t=20s&feature=share`,
+  the very parameters of §14.2 — is watched: the header YouTube gave (*NASA Moon
+  Base: The First Six Months · NASA · 1:07*), a description, and a transcript of
+  twelve lines that opens with the video's first words.
+- **A segment, 0:20–0:40, named in words**: the result says the whole video was
+  read and charged, and the transcript is of the part asked for — three lines,
+  at 0:26, 0:29 and 0:38, counted from the video's start — without the video's
+  first words in it.
+- **The ceiling**: the 67-second video under a ceiling of one minute, thirty
+  seconds of it asked for, is refused in half a second — *"1:07 … 1:00"* — and
+  nothing is spent.
+
+In the terminal (`tools/console_probe.py --scenario gateway`): the settings'
+search finds the video group; it names `openrouter`, the model, the gateway's
+key rows, and has no row for the resolution; the model row lists 70 models,
+fifteen of the Gemini family first, each with its window and price and none
+marked "no tools".
+
+### 14.4 Where stage 4 departed from the plan
+
+| the plan | what was built, and why |
+|---|---|
+| F10: `video.provider` and a section per provider | The gateway has a section, `video.openrouter`; Gemini's fields stay where a file has always held them, at the top of `video`. Moving them into a section of their own would have been a rename — a step of the schema and a migration — for the same effect: neither model is retyped on a switch. |
+| F10: the lowest reasoning effort the catalogue lists | As planned, from the model's own entry (`GET /model/{slug}`), asked once per client. A model that lists none is sent nothing about reasoning; an outage of the catalogue is not an answer and is asked about again. |
+| F10: an answer with no video tokens is an error | As planned, and first among what is read of a `200`: before the text, which is never looked at. Before it, the body's `error` — one refusal comes as a `200` (§4.5). |
+| F10: the length gate reads the whole video's length | As planned — and a video **whose length could not be read** is refused, where the native provider's is clipped to the ceiling: the gateway takes no bound to clip by. With the ceiling at 0 it is watched. The refusal does not advise a segment, which through the gateway costs the same. |
+| F7: `?input_modalities=video` | Without a key. With one, the account's whole list, narrowed here by what each entry says it takes: the account's list does not take the filter (§14.1). |
+| F7: a row marks a model that lists no `tools` | Not behind the video row: a model that watches is asked to describe, not to act. |
+| — | **Measured on the way**: what a link with a parameter costs (§14.2). Nothing of the application sent one; the smoke that pastes such a link is there so that nothing ever does. |

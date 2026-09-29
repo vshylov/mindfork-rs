@@ -890,7 +890,8 @@ computer** (Windows — the system DPAPI; Linux — a key derived from
 - a saved key **cannot be viewed or copied** from the app — editing means re-entering
   it; the field only shows "configured (this computer)";
 - one key serves **chat, impersonation, embeddings and speech** for that provider
-  (OpenRouter's key included: all four tabs have its mode).
+  (OpenRouter's key included: all four tabs have its mode) — and the video tool,
+  which reads the key of the provider it is set to, Gemini or OpenRouter (§4.4).
 
 The key is protected against moving/copying the file, but not against programs
 running under your own user account on the same computer (this is how browser
@@ -923,7 +924,10 @@ many vendors. It is a mode of its own on all four tabs of the section: on
 **Assistant**, **Impersonation** and **Embeddings** next to `managed`,
 `external` and the four clouds, and on **Speech** next to `openai`, `gemini` and
 `external` (§4.3) — so a local server and the gateway each keep their settings
-and switching between them retypes nothing. Design and measurements:
+and switching between them retypes nothing. The video tool reaches it too, by a
+**Provider** row of its own in Settings → Tools (§4.4), so the one key serves
+everything the app asks a model for: chat, impersonation, embeddings, speech
+and video. Design and measurements:
 [docs/research/openrouter-mode.md](research/openrouter-mode.md).
 
 **Setting it up.**
@@ -932,7 +936,8 @@ and switching between them retypes nothing. Design and measurements:
 2. Enter the key in "OpenRouter API key" — or name the environment variable that
    holds it (`OPENROUTER_API_KEY`, say) in the field below; no variable name is
    assumed. **One stored key serves every tab in this mode**: the impersonation,
-   embedding and speech slots need no key of their own, only a model.
+   embedding and speech slots need no key of their own, only a model — and
+   neither does the video tool, once its provider is `openrouter` (§4.4).
 3. `Enter` on the **Model** row lists the gateway's catalogue. Each row is the
    model's id, its context window, the price of a million tokens in and out
    (`free` where both are zero) and `no tools` for a model that lists none —
@@ -968,7 +973,8 @@ embedded first. The embedder's chip is informational, as in every mode: it holds
 no call back, so an embedding asked for on a refused key is still asked for, and
 fails in the gateway's words. The Speech tab has no chip and its key is not
 asked about ahead of time — nothing of it is running until `/tts` is typed — so
-there a refused key is what the first `/tts` says (§4.3).
+there a refused key is what the first `/tts` says (§4.3). The video tool has no
+chip either, and there a refused key is what the first video says (§4.4).
 
 **What the app learns from the gateway.** The model's context window (what
 automatic compaction measures against), the sampling parameters it takes, whether
@@ -999,12 +1005,14 @@ message right after the tool's result, and `/continue` resumes a reply on Claude
 up to the 4.5 generation and on Gemini, and refuses on every other model.
 
 **The app names itself to OpenRouter.** Every request to the gateway — chat,
-embeddings, speech, the key check, the question about the model and the lists
-of models for the picker — carries two headers: `HTTP-Referer: https://mindfork.io` and `X-OpenRouter-Title: mindfork`.
+embeddings, speech, a video, the key check, the question about the model and
+the lists of models for the picker — carries two headers: `HTTP-Referer: https://mindfork.io` and `X-OpenRouter-Title: mindfork`.
 They name the application and say nothing about you; by OpenRouter's own
 description, it counts its public application rankings by them. On by default; **"Name the app to
-OpenRouter"**, in the provider's group on any tab whose mode is `openrouter`,
-turns them off for every slot at once ([PRIVACY.md](../PRIVACY.md) §3.1).
+OpenRouter"**, in the provider's group on any tab whose mode is `openrouter` —
+and at the end of the video group in Settings → Tools while its provider is
+`openrouter` — turns them off for every slot at once
+([PRIVACY.md](../PRIVACY.md) §3.1).
 
 **Embeddings.** The Embeddings tab in this mode sends the same request the other
 cloud embedders do, under the two rules every cloud embedder is under (the
@@ -1034,8 +1042,14 @@ Model row and of the chosen model's voices behind the two voice rows. It has no
 default model — nothing is spoken until one is chosen. Setup, and what differs
 from the other speech providers: §4.3.
 
-**Not there yet.** Watching a YouTube video has no `openrouter` mode: the video
-tool keeps its own provider (§4.4).
+**Video.** `youtube_watch` watches through the gateway when the **Provider**
+row of the video group (Settings → Tools) is `openrouter`: the same key, and a
+list of the gateway's models that take video behind the Model row, the Gemini
+family first. It has no default model — until one is chosen the tool answers
+in its reduced form, with the video's title, channel, length and the author's
+description. Through the gateway **the whole video
+is read and charged, even when a part of it is asked for**. Setup, and what
+differs from Google's own API: §4.4.
 
 **Coming from `external`.** An `external` section whose URL is on `openrouter.ai`
 shows a hint that this mode exists. Nothing is moved automatically: set the mode,
@@ -1047,7 +1061,9 @@ PCM or MP3 and refuses anything else — speech through it needs the mode.
 **Older versions and `settings.json`.** This version writes `settings.json` at
 schema 4. A mindfork older than it refuses to start on that file, saying the data
 was created by a newer version; the copy made before the upgrade,
-`backups/pre-migrate-<date>.zip`, is the way back.
+`backups/pre-migrate-<date>.zip`, is the way back. The video tool's provider
+(§4.4) added fields to the file and no step to the schema: a file written
+before them reads as it always did, with Gemini watching.
 
 ### 3.3. Everything in one go (`mindfork setup`)
 
@@ -1666,32 +1682,120 @@ group of the "Tools" section (`Ctrl+P`):
 
 | Field | Meaning |
 |---|---|
+| Provider | who watches: `gemini` (default) — Google's own API — or `openrouter` — the same Gemini models behind an OpenRouter key (below) |
 | Model | the Gemini model that watches (`gemini-3.5-flash` by default) |
 | Input resolution | how finely frames are sampled — **measured to change nothing on Gemini 3.x**; on 2.5 it is `low` ≈ 100 vs `medium` ≈ 295 tokens per second of video |
 | Max video length | refuse anything longer (default 30 min; `0` — no ceiling) |
 | Gemini API key | the Gemini key, stored on this computer (encrypted with a machine key, ADR 0008) |
 | Gemini API key (env, opt.) | env-variable name — a fallback when no key is stored in settings |
 
+These are the rows with `gemini`. With `openrouter` the group is the gateway's,
+described under its own heading below; each provider keeps its own model and
+its own key variable, so switching between them retypes nothing.
+
 **The key is the shared Gemini one** (ADR 0008): if it is already entered for
 chat or embeddings, nothing else is needed — and if it is not, enter it right
 here. That row exists because the "Model" section only shows a key field for a
 slot whose mode *is* that cloud, so with a local or OpenAI setup there would
 otherwise be nowhere to put a Gemini key at all. It works whatever your chat engine
-is — including a local `llama-server` — because the tool calls Gemini itself and
-returns text into the conversation. Gemini is currently the only provider that
-accepts video at all; OpenAI and Anthropic take text and images only.
+is — including a local `llama-server` — because the tool calls the provider
+itself and returns text into the conversation. Gemini is currently the only
+model family that takes a YouTube video — OpenAI and Anthropic take text and
+images only — and it is reached either way: by Google's own API, or through the
+OpenRouter gateway.
 
 Cost is per second of footage, not per video: on the default model a 10-minute
 video is ~55k tokens on Google's side (a few hundred in your conversation, since
 only the answer comes back). Hence the length ceiling — above it the tool
 refuses and suggests a segment, and the model can pass `start`/`end` in seconds
-to watch just part of a long talk.
+to watch just part of a long talk. That holds for Google's own API, which cuts
+the segment and charges for the segment; through the gateway a part costs the
+whole video (below).
 
 Without a key the tool still works in a reduced form: title, channel, length and
 the author's description, read from the public watch page. The same metadata is
 what `fetch_url` now returns for a YouTube link, instead of failing to find
 readable text on it. Only **public** videos can be watched — not private or
 unlisted ones. Both paths need the web-access switch on.
+
+### Watching through the OpenRouter gateway (`openrouter`)
+
+The same Gemini models behind the key the rest of the `openrouter` mode uses
+(§3.2) — for when the gateway's key is the one you have. With **Provider** set
+to `openrouter` the group shows, in this order: **Provider**, **Model**, **Max
+video length (min)**, **OpenRouter API key**, **OpenRouter API key (env,
+opt.)**, **Name the app to OpenRouter**. There is **no "Input resolution"
+row**: the gateway carries no such setting, so nothing chosen there would reach
+a model.
+
+1. Set **Provider** to `openrouter`. If the key is already stored for another
+   tab, there is nothing to enter; otherwise enter it here, or name the variable
+   that holds it.
+2. `Enter` on **Model** lists the gateway's models that take video — with a key
+   out of your account's own list, without one the public list, so it opens
+   before a key is entered. The first row is "Type a name by hand…". A row is
+   the model's slug, its context window and the price of a million tokens in
+   and out; a model that takes no tools is not marked here, since a model that
+   watches is asked to describe, not to act. **The Gemini family opens the
+   list, and it is the one to choose from**: measured, it is the family that
+   takes a YouTube *link*, while the others that list video input go to
+   download the link as a file and refuse (`qwen/qwen3.6-flash`: *"Missing
+   Content-Length of multimodal url"*). They are listed all the same, after
+   Gemini: the list is what the gateway says takes video, and the app orders it
+   without leaving anything out.
+   **There is no default model**: until one is chosen, the tool works in its
+   reduced form.
+
+What to expect, all of it measured on 2026-09-29
+([docs/research/openrouter-mode.md](research/openrouter-mode.md) §4.5, §14):
+
+- **The whole video is read and charged, even when a part is asked for.** The
+  gateway takes no segment bounds. When the model asks for a part
+  (`start`/`end`), the app names that part in the request, in words; the answer
+  is about the part, the bill is for the whole video, and the tool's result
+  says so — so that the model knows asking for the next part costs the whole
+  video again. Through Google's own API a 20-second part of a 67-second video
+  is 1 874 tokens against 6 147 for the whole.
+- **So the length ceiling measures the whole video.** A video longer than "Max
+  video length" is refused whatever part of it is asked for, and the refusal
+  does not suggest a segment, which would cost the same: the ceiling and the
+  provider are yours to change. A video whose length could not be read from
+  YouTube is refused as well, unless the ceiling is `0` — through Google's API
+  such a video is clipped to the ceiling, and the gateway has nothing to clip
+  by.
+- **A video costs what it costs through Google's API**: the 67-second one is
+  about 6 100 prompt tokens either way — $0.002 on
+  `google/gemini-3.5-flash-lite`, a little over a cent on
+  `google/gemini-3.5-flash`.
+- **Any link you paste is fine.** The app hands the gateway the video's
+  canonical address, built from the video's id, and nothing else of the link.
+  It matters: measured, the same address with one more parameter (`&t=20s`,
+  `&feature=share`) was read as a web page and not as a video — 551 337 prompt
+  tokens and $0.165, ninety times the price.
+- **An answer that was not made from the video is an error.** The gateway can
+  answer `200` with a plausible description of a link it did not read as a
+  video. The app tells the two apart by the gateway's own count of video
+  tokens: where there are none, the text is thrown away and the tool reports
+  *"the gateway answered without reading the video…"*.
+- **A refusal reads as the gateway and the provider wrote it**: `OpenRouter
+  video: status 502 Bad Gateway: Provider returned error: The caller does not
+  have permission` is a video that is private or does not exist; `404 "No
+  endpoints found that support input video"` is a model that takes no video;
+  `401 … User not found.` is a key the gateway does not know. The key is **not
+  checked ahead of time** here (§3.2), so that last sentence arrives with the
+  first video.
+- **Reasoning is kept to the least the model allows**, since the reply's
+  ceiling covers it. Before its first video the app asks the gateway about the
+  model (`GET /model/<slug>`) and then asks for the lowest reasoning effort the
+  model lists — `minimal` on Gemini 3.5, which cannot be told not to reason. A
+  model that lists none is asked nothing about reasoning.
+- **The two headers** that name the app to OpenRouter (§3.2) travel with video
+  requests, with the question about the model and with the list request,
+  under the same switch.
+
+**The base URL has no row.** To reach the gateway through a proxy, set
+`video.openrouter.url` in `settings.json`; empty, it is
+`https://openrouter.ai/api/v1`.
 
 ## 5. Importing from other apps
 
@@ -1878,9 +1982,9 @@ $env:MINDFORK_ENGINE_URL     = "http://127.0.0.1:8000/v1"   # a local llama.cpp,
 cargo test gateway_live -- --ignored --nocapture --test-threads=1
 ```
 
-That filter is the mode's whole live gate, **26 smokes**: the twelve of the
-chat side, described here, the embedder's four and the ten of speech, both
-described below. The twelve are about
+That filter is the mode's whole live gate, **34 smokes**: the twelve of the
+chat side, described here, the embedder's four, the ten of speech and the
+eight of video, all described below. The twelve are about
 ten cents — most of it the orchestrator's turns, which send the app's whole
 prompt and tool set: the client's nine (thoughts and who
 served, a tool round trip, a muted turn against its `external` control, a tool's
@@ -1986,6 +2090,45 @@ without one they skip, saying so: the application's four and the player's one
 whole, and of the client's five the half of the 44.1 kHz smoke that hears the
 rate — the half that reads it still runs.
 
+**Video through the gateway has eight**, in two modules: five on the mode's own
+client (`shared/video/gateway_live_tests.rs`) and three on `youtube_watch` as
+the agentic loop calls it, on the client the registry builds
+(`features/tools/gateway_live_tests.rs`). They are declared by the same one
+variable and need no local server and no chat engine; the tool's three also
+need the network to YouTube, for the video's title and length:
+
+```powershell
+$env:MINDFORK_OPENROUTER_KEY = $env:OPENROUTER_API_KEY
+
+cargo test video::gateway_live -- --ignored --nocapture --test-threads=1   # the client's five alone
+cargo test tools::gateway_live -- --ignored --nocapture --test-threads=1   # the tool's three alone
+```
+
+About a cent for the eight: one watch of the video is about $0.002. **The video
+is one no model can describe from memory** — 67 seconds, published 2026-09-08
+(`IwZVXmQdX1E`) — and what is asserted of it is a line of what is said in it
+("bound for the moon"), and, by the client itself, that the gateway counted
+video tokens. What they hold:
+
+- **The client's five**: the list of models that take video, with a key and
+  without; the video watched — a line of what is said in it; a link the gateway
+  does not read is an error, not a description; a video that is not there is a
+  refusal in the provider's words; a refused key, in the gateway's.
+- **The tool's three**: a link as a person pastes it, with `&t=20s&feature=share`
+  in it, is watched and transcribed; a segment named in words is what the
+  answer is about, with the note that the whole video was read; a video over
+  the ceiling is refused whatever part of it is asked for — nothing spent.
+
+The smoke of the unread link sends `https://example.com/`, which the gateway
+answers `200` with no video tokens for $0.000005. **The expensive form of the
+same defect — a YouTube address with one more parameter, $0.165 a request — is
+not sent by the gate**: it is covered by a unit test, against the body the
+gateway answered with when it was measured.
+
+| Variable | The kind | Measured on |
+|---|---|---|
+| `MINDFORK_OPENROUTER_VIDEO_MODEL` | takes a YouTube link as a video — of the Gemini family | `google/gemini-3.5-flash-lite` |
+
 On Windows the application itself can be driven through the mode, in a hidden
 console on a scratch data root: `python tools/console_probe.py --scenario
 gateway` types a question into the chat, reads both of the mode's chips off
@@ -1994,8 +2137,11 @@ opens the settings and the model list, and checks that the key reached neither
 the log nor the settings file. It also types `/tts` and reads the `speaking`
 chip on and off the status line, then reads the Speech tab, the list of speech
 models and the list of voices off the screen — so it, too, is **audible**, and
-needs a sound card. It reads
-`OPENROUTER_API_KEY` by name, as the settings do.
+needs a sound card. And it finds the video group by the settings' search, reads
+its rows — the provider named, no row for the resolution — and the list behind
+the model row: the Gemini family first, and no "no tools" mark. It reads
+`OPENROUTER_API_KEY` by name, as the settings do;
+`MINDFORK_OPENROUTER_VIDEO_MODEL` names the video model it sets.
 
 ### 7.2. The remote gate (rented GPU, no local stack)
 

@@ -24,4 +24,5 @@ mod wire;
 pub(crate) use client::attributed;
 pub use client::{KeyVerdict, OpenAiClient};
 pub use responses::ResponsesClient;
+pub(crate) use wire::ModelEnvelope;
 pub use wire::tools_json;

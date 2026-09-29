@@ -620,6 +620,7 @@ pub fn named_key_env_vars(cfg: &AppConfig) -> Vec<String> {
             cfg.tts.external.api_key_env.clone(),
             cfg.tools.web_tavily_key_env.clone(),
             cfg.video.api_key_env.clone(),
+            cfg.video.openrouter.api_key_env.clone(),
         ])
         .flatten()
         .map(|n| n.trim().to_string())
@@ -2114,15 +2115,80 @@ impl MediaResolution {
     }
 }
 
+/// Who watches the video. Gemini is the family that takes a YouTube link, and it
+/// is reached two ways: by Google's own API, or through the OpenRouter gateway —
+/// for a user whose one key is the gateway's
+/// (docs/research/openrouter-mode.md §4.5, fork F10).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum VideoProvider {
+    /// Google's own `generateContent`: a segment is clipped by the provider and
+    /// only the segment is charged.
+    #[default]
+    Gemini,
+    /// The gateway's `chat/completions` with a `video_url` part: no segment
+    /// bounds and no resolution are carried — the whole video is read and
+    /// charged, and a segment is named in words.
+    #[serde(rename = "openrouter")]
+    OpenRouter,
+}
+
+impl VideoProvider {
+    pub const ALL: [VideoProvider; 2] = [VideoProvider::Gemini, VideoProvider::OpenRouter];
+
+    /// UI label (Choice field), and the settings file's own spelling.
+    pub fn label(self) -> &'static str {
+        match self {
+            VideoProvider::Gemini => "gemini",
+            VideoProvider::OpenRouter => "openrouter",
+        }
+    }
+
+    /// The provider whose stored key the slot reads (ADR 0008).
+    pub fn cloud_provider(self) -> CloudProvider {
+        match self {
+            VideoProvider::Gemini => CloudProvider::Gemini,
+            VideoProvider::OpenRouter => CloudProvider::OpenRouter,
+        }
+    }
+
+    pub fn cycle(self, dir: i32) -> Self {
+        let i = Self::ALL.iter().position(|v| *v == self).unwrap_or(0) as i32;
+        let n = Self::ALL.len() as i32;
+        Self::ALL[(i + dir).rem_euclid(n) as usize]
+    }
+}
+
+/// The video slot's section for the OpenRouter gateway. It has **no default
+/// model**: a default that names a model ages (docs/research/model-picker.md
+/// §1), and the gateway's list of models that take video is one keypress away.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VideoGatewaySettings {
+    /// The model's slug on the gateway (`google/gemini-3.5-flash`).
+    pub model_name: Option<String>,
+    /// Base URL override; empty → the gateway's own.
+    pub url: Option<String>,
+    /// Env-variable name with the gateway's key — a fallback when none is stored.
+    pub api_key_env: Option<String>,
+}
+
 /// Video understanding (`youtube_watch`, docs/research/youtube-integration.md).
 /// A slot of its own, independent of the chat engine: only Gemini ingests video
 /// at all, so a user on a local model or on Claude still gets this — the tool
-/// calls Gemini out of band, exactly like TTS (ADR 0009). The API key is **not**
-/// here: it is the provider key shared with chat/embeddings (ADR 0008).
-/// All fields `#[serde(default)]` → old `settings.json` reads without migration.
+/// calls the provider out of band, exactly like TTS (ADR 0009). The API key is
+/// **not** here: it is the provider key shared with chat/embeddings (ADR 0008).
+/// All fields `#[serde(default)]` → old `settings.json` reads without migration:
+/// the fields a file has always held — `model_name`, `url`, `api_key_env` — are
+/// Gemini's, where they were, and the gateway's are a section beside them, so
+/// that neither model is retyped on a switch.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct VideoSettings {
+    /// Who watches. `gemini` unless chosen otherwise.
+    pub provider: VideoProvider,
+    /// The gateway's section, read when `provider` is `openrouter`.
+    pub openrouter: VideoGatewaySettings,
     /// Gemini model name. Empty → the tool reports itself unconfigured.
     pub model_name: Option<String>,
     /// Base URL override (`…/v1beta`); empty → the provider's own.
@@ -2130,15 +2196,25 @@ pub struct VideoSettings {
     /// Env-variable name with the key — a fallback when nothing is stored in
     /// settings (the same pattern as the engine and TTS sections).
     pub api_key_env: Option<String>,
-    /// Frame sampling detail.
+    /// Frame sampling detail. Gemini's own API reads it; the gateway carries no
+    /// such field (three spellings tried, none honoured).
     pub media_resolution: MediaResolution,
     /// Refuse videos longer than this many minutes (`0` — no ceiling).
     pub max_minutes: u32,
 }
 
+impl VideoSettings {
+    /// The stored secret the slot reads: the chosen provider's one key.
+    pub fn secret_key(&self) -> crate::shared::secrets::SecretKey {
+        crate::shared::secrets::SecretKey::Provider(self.provider.cloud_provider())
+    }
+}
+
 impl Default for VideoSettings {
     fn default() -> Self {
         Self {
+            provider: VideoProvider::default(),
+            openrouter: VideoGatewaySettings::default(),
             model_name: Some(DEFAULT_VIDEO_MODEL.into()),
             url: None,
             api_key_env: None,
@@ -4023,6 +4099,100 @@ mod tests {
                 .filter(|s| s.voice.as_deref() == Some(named.as_str()))
                 .count();
             assert_eq!(holding, 1, "{mode:?} wrote to one section");
+        }
+    }
+
+    // ---------- video through the gateway (docs/research/openrouter-mode.md, fork F10) ----------
+
+    /// The selector is a new field and the gateway's section a new one beside
+    /// Gemini's fields: a file written before either reads as it always did —
+    /// Gemini, its model where it was — and what each provider holds survives
+    /// a switch to the other and back.
+    #[test]
+    fn the_video_slot_chooses_its_provider_and_keeps_both_models() {
+        let old: VideoSettings = serde_json::from_str(
+            r#"{"model_name":"gemini-2.5-pro","api_key_env":"MY_GEMINI","max_minutes":45}"#,
+        )
+        .expect("a file of before the selector");
+        assert_eq!(old.provider, VideoProvider::Gemini);
+        assert_eq!(old.openrouter, VideoGatewaySettings::default());
+        assert_eq!(old.model_name.as_deref(), Some("gemini-2.5-pro"));
+        assert_eq!(
+            old.secret_key(),
+            SecretKey::Provider(CloudProvider::Gemini),
+            "Gemini's key, as before"
+        );
+
+        let new: VideoSettings = serde_json::from_str(
+            r#"{"provider":"openrouter","model_name":"gemini-2.5-pro",
+                "openrouter":{"model_name":"google/gemini-3.5-flash","api_key_env":"MY_ROUTER"}}"#,
+        )
+        .expect("the selector is read");
+        assert_eq!(new.provider, VideoProvider::OpenRouter);
+        assert_eq!(
+            new.secret_key(),
+            SecretKey::Provider(CloudProvider::OpenRouter)
+        );
+        assert_eq!(
+            new.openrouter.model_name.as_deref(),
+            Some("google/gemini-3.5-flash")
+        );
+        assert_eq!(new.model_name.as_deref(), Some("gemini-2.5-pro"));
+        let written = serde_json::to_value(&new).unwrap();
+        assert_eq!(written["provider"], "openrouter");
+        assert_eq!(written["openrouter"]["api_key_env"], "MY_ROUTER");
+
+        for other in ["open_router", "OpenRouter", "google"] {
+            let asked = format!(r#"{{"provider":"{other}"}}"#);
+            assert!(
+                serde_json::from_str::<VideoSettings>(&asked).is_err(),
+                "{other} is not a provider"
+            );
+        }
+    }
+
+    /// No default model for the gateway — Gemini keeps the one it has — and the
+    /// selector is reached both ways from either provider.
+    #[test]
+    fn the_gateways_video_section_starts_empty_and_the_selector_cycles() {
+        let video = VideoSettings::default();
+        assert_eq!(video.provider, VideoProvider::Gemini);
+        assert_eq!(video.openrouter, VideoGatewaySettings::default());
+        assert_eq!(video.model_name.as_deref(), Some(DEFAULT_VIDEO_MODEL));
+        for dir in [1, -1] {
+            assert_eq!(
+                VideoProvider::Gemini.cycle(dir),
+                VideoProvider::OpenRouter,
+                "{dir}"
+            );
+            assert_eq!(
+                VideoProvider::OpenRouter.cycle(dir),
+                VideoProvider::Gemini,
+                "{dir}"
+            );
+        }
+        let labels: Vec<&str> = VideoProvider::ALL.into_iter().map(|p| p.label()).collect();
+        assert_eq!(labels, ["gemini", "openrouter"]);
+        for provider in VideoProvider::ALL {
+            let written = serde_json::to_value(provider).unwrap();
+            assert_eq!(
+                written,
+                provider.label(),
+                "the label is the file's spelling"
+            );
+        }
+    }
+
+    /// The variable the video slot names for the gateway's key is a secret like
+    /// the others — and Gemini's stays one.
+    #[test]
+    fn the_gateways_video_key_variable_is_named_among_the_secrets() {
+        let mut c = AppConfig::default();
+        c.video.api_key_env = Some("MY_GEMINI_VIDEO".into());
+        c.video.openrouter.api_key_env = Some(" MY_ROUTER_VIDEO ".into());
+        let named = named_key_env_vars(&c);
+        for name in ["MY_GEMINI_VIDEO", "MY_ROUTER_VIDEO"] {
+            assert!(named.contains(&name.to_string()), "{name}: {named:?}");
         }
     }
 

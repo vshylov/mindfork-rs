@@ -60,6 +60,17 @@ split by subsystem.
   speak — the gateway refuses the format an external server is asked for — and
   its address row now says that the mode exists.
 
+- **A YouTube video through OpenRouter.** Settings → Tools → Video (YouTube) →
+  *Provider* → `openrouter`: `youtube_watch` watches through the Gemini models
+  behind an OpenRouter key, for a setup whose one key is the gateway's. `Enter`
+  on the model row lists the models that take video, the Gemini family first —
+  it is the one that takes a YouTube link. Through the gateway the whole video
+  is read and charged even when a part of it is asked for: the ceiling on a
+  video's length measures the whole video there, and the answer says that the
+  whole of it was read. Google's own API stays the default, and the cheaper
+  way to look at a part of a long video. An answer that came back without the
+  video having been read is refused rather than shown.
+
 ### Changed
 - A reply that came through OpenRouter records, in the chat file, which
   provider served it and what it cost. Nothing shows them yet.
@@ -92,9 +103,10 @@ split by subsystem.
   The engine is asked again on every applied change.
 
 ### Data
-- **`settings.json` 3 → 4**: `openrouter` becomes a value of the mode rows, with
-  a section of its own in each of the three engines, and a top-level
-  `openrouter` block holds the attribution switch. Nothing is rewritten — the
+- **`settings.json` 3 → 4**: `openrouter` becomes a value of the mode rows —
+  the three engines' and speech's — with a section of its own in each, the
+  video settings name their provider and hold a section for the gateway, and a
+  top-level `openrouter` block holds the attribution switch. Nothing is rewritten — the
   step stamps the version, because a version that does not know the value
   refuses the whole file rather than reading the rest of it. As with every
   schema change, the file is backed up before it is migrated; an older version

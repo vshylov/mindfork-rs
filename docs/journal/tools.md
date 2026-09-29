@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (84)
+## Entries (85)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -96,6 +96,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: safe defaults 2a — the file tools need a root and never reach the app's own folders (done)
 - Post-M9: safe defaults 2b — the sandbox's network is public-only, and model-driven children lose the keys (done)
 - Post-M9: a streamed MP3, and a decoder that trusted its first frame (done)
+- Post-M9: `youtube_watch` with a provider that reads the whole video (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -5586,4 +5587,47 @@ its first frame.
 
 **Smoke — GO** (2026-09-29): the MP3-only model's clip, through this decoder, transcribed
 back to its last word; and played by `/tts`, in two voices. The engine journal has the
+run.
+
+### Post-M9: `youtube_watch` with a provider that reads the whole video (done)
+
+**What.** Stage 4 of the OpenRouter mode ([the engine journal](engine.md), research
+[openrouter-mode.md](../research/openrouter-mode.md) §4.5, §14) gave the video slot a
+second provider, and the second one differs from the first in what the tool had taken for
+granted: it cuts no segment. The gateway carries no bounds — four spellings tried, none
+honoured — so whatever part is asked for, the whole video is read and charged.
+
+**Built.** The contract says which kind a provider is
+(`VideoUnderstanding::reads_segments`, `true` unless a client says otherwise), and the
+tool does three things differently for the other kind:
+- **the segment is a sentence of the prompt**, in front of the task — *"Consider only the
+  part of this video from 0:40 to 1:20, and ignore everything outside it"*, with a form
+  for a bound on either side — in the profile's language, as the prompt is;
+- **the ceiling measures the whole video**, since that is what is charged: a part of a
+  long video is no way under it. The refusal is its own and does not advise a segment —
+  the first provider's does, and here the advice would cost the same again. A video whose
+  length could not be read is refused as well: the first provider's is clipped to the
+  ceiling, and this one takes no bound to clip by;
+- **the result says what was read**: the whole video, which part was named, and that
+  another part of the same video costs the whole of it again — said to the model, which
+  is who asks for the next part.
+
+For the first provider nothing changed: the bounds are sent, the part is what is measured,
+and there is no sentence and no note.
+
+**The address** is the video's id and nothing else, as it has always been — and that
+turned out to be what the second provider cannot do without: one more parameter, and the
+gateway reads the page instead of the video, at ninety times the price (research §14.2).
+A test pastes a link with two.
+
+**Tests.** `the_whole_video_is_measured_where_a_segment_cannot_be_cut`: the gate as a
+table — the video's length, the part asked for, what each kind of provider does. The gate
+is judged directly: what `invoke` knows of a video's length it reads from YouTube, and a
+test that asserted a refusal through it would be asserting the network.
+`a_provider_without_bounds_is_told_the_segment_in_words` and
+`the_segment_is_said_only_where_it_cannot_be_cut`, on a provider of each kind.
+
+**Smoke — GO** (2026-09-29), through the gateway: a pasted link watched and transcribed;
+a part named in words and a transcript of that part, its stamps counted from the video's
+start; a video over the ceiling refused with nothing spent. The engine journal has the
 run.

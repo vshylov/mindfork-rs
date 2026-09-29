@@ -16,7 +16,7 @@ use crate::shared::api::catalogue::{
     self, CatalogueError, CatalogueRequest, CatalogueShape, ModelSlot,
 };
 use crate::shared::config::{
-    CloudSettings, ExternalSettings, ImpersonationMode, ServerMode, TtsMode,
+    CloudSettings, ExternalSettings, ImpersonationMode, ServerMode, TtsMode, VideoProvider,
 };
 
 use super::Orchestrator;
@@ -66,19 +66,28 @@ impl Orchestrator {
     ) -> Result<CatalogueRequest, CatalogueError> {
         use crate::shared::config::SecretSlot;
         let cfg = &self.config;
-        // The speech slot has modes and sections of its own kind, and one of
-        // them has a catalogue.
-        let speech = CloudSettings {
-            url: cfg.tts.openrouter.url.clone(),
-            api_key_env: cfg.tts.openrouter.api_key_env.clone(),
+        // The speech slot and the video slot have sections of their own kind,
+        // and one mode of each has a catalogue: the gateway's. What the request
+        // reads of a section is its address and the variable its key is in.
+        let of_the_gateway = |url: &Option<String>, env: &Option<String>| CloudSettings {
+            url: url.clone(),
+            api_key_env: env.clone(),
             ..CloudSettings::default()
         };
+        let speech = of_the_gateway(&cfg.tts.openrouter.url, &cfg.tts.openrouter.api_key_env);
+        let video = of_the_gateway(&cfg.video.openrouter.url, &cfg.video.openrouter.api_key_env);
         let (mode, external, cloud, secret) = match slot {
             ModelSlot::Speech => (
                 speech_mode(cfg.tts.mode).ok_or(CatalogueError::NotConfigured)?,
                 &cfg.engine.external,
                 Some(&speech),
                 cfg.tts.secret_key(),
+            ),
+            ModelSlot::Video => (
+                video_mode(cfg.video.provider).ok_or(CatalogueError::NotConfigured)?,
+                &cfg.engine.external,
+                Some(&video),
+                Some(cfg.video.secret_key()),
             ),
             ModelSlot::Assistant => (
                 cfg.engine.mode,
@@ -151,6 +160,17 @@ fn speech_mode(mode: TtsMode) -> Option<ServerMode> {
     }
 }
 
+/// The video slot's provider as the [`ServerMode`] whose catalogue it reads, or
+/// `None` where there is none to read: Gemini's own list calls everything that
+/// generates content a chat model and says nothing of video, so that row stays
+/// the text field it is.
+fn video_mode(provider: VideoProvider) -> Option<ServerMode> {
+    match provider {
+        VideoProvider::OpenRouter => Some(ServerMode::OpenRouter),
+        VideoProvider::Gemini => None,
+    }
+}
+
 /// The request for a mode, or why there is none.
 ///
 /// The base URL is the slot's override when it has one — a proxy or a gateway
@@ -196,6 +216,7 @@ fn source(
             let shape = match slot {
                 ModelSlot::Embedder => CatalogueShape::OpenRouterEmbeddings,
                 ModelSlot::Speech => CatalogueShape::OpenRouterSpeech,
+                ModelSlot::Video => CatalogueShape::OpenRouterVideo,
                 ModelSlot::Assistant | ModelSlot::Impersonation => CatalogueShape::OpenRouter,
             };
             let base = cloud
@@ -475,6 +496,21 @@ mod tests {
             .map(TtsMode::label)
             .collect();
         assert_eq!(asked, ["openrouter"]);
+    }
+
+    /// The video row asks the gateway for the models that take video, and
+    /// Gemini's own provider asks nobody.
+    #[test]
+    fn the_video_slot_asks_the_gateway_for_the_models_that_take_video() {
+        let asked = gateway(ModelSlot::Video, None, Some("k")).expect("a request");
+        assert_eq!(asked.shape, CatalogueShape::OpenRouterVideo);
+        assert_eq!(asked.base, GATEWAY_BASE);
+        let with_a_list: Vec<&str> = VideoProvider::ALL
+            .into_iter()
+            .filter(|provider| video_mode(*provider).is_some())
+            .map(VideoProvider::label)
+            .collect();
+        assert_eq!(with_a_list, ["openrouter"]);
     }
 
     /// The section's base URL moves the gateway's catalogue with the chat — a

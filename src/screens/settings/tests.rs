@@ -6921,3 +6921,316 @@ fn the_picker_names_the_list_it_shows() {
     assert!(!voices.contains("the provider's models"), "{voices}");
     assert!(voices.contains("eve") && voices.contains("leo"), "{voices}");
 }
+
+// ---------- video through the gateway (docs/research/openrouter-mode.md, fork F10) ----------
+
+use crate::shared::config::VideoProvider;
+
+const GEMINI_FLASH: &str = "google/gemini-3.5-flash";
+
+/// A screen whose video slot is the gateway's, with this model named.
+fn video_through_the_gateway(model: Option<&str>) -> SettingsScreen {
+    let mut s = screen();
+    s.config.video.provider = VideoProvider::OpenRouter;
+    s.config.video.openrouter.model_name = model.map(str::to_string);
+    s
+}
+
+/// The rows of the video group, in the order they are shown.
+fn video_group(s: &SettingsScreen) -> Vec<FieldId> {
+    let fields = s.tool_fields();
+    let group = fields
+        .iter()
+        .find(|f| f.id == FieldId::VideoProvider)
+        .map(|f| f.group)
+        .expect("the provider's row");
+    let shown = fields.iter().filter(|f| f.group == group);
+    shown.map(|f| f.id).collect()
+}
+
+/// A model that takes video as the gateway lists one.
+fn watching(id: &str, tools: Option<bool>) -> CatalogModel {
+    CatalogModel {
+        facts: crate::shared::api::catalogue::ModelFacts {
+            context_length: Some(1_048_576),
+            prompt_price: Some(300_000),
+            completion_price: Some(2_500_000),
+            tools,
+            video: Some(true),
+        },
+        ..cat(id, Some("A Vendor: A Model"), ModelRole::Chat)
+    }
+}
+
+/// The group opens with who watches, and shows that provider's rows: through
+/// the gateway there is no row for the resolution — the gateway carries none —
+/// and the provider's own switch closes the group. Every row says what it is
+/// for, in every interface language, and the gateway's key rows name the
+/// gateway.
+#[test]
+fn the_video_group_shows_the_rows_of_whoever_watches() {
+    use FieldId as F;
+    let s = screen();
+    assert_eq!(
+        video_group(&s),
+        [
+            F::VideoProvider,
+            F::VideoModel,
+            F::VideoResolution,
+            F::VideoMaxMinutes,
+            F::VideoApiKey,
+            F::VideoApiKeyEnv
+        ]
+    );
+    for lang in crate::shared::i18n::Lang::ALL.iter().copied() {
+        for provider in VideoProvider::ALL {
+            let mut s = video_through_the_gateway(None);
+            s.config.video.provider = provider;
+            s.config.interface.language = lang;
+            let gateway = provider == VideoProvider::OpenRouter;
+            if gateway {
+                assert_eq!(
+                    video_group(&s),
+                    [
+                        F::VideoProvider,
+                        F::VideoModel,
+                        F::VideoMaxMinutes,
+                        F::VideoApiKey,
+                        F::VideoApiKeyEnv,
+                        F::GatewayAttribution
+                    ]
+                );
+            }
+            for row in video_group(&s) {
+                let hint = field_desc(&s, row).unwrap_or_default();
+                assert!(!hint.is_empty(), "{lang:?} {provider:?} {row:?}");
+            }
+            for row in [F::VideoApiKey, F::VideoApiKeyEnv] {
+                let label = field_label(&s, row).unwrap_or_default();
+                assert_eq!(
+                    label.contains("OpenRouter"),
+                    gateway,
+                    "{lang:?} {provider:?} {row:?}: {label}"
+                );
+                let hint = field_desc(&s, row).unwrap_or_default();
+                assert_eq!(
+                    hint.contains("OpenRouter"),
+                    gateway,
+                    "{lang:?} {provider:?} {row:?}: {hint}"
+                );
+            }
+        }
+    }
+    // The hint of the model's row is the provider's own, and so is the
+    // ceiling's — through the gateway a segment is no way around it — and
+    // each names whom it is about.
+    let gemini = screen();
+    let gateway = video_through_the_gateway(None);
+    for row in [F::VideoModel, F::VideoMaxMinutes] {
+        let of_gemini = field_desc(&gemini, row).unwrap_or_default();
+        let of_the_gateway = field_desc(&gateway, row).unwrap_or_default();
+        assert!(!of_gemini.contains("OpenRouter"), "{row:?}: {of_gemini}");
+        assert!(
+            of_the_gateway.contains("OpenRouter"),
+            "{row:?}: {of_the_gateway}"
+        );
+    }
+}
+
+/// The provider is chosen by the arrows, both ways, and each keeps what is
+/// its own: a model and a variable typed for one are not the other's, and are
+/// there when it is chosen again.
+#[test]
+fn each_video_provider_keeps_its_model_and_its_variable() {
+    let typed = |s: &mut SettingsScreen, row: FieldId, text: &str| {
+        goto_section(s, Section::Tools);
+        goto_field(s, row);
+        s.handle_key(key(KeyCode::Enter));
+        s.handle_key(ctrl('k'));
+        for c in text.chars() {
+            s.handle_key(key(KeyCode::Char(c)));
+        }
+        s.handle_key(key(KeyCode::Enter));
+    };
+    let mut s = screen();
+    typed(&mut s, FieldId::VideoApiKeyEnv, "MY_GEMINI");
+    goto_section(&mut s, Section::Tools);
+    goto_field(&mut s, FieldId::VideoProvider);
+    match s.handle_key(key(KeyCode::Right)) {
+        Some(SettingsIntent::SaveConfig(c)) => {
+            assert_eq!(c.video.provider, VideoProvider::OpenRouter)
+        }
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+    // The model's row is the gateway's list now; its first row is the editor.
+    goto_field_again(&mut s, FieldId::VideoModel);
+    s.handle_key(key(KeyCode::Enter));
+    s.handle_key(key(KeyCode::Home));
+    s.handle_key(key(KeyCode::Enter));
+    assert!(s.editor.is_some(), "typing a name by hand");
+    for c in GEMINI_FLASH.chars() {
+        s.handle_key(key(KeyCode::Char(c)));
+    }
+    s.handle_key(key(KeyCode::Enter));
+    typed(&mut s, FieldId::VideoApiKeyEnv, "MY_ROUTER");
+
+    let video = &s.config.video;
+    assert_eq!(video.openrouter.model_name.as_deref(), Some(GEMINI_FLASH));
+    assert_eq!(video.openrouter.api_key_env.as_deref(), Some("MY_ROUTER"));
+    assert_eq!(
+        video.model_name.as_deref(),
+        Some(crate::shared::config::DEFAULT_VIDEO_MODEL)
+    );
+    assert_eq!(video.api_key_env.as_deref(), Some("MY_GEMINI"));
+
+    goto_section(&mut s, Section::Tools);
+    goto_field(&mut s, FieldId::VideoProvider);
+    s.handle_key(key(KeyCode::Left));
+    assert_eq!(s.config.video.provider, VideoProvider::Gemini);
+    let shown = |s: &SettingsScreen, row: FieldId| {
+        let fields = s.tool_fields();
+        let field = fields.into_iter().find(|f| f.id == row);
+        field
+            .map(|f| value_text(&f.kind, s.loc()))
+            .unwrap_or_default()
+    };
+    assert_eq!(
+        shown(&s, FieldId::VideoModel),
+        crate::shared::config::DEFAULT_VIDEO_MODEL
+    );
+    assert_eq!(shown(&s, FieldId::VideoApiKeyEnv), "MY_GEMINI");
+    typed(&mut s, FieldId::VideoModel, "gemini-2.5-pro");
+    assert_eq!(s.config.video.model_name.as_deref(), Some("gemini-2.5-pro"));
+    assert_eq!(
+        s.config.video.openrouter.model_name.as_deref(),
+        Some(GEMINI_FLASH),
+        "what was typed for Gemini is not the gateway's"
+    );
+}
+
+/// The key row addresses the key of whoever watches — the gateway's one key,
+/// which the other slots use — and what is typed is that secret, never a line
+/// of the settings.
+#[test]
+fn the_video_key_row_addresses_the_key_of_whoever_watches() {
+    let gateway = SecretKey::Provider(CloudProvider::OpenRouter);
+    let mut s = video_through_the_gateway(Some(GEMINI_FLASH));
+    // No engine speaks to the gateway: the video slot does by itself.
+    s.config.engine.mode = ServerMode::Managed;
+    assert_eq!(
+        s.secret_field_key(FieldId::VideoApiKey),
+        Some(gateway.clone())
+    );
+    goto_section(&mut s, Section::Tools);
+    goto_field(&mut s, FieldId::VideoApiKey);
+    assert_eq!(
+        enter_secret(&mut s, "sk-or-v1-test"),
+        Some(SettingsIntent::SetSecret {
+            key: gateway,
+            value: "sk-or-v1-test".into()
+        })
+    );
+    let json = serde_json::to_string(&s.config).unwrap();
+    assert!(!json.contains("sk-or-v1-test"), "the key leaked: {json}");
+    s.config.video.provider = VideoProvider::Gemini;
+    assert_eq!(
+        s.secret_field_key(FieldId::VideoApiKey),
+        Some(SecretKey::Provider(CloudProvider::Gemini))
+    );
+}
+
+/// `Enter` on the model row asks the gateway for the models that take video
+/// — through the gateway, and nobody through Gemini's own API, whose row is
+/// the text field it was. A pick is written into the gateway's section. A row
+/// shows the window and the price, and does not mark a model that takes no
+/// tools: a model that watches is asked to describe, not to act.
+#[test]
+fn the_video_model_row_has_the_gateways_list_behind_it() {
+    let mut s = screen();
+    goto_section(&mut s, Section::Tools);
+    goto_field(&mut s, FieldId::VideoModel);
+    assert_eq!(s.handle_key(key(KeyCode::Enter)), None);
+    assert!(
+        s.picker.is_none() && s.editor.is_some(),
+        "Gemini: the editor"
+    );
+
+    let mut s = video_through_the_gateway(None);
+    s.config.interface.language = crate::shared::i18n::Lang::En;
+    goto_section(&mut s, Section::Tools);
+    goto_field(&mut s, FieldId::VideoModel);
+    assert_eq!(
+        s.handle_key(key(KeyCode::Enter)),
+        Some(SettingsIntent::ListModels(ModelSlot::Video))
+    );
+    s.set_model_catalogue(
+        ModelSlot::Video,
+        Ok(vec![
+            watching(GEMINI_FLASH, Some(false)),
+            watching("qwen/qwen3.6-flash", Some(true)),
+        ]
+        .into()),
+    );
+    let rows: Vec<String> = {
+        let st = s.picker.as_ref().expect("the picker is open");
+        st.all.iter().map(|m| s.picker_label(m)).collect()
+    };
+    assert_eq!(
+        rows,
+        [
+            "google/gemini-3.5-flash · 1.04M context · $0.30 in / $2.50 out per 1M tokens",
+            "qwen/qwen3.6-flash · 1.04M context · $0.30 in / $2.50 out per 1M tokens"
+        ]
+    );
+    match s.handle_key(key(KeyCode::Enter)) {
+        Some(SettingsIntent::SaveConfig(c)) => {
+            assert_eq!(c.video.openrouter.model_name.as_deref(), Some(GEMINI_FLASH));
+            assert_eq!(c.video.model_name, AppConfig::default().video.model_name);
+        }
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+    // The same entry behind the assistant's row is marked: there it matters.
+    let mut chat = on_the_model_row(ServerMode::OpenRouter);
+    chat.config.interface.language = crate::shared::i18n::Lang::En;
+    chat.handle_key(key(KeyCode::Enter));
+    let label = chat.picker_label(&watching(GEMINI_FLASH, Some(false)));
+    assert!(label.ends_with("no tools"), "{label}");
+}
+
+/// What the video slot points at is what its answer is filed under: the
+/// provider, the address, the variable, whether a key is stored.
+#[test]
+fn a_video_answer_is_kept_for_what_it_was_asked_under() {
+    let mut s = video_through_the_gateway(Some(GEMINI_FLASH));
+    let first = s.slot_source(ModelSlot::Video);
+    s.config.video.openrouter.url = Some("https://eu.openrouter.ai/api/v1".into());
+    assert_ne!(s.slot_source(ModelSlot::Video), first, "the address");
+    s.config.video.openrouter.url = None;
+    s.config.video.openrouter.api_key_env = Some("MY_ROUTER".into());
+    assert_ne!(s.slot_source(ModelSlot::Video), first, "the variable");
+    s.config.video.openrouter.api_key_env = None;
+    assert_eq!(s.slot_source(ModelSlot::Video), first);
+    s.set_secrets_present(vec![SecretKey::Provider(CloudProvider::Gemini)]);
+    assert_eq!(
+        s.slot_source(ModelSlot::Video),
+        first,
+        "Gemini's key is not the gateway's"
+    );
+    s.set_secrets_present(vec![SecretKey::Provider(CloudProvider::OpenRouter)]);
+    assert_ne!(s.slot_source(ModelSlot::Video), first, "a stored key");
+    // Gemini's own fields are not what the gateway's list is asked under.
+    let keyed = s.slot_source(ModelSlot::Video);
+    s.config.video.url = Some("https://gemini.example/v1beta".into());
+    s.config.video.api_key_env = Some("MY_GEMINI".into());
+    assert_eq!(s.slot_source(ModelSlot::Video), keyed);
+    // The provider itself, with no key stored for either: what was asked
+    // of the gateway is not an answer for another provider's row.
+    s.set_secrets_present(vec![]);
+    let of_the_gateway = s.slot_source(ModelSlot::Video);
+    s.config.video.provider = VideoProvider::Gemini;
+    assert_ne!(
+        s.slot_source(ModelSlot::Video),
+        of_the_gateway,
+        "the provider"
+    );
+}

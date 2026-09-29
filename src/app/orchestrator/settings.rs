@@ -86,14 +86,26 @@ impl Orchestrator {
         }
         // A tool-parameter change — a registry rebuild (python_path, limits).
         // Video settings feed the same registry (the `youtube_watch` client is
-        // built there), so they rebuild it too.
-        if self.config.tools != old.tools || self.config.video != old.video {
+        // built there), so they rebuild it too — and so does the gateway's
+        // switch, which the gateway's video client is built with.
+        if self.config.tools != old.tools
+            || self.config.video != old.video
+            || self.video_follows(&old.openrouter)
+        {
             self.rebuild_registry();
             // The cap on background runs applies to the next start.
             self.background_slots
                 .set_max(self.config.tools.subagent_background_max);
         }
         self.emit_settings();
+    }
+
+    /// Whether the video client was built with something of the gateway's that
+    /// has changed since: the slot speaks to the gateway, and the provider-wide
+    /// settings are not what they were.
+    fn video_follows(&self, before: &crate::shared::config::OpenRouterSettings) -> bool {
+        self.config.video.provider == crate::shared::config::VideoProvider::OpenRouter
+            && self.config.openrouter != *before
     }
 
     /// Stores a secret entered in settings: encrypts it with the machine key
@@ -124,11 +136,12 @@ impl Orchestrator {
                 if self.config.embed.mode.cloud_provider() == p {
                     self.restarts.mark_embed();
                 }
-                // The video slot uses the Gemini key too, and its client lives in the
-                // tool registry — so a Gemini key change has to rebuild it (cheap,
-                // in-memory), or `youtube_watch` would keep reporting itself
-                // unconfigured until the next unrelated settings edit.
-                if provider == CloudProvider::Gemini {
+                // The video slot reads a provider's key too — Gemini's, or the
+                // gateway's — and its client lives in the tool registry, so a
+                // change of that key has to rebuild it (cheap, in-memory), or
+                // `youtube_watch` would keep reporting itself unconfigured until
+                // the next unrelated settings edit.
+                if provider == self.config.video.provider.cloud_provider() {
                     self.rebuild_registry();
                 }
             }
