@@ -33,11 +33,11 @@ evidence. Adding or closing an item is part of every task's documentation step
 five slots — chat, impersonation, embeddings, speech, a YouTube video — of
 which speech and video have no road through `external` at all; the forks were
 decided the same day. Four stages: the provider in chat and impersonation
-(**done** — and the embedder's arm with it, §11 there), embeddings (what is left
-of them: the retry, the batch cap and the embedder's key check — **next**),
-speech, video; the gateway's own knobs are a fifth, on demand. Waiting for the
-release that carries stage 1: the site's home page and three articles, which
-would otherwise describe a mode the published version does not have.
+(**done**, §11 there), embeddings (**done**, §12 — the retry and the batch cap
+for every embedder, not only the gateway's), speech (**next**), video; the
+gateway's own knobs are a fifth, on demand. Waiting for the release that
+carries stage 1: the site's home page and three articles, which would
+otherwise describe a mode the published version does not have.
 
 The tracks this section carried before — the first public release, images,
 retry/backoff, the prompt-caching measurement, the attachment birth turn, and
@@ -55,12 +55,11 @@ below are an idea bank of equal weight.
   the OpenRouter review is closed. Left:
   - **on demand** — a **managed custom command**: the supervisor launching an
     arbitrary sidecar proxy ([plugin-system.md §6](research/plugin-system.md)).
-  - **deferred** — **embeddings through a gateway**: measured 2026-09-29 — the
-    wire works as it is, and an index built on a local `bge-m3` stays valid
-    against the gateway's — and since stage 1 of the OpenRouter mode the
-    embedder has the mode. What is missing is a retry around the embedder and a
-    cap on the batch; both ride on the mode's second stage
-    ([openrouter-mode.md §4.3](research/openrouter-mode.md)).
+  - **on demand** — **`input_type` on the gateway's embeddings**: a field for
+    query-versus-document that two of eight measured models honour; the
+    prefixes the app has cover the rest
+    ([openrouter-mode.md §4.3](research/openrouter-mode.md), F8). The rest of
+    "embeddings through a gateway" is closed by the mode's second stage.
   - **on demand** — **OpenRouter's own request knobs** (`provider` routing, the
     `models` fallback, `transforms`, attribution headers, `usage.cost`) —
     deliberately not exposed

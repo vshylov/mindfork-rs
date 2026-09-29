@@ -130,8 +130,9 @@ list, filtered as you type.
 assistant, impersonation and embeddings, each with a model of its own. Its model
 list opens before a key is entered and shows, per model, the context window, the
 price per million tokens in and out, and a mark on a model that takes no tools.
-The key is checked once when the engine is applied, so a refused key is the
-engine's status rather than the first message's error; the context window, the
+The key is checked when an engine in this mode is applied — the embedder
+included — so a refused key is that engine's status rather than the first
+request's error; the context window, the
 sampling fields on offer and image support are read from the gateway's own entry
 for the model. Requests to the gateway carry two headers that name the
 application — never you — and a switch in the same section turns them off
@@ -271,7 +272,7 @@ for convenience: the English originals are the texts with legal force.
 
 Actively developed, in small reviewed tracks; the original ten-milestone plan
 ([docs/history/plan.md](docs/history/plan.md)) is long finished. The suite stands
-at **3674 unit tests** plus **214 `#[ignore]` smoke tests** that are run against
+at **3693 unit tests** plus **218 `#[ignore]` smoke tests** that are run against
 real stacks — a local `llama-server` and the live cloud APIs — before
 provider-touching changes ship. See the [changelog](CHANGELOG.md) for what is new
 and the [roadmap](docs/roadmap.md) for what may come next.

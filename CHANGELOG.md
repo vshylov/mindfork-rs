@@ -29,8 +29,16 @@ split by subsystem.
   privacy settings allow; the entries that cannot answer a chat request are
   left out.
 - **A key the gateway refuses is said before the first message.** The key is
-  checked once when the mode is applied, and a refused one is the status line,
-  in OpenRouter's own words — not a `401` on your first question.
+  checked once when the mode is applied — for the assistant, for impersonation
+  and for the embedder alike — and a refused one is the status line, in
+  OpenRouter's own words, not a `401` on your first question. (The embedder's
+  status holds nothing back: a memory search made on a refused key is still
+  made, and answered by the refusal. The difference is that you were told.)
+- **A cloud embedder tries again.** A rate limit, an overloaded provider or a
+  lost connection no longer fails an indexing run or a memory search at once:
+  the request is repeated, up to three attempts, as a chat turn's is. For
+  OpenAI, Gemini and OpenRouter; a server of your own is asked once, as
+  before.
 - **"Thinking: off" on a model that cannot stop thinking.** Some models refuse
   a request to switch reasoning off. Through the gateway such a model is asked
   for the lowest effort it lists instead — measured on Gemini 3.5 Flash, that
@@ -46,6 +54,20 @@ split by subsystem.
   provider served it and what it cost. Nothing shows them yet.
 
 ### Fixed
+- **A long text could not be added to the knowledge base on a Gemini
+  embedder.** `rag_add` sent every chunk of a text in one request, and Gemini
+  refuses the hundred-and-first — on Google's own endpoint and through a
+  gateway alike. Every embedding request is at most 64 texts now, on every
+  embedder; a longer one is sent in parts.
+- **An edit of the embedding settings switched two things off until the
+  restart**: the `query:`/`passage:` markers of the model's input convention,
+  and the check that the stored vectors belong to the model now answering. A
+  change of the embedding model made in the settings therefore went unnoticed
+  until the next start, and searches ran against another model's vectors. Both
+  now follow every change, and a relaunched local embedding server too.
+- **The first knowledge-base search after a change of the embedding model
+  returned passages ranked by the wrong model**, with the notice of the change
+  beside them. It refuses, like every search after it, until `/reindex`.
 - **A settings edit could leave the previous engine's facts in charge.**
   Changing the mode from one reachable engine to another — a local server to a
   cloud, say — kept the context window and the list of sampling fields of the

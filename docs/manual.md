@@ -65,9 +65,10 @@ in and out, and `no tools` for a model that cannot call them — which, in an ap
 driven by tools, means it can only chat. The list opens **before** a key is
 entered (the gateway's catalogue is public); with a key it is your account's own
 list, narrowed by the privacy and provider settings you made there. The key
-itself is checked once, when the engine is applied: a key the gateway refuses
-shows in the status chip, in the gateway's words, instead of failing your first
-message. Setup in full, and what the app tells OpenRouter about itself —
+itself is checked when an engine in this mode is applied, the embedder
+included: a key the gateway refuses shows in that engine's status chip, in the
+gateway's words, instead of failing your first message. Setup in full, and what
+the app tells OpenRouter about itself —
 [install.md §3.2](install.md).
 
 For `managed`, the **Binary** field may be left empty — the app then uses the

@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (20)
+## Entries (21)
 
 - Post-M9: loading/removing files in RAG via `/rag add|remove` commands (done)
 - Post-M9: smart RAG chunking (overlap + markdown) + stitching on retrieval (done)
@@ -32,6 +32,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: `/file open 1` — a bare number is the listed `#N` (done)
 - Post-M9: a fetched page and its birth turn — no search it cannot have, and a cut that says where (done)
 - Post-M9: a fetched page searchable in its birth turn — the index starts at the round's end (done)
+- Post-M9: the embedder keeps its guard through a settings edit (done)
 
 ### Post-M9: loading/removing files in RAG via `/rag add|remove` commands (done)
 - **Commands in the input box**: `/rag add <path>` indexes a file or directory into the
@@ -1514,3 +1515,34 @@ attachment claimed and searched in the next round with its note held; the landin
 releasing a held note after "attached" and indexing nothing twice; an index still running
 at the landing speaking when it ends. The UI: `IndexEnded` takes down only its own
 banner and writes nothing. Unit: 3456 green, 202 ignored (3443 / 202 before).
+
+### Post-M9: the embedder keeps its guard through a settings edit (done)
+
+Two defects of the embedding stack, found and fixed by stage 2 of the OpenRouter mode;
+the stage itself — the batch cap, the retry, the key check, the live runs — is recorded
+in [engine.md](engine.md), "embeddings through the gateway".
+
+- **The model-change guard and the input convention were applied at start-up only.**
+  `apply_embed_settings` wrapped the embedder in `EmbedGuard { PrefixedEmbedder { … } }`;
+  `flush_restarts` (a settings edit) and `relaunch_dead_managed_servers` called
+  `engines.apply_embed` alone, which installs what the supervisor built. So the entry
+  "embedding-model change" above held for a change made *between* sessions and not for
+  one made *in* one: the settings screen is where a model is changed, and after the edit
+  nothing checked the canary, nothing retired the generation, and `query:`/`passage:`
+  stopped being written. Now the dress is an argument of `EngineManager::apply_embed`
+  (`Orchestrator::embedder_dress`); the three roads are tested by what reaches the
+  embedder.
+- **`rag_search` could search a base that its own query had just made stale.** The guard
+  is lazy — it checks on the first request an embedder serves — and the tool asked
+  `rag_is_stale` before embedding the query. It asks again after. The attachment search
+  needed nothing: `attachment_search` filters by generation in SQL ("belt and braces",
+  as its comment says — here are the braces).
+- **Every embedding request is at most 64 texts**, and an answer with a different number
+  of vectors than texts is an error (`shared/api/embed_policy.rs`). The ingest batches of
+  16 (`EMBED_BATCH_CHUNKS`) are unchanged; what is split is `rag_add`, the overview and
+  the rerank, which send what they have.
+- Live: an index built on a local `bge-m3` Q8_0 answers a query embedded by the
+  gateway's `baai/bge-m3` with no reindex offered — canary 0.999491 against
+  `CANARY_MATCH` 0.999, which is a margin of 0.0005 and is the number to look at first
+  if a coarser quantization ever reads as "the model changed".
+- Unit: 3693 green, 218 ignored (3674 / 214 before).

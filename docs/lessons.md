@@ -1875,6 +1875,27 @@ should reach (a whole drive, a project holding the data root): refuse by the res
 path, not by the root.
 — *safe defaults 2a*.
 
+**A wrapper that is a step callers take afterwards is a step one of them will skip.**
+The embedder was wrapped in its input convention and its model-change guard by the
+function that applies the embedding settings at start-up — two lines after the call
+that installs the embedder. A settings edit and a relaunch made the same call and not
+the two lines, so from the first change of the embedding settings to the restart the
+application ran on the bare client, and the guard was absent at the one moment it
+exists for. Nothing failed: a missing check is silent by nature. Make the wrapping an
+**argument** of the function that installs — then a caller that does not supply it does
+not compile — and test it on every road by what reaches the wrapped object, not by
+what the settings say.
+— *embeddings through the gateway — stage 2 of the OpenRouter mode*.
+
+**A lazy check can fire inside the operation that asked for its verdict.** The
+knowledge-base search looked whether the base was stale, then embedded the query, then
+searched. The check that marks the base stale runs on the first request an embedder
+serves — which was that query. So the base was sound at the top of the function and
+another model's at the bottom, and the one search that *noticed* the change was the one
+that ran against the stale index. Where a verdict is produced lazily, ask for it
+**after** the step that may produce it, or have that step return it.
+— *embeddings through the gateway — stage 2 of the OpenRouter mode*.
+
 ## 9. Live runs and model behaviour
 
 **A second turn that repeats the first turn's question tests the model's memory, not

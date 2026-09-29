@@ -170,7 +170,9 @@ src/
 │  │  ├─ mod.rs             scaffold: Orchestrator (17 fields), run() loop, command
 │  │  │                     dispatcher, shared helpers (emitters, chat_mut, mark_dirty)
 │  │  ├─ engines.rs         EngineManager: server lifecycle, readiness,
-│  │  │                     apply_chat/embed/impersonation, backend_if_ready
+│  │  │                     apply_chat/embed/impersonation, backend_if_ready.
+│  │  │                     apply_embed takes the embedder's `dress` (EmbedderDress)
+│  │  │                     as an argument — the one road an embedder is installed by
 │  │  ├─ embed_guard.rs     EmbedGuard: Embedder decorator detecting an embedding-
 │  │  │                     model change (canary, lazy on first use) and retiring the
 │  │  │                     vectors it orphans — bumps the embedding generation, deletes
@@ -220,7 +222,9 @@ src/
 │  │  │                     the chats, consecutive (name, mode) runs collapsed).
 │  │  │                     The forward recorder itself is in generation.rs
 │  │  ├─ profiles.rs        create/edit/delete profiles
-│  │  ├─ settings.rs        config + server (re)start via the supervisor
+│  │  ├─ settings.rs        config + server (re)start via the supervisor;
+│  │  │                     embedder_dress — EmbedGuard { PrefixedEmbedder { … } },
+│  │  │                     built for the start-up, a settings edit and a relaunch alike
 │  │  ├─ title.rs           chat auto-title (background task) + the automatic
 │  │  │                     trigger (`interface.auto_title`, spec §11.2): fires
 │  │  │                     once per conversation from handle_send/handle_done,
@@ -255,7 +259,10 @@ src/
 │  │  ├─ request.rs         mapping domain messages to the engine wire format
 │  │  └─ tests/             orchestrator tests, split by feature (mod.rs — fixtures;
 │  │                        generation/chats/profiles/settings/title/impersonation/
-│  │                        self_model/reflection/rag/request + live.rs #[ignore])
+│  │                        self_model/reflection/rag/request + live.rs #[ignore];
+│  │                        gateway_live.rs and gateway_live_embed.rs — the
+│  │                        `openrouter` mode's smokes on the production supervisor,
+│  │                        #[ignore], docs/install.md §7.1)
 │  ├─ gen_state.rs          GenState: pure Idle/Generating/Cancelling state machine
 │  │                        (begin/request_cancel/finish transitions, no I/O)
 │  ├─ events.rs             AppCommand (UI→orchestrator) and AppEvent (orchestrator→UI)
@@ -265,7 +272,13 @@ src/
 │  │  ├─ input.rs           input batching + clipboard paste (Windows path): Chunk, coalescing
 │  │  ├─ dispatch.rs        apply_event (AppEvent→screen) + Intent→AppCommand translation
 │  │  └─ clipboard.rs       read/write the system clipboard (arboard)
-│  ├─ supervisor.rs         ServerSupervisor: (re)start managed / connect to external
+│  ├─ supervisor.rs         ServerSupervisor: (re)start managed / connect to external;
+│  │                        puts the batch cap around every embedder it builds and
+│  │                        the retry around a cloud's (shared/api/embed_policy.rs);
+│  │                        asks the OpenRouter gateway about the key, for the
+│  │                        embedder as for the chat engines (spawn_key_check).
+│  │                        supervisor/gateway_tests.rs — #[cfg(test)], against a
+│  │                        local stub over a real socket
 │  └─ verify.rs             `mindfork setup --verify`: starts what the settings describe
 │                           through the supervisor's own managed_config /
 │                           managed_embed_config + ServerHandle::launch, both servers at
@@ -378,7 +391,9 @@ src/
 │  │  │                     the confirmation popup) folds what fits into the header; Full
 │  │  │                     (an expanded card) puts the name alone there and enumerates
 │  │  │                     every argument below, one `key: value` line each
-│  │  ├─ rag.rs             rag_add/rag_search: chunking, embedding, kNN, stitching
+│  │  ├─ rag.rs             rag_add/rag_search: chunking, embedding, kNN, stitching;
+│  │  │                     rag_search refuses over a stale base, asked before and
+│  │  │                     after the query is embedded (spec §9.3.4)
 │  │  ├─ notes/             notes. God object broken up (docs/history/refactoring-god-objects.md,
 │  │  │                     stage 4; external surface `notes::*` preserved via re-export
 │  │  │                     `pub(crate) use <submod>::*` from mod.rs):
@@ -583,6 +598,13 @@ src/
    │  │                     embedding models) into one CatalogModel carrying the role the
    │  │                     endpoint claimed — Unstated where it claimed none — and
    │  │                     ModelFacts (window, price, tools) where it published them
+   │  ├─ embed_policy.rs    two Embedder decorators the supervisor stacks over a client:
+   │  │                     BatchedEmbedder (a request carries at most MAX_INPUTS = 64
+   │  │                     texts; a longer input goes in parts, answered as one list
+   │  │                     in order; a part answering another number of vectors than
+   │  │                     it had texts is an error) and RetryEmbedder (a transient
+   │  │                     failure asked again under retry.rs's RetryPolicy — the
+   │  │                     clouds only). See spec §6.8, §9.3
    │  ├─ managed.rs         ServerHandle (managed llama-server process), ManagedConfig, wait_until_ready, ChildExit
    │  ├─ llama_args.rs      the user's raw server arguments: which are refused per ManagedRole
    │  │                     (a field's flag, the connection, an agent, a fetch) and which LLAMA_*
@@ -1440,7 +1462,9 @@ provider's body kept as fields; `check_status`; the transient/permanent
 classification), **`http`** (one `reqwest::Client` with a 10 s **connect**
 timeout, and `send_cancellable`, which puts the initial POST inside the
 cancellation token's reach) and **`retry`** (`RetryBackend`, below) — see
-spec §6.8. The rest is laid out by family
+spec §6.8. **`embed_policy`** is the embedder's counterpart of `retry`: the two
+`Embedder` decorators the supervisor stacks over a client (`BatchedEmbedder`,
+`RetryEmbedder`, below). The rest is laid out by family
 ([ADR 0004](decisions/0004-engine-contract-multi-provider.md)): **`contract`**
 (provider-agnostic traits and types), **`openai`** (two protocols in the
 family: `client`+`wire` — Chat Completions for local/external `llama-server`/
@@ -1485,6 +1509,14 @@ classDiagram
     class UnavailableEmbedder {
         RAG not configured → error
     }
+    class BatchedEmbedder {
+        embed_policy.rs
+        at most MAX_INPUTS texts per request
+    }
+    class RetryEmbedder {
+        embed_policy.rs
+        a cloud's transient failure, asked again
+    }
     class MockBackend {
         #[cfg(test)]
     }
@@ -1496,6 +1528,8 @@ classDiagram
     Embedder <|.. OpenAiClient
     Embedder <|.. UnavailableEmbedder
     Embedder <|.. PrefixedEmbedder
+    Embedder <|.. BatchedEmbedder
+    Embedder <|.. RetryEmbedder
 ```
 
 The provider is picked in settings via a single mode selector (`managed`/
@@ -1586,8 +1620,9 @@ parser reads two more fields a gateway sends — `provider` on a chunk and
 `usage.cost` on the last — and yields them as `ChatChunk::Served`.
 
 Anthropic, xAI and Responses have no
-embeddings — only `OpenAiClient` implements `Embedder` (RAG uses a separate one,
-ADR 0002), which is how the gateway's embeddings ride with its chat mode.
+embeddings — of the clients only `OpenAiClient` implements `Embedder` (RAG uses
+a separate one, ADR 0002), which is how the gateway's embeddings ride with its
+chat mode.
 **External** authenticates like a cloud: its Bearer key (for an
 OpenAI-compatible proxy or gateway) is either entered in settings — stored per
 **slot**, `secrets::ExternalSlot`, since each slot's `external` URL is a server of
@@ -1689,8 +1724,8 @@ its own — or named by `api_key_env`, resolved through the same
   the response cannot be an `Err` (the caller holds the stream), so each client
   yields it right before `Finished(Error)` — Anthropic's in-stream `error` event,
   a Gemini error payload, an OpenAI-shaped error object inside a llama.cpp `200`
-  stream, or a dropped connection. `transient` is the retry verdict (spec §6.8);
-  nothing consumes it until the retry decorator lands.
+  stream, or a dropped connection. `transient` is the retry verdict (spec §6.8),
+  read by `RetryBackend` (below).
   `ToolCallAccumulator` collects calls split across chunks by `index`; `Usage`
   (`prompt_tokens`/`completion_tokens`) arrives as a final chunk when
   `stream_options.include_usage=true` — the token counter. `ThoughtsSignature`
@@ -1721,6 +1756,31 @@ its own — or named by `api_key_env`, resolved through the same
   capability. It has happened three times; each method now has a delegation test
   asserting a value the decorator could not have produced by falling through
   (lessons §9). See spec §6.8 and docs/research/cloud-retry-backoff.md.
+- **`BatchedEmbedder` and `RetryEmbedder`** (`embed_policy.rs`) are `Embedder`
+  **decorators**, for the reason `RetryBackend` is one: the clients stay dumb
+  about policy and no call site can forget it. The supervisor stacks them,
+  outermost first — `BatchedEmbedder { RetryEmbedder { client } }` — so a long
+  input is split first and each part is retried by itself: a part that already
+  answered is not asked for again.
+  `BatchedEmbedder` sends at most `MAX_INPUTS` = 64 texts per request, the parts
+  one after another, and answers one list in the order it was given; a part that
+  fails fails the call. Every request, split or not, goes through `part`, which
+  holds the answer to its count — as many vectors as there were texts, else an
+  error — because vectors are matched to texts by position. The number rests on
+  a measurement (Gemini's OpenAI-compatible endpoint, and the gateway's two
+  Gemini embedding models, refuse the 101st input) and a `const` assertion keeps
+  it under 100; the app's own ingest batches (`EMBED_BATCH_CHUNKS` 16,
+  `NOTE_BACKFILL_BATCH` 32) pass through whole, and the caller it exists for is
+  `rag_add`, which embeds every chunk of its text in one call.
+  `RetryEmbedder` asks again after a failure `EngineError::is_transient` calls
+  transient, under `RetryPolicy::default()` and `RetryPolicy::decide` — the
+  verdict a chat turn is retried by, made `pub(super)` for it. It has no commit
+  point to respect (a request answers whole or fails whole) and no stream to
+  report into: the wait is a `tracing::warn!` and a `tokio::time::sleep`. A
+  failure that is not an `EngineError` — a body that did not parse — is not
+  retried. Applied to the **cloud** embedders only (`cloud_embed_setup`);
+  `external` and managed are left without it, unlike `RetryBackend`, which
+  covers `external` (spec §6.8, §9.3).
 - **`ServerHandle`** (`managed.rs`) owns the child `llama-server`: the `Child`
   is handed to a **monitor task** (`spawn_monitor`), which `select!`s between
   its exit (raising an `exited` token) and a `kill` signal (raised in the
@@ -1812,6 +1872,42 @@ process/port, with the `Embedder` trait split off from `EngineBackend`. Not
 configured → `UnavailableEmbedder` (RAG returns a clear error instead of
 crashing).
 
+**What the supervisor builds is a client inside its policy**
+(`shared/api/embed_policy.rs`, §6), by mode:
+
+| Mode | The embedder `ServerSupervisor::apply_embed` returns | Immediate status |
+|---|---|---|
+| external | `BatchedEmbedder { OpenAiClient }` | `Connecting`, then the `/health` probe |
+| managed | `BatchedEmbedder { OpenAiClient }` | `Connecting`, then the `/health` probe |
+| openai, gemini | `BatchedEmbedder { RetryEmbedder { OpenAiClient } }` | `Ready` |
+| openrouter | `BatchedEmbedder { RetryEmbedder { OpenAiClient.for_openrouter } }` | `Connecting`, then the key check |
+| claude, grok; nothing configured; a launch that failed | `UnavailableEmbedder`, bare | `NotConfigured`, or `Disconnected` with the launch error |
+
+The cap is every embedder's; the retry is a cloud's alone — a server the user
+runs is up or it is down, and its probe and, for a managed one, the relaunch
+budget are its recovery.
+
+**One road installs an embedder, and it dresses it.**
+`EngineManager::apply_embed` takes a `dress: EmbedderDress` — a boxed
+`FnOnce(Arc<dyn Embedder>) -> Arc<dyn Embedder>` — and stores
+`dress(setup.embedder)`. `Orchestrator::embedder_dress` builds it from the
+settings as they stand: `EmbedGuard { PrefixedEmbedder { what the supervisor
+built } }`, the prefixer inside the guard so that the canary and the calibration
+probes pass through it. So the whole stack a tool's text goes down is
+
+```text
+EmbedGuard { PrefixedEmbedder { BatchedEmbedder { RetryEmbedder { client } } } }
+```
+
+with the retry present for a cloud only. All three callers pass the dress:
+`apply_embed_settings` (start-up), `flush_restarts` (a settings edit) and
+`relaunch_dead_managed_servers`. It is an argument rather than a step taken
+afterwards because it used to be one, and only the start-up took it: an edit
+and a relaunch installed what the supervisor built as it was, so from the first
+change of the embedding settings to the restart there were no
+`query:`/`passage:` markers and no model-change check — at the one moment that
+check exists for (docs/research/openrouter-mode.md §9, A1).
+
 All three servers are probed the same way: `apply_*` returns an **immediate**
 status (`Connecting`, or `Disconnected` when the launch itself fails) and a
 background monitor posts the real one to its own channel — the orchestrator's
@@ -1831,11 +1927,17 @@ posts the verdict to the slot's status channel, under the same per-server
 and a request will speak for itself; `NoAnswer` → `Disconnected` with the
 transport's reason, said once, and the question again every `RECHECK_POLL` until
 something answers. The task ends at the first answer: nothing about a cloud is
-periodic, and `/health` is never asked of this host. It serves the assistant's
-and impersonation's engines (`apply_chat`, `apply_impersonation`);
-`cloud_embed_setup` builds the gateway's embedder `Ready` like the other cloud
-embedders, with no check (spec §3.4; docs/research/openrouter-mode.md §3.3,
-fork F6).
+periodic, and `/health` is never asked of this host. It serves all three slots:
+the assistant's and impersonation's engines (`apply_chat`,
+`apply_impersonation`) and the embedder — `cloud_embed_setup` takes the slot's
+`Monitor` (its `CancellationToken`, status channel and locale), returns
+`Connecting` for the gateway and hands the client to the same
+`spawn_key_check`, while the other two cloud embedders stay `Ready` at once and
+ask nothing. The client the check asks is the one inside the embedder's policy
+(`Arc<OpenAiClient>`, cloned before it is wrapped). A refused key is then the
+embedder's status rather than a `401` first met in the result of whichever tool
+embedded first; the status still gates nothing (below), so the call itself is
+not withheld (spec §3.4; docs/research/openrouter-mode.md §3.3, fork F6).
 
 What is provider-wide about the gateway — `AppConfig.openrouter`
 (`OpenRouterSettings { attribution }`) — belongs to no slot, so it reaches the
@@ -2039,7 +2141,14 @@ Storage invariants:
   change invalidated. `EmbedGuard` compares the canary on the first embedding
   call and acts on a mismatch (spec §9.3.4); `reset_vectors` clears all four of
   those keys, since with no vectors left there is nothing to be stale relative
-  to. All are `meta` keys, so adding them needed no schema bump.
+  to. All are `meta` keys, so adding them needed no schema bump. A guard is one
+  per **installed** embedder — the start-up, a settings edit and a relaunch each
+  build a new one (`Orchestrator::embedder_dress`, §6 "Server management") — and
+  its check is lazy, so the request that trips it can be any tool's. Hence
+  `rag_search` reads `rag_is_stale` twice, before it embeds the query and after:
+  the embedding of the query may be the very request on which the guard marked
+  the base stale, and the kNN that follows would otherwise measure a new model's
+  query against the old model's vectors.
 - **The model's similarity range** is recorded next to its identity, for the same
   reason and on the same once-per-model path: the counter says *which* model the
   stored vectors came from, the calibration (`embed_cal_unrelated`/

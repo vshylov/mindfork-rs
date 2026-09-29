@@ -649,6 +649,8 @@ dialect; stages 3 and 4 are a client each; stage 2 is the smallest.
 **Stage 1 is built** (2026-09-29): what it measured on the way and where it
 departed from this table — the embedder's arm came with it — is §11.
 
+**Stage 2 is built** (2026-09-29), go/no-go met: §12.
+
 ## 8. What this does not cover
 
 Speech-to-text (24 models — it would be voice input, a feature nobody has
@@ -773,3 +775,65 @@ because the smoke's fixture had none.
 | F7: one shape, four sources | Three: the account's list, the public list, the embedding models. The speech and the video lists belong to the stages that have a slot to show them in. |
 | F5: the headers on every request | On every request, the model list's included — asked by another client than the engine's, and named by the same switch. |
 | §9 A2: not this track's to fix | Fixed here: the mode would have met it on every change of model. With the facts asked again on every applied change a second defect surfaced — an answer of the engine that was replaced reached the screens, sent before its epoch was looked at — and was fixed with it. |
+
+## 12. Measured while stage 2 was built (2026-09-29)
+
+### 12.1 How many inputs one embeddings request takes **[live]**
+
+More inputs sent until the endpoint refused; the texts short and all different,
+so that an answer out of order would show.
+
+| endpoint | takes | the refusal |
+|---|---|---|
+| Gemini, OpenAI-compatible (`gemini-embedding-001`) | **100** | `400 "BatchEmbedContentsRequest.requests: at most 100 requests can be in one batch"` |
+| the gateway, `google/gemini-embedding-2` and its preview | **100** | the same sentence, wrapped |
+| the gateway, the other 31 embedding models | 128 and more | — |
+| the gateway, `baai/bge-m3` on DeepInfra (§4.3) | 1024 | `422 array_above_max_length` |
+| OpenAI (`text-embedding-3-small`) | 2048 | `400 "array length must be 2048 or less"` |
+
+Every answer came in the order of its inputs. Gemini leaves `index` out of the
+first vector (a zero, omitted) and numbers the rest.
+
+So `rag_add`, which embeds every chunk of its text in one request, could not
+add a text of more than a hundred chunks on a Gemini embedder — on Google's own
+endpoint, before any gateway. The cap is **64**: under the strictest count, and
+at the default chunk size under the per-request token ceilings that are
+published.
+
+### 12.2 The go/no-go **[live]**
+
+On the production supervisor, through the tools the model calls
+(`gateway_live_embed`), with a local `bge-m3-Q8_0.gguf` (llama.cpp b11234, CPU):
+
+- Five passages indexed on the local model. The embedder moved to the gateway's
+  `baai/bge-m3` **by an edit made in the session**. The query *"Which city is
+  the capital of France?"*, embedded by the gateway, finds the passage the local
+  model indexed — L2 distance 0.717 against 1.164 for the runner-up. **No
+  reindex is offered**: no notice, the same generation, the base not stale. The
+  canary, local against the gateway: **0.999491**, the floor being 0.999.
+- A passage added through the gateway is found by the gateway and, moved back,
+  by the local model.
+- **The control**: the same edit to `intfloat/multilingual-e5-large` — the same
+  width, another model — is said once, retires the generation and marks the
+  base stale. That is the guard armed by the edit, which is the half of this
+  that did not work before (§9, A1).
+- A text of **131 chunks** is added through `google/gemini-embedding-2` and
+  through Google's own endpoint, and its one planted fact is found; the bare
+  client, given the same 131 chunks in one request, is refused by both.
+- A key the gateway refuses is the embedder's status before anything is
+  embedded.
+
+The retry has no live arm. A `429` cannot be asked for, and unpinned the
+gateway's router falls back by itself (§4.3); what is tested is the decorator
+against a scripted embedder and the supervisor's stack against a stub that
+answers `429` and then the vectors.
+
+### 12.3 Where stage 2 departed from the plan
+
+| the plan | what was built, and why |
+|---|---|
+| F8: a retry for every cloud embedder | As planned — and **not** for `external`, where the chat retry does apply. An embedder is called several times in a turn by the memory tools; against a server of the user's own that is down, three attempts are three seconds of waiting per call on a server nobody started. |
+| F8: requests split at a fixed number | For every embedder, the user's own servers included: one rule, and a `llama-server` has no count of its own to exceed. A part that answers a vector short is an error rather than a shorter answer — vectors are matched to their texts by position. |
+| §11.5: whether the embedder's key is checked | It is, like the chat engine's: `Connecting` until `GET /key` answered. |
+| §9 A1: not this track's to fix | Fixed here, as the go/no-go could not be met without it: "no reindex was offered" says nothing from a guard that was not there. The dress is an argument of the one function that installs an embedder. |
+| — | **Found by the control arm**: the first search after a change of model ran against the stale index. `rag_search` looked whether the base was stale, *then* embedded the query — and the guard checks on the first request an embedder serves, which was that one. It looks again after the embedding. |

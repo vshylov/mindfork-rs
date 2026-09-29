@@ -960,9 +960,13 @@ moment that takes:
 | an outage or a rate limit — the key was not judged | ready: a request will speak for itself |
 | no answer at all (no network, DNS, TLS) | the reason, and the question repeats every 5 s until something answers |
 
-After the first answer nothing is asked periodically. The check belongs to the
-assistant's and impersonation's engines; the embedder is ready as soon as it has
-a key and a model, and a bad key there surfaces on the first embedding call.
+After the first answer nothing is asked periodically. The check is made for
+each of the three tabs in this mode — the assistant's engine, impersonation's
+and the embedder — so a key the gateway refuses shows on the Embeddings tab's
+chip as well, instead of first appearing inside the result of whichever tool
+embedded first. The embedder's chip is informational, as in every mode: it holds
+no call back, so an embedding asked for on a refused key is still asked for, and
+fails in the gateway's words.
 
 **What the app learns from the gateway.** The model's context window (what
 automatic compaction measures against), the sampling parameters it takes, whether
@@ -1001,10 +1005,26 @@ OpenRouter"**, in the provider's group on any tab whose mode is `openrouter`,
 turns them off for every slot at once ([PRIVACY.md](../PRIVACY.md) §3.1).
 
 **Embeddings.** The Embeddings tab in this mode sends the same request the other
-cloud embedders do. Two things are not there yet: a request the routed provider
-answers with a rate limit is not retried, and a very large document is sent as
-one request, which a provider may refuse for its size — both surface as the
-call's error.
+cloud embedders do, under the two rules every cloud embedder is under (the
+embedding server's notes under "Quick start via environment variables",
+below): a request carries at most 64 texts, a longer one going out in parts,
+and a request that failed for a passing reason — a rate limit, an overloaded
+provider, a lost connection — is sent again, up to three attempts. The first
+matters here in particular: two of the gateway's embedding models — Gemini's,
+`google/gemini-embedding-2` among them — refuse a request of more than a
+hundred texts, which is what a long text handed to `rag_add` used to be.
+
+**Moving the embedder between a local server and the gateway** does not by
+itself call for `/reindex`. What decides is whether the model that answers is
+the model that indexed, and the app measures that rather than reading names
+("Loading files into the knowledge base", below): measured on 2026-09-29, a
+local `bge-m3` Q8_0 and the gateway's `baai/bge-m3` agree on the check's fixed
+sentence to 0.999491, above the 0.999 the check asks for, so an index built on
+the one answers a query embedded by the other and nothing is offered. A model
+of the same vector size that is another model
+(`intfloat/multilingual-e5-large`, in the same run) is caught on its first
+request, and `rag_search` refuses over the knowledge base until `/reindex` —
+the search that noticed the change included.
 
 **Not there yet.** Speech (`/tts`) and watching a YouTube video have no
 `openrouter` mode: the Speech tab and the video tool keep their own providers
@@ -1253,6 +1273,27 @@ simply not indexed (a note says so) and are still read page by page.
 > **external** embedding server, raise the batch yourself, e.g.:
 > `llama-server -m bge-m3-Q8_0.gguf --embeddings --host 0.0.0.0 --port 8001 -ngl 99 -c 8192 -ub 8192 -b 8192`.
 
+> **How many texts a request carries.** Not the physical batch above, which
+> counts tokens of one text: this is the number of texts in one HTTP request.
+> The app sends **at most 64**, in every mode; a longer input goes out in
+> several requests, one after another, and comes back as one answer. Providers
+> count differently — measured on 2026-09-29, Gemini's OpenAI-compatible
+> endpoint refuses the 101st text (`400 "at most 100 requests can be in one
+> batch"`), DeepInfra takes 1024, OpenAI 2048 — and 64 is under all of them.
+> Indexing a file never came near the limit (it embeds 16 chunks at a time); the
+> `rag_add` tool did, since it embeds a whole text at once, and a text of more
+> than a hundred chunks was refused by Gemini. An answer with a different number
+> of vectors than there were texts is an error, not a shorter index.
+
+> **A cloud embedder is asked again.** A request to OpenAI, Gemini or the
+> OpenRouter gateway that failed for a passing reason — no answer at all, or a
+> `408`, `429`, `500`, `502`, `503`, `504` or `529` — is sent again: three
+> attempts in all, about 1 s and then about 2 s apart, a provider's
+> `Retry-After` obeyed up to 30 s and, above that, not waited for. A local or
+> external embedding server is **not** retried — it is up or it is down: the
+> health check behind its status chip notices when it answers again, and a
+> managed one that died is relaunched.
+
 ### Loading files into the knowledge base (RAG)
 
 Besides the `rag_add` tool (used by the model), files and directories can be
@@ -1290,7 +1331,10 @@ indexed manually — with commands right in the chat input box:
   model indexed — without deleting anything. Memory (notes and self-observations)
   rebuilds itself as you use it; the search indexes of attached files and the
   knowledge base wait for `/reindex`. Until the base is rebuilt, `rag_search`
-  refuses over it instead of answering from vectors it cannot compare. On a first
+  refuses over it instead of answering from vectors it cannot compare — the
+  search whose own query was the new model's first request included. The check
+  is made again after every change of the embedding settings, not only after a
+  start, and the input prefixes chosen there take effect with it. On a first
   run there is nothing to compare against, so nothing is reported.
 - **`/reindex`** re-embeds every stored vector with the current model, in one
   pass over the whole database — memory, the attached-file indexes and **every**
@@ -1752,8 +1796,10 @@ $env:MINDFORK_ENGINE_URL     = "http://127.0.0.1:8000/v1"   # a local llama.cpp,
 cargo test gateway_live -- --ignored --nocapture --test-threads=1
 ```
 
-That is twelve smokes and about ten cents — most of it the orchestrator's
-turns, which send the app's whole prompt and tool set: the client's nine (thoughts and who
+That filter is the mode's whole live gate: the twelve smokes of the chat side,
+described here, and the embedder's four, described below. The twelve are about
+ten cents — most of it the orchestrator's turns, which send the app's whole
+prompt and tool set: the client's nine (thoughts and who
 served, a tool round trip, a muted turn against its `external` control, a tool's
 image with a blind control, a `:nitro` slug, the key, the catalogues,
 embeddings), and the orchestrator's three on the production supervisor — a chat
@@ -1767,10 +1813,52 @@ smoke is about; a model that turns out not to be of that kind fails the smoke
 rather than skipping it. Without `MINDFORK_ENGINE_URL` the switch is skipped and
 the rest run.
 
+**The embedder in that mode has four smokes more**, in a module of their own
+(`app/orchestrator/tests/gateway_live_embed.rs`). They run on the production
+supervisor and through the tools the model calls, so what is embedded goes the
+whole road — the input convention, the model-change guard, the batch cap, the
+retry, the client — and they need no chat engine:
+
+```powershell
+$env:MINDFORK_EMBED_URL      = "http://127.0.0.1:8001/v1"   # a local bge-m3
+$env:MINDFORK_OPENROUTER_KEY = $env:OPENROUTER_API_KEY
+$env:MINDFORK_GEMINI_KEY     = "<key>"                      # Google's own endpoint
+
+cargo test gateway_live_embed -- --ignored --nocapture --test-threads=1
+```
+
+Well under a cent a run — a few hundred short texts; the gateway's own meter
+did not move by a millionth of a dollar over one. What they hold:
+
+- **An index built locally answers a query the gateway embedded.** The
+  knowledge base is filled on the local `bge-m3`, the embedder is moved to the
+  gateway's `baai/bge-m3` by an edit of the settings inside the session, and the
+  passage is found with **no reindex offered** — no notice, the same embedding
+  generation, the base not stale; what the gateway embedded is found from both
+  sides after the move back. The control arm is the guard itself: the same move
+  to a model of the same width that is another model
+  (`intfloat/multilingual-e5-large`) is said once and the search refuses.
+  Needs `MINDFORK_EMBED_URL` and the gateway's key;
+  `MINDFORK_OPENROUTER_EMBED_MODEL` names another model for the first half.
+- **A text of more than a hundred chunks is added whole through the gateway**,
+  on `google/gemini-embedding-2` — or on what
+  `MINDFORK_OPENROUTER_CAPPED_EMBED_MODEL` names, which has to be a model that
+  takes a hundred inputs and no more. Its control arm is the refusal: the bare
+  client, asked for the very chunks the tool was given in one request, must
+  answer `at most 100`.
+- **The same through Google's own endpoint** (`gemini-embedding-001`), which is
+  where the number was measured. Needs `MINDFORK_GEMINI_KEY`.
+- **A refused key is the embedder's status.** It reads no variable — the key
+  under test is a wrong one the smoke makes up — and needs only the network.
+
+A smoke whose variable is unset is skipped and says which.
+
 On Windows the application itself can be driven through the mode, in a hidden
 console on a scratch data root: `python tools/console_probe.py --scenario
-gateway` types a question into the chat, opens the settings and the model list,
-and checks that the key reached neither the log nor the settings file. It reads
+gateway` types a question into the chat, reads both of the mode's chips off
+the status line, indexes a file through the gateway's embedder (`/rag add`),
+opens the settings and the model list, and checks that the key reached neither
+the log nor the settings file. It reads
 `OPENROUTER_API_KEY` by name, as the settings do.
 
 ### 7.2. The remote gate (rented GPU, no local stack)

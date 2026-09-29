@@ -155,13 +155,13 @@ attach an image. The OpenAI, Gemini and Anthropic clouds are not probed.
 The OpenRouter gateway is asked two things, both with your key:
 
 - **`GET /key` — whether the key is accepted.** Asked **once** each time the
-  chat engine or the impersonation engine is set up in the `openrouter` mode:
-  when the app starts, and after you change that engine's settings, the key or
-  the switch above. Only if nothing answers at all — no network — is it asked
-  again, every 5 seconds, until something does; after the first answer it is not
-  repeated. The answer also describes the key (its limit and its usage); the app
-  reads whether the key was accepted and nothing else, and keeps none of it. The
-  embedding engine does not ask.
+  chat engine, the impersonation engine or the embedding engine is set up in the
+  `openrouter` mode: when the app starts, and after you change that engine's
+  settings, the key or the switch above. Only if nothing answers at all — no
+  network — is it asked again, every 5 seconds, until something does; after the
+  first answer it is not repeated. The answer also describes the key (its limit
+  and its usage); the app reads whether the key was accepted and nothing else,
+  and keeps none of it.
 - **`GET /model/<the model you chose>` — that one model's entry** in the
   gateway's catalogue: its context window, the parameters it accepts, whether it
   takes images, how it reasons. Asked when the chat engine is set up, and by the
@@ -198,9 +198,18 @@ queries together with up to 800 characters of each result page**, which the tool
 embeds to rank results. If your embedder is a cloud provider, that is search
 content reaching a second vendor.
 
+A request carries at most 64 texts, so a longer list — a long document added to
+the knowledge base at once — is sent as several requests, one after another, to
+the same endpoint. And a request that a cloud provider or the gateway failed for
+a passing reason — a rate limit, an overload, a lost connection — is sent again,
+up to three attempts in all: the same text can reach that provider more than
+once. A local or external embedding server is not asked again.
+
 To notice that the embedding model has changed, the app also embeds one fixed
-sentence (`mindfork embedding canary v1`) when it first uses the embedder in a
-session, and a fixed set of calibration sentences once for each new model.
+sentence (`mindfork embedding canary v1`) when it first uses the embedder after
+the embedding engine was set up — when the app starts, after you change that
+engine's settings, and after a local embedding server the app runs was
+restarted — and a fixed set of calibration sentences once for each new model.
 Neither contains anything of yours.
 
 ### 3.3 The web tools — off until you turn them on

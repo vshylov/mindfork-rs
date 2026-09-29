@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (77)
+## Entries (78)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -89,6 +89,8 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: `mindfork setup` — a working managed engine from one command (done)
 - Post-M9: raw `llama-server` arguments in managed settings (done)
 - Post-M9: OpenRouter as a provider of its own — stage 1 (done)
+- Post-M9: embeddings through the gateway — stage 2 of the OpenRouter mode (done)
+
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
   a long time (up to the `MANAGED_READY_TIMEOUT=600s` timeout) in "server:
@@ -5152,3 +5154,113 @@ them: a wildcard import in a test file whose name does not start with `test`, an
 literals the console probe's new scenario repeated a third and a fourth time.
 
 **Gates**: fmt / clippy / test green — **3674 unit tests, 214 `#[ignore]`** (+72 unit tests, +12 live smokes).
+
+### Post-M9: embeddings through the gateway — stage 2 of the OpenRouter mode (done)
+
+**What.** Stage 2 of [docs/research/openrouter-mode.md](../research/openrouter-mode.md)
+(§7, fork F8) — and built, as the fork said, for every embedder rather than for the
+gateway's: requests of a bounded size, another attempt for a cloud when the failure is
+one that passes, the gateway's key asked about before the embedder is called ready. The
+go/no-go is the switching the track is about: **an index built on a local `bge-m3`
+answers a query the gateway embedded, and no reindex is offered.** Two defects stood
+between the plan and that sentence, and both are fixed here.
+
+**Measured first** (research §12.1). How many inputs one request takes, by sending more
+until the endpoint refused: Gemini's OpenAI-compatible endpoint **100**, and so two of the
+gateway's 33 embedding models, which are Gemini's; DeepInfra 1024; OpenAI 2048. `rag_add`
+embeds every chunk of its text in one request — so a text of more than a hundred chunks
+could not be added on a Gemini embedder at all, on Google's own endpoint, before any
+gateway. The plan had called the batch cap a precaution; it was a fix.
+
+**Built.**
+- `shared/api/embed_policy.rs`, two decorators over `Embedder`, stacked by the supervisor
+  as `BatchedEmbedder { RetryEmbedder { the client } }` — the split outside, so a part
+  that failed is asked for again by itself and the parts that answered are not.
+  - `BatchedEmbedder`: at most `MAX_INPUTS` = **64** texts a request, a `const` assertion
+    beside the number holding it under a hundred. Parts go one after another and come
+    back as one list in the order given. **A part that answers a vector short is an
+    error**, in a single request as much as in a part: vectors are matched to texts by
+    position, and a shorter answer would shift every vector after it onto its
+    neighbour's text.
+  - `RetryEmbedder`: the chat retry's policy (`RetryPolicy::decide`, opened to the module)
+    and the chat retry's verdict (`EngineError::is_transient`). Simpler in one way that
+    matters — an embedding request has no commit point, it answers whole or fails whole.
+- `app/supervisor.rs`: every embedder behind the cap; the clouds' — OpenAI, Gemini, the
+  gateway — behind the retry as well. The gateway's is `Connecting` until `GET /key`
+  answered (`spawn_key_check`, the chat engine's own), so a refused key is the slot's
+  status from the moment the engine is applied. The status withholds nothing — an
+  embedder is called whatever its chip says, in every mode — so a tool that embeds on
+  a refused key is still answered by the refusal; what changed is that the user was
+  told first.
+- `app/orchestrator`: `EngineManager::apply_embed` takes the embedder's **dress** —
+  `EmbedGuard { PrefixedEmbedder { … } }`, built by `Orchestrator::embedder_dress` — as
+  an argument.
+- `features/tools/rag.rs`: `rag_search` asks whether the base is stale after the query
+  was embedded as well as before.
+
+**The two defects.**
+- *The guard and the convention were lost on the first in-session change of the
+  embedding settings* (research §9, A1 — read there, not run). Start-up wrapped the
+  embedder; a settings edit and the relaunch of a dead managed server installed what the
+  supervisor built as it was. Until the restart: no `query:`/`passage:` markers, no check
+  that the stored vectors belong to the model now answering. The go/no-go could not be
+  met without fixing it — "no reindex was offered" says nothing from a guard that was
+  not there — and it is fixed by construction: the wrapping is an argument of the one
+  function that installs, so a caller that leaves it out does not compile.
+- *The search that notices a change of model ran against the stale index.* Found by the
+  live control arm: after the switch to a model of the same width that is another model,
+  `rag_search` answered "5 passages found", with the notice of the change beside it. The
+  tool looked whether the base was stale and *then* embedded the query; the guard checks
+  on the first request an embedder serves, which was that one. Attachments were never
+  exposed — their search filters by generation in SQL; the knowledge base relies on the
+  flag.
+
+**Rejected / not built.** No retry for `external` or `managed` embedders, where the chat
+retry does apply: the memory tools embed several times in a turn, and against a server of
+the user's own that is down three attempts are three seconds of waiting per call on a
+server nobody started. No `input_type` (F8, on demand: two of eight models honour it). No
+sorting of an answer by its `index`: every answer measured came in order, and Gemini
+leaves the first `index` out. No notice in the feed when an embedding is retried — it is
+logged; a chat turn shows its wait because a person is watching it.
+
+**Tests.** Unit tests next to the code, each checked against the mutation it guards —
+16 mutants, none survived. The decorators against a scripted embedder that keeps
+what it was asked (the sizes of the requests are what a split is judged by, their count
+what a retry is), on a paused clock so that the waits are asserted to the second. The
+supervisor's stack over a real socket: `429` then the vectors is an answer for a cloud
+and the gateway, a `503` from the user's own server is asked once, 65 texts are two
+requests on either. The dress by what reaches the embedder — the marker on the text and
+the guard's canary — on all three roads.
+
+**Smoke — GO** (2026-09-29; the gateway with the user's key, Google's endpoint with
+`GEMINI_API_KEY`, a local llama.cpp b11234 on the CPU serving `bge-m3-Q8_0.gguf`
+`--embeddings -c 8192`; Windows 11). `cargo test gateway_live_embed -- --ignored`:
+- `an_index_built_locally_answers_a_query_embedded_by_the_gateway_live` — five passages
+  indexed locally; the embedder moved to `baai/bge-m3` by an edit; *"Which city is the
+  capital of France?"* finds the passage at L2 0.717 (the runner-up 1.164); no notice,
+  the same generation, the base not stale; **the canary, local against the gateway,
+  0.999491** with the floor at 0.999. A passage added through the gateway is found by the
+  gateway and, moved back, by the local model. **Control**: the same edit to
+  `intfloat/multilingual-e5-large` is said once, retires the generation, marks the base
+  stale, and the search refuses. **Red before it was green**: the control's last
+  assertion — that is the second defect above.
+- `a_long_text_is_added_through_the_gateway_live` (`google/gemini-embedding-2`) and
+  `a_long_text_is_added_through_gemini_live` (`gemini-embedding-001`) — 131 chunks added,
+  the planted fact found; the bare client, given the same chunks at once, refused with
+  *"at most 100 requests can be in one batch"* by both.
+- `a_refused_key_is_the_embedders_status_live` — *"OpenRouter refused the API key: User
+  not found."* before anything is embedded.
+- The retry has no live arm: a `429` cannot be asked for.
+- **The app itself** (`tools/console_probe.py --scenario gateway`, extended): both of the
+  mode's chips ready in the status line — `● chat  ● emb` — and `/rag add notes.txt`
+  answered *"RAG: indexing finished — files: 1, chunks: 1"* through the gateway's
+  embedder.
+
+**Docs.** spec §3.4, §6, §9.5, §9.7; architecture §3, §5, §9; install.md §3.2, §7.1;
+PRIVACY.md and its translation (the embedding engine asks `GET /key` too; a text may
+reach a cloud more than once), with the derived pages regenerated; CHANGELOG (Added,
+four Fixed); the roadmap; lessons §8; research §7, §12; the RAG journal, for the two
+defects that are its area's.
+
+**Gates**: fmt / clippy / test green — **3693 unit tests, 218 `#[ignore]`**
+(+19 unit tests, +4 live smokes).

@@ -23,13 +23,13 @@ follow it to the two or three documents your task actually needs.
 
 Two rules that follow from that:
 
-- **Read the section, not the file.** [spec.md](spec.md) (217 KB) and
-  [docs/architecture.md](docs/architecture.md) (144 KB) are chaptered reference
+- **Read the section, not the file.** [spec.md](spec.md) (496 KB) and
+  [docs/architecture.md](docs/architecture.md) (275 KB) are chaptered reference
   documents with stable numbering; every section is cited by number from the map
   and from the code. Loading either whole spends context on twelve chapters to
   use one.
 - **The engineering journal is per area.** What was done, why, what was measured
-  and what was rejected lives in `docs/journal/<area>.md` — 243 entries, split by
+  and what was rejected lives in `docs/journal/<area>.md` — 549 entries, split by
   subsystem. Read the file for the area you are touching; grep across them when
   hunting a specific past decision.
 
@@ -44,8 +44,8 @@ Two rules that follow from that:
 | working on **storage**, config, backup, migrations, secrets | architecture §7 · spec §5, §12 · [docs/journal/storage.md](docs/journal/storage.md) |
 | working on a **tool**, MCP, the Python sandbox | architecture §8 · spec §9 · [docs/journal/tools.md](docs/journal/tools.md) |
 | working on the **self-model** — summary, goals, traits, reflection | architecture §9 · spec §17 · [docs/journal/self-model.md](docs/journal/self-model.md) |
-| working on **notes** and their graph | architecture §9 · spec §9.5 · [docs/journal/notes.md](docs/journal/notes.md) |
-| working on **RAG**, chat attachments or embeddings | architecture §9 · spec §9.5, §9.7 · [docs/journal/rag.md](docs/journal/rag.md) |
+| working on **notes** and their graph | architecture §9 · spec §9.3 · [docs/journal/notes.md](docs/journal/notes.md) |
+| working on **RAG**, chat attachments or embeddings | architecture §6–§7 · spec §9.3 (§9.3.4–§9.3.5), §9.7 · [docs/journal/rag.md](docs/journal/rag.md) |
 | working on the **feed**, markdown, rendering, the terminal | architecture §10 · spec §11.3–§11.4 · [docs/journal/ui-feed.md](docs/journal/ui-feed.md) |
 | working on the **input box**, keys, spellcheck | architecture §10 · spec §11.5 · [docs/journal/ui-input.md](docs/journal/ui-input.md) |
 | working on a **screen** — settings, chat list, search, help | architecture §10 · spec §11.6–§11.8 · [docs/journal/ui-screens.md](docs/journal/ui-screens.md) |
@@ -179,8 +179,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-29, version 0.12.0)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3674 unit tests
-green, 214 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **3693 unit tests
+green, 218 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -192,13 +192,15 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
-- **OpenRouter as a provider of its own — stage 1** (chat, impersonation, the
-  embedder's arm). `openrouter` is a mode beside `external`: one key, a dialect on
+- **OpenRouter as a provider of its own — stages 1 and 2** (chat, impersonation,
+  embeddings). `openrouter` is a mode beside `external`: one key, a dialect on
   the client (`repetition_penalty`, the lowest listed effort on a muted turn), the
   key checked before `Ready`, the picker's rows with window and price, attribution
-  behind a switch; `settings.json` 3 → 4. Live **GO**, the switch local → gateway →
-  back included. Next: stage 2, the embedder's retry and batch cap
-  ([docs/research/openrouter-mode.md](docs/research/openrouter-mode.md) §7, §11,
+  behind a switch; `settings.json` 3 → 4. Stage 2 is every embedder's: requests of
+  at most 64 texts, a retry for a cloud, and the guard and the convention applied
+  by every road that installs an embedder. Live **GO** — the switch local →
+  gateway → back, and a local index answering the gateway's query. Next: speech
+  ([docs/research/openrouter-mode.md](docs/research/openrouter-mode.md) §7, §11–§12,
   spec §3.4, §11.6, [docs/journal/engine.md](docs/journal/engine.md)).
 - **`Ctrl+←/→` stop at punctuation** — three character classes, not two: a run of
   marks is a stop of its own, and deletion and selection share it
