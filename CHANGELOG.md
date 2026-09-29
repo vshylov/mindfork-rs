@@ -14,6 +14,52 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Added
+- **OpenRouter is a mode of its own.** Settings → Model/server → *Mode* →
+  `openrouter` — for the assistant, for impersonation and for the embedder. The
+  gateway's section sits beside `external`, so a local server's address and the
+  gateway's key are both kept: moving between a local model and OpenRouter is
+  the *Mode* row and nothing else, and one stored key serves every slot that
+  uses the gateway. `external` pointed at `openrouter.ai` keeps working as it
+  did, and its address row now says that the mode exists.
+- **The model list shows what a model is.** In the `openrouter` mode `Enter` on
+  the model row lists the gateway's catalogue with each model's context window,
+  its price per million tokens in and out, and *no tools* where the gateway
+  says the model takes none. With a key the list is the models your account's
+  privacy settings allow; the entries that cannot answer a chat request are
+  left out.
+- **A key the gateway refuses is said before the first message.** The key is
+  checked once when the mode is applied, and a refused one is the status line,
+  in OpenRouter's own words — not a `401` on your first question.
+- **"Thinking: off" on a model that cannot stop thinking.** Some models refuse
+  a request to switch reasoning off. Through the gateway such a model is asked
+  for the lowest effort it lists instead — measured on Gemini 3.5 Flash, that
+  is no reasoning tokens at all.
+- **A switch for naming the app to OpenRouter.** Requests to the gateway carry
+  two headers that name this application — its site and its name — which
+  OpenRouter counts its public app rankings by. They say nothing about you.
+  Settings → Model/server → *Name the app to OpenRouter*; on by default, off —
+  the headers are not sent.
+
+### Changed
+- A reply that came through OpenRouter records, in the chat file, which
+  provider served it and what it cost. Nothing shows them yet.
+
+### Fixed
+- **A settings edit could leave the previous engine's facts in charge.**
+  Changing the mode from one reachable engine to another — a local server to a
+  cloud, say — kept the context window and the list of sampling fields of the
+  engine before it, so compaction fired by the wrong window until the restart.
+  The engine is asked again on every applied change.
+
+### Data
+- **`settings.json` 3 → 4**: `openrouter` becomes a value of the mode rows, with
+  a section of its own in each of the three engines, and a top-level
+  `openrouter` block holds the attribution switch. Nothing is rewritten — the
+  step stamps the version, because a version that does not know the value
+  refuses the whole file rather than reading the rest of it. As with every
+  schema change, the file is backed up before it is migrated.
+
 ## [0.12.0] — 2026-09-28
 
 **The app can paint its own window, and a theme can be yours.** Three ways of

@@ -83,6 +83,14 @@ pub const ATTRIBUTION_REFERER: &str = "https://mindfork.io";
 /// What the gateway's `X-OpenRouter-Title` names.
 pub const ATTRIBUTION_TITLE: &str = "mindfork";
 
+/// The message of an error envelope (`{"error": {"message": …}}`), when the
+/// body is one and says something.
+fn said_in(body: &str) -> Option<String> {
+    let envelope: serde_json::Value = serde_json::from_str(body).ok()?;
+    let said = envelope.get("error")?.get("message")?.as_str()?.trim();
+    (!said.is_empty()).then(|| said.to_string())
+}
+
 /// What the gateway said about a key ([`OpenAiClient::check_key`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KeyVerdict {
@@ -193,11 +201,10 @@ impl OpenAiClient {
         if status.is_success() {
             return KeyVerdict::Accepted;
         }
-        let said = error::check_status(SUBJECT_ENGINE, resp)
-            .await
-            .err()
-            .map(|e| e.message)
-            .unwrap_or_else(|| status.to_string());
+        // The sentence the gateway wrote, not the envelope it came in: this is
+        // read in a status line.
+        let body = resp.text().await.unwrap_or_default();
+        let said = said_in(&body).unwrap_or_else(|| status.to_string());
         if matches!(status.as_u16(), 401 | 403) {
             KeyVerdict::Refused(said)
         } else {

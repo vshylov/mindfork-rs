@@ -15,6 +15,8 @@
 
 pub mod client;
 #[cfg(test)]
+mod gateway_live;
+#[cfg(test)]
 mod gateway_tests;
 pub mod responses;
 mod wire;

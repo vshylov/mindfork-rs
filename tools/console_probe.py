@@ -52,6 +52,13 @@ Scenarios (`--scenario`):
 * `no-color` — `mindfork demo` three times: with `NO_COLOR=1`, where the very
   first frame must already be bare; with `NO_COLOR=` (empty), which is an
   unset one; and without it.
+* `gateway` — a copy of the binary in a scratch directory whose settings name
+  the `openrouter` mode, against the **real gateway** (it needs
+  `OPENROUTER_API_KEY`, which the settings read by name, and spends a fraction
+  of a cent): a question typed into the chat is answered, the settings show the
+  provider's rows with the attribution switch, and `Enter` on the model row
+  lists the gateway's catalogue with the window and the price. Takes the
+  single-instance lock, like `first-frame`.
 * `user-theme` — a copy of the binary in a scratch directory whose
   `data/themes/` holds a theme of one colour (a light canvas) next to a file
   that is not a theme, with the settings naming that theme. The first frame
@@ -70,6 +77,7 @@ Usage:
     python tools/console_probe.py --scenario mono
     python tools/console_probe.py --scenario no-color
     python tools/console_probe.py --scenario user-theme
+    python tools/console_probe.py --scenario gateway
     python tools/console_probe.py --exe target/release/mindfork.exe
 
 Exit code: 0 — every check passed, 1 — a check failed, 2 — cannot run here.
@@ -684,8 +692,87 @@ def scenario_user_theme(exe: Path, report: Report) -> None:
         report.check(code == 0, f"the app exited with code {code} the second time")
 
 
+def text_of(rows: list[list[tuple[str, int]]]) -> str:
+    return "\n".join("".join(char for char, _ in row).rstrip() for row in rows)
+
+
+def wait_for_text(text: str, seconds: float) -> list[list[tuple[str, int]]]:
+    """The screen once `text` is on it, or as it is when the time is up — the
+    caller's check then says what was there instead."""
+    deadline = time.monotonic() + seconds
+    rows = read_screen()
+    while text not in text_of(rows) and time.monotonic() < deadline:
+        time.sleep(0.5)
+        rows = read_screen()
+    return rows
+
+
+def scenario_gateway(exe: Path, report: Report) -> None:
+    if not os.environ.get("OPENROUTER_API_KEY", "").strip():
+        raise RuntimeError("OPENROUTER_API_KEY is not set, and this scenario is the real gateway")
+    model = os.environ.get("MINDFORK_OPENROUTER_MODEL", "anthropic/claude-haiku-4.5")
+    with tempfile.TemporaryDirectory(prefix="mindfork-probe-") as scratch:
+        root = Path(scratch)
+        copy = root / exe.name
+        shutil.copy(exe, copy)
+        (root / "data").mkdir()
+        settings = {
+            "schema_version": 4,
+            "interface": {"language": "en"},
+            "engine": {
+                "mode": "openrouter",
+                # The key is named, not written: the settings hold no secret.
+                "openrouter": {"model_name": model, "api_key_env": "OPENROUTER_API_KEY"},
+            },
+        }
+        (root / "data" / "settings.json").write_text(json.dumps(settings), encoding="utf-8")
+
+        session = Session(copy, [], cwd=root)
+        try:
+            print("the chat: a question through the gateway")
+            type_text("Answer with one word: what is the capital of France?")
+            press("enter", SETTLE_REPAINT)
+            rows = wait_for_text("Paris", 60)
+            print(text_of(rows))
+            report.says("the reply", rows, ("Paris",))
+
+            print("the settings: the provider's rows")
+            press("ctrl+p", SETTLE_REPAINT)  # opens on "Model/server"
+            press("enter", SETTLE_REPAINT)  # into its fields: the row of tabs
+            rows = read_screen()
+            print(text_of(rows))
+            report.says(
+                "Model/server",
+                rows,
+                ("openrouter", model, "OpenRouter API key", "Name the app to OpenRouter"),
+            )
+
+            print("the picker: the gateway's catalogue behind the model row")
+            press("down")  # the tabs -> "Mode"
+            press("down")  # -> "Model"
+            press("enter", SETTLE_REPAINT)
+            rows = wait_for_text("per 1M tokens", 30)
+            print(text_of(rows))
+            report.says("the catalogue", rows, ("context", "per 1M tokens", "Type a name by hand"))
+            press("esc")
+            press("esc")
+        finally:
+            code = session.close()
+        report.check(code == 0, f"the app exited with code {code}")
+        log = "\n".join(
+            path.read_text(encoding="utf-8", errors="replace")
+            for path in (root / "data" / "logs").glob("*")
+            if path.is_file()
+        )
+        key = os.environ["OPENROUTER_API_KEY"].strip()
+        report.check(key not in log, "the key is not in the log")
+        saved = (root / "data" / "settings.json").read_text(encoding="utf-8")
+        report.check(key not in saved, "nor in the settings")
+
+
 SCENARIOS = {
     "full-mode": scenario_full_mode,
+    "gateway": scenario_gateway,
     "first-frame": scenario_first_frame,
     "mono": scenario_mono,
     "no-color": scenario_no_color,

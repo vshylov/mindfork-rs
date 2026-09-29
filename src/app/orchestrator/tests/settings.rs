@@ -713,3 +713,211 @@ async fn a_stored_search_key_shows_as_present() {
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
 }
+
+/// What one engine said about itself does not outlive it.
+///
+/// Until this was fixed the facts were asked again at start-up and on a status
+/// flip only. A managed or external server announces itself through its probe,
+/// so those switches were covered; a cloud is ready at once and says nothing —
+/// and the previous engine's window went on deciding when automatic compaction
+/// fired, against a model it had never been measured for
+/// (docs/research/openrouter-mode.md §4.1, §9 A2). The gateway's own mode would
+/// have met this on every change of model.
+#[tokio::test]
+async fn what_the_previous_engine_said_does_not_outlive_a_settings_edit() {
+    use crate::app::orchestrator::compaction::EngineFacts;
+    use crate::shared::api::contract::ModelCapabilities;
+
+    let (_d, mut orch) = bare_orch();
+    orch.config.engine.mode = ServerMode::External;
+    // As a gateway's catalogue answered for the model `external` pointed at.
+    let epoch = orch.context.epoch();
+    orch.handle_budget_result(
+        epoch,
+        EngineFacts {
+            budget: None,
+            caps: Some(ModelCapabilities {
+                context_length: Some(64_000),
+                sampling_fields: Some(vec!["temperature".to_string()].into()),
+            }),
+        },
+    );
+    assert_eq!(orch.context_budget(), Some(64_000));
+    assert!(orch.endpoint_catalogued());
+
+    // The switch that flips no status.
+    orch.config.engine.mode = ServerMode::Claude;
+    orch.restarts.mark_chat();
+    orch.flush_restarts();
+
+    assert_eq!(
+        orch.context_budget(),
+        None,
+        "the window belonged to the engine that is gone"
+    );
+    assert!(!orch.endpoint_catalogued());
+    assert!(orch.endpoint_sampling_fields().is_none());
+    assert!(
+        orch.context.epoch() > epoch,
+        "and an answer still in flight for it would be dropped"
+    );
+}
+
+/// An answer of the engine that is gone says nothing to the screens.
+///
+/// The memo dropped it — and the list of sampling fields it carried was sent to
+/// the UI before the epoch was looked at. With the facts asked again on every
+/// applied change, two answers race whenever a mode is changed twice in a row:
+/// the slower engine answers last, and its list would stay on the settings
+/// screen of the other.
+#[tokio::test]
+async fn an_answer_of_the_engine_that_is_gone_tells_the_screens_nothing() {
+    use crate::app::orchestrator::compaction::EngineFacts;
+    use crate::shared::api::contract::ModelCapabilities;
+
+    let answer = || EngineFacts {
+        budget: None,
+        caps: Some(ModelCapabilities {
+            context_length: Some(64_000),
+            sampling_fields: Some(vec!["temperature".to_string()].into()),
+        }),
+    };
+    let told = |rx: &mut UnboundedReceiver<AppEvent>| {
+        let mut lists = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            if let AppEvent::EngineSamplingFields(fields) = event {
+                lists.push(fields);
+            }
+        }
+        lists
+    };
+    let (_d, mut orch, mut rx) = bare_orch_rx();
+    // A mode whose window is the engine's to say, not the settings'.
+    orch.config.engine.mode = ServerMode::External;
+    let gone = orch.context.epoch();
+    orch.refresh_engine_facts();
+    told(&mut rx);
+
+    orch.handle_budget_result(gone, answer());
+    assert_eq!(told(&mut rx), [], "the engine it describes is gone");
+    assert_eq!(orch.context_budget(), None);
+    assert!(orch.endpoint_sampling_fields().is_none());
+
+    // The control: the same answer for the engine that is there.
+    orch.handle_budget_result(orch.context.epoch(), answer());
+    assert_eq!(
+        told(&mut rx),
+        [Some(vec!["temperature".to_string()].into())]
+    );
+    assert_eq!(orch.context_budget(), Some(64_000));
+}
+
+/// The status event of a slot raised again — waited for under a bound, so that
+/// a restart that never came is a failure with these words rather than a test
+/// that never ends (the clock is paused: the bound costs nothing).
+async fn raised_again(rx: &mut UnboundedReceiver<AppEvent>) {
+    tokio::time::timeout(
+        std::time::Duration::from_secs(60),
+        wait_for(rx, |e| matches!(e, AppEvent::ServerStatus(_))),
+    )
+    .await
+    .expect("the slot is raised again")
+    .expect("the event stream");
+}
+
+/// The gateway's own switch reaches the slots that speak to the gateway — and
+/// no other: a managed server is a GGUF killed and loaded again, and must not
+/// pay that for a header it never sends.
+///
+/// Proving a restart *didn't* happen can't rely on waiting for an absent event,
+/// so the second half ends with a genuine change and reads the counter against
+/// **its** status event.
+#[tokio::test(start_paused = true)]
+async fn the_gateways_own_switch_restarts_only_the_slots_that_speak_to_it() {
+    let backend = Arc::new(MockBackend::scripted(vec![ChatChunk::Finished(
+        FinishReason::Stop,
+    )])) as Arc<dyn EngineBackend>;
+    let sup = Arc::new(MockSupervisor::with_backend(Some(backend)));
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Arc::new(Storage::open(Paths::with_root(dir.path())).unwrap());
+    let (cmd_tx, cmd_rx) = unbounded_channel();
+    let (evt_tx, mut evt_rx) = unbounded_channel();
+    let through_the_gateway = |attribution: bool| AppConfig {
+        engine: crate::shared::config::EngineSettings {
+            mode: ServerMode::OpenRouter,
+            ..Default::default()
+        },
+        openrouter: crate::shared::config::OpenRouterSettings { attribution },
+        ..Default::default()
+    };
+    let handle = tokio::spawn(run(OrchestratorDeps {
+        cmd_rx,
+        evt_tx,
+        storage,
+        config: through_the_gateway(true),
+        supervisor: sup.clone(),
+        default_language: crate::shared::i18n::Lang::default(),
+        extra_tools: Vec::new(),
+    }));
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Settings { .. }))
+        .await
+        .unwrap();
+    assert_eq!(sup.chat_call_count(), 1, "bootstrap raised it once");
+
+    // The switch alone: the chat slot speaks to the gateway, so it is re-raised.
+    cmd_tx
+        .send(AppCommand::UpdateConfig(Box::new(through_the_gateway(
+            false,
+        ))))
+        .unwrap();
+    raised_again(&mut evt_rx).await;
+    assert_eq!(
+        sup.chat_call_count(),
+        2,
+        "the client has to be rebuilt without the headers"
+    );
+
+    // Off the gateway (a restart of its own), then the switch alone again.
+    let managed = |attribution: bool, gpu_layers: i32| AppConfig {
+        engine: crate::shared::config::EngineSettings {
+            managed: crate::shared::config::ManagedSettings {
+                gpu_layers,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        openrouter: crate::shared::config::OpenRouterSettings { attribution },
+        ..Default::default()
+    };
+    cmd_tx
+        .send(AppCommand::UpdateConfig(Box::new(managed(false, 99))))
+        .unwrap();
+    raised_again(&mut evt_rx).await;
+    assert_eq!(sup.chat_call_count(), 3);
+
+    cmd_tx
+        .send(AppCommand::UpdateConfig(Box::new(managed(true, 99))))
+        .unwrap();
+    wait_for(
+        &mut evt_rx,
+        |e| matches!(e, AppEvent::Settings { config, .. } if config.openrouter.attribution),
+    )
+    .await
+    .unwrap();
+    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    assert_eq!(
+        sup.chat_call_count(),
+        3,
+        "a managed server has nothing to do with the gateway's switch"
+    );
+
+    // The marker that the flush above really ran: a genuine change restarts once.
+    cmd_tx
+        .send(AppCommand::UpdateConfig(Box::new(managed(true, 10))))
+        .unwrap();
+    raised_again(&mut evt_rx).await;
+    assert_eq!(sup.chat_call_count(), 4);
+
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+}

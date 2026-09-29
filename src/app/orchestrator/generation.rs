@@ -408,13 +408,19 @@ impl Orchestrator {
         // a readiness check to hear it (single source of truth: research §2).
         if !self.continuation_supported() {
             // A gateway gets its own note: the generic one says external engines
-            // continue, which is exactly what is not true here.
-            let key =
-                if self.config.engine.mode == ServerMode::External && self.endpoint_catalogued() {
-                    "ui.cmd.continue_unsupported_gateway"
-                } else {
-                    "ui.cmd.continue_unsupported"
-                };
+            // continue, which is exactly what is not true here. `external` is one
+            // once its catalogue has answered; the gateway's own mode is one by
+            // name, before it has.
+            let gateway = match self.config.engine.mode {
+                ServerMode::OpenRouter => true,
+                ServerMode::External => self.endpoint_catalogued(),
+                _ => false,
+            };
+            let key = if gateway {
+                "ui.cmd.continue_unsupported_gateway"
+            } else {
+                "ui.cmd.continue_unsupported"
+            };
             let _ = self
                 .evt_tx
                 .send(AppEvent::Error(self.ui_locale().t(key).into()));

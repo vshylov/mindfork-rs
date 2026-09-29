@@ -646,6 +646,9 @@ earlier three tracks is removed.
 Stage 1 is about the size of the Grok PR plus the picker's shape and the
 dialect; stages 3 and 4 are a client each; stage 2 is the smallest.
 
+**Stage 1 is built** (2026-09-29): what it measured on the way and where it
+departed from this table — the embedder's arm came with it — is §11.
+
 ## 8. What this does not cover
 
 Speech-to-text (24 models — it would be voice input, a feature nobody has
@@ -683,3 +686,88 @@ The discipline that mattered, each time:
   speech;
 - **a repeatability check before a behavioural comparison** — which is how the
   penalty probe of §3.5 was found to prove nothing.
+
+## 11. Measured while stage 1 was built (2026-09-29)
+
+What §4.1 stated as design, measured before the code was made to rest on it;
+and where the stage departed from the plan of §6–§7. Same method as §10; about
+60 requests more, under five cents.
+
+### 11.1 A muted turn, by kind of model **[live]**
+
+One request each — a five-word title, `max_tokens: 400` — with nothing about
+reasoning, with each spelling of "off", with the lowest effort the entry lists
+and with one it does not. Reasoning tokens, and the gateway's own `cost` where
+it says something:
+
+| model | the entry's `reasoning` | nothing asked | `reasoning_effort: "none"` | `reasoning: {enabled: false}` | the lowest listed | one not listed |
+|---|---|---|---|---|---|---|
+| `google/gemini-3.5-flash` | mandatory, `high…minimal` | 277, $0.00256 | **400** | **400** | `minimal`: **0**, $0.0000675 | `xhigh`: 200, 230 |
+| `x-ai/grok-4.6` | mandatory, `xhigh…low` | 422, $0.00282 | **400** | **400** | `low`: 193, $0.00144 | `minimal`: 200, 159 |
+| `anthropic/claude-sonnet-5.5` | mandatory, `max…low` | 0 | **400** | **400** | `low`: 0 | `minimal`: 200, 0 |
+| `deepseek/deepseek-r1` | mandatory, no list | 325 | **400** | **400** | — | — |
+| `openai/gpt-5.5` | optional, `xhigh…none` | 15 | 200, 0 | 200, 0 | `low`: 0 | `minimal`: 200, 0 |
+| `qwen/qwen3.6-27b` | optional, on by default | 301 | 200, 0 | 200, 0 | — | — |
+| `anthropic/claude-haiku-4.5` | optional | 0 | 200, 0 | 200, 0 | — | — |
+| `meta-llama/llama-3.3-70b-instruct` | none | 0 | 200 | 200 | — | — |
+
+Every refusal is the same sentence: `400 "Reasoning is mandatory for this
+endpoint and cannot be disabled."`
+
+- **A model that must reason refuses both spellings of "off"** — 4 of 4 — and
+  takes its lowest listed effort. On Gemini 3.5 Flash that is no reasoning at
+  all and a thirty-eighth of the price; on Grok 4.6 half. Through `external` the
+  same turn is refused, re-sent with nothing asked, and answered at the model's
+  default depth: it works, and it pays for reasoning that a title, a compaction
+  roll and an impersonated message never wanted.
+- **An effort the entry does not list is accepted** — 4 of 4, `200`. So the list
+  describes the model; it does not validate the request. Nothing in the client
+  relies on that: it asks only for what is listed.
+- **A mandatory model with no list** has nothing lower to be asked for. The
+  request carries no reasoning field, and is answered.
+
+### 11.2 One model's entry **[live]**
+
+`GET /model/{author}/{slug}` answers the entry of §3.2 for one model: **2 148
+bytes** in 0.1 s where the list is **754 782** in 0.5 s, with or without a key.
+It resolves what the list does not carry — `anthropic/claude-haiku-4.5:nitro`
+and `:floor` answer the base model's entry (both route a chat request, §3.2's
+list has neither) — and answers `404 "Model not found: …"` for a slug that is
+nobody's, a `:free` variant that does not exist included. The `~…-latest`
+aliases are in the list already. The mode's client asks this route and never
+the list: `external`, matching the list by id, knows nothing about a model
+named with a variant.
+
+### 11.3 An answer delivered as reasoning **[live]**
+
+`deepseek/deepseek-r1`, routed to one provider in every run here: **2 runs of
+4** ended `finish_reason: "stop"` with the whole reply — the worked answer and
+its last line — in `reasoning` and no `content` delta at all; the other two
+split it. Read chunk by chunk outside the app, so it is the stream as the
+gateway sends it. `qwen/qwen3.6-27b` split 4 of 4 across four providers. The
+app shows such a turn as thoughts and an empty reply, which is what arrived.
+Not this track's to fix; it is why the smoke of the mode's thoughts runs on the
+second model.
+
+### 11.4 A user message that is an image and nothing else **[live]**
+
+A tool's image is re-homed into a `user` message (§4.1), which has no text of
+its own. Sent with the image alone, `google/gemini-3.5-flash` answered **8 of
+8** with a fault: the model's scratch text at the head of the reply (`0The
+background is green…`, `_thought` followed by its reasoning) or no reply at all
+— `finish_reason: "stop"` on the first chunk, no usage. With one text part
+before the image, 8 of 8 were clean. `anthropic/claude-haiku-4.5` and
+`qwen/qwen3.6-27b` were clean 4 of 4 without it. The app never sends the bare
+form — every image it builds carries its label — so this is a property the
+label turned out to have, written down where the label is built; it was met
+because the smoke's fixture had none.
+
+### 11.5 Where stage 1 departed from the plan
+
+| the plan | what was built, and why |
+|---|---|
+| §7: embeddings are stage 2 | **The embedder's arm came with stage 1.** `ServerMode` is one enum for the chat engine and the embedder, so a value the first takes is a value the second has to answer for. The arm is built like a cloud's — a model and a key, `Ready` at once, no key check. Stage 2 is what is left: the retry, the batch cap, and whether the embedder's key is checked. |
+| F7: a row shows the name, the window and the price | A row shows the **id** — it is what is stored and what the gateway routes on — followed by the window, the price and `no tools`. The published name is searched by the filter and not drawn. |
+| F7: one shape, four sources | Three: the account's list, the public list, the embedding models. The speech and the video lists belong to the stages that have a slot to show them in. |
+| F5: the headers on every request | On every request, the model list's included — asked by another client than the engine's, and named by the same switch. |
+| §9 A2: not this track's to fix | Fixed here: the mode would have met it on every change of model. With the facts asked again on every applied change a second defect surfaced — an answer of the engine that was replaced reached the screens, sent before its epoch was looked at — and was fixed with it. |

@@ -663,6 +663,23 @@ async fn continue_through_a_gateway_live() {
         "declared {declared:?}, the endpoint answered {landed:?}"
     );
 
+    cut_then_continue(&cmd_tx, &mut evt_rx, &model, continues).await;
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+}
+
+/// A reply cut by the length limit, and `/continue` after it: the cut is
+/// announced as continuable exactly when `continues`, and the command then
+/// either resumes the reply **without** restarting it or refuses with the
+/// gateway's note. The config has to cap the reply at 4 tokens and keep the
+/// model from reasoning — see [`continue_through_a_gateway_live`], which this
+/// was cut out of so that the OpenRouter mode's smoke asserts the same thing.
+pub(super) async fn cut_then_continue(
+    cmd_tx: &UnboundedSender<AppCommand>,
+    rx: &mut UnboundedReceiver<AppEvent>,
+    model: &str,
+    continues: bool,
+) {
     cmd_tx
         .send(AppCommand::SendMessage(
             "What is the capital of France? Answer in one short sentence.".into(),
@@ -670,7 +687,7 @@ async fn continue_through_a_gateway_live() {
         .unwrap();
     let mut partial = String::new();
     let (reason, continuable) = loop {
-        match evt_rx.recv().await.expect("the turn's events") {
+        match rx.recv().await.expect("the turn's events") {
             AppEvent::Chunk { text, .. } => partial.push_str(&text),
             AppEvent::Finished {
                 reason,
@@ -695,7 +712,7 @@ async fn continue_through_a_gateway_live() {
     let mut resumed = String::new();
     let mut note = None;
     loop {
-        match evt_rx.recv().await.expect("the command's events") {
+        match rx.recv().await.expect("the command's events") {
             AppEvent::Chunk { text, .. } => resumed.push_str(&text),
             AppEvent::Error(text) if !continues => {
                 note = Some(text);
@@ -706,8 +723,6 @@ async fn continue_through_a_gateway_live() {
         }
     }
     eprintln!("[{model}] /continue: note={note:?} resumed={resumed:?}");
-    cmd_tx.send(AppCommand::Quit).unwrap();
-    handle.await.unwrap();
 
     if continues {
         assert!(!resumed.is_empty(), "the continuation brought nothing");

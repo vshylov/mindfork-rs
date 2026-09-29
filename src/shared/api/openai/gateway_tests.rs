@@ -623,9 +623,19 @@ async fn a_key_is_accepted_refused_or_not_judged_at_all() {
 
     let (url, server) = stub(1, REFUSED);
     match gateway(url, "m").check_key().await {
-        KeyVerdict::Refused(said) => assert!(said.contains("User not found"), "{said}"),
+        // The gateway's sentence, without the envelope it came in.
+        KeyVerdict::Refused(said) => assert_eq!(said, "User not found."),
         other => panic!("a 401 refuses the key: {other:?}"),
     }
+    let _ = server.join();
+
+    // A refusal that is not an envelope is said by its status.
+    const BARE: &[Route] = &[("/v1/key", "403 Forbidden", "text/html", "<html>no</html>")];
+    let (url, server) = stub(1, BARE);
+    assert_eq!(
+        gateway(url, "m").check_key().await,
+        KeyVerdict::Refused("403 Forbidden".into())
+    );
     let _ = server.join();
 
     let (url, server) = stub(1, DOWN);

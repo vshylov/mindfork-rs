@@ -229,6 +229,13 @@ pub fn carries_tool_images(messages: &[ApiMessage]) -> bool {
 /// builder already takes (docs/research/mcp-tool-images.md F1-A). **One** message per
 /// run rather than one per result, because a round's tool messages must follow its
 /// `tool_calls` contiguously.
+///
+/// The label is load-bearing, not decoration: the `user` message has no text of its
+/// own, and one that is an image and nothing else was answered by
+/// `google/gemini-3.5-flash` with its scratch text in the reply or with no reply at
+/// all — 8 of 8, against 8 clean of 8 with a label before the image
+/// (docs/research/openrouter-mode.md §11.4). Every image the orchestrator builds
+/// carries one.
 pub fn rehome_tool_images(messages: &[ApiMessage]) -> Option<Vec<ApiMessage>> {
     if !carries_tool_images(messages) {
         return None;

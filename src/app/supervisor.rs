@@ -934,6 +934,13 @@ fn spawn_probe(
 /// After the first answer this task ends: a cloud is not watched, and nothing
 /// here is periodic once the key has been judged.
 fn spawn_key_check(client: Arc<OpenAiClient>, monitor: Monitor) {
+    spawn_key_check_every(client, monitor, RECHECK_POLL)
+}
+
+/// [`spawn_key_check`] with the wait between two unanswered attempts given —
+/// what lets a test see the second attempt without waiting out the first's
+/// five seconds.
+fn spawn_key_check_every(client: Arc<OpenAiClient>, monitor: Monitor, recheck: Duration) {
     let Monitor {
         cancel,
         status_tx,
@@ -972,7 +979,7 @@ fn spawn_key_check(client: Arc<OpenAiClient>, monitor: Monitor) {
                     tokio::select! {
                         biased;
                         _ = cancel.cancelled() => return,
-                        _ = tokio::time::sleep(RECHECK_POLL) => continue,
+                        _ = tokio::time::sleep(recheck) => continue,
                     }
                 }
             };
@@ -1214,6 +1221,9 @@ impl ServerSupervisor for MockSupervisor {
         }
     }
 }
+
+#[cfg(test)]
+mod gateway_tests;
 
 #[cfg(test)]
 mod tests {
