@@ -63,8 +63,10 @@ Scenarios (`--scenario`):
   through the gateway — **audibly**, it needs a sound card — the Speech tab
   shows the provider's rows and none for instructions, its model row lists the
   gateway's speech models with their voices counted and no price, and its
-  voice row lists the voices of the model named. Takes the single-instance
-  lock, like `first-frame`.
+  voice row lists the voices of the model named. And video: the settings'
+  search finds the video group, which names its provider and has no row for
+  the resolution, and its model row lists the models that take video, the
+  Gemini family first. Takes the single-instance lock, like `first-frame`.
 * `user-theme` — a copy of the binary in a scratch directory whose
   `data/themes/` holds a theme of one colour (a light canvas) next to a file
   that is not a theme, with the settings naming that theme. The first frame
@@ -742,6 +744,7 @@ def scenario_gateway(exe: Path, report: Report) -> None:
     embedder = os.environ.get("MINDFORK_OPENROUTER_EMBED_MODEL", "baai/bge-m3")
     speaker = os.environ.get("MINDFORK_OPENROUTER_TTS_MODEL", "x-ai/grok-voice-tts-1.0")
     voice = os.environ.get("MINDFORK_OPENROUTER_TTS_VOICE", "eve")
+    watcher = os.environ.get("MINDFORK_OPENROUTER_VIDEO_MODEL", "google/gemini-3.5-flash-lite")
     with tempfile.TemporaryDirectory(prefix="mindfork-probe-") as scratch:
         root = Path(scratch)
         copy = root / exe.name
@@ -766,6 +769,10 @@ def scenario_gateway(exe: Path, report: Report) -> None:
                     "voice": voice,
                     "api_key_env": "OPENROUTER_API_KEY",
                 },
+            },
+            "video": {
+                "provider": "openrouter",
+                "openrouter": {"model_name": watcher, "api_key_env": "OPENROUTER_API_KEY"},
             },
         }
         (root / "data" / SETTINGS_FILE).write_text(json.dumps(settings), encoding="utf-8")
@@ -855,6 +862,38 @@ def scenario_gateway(exe: Path, report: Report) -> None:
             rows = wait_for_text("the model's voices", 30)
             print(text_of(rows))
             report.says("the voices", rows, (voice, "the model's voices", BY_HAND))
+            press("esc")
+
+            print("the settings: the video group, found by the search")
+            type_text("/")
+            type_text("Max video length")
+            press("enter", SETTLE_REPAINT)  # lands on the row, in "Tools"
+            rows = read_screen()
+            print(text_of(rows))
+            report.says(
+                "Video (YouTube)",
+                rows,
+                ("Provider", "openrouter", watcher, "OpenRouter API key", "Max video length"),
+            )
+            report.check(
+                "Input resolution" not in text_of(rows),
+                "no row for the resolution: the gateway carries none",
+            )
+
+            print("the picker: the models that take video behind the model row")
+            press("up")  # "Max video length" -> "Model"
+            press("enter", SETTLE_REPAINT)
+            rows = wait_for_text("per 1M tokens", 30)
+            print(text_of(rows))
+            report.says("the video models", rows, ("google/gemini", "context", BY_HAND))
+            listed = [line for line in text_of(rows).splitlines() if " context " in line]
+            report.check(
+                bool(listed) and all("google/gemini" in line for line in listed[:5]),
+                "the Gemini family opens the list",
+            )
+            report.check(
+                "no tools" not in text_of(rows), "a model that watches is not marked for tools"
+            )
             press("esc")
             press("esc")
         finally:

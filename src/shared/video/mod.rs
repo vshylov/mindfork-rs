@@ -24,6 +24,8 @@ pub mod gateway;
 pub mod gemini;
 
 #[cfg(test)]
+pub(crate) mod gateway_live_tests;
+#[cfg(test)]
 mod gateway_tests;
 
 use std::fmt;

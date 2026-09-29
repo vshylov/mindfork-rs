@@ -8,6 +8,8 @@
 
 #[cfg(test)]
 mod embed_roles_tests;
+#[cfg(test)]
+mod gateway_live_tests;
 
 pub mod attachment;
 pub mod calc;
