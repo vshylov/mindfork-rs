@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (28)
+## Entries (29)
 
 - Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - Post-M9: SonarQube Cloud analysis in CI (done)
@@ -40,6 +40,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: the quality-gate badge, and the one Dependabot badge that is not a claim (done)
 - Post-M9: SonarQube follow-up — the IndexNow tool's three findings (done)
 - Post-M9: SonarQube follow-up — the pod probe's shell findings (done)
+- Post-M9: the gate judges new-code coverage again, and the file says so (done)
 
 ### Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - **28 relative links in the docs pointed at nothing**, and had for a while.
@@ -1604,3 +1605,37 @@ structure (AGENTS.md §3).
   suite green on the branch); `bash -n` clean, the documentation gates green.
   No CHANGELOG entry: internal tooling (§4). No live run: the probe is a pod
   measurement, not an engine path (AGENTS.md §3).
+
+### Post-M9: the gate judges new-code coverage again, and the file says so (done)
+
+- **`sonar-project.properties` described a gate that was not the one applied.**
+  Its comment said the project is judged by the custom "Sonar way without
+  new-code coverage" and that "a genuinely untested new feature can now pass the
+  gate". True on 2026-08-06, when that gate was made and applied (the entry
+  "the quality gate stopped judging new-code coverage", above). Not true since
+  2026-09-21 at the latest: #611 was red on `new_coverage` at 76.1 %, and #645 on
+  2026-09-29 at 77.3 %, each with no finding and no duplication.
+- **Read off the server rather than inferred** (2026-09-29, through the SonarQube
+  MCP server): the organization lists two gates — the built-in `Sonar way`,
+  **`isDefault: true`**, six conditions with `new_coverage < 80` among them, and
+  the custom one, `isDefault: false`, five — and the project's status, on `main`
+  and on the pull request alike, carries all six. So the project is on the
+  default. **When it went back, and why, is recorded nowhere in the repository**
+  and was not guessed at in the file: the custom gate still exists, and
+  re-applying it is a project setting on the server — the owner's decision, not
+  a line of configuration.
+- **The comment now says what judges, and what that means for a pull request**:
+  the coverage is the unit run's, so `#[ignore]` smokes do not count; a file of
+  live smokes has to be named as a test file, or the report takes it for
+  production code (352 lines at 0 % on #645 — the engine journal's entry on the
+  OpenRouter mode's stage 1 has the measurement); and the figure can be
+  rehearsed locally from the same LCOV report. The history of 2026-08-06 stays
+  in the comment, as history. The second stale sentence, on
+  `sonar.coverage.exclusions=tools/**` ("the quality gate … no longer judges
+  coverage"), is corrected with it: the exclusion now also decides something.
+- **Left as they are**: this journal's earlier entries, which are a record of
+  what was true when they were written — including the one that declined a
+  coverage badge for the masthead because the gate did not judge coverage. The
+  premise of that decision has changed; the decision has not been revisited.
+- No code touched — test totals unchanged. No CHANGELOG entry: nothing a user
+  sees (AGENTS.md §4).
