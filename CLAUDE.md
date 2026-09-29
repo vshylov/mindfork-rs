@@ -3,8 +3,9 @@
 A console (TUI) AI chat application in Rust. Local models **Gemma 3/4** and
 **Qwen 3.5/3.6** via **llama.cpp `llama-server`** (an OpenAI-compatible server;
 in external mode any such server works — vLLM/LM Studio/Ollama), plus the cloud
-providers OpenAI, Gemini and Anthropic. UI on **ratatui**. Platforms: Windows +
-Linux. Architecture — **Feature-Sliced Design (FSD)**.
+providers OpenAI, Gemini, Anthropic and xAI, and the OpenRouter gateway. UI on
+**ratatui**. Platforms: Windows + Linux. Architecture — **Feature-Sliced Design
+(FSD)**.
 
 > **Engine:** originally designed around `xinfer`, which turned out too raw
 > (incoherent output on Gemma 4, builds poorly on Windows) — switched to
@@ -22,13 +23,13 @@ follow it to the two or three documents your task actually needs.
 
 Two rules that follow from that:
 
-- **Read the section, not the file.** [spec.md](spec.md) (217 KB) and
-  [docs/architecture.md](docs/architecture.md) (144 KB) are chaptered reference
+- **Read the section, not the file.** [spec.md](spec.md) (496 KB) and
+  [docs/architecture.md](docs/architecture.md) (275 KB) are chaptered reference
   documents with stable numbering; every section is cited by number from the map
   and from the code. Loading either whole spends context on twelve chapters to
   use one.
 - **The engineering journal is per area.** What was done, why, what was measured
-  and what was rejected lives in `docs/journal/<area>.md` — 243 entries, split by
+  and what was rejected lives in `docs/journal/<area>.md` — 553 entries, split by
   subsystem. Read the file for the area you are touching; grep across them when
   hunting a specific past decision.
 
@@ -43,8 +44,8 @@ Two rules that follow from that:
 | working on **storage**, config, backup, migrations, secrets | architecture §7 · spec §5, §12 · [docs/journal/storage.md](docs/journal/storage.md) |
 | working on a **tool**, MCP, the Python sandbox | architecture §8 · spec §9 · [docs/journal/tools.md](docs/journal/tools.md) |
 | working on the **self-model** — summary, goals, traits, reflection | architecture §9 · spec §17 · [docs/journal/self-model.md](docs/journal/self-model.md) |
-| working on **notes** and their graph | architecture §9 · spec §9.5 · [docs/journal/notes.md](docs/journal/notes.md) |
-| working on **RAG**, chat attachments or embeddings | architecture §9 · spec §9.5, §9.7 · [docs/journal/rag.md](docs/journal/rag.md) |
+| working on **notes** and their graph | architecture §9 · spec §9.3 · [docs/journal/notes.md](docs/journal/notes.md) |
+| working on **RAG**, chat attachments or embeddings | architecture §6–§7 · spec §9.3 (§9.3.4–§9.3.5), §9.7 · [docs/journal/rag.md](docs/journal/rag.md) |
 | working on the **feed**, markdown, rendering, the terminal | architecture §10 · spec §11.3–§11.4 · [docs/journal/ui-feed.md](docs/journal/ui-feed.md) |
 | working on the **input box**, keys, spellcheck | architecture §10 · spec §11.5 · [docs/journal/ui-input.md](docs/journal/ui-input.md) |
 | working on a **screen** — settings, chat list, search, help | architecture §10 · spec §11.6–§11.8 · [docs/journal/ui-screens.md](docs/journal/ui-screens.md) |
@@ -176,10 +177,10 @@ Backend selection: `MINDFORK_ENGINE_URL` (external, any OpenAI server) OR
 rented instead of hosted — `python tools/e2e_hf.py run`, see
 `docs/history/remote-e2e-hf.md`.
 
-## Status (2026-09-28, version 0.12.0)
+## Status (2026-09-29, version 0.12.0)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3602 unit tests
-green, 202 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **3751 unit tests
+green, 236 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -191,6 +192,20 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **OpenRouter as a provider of its own — track complete** (2026-09-29, four
+  stages, one release). `openrouter` is a mode beside `external`: one key, a dialect
+  on the client (`repetition_penalty`, the lowest listed effort on a muted turn), the
+  key checked before `Ready`, the picker's rows with window and price, attribution
+  behind a switch; `settings.json` 3 → 4. Stage 2 is every embedder's: requests of
+  at most 64 texts, a retry for a cloud, and the guard and the convention applied
+  by every road that installs an embedder. Stage 3: the audio format negotiated per
+  model, the rate read from the answer's label, the voices listed — and a player
+  that no longer trusts a streamed MP3's first frame, in every mode. Stage 4:
+  `video.provider`; an answer with no video tokens is an error; the whole video is
+  read, so a segment is named in words and the ceiling measures the whole. Live
+  **GO**, each stage
+  ([docs/research/openrouter-mode.md](docs/research/openrouter-mode.md) §7, §11–§14,
+  spec §3.4, §9.9, §11.6, §11.9, [docs/journal/engine.md](docs/journal/engine.md)).
 - **`Ctrl+←/→` stop at punctuation** — three character classes, not two: a run of
   marks is a stop of its own, and deletion and selection share it
   ([docs/journal/ui-input.md](docs/journal/ui-input.md), spec §11.5).
@@ -376,23 +391,6 @@ being recent is dropped, not shortened.
   resolver now reads a bare number as `#N` unless an item is called that, for `/file`,
   `/image remove` and `python_exec`'s `files` alike, and a miss answers with the numbers
   there are (spec §9.7, [docs/journal/rag.md](docs/journal/rag.md)).
-- **Through a gateway, a tool's image and `/continue` belong to the route** — M3 ran
-  the app itself through OpenRouter (GO on Bedrock-routed Haiku: a chart only the
-  image could answer for, the `/file` round trip), and per pinned route with blind
-  controls both halves of F6 turned out real: of 29 route-and-model pairs 3 answer
-  about a tool image they never received (in a user message 28 of 28 see it, so
-  stage H1 re-homes them there on a gateway), and `/continue` restarts on OpenAI and every
-  open-weight route, which the echo filter stored glued onto the partial. Stage H2
-  gates it: on an `external` endpoint whose catalogue answered, the slug's vendor
-  is read against the spec §6.4 table (Anthropic ≤ 4.5, Gemini continue; the rest
-  refuse with a gateway note), one answer feeds the gate, `Finished.continuable`
-  and the notes, and the catalogue is asked when the engine is applied so the
-  first command after a restart is not answered blind. **Silence is never a
-  claim**: no catalogue, no change. F5 closed on a measurement — a garbage
-  signature is a `400` through the gateway and direct, sending no blocks never is,
-  so there is nothing to build
-  ([docs/history/gateway-images-and-continue.md](docs/history/gateway-images-and-continue.md),
-  spec §6.4, [docs/journal/engine.md](docs/journal/engine.md)).
 - **A headless launch (no TTY) exits with code 2** and a one-line reason — the
   TUI cannot be run from an agent's shell; how it *looks* needs a real terminal
   and a person. What a console *holds* can be measured on Windows:

@@ -195,3 +195,57 @@ fn external_mode_without_url_reports_setup_error() {
         "external without a URL — a clear hint"
     );
 }
+
+/// The gateway's mode has no default model — a default that names a model
+/// ages — so a slot switched to it and left as it is says what is missing; and
+/// with a model named, that the provider's key is.
+#[test]
+fn the_gateways_mode_says_what_it_cannot_speak_without() {
+    let (_dir, mut orch, mut rx) = bare_orch_rx();
+    orch.bootstrap().unwrap();
+    let active = orch.active_id.unwrap();
+    orch.chat_mut(active)
+        .unwrap()
+        .push_message(Message::assistant("the assistant's answer"));
+    orch.config.tts.mode = TtsMode::OpenRouter;
+    let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::default());
+    let mut said = |orch: &mut Orchestrator| {
+        while rx.try_recv().is_ok() {}
+        orch.handle_tts(TtsScope::Last);
+        std::iter::from_fn(|| rx.try_recv().ok()).find_map(|e| match e {
+            AppEvent::Error(m) => Some(m),
+            _ => None,
+        })
+    };
+    assert_eq!(
+        said(&mut orch).as_deref(),
+        Some(loc.t("ui.err.tts_no_model"))
+    );
+    orch.config.tts.openrouter.model_name = Some("x-ai/grok-voice-tts-1.0".into());
+    assert_eq!(
+        said(&mut orch).as_deref(),
+        Some(loc.t("ui.err.tts_no_api_key"))
+    );
+}
+
+/// Every `/tts` builds its clients anew, and builds them on what the session
+/// holds: the provider's switch as it is when the command is typed, and one
+/// memo of formats — what a refused request taught one command, the next one
+/// knows.
+#[test]
+fn every_command_speaks_on_the_sessions_memo_and_the_switch_as_it_stands() {
+    use crate::shared::tts::GatewaySpeech;
+    let (_dir, mut orch) = bare_orch();
+    let GatewaySpeech {
+        attribution,
+        formats,
+    } = orch.speech_gateway();
+    assert!(attribution, "on until somebody turns it off");
+    orch.config.openrouter.attribution = false;
+    let next = orch.speech_gateway();
+    assert!(!next.attribution);
+    assert!(
+        std::sync::Arc::ptr_eq(&formats, &next.formats),
+        "one memo for the session"
+    );
+}

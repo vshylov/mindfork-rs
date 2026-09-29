@@ -829,7 +829,8 @@ async fn summarize_text(
                 }
                 ChatChunk::Thoughts(_)
                 | ChatChunk::ThoughtsSignature(_)
-                | ChatChunk::ToolCall(_) => {}
+                | ChatChunk::ToolCall(_)
+                | ChatChunk::Served(_) => {}
             }
         }
         Ok::<Summarized, anyhow::Error>(Summarized { text: out, prefill })

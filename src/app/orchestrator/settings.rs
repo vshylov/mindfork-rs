@@ -64,6 +64,21 @@ impl Orchestrator {
         if self.config.embed != old.embed {
             self.restarts.mark_embed();
         }
+        // What is provider-wide about the gateway reaches every slot that speaks
+        // to it — and no other: `flush_restarts` compares it per slot, so a
+        // managed server is not reloaded over a header it never sends.
+        if self.config.openrouter != old.openrouter {
+            let gateway = Some(CloudProvider::OpenRouter);
+            if self.config.engine.mode.cloud_provider() == gateway {
+                self.restarts.mark_chat();
+            }
+            if self.config.impersonation_engine.mode.cloud_provider() == gateway {
+                self.restarts.mark_impersonation();
+            }
+            if self.config.embed.mode.cloud_provider() == gateway {
+                self.restarts.mark_embed();
+            }
+        }
         // An MCP-servers settings change — a deferred re-raise (a debounce, like
         // the engines): killing/spawning processes is an expensive operation.
         if self.config.mcp != old.mcp {
@@ -71,14 +86,26 @@ impl Orchestrator {
         }
         // A tool-parameter change — a registry rebuild (python_path, limits).
         // Video settings feed the same registry (the `youtube_watch` client is
-        // built there), so they rebuild it too.
-        if self.config.tools != old.tools || self.config.video != old.video {
+        // built there), so they rebuild it too — and so does the gateway's
+        // switch, which the gateway's video client is built with.
+        if self.config.tools != old.tools
+            || self.config.video != old.video
+            || self.video_follows(&old.openrouter)
+        {
             self.rebuild_registry();
             // The cap on background runs applies to the next start.
             self.background_slots
                 .set_max(self.config.tools.subagent_background_max);
         }
         self.emit_settings();
+    }
+
+    /// Whether the video client was built with something of the gateway's that
+    /// has changed since: the slot speaks to the gateway, and the provider-wide
+    /// settings are not what they were.
+    fn video_follows(&self, before: &crate::shared::config::OpenRouterSettings) -> bool {
+        self.config.video.provider == crate::shared::config::VideoProvider::OpenRouter
+            && self.config.openrouter != *before
     }
 
     /// Stores a secret entered in settings: encrypts it with the machine key
@@ -109,11 +136,12 @@ impl Orchestrator {
                 if self.config.embed.mode.cloud_provider() == p {
                     self.restarts.mark_embed();
                 }
-                // The video slot uses the Gemini key too, and its client lives in the
-                // tool registry — so a Gemini key change has to rebuild it (cheap,
-                // in-memory), or `youtube_watch` would keep reporting itself
-                // unconfigured until the next unrelated settings edit.
-                if provider == CloudProvider::Gemini {
+                // The video slot reads a provider's key too — Gemini's, or the
+                // gateway's — and its client lives in the tool registry, so a
+                // change of that key has to rebuild it (cheap, in-memory), or
+                // `youtube_watch` would keep reporting itself unconfigured until
+                // the next unrelated settings edit.
+                if provider == self.config.video.provider.cloud_provider() {
                     self.rebuild_registry();
                 }
             }
@@ -185,6 +213,7 @@ impl Orchestrator {
         let (chat, embed, imp, mcp) = self.restarts.take();
         let loc = self.ui_locale();
         let keys = &self.config.api_keys;
+        let gateway = &self.config.openrouter;
         // The flag only says "something was edited"; whether a restart is *worth doing*
         // is decided here, against what each server is actually running. An edit and its
         // undo (`Ctrl+Z`) both raise the flag, and the final config then equals the
@@ -192,24 +221,42 @@ impl Orchestrator {
         // has, and for a managed one that means killing and reloading a GGUF for
         // nothing. See docs/history/settings-undo.md §5.1.
         let mut applied_any = false;
-        if chat && !self.engines.chat_is_current(&self.config.engine, keys) {
-            self.engines.apply_chat(&self.config.engine, keys, loc);
+        let chat_applied = chat
+            && !self
+                .engines
+                .chat_is_current(&self.config.engine, keys, gateway);
+        if chat_applied {
+            self.engines
+                .apply_chat(&self.config.engine, keys, gateway, loc);
             applied_any = true;
         }
-        if embed && !self.engines.embed_is_current(&self.config.embed, keys) {
-            self.engines.apply_embed(&self.config.embed, keys, loc);
+        if embed
+            && !self
+                .engines
+                .embed_is_current(&self.config.embed, keys, gateway)
+        {
+            let dress = self.embedder_dress();
+            self.engines
+                .apply_embed(&self.config.embed, keys, gateway, loc, dress);
             applied_any = true;
         }
         if imp
-            && !self
-                .engines
-                .impersonation_is_current(&self.config.impersonation_engine, keys)
+            && !self.engines.impersonation_is_current(
+                &self.config.impersonation_engine,
+                keys,
+                gateway,
+            )
         {
             self.engines
-                .apply_impersonation(&self.config.impersonation_engine, keys, loc);
+                .apply_impersonation(&self.config.impersonation_engine, keys, gateway, loc);
             applied_any = true;
         }
-        if mcp && !self.mcp.is_current(&self.config.mcp, keys) {
+        // Decided while `keys` is still borrowed; what follows takes `self` whole.
+        let mcp_stale = mcp && !self.mcp.is_current(&self.config.mcp, keys);
+        if chat_applied {
+            self.refresh_chat_engine();
+        }
+        if mcp_stale {
             self.apply_mcp_settings();
         }
         if applied_any {
@@ -222,8 +269,29 @@ impl Orchestrator {
     /// go through the `restarts` debounce queue → [`Self::flush_restarts`].
     pub(super) fn apply_chat_settings(&mut self) {
         let loc = self.ui_locale();
-        self.engines
-            .apply_chat(&self.config.engine, &self.config.api_keys, loc);
+        self.engines.apply_chat(
+            &self.config.engine,
+            &self.config.api_keys,
+            &self.config.openrouter,
+            loc,
+        );
+        self.refresh_chat_engine();
+        self.emit_server_status();
+    }
+
+    /// Everything that was learned from the chat engine is asked again: it has
+    /// just been replaced.
+    ///
+    /// Called by **every** path that applies one — the start-up and the settings
+    /// edit alike. Until the second one did, what was learned survived any
+    /// switch that flipped no status: a managed or external server announces
+    /// itself through its probe, which lands here by way of
+    /// [`Self::handle_chat_status`], but a cloud is ready at once and says
+    /// nothing, so the previous engine's window went on deciding when
+    /// compaction fired (docs/research/openrouter-mode.md §4.1, §9 A2) — and a
+    /// gateway, where another model is one field away, would have kept the
+    /// previous model's window and sampling list.
+    fn refresh_chat_engine(&mut self) {
         // A different engine has a different context window, and an answer from
         // the previous one must not be carried over — nor an in-flight one
         // applied when it lands (spec §6.7). Asked again at once, not at the first
@@ -234,7 +302,6 @@ impl Orchestrator {
         self.refresh_model_name();
         // And its slot count: the hint must not describe the previous server.
         self.refresh_engine_slots();
-        self.emit_server_status();
     }
 
     /// The chat server's readiness flipped. A method rather than the loop's arm so
@@ -262,8 +329,26 @@ impl Orchestrator {
     /// (the embeddings chip in the status line appears/disappears based on the setting).
     pub(super) fn apply_embed_settings(&mut self) {
         let loc = self.ui_locale();
-        self.engines
-            .apply_embed(&self.config.embed, &self.config.api_keys, loc);
+        let dress = self.embedder_dress();
+        self.engines.apply_embed(
+            &self.config.embed,
+            &self.config.api_keys,
+            &self.config.openrouter,
+            loc,
+            dress,
+        );
+        self.emit_server_status();
+    }
+
+    /// What goes around the embedder the supervisor built, as the settings
+    /// stand now. Taken by every road that installs one
+    /// ([`EngineManager::apply_embed`]) — start-up, a settings edit, a relaunch.
+    ///
+    /// [`EngineManager::apply_embed`]: super::engines::EngineManager::apply_embed
+    pub(super) fn embedder_dress(&self) -> super::engines::EmbedderDress {
+        let convention = self.config.embed.convention;
+        let model = self.config.embed.active_model_name();
+        let (storage, loc, evt_tx) = (self.storage.clone(), self.ui_locale(), self.evt_tx.clone());
         // Two decorators, and the order is load-bearing:
         //
         //   EmbedGuard { PrefixedEmbedder { real embedder } }
@@ -281,19 +366,14 @@ impl Orchestrator {
         // embedding settings change — exactly when the model is most likely to
         // have been swapped. The check is lazy (embeddings have no readiness
         // probe, ADR 0002).
-        let prefixed = std::sync::Arc::new(crate::shared::embed_prefix::PrefixedEmbedder::new(
-            self.engines.embedder.clone(),
-            self.config.embed.convention,
-        ));
-        self.engines.embedder = std::sync::Arc::new(super::embed_guard::EmbedGuard::new(
-            prefixed,
-            self.storage.clone(),
-            self.config.embed.active_model_name(),
-            self.config.embed.convention,
-            self.ui_locale(),
-            self.evt_tx.clone(),
-        ));
-        self.emit_server_status();
+        Box::new(move |built| {
+            let prefixed = std::sync::Arc::new(crate::shared::embed_prefix::PrefixedEmbedder::new(
+                built, convention,
+            ));
+            std::sync::Arc::new(super::embed_guard::EmbedGuard::new(
+                prefixed, storage, model, convention, loc, evt_tx,
+            ))
+        })
     }
 
     /// Revives a **managed** server whose process is gone.
@@ -318,15 +398,25 @@ impl Orchestrator {
         let chat_managed = self.config.engine.mode == ServerMode::Managed;
         if chat_managed && self.needs_relaunch(Server::Chat, now) {
             tracing::warn!("managed chat server is down — relaunching");
-            self.engines
-                .apply_chat(&self.config.engine, &self.config.api_keys, loc);
+            self.engines.apply_chat(
+                &self.config.engine,
+                &self.config.api_keys,
+                &self.config.openrouter,
+                loc,
+            );
             relaunched = true;
         }
         if self.config.embed.mode == ServerMode::Managed && self.needs_relaunch(Server::Embed, now)
         {
             tracing::warn!("managed embedding server is down — relaunching");
-            self.engines
-                .apply_embed(&self.config.embed, &self.config.api_keys, loc);
+            let dress = self.embedder_dress();
+            self.engines.apply_embed(
+                &self.config.embed,
+                &self.config.api_keys,
+                &self.config.openrouter,
+                loc,
+                dress,
+            );
             relaunched = true;
         }
         if self.config.impersonation_engine.mode == ImpersonationMode::Managed
@@ -336,6 +426,7 @@ impl Orchestrator {
             self.engines.apply_impersonation(
                 &self.config.impersonation_engine,
                 &self.config.api_keys,
+                &self.config.openrouter,
                 loc,
             );
             relaunched = true;
@@ -371,6 +462,7 @@ impl Orchestrator {
         self.engines.apply_impersonation(
             &self.config.impersonation_engine,
             &self.config.api_keys,
+            &self.config.openrouter,
             loc,
         );
         self.emit_server_status();

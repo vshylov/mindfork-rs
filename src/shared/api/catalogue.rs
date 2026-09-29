@@ -15,6 +15,7 @@
 //! | Gemini | `GET {base}/models` (native) | `supportedGenerationMethods` |
 //! | Anthropic | `GET {base}/v1/models` | the route itself: the Messages API has only chat models |
 //! | xAI | `GET {base}/language-models` | the route itself: the language half of a catalogue that also holds image and video models |
+//! | OpenRouter | `GET {base}/models/user`, `/models`, `/embeddings/models`, `…?output_modalities=speech`, `…?input_modalities=video` | `architecture.output_modalities` and `input_modalities` — and the window, the price, the parameters and the voices besides |
 //!
 //! Hence [`ModelRole::Unstated`], which is **not** "it does nothing": where the
 //! endpoint publishes no claim, none is invented, and every model it lists is
@@ -54,6 +55,28 @@ pub enum CatalogueShape {
     Anthropic,
     /// `{"models": [{"id": …}]}` — xAI's language-only half of its catalogue.
     Xai,
+    /// The OpenRouter gateway's list of models that answer with **text**:
+    /// `/models/user` with a key — narrowed by the account's own privacy and
+    /// provider settings — and the public `/models` without one. The one cloud
+    /// catalogue that needs no key, and the one that says per model what the
+    /// window is, what a token costs and which parameters are taken
+    /// (docs/research/openrouter-mode.md §3.2).
+    OpenRouter,
+    /// The same gateway's `/embeddings/models`.
+    OpenRouterEmbeddings,
+    /// The same gateway's models that answer with **speech**: the list of
+    /// [`Self::OpenRouter`] narrowed by the gateway's own filter,
+    /// `?output_modalities=speech` — which the account's list takes as the
+    /// public one does (measured: 21 entries either way,
+    /// docs/research/openrouter-mode.md §13).
+    OpenRouterSpeech,
+    /// The same gateway's models that **take video**. Without a key it is the
+    /// public list under the gateway's own filter, `?input_modalities=video` —
+    /// 85 entries. With one it is the account's whole list: measured, that list
+    /// does **not** take this filter — 461 entries came back, not 85 — so the
+    /// entries are narrowed here, by the `input_modalities` each of them
+    /// publishes ([`ModelFacts::video`], docs/research/openrouter-mode.md §14).
+    OpenRouterVideo,
 }
 
 /// What the endpoint said a model is for.
@@ -68,6 +91,8 @@ pub enum ModelRole {
     Chat,
     /// The endpoint says this model embeds text.
     Embedding,
+    /// The endpoint says this model answers with speech.
+    Speech,
     /// The endpoint says this model does something else (Gemini's video, music
     /// and live-only models).
     Other,
@@ -88,6 +113,13 @@ pub enum ModelSlot {
     Impersonation,
     /// The model that embeds notes and attachments.
     Embedder,
+    /// The model that reads messages aloud. One speech mode has a catalogue
+    /// behind it — the gateway's — and its voice rows are filled from the same
+    /// answer: a voice belongs to a model ([`CatalogModel::voices`]).
+    Speech,
+    /// The model that watches a video for `youtube_watch`. One provider of that
+    /// slot has a catalogue — the gateway.
+    Video,
 }
 
 /// One entry of a provider's catalogue, reduced to what a picker needs.
@@ -108,6 +140,63 @@ pub struct CatalogModel {
     /// stating its own model is on the way out — the very staleness D7 is about,
     /// from the only party that knows.
     pub retiring: Option<String>,
+    /// What else the endpoint published about the model. Empty for every
+    /// catalogue that publishes names alone.
+    pub facts: ModelFacts,
+    /// The voices the endpoint says this model speaks in, in its order
+    /// (`supported_voices`). Empty for a model that is not a speech model, and
+    /// for one that lists none — four of the gateway's 21 speak without a
+    /// voice being named.
+    pub voices: Vec<String>,
+}
+
+impl CatalogModel {
+    /// A voice as an entry of a list: what the voice rows' picker offers.
+    /// The name is all there is to a voice — the catalogue says nothing else
+    /// about one.
+    pub fn voice(name: &str) -> Self {
+        Self {
+            id: name.to_string(),
+            display: None,
+            role: ModelRole::Speech,
+            retiring: None,
+            facts: ModelFacts::default(),
+            voices: Vec::new(),
+        }
+    }
+}
+
+/// What a catalogue says about a model besides its name — each field the
+/// **endpoint's** claim, and `None` where it made none. Integers throughout, so
+/// that an entry compares exactly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ModelFacts {
+    /// The context window, in tokens.
+    pub context_length: Option<u32>,
+    /// What a million **prompt** tokens cost, in millionths of a dollar.
+    pub prompt_price: Option<u64>,
+    /// What a million **completion** tokens cost, in millionths of a dollar.
+    pub completion_price: Option<u64>,
+    /// Whether the model takes tool schemas: `Some(false)` — the entry lists
+    /// its parameters and `tools` is not among them. This application is driven
+    /// by tools, so a model without them chats and does nothing else.
+    pub tools: Option<bool>,
+    /// Whether the model takes video, from the inputs the entry lists:
+    /// `Some(false)` — it lists its inputs and video is not among them; `None` —
+    /// it lists none. What a row is narrowed by, not what a row shows.
+    pub video: Option<bool>,
+}
+
+impl ModelFacts {
+    /// Whether the endpoint said anything a row has to show. What an entry
+    /// takes as input is not shown — it is what the list was narrowed by.
+    pub fn is_empty(&self) -> bool {
+        let shown = ModelFacts {
+            video: None,
+            ..*self
+        };
+        shown == ModelFacts::default()
+    }
 }
 
 /// Why there is no list. Every arm leaves the row exactly as it is today — a
@@ -160,6 +249,11 @@ pub struct CatalogueRequest {
     /// `llama-server`'s normal case; a cloud slot without a key never gets here
     /// (the caller answers [`CatalogueError::NoKey`] without a request).
     pub key: Option<String>,
+    /// Whether the request names this application to the OpenRouter gateway,
+    /// in the two headers every other request to it carries
+    /// ([`super::openai::attributed`]). The gateway's switch, and nobody
+    /// else's: `false` for every other provider.
+    pub attribution: bool,
 }
 
 impl CatalogueRequest {
@@ -176,6 +270,16 @@ impl CatalogueRequest {
             // `/v1/messages` itself), so the catalogue appends its own.
             CatalogueShape::Anthropic => format!("{base}/v1/models?limit={PAGE_SIZE}"),
             CatalogueShape::Xai => format!("{base}/language-models"),
+            // The account's own list where there is an account to ask about.
+            CatalogueShape::OpenRouter if self.key.is_some() => format!("{base}/models/user"),
+            CatalogueShape::OpenRouter => format!("{base}/models"),
+            CatalogueShape::OpenRouterEmbeddings => format!("{base}/embeddings/models"),
+            CatalogueShape::OpenRouterSpeech if self.key.is_some() => {
+                format!("{base}/models/user?output_modalities=speech")
+            }
+            CatalogueShape::OpenRouterSpeech => format!("{base}/models?output_modalities=speech"),
+            CatalogueShape::OpenRouterVideo if self.key.is_some() => format!("{base}/models/user"),
+            CatalogueShape::OpenRouterVideo => format!("{base}/models?input_modalities=video"),
         }
     }
 }
@@ -202,6 +306,9 @@ pub async fn fetch(req: &CatalogueRequest) -> Result<Vec<CatalogModel>, Catalogu
         // A local server with no key at all — the shape that needs none.
         (_, None) => rb,
     };
+    if req.attribution {
+        rb = super::openai::attributed(rb);
+    }
     let resp = match rb.send().await {
         Ok(r) => r,
         Err(err) => {
@@ -247,6 +354,8 @@ pub fn parse(shape: CatalogueShape, body: &str) -> Result<Vec<CatalogModel>, Cat
                             display: None,
                             role: ModelRole::Unstated,
                             retiring: e.shutdown_date.filter(|d| !d.is_empty()),
+                            facts: ModelFacts::default(),
+                            voices: Vec::new(),
                         },
                     )
                 })
@@ -282,6 +391,8 @@ pub fn parse(shape: CatalogueShape, body: &str) -> Result<Vec<CatalogModel>, Cat
                         display: e.display_name.filter(|d| !d.is_empty()),
                         role: gemini_role(&e.supported_generation_methods),
                         retiring: None,
+                        facts: ModelFacts::default(),
+                        voices: Vec::new(),
                     })
                 })
                 .collect()
@@ -303,6 +414,8 @@ pub fn parse(shape: CatalogueShape, body: &str) -> Result<Vec<CatalogModel>, Cat
                             // so the route itself is the claim (§2.3).
                             role: ModelRole::Chat,
                             retiring: None,
+                            facts: ModelFacts::default(),
+                            voices: Vec::new(),
                         },
                     )
                 })
@@ -328,9 +441,30 @@ pub fn parse(shape: CatalogueShape, body: &str) -> Result<Vec<CatalogModel>, Cat
                             // under `/models` only (§2.4).
                             role: ModelRole::Chat,
                             retiring: None,
+                            facts: ModelFacts::default(),
+                            voices: Vec::new(),
                         },
                     )
                 })
+                .collect();
+            v.sort_by_key(|(created, _)| std::cmp::Reverse(*created));
+            v.into_iter().map(|(_, m)| m).collect()
+        }
+        CatalogueShape::OpenRouter
+        | CatalogueShape::OpenRouterEmbeddings
+        | CatalogueShape::OpenRouterSpeech
+        | CatalogueShape::OpenRouterVideo => {
+            let list: GatewayList = serde_json::from_str(body).map_err(unreadable)?;
+            let mut v: Vec<_> = list
+                .data
+                .into_iter()
+                // A `:batch` slug is the gateway's Batch API under a model's
+                // name: asked to chat it answers `404 … cannot be used with the
+                // chat/completions endpoint` (measured,
+                // docs/research/openrouter-mode.md §2.4, D2). The refusal is the
+                // endpoint's own, so leaving these out narrows on its claim.
+                .filter(|e| !e.id.is_empty() && !e.id.ends_with(":batch"))
+                .map(|e| (e.created.unwrap_or(0), e.into_model()))
                 .collect();
             v.sort_by_key(|(created, _)| std::cmp::Reverse(*created));
             v.into_iter().map(|(_, m)| m).collect()
@@ -388,6 +522,11 @@ const ANOTHER_JOB_IN_A_NAME: [&str; 17] = [
     "music",
 ];
 
+/// The family measured to take a YouTube link as a video — what the video
+/// row's list opens with. An alias (`~google/gemini-flash-latest`) is of the
+/// family too.
+const VIDEO_LINK_IN_A_NAME: [&str; 1] = ["google/gemini"];
+
 /// The mirror of [`ANOTHER_JOB_IN_A_NAME`] for the embedder's row.
 const EMBEDDING_IN_A_NAME: [&str; 1] = ["embed"];
 
@@ -411,6 +550,15 @@ fn rank(m: &CatalogModel, slot: ModelSlot) -> u8 {
             !(m.role == ModelRole::Embedding
                 || (m.role == ModelRole::Unstated && name_hints(&m.id, &EMBEDDING_IN_A_NAME))),
         ),
+        // The one catalogue this slot reads says what every entry is for, so
+        // there is no name to guess from: the endpoint's order stands.
+        ModelSlot::Speech => 0,
+        // Gemini first. Every entry listed claims video, and the list is
+        // narrowed by that claim alone; that the Gemini family is the one that
+        // takes a YouTube **link** — the others go to download it, and refuse —
+        // is this project's measurement, which may order a list and never
+        // narrow it (docs/research/openrouter-mode.md §4.5, fork F7).
+        ModelSlot::Video => u8::from(!name_hints(&m.id, &VIDEO_LINK_IN_A_NAME)),
     }
 }
 
@@ -430,6 +578,10 @@ pub fn for_slot(models: Vec<CatalogModel>, slot: ModelSlot) -> Vec<CatalogModel>
             (_, ModelRole::Unstated) => true,
             (ModelSlot::Assistant | ModelSlot::Impersonation, role) => role == ModelRole::Chat,
             (ModelSlot::Embedder, role) => role == ModelRole::Embedding,
+            (ModelSlot::Speech, role) => role == ModelRole::Speech,
+            // What answers with text and takes video — or has not said what it
+            // takes, which is silence.
+            (ModelSlot::Video, role) => role == ModelRole::Chat && m.facts.video != Some(false),
         })
         .collect();
     kept.sort_by_key(|m| rank(m, slot));
@@ -491,6 +643,123 @@ struct AnthropicEntry {
 struct XaiList {
     #[serde(default)]
     models: Vec<XaiEntry>,
+}
+
+#[derive(Deserialize)]
+struct GatewayList {
+    #[serde(default)]
+    data: Vec<GatewayEntry>,
+}
+
+/// One entry of the gateway's catalogue. Everything but the id is optional and
+/// read leniently: a field that changes its shape costs that one fact, never the
+/// list.
+#[derive(Deserialize)]
+struct GatewayEntry {
+    id: String,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    created: Option<i64>,
+    #[serde(default)]
+    context_length: Option<serde_json::Value>,
+    #[serde(default)]
+    pricing: Option<serde_json::Value>,
+    #[serde(default)]
+    architecture: Option<serde_json::Value>,
+    #[serde(default)]
+    supported_parameters: Option<Vec<String>>,
+    #[serde(default)]
+    supported_voices: Option<serde_json::Value>,
+    #[serde(default)]
+    expiration_date: Option<String>,
+}
+
+impl GatewayEntry {
+    fn into_model(self) -> CatalogModel {
+        let outputs: Vec<&str> = self
+            .architecture
+            .as_ref()
+            .and_then(|a| a.get("output_modalities"))
+            .and_then(|o| o.as_array())
+            .map(|list| list.iter().filter_map(|m| m.as_str()).collect())
+            .unwrap_or_default();
+        let role = if outputs.is_empty() {
+            ModelRole::Unstated
+        } else if outputs.contains(&"text") {
+            ModelRole::Chat
+        } else if outputs.contains(&"embeddings") {
+            ModelRole::Embedding
+        } else if outputs.contains(&"speech") {
+            ModelRole::Speech
+        } else {
+            ModelRole::Other
+        };
+        // `null` for a model that lists none. Read leniently, like the rest:
+        // an entry that is not a name costs that entry, never the list.
+        let voices = self
+            .supported_voices
+            .as_ref()
+            .and_then(|v| v.as_array())
+            .map(|list| {
+                list.iter()
+                    .filter_map(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|v| !v.is_empty())
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let price = |key: &str| {
+            self.pricing
+                .as_ref()
+                .and_then(|p| p.get(key))
+                .and_then(price_per_million)
+        };
+        let facts = ModelFacts {
+            context_length: self
+                .context_length
+                .as_ref()
+                .and_then(serde_json::Value::as_u64)
+                .and_then(|n| u32::try_from(n).ok())
+                .filter(|&n| n > 0),
+            prompt_price: price("prompt"),
+            completion_price: price("completion"),
+            tools: self
+                .supported_parameters
+                .as_ref()
+                .filter(|p| !p.is_empty())
+                .map(|p| p.iter().any(|x| x == "tools")),
+            video: self
+                .architecture
+                .as_ref()
+                .and_then(|a| a.get("input_modalities"))
+                .and_then(|i| i.as_array())
+                .filter(|list| !list.is_empty())
+                .map(|list| list.iter().any(|m| m.as_str() == Some("video"))),
+        };
+        CatalogModel {
+            id: self.id,
+            display: self.name.filter(|n| !n.is_empty()),
+            role,
+            retiring: self.expiration_date.filter(|d| !d.is_empty()),
+            facts,
+            voices,
+        }
+    }
+}
+
+/// The gateway's price of **one token**, in dollars — published as a string
+/// (`"0.000001"`) — as the price of a million, in millionths of a dollar.
+/// `None` for anything that is not a number, and for a negative one: the
+/// gateway's router models publish `-1` to say "it depends".
+fn price_per_million(per_token: &serde_json::Value) -> Option<u64> {
+    let dollars = match per_token {
+        serde_json::Value::String(s) => s.trim().parse::<f64>().ok()?,
+        serde_json::Value::Number(n) => n.as_f64()?,
+        _ => return None,
+    };
+    (dollars.is_finite() && dollars >= 0.0).then(|| (dollars * 1e12).round() as u64)
 }
 
 #[derive(Deserialize)]
@@ -706,6 +975,7 @@ mod tests {
             shape,
             base: "https://example.test/v1/".to_string(),
             key: None,
+            attribution: false,
         };
         assert_eq!(
             req(CatalogueShape::OpenAi).url(),
@@ -725,10 +995,412 @@ mod tests {
                 shape: CatalogueShape::Anthropic,
                 base: "https://api.anthropic.com".to_string(),
                 key: None,
+                attribution: false,
             }
             .url(),
             "https://api.anthropic.com/v1/models?limit=1000",
             "the Anthropic base carries no version segment"
+        );
+    }
+
+    // ---------- the OpenRouter gateway (docs/research/openrouter-mode.md §3.2) ----------
+
+    /// Entries in the gateway's own shape, measured 2026-09-29 and cut to the
+    /// keys this client reads, in an order that is **not** by date: a `:batch`
+    /// twin, a router that prices itself `-1`, a free model without tools, a
+    /// model on its way out, one that answers with images, and two whose fields
+    /// changed shape.
+    const GATEWAY_BODY: &str = r#"{"data":[
+        {"id":"anthropic/claude-haiku-4.5","name":"Anthropic: Claude Haiku 4.5","created":1760547638,
+         "context_length":200000,
+         "architecture":{"input_modalities":["text","image","file"],"output_modalities":["text"]},
+         "pricing":{"prompt":"0.000001","completion":"0.000005"},
+         "supported_parameters":["max_tokens","temperature","tools"],"expiration_date":null},
+        {"id":"anthropic/claude-haiku-4.5:batch","name":"Anthropic: Claude Haiku 4.5 (batch)","created":1760547638,
+         "context_length":200000,"architecture":{"output_modalities":["text"]},
+         "pricing":{"prompt":"0.0000005","completion":"0.0000025"},"supported_parameters":["tools"]},
+        {"id":"openrouter/auto","name":"Auto Router","created":1699401600,"context_length":2000000,
+         "architecture":{"output_modalities":["text"]},
+         "pricing":{"prompt":"-1","completion":"-1"},"supported_parameters":["tools"]},
+        {"id":"google/gemini-3.5-flash","name":"Google: Gemini 3.5 Flash","created":1779000000,
+         "context_length":1048576,
+         "architecture":{"input_modalities":["text","image","video"],"output_modalities":["text"]},
+         "pricing":{"prompt":"0.0000003","completion":"0.0000025"},
+         "supported_parameters":["reasoning","max_tokens","tools"],"expiration_date":""},
+        {"id":"meta-llama/llama-3.3-70b-instruct:free","name":"Meta: Llama 3.3 70B (free)","created":1733506137,
+         "context_length":65536,"architecture":{"output_modalities":["text"]},
+         "pricing":{"prompt":"0","completion":"0"},"supported_parameters":["max_tokens","temperature"]},
+        {"id":"qwen/qwen3.6-27b","name":"Qwen: Qwen3.6 27B","created":1775000000,"context_length":131072,
+         "architecture":{"output_modalities":["text"]},
+         "pricing":{"prompt":"0.00000012","completion":"0.00000048"},"supported_parameters":["tools"]},
+        {"id":"openai/gpt-4-turbo","name":"OpenAI: GPT-4 Turbo","created":1712620800,
+         "context_length":128000,"architecture":{"output_modalities":["text"]},
+         "pricing":{"prompt":0.00001,"completion":0.00003},"expiration_date":"2026-11-01"},
+        {"id":"openai/gpt-image-2","name":"","created":1770000000,"context_length":32000,
+         "architecture":{"output_modalities":["image"]},"pricing":{"prompt":"0.000005"}},
+        {"id":"odd/shapes","created":1700000000,"context_length":"large",
+         "architecture":"text->text","pricing":{"prompt":"n/a","completion":null},
+         "supported_parameters":[]},
+        {"id":"odd/window","context_length":0,"pricing":"free"}
+    ]}"#;
+
+    /// `GET /embeddings/models`: the same shape, answering with embeddings.
+    const GATEWAY_EMBEDDINGS_BODY: &str = r#"{"data":[
+        {"id":"openai/text-embedding-3-small","name":"OpenAI: Text Embedding 3 Small","created":1706000000,
+         "context_length":8191,"architecture":{"input_modalities":["text"],"output_modalities":["embeddings"]},
+         "pricing":{"prompt":"0.00000002","completion":"0"}},
+        {"id":"baai/bge-m3","name":"BAAI: bge-m3","created":1754000000,"context_length":8192,
+         "architecture":{"input_modalities":["text"],"output_modalities":["embeddings"]},
+         "pricing":{"prompt":"0.00000001","completion":"0"}}
+    ]}"#;
+
+    /// `GET /models?output_modalities=speech`, measured 2026-09-29 and cut to
+    /// the keys this client reads: a model with voices, one that lists `null`,
+    /// one whose list holds what is not a name, and — were the filter ever to
+    /// let one through — a chat model.
+    const GATEWAY_SPEECH_BODY: &str = r#"{"data":[
+        {"id":"x-ai/grok-voice-tts-1.0","name":"xAI: Grok Voice TTS 1.0","created":1782000000,
+         "context_length":15000,
+         "architecture":{"modality":"text->speech","input_modalities":["text"],"output_modalities":["speech"]},
+         "pricing":{"prompt":"0.000015","completion":"0"},"supported_parameters":[],
+         "supported_voices":["eve","ara","rex","sal","leo"]},
+        {"id":"fish-audio/s1","name":"Fish Audio: S1","created":1788000000,"context_length":0,
+         "architecture":{"input_modalities":["text"],"output_modalities":["speech"]},
+         "pricing":{"prompt":"0.000015","completion":"0"},"supported_parameters":[],
+         "supported_voices":null},
+        {"id":"odd/voices","created":1700000000,
+         "architecture":{"output_modalities":["speech"]},
+         "supported_voices":["Kore",""," Puck ",7,null,{"name":"Zephyr"}]},
+        {"id":"odd/voice-list","created":1600000000,
+         "architecture":{"output_modalities":["speech"]},"supported_voices":"alloy"},
+        {"id":"google/gemini-3.5-flash","created":1779000000,
+         "architecture":{"output_modalities":["text"]},"supported_voices":null}
+    ]}"#;
+
+    fn gateway() -> Vec<CatalogModel> {
+        parse(CatalogueShape::OpenRouter, GATEWAY_BODY).expect("a catalogue")
+    }
+
+    /// The speech list: what answers with speech is a speech model by the
+    /// gateway's word, and is offered for the speech row and no other; its
+    /// voices are the ones it lists, in its order. A list that holds what is
+    /// not a name costs those entries, and one that is not a list — all of
+    /// them; neither costs the model its row.
+    #[test]
+    fn the_gateway_says_which_models_speak_and_in_which_voices() {
+        let listed = parse(CatalogueShape::OpenRouterSpeech, GATEWAY_SPEECH_BODY).expect("a list");
+        let voices = |id: &str| named(&listed, id).voices.join(" ");
+        assert_eq!(voices("x-ai/grok-voice-tts-1.0"), "eve ara rex sal leo");
+        assert_eq!(voices("fish-audio/s1"), "");
+        assert_eq!(voices("odd/voices"), "Kore Puck");
+        assert_eq!(voices("odd/voice-list"), "");
+        assert_eq!(
+            named(&listed, "x-ai/grok-voice-tts-1.0").role,
+            ModelRole::Speech
+        );
+
+        let offered = for_slot(listed.clone(), ModelSlot::Speech);
+        assert_eq!(
+            ids(&offered),
+            [
+                "fish-audio/s1",
+                "x-ai/grok-voice-tts-1.0",
+                "odd/voices",
+                "odd/voice-list"
+            ],
+            "newest first, and the chat model is not a speech model"
+        );
+        for slot in [
+            ModelSlot::Assistant,
+            ModelSlot::Impersonation,
+            ModelSlot::Embedder,
+        ] {
+            let others = for_slot(listed.clone(), slot);
+            assert!(
+                others.iter().all(|m| m.role != ModelRole::Speech),
+                "{slot:?}: {:?}",
+                ids(&others)
+            );
+        }
+        // Silence narrows nothing, here as everywhere.
+        let unstated = for_slot(gateway(), ModelSlot::Speech);
+        assert_eq!(ids(&unstated), ["odd/shapes", "odd/window"]);
+        // A chat model lists no voices, whatever its entry holds.
+        assert!(gateway().iter().all(|m| m.voices.is_empty()));
+    }
+
+    /// The video row's list: what answers with text and takes video, by the
+    /// inputs each entry publishes — so the account's list, which the gateway
+    /// does not narrow, is narrowed here, to what the public one is narrowed to
+    /// by the gateway. An entry that lists no inputs is silence, and stays.
+    /// Gemini opens the list, in the gateway's order; the rest follow in it.
+    #[test]
+    fn the_video_list_is_what_claims_video_with_gemini_first() {
+        let takes = |id: &str| named(&gateway(), id).facts.video;
+        assert_eq!(takes("google/gemini-3.5-flash"), Some(true));
+        assert_eq!(takes("anthropic/claude-haiku-4.5"), Some(false));
+        assert_eq!(takes("qwen/qwen3.6-27b"), None, "it lists no inputs");
+        assert_eq!(takes("odd/shapes"), None, "not a list of inputs");
+
+        let listed = parse(
+            CatalogueShape::OpenRouterVideo,
+            r#"{"data":[
+            {"id":"qwen/qwen3.6-flash","created":5,"architecture":
+                {"input_modalities":["text","image","video"],"output_modalities":["text"]}},
+            {"id":"google/gemini-3.5-flash","created":4,"architecture":
+                {"input_modalities":["text","video"],"output_modalities":["text"]}},
+            {"id":"anthropic/claude-haiku-4.5","created":3,"architecture":
+                {"input_modalities":["text","image"],"output_modalities":["text"]}},
+            {"id":"~google/gemini-flash-latest","created":2,"architecture":
+                {"input_modalities":["video","text"],"output_modalities":["text"]}},
+            {"id":"vendor/says-nothing-of-inputs","created":1,"architecture":
+                {"input_modalities":[],"output_modalities":["text"]}},
+            {"id":"vendor/films","created":6,"architecture":
+                {"input_modalities":["text","video"],"output_modalities":["video"]}},
+            {"id":"google/gemini-3.5-flash:batch","created":7,"architecture":
+                {"input_modalities":["text","video"],"output_modalities":["text"]}}
+            ]}"#,
+        )
+        .expect("a list");
+        assert_eq!(
+            ids(&for_slot(listed.clone(), ModelSlot::Video)),
+            [
+                "google/gemini-3.5-flash",
+                "~google/gemini-flash-latest",
+                "qwen/qwen3.6-flash",
+                "vendor/says-nothing-of-inputs"
+            ]
+        );
+        // The chat row is not narrowed by what a model takes.
+        assert_eq!(for_slot(listed, ModelSlot::Assistant).len(), 5);
+    }
+
+    /// What an entry takes as input is what a list is narrowed by, not what a
+    /// row shows: an entry that said this and nothing else has nothing to show,
+    /// and keeps the name a row without facts is drawn with.
+    #[test]
+    fn what_a_model_takes_is_not_a_fact_a_row_shows() {
+        let only_inputs = ModelFacts {
+            video: Some(true),
+            ..ModelFacts::default()
+        };
+        assert!(only_inputs.is_empty());
+        let windowed = ModelFacts {
+            context_length: Some(8192),
+            ..only_inputs
+        };
+        assert!(!windowed.is_empty());
+        assert!(ModelFacts::default().is_empty());
+    }
+
+    /// A voice is an entry of a list like a model is — the voice rows' picker
+    /// offers them — and its name is all the row holds.
+    #[test]
+    fn a_voice_is_an_entry_with_a_name_and_nothing_else() {
+        let voice = CatalogModel::voice("Kore");
+        assert_eq!(voice.id, "Kore");
+        assert_eq!(voice.role, ModelRole::Speech);
+        assert!(voice.facts.is_empty() && voice.voices.is_empty());
+        assert_eq!((voice.display, voice.retiring), (None, None));
+    }
+
+    fn ids(models: &[CatalogModel]) -> Vec<&str> {
+        models.iter().map(|m| m.id.as_str()).collect()
+    }
+
+    fn named<'a>(models: &'a [CatalogModel], id: &str) -> &'a CatalogModel {
+        let found = models.iter().find(|m| m.id == id);
+        found.unwrap_or_else(|| panic!("{id} is not listed in {:?}", ids(models)))
+    }
+
+    /// Defect D2: every `:batch` slug is in the list and answers a chat with a
+    /// `404`, so the picker leaves them out — and only them: a `:free` variant
+    /// chats, and an entry whose fields changed shape costs its facts, never
+    /// its row. Newest first, by the `created` the gateway publishes; an entry
+    /// without one sorts last.
+    #[test]
+    fn the_gateway_lists_everything_but_batch_newest_first() {
+        let newest_first = "google/gemini-3.5-flash qwen/qwen3.6-27b openai/gpt-image-2 \
+            anthropic/claude-haiku-4.5 meta-llama/llama-3.3-70b-instruct:free \
+            openai/gpt-4-turbo odd/shapes openrouter/auto odd/window";
+        assert_eq!(
+            ids(&gateway()),
+            newest_first.split_whitespace().collect::<Vec<_>>()
+        );
+    }
+
+    /// Unlike every catalogue before it, this one says what a model is **for**
+    /// — by what it answers with — so the role is the gateway's claim and the
+    /// list narrows on it (fork F7). Where it said nothing readable the role is
+    /// unstated, which is silence and narrows nothing.
+    #[test]
+    fn the_gateway_says_what_a_model_is_for_by_what_it_answers_with() {
+        let models = gateway();
+        let role = |id: &str| named(&models, id).role;
+        assert_eq!(role("anthropic/claude-haiku-4.5"), ModelRole::Chat);
+        assert_eq!(role("openai/gpt-image-2"), ModelRole::Other);
+        assert_eq!(role("odd/shapes"), ModelRole::Unstated);
+        assert_eq!(role("odd/window"), ModelRole::Unstated);
+
+        let embedders = parse(
+            CatalogueShape::OpenRouterEmbeddings,
+            GATEWAY_EMBEDDINGS_BODY,
+        )
+        .expect("a list");
+        assert_eq!(
+            ids(&embedders),
+            ["baai/bge-m3", "openai/text-embedding-3-small"]
+        );
+        assert!(embedders.iter().all(|m| m.role == ModelRole::Embedding));
+
+        let chat = for_slot(models.clone(), ModelSlot::Assistant);
+        assert!(
+            !ids(&chat).contains(&"openai/gpt-image-2") && chat.len() == models.len() - 1,
+            "what answers with images alone is not offered for chat: {:?}",
+            ids(&chat)
+        );
+        assert_eq!(chat, for_slot(models.clone(), ModelSlot::Impersonation));
+        assert_eq!(
+            ids(&for_slot(models, ModelSlot::Embedder)),
+            ["odd/shapes", "odd/window"],
+            "a chat model is not offered as an embedder; silence still is"
+        );
+        assert_eq!(
+            for_slot(embedders.clone(), ModelSlot::Embedder),
+            embedders,
+            "the embedder's row gets the embedding list whole, in its order"
+        );
+        assert!(for_slot(embedders, ModelSlot::Assistant).is_empty());
+    }
+
+    /// Defect D3 was a row with an id and nothing else, from a response that
+    /// carries the window, the price and the parameters. The price arrives as
+    /// dollars **per token** in a string and is kept as millionths of a dollar
+    /// per million tokens — an integer, so a row compares exactly, and a
+    /// rounded one: twelve cents, read as a float and scaled, falls a hair
+    /// short of 120000. Columns: the id, the window, the two prices, tools,
+    /// why (`-` — the gateway made no claim).
+    const GATEWAY_FACTS: &str = "
+        anthropic/claude-haiku-4.5             200000  1000000  5000000  yes | $1 in, $5 out, as published
+        google/gemini-3.5-flash                1048576 300000   2500000  yes | thirty cents in, two and a half dollars out
+        qwen/qwen3.6-27b                       131072  120000   480000   yes | rounded, not cut: neither is 119999 or 479999
+        meta-llama/llama-3.3-70b-instruct:free 65536   0        0        no  | free is a price, and no tools is a claim
+        openai/gpt-4-turbo                     128000  10000000 30000000 -   | a price sent as a number; no parameter list
+        openrouter/auto                        2000000 -        -        yes | a router prices itself -1: it depends
+        openai/gpt-image-2                     32000   5000000  -        -   | half a price is still that half
+        odd/shapes                             -       -        -        -   | unreadable fields, an empty parameter list
+        odd/window                             -       -        -        -   | a window of zero is no window
+    ";
+
+    #[test]
+    fn the_gateways_window_price_and_tools_are_read_as_published() {
+        let models = gateway();
+        let rows: Vec<&str> = GATEWAY_FACTS
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .collect();
+        assert_eq!(rows.len(), models.len(), "every entry has its row");
+        let mut wrong = Vec::new();
+        for row in rows {
+            let (columns, why) = row.split_once('|').unwrap();
+            let c: Vec<&str> = columns.split_whitespace().collect();
+            let got = named(&models, c[0]).facts;
+            let want = ModelFacts {
+                context_length: c[1].parse().ok(),
+                prompt_price: c[2].parse().ok(),
+                completion_price: c[3].parse().ok(),
+                tools: Some(c[4] == "yes").filter(|_| c[4] != "-"),
+                // What an entry takes as input has a test of its own.
+                video: got.video,
+            };
+            if got != want {
+                wrong.push(format!("{} — {}: {got:?}", c[0], why.trim()));
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    /// The name and the last day are the gateway's to publish, and an empty
+    /// string or a `null` is not either of them — 24 of its entries carry an
+    /// `expiration_date`, the rest a `null`.
+    #[test]
+    fn the_gateways_name_and_last_day_are_kept_where_it_published_them() {
+        let models = gateway();
+        let said = |id: &str| {
+            let m = named(&models, id);
+            (m.display.as_deref(), m.retiring.as_deref())
+        };
+        assert_eq!(
+            said("anthropic/claude-haiku-4.5"),
+            (Some("Anthropic: Claude Haiku 4.5"), None)
+        );
+        assert_eq!(
+            said("openai/gpt-4-turbo"),
+            (Some("OpenAI: GPT-4 Turbo"), Some("2026-11-01"))
+        );
+        assert_eq!(
+            said("google/gemini-3.5-flash").1,
+            None,
+            "an empty date is no date"
+        );
+        assert_eq!(said("openai/gpt-image-2").0, None, "an empty name is none");
+        assert_eq!(said("odd/window"), (None, None));
+    }
+
+    /// Fork F7, the sources: the account's own list where there is an account
+    /// to ask about — `/models/user` is narrowed by its privacy and provider
+    /// settings — the public one where there is not, and the embedding models
+    /// from a list of their own, key or no key.
+    #[test]
+    fn the_gateways_route_follows_the_key_and_the_slot() {
+        let url = |shape, key: Option<&str>| {
+            CatalogueRequest {
+                shape,
+                base: "https://openrouter.ai/api/v1/".to_string(),
+                key: key.map(str::to_string),
+                attribution: false,
+            }
+            .url()
+        };
+        assert_eq!(
+            url(CatalogueShape::OpenRouter, Some("k")),
+            "https://openrouter.ai/api/v1/models/user"
+        );
+        assert_eq!(
+            url(CatalogueShape::OpenRouter, None),
+            "https://openrouter.ai/api/v1/models"
+        );
+        for key in [None, Some("k")] {
+            assert_eq!(
+                url(CatalogueShape::OpenRouterEmbeddings, key),
+                "https://openrouter.ai/api/v1/embeddings/models"
+            );
+        }
+        // The models that take video: the public list under the gateway's
+        // filter, and the account's list whole — which does not take that
+        // filter, and is narrowed by what its entries say.
+        assert_eq!(
+            url(CatalogueShape::OpenRouterVideo, Some("k")),
+            "https://openrouter.ai/api/v1/models/user"
+        );
+        assert_eq!(
+            url(CatalogueShape::OpenRouterVideo, None),
+            "https://openrouter.ai/api/v1/models?input_modalities=video"
+        );
+        // The speech models are the chat list under the gateway's own filter,
+        // so the key moves them to the account's list as it moves the chat's.
+        assert_eq!(
+            url(CatalogueShape::OpenRouterSpeech, Some("k")),
+            "https://openrouter.ai/api/v1/models/user?output_modalities=speech"
+        );
+        assert_eq!(
+            url(CatalogueShape::OpenRouterSpeech, None),
+            "https://openrouter.ai/api/v1/models?output_modalities=speech"
+        );
+        // No other shape asks a different route for having a key.
+        assert_eq!(
+            url(CatalogueShape::OpenAi, Some("k")),
+            url(CatalogueShape::OpenAi, None)
         );
     }
 }
@@ -769,6 +1441,7 @@ mod live_smoke {
             shape,
             base: base.to_string(),
             key,
+            attribution: false,
         })
         .await
         .expect("the catalogue answered")

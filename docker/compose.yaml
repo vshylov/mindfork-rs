@@ -137,6 +137,7 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       XAI_API_KEY: ${XAI_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
     volumes:
       # The app's data root. A named volume rather than a bind mount: it holds
       # data.db and chats/*.json, and it must survive every image rebuild.

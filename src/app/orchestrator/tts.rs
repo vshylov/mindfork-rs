@@ -24,7 +24,9 @@ use crate::entities::message::{Message, MessageRole};
 use crate::features::tts_command::TtsScope;
 use crate::shared::config::SecretSlot;
 use crate::shared::i18n::Locale;
-use crate::shared::tts::{TtsEngine, TtsSetupError, engines_from_config, playback::Playback};
+use crate::shared::tts::{
+    GatewaySpeech, TtsEngine, TtsSetupError, engines_from_config, playback::Playback,
+};
 
 use super::Orchestrator;
 
@@ -80,10 +82,11 @@ impl Orchestrator {
         let stored = self.config.tts.secret_key().and_then(|k| {
             crate::shared::secrets::stored_key(&self.config.api_keys, &k.storage_name())
         });
+        let gateway = self.speech_gateway();
         // Two engines: the assistant's and (opt.) the user's — when a separate
         // "User voice" is set (spec §11.9). Both use the same provider → a shared
         // limit.
-        let (engine, user_engine) = match engines_from_config(&self.config.tts, stored) {
+        let (engine, user_engine) = match engines_from_config(&self.config.tts, stored, &gateway) {
             Ok(pair) => pair,
             Err(err) => {
                 self.fail_tts(self.ui_locale().t(setup_error_key(err)));
@@ -129,6 +132,17 @@ impl Orchestrator {
             evt_tx: self.evt_tx.clone(),
             done_tx: self.tts_done_tx.clone(),
         });
+    }
+
+    /// What a speech client of the gateway's is built with besides the slot's
+    /// settings, and is the gateway's own rather than the slot's: the
+    /// provider-wide switch as it stands now, and what this session has learned
+    /// about the gateway's models — the same memo for every command.
+    pub(super) fn speech_gateway(&self) -> GatewaySpeech {
+        GatewaySpeech {
+            attribution: self.config.openrouter.attribution,
+            formats: self.tts_formats.clone(),
+        }
     }
 
     /// Pauses the current playback (`/tts pause`), keeping the queue. No-op if

@@ -5,9 +5,9 @@
 //! a config snapshot per call, no manager slot is needed.
 //!
 //! Layout (docs/research/tts.md §8):
-//! - [`openai`] — `POST /v1/audio/speech`: the OpenAI cloud **and** any
-//!   third-party OpenAI-compatible TTS server (different base URL/key/response
-//!   format);
+//! - [`openai`] — `POST /v1/audio/speech`: the OpenAI cloud, any third-party
+//!   OpenAI-compatible TTS server **and** the OpenRouter gateway (different
+//!   base URL/key, and the response format asked for or negotiated);
 //! - [`gemini`] — native `generateContent` with `responseModalities:["AUDIO"]`;
 //! - [`playback`] — playback: an `rodio` source queue + cancellation.
 //!
@@ -20,10 +20,32 @@ pub mod gemini;
 pub mod openai;
 pub mod playback;
 
+#[cfg(test)]
+mod gateway_live_tests;
+#[cfg(test)]
+mod gateway_tests;
+
+use std::sync::Arc;
+
 use anyhow::Result;
 use tokio_util::sync::CancellationToken;
 
-use crate::shared::config::{TtsMode, TtsSettings};
+use crate::shared::config::{CloudProvider, TtsMode, TtsSettings};
+
+pub use openai::FormatMemo;
+
+/// What the gateway's speech client is given besides the slot's settings. Both
+/// are the provider's rather than the slot's, and neither is in
+/// [`TtsSettings`]: the switch is set once for every slot that speaks to the
+/// gateway, and the memo is what the session has learned.
+#[derive(Debug, Clone, Default)]
+pub struct GatewaySpeech {
+    /// Name the application to the gateway (`openrouter.attribution`, fork F5
+    /// of docs/research/openrouter-mode.md).
+    pub attribution: bool,
+    /// The format each model was last answered in.
+    pub formats: Arc<FormatMemo>,
+}
 
 /// A synthesized speech fragment.
 ///
@@ -92,16 +114,23 @@ pub type TtsEnginePair = (Box<dyn TtsEngine>, Option<Box<dyn TtsEngine>>);
 /// **only** if the active mode has a separate "user voice" set and it differs
 /// from the assistant's voice — then `/tts all`/`/tts N` read the user's turns
 /// with it (spec §11.9). Otherwise `None` → everything in one voice.
+///
+/// `gateway` is read by the `openrouter` mode alone; both engines share its
+/// memo, since both speak through one model.
 pub fn engines_from_config(
     tts: &TtsSettings,
     stored_key: Option<String>,
+    gateway: &GatewaySpeech,
 ) -> std::result::Result<TtsEnginePair, TtsSetupError> {
     let (assistant_voice, user_voice) = tts.active_voices();
-    let assistant = build_engine(tts, stored_key.clone(), None)?;
+    let assistant = build_engine(tts, stored_key.clone(), None, gateway)?;
     let user = match user_voice {
-        Some(uv) if Some(uv) != assistant_voice => {
-            Some(build_engine(tts, stored_key, Some(uv.to_string()))?)
-        }
+        Some(uv) if Some(uv) != assistant_voice => Some(build_engine(
+            tts,
+            stored_key,
+            Some(uv.to_string()),
+            gateway,
+        )?),
         _ => None,
     };
     Ok((assistant, user))
@@ -114,9 +143,25 @@ fn build_engine(
     tts: &TtsSettings,
     stored_key: Option<String>,
     voice_override: Option<String>,
+    gateway: &GatewaySpeech,
 ) -> std::result::Result<Box<dyn TtsEngine>, TtsSetupError> {
     let speed = tts.speed;
     match tts.mode {
+        TtsMode::OpenRouter => {
+            let section = &tts.openrouter;
+            let model = non_empty(section.model_name.clone()).ok_or(TtsSetupError::Model)?;
+            let key = resolve_key(stored_key, section.api_key_env.as_deref())
+                .ok_or(TtsSetupError::ApiKey)?;
+            let base = non_empty(section.url.clone())
+                .unwrap_or_else(|| CloudProvider::OpenRouter.chat_base_url().to_string());
+            // No voice is not refused here: four of the gateway's models list
+            // none and speak without one, and for the rest the gateway's own
+            // refusal says what is missing.
+            let voice = voice_override.or_else(|| non_empty(section.voice.clone()));
+            Ok(Box::new(openai::OpenAiTts::gateway(
+                base, key, model, voice, speed, gateway,
+            )))
+        }
         TtsMode::OpenAi | TtsMode::Gemini => {
             let cloud = tts.cloud().ok_or(TtsSetupError::Model)?;
             let model = non_empty(cloud.model_name.clone()).ok_or(TtsSetupError::Model)?;
@@ -198,6 +243,11 @@ fn non_empty(value: Option<String>) -> Option<String> {
 pub(crate) async fn error_body(what: &str, resp: reqwest::Response) -> anyhow::Error {
     let status = resp.status();
     let body = resp.text().await.unwrap_or_default();
+    refusal(what, status, &body)
+}
+
+/// [`error_body`] for an answer whose body has been read already.
+pub(crate) fn refusal(what: &str, status: reqwest::StatusCode, body: &str) -> anyhow::Error {
     let detail: String = body.trim().chars().take(500).collect();
     tracing::warn!(%status, body = %detail, "{what} returned an error status");
     if detail.is_empty() {
@@ -212,6 +262,11 @@ mod tests {
     use super::*;
     use crate::shared::config::{SecretSlot, TtsCloudSettings, TtsExternalSettings};
 
+    /// Nothing of the gateway's: what every mode but `openrouter` is built with.
+    fn none() -> GatewaySpeech {
+        GatewaySpeech::default()
+    }
+
     #[test]
     fn cloud_requires_model_and_key() {
         let mut tts = TtsSettings {
@@ -222,17 +277,17 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            engines_from_config(&tts, Some("sk-x".into())).err(),
+            engines_from_config(&tts, Some("sk-x".into()), &none()).err(),
             Some(TtsSetupError::Model)
         );
         tts.openai.model_name = Some("gpt-4o-mini-tts".into());
         // No key at all, neither stored nor in env → a clear structured error.
         assert_eq!(
-            engines_from_config(&tts, None).err(),
+            engines_from_config(&tts, None, &none()).err(),
             Some(TtsSetupError::ApiKey)
         );
         // A stored key (ADR 0008) is enough — nothing needs re-entering.
-        assert!(engines_from_config(&tts, Some("sk-x".into())).is_ok());
+        assert!(engines_from_config(&tts, Some("sk-x".into()), &none()).is_ok());
     }
 
     #[test]
@@ -243,7 +298,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            engines_from_config(&tts, None).err(),
+            engines_from_config(&tts, None, &none()).err(),
             Some(TtsSetupError::Url)
         );
         let tts = TtsSettings {
@@ -255,7 +310,7 @@ mod tests {
             ..Default::default()
         };
         // A local server needs neither a key nor a model.
-        assert!(engines_from_config(&tts, None).is_ok());
+        assert!(engines_from_config(&tts, None, &none()).is_ok());
     }
 
     /// The speech key follows the same chain as the engine's: a key stored for this
@@ -302,8 +357,8 @@ mod tests {
             )),
             "the speech slot must not read a provider's key in external mode"
         );
-        assert!(engines_from_config(&tts, Some("sk-voice".into())).is_ok());
-        assert!(engines_from_config(&tts, None).is_ok());
+        assert!(engines_from_config(&tts, Some("sk-voice".into()), &none()).is_ok());
+        assert!(engines_from_config(&tts, None, &none()).is_ok());
     }
 
     #[test]
@@ -316,7 +371,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            engines_from_config(&tts, Some("sk-x".into())).err(),
+            engines_from_config(&tts, Some("sk-x".into()), &none()).err(),
             Some(TtsSetupError::Model)
         );
     }
@@ -332,19 +387,19 @@ mod tests {
             ..Default::default()
         };
         // No user voice → a single engine.
-        let (_a, user) = engines_from_config(&base, Some("sk-x".into())).unwrap();
+        let (_a, user) = engines_from_config(&base, Some("sk-x".into()), &none()).unwrap();
         assert!(user.is_none(), "no user_voice → no second engine is built");
 
         // Set and differs → the second one is built.
         let mut with_user = base.clone();
         with_user.openai.user_voice = Some("nova".into());
-        let (_a, user) = engines_from_config(&with_user, Some("sk-x".into())).unwrap();
+        let (_a, user) = engines_from_config(&with_user, Some("sk-x".into()), &none()).unwrap();
         assert!(user.is_some(), "a separate user_voice → a second engine");
 
         // Matches the assistant's voice → no second one needed.
         let mut same = base.clone();
         same.openai.user_voice = Some("onyx".into());
-        let (_a, user) = engines_from_config(&same, Some("sk-x".into())).unwrap();
+        let (_a, user) = engines_from_config(&same, Some("sk-x".into()), &none()).unwrap();
         assert!(user.is_none(), "matching voice — a single engine");
     }
 

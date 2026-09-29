@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (76)
+## Entries (80)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -88,6 +88,11 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: CUDA for Linux, refused — and a version check that stopped checking (done)
 - Post-M9: `mindfork setup` — a working managed engine from one command (done)
 - Post-M9: raw `llama-server` arguments in managed settings (done)
+- Post-M9: OpenRouter as a provider of its own — stage 1 (done)
+- Post-M9: embeddings through the gateway — stage 2 of the OpenRouter mode (done)
+- Post-M9: speech through the gateway — stage 3 of the OpenRouter mode (done)
+- Post-M9: a video through the gateway — stage 4 of the OpenRouter mode, track complete (done)
+
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
   a long time (up to the `MANAGED_READY_TIMEOUT=600s` timeout) in "server:
@@ -4976,3 +4981,541 @@ The settings screenshots were regenerated (two rows more in *Model/server*).
 
 **Gates**: fmt / clippy / test green — **3434 unit tests, 199 `#[ignore]`**
 (+23 unit tests, +2 live smokes).
+
+### Post-M9: OpenRouter as a provider of its own — stage 1 (done)
+
+**What.** Stage 1 of the track [docs/research/openrouter-mode.md](../research/openrouter-mode.md)
+opened: `openrouter` is a mode of the assistant, of impersonation and of the embedder,
+with a section of its own beside `external`'s — so a local server's address and the
+gateway's key are both kept, and moving between them is the *Mode* row. The twelve forks
+were settled by the user on 2026-09-29, **every one at its recommendation**: a provider
+rather than named `external` connections (F1), all five slots in four stages (F2), a new
+value of the existing enums with `SETTINGS_SCHEMA` 3 → 4 (F3), Chat Completions with a
+dialect (F4), attribution headers on by default behind a switch (F5), the key checked
+once per apply (F6), the picker from the provider's claims (F7), a hint on an `external`
+address that is the gateway's (F12). `external` keeps reaching the gateway exactly as it
+did.
+
+**Built.**
+- `shared/config.rs`: `ServerMode::OpenRouter`, `ImpersonationMode::OpenRouter`,
+  `CloudProvider::OpenRouter` (the fifth of `ALL`), an `openrouter: CloudSettings` in each
+  of the three engine structs, and `AppConfig.openrouter: OpenRouterSettings { attribution }`
+  — the one setting that is the provider's rather than a slot's. One stored key serves
+  every slot (`SecretKey::Provider`). `storage/schema.rs`: `settings_to_v4` stamps the
+  version and rewrites nothing — the step exists because an older binary's typed parse
+  refuses a value it does not know, and a refusal that names the version is the better one.
+- `shared/api/openai`: `OpenAiClient::for_openrouter(attribution)` — the first provider
+  the client is **told** about instead of inferring from whether a catalogue answered.
+  Told, it writes the body in the gateway's dialect (`ChatCompletionRequest::for_gateway`:
+  `repeat_penalty` → `repetition_penalty`, the llama.cpp-only fields left out — the first
+  was measured to be dropped in silence, research §3.5); asks `GET /model/{slug}` for the
+  model's facts and never `/props`, `/health` or the 755 KB list; re-homes a tool's images
+  on every request without waiting for a catalogue; on a turn that asks reasoning off,
+  asks a model that must reason for the lowest effort it lists (`gateway_muted_effort`);
+  and names the application in `HTTP-Referer` / `X-OpenRouter-Title` when the switch says
+  so (`attributed`, the one place the two lines are written). `ChatChunk::Served` carries
+  the `provider` of the chunks and the `usage.cost` of the last one; the orchestrator
+  records both on the message (`MessageMetadata.provider`, `cost_nanos` — billionths of a
+  dollar, an integer) and shows them nowhere yet (F11).
+- `app/supervisor.rs`: the gateway's arm of `cloud_chat_setup` is `Connecting` until
+  `GET /key` answers (`spawn_key_check`). Accepted — `Ready`; refused (`401`/`403`) —
+  `Disconnected`, worded by the gateway's own sentence; anything else the gateway
+  answered (an outage, a `429`) — `Ready`, because the key was **not judged** and a
+  request may well work; no answer at all — said once and asked again every 5 s. A check
+  overtaken by a newer apply says nothing. The embedder's arm is built like a cloud's.
+- `app/orchestrator`: the engine's facts are asked again on **every** applied change of
+  the chat engine (`refresh_chat_engine`), not only on a status flip; the gateway's switch
+  restarts the slots that speak to the gateway and no other (`gateway_for`); `/continue`
+  in the mode reads the route table of spec §6.4 by the slug with no catalogue to wait for.
+- The picker: `CatalogueShape::OpenRouter` (`/models/user` with a key, `/models` without —
+  the one cloud whose list opens before a key was entered) and `OpenRouterEmbeddings`;
+  `ModelFacts` — window, the two prices in millionths of a dollar per million tokens,
+  `tools`; a row is the id, the window, the price, `no tools`; `:batch` slugs are left out
+  (they answer `404` to a chat request). `entities/sampling`: the static list of what the
+  gateway's schema reads, narrowed per model by the catalogue.
+- The settings screen: the mode in both cycles, the provider's rows, *Name the app to
+  OpenRouter*, and under an `external` address whose host is `openrouter.ai` a hint that
+  the mode exists.
+
+**The embedder's arm came with stage 1**, against the stage table: `ServerMode` is one
+enum for the chat engine and the embedder, so a value the first takes is a value the
+second has to answer for. Stage 2 is what is left — the retry, the batch cap, and whether
+the embedder's key is checked.
+
+**Measured while building** (research §11, the same method as its §10). A model that must
+reason refuses both spellings of "off" — `400 "Reasoning is mandatory for this endpoint
+and cannot be disabled."`, 4 models of 4 — and takes its lowest listed effort: on
+`google/gemini-3.5-flash` that is 0 reasoning tokens and $0.0000675 where the default
+depth is 277 and $0.00256. An effort the entry does not list is accepted (4 of 4), so the
+list describes and does not validate. `GET /model/{slug}` is 2 148 bytes and resolves
+`:nitro` / `:floor`, which the list does not carry. `deepseek/deepseek-r1` on the provider
+it was routed to delivered the whole reply as `reasoning` with no `content` in 2 runs of
+4 — the stream as sent, read outside the app. And a `user` message that is an image and
+nothing else gets `google/gemini-3.5-flash` to put its scratch text into the reply
+(`0The background…`, `_thought…`) or to answer nothing, 8 of 8; with a text part before
+the image, 8 clean of 8. The app never sends the bare form — every image it builds is
+labelled — so the label turned out to be load-bearing; it was met because a smoke's
+fixture had none.
+
+**Found on the way, and fixed.**
+- *The engine's facts survived a settings edit that flips no status* (research §9, A2 —
+  read there, not run): from `external` to a cloud the previous engine's window went on
+  deciding when compaction fires. The mode would have met it on every change of model.
+- *An answer of the engine that was replaced reached the screens.* `handle_budget_result`
+  sent the list of sampling fields before it looked at the answer's epoch; the memo
+  dropped the answer and the UI kept it. Harmless while the question was asked twice a
+  session; with every apply asking, the slower of two engines answers last.
+- *The `/continue` note waited for a catalogue in the gateway's own mode*, so the first
+  command after a switch was answered by the generic note.
+- *An address without a scheme was read as the gateway's when a `://` stood further
+  along* — `localhost:8080/v1?upstream=https://openrouter.ai/api/v1`. Found by the test
+  written against the function's own stated contract.
+- *The model list's request did not follow the switch.* It is made by another client
+  (`catalogue::fetch`) than the engine's, and carried neither header — while the switch's
+  description, and the privacy policy's first draft, said "every request". Found while
+  the policy was being written from the code; the code was brought to the sentence rather
+  than the sentence to the code, so there is one rule to state: on — every request to the
+  gateway, off — none.
+- *A refused key was worded by the whole error envelope* in the status line.
+- *An embedder's row ended `$0.000 out`* — 33 of 33: an embedder writes nothing to price.
+
+**Rejected / not built.** `524` is not added to `RETRYABLE_STATUSES`: it is in the
+gateway's description and was never met. The embedder's key is not checked — stage 2's to
+decide. Nothing of `reasoning_details` is sent back: the earlier review measured that no
+route needs it. `provider` and `cost` are recorded and not shown (F11). The one-sentence
+description of the app in `Cargo.toml`, the site's configuration and the package metadata
+still counts four clouds — it is a decision about the masthead, not a fact to correct.
+The site's home page and articles are left for the release's pull request: merged now,
+they would describe a mode the published 0.12.0 does not have.
+
+**Tests.** Unit tests next to the code, each checked against the mutation it guards —
+40 mutants of the client, the supervisor and the orchestrator, and 154 of the config, the sampling table, the dialect, the catalogue and the settings screen (the half a sub-agent wrote on a worktree of its own); none survived. Two things the mutation runs themselves taught. A runner that undid a
+mutation by swapping the replacement back met one that **deleted** a line — the empty
+string "occurs" everywhere — refused inside a `finally`, and left the file mutated; it
+showed only as an unexpected ` M`. The runner keeps the file's text and writes it back
+now, and checks every anchor of the plan before the first mutation. And a test that waits
+for an event without a bound does not fail under the mutation it guards, it **hangs** —
+the run stopped there for half an hour; the wait is bounded now (the clock is paused, so
+the bound costs nothing). The live smokes are `gateway_live_tests` in `shared/api/openai` and
+in the orchestrator's tests, declared by `MINDFORK_OPENROUTER_KEY`.
+
+**Smoke — GO** (2026-09-29; the gateway with the user's key, and for the switch a local
+llama.cpp b11234, CPU, `gemma-3-4b-it` Q8_0, `-c 8192 --jinja`; Windows 11):
+- **The switch**, on the production supervisor
+  (`a_chat_moves_to_the_gateway_and_back_in_one_session_live`), three times — through
+  `anthropic/claude-haiku-4.5`, `google/gemini-3.5-flash` and `qwen/qwen3.6-27b`. On the
+  local server: no sampling list, 4 slots, "Paris". One field of the config changes: the
+  gateway's list lands — 12 fields for Haiku, 12 others for Gemini, 19 for Qwen, none of
+  them llama.cpp's — no slots, "Paris", and the message records `Amazon Bedrock` /
+  `Google` / `Phala` and a cost. Back: the list is gone by an event that says so, 4 slots,
+  "Paris". Both sections are in the saved settings. **The first run was red**, and
+  rightly: the test took the first event of each kind for the answer, and sent its message
+  while the mode was still `Connecting` — which the app refuses.
+- **A refused key** (`a_refused_key_is_the_chats_status_live`): the status is
+  *"OpenRouter refused the API key: User not found."* before any message, and a message
+  sent anyway is refused with the same words.
+- **`/continue`** (`continue_in_the_mode_follows_the_route_table_live`), both arms:
+  `anthropic/claude-haiku-4.5` cut at "The capital of France", announced continuable,
+  resumed with " is Paris."; `google/gemma-4-31b-it` cut at the same place, announced not
+  continuable, refused with the gateway's note.
+- **The client** (`shared::api::openai::gateway_live_tests`, nine smokes), on the three
+  families: thoughts, the answer and who served (`qwen/qwen3.6-27b`: 1 263 characters of
+  thoughts, then 391; `google/gemini-3.5-flash` the same); a tool call and its result
+  (48213 read back by Haiku, Gemini and Qwen); **a muted turn** — through the mode 0
+  reasoning tokens and $0.0000765, through `external` the refusal, the re-send and 307
+  tokens at $0.0028, the control arm; a mandatory model with no list answered; a tool's
+  image seen with the control arm blind (Haiku, Qwen; Gemini once the fixture was
+  labelled); a `:nitro` slug with its model's facts where `external` has none; the key
+  judged; the three catalogues — 384 entries for the account, 387 public, 33 embedding
+  models, a window on every one; and embeddings through `baai/bge-m3` — 1024 wide, unit
+  length, the same text to the same place.
+- **The app itself** (`tools/console_probe.py --scenario gateway`, a copy of the binary
+  on a scratch data root whose settings name the mode and the key's variable): a question
+  typed into the chat is answered "Paris." with its thoughts folded above; the settings
+  show the mode, the provider's rows and the switch; `Enter` on the model row lists 384
+  models with their windows and prices; the key is in neither the log nor the settings.
+
+**Docs.** spec §3.4, §6.1, §6.4, §6.7, §8.1–§8.2, §9.10, §11.6, §12.2, §13.4; architecture §1, §3–§7, §12; ADR 0004 (the status list); install.md §3, §3.2 (the mode) and §7.1 (its smokes); the manual; README; PRIVACY.md and its translation, with the installer's pages and the site's page regenerated from them; CHANGELOG (Added, Changed, Fixed, **Data**); the roadmap; lessons §2, §3 and §9; the research document's §7 and §11; the container lab's seed and its key. Two statements the documents made before this and the code does not bear out were corrected on the way: install.md had `external` sending `repetition_penalty`, which it offers and does not send, and architecture.md put both schemas at 2.
+
+**The quality gate, on the first push: red, twice over.** *Reliability*: the key
+check's loop ended in an unconditional `return`, with its one `continue` inside a
+`select!` — read by the analyzer as a loop that runs once (`rust:S1751`), and by a
+person not much better. It is two functions now: `key_verdict` asks `while` nothing
+answers, the task maps the verdict to a status. *New-code coverage, 77.3 % against 80*:
+computed locally from the same report CI makes (`cargo llvm-cov --lcov`, the lines
+`git diff -U0` adds, their intersection), 352 of the 403 uncovered lines were one file —
+the client's live smokes. The coverage report leaves out what it takes for a test file
+by its path, a `tests/` directory or a name ending in `tests.rs`; `gateway_live.rs` was
+neither, so nine `#[ignore]` smokes were production code at 0 %. Renamed
+`gateway_live_tests.rs`, which is what it is. The production lines by themselves stood
+at 96.5 %, and the 51 they were short of were read rather than waved through: the
+switch reaching impersonation and the embedder, and the catalogue's outage — asked
+about again, where a `404` is kept — had no test, and have one each now, with the
+mutants that go with them. 97.9 % after. Three maintainability findings went with
+them: a wildcard import in a test file whose name does not start with `test`, and two
+literals the console probe's new scenario repeated a third and a fourth time.
+
+**Gates**: fmt / clippy / test green — **3674 unit tests, 214 `#[ignore]`** (+72 unit tests, +12 live smokes).
+
+### Post-M9: embeddings through the gateway — stage 2 of the OpenRouter mode (done)
+
+**What.** Stage 2 of [docs/research/openrouter-mode.md](../research/openrouter-mode.md)
+(§7, fork F8) — and built, as the fork said, for every embedder rather than for the
+gateway's: requests of a bounded size, another attempt for a cloud when the failure is
+one that passes, the gateway's key asked about before the embedder is called ready. The
+go/no-go is the switching the track is about: **an index built on a local `bge-m3`
+answers a query the gateway embedded, and no reindex is offered.** Two defects stood
+between the plan and that sentence, and both are fixed here.
+
+**Measured first** (research §12.1). How many inputs one request takes, by sending more
+until the endpoint refused: Gemini's OpenAI-compatible endpoint **100**, and so two of the
+gateway's 33 embedding models, which are Gemini's; DeepInfra 1024; OpenAI 2048. `rag_add`
+embeds every chunk of its text in one request — so a text of more than a hundred chunks
+could not be added on a Gemini embedder at all, on Google's own endpoint, before any
+gateway. The plan had called the batch cap a precaution; it was a fix.
+
+**Built.**
+- `shared/api/embed_policy.rs`, two decorators over `Embedder`, stacked by the supervisor
+  as `BatchedEmbedder { RetryEmbedder { the client } }` — the split outside, so a part
+  that failed is asked for again by itself and the parts that answered are not.
+  - `BatchedEmbedder`: at most `MAX_INPUTS` = **64** texts a request, a `const` assertion
+    beside the number holding it under a hundred. Parts go one after another and come
+    back as one list in the order given. **A part that answers a vector short is an
+    error**, in a single request as much as in a part: vectors are matched to texts by
+    position, and a shorter answer would shift every vector after it onto its
+    neighbour's text.
+  - `RetryEmbedder`: the chat retry's policy (`RetryPolicy::decide`, opened to the module)
+    and the chat retry's verdict (`EngineError::is_transient`). Simpler in one way that
+    matters — an embedding request has no commit point, it answers whole or fails whole.
+- `app/supervisor.rs`: every embedder behind the cap; the clouds' — OpenAI, Gemini, the
+  gateway — behind the retry as well. The gateway's is `Connecting` until `GET /key`
+  answered (`spawn_key_check`, the chat engine's own), so a refused key is the slot's
+  status from the moment the engine is applied. The status withholds nothing — an
+  embedder is called whatever its chip says, in every mode — so a tool that embeds on
+  a refused key is still answered by the refusal; what changed is that the user was
+  told first.
+- `app/orchestrator`: `EngineManager::apply_embed` takes the embedder's **dress** —
+  `EmbedGuard { PrefixedEmbedder { … } }`, built by `Orchestrator::embedder_dress` — as
+  an argument.
+- `features/tools/rag.rs`: `rag_search` asks whether the base is stale after the query
+  was embedded as well as before.
+
+**The two defects.**
+- *The guard and the convention were lost on the first in-session change of the
+  embedding settings* (research §9, A1 — read there, not run). Start-up wrapped the
+  embedder; a settings edit and the relaunch of a dead managed server installed what the
+  supervisor built as it was. Until the restart: no `query:`/`passage:` markers, no check
+  that the stored vectors belong to the model now answering. The go/no-go could not be
+  met without fixing it — "no reindex was offered" says nothing from a guard that was
+  not there — and it is fixed by construction: the wrapping is an argument of the one
+  function that installs, so a caller that leaves it out does not compile.
+- *The search that notices a change of model ran against the stale index.* Found by the
+  live control arm: after the switch to a model of the same width that is another model,
+  `rag_search` answered "5 passages found", with the notice of the change beside it. The
+  tool looked whether the base was stale and *then* embedded the query; the guard checks
+  on the first request an embedder serves, which was that one. Attachments were never
+  exposed — their search filters by generation in SQL; the knowledge base relies on the
+  flag.
+
+**Rejected / not built.** No retry for `external` or `managed` embedders, where the chat
+retry does apply: the memory tools embed several times in a turn, and against a server of
+the user's own that is down three attempts are three seconds of waiting per call on a
+server nobody started. No `input_type` (F8, on demand: two of eight models honour it). No
+sorting of an answer by its `index`: every answer measured came in order, and Gemini
+leaves the first `index` out. No notice in the feed when an embedding is retried — it is
+logged; a chat turn shows its wait because a person is watching it.
+
+**Tests.** Unit tests next to the code, each checked against the mutation it guards —
+16 mutants, none survived. The decorators against a scripted embedder that keeps
+what it was asked (the sizes of the requests are what a split is judged by, their count
+what a retry is), on a paused clock so that the waits are asserted to the second. The
+supervisor's stack over a real socket: `429` then the vectors is an answer for a cloud
+and the gateway, a `503` from the user's own server is asked once, 65 texts are two
+requests on either. The dress by what reaches the embedder — the marker on the text and
+the guard's canary — on all three roads.
+
+**Smoke — GO** (2026-09-29; the gateway with the user's key, Google's endpoint with
+`GEMINI_API_KEY`, a local llama.cpp b11234 on the CPU serving `bge-m3-Q8_0.gguf`
+`--embeddings -c 8192`; Windows 11). `cargo test gateway_live_embed -- --ignored`:
+- `an_index_built_locally_answers_a_query_embedded_by_the_gateway_live` — five passages
+  indexed locally; the embedder moved to `baai/bge-m3` by an edit; *"Which city is the
+  capital of France?"* finds the passage at L2 0.717 (the runner-up 1.164); no notice,
+  the same generation, the base not stale; **the canary, local against the gateway,
+  0.999491** with the floor at 0.999. A passage added through the gateway is found by the
+  gateway and, moved back, by the local model. **Control**: the same edit to
+  `intfloat/multilingual-e5-large` is said once, retires the generation, marks the base
+  stale, and the search refuses. **Red before it was green**: the control's last
+  assertion — that is the second defect above.
+- `a_long_text_is_added_through_the_gateway_live` (`google/gemini-embedding-2`) and
+  `a_long_text_is_added_through_gemini_live` (`gemini-embedding-001`) — 131 chunks added,
+  the planted fact found; the bare client, given the same chunks at once, refused with
+  *"at most 100 requests can be in one batch"* by both.
+- `a_refused_key_is_the_embedders_status_live` — *"OpenRouter refused the API key: User
+  not found."* before anything is embedded.
+- The retry has no live arm: a `429` cannot be asked for.
+- **The app itself** (`tools/console_probe.py --scenario gateway`, extended): both of the
+  mode's chips ready in the status line — `● chat  ● emb` — and `/rag add notes.txt`
+  answered *"RAG: indexing finished — files: 1, chunks: 1"* through the gateway's
+  embedder.
+
+**Docs.** spec §3.4, §6, §9.5, §9.7; architecture §3, §5, §9; install.md §3.2, §7.1;
+PRIVACY.md and its translation (the embedding engine asks `GET /key` too; a text may
+reach a cloud more than once), with the derived pages regenerated; CHANGELOG (Added,
+four Fixed); the roadmap; lessons §8; research §7, §12; the RAG journal, for the two
+defects that are its area's.
+
+**Gates**: fmt / clippy / test green — **3693 unit tests, 218 `#[ignore]`**
+(+19 unit tests, +4 live smokes).
+
+### Post-M9: speech through the gateway — stage 3 of the OpenRouter mode (done)
+
+**What.** Stage 3 of [docs/research/openrouter-mode.md](../research/openrouter-mode.md)
+(§7, fork F9): the speech slot gets the mode the other three slots have — one client, the
+audio format negotiated, the voice chosen from a list. The go/no-go is two sentences and
+both are about the **text**: a model that takes raw samples only and a model that takes
+MP3 only are each heard back saying what they were given, and a model at 44.1 kHz plays
+at its own rate. The second sentence failed on its first run, in a place the plan did not
+name — the player's decoder — and that defect was every mode's.
+
+**Measured first** (research §13.1), where the matrix of §4.4 had left a question:
+- the gateway's own filter, `?output_modalities=speech`, works on the account's list as
+  on the public one — 21 entries either way — so the picker's rule of stage 1 (the
+  account's list with a key, the public one without) holds for this slot unchanged;
+- the route takes `pcm` and `mp3` and refuses anything else from its schema, before a
+  model is asked. `external` asks a server for `wav`: **there was no way to speak through
+  this gateway before this stage**;
+- seven of eight models tried without a voice refuse with a sentence that says so; the
+  eighth lists none and speaks;
+- **the catalogue's price has no unit**. Fifty characters through
+  `x-ai/grok-voice-tts-1.0` cost fifty times its `pricing.prompt` on the gateway's own
+  record of the request — a price per character — while Gemini's speech entries are
+  priced per token.
+
+**Built.**
+- `shared/config.rs`: `TtsMode::OpenRouter`, written `openrouter`, third in the cycle —
+  the clouds, then the server of the user's own — and `TtsSettings::openrouter`, a section
+  with **no default model and no default voice**. The key is the provider's one key; the
+  variable the section may name joins the names removed from a model-driven child's
+  environment. No schema step: `tts.mode` is one of the four values F3 names, and no build
+  with schema 4 has been released.
+- `shared/tts/openai.rs`: a third constructor, `OpenAiTts::gateway`. The format is
+  `Format::Fixed` for the two modes that ask for one and `Format::Negotiated` for this
+  one: `pcm` first, and on a `400` that names `response_format` the other format, once.
+  **What is remembered is what the gateway did** (`FormatMemo`, by model) — so it is
+  learned both ways, and a model that stops taking the remembered format costs one
+  refused request. The memo is the **session's**: `Orchestrator::speech_gateway` hands
+  every command's clients the same one, since a speech client is built per command and a
+  memo inside it would pay the refusal with every `/tts`.
+- The answer is read from its **label**: `audio/pcm;rate=…;channels=…` (and `audio/L16`)
+  is raw samples at that rate and that many channels, anything else a container, no label
+  what was asked for. The body is never looked into — raw samples may begin `0xFFFF`,
+  which is an MP3 frame's first two bytes.
+- A refusal is said in the gateway's sentence, `error.message` out of its JSON; the
+  attribution headers follow the provider's switch; `instructions` is not sent — it is
+  not a field of this route, and the mode has no row for it.
+- `shared/api/catalogue.rs`: `CatalogueShape::OpenRouterSpeech`, `ModelRole::Speech`,
+  `ModelSlot::Speech`, and `CatalogModel::voices` — read leniently, as the rest of an
+  entry is: what is not a name costs that name, never the row.
+- `screens/settings`: the mode's rows, with the provider's switch closing them as under
+  the other three tabs. `Enter` on the model row lists the gateway's speech models; on
+  either voice row, the voices of the model named — **out of the same answer**, so one
+  request serves the three rows for a visit. A model that lists no voice, or a name typed
+  by hand, leaves the voice row the editor it was. A speech model's row says how many
+  voices it lists, and **names no price**.
+- The speech slot's `external` address row says a mode is needed when the address is the
+  gateway's. Not the other slots' sentence — that one ends *"this section keeps working
+  as it is"*, which for speech is false.
+
+**The defect.** `attempt to subtract with overflow`, in the MP3 demuxer, on MiniMax's
+first answer. Gapless playback — the player's default — trims what the first frame's
+`Info` tag says the encoder added and counts the frames by the same tag, and a speech
+server writes that tag before it knows how long the stream will be. Every model that
+answers an MP3 was then asked for one and decoded both ways (research §13.2): MiniMax's
+two count **no frames**, which is the overflow — a panic in a build that checks, a wrapped
+number in one that does not; Kokoro's counts half, and its sentence stopped at 2.35 s of
+4.78. The decoder is built without the trim. Entry of its own in
+[the tools journal](tools.md), whose area the player is.
+
+**Rejected / not built.** No `GET /key` for this slot (F6): nothing is applied — the slot
+has no engine and no status — and a key asked about when `/tts` is typed would be a
+second request in front of the one that says the same. No refusal up front for a missing
+voice: four models speak without one, and the gateway's sentence names what is missing.
+No retry: no speech provider has one, and a fragment that failed is a sentence the user
+hears missing either way. No list for the other three speech modes — OpenAI's catalogue
+says nothing of what a model does, Gemini's calls its speech models chat models. No
+sorting of the voices, no filter by language: the catalogue publishes names and nothing
+about them. No `catch_unwind` around the decoder: the panic hook is the terminal's, and a
+caught panic would still run it over the interface.
+
+**Tests.** Next to the code, each checked against the mutation it guards — 48
+mutants, and none survives. One did at first — the mode, in what a speech answer is
+filed under — and got the assertion it lacked; and one line fell to the pass itself, a
+write to the memo of what the memo already held. The client over a real socket, against a stub that answers from a
+script and keeps every request whole: the bodies are the gateway's own, and what is
+counted is the requests. The label as a table of fifteen rows, every one served with a
+body that begins as an MP3 frame does. The decoder against an MP3 of silence built in the
+test the way a streaming encoder writes one — a first frame that holds an `Info` tag and
+no audio — whose tag counts none of its frames, half of them, all of them: the panic is
+the library's own line, reproduced without a network.
+
+**Smoke — GO** (2026-09-29; the gateway with the user's key; Windows 11, a sound card).
+`cargo test gateway_live -- --ignored --test-threads=1` is 26 smokes now, ten of them
+this stage's. Every clip is transcribed back by `openai/whisper-large-v3-turbo` through
+the gateway's `/audio/transcriptions`, and the sentence is looked for in what was heard.
+- `a_model_that_takes_raw_samples_only_is_heard_back_live`
+  (`google/gemini-3.8-flash-lite-tts`) — asked once, 24 kHz mono, the English sentence and
+  the Russian one heard back word for word. Control: asked for `mp3` alone, the model
+  refuses.
+- `a_model_that_takes_mp3_only_is_heard_back_live` (`minimax/speech-2.8-turbo`) —
+  refused, asked again, answered; what is transcribed is **what the application's decoder
+  made of the container** — 32 kHz, 4.28 s — and the sentence is there to its last word.
+  **Red before it was green**: that is the defect above.
+- `a_model_at_44_khz_plays_at_its_own_rate_live` (`fish-audio/s1`) — 44 100 Hz in the
+  label and in the clip; through the sound card a clip of 3.44 s played in 3.53 s, where
+  at 24 kHz it would have taken 6.32.
+- `a_refused_key_is_said_in_the_gateways_words_live` — *"TTS: status 401 Unauthorized:
+  User not found."*; `the_gateways_speech_list_answers_live` — 21 models with a key and
+  without, 16 with voices.
+- **Through the application** (`gateway_live_speech`): `/tts` over a chat, to the sound
+  card. The MP3-only model in two voices — two engines on one memo — 8.04 s for two
+  sentences; the 44.1 kHz model with no voice set, 5.58 s; the raw-samples model, 6.72 s;
+  a model that needs a voice and has none is an error in the feed, in the gateway's
+  sentence, and the speech ends.
+- **The app itself** (`tools/console_probe.py --scenario gateway`, extended): `/tts`
+  lights `speaking` in the status line and it goes out with nothing said of a failure;
+  the Speech tab's rows, without one for instructions; 21 models, their voices counted
+  and no price beside them; the five voices of the model named.
+- **Not spoken**: the one model that answers raw samples in stereo
+  (`bytedance-seed/seed-audio-1-0`, 11–23 s a sentence). Its label is read by a unit
+  test, and the player is timed without a network
+  (`a_clip_lasts_what_its_rate_and_channels_say_live`): a second of audio at 24 kHz in
+  stereo played in 1.06 s, at 44.1 kHz mono in 1.07 s.
+
+**Docs.** spec §3.4, §11.6, §11.9, §12.2; architecture §3, §4, §6, §7, §12; install.md
+§3.2, §4.3, §7.1; the manual §1, §7; README; ADR 0009, an amendment; PRIVACY.md and its
+translation (§3.1, §3.4, §4 — what a speech request carries, that a fragment may be sent
+twice, that the lists carry no text), with the derived pages regenerated; CHANGELOG (Added,
+Fixed); the roadmap; lessons §9; research §7, §13; the tools journal, for the player's
+defect.
+
+**Gates**: fmt / clippy / test green — **3724 unit tests, 228 `#[ignore]`**
+(+31 unit tests, +10 live smokes: nine of the gateway's, one of the player's).
+
+### Post-M9: a video through the gateway — stage 4 of the OpenRouter mode, track complete (done)
+
+**What.** Stage 4 of [docs/research/openrouter-mode.md](../research/openrouter-mode.md)
+(§7, fork F10), the last: `youtube_watch` watches through the Gemini models behind an
+OpenRouter key, for a user whose one key is the gateway's. The video slot gets its first
+provider selector. The go/no-go is two sentences — the video of 2026-09-08 is watched,
+with video tokens counted and a line of what is said in it; a link the gateway does not
+read is an error, not a description — and both are met. With it the mode serves all five
+slots, and every stage ships in one release, 0.13.0 (the user's decision).
+
+**Measured first** (research §14.1–§14.2), and two of the three measurements changed what
+was built:
+- **the account's list does not take the video filter.** `/models?input_modalities=video`
+  answers 85 entries; `/models/user?input_modalities=video` answers 461, the whole list.
+  It takes the speech filter (stage 3), so the two were not alike. The list behind the
+  video row is narrowed here, by the `input_modalities` each entry publishes;
+- **one more parameter in the address and the link is not a video.** `…watch?v=<id>` is
+  6 119 prompt tokens, $0.0019; the same with `&feature=share` or `&t=20s` is **551 337**
+  and **$0.165**, no video tokens among them, and one of the two answers was a description
+  all the same — of the page. Research §4.5 had met the zero; the bill is new. The tool has
+  always built the address from the video's id, so nothing of the application sent one —
+  and a smoke pastes such a link now, so that nothing ever does;
+- the body of an answer, whole, for the parser: `usage.prompt_tokens_details` with
+  `video_tokens` and `audio_tokens` apart.
+
+**Built.**
+- `shared/config.rs`: `VideoProvider` — `gemini`, the default, and `openrouter` — as
+  `video.provider`, and `video.openrouter`, a section with **no default model**. Gemini's
+  fields stay where a file has always held them, so the change is additive: no step of the
+  schema, and a file of before reads as it did. `VideoSettings::secret_key` is the
+  settings' own answer to whose key is read.
+- `shared/video/gateway.rs`, `GatewayVideo`: the link as a `video_url` part of a
+  non-streaming chat completion. It asks for **the lowest reasoning effort the gateway
+  lists for the model** — the model's own entry, asked once; an outage is not an answer
+  and is asked about again; a model that lists none is told nothing. It sends no bounds,
+  no resolution and no `processing`: the gateway carries none of the first two, and the
+  third moves the video to where the usage does not show it.
+- **What of an answer is believed**, in this order: the body's `error`, whatever the
+  status — one refusal arrives as a `200`; then the count of video tokens — **none, and
+  the answer is an error**, its text never looked at; then the text. A refusal is said in
+  the gateway's words and, where it passed a provider's on, in the provider's.
+- `shared/video`: the contract says whether a segment is the provider's to cut
+  (`VideoUnderstanding::reads_segments`), and one function builds the client the settings
+  name.
+- `features/tools/youtube.rs`: with a provider that reads the whole video the segment is
+  a sentence of the prompt, the ceiling measures the whole video, and the result says the
+  whole of it was read. Entry of its own in [the tools journal](tools.md).
+- `shared/api/catalogue.rs`: `CatalogueShape::OpenRouterVideo`, `ModelSlot::Video`, and
+  `ModelFacts::video` — what an entry takes, which a list is narrowed by and a row does
+  not show. The Gemini family opens the list: our measurement orders it and does not
+  narrow it.
+- `screens/settings`: the video group's *Provider* row and the rows of each provider —
+  through the gateway no row for the resolution, the provider's own switch closing the
+  group, the key row addressing the key of whoever watches — and the list behind the
+  gateway's model row, its rows unmarked for tools.
+- `app/orchestrator`: the client is built on the key of the provider the settings name
+  (`video_config`), and the registry that holds it is rebuilt by what it was built from —
+  the gateway's switch and the gateway's key while the slot speaks to the gateway, and
+  neither while it does not.
+- `shared/http_stub.rs`: the scripted server the speech tests had written for themselves,
+  moved out for both clients' tests to stand on.
+
+**Rejected / not built.** No guard in the client against an address with parameters: the
+tool builds the address, and a second normaliser in the layer below would be a second
+opinion about what a YouTube link is. No retry: a video is minutes of somebody's money,
+and a failure is said. No clip for a video of unknown length — the gateway takes no bound
+to clip by — so it is refused, where the native provider's is clipped. No default model.
+No list for Gemini's own provider: its catalogue says nothing of video. No section for
+Gemini: it would have been a rename, and a step of the schema, for nothing a user would
+see. The knobs of F11 — the provider pinned, the cost shown — stay on demand.
+
+**Tests.** Next to the code, each checked against the mutation it guards — 58
+mutants, and none survives. Two did at first — a hint that named the other provider and
+still differed from its neighbour's, and the provider in what a video answer is filed
+under — and each got the assertion it lacked. The documents' author found a third thing by
+reading: a limit reached on the catalogue (`429`) was remembered as the model's answer,
+where an outage was not.
+The client over a real socket, on the bodies the gateway answered with: the answer with
+551 337 prompt tokens and no video among them is one of them, and what the test asserts
+is that not a word of its description reaches the caller. The length gate as a table of
+seven rows, each judged twice — by a provider that cuts segments and by one that reads
+the whole video.
+
+**Smoke — GO** (2026-09-29; the gateway with the user's key; YouTube for the video's
+title and length; Windows 11). `cargo test gateway_live -- --ignored --test-threads=1` is
+34 smokes of the mode now, eight of them this stage's. The video is one no model can
+describe from memory: 67 seconds, published 2026-09-08.
+- `a_video_is_watched_through_the_gateway_live` — 4.4 s; *"This is the moment where we
+  should all start believing again. Now, bound for the moon. America is returning to the
+  moon to build a moon base."*
+- `a_link_the_gateway_does_not_read_is_an_error_not_a_description_live` — a `200` from
+  the gateway, and the client's *"answered without reading the video — no video tokens
+  among the 0 prompt tokens it counted"*. The link is `https://example.com/`, at $0.000005;
+  the form of the same defect that costs $0.165 is not what a gate sends every time.
+- `a_video_that_is_not_there_…` — *"502 Bad Gateway: Provider returned error: The caller
+  does not have permission"*; `a_refused_key_…` — *"401 Unauthorized: User not found."*;
+  `the_gateways_video_list_answers_live` — 72 without a key, 70 with one, out of 85 and
+  461 sent; Gemini opens both.
+- **The tool** (`features::tools::gateway_live_tests`): a link pasted with `&t=20s&feature=share`
+  is watched — the header YouTube gave, a description, a transcript of twelve lines from
+  the video's first words; a segment, 0:20–0:40, named in words — the note that the whole
+  video was read, and a transcript of three lines, at 0:26, 0:29 and 0:38; the video under
+  a ceiling of one minute, thirty seconds of it asked for, refused in half a second with
+  nothing spent.
+- **The app itself** (`tools/console_probe.py --scenario gateway`, extended): the search
+  finds the video group; it names the provider and has no row for the resolution; the
+  model row lists 70 models, the Gemini family first, none marked for tools.
+
+**Docs.** spec §3.4, §9.9, §11.6, §12.2, §13; architecture §3, §4, §6, §7, §8, §12;
+install.md §3.2, §4.4, §7.1; the manual §1, §6, §8; README; PRIVACY.md and its translation
+(§3.1, §3.3, §4, §5 — what a video request carries, the question about the model, the
+list behind the model row), with the derived pages regenerated; CHANGELOG (Added, Data);
+the roadmap, where the track is closed; lessons §9; research §7, §14; the tools journal,
+for the tool's part.
+
+**Gates**: fmt / clippy / test green — **3751 unit tests, 236 `#[ignore]`**
+(+27 unit tests, +8 live smokes). The screenshots of the settings were redrawn: the
+tools' section counts a row more.

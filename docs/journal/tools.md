@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (83)
+## Entries (85)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -95,6 +95,8 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a chart's line no longer says it was shown to a model that takes no images (done)
 - Post-M9: safe defaults 2a — the file tools need a root and never reach the app's own folders (done)
 - Post-M9: safe defaults 2b — the sandbox's network is public-only, and model-driven children lose the keys (done)
+- Post-M9: a streamed MP3, and a decoder that trusted its first frame (done)
+- Post-M9: `youtube_watch` with a provider that reads the whole video (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -5537,3 +5539,108 @@ entries above).
   answered `IndentationError` before reaching the network — a test that would have "passed"
   a broken sandbox by never getting there.
 - **Gates**: fmt / clippy / test green — **3288 unit tests, 188 `#[ignore]`**.
+
+### Post-M9: a streamed MP3, and a decoder that trusted its first frame (done)
+
+**What.** Found by stage 3 of the OpenRouter mode
+([the engine journal](engine.md), research
+[openrouter-mode.md](../research/openrouter-mode.md) §13.2), and not the gateway's: the
+player decoded a container with the library's default, which is gapless playback, and an
+MP3 that a speech server **streams** carries a first frame that gapless playback cannot
+be given.
+
+**The defect.** The first frame of an MP3 may hold no audio but an `Info` tag: how many
+frames follow, and how many samples the encoder added in front and behind. Gapless
+playback trims by it. A server that streams writes the tag before the stream — so the
+count is what it knew then. Measured on the twelve of the gateway's speech models that
+answer an MP3, each decoded both ways:
+- MiniMax's two models count **no frames**. The demuxer computes the length as the frames
+  times their size, less the delay and the padding — less than nothing. In a build that
+  checks for overflow that is a panic, `attempt to subtract with overflow`, inside the
+  speech task; in a release build the number wraps.
+- Kokoro's counts about half of them: the clip was 4.78 s and the decoder ended it at
+  2.35, mid-sentence, with no error.
+- Two more differ by the trim alone, 48 and 66 ms; seven write no tag, or a true one.
+
+Until this stage the only container the application asked anybody for was `wav`, of an
+`external` server, where there is no such tag. But the player plays what it is given, and
+nothing holds a server to the format it was asked for.
+
+**The fix.** `shared/tts/playback.rs`, `decoder`: built by the library's builder with
+gapless playback off. A clip keeps the encoder's padding — tens of milliseconds of
+silence, in speech.
+
+**Rejected.** Catching the panic: the panic hook is the terminal's, and it runs for a
+caught panic too — over the interface. Decoding a clip whole before it is queued, to move
+the decoder off the audio thread: it would not have helped, for the same reason, and costs
+the memory of the clip in samples. Repairing the tag: the frames are there to be counted,
+and with the trim off nobody reads the count.
+
+**Tests.** `a_streamed_container_is_played_whole_whatever_its_tag_says`: an MP3 of silence
+built in the test as a streaming encoder writes one — MPEG-1 Layer III, mono, 44.1 kHz; a
+first frame with an `Info` tag and an encoder's delay in it — whose tag counts none of its
+eight frames, four of them, all eight, and one of forty. Each decodes to its frames times
+1152 samples. With the trim on the first row is the library's panic at the library's own
+line, and the second a clip of half its length — the mutation the test was checked
+against. `what_cannot_be_decoded_is_an_error`: JSON, zeros, and a container cut off inside
+its first frame.
+
+**Smoke — GO** (2026-09-29): the MP3-only model's clip, through this decoder, transcribed
+back to its last word; and played by `/tts`, in two voices. The engine journal has the
+run.
+
+### Post-M9: `youtube_watch` with a provider that reads the whole video (done)
+
+**What.** Stage 4 of the OpenRouter mode ([the engine journal](engine.md), research
+[openrouter-mode.md](../research/openrouter-mode.md) §4.5, §14) gave the video slot a
+second provider, and the second one differs from the first in what the tool had taken for
+granted: it cuts no segment. The gateway carries no bounds — four spellings tried, none
+honoured — so whatever part is asked for, the whole video is read and charged.
+
+**Built.** The contract says which kind a provider is
+(`VideoUnderstanding::reads_segments`, `true` unless a client says otherwise), and the
+tool does three things differently for the other kind:
+- **the segment is a sentence of the prompt**, in front of the task — *"Consider only the
+  part of this video from 0:40 to 1:20, and ignore everything outside it"*, with a form
+  for a bound on either side — in the profile's language, as the prompt is;
+- **the ceiling measures the whole video**, since that is what is charged: a part of a
+  long video is no way under it. The refusal is its own and does not advise a segment —
+  the first provider's does, and here the advice would cost the same again. A video whose
+  length could not be read is refused as well: the first provider's is clipped to the
+  ceiling, and this one takes no bound to clip by;
+- **the result says what was read**: the whole video, which part was named, and that
+  another part of the same video costs the whole of it again — said to the model, which
+  is who asks for the next part.
+
+For the first provider nothing changed: the bounds are sent, the part is what is measured,
+and there is no sentence and no note.
+
+**The address** is the video's id and nothing else, as it has always been — and that
+turned out to be what the second provider cannot do without: one more parameter, and the
+gateway reads the page instead of the video, at ninety times the price (research §14.2).
+A test pastes a link with two.
+
+**Tests.** `the_whole_video_is_measured_where_a_segment_cannot_be_cut`: the gate as a
+table — the video's length, the part asked for, what each kind of provider does. The gate
+is judged directly: what `invoke` knows of a video's length it reads from YouTube, and a
+test that asserted a refusal through it would be asserting the network.
+`a_provider_without_bounds_is_told_the_segment_in_words` and
+`the_segment_is_said_only_where_it_cannot_be_cut`, on a provider of each kind.
+
+**Smoke — GO** (2026-09-29), through the gateway: a pasted link watched and transcribed;
+a part named in words and a transcript of that part, its stamps counted from the video's
+start; a video over the ceiling refused with nothing spent. The engine journal has the
+run.
+
+**Measured after, before the release (2026-09-30).** The research had three adjacent
+findings, and the question was whether any is owed to the release. Two were defects and
+the track fixed them on its way — the embedder's guard in stage 2, the engine's facts in
+stage 1; the research's table says so now. The third, *Input resolution* doing nothing on
+the default model, was measured again in every spelling the API takes, the 3.x
+generation's field on the part included: `gemini-3.5-flash` answers 1821 video tokens for
+the same 20 seconds to each of them, and `gemini-2.5-flash` refuses the part's field with
+a `400`. Nothing to fix — the application sends the documented field, and the hint has
+said where it does nothing since 2026-08-01. What the default model does read is the
+frame rate (`video_metadata.fps`): 66 tokens a frame and 25 a second for the sound, so
+half the frames is a third less. The gateway carries no frame rate either — three places
+tried. A frame rate as a setting is in the roadmap, on demand (research §15).

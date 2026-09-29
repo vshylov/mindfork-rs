@@ -199,15 +199,98 @@ impl SettingsScreen {
     /// so a row cannot address a different secret than the orchestrator resolves.
     /// See docs/research/api-key-storage.md, docs/history/external-api-key.md §5.2,
     /// docs/history/mcp-server-editor.md §9.
+    /// The video group: who watches, and the rows of that provider.
+    ///
+    /// Through the gateway there is no resolution row — the gateway carries no
+    /// such field — the model row has the gateway's list behind it, and the
+    /// provider's own switch closes the group, as under every tab whose mode is
+    /// the gateway (docs/research/openrouter-mode.md, fork F10).
+    fn video_rows(&self, loc: &'static Locale) -> Vec<FieldRow> {
+        let video = &self.config.video;
+        let provider = video.provider.cloud_provider();
+        let name = provider.display_name();
+        let gateway = video.provider == VideoProvider::OpenRouter;
+        let (model, key_env) = if gateway {
+            (&video.openrouter.model_name, &video.openrouter.api_key_env)
+        } else {
+            (&video.model_name, &video.api_key_env)
+        };
+        let said = |key: &'static str| loc.t(key);
+        let mut rows = vec![
+            row(
+                FieldId::VideoProvider,
+                said("ui.settings.field.video_provider"),
+                FieldKind::Choice(video.provider.label().to_string()),
+            )
+            .describe(said("ui.settings.desc.video_provider")),
+            text_row(FieldId::VideoModel, said("ui.settings.field.model"), model).describe(said(
+                if gateway {
+                    "ui.settings.desc.video_model_gateway"
+                } else {
+                    "ui.settings.desc.video_model"
+                },
+            )),
+        ];
+        if !gateway {
+            rows.push(
+                row(
+                    FieldId::VideoResolution,
+                    said("ui.settings.field.video_resolution"),
+                    FieldKind::Choice(video_resolution_label(video.media_resolution, loc)),
+                )
+                .describe(said("ui.settings.desc.video_resolution")),
+            );
+        }
+        rows.push(
+            num_field(
+                FieldId::VideoMaxMinutes,
+                said("ui.settings.field.video_max_minutes"),
+                video.max_minutes,
+            )
+            .describe(said(if gateway {
+                "ui.settings.desc.video_max_minutes_gateway"
+            } else {
+                "ui.settings.desc.video_max_minutes"
+            })),
+        );
+        rows.push(secret_row(
+            FieldId::VideoApiKey,
+            self.secret_field_present(FieldId::VideoApiKey),
+            &api_key_label(Some(name), loc),
+            if gateway {
+                "ui.settings.desc.video_api_key_gateway"
+            } else {
+                DESC_VIDEO_API_KEY
+            },
+            loc,
+        ));
+        rows.push(
+            text_row(
+                FieldId::VideoApiKeyEnv,
+                &api_key_env_opt_label(name, loc),
+                key_env,
+            )
+            .describe(said(if gateway {
+                "ui.settings.desc.video_api_key_env_gateway"
+            } else {
+                "ui.settings.desc.video_api_key_env"
+            })),
+        );
+        if gateway {
+            rows.extend(provider_wide_rows(Some(provider), &self.config, loc));
+        }
+        rows
+    }
+
     pub(super) fn secret_field_key(&self, id: FieldId) -> Option<SecretKey> {
         match id {
             FieldId::XApiKey => self.config.engine.secret_key(),
             FieldId::IxApiKey => self.config.impersonation_engine.secret_key(),
             FieldId::EApiKey => self.config.embed.secret_key(),
             FieldId::TtsApiKey => self.config.tts.secret_key(),
-            // The video slot has no mode of its own — only Gemini takes video
-            // (spec §9.9), so this row always addresses the Gemini key.
-            FieldId::VideoApiKey => Some(SecretKey::Provider(CloudProvider::Gemini)),
+            // The key of whoever watches: Gemini's, or the gateway's — the
+            // settings' own answer, like the rows above (spec §9.9).
+            FieldId::VideoApiKey => Some(self.config.video.secret_key()),
             // A search slot, like an external one, is its own address: these are
             // not inference providers and must never resolve through the
             // engine's key lookup (see `SecretKey::Search`).
@@ -276,7 +359,7 @@ impl SettingsScreen {
                     ServerMode::External => rows.extend(grouped(
                         loc.t("ui.settings.group.server"),
                         vec![
-                            text_row(FieldId::XUrl, "URL (external)", &x.external.url),
+                            external_url_row(FieldId::XUrl, &x.external.url, loc),
                             text_row(
                                 FieldId::XModelName,
                                 loc.t("ui.settings.field.model_opt"),
@@ -299,9 +382,9 @@ impl SettingsScreen {
                     ServerMode::OpenAi
                     | ServerMode::Gemini
                     | ServerMode::Claude
-                    | ServerMode::Grok => rows.extend(grouped(
-                        loc.t("ui.settings.group.provider"),
-                        cloud_rows(
+                    | ServerMode::Grok
+                    | ServerMode::OpenRouter => {
+                        let mut provider = cloud_rows(
                             x.cloud().zip(x.mode.cloud_provider()),
                             FieldId::XModelName,
                             FieldId::XApiKey,
@@ -309,8 +392,14 @@ impl SettingsScreen {
                             FieldId::XUrl,
                             self.secret_field_present(FieldId::XApiKey),
                             loc,
-                        ),
-                    )),
+                        );
+                        provider.extend(provider_wide_rows(
+                            x.mode.cloud_provider(),
+                            &self.config,
+                            loc,
+                        ));
+                        rows.extend(grouped(loc.t("ui.settings.group.provider"), provider))
+                    }
                 }
                 // Parallel sessions — the assistant engine only (spec §11.6): the
                 // value lives in the active mode's own section, and the slot
@@ -330,7 +419,8 @@ impl SettingsScreen {
                     ServerMode::OpenAi
                     | ServerMode::Gemini
                     | ServerMode::Claude
-                    | ServerMode::Grok => (
+                    | ServerMode::Grok
+                    | ServerMode::OpenRouter => (
                         x.cloud().map_or(1, |c| c.sessions),
                         x.cloud().map_or(1, |c| c.concurrent_calls),
                         None,
@@ -399,7 +489,7 @@ impl SettingsScreen {
                     ImpersonationMode::External => rows.extend(grouped(
                         loc.t("ui.settings.group.server"),
                         vec![
-                            text_row(FieldId::IxUrl, "URL (external)", &x.external.url),
+                            external_url_row(FieldId::IxUrl, &x.external.url, loc),
                             text_row(
                                 FieldId::IxModelName,
                                 loc.t("ui.settings.field.model_opt"),
@@ -422,9 +512,9 @@ impl SettingsScreen {
                     ImpersonationMode::OpenAi
                     | ImpersonationMode::Gemini
                     | ImpersonationMode::Claude
-                    | ImpersonationMode::Grok => rows.extend(grouped(
-                        loc.t("ui.settings.group.provider"),
-                        cloud_rows(
+                    | ImpersonationMode::Grok
+                    | ImpersonationMode::OpenRouter => {
+                        let mut provider = cloud_rows(
                             x.cloud().zip(x.mode.cloud_provider()),
                             FieldId::IxModelName,
                             FieldId::IxApiKey,
@@ -432,8 +522,14 @@ impl SettingsScreen {
                             FieldId::IxUrl,
                             self.secret_field_present(FieldId::IxApiKey),
                             loc,
-                        ),
-                    )),
+                        );
+                        provider.extend(provider_wide_rows(
+                            x.mode.cloud_provider(),
+                            &self.config,
+                            loc,
+                        ));
+                        rows.extend(grouped(loc.t("ui.settings.group.provider"), provider))
+                    }
                 }
                 rows
             }
@@ -474,7 +570,7 @@ impl SettingsScreen {
                     ServerMode::External => rows.extend(grouped(
                         loc.t("ui.settings.group.server"),
                         vec![
-                            text_row(FieldId::EUrl, "URL (external)", &e.external.url),
+                            external_url_row(FieldId::EUrl, &e.external.url, loc),
                             text_row(
                                 FieldId::EModelName,
                                 loc.t("ui.settings.field.model_opt"),
@@ -500,38 +596,38 @@ impl SettingsScreen {
                     ServerMode::OpenAi
                     | ServerMode::Gemini
                     | ServerMode::Claude
-                    | ServerMode::Grok => {
+                    | ServerMode::Grok
+                    | ServerMode::OpenRouter => {
                         let none = CloudSettings::default();
                         let c = e.cloud().unwrap_or(&none);
                         let name = e.mode.cloud_provider().map(CloudProvider::display_name);
-                        rows.extend(grouped(
-                            loc.t("ui.settings.group.provider"),
-                            vec![
-                                text_row(
-                                    FieldId::EModelName,
-                                    loc.t("ui.settings.field.model"),
-                                    &c.model_name,
-                                )
-                                .describe(loc.t(DESC_MODEL_NAME)),
-                                api_key_row(
-                                    FieldId::EApiKey,
-                                    self.secret_field_present(FieldId::EApiKey),
-                                    name,
-                                    loc,
-                                ),
-                                text_row(
-                                    FieldId::EApiKeyEnv,
-                                    &api_key_env_label(name, loc),
-                                    &c.api_key_env,
-                                )
-                                .describe(loc.t(DESC_API_KEY_ENV)),
-                                text_row(
-                                    FieldId::EUrl,
-                                    loc.t("ui.settings.field.base_url"),
-                                    &c.url,
-                                ),
-                            ],
-                        ))
+                        let mut provider = vec![
+                            text_row(
+                                FieldId::EModelName,
+                                loc.t("ui.settings.field.model"),
+                                &c.model_name,
+                            )
+                            .describe(loc.t(DESC_MODEL_NAME)),
+                            api_key_row(
+                                FieldId::EApiKey,
+                                self.secret_field_present(FieldId::EApiKey),
+                                name,
+                                loc,
+                            ),
+                            text_row(
+                                FieldId::EApiKeyEnv,
+                                &api_key_env_label(name, loc),
+                                &c.api_key_env,
+                            )
+                            .describe(loc.t(DESC_API_KEY_ENV)),
+                            text_row(FieldId::EUrl, loc.t("ui.settings.field.base_url"), &c.url),
+                        ];
+                        provider.extend(provider_wide_rows(
+                            e.mode.cloud_provider(),
+                            &self.config,
+                            loc,
+                        ));
+                        rows.extend(grouped(loc.t("ui.settings.group.provider"), provider))
                     }
                 }
                 // Independent of the mode: the input convention is a property of
@@ -574,7 +670,7 @@ impl SettingsScreen {
                 ];
                 let mut engine = match t.mode {
                     TtsMode::External => vec![
-                        text_row(FieldId::TtsUrl, "URL (external)", &t.external.url),
+                        speech_url_row(FieldId::TtsUrl, &t.external.url, loc),
                         text_row(
                             FieldId::TtsModelName,
                             loc.t("ui.settings.field.model_opt"),
@@ -605,7 +701,53 @@ impl SettingsScreen {
                         )
                         .describe(loc.t(DESC_EXT_API_KEY_ENV)),
                     ],
-                    _ => {
+                    // The gateway: the model and the voices have the
+                    // gateway's lists behind them, and there is no row for
+                    // instructions — not a field of its speech route, which
+                    // drops it with a `200` (docs/research/openrouter-mode.md
+                    // §4.4). The provider-wide switch closes the section, as
+                    // under every tab whose mode is the gateway.
+                    TtsMode::OpenRouter => {
+                        let c = &t.openrouter;
+                        let provider = t.mode.cloud_provider();
+                        let name = provider.map(CloudProvider::display_name);
+                        let mut section = vec![
+                            text_row(
+                                FieldId::TtsModelName,
+                                loc.t("ui.settings.field.model"),
+                                &c.model_name,
+                            )
+                            .describe(loc.t("ui.settings.desc.tts_model_gateway")),
+                            text_row(
+                                FieldId::TtsVoice,
+                                loc.t("ui.settings.field.voice"),
+                                &c.voice,
+                            )
+                            .describe(loc.t("ui.settings.desc.tts_voice_gateway")),
+                            text_row(
+                                FieldId::TtsUserVoice,
+                                loc.t("ui.settings.field.tts_user_voice"),
+                                &c.user_voice,
+                            )
+                            .describe(loc.t("ui.settings.desc.tts_user_voice")),
+                            api_key_row(
+                                FieldId::TtsApiKey,
+                                self.secret_field_present(FieldId::TtsApiKey),
+                                name,
+                                loc,
+                            ),
+                            text_row(
+                                FieldId::TtsApiKeyEnv,
+                                &api_key_env_label(name, loc),
+                                &c.api_key_env,
+                            )
+                            .describe(loc.t(DESC_API_KEY_ENV)),
+                            text_row(FieldId::TtsUrl, loc.t("ui.settings.field.base_url"), &c.url),
+                        ];
+                        section.extend(provider_wide_rows(provider, &self.config, loc));
+                        section
+                    }
+                    TtsMode::OpenAi | TtsMode::Gemini => {
                         let none = TtsCloudSettings::default();
                         let c = t.cloud().unwrap_or(&none);
                         let name = t.mode.cloud_provider().map(CloudProvider::display_name);
@@ -919,42 +1061,7 @@ impl SettingsScreen {
         }));
         rows.extend(grouped(
             loc.t("ui.settings.group.video"),
-            vec![
-                text_row(
-                    FieldId::VideoModel,
-                    loc.t("ui.settings.field.model"),
-                    &self.config.video.model_name,
-                )
-                .describe(loc.t("ui.settings.desc.video_model")),
-                row(
-                    FieldId::VideoResolution,
-                    loc.t("ui.settings.field.video_resolution"),
-                    FieldKind::Choice(video_resolution_label(
-                        self.config.video.media_resolution,
-                        loc,
-                    )),
-                )
-                .describe(loc.t("ui.settings.desc.video_resolution")),
-                num_field(
-                    FieldId::VideoMaxMinutes,
-                    loc.t("ui.settings.field.video_max_minutes"),
-                    self.config.video.max_minutes,
-                )
-                .describe(loc.t("ui.settings.desc.video_max_minutes")),
-                secret_row(
-                    FieldId::VideoApiKey,
-                    self.secret_field_present(FieldId::VideoApiKey),
-                    &api_key_label(Some(CloudProvider::Gemini.display_name()), loc),
-                    DESC_VIDEO_API_KEY,
-                    loc,
-                ),
-                text_row(
-                    FieldId::VideoApiKeyEnv,
-                    &api_key_env_opt_label(CloudProvider::Gemini.display_name(), loc),
-                    &self.config.video.api_key_env,
-                )
-                .describe(loc.t("ui.settings.desc.video_api_key_env")),
-            ],
+            self.video_rows(loc),
         ));
         rows.extend(grouped(
             loc.t("ui.settings.group.files"),

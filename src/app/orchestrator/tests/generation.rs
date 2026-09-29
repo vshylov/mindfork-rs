@@ -1108,6 +1108,8 @@ fn merge_continuation_appends_in_place_and_keeps_the_model_name() {
         sampling: Default::default(),
         mode: Default::default(),
         model: Some(model.into()),
+        provider: None,
+        cost_nanos: None,
         finish: Some(finish),
     };
     let mut seed = Message::assistant("Начало было длинным и обстоятельным");
@@ -1459,6 +1461,8 @@ async fn continue_refusals_answer_with_the_route_that_works() {
         sampling: Default::default(),
         mode: Default::default(),
         model: None,
+        provider: None,
+        cost_nanos: None,
         finish: Some(MessageFinish::Stop),
     });
     orch.chat_mut(chat_id).unwrap().push_message(done);
@@ -1549,6 +1553,8 @@ async fn continue_through_a_gateway_follows_the_route_table() {
         sampling: Default::default(),
         mode: Default::default(),
         model: None,
+        provider: None,
+        cost_nanos: None,
         finish: Some(MessageFinish::Cancelled),
     });
     chat.push_message(partial);
@@ -1606,6 +1612,71 @@ async fn continue_through_a_gateway_follows_the_route_table() {
         drain(&mut rx),
         (None, Some(true)),
         "Claude up to 4.5 continues through a gateway"
+    );
+}
+
+/// The gateway's own mode follows the same route table **without waiting for the
+/// catalogue**: `external` needs the answer to know it is speaking to a gateway,
+/// and this mode is one by name (docs/research/openrouter-mode.md §2.3). So the
+/// first command after a start is already answered by the slug — and refused
+/// with the gateway's note, not the one that says external engines continue.
+#[tokio::test]
+async fn continue_in_the_gateways_own_mode_needs_no_catalogue() {
+    use crate::entities::chat::Chat;
+    use crate::entities::message::{Message, MessageFinish, MessageMetadata};
+    use crate::entities::profile::Profile;
+    use crate::shared::config::ServerMode;
+
+    let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::default());
+    let (_d, mut orch, mut rx) = bare_orch_rx();
+    orch.engines.backend = Some(Arc::new(MockBackend::scripted(vec![])) as Arc<dyn EngineBackend>);
+    orch.engines.server_status = ServerStatus::Ready;
+    orch.config.engine.mode = ServerMode::OpenRouter;
+    orch.config.engine.openrouter.model_name = Some("qwen/qwen3.6-27b".into());
+    let mut chat = Chat::from_profile(&Profile::new("P", "sys"), "c");
+    let chat_id = chat.id;
+    chat.push_message(Message::user("a question"));
+    let mut partial = Message::assistant("A reply cut sh");
+    partial.metadata = Some(MessageMetadata {
+        sampling: Default::default(),
+        mode: ServerMode::OpenRouter,
+        model: None,
+        provider: None,
+        cost_nanos: None,
+        finish: Some(MessageFinish::Cancelled),
+    });
+    chat.push_message(partial);
+    orch.chats.push(chat);
+    orch.active_id = Some(chat_id);
+    let drain = |rx: &mut UnboundedReceiver<AppEvent>| {
+        let (mut note, mut started) = (None, None);
+        while let Ok(ev) = rx.try_recv() {
+            match ev {
+                AppEvent::Error(text) => note = Some(text),
+                AppEvent::GenerationStarted { continuation, .. } => started = Some(continuation),
+                _ => {}
+            }
+        }
+        (note, started)
+    };
+
+    assert!(!orch.endpoint_catalogued(), "nothing has answered yet");
+    orch.handle_continue();
+    assert_eq!(
+        drain(&mut rx),
+        (
+            Some(loc.t("ui.cmd.continue_unsupported_gateway").to_string()),
+            None
+        ),
+        "an open-weight route restarts, and the mode knows before the catalogue says so"
+    );
+
+    orch.config.engine.openrouter.model_name = Some("anthropic/claude-haiku-4.5".into());
+    orch.handle_continue();
+    assert_eq!(
+        drain(&mut rx),
+        (None, Some(true)),
+        "Claude up to 4.5 continues"
     );
 }
 
@@ -1970,5 +2041,81 @@ fn the_estimate_counts_the_tool_schemas() {
         with_estimate - bare_estimate,
         (json.len() as u64).div_ceil(4) + 4,
         "the block's bytes over four, plus one message overhead"
+    );
+}
+
+/// Fork F11 of docs/research/openrouter-mode.md, end to end: what the gateway
+/// said about a request — who served it, and for how much — is on the message
+/// that request produced, and a reply from an engine that says neither carries
+/// neither (the file stays as it was before the fields existed).
+#[tokio::test]
+async fn who_served_a_reply_and_what_it_cost_are_recorded_on_the_message() {
+    use crate::shared::api::contract::Served;
+    use crate::shared::config::{CloudSettings, EngineSettings, ServerMode};
+
+    async fn reply_through(chunks: Vec<ChatChunk>) -> (Message, String) {
+        let config = AppConfig {
+            engine: EngineSettings {
+                mode: ServerMode::OpenRouter,
+                openrouter: CloudSettings {
+                    model_name: Some("anthropic/claude-haiku-4.5".into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let backend = Arc::new(MockBackend::scripted(chunks)) as Arc<dyn EngineBackend>;
+        let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch_cfg(Some(backend), config);
+        let root = _d.path().to_path_buf();
+        let active = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+            .await
+            .unwrap();
+        let chat_id = match active {
+            AppEvent::ChatActivated { id, .. } => id,
+            _ => unreachable!(),
+        };
+        cmd_tx.send(AppCommand::SendMessage("hi".into())).unwrap();
+        wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
+            .await
+            .unwrap();
+        cmd_tx.send(AppCommand::Quit).unwrap();
+        handle.await.unwrap();
+
+        let reopened = Storage::open(Paths::with_root(&root)).unwrap();
+        let chat = reopened.json().load_chat(chat_id).unwrap().unwrap();
+        // Read as it is on disk, and a missing file fails here: an empty string
+        // would satisfy "contains neither key" without a reply ever being saved.
+        let file = std::fs::read_to_string(Paths::with_root(&root).chat_file(&chat_id.to_string()))
+            .expect("the chat file");
+        assert!(file.contains("Paris"), "the reply is in the file: {file}");
+        (chat.messages[1].clone(), file)
+    }
+
+    let (said, _) = reply_through(vec![
+        ChatChunk::Text("Paris".into()),
+        ChatChunk::Served(Served {
+            provider: Some("Amazon Bedrock".into()),
+            cost_nanos: Some(37_000),
+        }),
+        ChatChunk::Finished(FinishReason::Stop),
+    ])
+    .await;
+    let meta = said.metadata.expect("a metadata snapshot");
+    assert_eq!(meta.mode, ServerMode::OpenRouter);
+    assert_eq!(meta.model.as_deref(), Some("anthropic/claude-haiku-4.5"));
+    assert_eq!(meta.provider.as_deref(), Some("Amazon Bedrock"));
+    assert_eq!(meta.cost_nanos, Some(37_000));
+
+    let (silent, file) = reply_through(vec![
+        ChatChunk::Text("Paris".into()),
+        ChatChunk::Finished(FinishReason::Stop),
+    ])
+    .await;
+    let meta = silent.metadata.expect("a metadata snapshot");
+    assert_eq!((meta.provider, meta.cost_nanos), (None, None));
+    assert!(
+        !file.contains("cost_nanos") && !file.contains("\"provider\""),
+        "absent stays absent on disk: {file}"
     );
 }

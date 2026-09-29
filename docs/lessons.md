@@ -287,6 +287,11 @@ touch a test file, bound **every** stub a test joins, through one shared accept
 emits no note, so the red run sat for ten minutes instead of failing in eighteen
 seconds. The event a change *produces* is exactly the one its control arm will not:
 bound every wait for it, in the unit test as well as in the smoke.
+**A fifth**, and what it cost this time was a verdict: a test on a paused clock waited
+with bare `wait_for` for the status of a restart, its mutant made the restart never
+happen, and the run stopped there; killing the hung process to let the run go on
+recorded the mutant as *survived*, since a killed process prints no `FAILED`. On a
+paused clock a bound costs nothing — the timeout fires the moment the runtime is idle.
 — *engine failures stop being silent*, *a tool's images reach the model through a
 gateway*, *whether a gateway's model takes images comes from its catalogue*, *a chat
 whose history carries images, on an engine that takes none*.
@@ -623,9 +628,24 @@ once — 25 seconds a mutant instead of 150 — and there is one restore, from a
 copy, at the end. A mutant that cannot be an expression under a switch is rarer
 than it looks: a deleted statement is `if !mutant(N) { … }`, a flipped guard is
 `guard && !mutant(N)`.
+**The restore is from the text, never by the reverse replacement.** A runner that
+undid each mutant by swapping `new` back to `old` met a mutant that *deleted* a line:
+`new` was the empty string, which occurs everywhere, so the undo refused — inside a
+`finally`, which ended the run with the file mutated. Read the file before touching
+it and write that back; and check every anchor of the whole plan before the first
+mutant, so that one the formatter has since re-wrapped costs nothing.
 — *colour modes — the monochrome mode*.
 
 ## 3. Measure; do not assume
+
+**Write the user's document from the code, and treat a sentence that cannot be
+written as a finding.** The privacy policy's paragraph on two attribution headers was
+drafted as "every request carries them", which is what the switch's own description
+said; writing it from the code, the model list's request turned out to be made by
+another client and to carry neither. No test had asked. A document that promises
+something to a reader is a specification with an audience — the place to find that a
+claim is true of one call site and not of the next.
+— *OpenRouter as a provider of its own — stage 1*.
 
 **A measured fact about someone else's release has a date on it — and a check
 that cannot parse must not pass.** The download research measured, on
@@ -1855,6 +1875,27 @@ should reach (a whole drive, a project holding the data root): refuse by the res
 path, not by the root.
 — *safe defaults 2a*.
 
+**A wrapper that is a step callers take afterwards is a step one of them will skip.**
+The embedder was wrapped in its input convention and its model-change guard by the
+function that applies the embedding settings at start-up — two lines after the call
+that installs the embedder. A settings edit and a relaunch made the same call and not
+the two lines, so from the first change of the embedding settings to the restart the
+application ran on the bare client, and the guard was absent at the one moment it
+exists for. Nothing failed: a missing check is silent by nature. Make the wrapping an
+**argument** of the function that installs — then a caller that does not supply it does
+not compile — and test it on every road by what reaches the wrapped object, not by
+what the settings say.
+— *embeddings through the gateway — stage 2 of the OpenRouter mode*.
+
+**A lazy check can fire inside the operation that asked for its verdict.** The
+knowledge-base search looked whether the base was stale, then embedded the query, then
+searched. The check that marks the base stale runs on the first request an embedder
+serves — which was that query. So the base was sound at the top of the function and
+another model's at the bottom, and the one search that *noticed* the change was the one
+that ran against the stale index. Where a verdict is produced lazily, ask for it
+**after** the step that may produce it, or have that step return it.
+— *embeddings through the gateway — stage 2 of the OpenRouter mode*.
+
 ## 9. Live runs and model behaviour
 
 **A second turn that repeats the first turn's question tests the model's memory, not
@@ -2118,7 +2159,81 @@ the plotting area's colour, through `matplotlibrc` — asked in a follow-up with
 the answer could have come through, and close it.
 — *sandbox file exchange — stage 1* ([sandbox-file-exchange.md](history/sandbox-file-exchange.md) §10).
 
+**The first event of a kind is not the answer.** A live test of a switch between two
+engines read the engine's facts off the first `EngineSlots` and `EngineSamplingFields`
+it saw. The slot count is announced twice — as gone, when the engine is replaced, and
+as answered — and the engine is asked again on every flip of its status, so the test
+asserted on the announcement and then sent its message while the new engine was still
+`Connecting`, which the app refuses: no `Finished`, and a wait with no bound. Wait for
+the **state** — ready, and both facts said after it became ready — under a deadline
+that reports the last thing seen; and give a turn helper an arm for the error, since a
+refused turn ends with one.
+— *OpenRouter as a provider of its own — stage 1*.
+
+**A fixture the app would never send measures the fixture.** A smoke of a tool's image
+built the image without the label every image of the app carries, and on one model the
+reply came back with the model's scratch text in it, or empty — 8 of 8, and 8 clean of
+8 with the label. Nothing in the app was wrong; the smoke had been asking about a
+request the app does not make. It is the ordering entry of §2 met on a live run: build
+the fixture through what production builds it with, or state in the smoke which
+property of production it leaves out. (The finding itself was worth keeping — the
+label turned out to be load-bearing, and is documented where it is built.)
+— *OpenRouter as a provider of its own — stage 1*.
+
+**"Heard back" has to be said of what the application plays, not of what the server
+sent.** The research for the speech stage transcribed every model's answer with a
+speech-to-text model and found eighteen that answer an MP3. What was transcribed was the
+gateway's bytes. The application's decoder had seen none of them: on the first it saw it
+panicked, and another it would have cut at half its length without a word — both from one
+default of the library, which trusts a number a streaming server writes before it knows
+it. A check that goes around the application's last step proves the service. Put that
+step in the loop: the smoke now transcribes **what the decoder made of the container**,
+and the sentence has to be there to its last word — "a clip came back" and "the clip
+decodes" would both have passed on the one that was cut.
+— *speech through the gateway — stage 3 of the OpenRouter mode*.
+
+**What the wrong request costs is a measurement too — make it before the request
+goes into a gate.** A probe's negative arm — a YouTube address with a time in it, to see
+the gateway not read it as a video — was answered as expected, with no video tokens, and
+with 558 136 prompt tokens of the page instead: seventeen cents for one request, ninety
+times the price of watching the video. A smoke built on it would have spent that on every
+run of the gate. The gate sends the cheap form of the same defect (a link to a page of a
+few bytes: a `200`, no video tokens, $0.000005), and the expensive one is a recorded
+measurement and a unit test on the body that came back. Before a negative arm becomes
+permanent, read its bill, not only its verdict.
+— *a video through the gateway — stage 4 of the OpenRouter mode*.
+
+**A filter one list takes, its sibling may not.** The gateway's public list takes
+`?input_modalities=video` — 85 entries — and so, by stage 3's measurement, its account
+list takes `?output_modalities=speech`. The account list asked for video answered 461: the
+whole list, the filter ignored with a `200`. Read from the code, the two requests were one
+pattern; a picker written from the pattern would have offered every chat model as a model
+that watches. A parameter that is ignored is not refused — count what came back.
+— *a video through the gateway — stage 4 of the OpenRouter mode*.
+
+**A reply can arrive whole and in the wrong channel.** One reasoning model, on the
+provider a gateway routed it to, delivered its entire reply — the answer included — as
+`reasoning`, with no `content` and `finish_reason: "stop"`, in 2 runs of 4. Read the
+raw stream outside the app before blaming the client, and do not let a smoke's
+assertion depend on a split the provider makes: pick the model whose split was
+measured, and say in the smoke why.
+— *OpenRouter as a provider of its own — stage 1*.
+
 ## 10. CI and infrastructure
+
+
+**A test file the coverage report does not recognise is production code to the gate.**
+`cargo llvm-cov` leaves out of its report what it takes for a test file by its path — a
+`tests/` directory, a name ending in `tests.rs` — and counts every other file compiled
+into the test binary. A file of `#[ignore]` live smokes named `gateway_live.rs` was
+therefore 352 executable lines at 0 %, and took a branch whose production lines were
+96.5 % covered to 77.3 %, under the gate's 80. The orchestrator's live smokes had never
+shown it: they live under `tests/`. Name a test file as one. And when the new-code
+figure is red, **compute it before writing a test for it**: the same LCOV report CI
+makes, the lines `git diff -U0` adds against the base, their intersection — ten minutes,
+and it names the lines, where the dashboard gives a percentage. Here it said that one
+rename was the whole of the gate, and that fifty-one lines were worth reading anyway.
+— *OpenRouter as a provider of its own — stage 1*.
 
 **A failed `needs` dependency skips the dependent job regardless of its `if`.** A
 docs-only gate reading `!= 'true'` still skipped the test job when the classifier job

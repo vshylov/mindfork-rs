@@ -515,15 +515,40 @@ impl YoutubeWatch {
     /// that is what gets measured against the ceiling. `Err(text)` — the
     /// refusal; `Ok((end_secs, note))` — the (possibly clipped) end bound plus
     /// an optional note about the clip.
+    ///
+    /// `whole` — the provider reads the whole video whatever the bounds say
+    /// ([`VideoUnderstanding::reads_segments`]). Then the **video** is what is
+    /// charged and what is measured, a segment changes nothing about it, and a
+    /// video whose length is unknown cannot be clipped to the ceiling — it is
+    /// refused rather than watched at a price nobody has seen.
     fn length_gate(
         &self,
         loc: &Locale,
         duration: Option<u32>,
         start: Option<u32>,
         end: Option<u32>,
+        whole: bool,
     ) -> std::result::Result<(Option<u32>, Option<String>), String> {
         let mut end_secs = end;
         let mut note: Option<String> = None;
+        if self.max_minutes > 0 && whole {
+            let cap = self.max_minutes * 60;
+            let minutes = self.max_minutes.to_string();
+            return match duration {
+                Some(d) if d > cap => Err(loc.tf(
+                    "tool.youtube_watch.result.too_long_whole",
+                    &[
+                        ("length", &format_duration(d)),
+                        ("cap", &format_duration(cap)),
+                    ],
+                )),
+                Some(_) => Ok((end, None)),
+                None => Err(loc.tf(
+                    "tool.youtube_watch.result.unknown_length_whole",
+                    &[("minutes", &minutes)],
+                )),
+            };
+        }
         if self.max_minutes > 0 {
             let cap = self.max_minutes * 60;
             match (duration, start, end) {
@@ -547,6 +572,24 @@ impl YoutubeWatch {
             }
         }
         Ok((end_secs, note))
+    }
+}
+
+/// The segment in words, for a provider that takes no bounds: a sentence of
+/// the prompt. `None` — the whole video was asked for.
+fn segment_in_words(loc: &Locale, start: Option<u32>, end: Option<u32>) -> Option<String> {
+    let at = |secs: u32| format_duration(secs);
+    match (start, end) {
+        (None, None) => None,
+        (Some(s), Some(e)) => Some(loc.tf(
+            "tool.youtube_watch.prompt.segment",
+            &[("from", &at(s)), ("to", &at(e))],
+        )),
+        (Some(s), None) => Some(loc.tf(
+            "tool.youtube_watch.prompt.segment_from",
+            &[("from", &at(s))],
+        )),
+        (None, Some(e)) => Some(loc.tf("tool.youtube_watch.prompt.segment_to", &[("to", &at(e))])),
     }
 }
 
@@ -639,10 +682,15 @@ impl Tool for YoutubeWatch {
             return Ok(ToolOutcome::text(out));
         };
 
-        let (end_secs, note) = match self.length_gate(ctx.loc, meta.duration_secs, start, end) {
-            Ok(v) => v,
-            Err(text) => return Ok(ToolOutcome::text(text)),
-        };
+        // A provider that takes no bounds reads the whole video: the segment is
+        // a sentence of the prompt, and the whole video is what is measured.
+        let whole = !video.reads_segments();
+        let (end_secs, mut note) =
+            match self.length_gate(ctx.loc, meta.duration_secs, start, end, whole) {
+                Ok(v) => v,
+                Err(text) => return Ok(ToolOutcome::text(text)),
+            };
+        let in_words = segment_in_words(ctx.loc, start, end_secs).filter(|_| whole);
 
         let task = match focus {
             Some(f) => ctx
@@ -650,6 +698,19 @@ impl Tool for YoutubeWatch {
                 .tf("tool.youtube_watch.prompt.focus", &[("focus", f)]),
             None => ctx.loc.t("tool.youtube_watch.prompt.default").to_string(),
         };
+        let task = match &in_words {
+            Some(segment) => format!("{segment}\n\n{task}"),
+            None => task,
+        };
+        if in_words.is_some() {
+            // Said in the result: the answer is about a part, the bill is for
+            // the whole, and a model that asks for the next part should know.
+            let range = segment_label(start, end_secs).unwrap_or_default();
+            note = Some(ctx.loc.tf(
+                "tool.youtube_watch.result.whole_video_read",
+                &[("range", &range)],
+            ));
+        }
         // One request for both halves (fork F4): the video is ingested either
         // way, so a second call would double the expensive part for a formatting
         // convenience.
@@ -1032,6 +1093,186 @@ mod tests {
         );
     }
 
+    // ---- a provider that reads the whole video (docs/research/openrouter-mode.md, fork F10)
+
+    /// The tool with a provider that takes no bounds, as the gateway is, and no
+    /// ceiling: what is asserted below is the request, and a ceiling would make
+    /// it depend on whether the video's length could be read from the network.
+    fn through_a_provider_without_bounds(reply: MockVideo) -> (Arc<MockVideo>, YoutubeWatch) {
+        let mock = Arc::new(reply.whole_video());
+        (mock.clone(), YoutubeWatch::new(Some(mock), 0))
+    }
+
+    /// The segment is a sentence of the prompt, in front of the task; the
+    /// result says the whole video was read, and which part the answer is
+    /// about. And the address handed over is the video's id and nothing else,
+    /// whatever the link carried: through the gateway one more parameter is a
+    /// request ninety times the price, answered about a page.
+    #[tokio::test]
+    async fn a_provider_without_bounds_is_told_the_segment_in_words() {
+        let (_d, ctx) = ctx();
+        let (mock, tool) = through_a_provider_without_bounds(MockVideo::ok("described"));
+        let out = tool
+            .invoke(
+                &ctx,
+                serde_json::json!({
+                    "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=40s&feature=share",
+                    "start": 40, "end": 80, "focus": "what is on the whiteboard"}),
+            )
+            .await
+            .unwrap();
+        let req = mock.taken().expect("the provider was called");
+        assert_eq!(req.url, "https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+        let segment = ru().tf(
+            "tool.youtube_watch.prompt.segment",
+            &[("from", "0:40"), ("to", "1:20")],
+        );
+        assert!(
+            req.prompt.starts_with(&segment),
+            "the segment opens the prompt: {}",
+            req.prompt
+        );
+        assert!(req.prompt.contains("whiteboard"), "{}", req.prompt);
+        let said = ru().tf(
+            "tool.youtube_watch.result.whole_video_read",
+            &[("range", "0:40-1:20")],
+        );
+        assert!(out.result.contains(&said), "got: {}", out.result);
+        assert!(out.result.contains("described"), "got: {}", out.result);
+    }
+
+    /// A bound on one side is a sentence too; the whole video asked for is no
+    /// sentence and no note; and a provider that cuts segments itself is told
+    /// nothing in words — its request is what it has always been.
+    #[tokio::test]
+    async fn the_segment_is_said_only_where_it_cannot_be_cut() {
+        let (_d, ctx) = ctx();
+        let whole_note = ru().tf(
+            "tool.youtube_watch.result.whole_video_read",
+            &[("range", "")],
+        );
+        let lead = whole_note.split("{").next().unwrap_or_default()[..12].to_string();
+        for (args, sentence) in [
+            (
+                serde_json::json!({"url": "dQw4w9WgXcQ", "start": 95}),
+                Some(ru().tf(
+                    "tool.youtube_watch.prompt.segment_from",
+                    &[("from", "1:35")],
+                )),
+            ),
+            (
+                serde_json::json!({"url": "dQw4w9WgXcQ", "end": 30}),
+                Some(ru().tf("tool.youtube_watch.prompt.segment_to", &[("to", "0:30")])),
+            ),
+            (serde_json::json!({"url": "dQw4w9WgXcQ"}), None),
+        ] {
+            let (mock, tool) = through_a_provider_without_bounds(MockVideo::ok("described"));
+            let out = tool.invoke(&ctx, args.clone()).await.unwrap();
+            let req = mock.taken().expect("the provider was called");
+            match sentence {
+                Some(s) => {
+                    assert!(req.prompt.starts_with(&s), "{args}: {}", req.prompt);
+                    assert!(out.result.contains(&lead), "{args}: {}", out.result);
+                }
+                None => {
+                    let bare = ru().t("tool.youtube_watch.prompt.default");
+                    assert_eq!(req.prompt, bare, "{args}");
+                    assert!(!out.result.contains(&lead), "{args}: {}", out.result);
+                }
+            }
+        }
+
+        let mock = Arc::new(MockVideo::ok("described"));
+        let tool = YoutubeWatch::new(Some(mock.clone()), 0);
+        let args = serde_json::json!({"url": "dQw4w9WgXcQ", "start": 40, "end": 80});
+        let out = tool.invoke(&ctx, args).await.unwrap();
+        let req = mock.taken().expect("the provider was called");
+        assert_eq!(req.prompt, ru().t("tool.youtube_watch.prompt.default"));
+        assert_eq!((req.start_secs, req.end_secs), (Some(40), Some(80)));
+        assert!(!out.result.contains(&lead), "{}", out.result);
+    }
+
+    /// What is measured against the ceiling is what is charged. Columns: the
+    /// video's length in seconds (`-` — unknown), the segment asked for, then
+    /// what a provider that cuts segments does and what one that reads the
+    /// whole video does — under a ceiling of five minutes.
+    const GATE: &str = "
+        200   -        watched   watched  | a short video
+        400   -        refused   refused  | a long one
+        400   0..120   watched   refused  | a segment of a long one: cut, or read whole
+        400   0..600   refused   refused  | a segment longer than the ceiling
+        200   0..600   refused   watched  | ...which is no longer than the video that is read
+        -     0..120   watched   refused  | unknown length: a segment is its own measure
+        -     -        clipped   refused  | unknown length: clipped, where that can be done
+    ";
+
+    #[test]
+    fn the_whole_video_is_measured_where_a_segment_cannot_be_cut() {
+        let tool = YoutubeWatch::new(None, 5);
+        let mut wrong = Vec::new();
+        for row in GATE.lines().filter(|l| !l.trim().is_empty()) {
+            let c: Vec<&str> = row.split_whitespace().collect();
+            let duration = c[0].parse::<u32>().ok();
+            let bounds = c[1].split_once("..").map(|(s, e)| {
+                let secs = |v: &str| v.parse::<u32>().expect("seconds");
+                (secs(s), secs(e))
+            });
+            let (start, end) = (bounds.map(|b| b.0), bounds.map(|b| b.1));
+            for (whole, expected) in [(false, c[2]), (true, c[3])] {
+                let got = match tool.length_gate(ru(), duration, start, end, whole) {
+                    Err(_) => "refused",
+                    Ok((_, Some(_))) => "clipped",
+                    Ok((end_secs, None)) if end_secs == end => "watched",
+                    Ok(_) => "changed the bound",
+                };
+                if got != expected {
+                    wrong.push(format!("{} (whole: {whole}) => {got}", row.trim()));
+                }
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+
+        // With no ceiling nothing is measured, either way.
+        let unbounded = YoutubeWatch::new(None, 0);
+        for whole in [false, true] {
+            let gate = unbounded.length_gate(ru(), None, None, None, whole);
+            assert_eq!(gate, Ok((None, None)), "whole: {whole}");
+        }
+    }
+
+    /// The two refusals of a provider that reads the whole video say what they
+    /// are about — the length and the ceiling — and do not advise a segment,
+    /// which would cost the same.
+    #[test]
+    fn a_refusal_of_the_whole_video_does_not_advise_a_segment() {
+        let tool = YoutubeWatch::new(None, 5);
+        let long = tool
+            .length_gate(ru(), Some(400), Some(0), Some(60), true)
+            .expect_err("refused");
+        assert!(long.contains("6:40") && long.contains("5:00"), "{long}");
+        let advice = too_long(ru(), 400, 300);
+        assert_ne!(
+            long, advice,
+            "the other provider's refusal advises a segment"
+        );
+        let unknown = tool
+            .length_gate(ru(), None, None, None, true)
+            .expect_err("refused");
+        assert!(unknown.contains('5'), "names the ceiling: {unknown}");
+        for lang in Lang::ALL.iter().copied() {
+            for key in [
+                "tool.youtube_watch.result.too_long_whole",
+                "tool.youtube_watch.result.unknown_length_whole",
+                "tool.youtube_watch.result.whole_video_read",
+                "tool.youtube_watch.prompt.segment",
+                "tool.youtube_watch.prompt.segment_from",
+                "tool.youtube_watch.prompt.segment_to",
+            ] {
+                assert!(locale(lang).has_key(key), "{lang:?}: {key}");
+            }
+        }
+    }
+
     // ---- stage 2: the words, not just the description (docs/history/youtube-transcript.md)
 
     #[test]
@@ -1297,6 +1538,7 @@ mod tests {
         let cfg = crate::shared::video::resolve_config(
             &crate::shared::config::VideoSettings::default(),
             Some(key),
+            false,
         )
         .expect("a key and the default model are enough to configure the slot");
         let engine = Arc::new(crate::shared::video::gemini::GeminiVideo::new(cfg));
@@ -1380,6 +1622,7 @@ mod tests {
         let cfg = crate::shared::video::resolve_config(
             &crate::shared::config::VideoSettings::default(),
             Some(key),
+            false,
         )
         .expect("a key and the default model are enough to configure the slot");
         let engine = Arc::new(crate::shared::video::gemini::GeminiVideo::new(cfg));

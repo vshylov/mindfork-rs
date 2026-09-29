@@ -95,6 +95,7 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
             toggle(|c| c.notes.recall_includes_self = !c.notes.recall_includes_self)
         }
         CompactEnabled => toggle(|c| c.compaction.enabled = !c.compaction.enabled),
+        GatewayAttribution => toggle(|c| c.openrouter.attribution = !c.openrouter.attribution),
         ICopyThoughts => toggle(|c| c.copy.copy_thoughts = !c.copy.copy_thoughts),
         ICopyToolCalls => toggle(|c| c.copy.copy_tool_calls = !c.copy.copy_tool_calls),
         ICopyToolResults => toggle(|c| c.copy.copy_tool_results = !c.copy.copy_tool_results),
@@ -135,6 +136,16 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
                 index_menu(&PythonMode::ALL, c.tools.python_mode, |x| {
                     python_mode_label(x, loc)
                 })
+            },
+        ),
+        VideoProvider => choice(
+            |c, dir| c.video.provider = c.video.provider.cycle(dir),
+            |c, _loc| {
+                index_menu(
+                    &crate::shared::config::VideoProvider::ALL,
+                    c.video.provider,
+                    |p| p.label().to_string(),
+                )
             },
         ),
         VideoResolution => choice(
@@ -504,13 +515,25 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
         TPythonLocalMemory => int(|c, t| {
             c.tools.python_local_memory_mb = t.trim().parse::<u64>().ok().filter(|&m| m > 0);
         }),
-        VideoModel => text(|c, t| c.video.model_name = opt(t)),
+        // Routed by the provider: each keeps a model and a variable of its
+        // own, so that neither is retyped on a switch.
+        VideoModel => text(|c, t| match c.video.provider {
+            crate::shared::config::VideoProvider::Gemini => c.video.model_name = opt(t),
+            crate::shared::config::VideoProvider::OpenRouter => {
+                c.video.openrouter.model_name = opt(t)
+            }
+        }),
         VideoMaxMinutes => int(|c, t| {
             if let Ok(v) = t.parse() {
                 c.video.max_minutes = v;
             }
         }),
-        VideoApiKeyEnv => text(|c, t| c.video.api_key_env = opt(t)),
+        VideoApiKeyEnv => text(|c, t| match c.video.provider {
+            crate::shared::config::VideoProvider::Gemini => c.video.api_key_env = opt(t),
+            crate::shared::config::VideoProvider::OpenRouter => {
+                c.video.openrouter.api_key_env = opt(t)
+            }
+        }),
         TFsRoot => text(|c, t| c.tools.fs_root = opt(t)),
         WsTimeout => int(|c, t| {
             if let Ok(v) = t.parse() {

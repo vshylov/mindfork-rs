@@ -2,11 +2,11 @@
 # Generated from PRIVACY.md by tools/site_legal_pages.py - do not edit.
 title = "Privacy policy"
 description = "What mindfork keeps on your machine, what leaves it and only on which setting of yours, and what reaches its author — which is nothing."
-updated = "2026-09-28"
+updated = "2026-09-29"
 template = "doc.html"
 +++
 
-Effective **2026-09-28**. It covers three things that are easy to confuse: the
+Effective **2026-09-29**. It covers three things that are easy to confuse: the
 **mindfork application**, the website **mindfork.io**, and the project's
 presence on **GitHub**. They have very different answers, so they are kept
 apart below.
@@ -57,7 +57,7 @@ machine. On Windows the profile's own permissions do that.
 |---|---|---|
 | Settings, and the encrypted secrets map — each stored key labelled with the name of the computer it was entered on | `settings.json` | no |
 | Profiles, system prompts, per-profile tool lists | `profiles.json` | your prompts |
-| Chats | `chats/<uuid>.json` — messages, model thoughts, tool calls and their results, sub-agent transcripts, attached images inline, attachment text | **yes** |
+| Chats | `chats/<uuid>.json` — messages, model thoughts, tool calls and their results, sub-agent transcripts, attached images inline, attachment text; for a reply that came through the OpenRouter gateway, also the name of the provider that served it and what the request cost | **yes** |
 | Notes, the RAG knowledge base and their embedding vectors, the self-model, the record of which model ran when | `data.db` (SQLite) | **yes** |
 | The full-text search index | `cache.db` (SQLite) | **yes** — derived; delete it and it rebuilds |
 | Pre-images of every project file the assistant edited, for the `F4` diff and revert | `workspace/<chat-id>/` | your source code |
@@ -97,10 +97,42 @@ Where your conversation goes depends on the engine mode you chose:
   [Anthropic](https://www.anthropic.com/legal/privacy),
   [xAI](https://x.ai/legal/privacy-policy) — and their retention and
   training-on-your-data rules are theirs, not ours. Read them.
+- **The OpenRouter gateway** — `openrouter.ai`, or a different base URL if you
+  set one. A request sent through a gateway is processed by **two** parties: by
+  the gateway itself, under [OpenRouter's policy](https://openrouter.ai/privacy),
+  **and** by the provider the gateway routes the request to, under that
+  provider's. Which provider that is depends on the model you chose and on the
+  gateway's routing, and it can differ from one request to the next; which
+  providers your requests may reach, and on what terms for your data, is set in
+  your OpenRouter account, not in this app, which sends no routing preference of
+  its own. The gateway names the provider that served each reply and states
+  what the request cost; the app stores both with the message (§2) and shows
+  them nowhere yet.
 
 **Impersonation** — the model drafting your next message — has an engine setting
 of its own. By default it shares the chat engine; pointed elsewhere, it sends the
-conversation to that external server or cloud provider instead.
+conversation to that external server, cloud provider or gateway instead.
+
+**What the app says about itself.** To OpenRouter, and to no other provider,
+every request the app makes in the `openrouter` mode — chat, embeddings, speech
+(§3.4), the two questions listed under "Probes" below and the requests for the
+lists of models — and every request the video tool makes while its provider is
+`openrouter` (§3.3) — carries two headers:
+
+- `HTTP-Referer: https://mindfork.io`
+- `X-OpenRouter-Title: mindfork`
+
+That is their whole content: the address of this project's website and the name
+of the program, identical in every copy of the app. They hold nothing about you —
+no name, no identifier, no machine, no text. By OpenRouter's own description,
+it counts by them which application its traffic comes from and shows those
+counts in its public application rankings. They are **on by default**. To stop sending them: Settings →
+Model/server → any tab whose mode is `openrouter` → "Name the app to OpenRouter".
+The same switch is shown in Settings → Tools → Video (YouTube) while the video
+provider there is `openrouter`.
+It is one switch for every slot that uses the gateway, and with it off neither
+header is sent by any of them. An `external` engine pointed at the same address
+never sends them.
 
 The `MINDFORK_ENGINE_URL`, `MINDFORK_LLAMA_BIN`, `MINDFORK_EMBED_URL` and
 `MINDFORK_EMBED_BIN` environment variables, when set, replace the chat or
@@ -129,11 +161,75 @@ window, image support and accepted parameters. The Grok cloud is asked the same
 `/props` and `/models`, with your key, when the engine is set up and when you
 attach an image. The OpenAI, Gemini and Anthropic clouds are not probed.
 
+The OpenRouter gateway is asked two things, both with your key:
+
+- **`GET /key` — whether the key is accepted.** Asked **once** each time the
+  chat engine, the impersonation engine or the embedding engine is set up in the
+  `openrouter` mode: when the app starts, and after you change that engine's
+  settings, the key or the switch above. Only if nothing answers at all — no
+  network — is it asked again, every 5 seconds, until something does; after the
+  first answer it is not repeated. The answer also describes the key (its limit
+  and its usage); the app reads whether the key was accepted and nothing else,
+  and keeps none of it.
+- **`GET /model/<the model you chose>` — that one model's entry** in the
+  gateway's catalogue: its context window, the parameters it accepts, whether it
+  takes images, how it reasons. Asked when the chat engine is set up, and by the
+  impersonation engine when it is first used; the answer is kept until that
+  engine is set up again, and a question the gateway did not answer is asked
+  again the next time the answer is needed.
+
+In this mode `/health`, `/props` and the full model list are never requested by
+the engine. The speech setting in the `openrouter` mode (§3.4) asks neither of
+the two questions: whether its key is accepted is learned from the first request
+that speaks.
+
+The video tool, while its provider is `openrouter` (§3.3), never asks the first
+question — whether its key is accepted is learned from the first video — and
+asks the second about its own model: `GET /model/<the model you chose>`, before
+it watches a video, with your key. Of the answer it keeps which reasoning effort
+to ask for, and nothing else. As a rule that is one request: the answer is kept
+until the app sets its tools up again — when it starts, and whenever something
+they are built from changes: the settings, a key, a plugin's tools, or what the
+chat engine reports that it accepts — and a question the gateway did not answer
+is asked again with the next video.
+
+**The model list.** `Enter` on a model row of the settings screen asks that
+tab's provider or server for the list of models it serves — when you press it,
+and again on `Ctrl+R`; the answer is kept while the screen is open. The request
+carries your key where one is configured, and nothing else of yours. For
+OpenRouter it is your account's own list (`/models/user`) when a key is
+configured and the public list (`/models`) when none is — the one case in which
+the app contacts a cloud before you have given it a key — and
+`/embeddings/models` on the Embeddings tab; like every request to OpenRouter it
+carries the two headers described above, unless you switched them off.
+
+On the Speech tab, in the `openrouter` mode only, three rows ask: `Enter` on the
+Model row, on the Voice row or on the User voice row requests the gateway's list
+of speech models — the same two lists, `/models/user` with a key and `/models`
+without one, narrowed by `?output_modalities=speech` — and the voices offered
+are read out of that same answer. The request carries no text of yours; it
+carries your key when there is one, so that the list is your account's, and the
+two headers unless you switched them off. In the other speech modes these rows
+are text fields and ask nothing.
+
+In the video settings (Settings → Tools → Video), and only while the provider
+there is `openrouter`, `Enter` on the Model row requests the gateway's list of
+models. Without a key it is the public list, narrowed by the gateway to the
+models that take video (`/models?input_modalities=video`); with a key it is
+your account's own list (`/models/user`) — the whole of it, which the app then
+narrows itself, by what each entry says the model takes. The request carries no
+text of yours; it carries your key when there is one, and the two headers
+unless you switched them off. It is made when you press the key, whether or not
+the web tools (§3.3) are switched on. With `gemini` as the provider that row is
+a text field and asks nothing.
+
 ### 3.2 Embeddings (notes, RAG, search reranking)
 
 The embedding endpoint is a **separate setting** from the chat one: it can be a
-local server, an external URL, or a cloud provider — which may well be a
-*different* vendor from the one running your chat.
+local server, an external URL, a cloud provider or the OpenRouter gateway —
+which may well be a *different* vendor from the one running your chat. Through
+the gateway, what is embedded reaches the gateway and the provider it routes to,
+as a chat request does (§3.1).
 
 What gets embedded, and therefore sent there: note text, self-model traits,
 chunks of documents you added to the knowledge base (including text extracted
@@ -143,9 +239,18 @@ queries together with up to 800 characters of each result page**, which the tool
 embeds to rank results. If your embedder is a cloud provider, that is search
 content reaching a second vendor.
 
+A request carries at most 64 texts, so a longer list — a long document added to
+the knowledge base at once — is sent as several requests, one after another, to
+the same endpoint. And a request that a cloud provider or the gateway failed for
+a passing reason — a rate limit, an overload, a lost connection — is sent again,
+up to three attempts in all: the same text can reach that provider more than
+once. A local or external embedding server is not asked again.
+
 To notice that the embedding model has changed, the app also embeds one fixed
-sentence (`mindfork embedding canary v1`) when it first uses the embedder in a
-session, and a fixed set of calibration sentences once for each new model.
+sentence (`mindfork embedding canary v1`) when it first uses the embedder after
+the embedding engine was set up — when the app starts, after you change that
+engine's settings, and after a local embedding server the app runs was
+restarted — and a fixed set of calibration sentences once for each new model.
 Neither contains anything of yours.
 
 ### 3.3 The web tools — off until you turn them on
@@ -182,18 +287,86 @@ file says, so if you had it on, it stays on.)
   if a Gemini key is available — the one saved for the Gemini provider, or the
   variable you named in the video settings — hands the URL to Gemini, which
   watches the video on its own servers. No video bytes leave your machine; the
-  URL and the prompt do.
+  URL and the prompt do. Gemini, by Google's own API, is the video provider
+  unless you choose the other one, the OpenRouter gateway — described below
+  this list.
 - **Where they may not go**: model-chosen addresses are resolved and checked
   against the routable public internet — your LAN, loopback and other
   non-routable addresses are refused, on the original request and on every
   redirect, unless you set `tools.web_allow_private`.
 
+**`youtube_watch` through the OpenRouter gateway.** The video settings
+(Settings → Tools → Video) name who watches: `gemini`, the default, or
+`openrouter`. With `openrouter` — once a model is chosen there and the
+gateway's key is available: the one saved for OpenRouter, or the variable you
+named for it in the video settings — the tool's request goes to
+`openrouter.ai`, or to the base URL you set, and no longer to Google's address.
+A request carries:
+
+- **the video's address**, which the app builds from the video's id — nothing
+  else of the link that was pasted;
+- **the request text** — what to find out about the video: the app's own
+  instruction to describe it; the question the model asked of it, where it
+  asked one, which it composed from your conversation; and, when a part of the
+  video was asked for, a sentence naming that part;
+- the name of the model, the ceiling on the reply and the reasoning effort
+  asked for.
+
+It is sent with your key, and with the two headers that name the application
+(§3.1) unless you switched them off. The app neither downloads nor uploads the
+video: the provider fetches it from YouTube. OpenRouter passes the request on
+to the provider behind the model you chose — Google, through AI Studio or
+Vertex — which processes it under its own terms, as with a chat request (§3.1).
+Of the gateway's answer the app reads the text — the description of the video,
+and its transcript when one was asked for — why the reply ended and the token
+counts, or the refusal. The text reaches your chat as the tool's result, a
+large transcript as a chat attachment, as it does from Gemini; what the answer
+says of the provider that served it and of the cost is not kept.
+
+Before the first video the app asks the gateway about the model — once, as a
+rule (`GET /model/<the model you chose>`; §3.1, "Probes", says when it is asked
+again): that request carries the model's name and your key, and no text of
+yours. What the app itself asks YouTube for — the watch page or the oEmbed
+record, for the title and the length — is the same whoever watches.
+
+With this provider nothing is sent to the gateway until the tool is used —
+which, like every web tool, it cannot be until you switch the web tools on. The
+one exception is the list of models: `Enter` on the Model row of the video
+settings asks the gateway for it when you press the key, with the web tools on
+or off, and carries no text of yours (§3.1, "The model list").
+
 ### 3.4 Speech
 
 Nothing is ever spoken automatically: text is sent only when you invoke `/tts`.
 When you do, the **default provider is OpenAI's cloud** (`api.openai.com`), with
-Gemini and any OpenAI-compatible server as alternatives. What is sent is the
-message text, flattened out of markdown and split into chunks.
+Gemini, the OpenRouter gateway and any OpenAI-compatible server as alternatives.
+What is sent is the message text, flattened out of markdown and split into
+chunks. The audio that comes back is played and is not stored.
+
+**Through the OpenRouter gateway** — the speech setting's `openrouter` mode —
+what is read aloud is sent to `openrouter.ai`, or to the base URL you set. A
+request carries the text of the messages being spoken, as speakable text in
+fragments of at most 2000 characters; the name of the model; the name of the
+voice, when one is set; the audio format asked for; and the speech rate, when
+it is not 1.0. It is sent with your key, and with the two headers that name the
+application (§3.1) unless you switched them off. OpenRouter passes the text on
+to the provider behind the model you chose — Google, xAI, MiniMax and others —
+which processes it under its own terms, as with a chat request (§3.1).
+
+The gateway's speech models do not all take the same audio format. When a model
+refuses the format asked for first, **the same fragment is sent a second time**,
+asking for the other format. Which format the model answered in is remembered
+until the app is closed, so this happens once for a model in a session — and
+once more if the model later stops taking the format it answered in.
+
+In this mode nothing is sent until you type `/tts` — or until you press `Enter`
+on the Model, Voice or User voice row of the Speech tab, which asks the gateway
+for its list of speech models and carries no text of yours (§3.1, "The model
+list").
+
+The application has no speech-to-text, and never sends audio anywhere. (The
+project's own live tests transcribe synthesized test sentences back through the
+gateway; that is a developer's test run, not the application.)
 
 ### 3.5 Images you attach by URL
 
@@ -295,6 +468,9 @@ text passes through whatever is between you and the host.
 - **showing the model the images a tool produced** — charts from Python, images
   from MCP tools — once those tools are on;
 - **network access inside the Python sandbox**, once Python is enabled;
+- the two headers that **name the application to OpenRouter**, once an engine
+  or the speech setting is in the `openrouter` mode, or the video tool's
+  provider is `openrouter` (§3.1);
 - the cloud as the **default speech provider** — though nothing is spoken until
   you invoke `/tts`;
 - the ordinary local tools: notes, the knowledge base, the time, and so on.
@@ -306,6 +482,16 @@ error reporting, no update check, no version ping, no license check, no account
 and no server operated by this project. The addresses of the website, the
 repository and the crates.io page that appear in the "About" dialog are text on
 a screen; nothing fetches them.
+
+One thing is worth stating beside that, because it is the only place where the
+program is counted at all. If you use the `openrouter` mode — or have videos
+watched through the gateway — and leave its attribution on (§3.1), your
+requests name this application to OpenRouter, which
+by its own description counts such requests and shows totals per application in
+its public rankings. Those totals are OpenRouter's, they are public, and the
+author can read them where anyone can; they say nothing about who made the
+requests. Nothing is sent to the author by OpenRouter or by the app, and with the
+switch in §3.1 off your requests do not name the application at all.
 
 ## 6. Logs
 

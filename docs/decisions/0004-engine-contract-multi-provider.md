@@ -208,6 +208,22 @@ extra architectural work required.
   from positional per-provider arguments to a `CloudProvider::ALL`-ordered array.
   Live `#[ignore]` smokes against `api.x.ai` cover thoughts, the tool round-trip
   without a signature, and `effort=none`.
+- **The OpenRouter gateway — stage 1 done** (2026-09-29,
+  [docs/research/openrouter-mode.md](../research/openrouter-mode.md)): a fifth
+  `CloudProvider`/seventh `ServerMode` (`openrouter`), served — like xAI — by
+  `OpenAiClient` over Chat Completions, and the first provider the client is
+  **told** about: `for_openrouter` makes it write the body in the gateway's
+  dialect (`repeat_penalty` → `repetition_penalty`, no llama.cpp-only fields), ask
+  `GET /model/{slug}` for the model's facts instead of `/props` and the full
+  list, re-home a tool's images on every request, ask the lowest listed effort
+  on a muted turn of a model that must reason, and name the application in two
+  attribution headers behind a switch (`openrouter.attribution`). The one cloud
+  whose key is checked before it is called ready (`GET /key`, once per apply) and
+  whose `supported_sampling_fields` list is narrowed by the catalogue, per model.
+  The mode serves the assistant, impersonation and embeddings on one stored key;
+  `settings.json` went 3 → 4 because a new value of an existing enum is a
+  breaking change for an older binary. `external` is unchanged and still reaches
+  the gateway. Speech and video through the gateway are later stages, not done.
 - **`shared/api` layout (§2) — done** (after Phase 2, for symmetry with
   `anthropic/`): `backend.rs` → `contract.rs` (provider-agnostic contract);
   `client.rs`+`wire.rs` → `openai/` (with private `wire`, re-exporting

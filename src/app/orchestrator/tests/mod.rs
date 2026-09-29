@@ -292,6 +292,7 @@ fn bare_orch_rx() -> (tempfile::TempDir, Orchestrator, UnboundedReceiver<AppEven
         tts_gen: None,
         tts_playback: None,
         tts_done_tx: unbounded_channel().0,
+        tts_formats: Default::default(),
         storage,
         config,
         registry,
@@ -652,6 +653,9 @@ mod confirm;
 mod demo;
 mod dialogue;
 mod files;
+mod gateway_live;
+mod gateway_live_embed;
+mod gateway_live_speech;
 mod generation;
 mod images;
 mod impersonation;

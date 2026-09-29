@@ -41,6 +41,7 @@ body:
         - gemini
         - claude
         - grok
+        - openrouter
         - not relevant / not configured
     validations:
       required: true

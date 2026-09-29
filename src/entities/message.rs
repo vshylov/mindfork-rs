@@ -93,6 +93,18 @@ pub struct MessageMetadata {
     pub mode: ServerMode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// The company that served the request, where the endpoint names one — a
+    /// gateway does (`"Amazon Bedrock"` behind an Anthropic slug). Recorded and
+    /// not yet shown (docs/research/openrouter-mode.md, fork F11). Additive
+    /// (ADR 0006): absent from every message written before it, and from every
+    /// engine that is not a gateway.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    /// What **this round's** request cost on the gateway's own meter, in
+    /// billionths of a dollar. One round, not the turn: a turn's tool rounds
+    /// are requests of their own. Additive, like `provider`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_nanos: Option<u64>,
     /// How this reply's generation ended. See [`MessageFinish`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub finish: Option<MessageFinish>,
@@ -308,6 +320,8 @@ mod tests {
             sampling: Default::default(),
             mode: Default::default(),
             model: None,
+            provider: None,
+            cost_nanos: None,
             finish: None,
         };
         let js = serde_json::to_string(&md).unwrap();
@@ -320,5 +334,60 @@ mod tests {
         assert!(js.contains("\"finish\":\"length\""), "{js}");
         let back: MessageMetadata = serde_json::from_str(&js).unwrap();
         assert_eq!(back.finish, Some(MessageFinish::Length));
+    }
+
+    /// Fork F11 of docs/research/openrouter-mode.md: who served a round and
+    /// what it cost are recorded beside the model, and both are additive
+    /// (ADR 0006). A snapshot written before they existed — here one in the
+    /// words of a stored chat — reads with neither; a message from an engine
+    /// that is not a gateway is written without the keys, so its chat file
+    /// stays readable by the binary that wrote it; and a recorded pair comes
+    /// back as it went, the cost a whole number of billionths.
+    #[test]
+    fn who_served_a_round_and_its_cost_are_additive() {
+        /// The record as a chat file holds it, the sampling snapshot aside.
+        fn stored_as(md: &MessageMetadata) -> serde_json::Value {
+            let mut json = serde_json::to_value(md).unwrap();
+            if let Some(record) = json.as_object_mut() {
+                record.remove("sampling");
+            }
+            json
+        }
+        let stored = r#"{"sampling":{"temperature":0.7},"mode":"external","model":"qwen-3.6","finish":"stop"}"#;
+        let old: MessageMetadata = serde_json::from_str(stored).unwrap();
+        assert_eq!((old.provider.as_deref(), old.cost_nanos), (None, None));
+        assert_eq!(
+            stored_as(&old),
+            serde_json::json!({"mode":"external","model":"qwen-3.6","finish":"stop"}),
+            "absent must stay absent"
+        );
+
+        let served = MessageMetadata {
+            mode: ServerMode::OpenRouter,
+            model: Some("anthropic/claude-haiku-4.5".into()),
+            provider: Some("Amazon Bedrock".into()),
+            cost_nanos: Some(37_000),
+            ..old
+        };
+        assert_eq!(
+            stored_as(&served),
+            serde_json::json!({
+                "mode": "openrouter",
+                "model": "anthropic/claude-haiku-4.5",
+                "provider": "Amazon Bedrock",
+                "cost_nanos": 37_000,
+                "finish": "stop"
+            })
+        );
+        let written = serde_json::to_string(&served).unwrap();
+        let back: MessageMetadata = serde_json::from_str(&written).unwrap();
+        assert_eq!(back, served);
+
+        // A free round costs nothing, and that is a figure: it is written.
+        let free = MessageMetadata {
+            cost_nanos: Some(0),
+            ..served
+        };
+        assert_eq!(stored_as(&free)["cost_nanos"], 0);
     }
 }

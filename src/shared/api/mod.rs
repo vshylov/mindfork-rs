@@ -8,6 +8,7 @@
 pub mod anthropic;
 pub mod catalogue;
 pub mod contract;
+pub mod embed_policy;
 pub mod error;
 pub mod gemini;
 pub mod http;
@@ -42,7 +43,7 @@ pub use contract::{
 };
 pub use gemini::GeminiClient;
 pub use managed::{ManagedConfig, ServerHandle, wait_until_ready};
-pub use openai::{OpenAiClient, ResponsesClient};
+pub use openai::{KeyVerdict, OpenAiClient, ResponsesClient};
 
 /// A client to a live OpenAI-compatible server for the `#[ignore]` smokes,
 /// named by a pair of env variables: the URL and an **optional** Bearer key —

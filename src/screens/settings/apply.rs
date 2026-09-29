@@ -420,8 +420,9 @@ impl SettingsScreen {
                 // of docs/research/model-picker.md); it falls through to the
                 // editor below when there is no catalogue to offer — a slot
                 // whose provider already refused, and every other text field.
-                if crate::screens::settings::picker::model_slot(f.id).is_some()
+                if crate::screens::settings::picker::model_slot(&self.config, f.id).is_some()
                     && !self.catalogue_refused(f.id)
+                    && !self.no_voice_to_pick(f.id)
                 {
                     return self.open_model_picker(f.id);
                 }

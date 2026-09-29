@@ -13,15 +13,16 @@ use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio_util::sync::CancellationToken;
 
+use crate::shared::api::embed_policy::{BatchedEmbedder, RetryEmbedder};
 use crate::shared::api::llama_args::ManagedRole;
 use crate::shared::api::managed::ChildExit;
 use crate::shared::api::{
-    AnthropicClient, Embedder, EngineBackend, GeminiClient, ManagedConfig, OpenAiClient,
-    ResponsesClient, ServerHandle, UnavailableEmbedder, retry, wait_until_ready,
+    AnthropicClient, Embedder, EngineBackend, GeminiClient, KeyVerdict, ManagedConfig,
+    OpenAiClient, ResponsesClient, ServerHandle, UnavailableEmbedder, retry, wait_until_ready,
 };
 use crate::shared::config::{
     CloudProvider, EmbedSettings, EngineSettings, ImpersonationEngineSettings, ImpersonationMode,
-    ManagedEmbedSettings, ManagedSettings, ServerMode,
+    ManagedEmbedSettings, ManagedSettings, OpenRouterSettings, ServerMode,
 };
 use crate::shared::i18n::Locale;
 use crate::shared::paths::Paths;
@@ -74,6 +75,14 @@ pub struct EmbedSetup {
 /// then the env fallback (`api_key_env`) applies. See
 /// docs/research/api-key-storage.md, docs/history/external-api-key.md.
 pub trait ServerSupervisor: Send + Sync {
+    /// What is provider-wide about the OpenRouter gateway
+    /// ([`OpenRouterSettings`]), told before an `apply_*` that may build a client
+    /// for it. A method of its own rather than a parameter of the three below,
+    /// because it belongs to no slot: every slot's section is its own, and this
+    /// is the one thing they share. The default ignores it — a supervisor that
+    /// builds no gateway client has nothing to do with it.
+    fn set_gateway(&self, _gateway: &OpenRouterSettings) {}
+
     /// (Re)connects to the chat server. Returns the engine and status immediately
     /// (`Connecting`/`NotConfigured`/`Disconnected`), while managed/external readiness
     /// is sent to `status_tx` by a background probe. `cancel` marks the probe as stale:
@@ -162,6 +171,9 @@ impl BinaryLookup {
 #[derive(Default)]
 pub struct LlamaSupervisor {
     lookup: BinaryLookup,
+    /// The gateway's provider-wide settings as last told
+    /// ([`ServerSupervisor::set_gateway`]); the defaults until then.
+    gateway: std::sync::RwLock<OpenRouterSettings>,
 }
 
 impl LlamaSupervisor {
@@ -170,11 +182,25 @@ impl LlamaSupervisor {
     pub fn new(paths: &Paths) -> Self {
         Self {
             lookup: BinaryLookup::from_paths(paths),
+            gateway: Default::default(),
         }
+    }
+
+    /// A copy of the gateway's settings. A poisoned lock yields the defaults: the
+    /// value is a plain switch, and a panic elsewhere must not take the engine
+    /// down with it.
+    fn gateway(&self) -> OpenRouterSettings {
+        self.gateway.read().map(|g| g.clone()).unwrap_or_default()
     }
 }
 
 impl ServerSupervisor for LlamaSupervisor {
+    fn set_gateway(&self, gateway: &OpenRouterSettings) {
+        if let Ok(mut held) = self.gateway.write() {
+            *held = gateway.clone();
+        }
+    }
+
     fn apply_chat(
         &self,
         settings: &EngineSettings,
@@ -197,15 +223,26 @@ impl ServerSupervisor for LlamaSupervisor {
                 let cfg = managed_config(&settings.managed, ManagedRole::Assistant, &self.lookup);
                 managed_chat_setup(cfg, cancel, status_tx, loc)
             }
-            ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude | ServerMode::Grok => {
+            ServerMode::OpenAi
+            | ServerMode::Gemini
+            | ServerMode::Claude
+            | ServerMode::Grok
+            | ServerMode::OpenRouter => {
                 let cloud = settings.cloud().expect("cloud mode");
                 cloud_chat_setup(
                     settings.mode.cloud_provider().expect("cloud mode"),
-                    cloud.url.as_deref(),
-                    stored_key,
-                    cloud.api_key_env.as_deref(),
-                    cloud.model_name.as_deref(),
-                    loc,
+                    CloudEntry {
+                        url_override: cloud.url.as_deref(),
+                        stored_key,
+                        api_key_env: cloud.api_key_env.as_deref(),
+                        model_name: cloud.model_name.as_deref(),
+                    },
+                    &self.gateway(),
+                    Monitor {
+                        cancel,
+                        status_tx,
+                        loc,
+                    },
                 )
             }
         }
@@ -239,15 +276,23 @@ impl ServerSupervisor for LlamaSupervisor {
             ImpersonationMode::OpenAi
             | ImpersonationMode::Gemini
             | ImpersonationMode::Claude
-            | ImpersonationMode::Grok => {
+            | ImpersonationMode::Grok
+            | ImpersonationMode::OpenRouter => {
                 let cloud = settings.cloud().expect("cloud mode");
                 cloud_chat_setup(
                     settings.mode.cloud_provider().expect("cloud mode"),
-                    cloud.url.as_deref(),
-                    stored_key,
-                    cloud.api_key_env.as_deref(),
-                    cloud.model_name.as_deref(),
-                    loc,
+                    CloudEntry {
+                        url_override: cloud.url.as_deref(),
+                        stored_key,
+                        api_key_env: cloud.api_key_env.as_deref(),
+                        model_name: cloud.model_name.as_deref(),
+                    },
+                    &self.gateway(),
+                    Monitor {
+                        cancel,
+                        status_tx,
+                        loc,
+                    },
                 )
             }
         }
@@ -287,7 +332,7 @@ impl ServerSupervisor for LlamaSupervisor {
                         loc,
                     );
                     EmbedSetup {
-                        embedder: client,
+                        embedder: BatchedEmbedder::wrap(client),
                         handle: None,
                         status: ServerStatus::Connecting,
                     }
@@ -323,7 +368,7 @@ impl ServerSupervisor for LlamaSupervisor {
                                 loc,
                             );
                             EmbedSetup {
-                                embedder: client,
+                                embedder: BatchedEmbedder::wrap(client),
                                 handle: Some(handle),
                                 status: ServerStatus::Connecting,
                             }
@@ -343,14 +388,25 @@ impl ServerSupervisor for LlamaSupervisor {
                 }
                 _ => unavailable_embed(),
             },
-            ServerMode::OpenAi | ServerMode::Gemini => {
+            // The gateway's embeddings ride with its chat mode: `embed.mode` is
+            // the same enum. The wire is the one the other two clouds use,
+            // measured as it is (docs/research/openrouter-mode.md §4.3).
+            ServerMode::OpenAi | ServerMode::Gemini | ServerMode::OpenRouter => {
                 let cloud = settings.cloud().expect("cloud mode");
                 cloud_embed_setup(
                     settings.mode.cloud_provider().expect("cloud mode"),
-                    cloud.url.as_deref(),
-                    stored_key,
-                    cloud.api_key_env.as_deref(),
-                    cloud.model_name.as_deref(),
+                    CloudEntry {
+                        url_override: cloud.url.as_deref(),
+                        stored_key,
+                        api_key_env: cloud.api_key_env.as_deref(),
+                        model_name: cloud.model_name.as_deref(),
+                    },
+                    &self.gateway(),
+                    Monitor {
+                        cancel,
+                        status_tx,
+                        loc,
+                    },
                 )
             }
             // Anthropic and xAI have no embeddings API — RAG uses a separate embedder
@@ -581,20 +637,46 @@ pub(crate) fn resolve_api_key(
     std::env::var(var).map_err(|_| ApiKeyError::Missing(var.to_string()))
 }
 
+/// One cloud section as a setup function reads it: what the settings hold for
+/// the provider, and the key already decrypted for it.
+struct CloudEntry<'a> {
+    url_override: Option<&'a str>,
+    stored_key: Option<&'a str>,
+    api_key_env: Option<&'a str>,
+    model_name: Option<&'a str>,
+}
+
+/// Where a background check reports, and under which token it is still wanted.
+struct Monitor {
+    cancel: CancellationToken,
+    status_tx: UnboundedSender<ServerStatus>,
+    loc: &'static Locale,
+}
+
 /// Builds a cloud chat backend (OpenAI/Gemini-compat): the provider's base URL (with
 /// a possible override via `url`), a Bearer key from env, the model name, a strict
 /// OpenAI dialect. The cloud doesn't "load a model" — the status is immediately
 /// `Ready` (no probe). If the model isn't specified or the key is unavailable —
 /// `Disconnected` with a clear message (so as not to hit a `400` already mid-request).
 /// See ADR 0004.
+///
+/// The OpenRouter gateway is the one cloud that is **asked** before it is called
+/// ready: `GET /key` says whether the key is one, at no cost, so a refused key
+/// is the slot's status rather than the first message's error
+/// ([`spawn_key_check`]). It starts `Connecting` for the moment that takes.
 fn cloud_chat_setup(
     provider: CloudProvider,
-    url_override: Option<&str>,
-    stored_key: Option<&str>,
-    api_key_env: Option<&str>,
-    model_name: Option<&str>,
-    loc: &'static Locale,
+    entry: CloudEntry<'_>,
+    gateway: &OpenRouterSettings,
+    monitor: Monitor,
 ) -> ChatSetup {
+    let CloudEntry {
+        url_override,
+        stored_key,
+        api_key_env,
+        model_name,
+    } = entry;
+    let loc = monitor.loc;
     let disconnected = |msg: String| ChatSetup {
         backend: None,
         handle: None,
@@ -635,6 +717,20 @@ fn cloud_chat_setup(
                 .with_model(Some(model.to_string()))
                 .with_effort_none_omitted(true),
         ),
+        CloudProvider::OpenRouter => {
+            let client = Arc::new(
+                OpenAiClient::new(base)
+                    .with_api_key(Some(key))
+                    .with_model(Some(model.to_string()))
+                    .for_openrouter(gateway.attribution),
+            );
+            spawn_key_check(client.clone(), monitor);
+            return ChatSetup {
+                backend: Some(retry::RetryBackend::wrap(client)),
+                handle: None,
+                status: ServerStatus::Connecting,
+            };
+        }
     };
     ChatSetup {
         // Every cloud provider sheds load as a matter of course, and a cloud
@@ -647,16 +743,36 @@ fn cloud_chat_setup(
     }
 }
 
-/// Builds a cloud embedding backend (OpenAI/Gemini). On an incomplete configuration
-/// (no model or key) — `UnavailableEmbedder` (RAG returns a clear error, doesn't
-/// crash), same as for other unconfigured embedders.
+/// Builds a cloud embedding backend (OpenAI/Gemini/the OpenRouter gateway). On
+/// an incomplete configuration (no model or key) — `UnavailableEmbedder` (RAG
+/// returns a clear error, doesn't crash), same as for other unconfigured
+/// embedders.
+///
+/// A cloud's embedder is retried as its chat backend is, and for the reason
+/// given there: every provider sheds load as a matter of course — a `429` was
+/// the answer to 4 requests of 10 on one of the gateway's — and nothing else
+/// will ever recover a request to a server nobody here can restart
+/// (docs/research/openrouter-mode.md §4.3, fork F8).
+///
+/// The gateway's is `Connecting` until its key was judged, like its chat
+/// engine ([`spawn_key_check`]): a refused key is the slot's status from the
+/// moment the engine is applied, where it used to be first heard of as a `401`
+/// inside the result of the first tool that embedded. The status withholds
+/// nothing — an embedder is called whatever its chip says — so that tool is
+/// still answered by the gateway's refusal; what changes is that the user was
+/// told before.
 fn cloud_embed_setup(
     provider: CloudProvider,
-    url_override: Option<&str>,
-    stored_key: Option<&str>,
-    api_key_env: Option<&str>,
-    model_name: Option<&str>,
+    entry: CloudEntry<'_>,
+    gateway: &OpenRouterSettings,
+    monitor: Monitor,
 ) -> EmbedSetup {
+    let CloudEntry {
+        url_override,
+        stored_key,
+        api_key_env,
+        model_name,
+    } = entry;
     let (Some(model), Ok(key)) = (
         model_name.filter(|m| !m.is_empty()),
         resolve_api_key(stored_key, api_key_env),
@@ -670,9 +786,17 @@ fn cloud_embed_setup(
     let client = OpenAiClient::new(base)
         .with_api_key(Some(key))
         .with_model(Some(model.to_string()));
+    let (client, status) = match provider {
+        CloudProvider::OpenRouter => {
+            let client = Arc::new(client.for_openrouter(gateway.attribution));
+            spawn_key_check(client.clone(), monitor);
+            (client, ServerStatus::Connecting)
+        }
+        _ => (Arc::new(client), ServerStatus::Ready),
+    };
     EmbedSetup {
-        status: ServerStatus::Ready,
-        embedder: Arc::new(client),
+        status,
+        embedder: BatchedEmbedder::wrap(RetryEmbedder::wrap(client)),
         handle: None,
     }
 }
@@ -818,6 +942,93 @@ fn spawn_probe(
             }
         }
     });
+}
+
+/// Asks the gateway about the key, **once**, and reports what it said
+/// (docs/research/openrouter-mode.md §3.3, fork F6).
+///
+/// A verdict is an HTTP answer. A key the gateway refuses is `Disconnected` with
+/// the gateway's own words; an accepted one is `Ready`; an answer that judges
+/// nothing — an outage, a rate limit — is `Ready` too, since the key was not
+/// refused and a request will speak for itself.
+///
+/// **No answer at all** is the one case that repeats: nothing was learned, so
+/// the slot says why it is waiting and asks again every [`RECHECK_POLL`] until
+/// something answers — the recovery a machine that came back online needs.
+/// After the first answer this task ends: a cloud is not watched, and nothing
+/// here is periodic once the key has been judged.
+fn spawn_key_check(client: Arc<OpenAiClient>, monitor: Monitor) {
+    spawn_key_check_every(client, monitor, RECHECK_POLL)
+}
+
+/// [`spawn_key_check`] with the wait between two unanswered attempts given —
+/// what lets a test see the second attempt without waiting out the first's
+/// five seconds.
+fn spawn_key_check_every(client: Arc<OpenAiClient>, monitor: Monitor, recheck: Duration) {
+    let Monitor {
+        cancel,
+        status_tx,
+        loc,
+    } = monitor;
+    tokio::spawn(async move {
+        let Some(verdict) = key_verdict(&client, &cancel, &status_tx, recheck).await else {
+            return;
+        };
+        let status = match verdict {
+            KeyVerdict::Accepted => ServerStatus::Ready,
+            KeyVerdict::Unjudged(said) => {
+                tracing::info!(reason = %said, "the gateway did not judge the key; taken as usable");
+                ServerStatus::Ready
+            }
+            KeyVerdict::Refused(said) => ServerStatus::Disconnected(loc.tf(
+                "ui.err.server.key_refused",
+                &[
+                    ("provider", CloudProvider::OpenRouter.display_name()),
+                    ("reason", &said),
+                ],
+            )),
+            // What `key_verdict` waits out rather than returns.
+            KeyVerdict::NoAnswer(said) => ServerStatus::Disconnected(said),
+        };
+        let _ = status_tx.send(status);
+    });
+}
+
+/// The gateway's word on the key, asked until there is one: while nothing
+/// answers, the slot is told why it waits — once — and the question is put
+/// again every `recheck`. `None`: the check is no longer wanted.
+async fn key_verdict(
+    client: &OpenAiClient,
+    cancel: &CancellationToken,
+    status_tx: &UnboundedSender<ServerStatus>,
+    recheck: Duration,
+) -> Option<KeyVerdict> {
+    let mut verdict = asked_once(client, cancel).await?;
+    let mut said_waiting = false;
+    while let KeyVerdict::NoAnswer(said) = verdict {
+        if !std::mem::replace(&mut said_waiting, true)
+            && status_tx.send(ServerStatus::Disconnected(said)).is_err()
+        {
+            return None;
+        }
+        tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return None,
+            _ = tokio::time::sleep(recheck) => {}
+        }
+        verdict = asked_once(client, cancel).await?;
+    }
+    Some(verdict)
+}
+
+/// One `GET /key`, unless the check was overtaken before it answered.
+async fn asked_once(client: &OpenAiClient, cancel: &CancellationToken) -> Option<KeyVerdict> {
+    let verdict = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => return None,
+        verdict = client.check_key() => verdict,
+    };
+    (!cancel.is_cancelled()).then_some(verdict)
 }
 
 /// Waits for a managed child's exit signal; for a server we don't own (external)
@@ -1054,6 +1265,9 @@ impl ServerSupervisor for MockSupervisor {
 }
 
 #[cfg(test)]
+mod gateway_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::shared::api::EmbedRole;
@@ -1096,6 +1310,7 @@ mod tests {
                 llama_dir: Some(llama_dir.clone().into()),
                 exe_dir: None,
             },
+            gateway: Default::default(),
         };
         eprintln!(
             "resolved: {:?}",
@@ -1189,6 +1404,7 @@ mod tests {
                 llama_dir: Some(data.path().to_path_buf()),
                 exe_dir: None,
             },
+            gateway: Default::default(),
         }
         .apply_embed(&settings, None, CancellationToken::new(), tx, ru());
         assert_ne!(
@@ -1250,6 +1466,7 @@ mod tests {
                 llama_dir: Some(data.path().to_path_buf()),
                 exe_dir: None,
             },
+            gateway: Default::default(),
         }
         .apply_embed(&settings, None, CancellationToken::new(), tx, ru());
         assert!(setup.handle.is_none(), "no process is started");

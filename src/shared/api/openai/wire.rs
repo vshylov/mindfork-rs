@@ -9,12 +9,14 @@ use serde::{Deserialize, Serialize};
 use crate::entities::sampling::{ReasoningEffort, SamplingConfig};
 use crate::shared::api::contract::{ApiMessage, ApiRole, ChatRequest};
 
-// The only consumer of this client is the local/external llama.cpp `llama-server`
-// (managed/external). The clouds moved to their own protocols: OpenAI → Responses
+// This client's first consumer is the local/external llama.cpp `llama-server`
+// (managed/external): everything set is sent, since llama.cpp ignores what it
+// does not know. The clouds moved to their own protocols — OpenAI → Responses
 // ([`ResponsesClient`](super::ResponsesClient)), Gemini → native
 // [`GeminiClient`](crate::shared::api::gemini::GeminiClient), Claude → Anthropic
-// Messages. So there's no longer a sampling dialect/filter — send everything set
-// (llama.cpp ignores unknown fields). See ADR 0004.
+// Messages (ADR 0004) — except the two that speak Chat Completions: xAI, which
+// takes the body as it is, and the OpenRouter gateway, which has a dialect of
+// its own ([`ChatCompletionRequest::for_gateway`]).
 
 // ---------- chat request ----------
 
@@ -61,6 +63,12 @@ pub struct ChatCompletionRequest {
     pub presence_penalty: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repeat_penalty: Option<f32>,
+    /// The same knob under the name a **gateway** reads. Never set by
+    /// [`build_chat_request`]; [`ChatCompletionRequest::for_gateway`] moves
+    /// `repeat_penalty` here, because through OpenRouter the llama.cpp spelling
+    /// reaches no model (docs/research/openrouter-mode.md §2.4, D1).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repetition_penalty: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repeat_last_n: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -221,6 +229,13 @@ pub fn carries_tool_images(messages: &[ApiMessage]) -> bool {
 /// builder already takes (docs/research/mcp-tool-images.md F1-A). **One** message per
 /// run rather than one per result, because a round's tool messages must follow its
 /// `tool_calls` contiguously.
+///
+/// The label is load-bearing, not decoration: the `user` message has no text of its
+/// own, and one that is an image and nothing else was answered by
+/// `google/gemini-3.5-flash` with its scratch text in the reply or with no reply at
+/// all — 8 of 8, against 8 clean of 8 with a label before the image
+/// (docs/research/openrouter-mode.md §11.4). Every image the orchestrator builds
+/// carries one.
 pub fn rehome_tool_images(messages: &[ApiMessage]) -> Option<Vec<ApiMessage>> {
     if !carries_tool_images(messages) {
         return None;
@@ -387,6 +402,7 @@ pub fn build_chat_request(
         frequency_penalty: s.frequency_penalty,
         presence_penalty: s.presence_penalty,
         repeat_penalty: s.repeat_penalty,
+        repetition_penalty: None,
         repeat_last_n: s.repeat_last_n,
         dry_multiplier: s.dry_multiplier,
         dry_base: s.dry_base,
@@ -413,6 +429,99 @@ pub fn build_chat_request(
         tools,
         tool_choice,
     }
+}
+
+impl ChatCompletionRequest {
+    /// The body as the **OpenRouter gateway** reads it
+    /// (docs/research/openrouter-mode.md §3.5, measured by sending each field with
+    /// a value of the wrong type):
+    ///
+    /// - `repeat_penalty` travels as `repetition_penalty` — the gateway's schema
+    ///   has the second name and drops the first unread;
+    /// - every field that is llama.cpp's own is left out: the gateway drops them,
+    ///   so sending them says nothing to the model and misdescribes the request
+    ///   to anyone reading it. `thinking` and `reasoning_budget` are among them —
+    ///   reasoning is asked for as `reasoning_effort` and `reasoning`, which the
+    ///   client fills from the catalogue ([`gateway_muted_effort`],
+    ///   [`gateway_reasoning`]);
+    /// - `/continue`'s explicit pair goes too: a gateway continues a trailing
+    ///   assistant message or does not, by the routed vendor, and the pair is not
+    ///   what decides (docs/history/gateway-images-and-continue.md §1.3).
+    ///
+    /// `top_k` and `min_p` stay: the gateway reads both, and the catalogue says
+    /// per model whether the provider takes them.
+    pub fn for_gateway(mut self) -> Self {
+        self.repetition_penalty = self.repeat_penalty.take();
+        self.repeat_last_n = None;
+        self.dynatemp_range = None;
+        self.dynatemp_exponent = None;
+        self.top_n_sigma = None;
+        self.typical_p = None;
+        self.adaptive_target = None;
+        self.adaptive_decay = None;
+        self.dry_multiplier = None;
+        self.dry_base = None;
+        self.dry_allowed_length = None;
+        self.dry_penalty_last_n = None;
+        self.dry_sequence_breakers = None;
+        self.xtc_probability = None;
+        self.xtc_threshold = None;
+        self.mirostat = None;
+        self.mirostat_tau = None;
+        self.mirostat_eta = None;
+        self.samplers = None;
+        self.thinking = None;
+        self.reasoning_budget = None;
+        self.chat_template_kwargs = None;
+        self.continue_final_message = None;
+        self.add_generation_prompt = None;
+        self
+    }
+}
+
+/// The efforts a gateway's catalogue may list, lowest first. `none` is not among
+/// them: it is the request to turn reasoning off, which is a different question.
+const GATEWAY_EFFORTS: [&str; 6] = ["minimal", "low", "medium", "high", "xhigh", "max"];
+
+/// Whether the request asks for reasoning to be **off**: an effort of `none`, a
+/// zero budget, or the thinking switch set to off with no effort chosen — the
+/// three ways the orchestrator and the settings say it.
+pub fn asks_reasoning_off(sampling: &SamplingConfig) -> bool {
+    match sampling.reasoning_effort {
+        Some(effort) => effort == ReasoningEffort::None,
+        None => sampling.reasoning_budget == Some(0) || sampling.thinking == Some(false),
+    }
+}
+
+/// The effort a **muted** turn asks for on a model that cannot be muted, or
+/// `None` to send the request as built.
+///
+/// Measured through OpenRouter (docs/research/openrouter-mode.md §4.1): a model
+/// whose catalogue entry says `reasoning.mandatory: true` answers both
+/// `reasoning_effort: "none"` and `reasoning: {enabled: false}` with a `400`
+/// ("Reasoning is mandatory for this endpoint and cannot be disabled"), and the
+/// lowest effort it lists with a `200` — on Gemini 3.5 Flash zero reasoning
+/// tokens and a thirtieth of the cost of its default. So the silent turns — the
+/// title, the compaction roll, impersonation — ask for that instead of being
+/// refused, re-sent and billed at the default depth.
+///
+/// `mandatory` also covers a server that has already refused (`off_refused`): a
+/// catalogue that said nothing, or said `false` wrongly, is corrected by the
+/// refusal itself. A model that lists no efforts gets `None` — there is nothing
+/// lower to ask for — and the caller sends no reasoning field at all.
+pub fn gateway_muted_effort(
+    sampling: &SamplingConfig,
+    entry: Option<&ModelEntry>,
+    off_refused: bool,
+) -> Option<&'static str> {
+    if !asks_reasoning_off(sampling) {
+        return None;
+    }
+    let mandatory = off_refused || entry.and_then(ModelEntry::reasoning_mandatory) == Some(true);
+    if !mandatory {
+        return None;
+    }
+    entry?.lowest_effort()
 }
 
 /// The body of a gateway's `reasoning` object — the switch alone; an effort keeps
@@ -467,6 +576,11 @@ pub fn gateway_reasoning(
 pub struct ChatCompletionChunk {
     #[serde(default)]
     pub choices: Vec<ChatChoiceChunk>,
+    /// The company that served the request, as a **gateway** names it on every
+    /// chunk (OpenRouter: `"Amazon Bedrock"` for an Anthropic model). Absent from
+    /// every server that is not a gateway.
+    #[serde(default)]
+    pub provider: Option<String>,
     /// The token counter: sent as the final chunk when
     /// `stream_options.include_usage=true` (such a chunk's `choices` is usually empty).
     #[serde(default)]
@@ -557,6 +671,20 @@ pub struct Usage {
     pub completion_tokens: u32,
     #[serde(default)]
     pub completion_tokens_details: CompletionTokensDetails,
+    /// What the request cost, in dollars — a gateway's own meter (OpenRouter puts
+    /// it on the stream's last chunk). Absent everywhere else.
+    #[serde(default)]
+    pub cost: Option<f64>,
+}
+
+impl Usage {
+    /// [`Self::cost`] in billionths of a dollar — an integer, so that what is
+    /// stored compares and sums exactly. `None` for no figure, a negative one or
+    /// one that is not a number.
+    pub fn cost_nanos(&self) -> Option<u64> {
+        let cost = self.cost.filter(|c| c.is_finite() && *c >= 0.0)?;
+        Some((cost * 1e9).round() as u64)
+    }
 }
 
 /// Token breakdown of the Chat Completions response (only reasoning tokens matter).
@@ -636,6 +764,16 @@ pub struct ModelList {
     pub data: Vec<ModelEntry>,
 }
 
+/// `GET /model/{author}/{slug}` — OpenRouter's answer about **one** model: the
+/// same entry the catalogue lists, under `data`. Two kilobytes where the whole
+/// catalogue is three quarters of a megabyte, and the gateway resolves a
+/// `:variant` suffix and a `~…-latest` alias itself, which the list cannot
+/// (docs/research/openrouter-mode.md §4.1).
+#[derive(Debug, Deserialize)]
+pub struct ModelEnvelope {
+    pub data: ModelEntry,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct ModelEntry {
     #[serde(default)]
@@ -695,6 +833,20 @@ impl ModelEntry {
     /// catalogue did not say.
     pub fn reasoning_mandatory(&self) -> Option<bool> {
         self.reasoning.as_ref()?.get("mandatory")?.as_bool()
+    }
+
+    /// The lowest effort `reasoning.supported_efforts` lists, in the spelling the
+    /// request takes. `None` — no list, an empty one, or one that names nothing
+    /// this client knows the order of.
+    pub fn lowest_effort(&self) -> Option<&'static str> {
+        let listed = self
+            .reasoning
+            .as_ref()?
+            .get("supported_efforts")?
+            .as_array()?;
+        GATEWAY_EFFORTS
+            .into_iter()
+            .find(|effort| listed.iter().any(|l| l.as_str() == Some(effort)))
     }
 }
 
@@ -1265,6 +1417,181 @@ mod tests {
         // A request without tools must not contain tool_choice.
         assert!(json.get("tool_choice").is_none());
     }
+
+    // ---------- the OpenRouter dialect (docs/research/openrouter-mode.md) ----------
+
+    /// Every field a request body can carry, as its sorted keys — so that a
+    /// field the dialect forgets, or drops by mistake, has a value to show it.
+    /// The sampling comes from one JSON literal rather than a struct literal of
+    /// thirty same-shape rows (lessons §2).
+    fn a_body_with_everything_set() -> ChatCompletionRequest {
+        use crate::shared::api::contract::{ApiToolCall, ToolSchema};
+        let sampling: SamplingConfig = serde_json::from_str(
+            r#"{"temperature":0.7,"dynatemp_range":0.5,"dynatemp_exponent":1.0,"top_k":40,
+                "top_p":0.9,"min_p":0.05,"top_n_sigma":1.0,"typical_p":0.9,
+                "adaptive_target":0.5,"adaptive_decay":0.9,"frequency_penalty":0.1,
+                "presence_penalty":0.2,"repeat_penalty":1.15,"repeat_last_n":64,
+                "dry_multiplier":0.8,"dry_base":1.75,"dry_allowed_length":2,
+                "dry_penalty_last_n":64,"dry_sequence_breakers":["\n"],
+                "xtc_probability":0.5,"xtc_threshold":0.1,"mirostat":2,"mirostat_tau":5.0,
+                "mirostat_eta":0.1,"max_tokens":512,"seed":7,"samplers":["top_k"],
+                "thinking":true,"reasoning_effort":"low","reasoning_budget":0}"#,
+        )
+        .unwrap();
+        let call = ApiToolCall {
+            thought_signature: None,
+            id: "c1".into(),
+            name: "note_save".into(),
+            arguments: "{}".into(),
+        };
+        let req = ChatRequest {
+            continue_final: true,
+            system: Some("sys".into()),
+            messages: vec![
+                ApiMessage::user("q"),
+                ApiMessage::assistant_tool_calls("", vec![call]),
+                ApiMessage::tool("c1", "saved"),
+                ApiMessage::assistant("part"),
+            ],
+            sampling,
+            tools: vec![ToolSchema {
+                name: "note_save".into(),
+                description: "Save a note".into(),
+                parameters: serde_json::json!({"type":"object"}),
+            }],
+        };
+        let mut body = build_chat_request(&req, true, Some("anthropic/claude-haiku-4.5"), false);
+        body.reasoning = Some(WireReasoning { enabled: true });
+        body
+    }
+
+    /// What the dialect takes out: llama.cpp's own sampling, its two reasoning
+    /// fields, the template kwargs and `/continue`'s explicit pair — each one
+    /// answered `200` to a value of the wrong type, which is to say unread
+    /// (docs/research/openrouter-mode.md §3.5).
+    const LEFT_OUT_FOR_THE_GATEWAY: &str = "add_generation_prompt adaptive_decay \
+        adaptive_target chat_template_kwargs continue_final_message dry_allowed_length \
+        dry_base dry_multiplier dry_penalty_last_n dry_sequence_breakers dynatemp_exponent \
+        dynatemp_range mirostat mirostat_eta mirostat_tau reasoning_budget repeat_last_n \
+        repeat_penalty samplers thinking top_n_sigma typical_p xtc_probability xtc_threshold";
+
+    /// ...and what it leaves exactly as built: the conversation, the tools and
+    /// every field the gateway's schema refused a wrong type in.
+    const READ_BY_THE_GATEWAY: &str = "frequency_penalty max_tokens messages min_p model \
+        presence_penalty reasoning reasoning_effort seed stream stream_options temperature \
+        tool_choice tools top_k top_p";
+
+    /// [`ChatCompletionRequest::for_gateway`] as a pure function, against a
+    /// body with every field set. Defect D1 was a knob offered, set, sent under
+    /// llama.cpp's name and read by nobody: the penalty has to arrive as
+    /// `repetition_penalty`, with its value, and nothing else may move — a
+    /// field dropped by mistake is a setting silently ignored, and one left in
+    /// misdescribes the request to whoever reads it.
+    #[test]
+    fn the_gateway_dialect_renames_one_field_and_leaves_out_llama_cpps_own() {
+        type Body = serde_json::Map<String, serde_json::Value>;
+        fn sorted(mut keys: Vec<&str>) -> Vec<&str> {
+            keys.sort_unstable();
+            keys
+        }
+        fn only_in<'a>(a: &'a Body, b: &Body) -> Vec<&'a str> {
+            let keys = a.keys().filter(|k| !b.contains_key(*k));
+            sorted(keys.map(String::as_str).collect())
+        }
+        let before = serde_json::to_value(a_body_with_everything_set()).unwrap();
+        let after = serde_json::to_value(a_body_with_everything_set().for_gateway()).unwrap();
+        let (before, after) = (before.as_object().unwrap(), after.as_object().unwrap());
+
+        assert_eq!(
+            only_in(before, after),
+            sorted(LEFT_OUT_FOR_THE_GATEWAY.split_whitespace().collect())
+        );
+        assert_eq!(only_in(after, before), ["repetition_penalty"]);
+        assert_eq!(after["repetition_penalty"], before["repeat_penalty"]);
+
+        let stayed = after.keys().filter(|k| before.get(*k) == after.get(*k));
+        assert_eq!(
+            sorted(stayed.map(String::as_str).collect()),
+            sorted(READ_BY_THE_GATEWAY.split_whitespace().collect()),
+            "present on both sides with the same value"
+        );
+    }
+
+    /// What is stored has to compare and sum exactly, so the gateway's dollars
+    /// become whole billionths — rounded, not cut: a decimal fraction is not a
+    /// binary one, and `0.000065` scaled falls a hair short of 65000. Only a
+    /// figure that **is** a cost becomes one: zero is the price of a free
+    /// model, while a negative number, a missing key and a `null` are no
+    /// figure at all (fork F11). Columns: the `usage` object, the nanos, why.
+    const COSTS: &str = r#"
+        {"prompt_tokens":17,"completion_tokens":4,"cost":0.000037} => 37000       | a measured turn on Haiku 4.5
+        {"cost":0.000065}                                           => 65000       | rounded, not cut to 64999
+        {"cost":0}                                                  => 0           | a free model costs nothing, and says so
+        {"cost":12.5}                                               => 12500000000 | dollars, not fractions of a cent
+        {"cost":0.0000000004}                                       => 0           | less than half a billionth is nothing
+        {"cost":-0.000001}                                          => -           | a negative figure is not a cost
+        {"cost":null}                                               => -           | null
+        {"prompt_tokens":17,"completion_tokens":4}                  => -           | every server that is not a gateway
+    "#;
+
+    #[test]
+    fn a_cost_is_stored_in_whole_billionths_of_a_dollar() {
+        let mut wrong = Vec::new();
+        for row in COSTS.lines().filter(|l| !l.trim().is_empty()) {
+            let (columns, why) = row.split_once('|').unwrap();
+            let (usage, nanos) = columns.split_once("=>").unwrap();
+            let usage: Usage = serde_json::from_str(usage.trim()).unwrap();
+            let got = usage.cost_nanos();
+            if got != nanos.trim().parse().ok() {
+                wrong.push(format!("{}: {got:?}", why.trim()));
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+        // What JSON cannot spell, a float still can.
+        for not_a_number in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let usage = Usage {
+                cost: Some(not_a_number),
+                ..Default::default()
+            };
+            assert_eq!(usage.cost_nanos(), None, "{not_a_number}");
+        }
+    }
+
+    /// `GET /model/{author}/{slug}` answers with **one** entry under `data`
+    /// (docs/research/openrouter-mode.md §4.1), read by the same accessors the
+    /// catalogue's entries are. The two bodies a caller could mistake for it —
+    /// the list, whose `data` is an array, and the gateway's error envelope —
+    /// are not an entry, and must not read as one that claims nothing.
+    #[test]
+    fn the_gateways_answer_about_one_model_is_an_entry_under_data() {
+        let one: ModelEnvelope = serde_json::from_str(
+            r#"{"data":{"id":"google/gemini-3.5-flash","name":"Google: Gemini 3.5 Flash",
+                "context_length":1048576,
+                "architecture":{"input_modalities":["text","image","video"],"output_modalities":["text"]},
+                "supported_parameters":["reasoning","max_tokens","temperature","tools"],
+                "reasoning":{"mandatory":true,"supported_efforts":["high","medium","low","minimal"]},
+                "pricing":{"prompt":"0.0000003","completion":"0.0000025"}}}"#,
+        )
+        .expect("the gateway's own shape");
+        let entry = one.data;
+        assert_eq!(entry.id, "google/gemini-3.5-flash");
+        assert_eq!(entry.context_length, Some(1_048_576));
+        assert_eq!(entry.takes_images(), Some(true));
+        assert!(entry.lists_parameter("tools") && !entry.lists_parameter("top_k"));
+        assert_eq!(entry.reasoning_mandatory(), Some(true));
+        assert_eq!(entry.lowest_effort(), Some("minimal"));
+
+        for not_an_entry in [
+            r#"{"data":[{"id":"google/gemini-3.5-flash"}]}"#,
+            r#"{"error":{"message":"nope/not-a-model is not a valid model ID","code":400}}"#,
+            "{}",
+        ] {
+            assert!(
+                serde_json::from_str::<ModelEnvelope>(not_an_entry).is_err(),
+                "{not_an_entry}"
+            );
+        }
+    }
 }
 
 /// Error objects delivered inside an already-open `200` stream
@@ -1494,5 +1821,162 @@ mod gateway_reasoning_tests {
             Some(4096),
             "an odd key must not cost the entry"
         );
+    }
+
+    // ---------- a muted turn through the OpenRouter mode ----------
+
+    /// A sampling from the three columns every table below opens with: the
+    /// thinking switch, the effort, the budget (`-` — not set).
+    fn sampling(thinking: &str, effort: &str, budget: &str) -> SamplingConfig {
+        SamplingConfig {
+            thinking: match thinking {
+                "on" => Some(true),
+                "off" => Some(false),
+                _ => None,
+            },
+            reasoning_effort: serde_json::from_value(serde_json::json!(effort)).ok(),
+            reasoning_budget: budget.parse().ok(),
+            ..Default::default()
+        }
+    }
+
+    /// The three ways the orchestrator and the settings say "do not reason",
+    /// and their precedence: an effort, once chosen, is the answer by itself —
+    /// `none` asks for silence and any other does not, whatever the switch and
+    /// the budget beside it say. Columns: thinking, effort, budget, asked off,
+    /// why.
+    const ASKED_OFF: &str = "
+        -    -     -    no   | nothing set
+        off  -     -    yes  | the switch off
+        on   -     -    no   | the switch on
+        -    none  -    yes  | an effort of none
+        -    low   -    no   | an effort chosen
+        -    -     0    yes  | a zero budget
+        -    -     -1   no   | an unlimited budget
+        -    -     512  no   | a budget to think within
+        on   -     0    yes  | a zero budget is off whatever the switch says
+        off  none  0    yes  | the silent turns' shape
+        on   none  -    yes  | none outranks the switch
+        off  high  -    no   | a chosen effort outranks the switch
+        -    high  0    no   | ...and the budget
+    ";
+
+    #[test]
+    fn a_request_says_do_not_reason_in_one_of_three_ways() {
+        let mut wrong = Vec::new();
+        for row in ASKED_OFF.lines().filter(|l| !l.trim().is_empty()) {
+            let (columns, why) = row.split_once('|').unwrap();
+            let c: Vec<&str> = columns.split_whitespace().collect();
+            if asks_reasoning_off(&sampling(c[0], c[1], c[2])) != (c[3] == "yes") {
+                wrong.push(why.trim());
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    /// A catalogue entry by the name the tables use. The first three are the
+    /// gateway's own, cut to the `reasoning` key
+    /// (docs/research/openrouter-mode.md §3.2); `absent` is a catalogue that
+    /// did not answer.
+    fn entry(kind: &str) -> Option<ModelEntry> {
+        let reasoning = match kind {
+            "gemini" => {
+                r#"{"mandatory":true,"supported_efforts":["high","medium","low","minimal"]}"#
+            }
+            "sonnet" => {
+                r#"{"mandatory":true,"supported_efforts":["max","xhigh","high","medium","low"]}"#
+            }
+            "r1" => r#"{"mandatory":true}"#,
+            "haiku" => r#"{"mandatory":false}"#,
+            "optional" => r#"{"mandatory":false,"supported_efforts":["high","low"]}"#,
+            "unstated" => r#"{"supported_efforts":["high","low"]}"#,
+            "silent" => "null",
+            _ => return None,
+        };
+        serde_json::from_str(&format!(r#"{{"id":"m","reasoning":{reasoning}}}"#)).ok()
+    }
+
+    /// §4.1, measured: a model that must reason answers a request to stop with
+    /// a `400` and the lowest effort it lists with a `200`, at a thirtieth of
+    /// the cost of its default depth. So a muted turn is given that effort —
+    /// and **only** a muted turn, on a model that cannot stop: every other row
+    /// is a request that works today and has to go out as built. Columns:
+    /// thinking, effort, budget, entry, refused before, the effort asked, why.
+    const MUTED_EFFORT: &str = "
+        off  none  0  gemini    no   minimal | the silent turns' shape, on a model that must reason
+        off  -     -  gemini    no   minimal | the switch alone
+        -    -     0  gemini    no   minimal | a zero budget alone
+        -    none  -  sonnet    no   low     | the lowest listed, whatever the list opens with
+        on   -     -  gemini    no   -       | a turn that may reason is sent as built
+        -    high  -  gemini    no   -       | an effort somebody chose is nobody's to replace
+        -    -     -  gemini    no   -       | nothing asked
+        off  none  0  r1        no   -       | must reason and lists no efforts: nothing lower to ask for
+        off  none  0  haiku     no   -       | may stop, so is asked to stop
+        off  none  0  optional  no   -       | ...even where it lists efforts
+        off  none  0  unstated  no   -       | an unstated flag is silence
+        off  none  0  optional  yes  low     | a refusal corrects an entry that said it may stop
+        off  none  0  unstated  yes  low     | ...and one that did not say
+        off  none  0  silent    yes  -       | refused, with no list to pick from
+        off  none  0  absent    yes  -       | refused, with no entry at all
+        off  none  0  absent    no   -       | no entry, nothing claimed
+        on   -     -  optional  yes  -       | a refusal mutes no turn that did not ask
+    ";
+
+    #[test]
+    fn a_muted_turn_is_given_the_lowest_effort_only_where_stopping_is_refused() {
+        let mut wrong = Vec::new();
+        for row in MUTED_EFFORT.lines().filter(|l| !l.trim().is_empty()) {
+            let (columns, why) = row.split_once('|').unwrap();
+            let c: Vec<&str> = columns.split_whitespace().collect();
+            let got = gateway_muted_effort(
+                &sampling(c[0], c[1], c[2]),
+                entry(c[3]).as_ref(),
+                c[4] == "yes",
+            );
+            if got != Some(c[5]).filter(|effort| *effort != "-") {
+                wrong.push(format!("{}: {got:?}", why.trim()));
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    /// The order is ours, not the list's: the catalogue publishes 26 different
+    /// lists (§3.2), most of them highest first, and `none` — where a list has
+    /// it — is the request to stop, which is the very thing a model that must
+    /// reason refuses. A list that names nothing this client can order is
+    /// silence. Columns: the entry's `reasoning`, the lowest effort, why.
+    const LOWEST_EFFORT: &str = r#"
+        {"supported_efforts":["high","medium","low","minimal"]}  => minimal | Gemini 3.5 Flash, highest first
+        {"supported_efforts":["minimal","low","medium","high"]}  => minimal | the same list, lowest first
+        {"supported_efforts":["xhigh","high","medium","low","minimal","none"]} => minimal | GPT-5.5: none is not an effort
+        {"supported_efforts":["max","xhigh","high","medium","low"]} => low  | Claude Sonnet 5.5
+        {"supported_efforts":["max","high","xhigh"]}             => high    | high is below xhigh, and both below max
+        {"supported_efforts":["max"]}                            => max     | one effort is the lowest there is
+        {"supported_efforts":["none"]}                           => -       | none alone is nothing to ask for
+        {"supported_efforts":["turbo","deep"]}                   => -       | words with no order here
+        {"supported_efforts":["Low","HIGH"]}                     => -       | another spelling is another word
+        {"supported_efforts":[3,"medium",null]}                  => medium  | what is not a word is passed over
+        {"supported_efforts":[]}                                 => -       | an empty list
+        {"supported_efforts":"low"}                              => -       | not a list
+        {"mandatory":true}                                       => -       | no list
+        "low"                                                    => -       | not an object
+    "#;
+
+    #[test]
+    fn the_lowest_effort_is_read_in_this_clients_order() {
+        let mut wrong = Vec::new();
+        for row in LOWEST_EFFORT.lines().filter(|l| !l.trim().is_empty()) {
+            let (columns, why) = row.split_once('|').unwrap();
+            let (reasoning, lowest) = columns.split_once("=>").unwrap();
+            let entry: ModelEntry =
+                serde_json::from_str(&format!(r#"{{"id":"m","reasoning":{reasoning}}}"#)).unwrap();
+            let got = entry.lowest_effort();
+            if got != Some(lowest.trim()).filter(|effort| *effort != "-") {
+                wrong.push(format!("{}: {got:?}", why.trim()));
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+        let silent: ModelEntry = serde_json::from_str(r#"{"id":"m"}"#).unwrap();
+        assert_eq!(silent.lowest_effort(), None, "no reasoning key at all");
     }
 }

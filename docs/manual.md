@@ -42,13 +42,14 @@ you like the shape of the thing.
 ### Connecting a model
 
 Open settings — `Ctrl+P` (or type `/settings`) — and go to **Model/server**. The
-**Mode** field cycles through the six modes with `←/→`:
+**Mode** field cycles through the seven modes with `←/→`:
 
 | Mode | What it is |
 |---|---|
 | `managed` | the app launches its own `llama-server` child process from a binary and a GGUF file on this machine |
-| `external` | any OpenAI-compatible server you already run: llama.cpp, vLLM, LM Studio, Ollama, or a gateway such as OpenRouter or LiteLLM |
+| `external` | any OpenAI-compatible server you already run: llama.cpp, vLLM, LM Studio, Ollama, or a gateway such as LiteLLM |
 | `openai` · `gemini` · `claude` · `grok` | the cloud providers, each with its own key and model |
+| `openrouter` | the OpenRouter gateway: one key in front of every vendor's models, the same key for the assistant, impersonation, embeddings and speech — and for watching videos, if you choose it there (§6) |
 
 For a cloud mode, fill in the API key (it is stored encrypted and bound to this
 machine, and never shown back) and then the **model**: press `Enter` on that
@@ -57,6 +58,18 @@ filter it, `Ctrl+R` asks again, and the first row of the list is the old way —
 typing a name by hand. Where a provider says which of its models are for chat,
 the list is narrowed to those; where it says nothing, everything it lists is
 offered with the likely ones first.
+
+In the `openrouter` mode that list says more, because the gateway publishes
+more: each row carries the model's context window, the price of a million tokens
+in and out, and `no tools` for a model that cannot call them — which, in an app
+driven by tools, means it can only chat. The list opens **before** a key is
+entered (the gateway's catalogue is public); with a key it is your account's own
+list, narrowed by the privacy and provider settings you made there. The key
+itself is checked when an engine in this mode is applied, the embedder
+included: a key the gateway refuses shows in that engine's status chip, in the
+gateway's words, instead of failing your first message. Setup in full, and what
+the app tells OpenRouter about itself —
+[install.md §3.2](install.md).
 
 For `managed`, the **Binary** field may be left empty — the app then uses the
 build `mindfork llama setup` installed last, or a `llama-server` sitting next to
@@ -221,12 +234,31 @@ per-tool toggles, so a companion can be given less than the machine allows.
 | **Web search** | `web_search` and `fetch_url` — off until you turn it on. Local and LAN addresses stay refused unless **Allow local addresses** is also on |
 | **Python execution** | `python_exec` in a WASI sandbox with no host file access; `mindfork sandbox setup` installs it once |
 | **File access** | `fs_read` / `fs_write` / `fs_list`, jailed to the one directory you name. The app's own data and program folders are never reachable |
-| **Video (YouTube)** | `youtube_watch` — needs a Gemini key, and works whatever your chat engine is |
+| **Video (YouTube)** | `youtube_watch` — needs a Gemini key or an OpenRouter one, by the group's **Provider** row, and works whatever your chat engine is |
 | **MCP servers** | tools from any Model Context Protocol server; a double opt-in, and a server that changes its tool list has to be re-confirmed |
 | **Background runs (subagent/dialogue)** | `start_subagent` and `start_dialogue` — work that outlives the reply |
 
 Two tools are always available and always safe: `calculate` and `current_time` —
 no network, no disk.
+
+### Who watches a video
+
+The **Provider** row of the Video (YouTube) group says who watches. `gemini` is
+Google's own API. `openrouter` is the same Gemini models behind the key the
+`openrouter` mode uses: `Enter` on **Model** then offers the models the gateway
+lists as taking video, the Gemini family first — it is the one that takes a
+YouTube link — and there is **no default model**, so until you choose one the
+tool answers from the video's page alone: its title, channel, length and the
+author's description. Each provider keeps its own model and key, and switching
+retypes nothing.
+
+What differs is the price of a part. Google cuts out the segment that was asked
+for and charges for the segment. Through the gateway **the whole video is read
+and charged, whatever part is asked for**: the answer is about the part and says
+that the whole was read, and the length ceiling measures the whole video — one
+longer than the ceiling is refused even for a minute of it. Any link you paste
+is fine: the app hands over the video's own address and nothing else of the
+link ([install.md §4.4](install.md)).
 
 ### Confirmation
 
@@ -250,10 +282,23 @@ is open and idle; otherwise the chat list marks it unread.
 
 `/tts` speaks the last message, `/tts N` the last N, `/tts all` the whole
 conversation; `/tts stop|pause|resume` controls playback. The voice is configured
-at `Ctrl+P → Model/server → Speech` — OpenAI, Gemini, or any OpenAI-compatible
-speech server — and your own lines can have a different voice. Code, tables and
+at `Ctrl+P → Model/server → Speech` — OpenAI, Gemini, the OpenRouter gateway, or
+any OpenAI-compatible speech server — and your own lines can have a different
+voice. Code, tables and
 diagrams are skipped with a short spoken note instead of being read out
 character by character.
+
+In the `openrouter` mode the Speech tab has lists where the other modes have
+text fields: `Enter` on **Model** offers the gateway's speech models, each with
+the number of voices it lists, and `Enter` on **Voice** or **User voice** offers
+the voices of the model chosen. The key is the one the other tabs use in that
+mode. There is **no default model** — until you choose one, `/tts` says speech is
+not configured — and no price in the list, because the gateway publishes that
+number without its unit. Most of its models need a voice and a few speak
+without one; when something is missing or refused, the chat shows the gateway's
+own sentence, for instance *"An explicit voice is required for this TTS
+provider."* The speech rate is sent, and a model may ignore it
+([install.md §4.3](install.md)).
 
 ## 8. Settings worth knowing
 
@@ -263,10 +308,16 @@ Eight sections, and these four are the ones worth a visit early.
   Besides the mode and the model: **Sessions (parallel streams)**, how many
   requests may be open at once (1 by default, so the assistant and its subagents
   take turns), and **Parallel tool calls**, how many of one reply's read-only
-  calls run together (1 on a local engine, 4 on a cloud).
+  calls run together (1 on a local engine, 4 on a cloud). A tab whose mode is
+  `openrouter` also has **Name the app to OpenRouter**: on by default, it adds
+  two headers naming the application — never you — to every request the app
+  makes to the gateway, and off, they are not sent. The same switch closes the
+  video group in **Tools** while its provider is `openrouter`.
 - **Sampling** — temperature and the rest, per slot. What the screen offers is
   narrowed to what the endpoint says it accepts, so a gateway stops showing knobs
-  it would silently drop. The **reply budget** (`max_tokens`) covers the model's
+  it would silently drop; in the `openrouter` mode the list starts from what the
+  gateway reads at all and narrows to what the chosen model takes. The **reply
+  budget** (`max_tokens`) covers the model's
   reasoning as well as its answer; the default of 16384 is deliberately generous
   for that reason.
 - **Memory** — the context window when the engine cannot say it, what triggers
@@ -494,7 +545,7 @@ the keys for itself:
 | `/rename [title]` · `/clone` · `/copy` | `F2` · `Ctrl+D` · `F5` | this chat: rename, clone, copy the conversation |
 | `/autotitle` | `Ctrl+R` in the list | have the model title this chat |
 | `/regen` · `/retry` · `/takeback` | `Ctrl+R` · `Ctrl+E` | regenerate the last reply / take back the last exchange |
-| `/continue` | — | resume the last interrupted reply from where it stopped — local and external engines, Gemini, and Claude up to the 4.5 generation |
+| `/continue` | — | resume the last interrupted reply from where it stopped — local and external engines, Gemini, and Claude up to the 4.5 generation; through OpenRouter or another gateway, only those same two — Gemini models, and Claude up to 4.5 |
 | `/impersonate [text]` | `Ctrl+U` | the model writes your next message, continuing the text you give it |
 | `/stop` | `Esc` | cancel the running generation |
 | `/find [text]` · `/search <text>` | `Ctrl+F` · `Ctrl+G` | find in this conversation / find messages across every chat |

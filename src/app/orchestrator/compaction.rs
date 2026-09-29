@@ -173,15 +173,17 @@ impl ContextDiscovery {
         published(facts.caps.as_ref()) != published(self.caps.as_ref())
     }
 
-    /// Applies an answer if it belongs to the current engine.
-    fn apply(&mut self, epoch: u64, facts: EngineFacts) {
+    /// Applies an answer if it belongs to the current engine, and says whether
+    /// it did.
+    fn apply(&mut self, epoch: u64, facts: EngineFacts) -> bool {
         if epoch != self.epoch {
-            return;
+            return false;
         }
         self.pending = false;
         self.answered = true;
         self.known = facts.budget;
         self.caps = facts.caps;
+        true
     }
 }
 
@@ -389,16 +391,21 @@ impl Orchestrator {
                 "the endpoint's catalogue answered for the configured model"
             );
         }
+        let fields = facts.caps.as_ref().and_then(|c| c.sampling_fields.clone());
+        let narrowed = self.context.caps_differ(&facts);
+        // An answer of an engine that is gone is dropped whole. Its list used to
+        // reach the screens all the same — sent before the epoch was looked at —
+        // and since every applied change asks again, the slower of two engines
+        // could answer last and leave its list on the screen of the other.
+        if !self.context.apply(epoch, facts) {
+            return;
+        }
         // The screens are told what the endpoint offers, the same way they are
         // told the slot count (`slots.rs`): a discovered fact reaches the UI as an
         // event, never by the UI asking.
         let _ = self
             .evt_tx
-            .send(crate::app::events::AppEvent::EngineSamplingFields(
-                facts.caps.as_ref().and_then(|c| c.sampling_fields.clone()),
-            ));
-        let narrowed = self.context.caps_differ(&facts);
-        self.context.apply(epoch, facts);
+            .send(crate::app::events::AppEvent::EngineSamplingFields(fields));
         // The `set_sampling` schema is baked into the registry, so a catalogue
         // that lands after startup has to rebuild it — otherwise the model keeps
         // being offered fields the endpoint drops, which is half of what this
@@ -772,7 +779,7 @@ pub(super) async fn collect_roll(
             // The client hands the usage over before `Finished` — it reads on
             // past `finish_reason` for exactly this chunk.
             ChatChunk::Usage(u) => c.usage = Some(u),
-            ChatChunk::ThoughtsSignature(_) | ChatChunk::ToolCall(_) => {}
+            ChatChunk::ThoughtsSignature(_) | ChatChunk::ToolCall(_) | ChatChunk::Served(_) => {}
         }
     }
     if let Some(err) = failure {

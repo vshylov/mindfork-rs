@@ -713,3 +713,600 @@ async fn a_stored_search_key_shows_as_present() {
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
 }
+
+/// What one engine said about itself does not outlive it.
+///
+/// Until this was fixed the facts were asked again at start-up and on a status
+/// flip only. A managed or external server announces itself through its probe,
+/// so those switches were covered; a cloud is ready at once and says nothing —
+/// and the previous engine's window went on deciding when automatic compaction
+/// fired, against a model it had never been measured for
+/// (docs/research/openrouter-mode.md §4.1, §9 A2). The gateway's own mode would
+/// have met this on every change of model.
+#[tokio::test]
+async fn what_the_previous_engine_said_does_not_outlive_a_settings_edit() {
+    use crate::app::orchestrator::compaction::EngineFacts;
+    use crate::shared::api::contract::ModelCapabilities;
+
+    let (_d, mut orch) = bare_orch();
+    orch.config.engine.mode = ServerMode::External;
+    // As a gateway's catalogue answered for the model `external` pointed at.
+    let epoch = orch.context.epoch();
+    orch.handle_budget_result(
+        epoch,
+        EngineFacts {
+            budget: None,
+            caps: Some(ModelCapabilities {
+                context_length: Some(64_000),
+                sampling_fields: Some(vec!["temperature".to_string()].into()),
+            }),
+        },
+    );
+    assert_eq!(orch.context_budget(), Some(64_000));
+    assert!(orch.endpoint_catalogued());
+
+    // The switch that flips no status.
+    orch.config.engine.mode = ServerMode::Claude;
+    orch.restarts.mark_chat();
+    orch.flush_restarts();
+
+    assert_eq!(
+        orch.context_budget(),
+        None,
+        "the window belonged to the engine that is gone"
+    );
+    assert!(!orch.endpoint_catalogued());
+    assert!(orch.endpoint_sampling_fields().is_none());
+    assert!(
+        orch.context.epoch() > epoch,
+        "and an answer still in flight for it would be dropped"
+    );
+}
+
+/// An embedder that keeps the texts it was asked to embed, as they arrived.
+struct Recording {
+    asked: std::sync::Mutex<Vec<String>>,
+}
+
+#[async_trait::async_trait]
+impl Embedder for Recording {
+    async fn embed(
+        &self,
+        texts: Vec<String>,
+        _role: crate::shared::api::EmbedRole,
+    ) -> anyhow::Result<Vec<Vec<f32>>> {
+        let vectors = texts.iter().map(|t| vec![t.len() as f32, 1.0]).collect();
+        self.asked.lock().unwrap().extend(texts);
+        Ok(vectors)
+    }
+}
+
+/// An orchestrator whose supervisor hands out `embedder`, bare, every time an
+/// embedding engine is applied — what the production supervisor does.
+fn orch_on(embedder: Arc<Recording>) -> (tempfile::TempDir, Orchestrator) {
+    let (dir, mut orch) = bare_orch();
+    orch.engines = EngineManager::new(
+        Arc::new(MockSupervisor::with_backend_and_embedder(
+            None,
+            Some(embedder as Arc<dyn Embedder>),
+        )),
+        unbounded_channel().0,
+        unbounded_channel().0,
+        unbounded_channel().0,
+    );
+    orch.config.embed.convention = crate::shared::embed_prefix::EmbedConvention::E5;
+    (dir, orch)
+}
+
+/// Embeds one passage through whatever the orchestrator would hand a tool now,
+/// and says what reached the embedder for it: every text asked since the last
+/// call, the guard's own among them.
+async fn embedded(orch: &Orchestrator, seen: &Recording, text: &str) -> Vec<String> {
+    orch.engines
+        .embedder()
+        .embed(
+            vec![text.to_string()],
+            crate::shared::api::EmbedRole::Passage,
+        )
+        .await
+        .expect("an embedding");
+    std::mem::take(&mut *seen.asked.lock().unwrap())
+}
+
+/// The canary, as the model-change guard asks for it under the e5 convention.
+fn canary() -> String {
+    format!("passage: {}", crate::shared::embed_identity::CANARY_TEXT)
+}
+
+/// An embedder is dressed by **every** road that installs one: its input
+/// convention applied, and the model-change guard armed.
+///
+/// Start-up dressed it; a settings edit and a relaunch installed what the
+/// supervisor built as it was — so from the first change of the embedding
+/// settings to the restart there were no `query:`/`passage:` markers, and
+/// nothing checked that the stored vectors belong to the model now answering.
+/// A switch of the embedder is the moment that check exists for
+/// (docs/research/openrouter-mode.md §9, A1).
+#[tokio::test]
+async fn an_embedder_is_dressed_by_every_road_that_installs_one() {
+    let seen = Arc::new(Recording {
+        asked: Default::default(),
+    });
+    let (_d, mut orch) = orch_on(seen.clone());
+
+    // Start-up.
+    orch.apply_embed_settings();
+    let asked = embedded(&orch, &seen, "first").await;
+    assert_eq!(asked.last().map(String::as_str), Some("passage: first"));
+    assert!(asked.contains(&canary()), "the guard asked: {asked:?}");
+    // Once per embedder: the guard does not ask again for the next text.
+    assert_eq!(embedded(&orch, &seen, "second").await, ["passage: second"]);
+
+    // A settings edit, as the settings screen makes it.
+    let mut edited = orch.config.clone();
+    edited.embed.external.model_name = Some("another-model".into());
+    orch.handle_update_config(edited);
+    orch.flush_restarts();
+    let asked = embedded(&orch, &seen, "third").await;
+    assert_eq!(
+        asked.last().map(String::as_str),
+        Some("passage: third"),
+        "the convention survives the edit"
+    );
+    assert!(
+        asked.contains(&canary()),
+        "and the guard is armed for the embedder the edit installed: {asked:?}"
+    );
+
+    // A convention changed in the session is the one applied.
+    let mut edited = orch.config.clone();
+    edited.embed.convention = crate::shared::embed_prefix::EmbedConvention::None;
+    orch.handle_update_config(edited);
+    orch.flush_restarts();
+    let asked = embedded(&orch, &seen, "fourth").await;
+    assert_eq!(asked.last().map(String::as_str), Some("fourth"));
+    assert!(
+        asked.contains(&crate::shared::embed_identity::CANARY_TEXT.to_string()),
+        "{asked:?}"
+    );
+}
+
+/// The third road: a managed embedding server that died is relaunched, and
+/// what the relaunch installs is dressed as well.
+#[tokio::test]
+async fn a_relaunched_embedder_is_dressed() {
+    let seen = Arc::new(Recording {
+        asked: Default::default(),
+    });
+    let (_d, mut orch) = orch_on(seen.clone());
+    orch.config.embed.mode = ServerMode::Managed;
+    orch.apply_embed_settings();
+    embedded(&orch, &seen, "before").await;
+
+    orch.engines
+        .set_embed_status(ServerStatus::Disconnected("the process exited".into()));
+    orch.relaunch_dead_managed_servers();
+    let asked = embedded(&orch, &seen, "after").await;
+    assert_eq!(asked.last().map(String::as_str), Some("passage: after"));
+    assert!(asked.contains(&canary()), "{asked:?}");
+}
+
+/// The gateway's switch is the provider's: it reaches **every** slot that
+/// speaks to the gateway — impersonation and the embedder as well as the chat —
+/// and what each was applied with is compared, so the slot is raised again with
+/// the switch as it now stands.
+#[tokio::test]
+async fn the_gateways_switch_reaches_impersonation_and_the_embedder() {
+    use crate::shared::config::ImpersonationMode;
+
+    let (_d, mut orch) = bare_orch();
+    let mut config = orch.config.clone();
+    config.impersonation_engine.mode = ImpersonationMode::OpenRouter;
+    config.embed.mode = ServerMode::OpenRouter;
+    orch.handle_update_config(config.clone());
+    orch.flush_restarts();
+    let current = |orch: &Orchestrator, config: &AppConfig| {
+        (
+            orch.engines.impersonation_is_current(
+                &config.impersonation_engine,
+                &config.api_keys,
+                &config.openrouter,
+            ),
+            orch.engines
+                .embed_is_current(&config.embed, &config.api_keys, &config.openrouter),
+        )
+    };
+    assert_eq!(current(&orch, &config), (true, true));
+
+    // The switch, and nothing else.
+    config.openrouter.attribution = false;
+    orch.handle_update_config(config.clone());
+    assert_eq!(
+        current(&orch, &config),
+        (false, false),
+        "what they were applied with is not what the settings say now"
+    );
+    assert_eq!(
+        orch.restarts.take(),
+        (false, true, true, false),
+        "the embedder and impersonation, and not the chat: its mode is not the gateway's"
+    );
+    orch.restarts.mark_embed();
+    orch.restarts.mark_impersonation();
+    orch.flush_restarts();
+    assert_eq!(current(&orch, &config), (true, true));
+
+    // A slot that is not the gateway's is current whatever the switch says.
+    let mut local = config.clone();
+    local.impersonation_engine.mode = ImpersonationMode::Shared;
+    local.embed.mode = ServerMode::Managed;
+    orch.handle_update_config(local.clone());
+    orch.flush_restarts();
+    local.openrouter.attribution = true;
+    orch.handle_update_config(local.clone());
+    assert_eq!(orch.restarts.take(), (false, false, false, false));
+    assert_eq!(current(&orch, &local), (true, true));
+}
+
+/// The model list's request follows the gateway's switch, on every tab that
+/// speaks to the gateway — and no other provider's request is ever named,
+/// whatever the switch says.
+#[test]
+fn the_model_list_names_the_app_where_the_gateways_switch_says_so() {
+    use crate::shared::api::catalogue::ModelSlot;
+    use crate::shared::config::{CloudSettings, EmbedSettings, ImpersonationMode};
+
+    let (_d, mut orch) = bare_orch();
+    orch.config.engine.mode = ServerMode::OpenRouter;
+    orch.config.impersonation_engine.mode = ImpersonationMode::OpenRouter;
+    orch.config.embed = EmbedSettings {
+        mode: ServerMode::OpenRouter,
+        ..Default::default()
+    };
+    let slots = [
+        ModelSlot::Assistant,
+        ModelSlot::Impersonation,
+        ModelSlot::Embedder,
+    ];
+    let named = |orch: &Orchestrator| {
+        slots.map(|slot| orch.catalogue_request(slot).expect("a request").attribution)
+    };
+    assert_eq!(named(&orch), [true; 3], "on until somebody turns it off");
+    orch.config.openrouter.attribution = false;
+    assert_eq!(named(&orch), [false; 3]);
+
+    // Another cloud, the switch on: the headers are the gateway's.
+    orch.config.openrouter.attribution = true;
+    orch.config.engine.mode = ServerMode::Grok;
+    orch.config.engine.grok = CloudSettings {
+        api_key_env: Some("PATH".into()),
+        ..Default::default()
+    };
+    let grok = orch
+        .catalogue_request(ModelSlot::Assistant)
+        .expect("a request");
+    assert!(!grok.attribution);
+}
+
+/// The speech slot's list is asked of the gateway in the gateway's mode — at
+/// the address and with the key variable of the slot's own section, named or
+/// not as the provider's switch says — and of nobody in any other mode: no
+/// other speech provider publishes a list of what speaks.
+#[test]
+fn the_speech_slots_list_is_the_gateways_and_follows_the_slots_own_section() {
+    use crate::shared::api::catalogue::{CatalogueError, CatalogueShape, ModelSlot};
+    use crate::shared::config::TtsMode;
+
+    let (_d, mut orch) = bare_orch();
+    // The chat slot is somewhere else entirely: speech has a mode of its own.
+    orch.config.engine.mode = ServerMode::Managed;
+    for mode in TtsMode::ALL {
+        orch.config.tts.mode = mode;
+        let asked = orch.catalogue_request(ModelSlot::Speech);
+        if mode != TtsMode::OpenRouter {
+            assert_eq!(asked, Err(CatalogueError::NotConfigured), "{mode:?}");
+            continue;
+        }
+        let asked = asked.expect("a request");
+        assert_eq!(asked.shape, CatalogueShape::OpenRouterSpeech);
+        assert_eq!(asked.base, "https://openrouter.ai/api/v1");
+        assert_eq!(asked.key, None, "the list is public: asked without a key");
+        assert!(asked.attribution, "on until somebody turns it off");
+    }
+
+    orch.config.tts.mode = TtsMode::OpenRouter;
+    orch.config.openrouter.attribution = false;
+    orch.config.tts.openrouter.url = Some(" https://eu.openrouter.ai/api/v1 ".into());
+    // A variable that is certainly set, read and never sent: nothing is asked
+    // here, the request is only built.
+    orch.config.tts.openrouter.api_key_env = Some("PATH".into());
+    // The chat slot's section names another address; it is not the speech
+    // slot's.
+    orch.config.engine.openrouter.url = Some("https://chat.example/v1".into());
+    let asked = orch
+        .catalogue_request(ModelSlot::Speech)
+        .expect("a request");
+    assert_eq!(asked.base, "https://eu.openrouter.ai/api/v1");
+    assert!(asked.key.is_some(), "the variable the speech section names");
+    assert!(!asked.attribution);
+}
+
+/// An answer of the engine that is gone says nothing to the screens.
+///
+/// The memo dropped it — and the list of sampling fields it carried was sent to
+/// the UI before the epoch was looked at. With the facts asked again on every
+/// applied change, two answers race whenever a mode is changed twice in a row:
+/// the slower engine answers last, and its list would stay on the settings
+/// screen of the other.
+#[tokio::test]
+async fn an_answer_of_the_engine_that_is_gone_tells_the_screens_nothing() {
+    use crate::app::orchestrator::compaction::EngineFacts;
+    use crate::shared::api::contract::ModelCapabilities;
+
+    let answer = || EngineFacts {
+        budget: None,
+        caps: Some(ModelCapabilities {
+            context_length: Some(64_000),
+            sampling_fields: Some(vec!["temperature".to_string()].into()),
+        }),
+    };
+    let told = |rx: &mut UnboundedReceiver<AppEvent>| {
+        let mut lists = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            if let AppEvent::EngineSamplingFields(fields) = event {
+                lists.push(fields);
+            }
+        }
+        lists
+    };
+    let (_d, mut orch, mut rx) = bare_orch_rx();
+    // A mode whose window is the engine's to say, not the settings'.
+    orch.config.engine.mode = ServerMode::External;
+    let gone = orch.context.epoch();
+    orch.refresh_engine_facts();
+    told(&mut rx);
+
+    orch.handle_budget_result(gone, answer());
+    assert_eq!(told(&mut rx), [], "the engine it describes is gone");
+    assert_eq!(orch.context_budget(), None);
+    assert!(orch.endpoint_sampling_fields().is_none());
+
+    // The control: the same answer for the engine that is there.
+    orch.handle_budget_result(orch.context.epoch(), answer());
+    assert_eq!(
+        told(&mut rx),
+        [Some(vec!["temperature".to_string()].into())]
+    );
+    assert_eq!(orch.context_budget(), Some(64_000));
+}
+
+/// The status event of a slot raised again — waited for under a bound, so that
+/// a restart that never came is a failure with these words rather than a test
+/// that never ends (the clock is paused: the bound costs nothing).
+async fn raised_again(rx: &mut UnboundedReceiver<AppEvent>) {
+    tokio::time::timeout(
+        std::time::Duration::from_secs(60),
+        wait_for(rx, |e| matches!(e, AppEvent::ServerStatus(_))),
+    )
+    .await
+    .expect("the slot is raised again")
+    .expect("the event stream");
+}
+
+/// The gateway's own switch reaches the slots that speak to the gateway — and
+/// no other: a managed server is a GGUF killed and loaded again, and must not
+/// pay that for a header it never sends.
+///
+/// Proving a restart *didn't* happen can't rely on waiting for an absent event,
+/// so the second half ends with a genuine change and reads the counter against
+/// **its** status event.
+#[tokio::test(start_paused = true)]
+async fn the_gateways_own_switch_restarts_only_the_slots_that_speak_to_it() {
+    let backend = Arc::new(MockBackend::scripted(vec![ChatChunk::Finished(
+        FinishReason::Stop,
+    )])) as Arc<dyn EngineBackend>;
+    let sup = Arc::new(MockSupervisor::with_backend(Some(backend)));
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Arc::new(Storage::open(Paths::with_root(dir.path())).unwrap());
+    let (cmd_tx, cmd_rx) = unbounded_channel();
+    let (evt_tx, mut evt_rx) = unbounded_channel();
+    let through_the_gateway = |attribution: bool| AppConfig {
+        engine: crate::shared::config::EngineSettings {
+            mode: ServerMode::OpenRouter,
+            ..Default::default()
+        },
+        openrouter: crate::shared::config::OpenRouterSettings { attribution },
+        ..Default::default()
+    };
+    let handle = tokio::spawn(run(OrchestratorDeps {
+        cmd_rx,
+        evt_tx,
+        storage,
+        config: through_the_gateway(true),
+        supervisor: sup.clone(),
+        default_language: crate::shared::i18n::Lang::default(),
+        extra_tools: Vec::new(),
+    }));
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Settings { .. }))
+        .await
+        .unwrap();
+    assert_eq!(sup.chat_call_count(), 1, "bootstrap raised it once");
+
+    // The switch alone: the chat slot speaks to the gateway, so it is re-raised.
+    cmd_tx
+        .send(AppCommand::UpdateConfig(Box::new(through_the_gateway(
+            false,
+        ))))
+        .unwrap();
+    raised_again(&mut evt_rx).await;
+    assert_eq!(
+        sup.chat_call_count(),
+        2,
+        "the client has to be rebuilt without the headers"
+    );
+
+    // Off the gateway (a restart of its own), then the switch alone again.
+    let managed = |attribution: bool, gpu_layers: i32| AppConfig {
+        engine: crate::shared::config::EngineSettings {
+            managed: crate::shared::config::ManagedSettings {
+                gpu_layers,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        openrouter: crate::shared::config::OpenRouterSettings { attribution },
+        ..Default::default()
+    };
+    cmd_tx
+        .send(AppCommand::UpdateConfig(Box::new(managed(false, 99))))
+        .unwrap();
+    raised_again(&mut evt_rx).await;
+    assert_eq!(sup.chat_call_count(), 3);
+
+    cmd_tx
+        .send(AppCommand::UpdateConfig(Box::new(managed(true, 99))))
+        .unwrap();
+    wait_for(
+        &mut evt_rx,
+        |e| matches!(e, AppEvent::Settings { config, .. } if config.openrouter.attribution),
+    )
+    .await
+    .unwrap();
+    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    assert_eq!(
+        sup.chat_call_count(),
+        3,
+        "a managed server has nothing to do with the gateway's switch"
+    );
+
+    // The marker that the flush above really ran: a genuine change restarts once.
+    cmd_tx
+        .send(AppCommand::UpdateConfig(Box::new(managed(true, 10))))
+        .unwrap();
+    raised_again(&mut evt_rx).await;
+    assert_eq!(sup.chat_call_count(), 4);
+
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+}
+
+// ---------- video through the gateway (docs/research/openrouter-mode.md, fork F10) ----------
+
+/// The video client is built from what the settings name: the provider, its
+/// own model, the key stored for **that** provider — Gemini's key is not the
+/// gateway's, nor the other way — and the gateway's switch.
+#[test]
+fn the_video_client_is_built_on_the_key_of_the_provider_it_names() {
+    use crate::app::orchestrator::video_config;
+    use crate::shared::config::{CloudProvider, VideoProvider};
+    use crate::shared::secrets::SecretKey;
+
+    let (_d, mut orch) = bare_orch();
+    assert!(video_config(&orch.config).is_none(), "no key anywhere");
+    orch.handle_set_secret(
+        SecretKey::Provider(CloudProvider::OpenRouter),
+        "sk-or-v1-stored".into(),
+    );
+    assert!(
+        video_config(&orch.config).is_none(),
+        "the gateway's key is not Gemini's"
+    );
+
+    let mut config = orch.config.clone();
+    config.video.provider = VideoProvider::OpenRouter;
+    assert!(
+        video_config(&config).is_none(),
+        "a key, and no model: the gateway has no default"
+    );
+    config.video.openrouter.model_name = Some("google/gemini-3.5-flash".into());
+    let built = video_config(&config).expect("a model and the provider's key");
+    assert_eq!(built.provider, VideoProvider::OpenRouter);
+    assert_eq!(built.model, "google/gemini-3.5-flash");
+    assert_eq!(built.api_key, "sk-or-v1-stored");
+    assert_eq!(built.base_url, "https://openrouter.ai/api/v1");
+    assert!(built.attribution, "on until somebody turns it off");
+    config.openrouter.attribution = false;
+    assert!(!video_config(&config).expect("built").attribution);
+
+    config.video.provider = VideoProvider::Gemini;
+    assert!(video_config(&config).is_none(), "Gemini has no key stored");
+}
+
+/// The video client lives in the tool registry, so what it was built from
+/// has to rebuild the registry: the gateway's switch and the gateway's key
+/// while the slot speaks to the gateway — and neither of them while it does
+/// not. Gemini's key goes on rebuilding it for Gemini.
+#[test]
+fn what_the_video_client_is_built_from_rebuilds_it() {
+    use crate::shared::config::{CloudProvider, VideoProvider};
+    use crate::shared::secrets::SecretKey;
+
+    let rebuilt = |orch: &mut Orchestrator, change: &dyn Fn(&mut Orchestrator)| {
+        let before = orch.registry.clone();
+        change(orch);
+        !Arc::ptr_eq(&before, &orch.registry)
+    };
+    let switch = |orch: &mut Orchestrator| {
+        let mut edited = orch.config.clone();
+        edited.openrouter.attribution = !edited.openrouter.attribution;
+        orch.handle_update_config(edited);
+    };
+    let key_of = |provider: CloudProvider| {
+        move |orch: &mut Orchestrator| {
+            orch.handle_set_secret(SecretKey::Provider(provider), "a-key".into())
+        }
+    };
+
+    let (_d, mut orch) = bare_orch();
+    // The chat engine is a local one throughout: the slot is its own.
+    assert_eq!(orch.config.video.provider, VideoProvider::Gemini);
+    assert!(!rebuilt(&mut orch, &switch), "Gemini's client names nobody");
+    assert!(!rebuilt(&mut orch, &key_of(CloudProvider::OpenRouter)));
+    assert!(rebuilt(&mut orch, &key_of(CloudProvider::Gemini)));
+
+    let mut edited = orch.config.clone();
+    edited.video.provider = VideoProvider::OpenRouter;
+    let to_the_gateway = |orch: &mut Orchestrator| orch.handle_update_config(edited.clone());
+    assert!(rebuilt(&mut orch, &to_the_gateway), "the provider changed");
+    assert!(rebuilt(&mut orch, &switch), "the gateway's client is named");
+    assert!(rebuilt(&mut orch, &key_of(CloudProvider::OpenRouter)));
+    assert!(
+        !rebuilt(&mut orch, &key_of(CloudProvider::Gemini)),
+        "Gemini's key is not what the gateway's client was built on"
+    );
+}
+
+/// The video row's list is asked of the gateway through the gateway — at the
+/// address and with the variable of the slot's own section, named or not as
+/// the provider's switch says — and of nobody through Gemini's own API.
+#[test]
+fn the_video_slots_list_is_the_gateways_and_follows_the_slots_own_section() {
+    use crate::shared::api::catalogue::{CatalogueError, CatalogueShape, ModelSlot};
+    use crate::shared::config::VideoProvider;
+
+    let (_d, mut orch) = bare_orch();
+    assert_eq!(
+        orch.catalogue_request(ModelSlot::Video),
+        Err(CatalogueError::NotConfigured),
+        "Gemini's own list says nothing of video"
+    );
+    orch.config.video.provider = VideoProvider::OpenRouter;
+    let asked = orch.catalogue_request(ModelSlot::Video).expect("a request");
+    assert_eq!(asked.shape, CatalogueShape::OpenRouterVideo);
+    assert_eq!(asked.base, "https://openrouter.ai/api/v1");
+    assert_eq!(asked.key, None, "the list is public: asked without a key");
+    assert!(asked.attribution);
+
+    orch.config.openrouter.attribution = false;
+    orch.config.video.openrouter.url = Some(" https://eu.openrouter.ai/api/v1 ".into());
+    // A variable that is certainly set, read and never sent: nothing is asked
+    // here, the request is only built.
+    orch.config.video.openrouter.api_key_env = Some("PATH".into());
+    // Gemini's fields, and the speech slot's section, are somebody else's.
+    orch.config.video.url = Some("https://gemini.example/v1beta".into());
+    orch.config.tts.openrouter.url = Some("https://speech.example/v1".into());
+    let asked = orch.catalogue_request(ModelSlot::Video).expect("a request");
+    assert_eq!(asked.base, "https://eu.openrouter.ai/api/v1");
+    assert!(asked.key.is_some(), "the variable the video section names");
+    assert!(!asked.attribution);
+}

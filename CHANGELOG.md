@@ -14,6 +14,104 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Added
+- **OpenRouter is a mode of its own.** Settings → Model/server → *Mode* →
+  `openrouter` — for the assistant, for impersonation and for the embedder. The
+  gateway's section sits beside `external`, so a local server's address and the
+  gateway's key are both kept: moving between a local model and OpenRouter is
+  the *Mode* row and nothing else, and one stored key serves every slot that
+  uses the gateway. `external` pointed at `openrouter.ai` keeps working as it
+  did, and its address row now says that the mode exists.
+- **The model list shows what a model is.** In the `openrouter` mode `Enter` on
+  the model row lists the gateway's catalogue with each model's context window,
+  its price per million tokens in and out — an embedding model has the one —
+  and *no tools* where the gateway says the model takes none. With a key the list is the models your account's
+  privacy settings allow; the entries that cannot answer a chat request are
+  left out.
+- **A key the gateway refuses is said before the first message.** The key is
+  checked once when the mode is applied — for the assistant, for impersonation
+  and for the embedder alike — and a refused one is the status line, in
+  OpenRouter's own words, not a `401` on your first question. (The embedder's
+  status holds nothing back: a memory search made on a refused key is still
+  made, and answered by the refusal. The difference is that you were told.)
+- **A cloud embedder tries again.** A rate limit, an overloaded provider or a
+  lost connection no longer fails an indexing run or a memory search at once:
+  the request is repeated, up to three attempts, as a chat turn's is. For
+  OpenAI, Gemini and OpenRouter; a server of your own is asked once, as
+  before.
+- **"Thinking: off" on a model that cannot stop thinking.** Some models refuse
+  a request to switch reasoning off. Through the gateway such a model is asked
+  for the lowest effort it lists instead — measured on Gemini 3.5 Flash, that
+  is no reasoning tokens at all.
+- **A switch for naming the app to OpenRouter.** Requests to the gateway carry
+  two headers that name this application — its site and its name — which
+  OpenRouter counts its public app rankings by. They say nothing about you.
+  Settings → Model/server → *Name the app to OpenRouter*; on by default, off —
+  the headers are not sent.
+
+- **Speech through OpenRouter.** Settings → Model/server → Speech → *Mode* →
+  `openrouter`: `/tts` reads messages aloud through the gateway's speech
+  models — some twenty, of a dozen vendors — on the key the other slots use.
+  `Enter` on the model row lists them, with the number of voices each has, and
+  `Enter` on a voice row lists the voices of the model you chose. There is no
+  default model: choose one. The audio format and the sample rate are the
+  model's own and differ between models; the app settles them with the gateway
+  and there is nothing to set. `external` pointed at `openrouter.ai` could never
+  speak — the gateway refuses the format an external server is asked for — and
+  its address row now says that the mode exists.
+
+- **A YouTube video through OpenRouter.** Settings → Tools → Video (YouTube) →
+  *Provider* → `openrouter`: `youtube_watch` watches through the Gemini models
+  behind an OpenRouter key, for a setup whose one key is the gateway's. `Enter`
+  on the model row lists the models that take video, the Gemini family first —
+  it is the one that takes a YouTube link. Through the gateway the whole video
+  is read and charged even when a part of it is asked for: the ceiling on a
+  video's length measures the whole video there, and the answer says that the
+  whole of it was read. Google's own API stays the default, and the cheaper
+  way to look at a part of a long video. An answer that came back without the
+  video having been read is refused rather than shown.
+
+### Changed
+- A reply that came through OpenRouter records, in the chat file, which
+  provider served it and what it cost. Nothing shows them yet.
+
+### Fixed
+- **A message read aloud could stop half way, or not start.** A speech server
+  that streams an MP3 writes the clip's length into its first frame before it
+  knows it, and the player believed the number: one model's sentence ended at
+  2.35 s of 4.78, and another's count of zero was an error inside the player.
+  The clip is played to its end now, whatever its first frame says. For every
+  speech mode that plays a container — a server of your own included.
+- **A long text could not be added to the knowledge base on a Gemini
+  embedder.** `rag_add` sent every chunk of a text in one request, and Gemini
+  refuses the hundred-and-first — on Google's own endpoint and through a
+  gateway alike. Every embedding request is at most 64 texts now, on every
+  embedder; a longer one is sent in parts.
+- **An edit of the embedding settings switched two things off until the
+  restart**: the `query:`/`passage:` markers of the model's input convention,
+  and the check that the stored vectors belong to the model now answering. A
+  change of the embedding model made in the settings therefore went unnoticed
+  until the next start, and searches ran against another model's vectors. Both
+  now follow every change, and a relaunched local embedding server too.
+- **The first knowledge-base search after a change of the embedding model
+  returned passages ranked by the wrong model**, with the notice of the change
+  beside them. It refuses, like every search after it, until `/reindex`.
+- **A settings edit could leave the previous engine's facts in charge.**
+  Changing the mode from one reachable engine to another — a local server to a
+  cloud, say — kept the context window and the list of sampling fields of the
+  engine before it, so compaction fired by the wrong window until the restart.
+  The engine is asked again on every applied change.
+
+### Data
+- **`settings.json` 3 → 4**: `openrouter` becomes a value of the mode rows —
+  the three engines' and speech's — with a section of its own in each, the
+  video settings name their provider and hold a section for the gateway, and a
+  top-level `openrouter` block holds the attribution switch. Nothing is rewritten — the
+  step stamps the version, because a version that does not know the value
+  refuses the whole file rather than reading the rest of it. As with every
+  schema change, the file is backed up before it is migrated; an older version
+  refuses a file this one has written, and that backup is the way back.
+
 ## [0.12.0] — 2026-09-28
 
 **The app can paint its own window, and a theme can be yours.** Three ways of

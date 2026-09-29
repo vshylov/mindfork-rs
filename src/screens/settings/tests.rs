@@ -4795,12 +4795,13 @@ fn the_field_pane_scrolls_only_once_the_selection_leaves_the_window() {
 
 // ---------- parallel sessions (spec §11.6) ----------
 
-/// Every cloud provider's mode, for the loops below.
-const CLOUD_MODES: [ServerMode; 4] = [
+/// Every cloud provider's mode, the gateway's included, for the loops below.
+const CLOUD_MODES: [ServerMode; 5] = [
     ServerMode::OpenAi,
     ServerMode::Gemini,
     ServerMode::Claude,
     ServerMode::Grok,
+    ServerMode::OpenRouter,
 ];
 
 /// Reads the active mode's `sessions` from a config the way the field does.
@@ -5432,6 +5433,8 @@ fn cat(id: &str, display: Option<&str>, role: ModelRole) -> CatalogModel {
         display: display.map(str::to_string),
         role,
         retiring: None,
+        facts: Default::default(),
+        voices: Vec::new(),
     }
 }
 
@@ -6137,4 +6140,1097 @@ fn a_lost_theme_is_listed_after_the_users_themes() {
     // Without user themes the row is what it was.
     assert_eq!(full_theme_names("dark"), ["dark", "light"]);
     assert_eq!(full_theme_names("sepia"), ["dark", "light", "sepia"]);
+}
+
+// ---------- the OpenRouter mode (docs/research/openrouter-mode.md) ----------
+
+/// The three tabs whose slot can be the gateway, each with its mode row and
+/// the four rows of its provider section: model, key, key variable, base URL.
+const GATEWAY_TABS: [(ModelTab, FieldId, [FieldId; 4]); 3] = {
+    use FieldId::*;
+    [
+        (
+            ModelTab::Assistant,
+            XMode,
+            [XModelName, XApiKey, XApiKeyEnv, XUrl],
+        ),
+        (
+            ModelTab::Impersonation,
+            IxMode,
+            [IxModelName, IxApiKey, IxApiKeyEnv, IxUrl],
+        ),
+        (
+            ModelTab::Embeddings,
+            EMode,
+            [EModelName, EApiKey, EApiKeyEnv, EUrl],
+        ),
+    ]
+};
+
+/// The mode a tab's slot is in, in the settings file's own spelling — one
+/// reading for the two mode enums.
+fn slot_mode(c: &AppConfig, tab: ModelTab) -> String {
+    let mode = match tab {
+        ModelTab::Assistant => serde_json::to_value(c.engine.mode),
+        ModelTab::Impersonation => serde_json::to_value(c.impersonation_engine.mode),
+        _ => serde_json::to_value(c.embed.mode),
+    };
+    let mode = mode.ok().and_then(|m| m.as_str().map(str::to_string));
+    mode.unwrap_or_default()
+}
+
+/// A screen with all three slots on the gateway, opened on the Model section.
+fn gateway_everywhere() -> SettingsScreen {
+    let mut s = screen();
+    s.config.engine.mode = ServerMode::OpenRouter;
+    s.config.impersonation_engine.mode = ImpersonationMode::OpenRouter;
+    s.config.embed.mode = ServerMode::OpenRouter;
+    goto_section(&mut s, Section::Model);
+    s
+}
+
+/// Stands on a row of one of the Model section's tabs, from wherever the
+/// screen was — the tabs differ in length, so the walk starts from the top.
+fn goto_model_row(s: &mut SettingsScreen, tab: ModelTab, id: FieldId) {
+    goto_section(s, Section::Model);
+    s.model_sub = tab;
+    s.field_idx = 0;
+    goto_field(s, id);
+}
+
+/// The mode is selectable where a mode is selected, by the arrows as well as
+/// by the popup: last in the cycle on every tab, so `←` from the first mode
+/// wraps onto it, `→` from it wraps back, and walking `→` meets it after
+/// `grok` and nowhere else. The alternative the commit names — a mode that
+/// cannot be reached, or one that can on the assistant's tab alone — is a
+/// provider with a key and no slot to use it in.
+#[test]
+fn the_mode_row_reaches_the_gateway_from_either_side_on_every_tab() {
+    for (tab, mode_row, _) in GATEWAY_TABS {
+        let mut s = screen();
+        goto_model_row(&mut s, tab, mode_row);
+        let first = slot_mode(&s.config, tab);
+
+        match s.handle_key(key(KeyCode::Left)) {
+            Some(SettingsIntent::SaveConfig(c)) => {
+                assert_eq!(slot_mode(&c, tab), "openrouter", "{tab:?}: ← wraps onto it")
+            }
+            other => panic!("{tab:?}: expected SaveConfig, got {other:?}"),
+        }
+        s.handle_key(key(KeyCode::Right));
+        assert_eq!(slot_mode(&s.config, tab), first, "{tab:?}: → wraps back");
+
+        let mut walked = Vec::new();
+        for _ in 0..16 {
+            s.handle_key(key(KeyCode::Right));
+            walked.push(slot_mode(&s.config, tab));
+            if walked.last() == Some(&first) {
+                break;
+            }
+        }
+        let tail: Vec<&str> = walked.iter().rev().take(3).map(String::as_str).collect();
+        assert_eq!(
+            tail,
+            [first.as_str(), "openrouter", "grok"],
+            "{tab:?}: {walked:?}"
+        );
+        let met = walked.iter().filter(|m| *m == "openrouter").count();
+        assert_eq!(met, 1, "{tab:?}: {walked:?}");
+    }
+}
+
+/// With the mode set a tab shows the provider's section — the four rows every
+/// cloud has — and, closing it, the one switch that is the provider's rather
+/// than the slot's (fork F5). The switch carries its description: a setting
+/// that decides what the application says about itself has to say what that
+/// is, and in every interface language it names the two values that are sent.
+#[test]
+fn the_gateway_mode_shows_its_section_and_the_attribution_switch_on_every_tab() {
+    use crate::shared::api::openai::client::{ATTRIBUTION_REFERER, ATTRIBUTION_TITLE};
+    use crate::shared::i18n::Lang;
+    for lang in Lang::ALL.iter().copied() {
+        let mut s = gateway_everywhere();
+        s.config.interface.language = lang;
+        for (tab, _, section) in GATEWAY_TABS {
+            let rows = s.model_fields_for(tab);
+            let shown: Vec<FieldId> = rows
+                .iter()
+                .map(|r| r.id)
+                .filter(|id| section.contains(id) || *id == FieldId::GatewayAttribution)
+                .collect();
+            let mut want = section.to_vec();
+            want.push(FieldId::GatewayAttribution);
+            assert_eq!(shown, want, "{lang:?} {tab:?}");
+
+            let switch = rows
+                .iter()
+                .find(|r| r.id == FieldId::GatewayAttribution)
+                .expect("asserted above");
+            assert!(
+                matches!(switch.kind, FieldKind::Toggle(true)),
+                "{lang:?} {tab:?}: on by default"
+            );
+            let hint = switch.description.as_deref().unwrap_or_default();
+            assert!(
+                hint.contains(ATTRIBUTION_REFERER) && hint.contains(ATTRIBUTION_TITLE),
+                "{lang:?} {tab:?}: the hint must name what is sent: {hint:?}"
+            );
+        }
+    }
+}
+
+/// ...and no other mode shows the switch: it would be a setting about a
+/// provider the slot is not talking to.
+#[test]
+fn the_attribution_switch_belongs_to_the_gateway_mode_alone() {
+    let mut s = gateway_everywhere();
+    let shown = |s: &SettingsScreen, tab| {
+        let rows = s.model_fields_for(tab);
+        rows.iter().any(|r| r.id == FieldId::GatewayAttribution)
+    };
+    for mode in ServerMode::ALL {
+        s.config.engine.mode = mode;
+        s.config.embed.mode = mode;
+        let gateway = mode == ServerMode::OpenRouter;
+        assert_eq!(shown(&s, ModelTab::Assistant), gateway, "{mode:?}");
+        assert_eq!(shown(&s, ModelTab::Embeddings), gateway, "{mode:?}");
+    }
+    for mode in IMP_MODES {
+        s.config.impersonation_engine.mode = mode;
+        assert_eq!(
+            shown(&s, ModelTab::Impersonation),
+            mode == ImpersonationMode::OpenRouter,
+            "{mode:?}"
+        );
+    }
+    // Speech has modes of its own, and the switch is under the one that
+    // speaks to the gateway.
+    for mode in TtsMode::ALL {
+        s.config.tts.mode = mode;
+        assert_eq!(
+            shown(&s, ModelTab::Tts),
+            mode == TtsMode::OpenRouter,
+            "{mode:?}"
+        );
+    }
+}
+
+/// The switch is **one** setting under three tabs: flipping it on any of them
+/// saves `openrouter.attribution` flipped, and the other tabs then show what
+/// was saved — not a value of their own.
+#[test]
+fn toggling_attribution_on_any_tab_saves_the_one_provider_wide_value() {
+    let mut s = gateway_everywhere();
+    let mut on = s.config.openrouter.attribution;
+    for (tab, ..) in GATEWAY_TABS {
+        goto_model_row(&mut s, tab, FieldId::GatewayAttribution);
+        on = !on;
+        match s.handle_key(key(KeyCode::Char(' '))) {
+            Some(SettingsIntent::SaveConfig(c)) => {
+                assert_eq!(c.openrouter.attribution, on, "{tab:?}")
+            }
+            other => panic!("{tab:?}: expected SaveConfig, got {other:?}"),
+        }
+        for (other, ..) in GATEWAY_TABS {
+            let rows = s.model_fields_for(other);
+            let row = rows.iter().find(|r| r.id == FieldId::GatewayAttribution);
+            assert!(
+                matches!(row.map(|r| &r.kind), Some(FieldKind::Toggle(v)) if *v == on),
+                "flipped on {tab:?}, read on {other:?}"
+            );
+        }
+    }
+}
+
+/// One key serves every slot of the provider (ADR 0008), so each tab's key row
+/// addresses the same stored secret, says whose it is — the three slots may
+/// point at three providers at once — and commits what is typed as that
+/// secret, never into the config.
+#[test]
+fn the_gateways_key_rows_name_the_provider_and_address_its_one_key() {
+    let gateway = SecretKey::Provider(CloudProvider::OpenRouter);
+    let mut s = gateway_everywhere();
+    for (tab, _, [_, key_row, env_row, _]) in GATEWAY_TABS {
+        for row in [key_row, env_row] {
+            let label = field_label(&s, row).unwrap_or_else(|| panic!("no row for {row:?}"));
+            assert!(label.contains("OpenRouter"), "{row:?}: {label:?}");
+        }
+        assert_eq!(s.secret_field_key(key_row), Some(gateway.clone()));
+
+        goto_model_row(&mut s, tab, key_row);
+        assert_eq!(
+            enter_secret(&mut s, "sk-or-v1-test"),
+            Some(SettingsIntent::SetSecret {
+                key: gateway.clone(),
+                value: "sk-or-v1-test".into()
+            }),
+            "{tab:?}"
+        );
+    }
+    let json = serde_json::to_string(&s.config).unwrap();
+    assert!(!json.contains("sk-or-v1-test"), "the key leaked: {json}");
+
+    // The status follows this provider's key and no neighbour's.
+    let status = |s: &SettingsScreen| {
+        let rows = s.model_fields_for(ModelTab::Assistant);
+        let row = rows.iter().find(|r| r.id == FieldId::XApiKey);
+        row.map(|r| value_text(&r.kind, s.loc()))
+            .unwrap_or_default()
+    };
+    let unset = status(&s);
+    s.set_secrets_present(vec![SecretKey::Provider(CloudProvider::Grok)]);
+    assert_eq!(status(&s), unset, "xAI's key is not the gateway's");
+    s.set_secrets_present(vec![gateway]);
+    assert_ne!(status(&s), unset);
+}
+
+/// Fork F12, adopted (a): a user who reached the gateway through `external`
+/// is told there is a mode for it — by the row that holds the address, on
+/// whichever tab it was typed — and nothing is moved for them. An address
+/// that is somebody else's says nothing, as before; and inside the mode
+/// itself the base-URL row does not recommend the mode it is already in.
+#[test]
+fn an_external_address_that_is_the_gateway_says_there_is_a_mode_for_it() {
+    let mut s = screen();
+    s.config.engine.mode = ServerMode::External;
+    s.config.impersonation_engine.mode = ImpersonationMode::External;
+    s.config.embed.mode = ServerMode::External;
+    let said = |s: &SettingsScreen, tab, id| {
+        let rows = s.model_fields_for(tab);
+        let row = rows.into_iter().find(|r| r.id == id);
+        row.expect("the address row").description
+    };
+    for (tab, _, [.., url_row]) in GATEWAY_TABS {
+        for (address, hinted) in [
+            (Some("https://openrouter.ai/api/v1"), true),
+            (Some("http://127.0.0.1:8000/v1"), false),
+            (None, false),
+        ] {
+            let address = address.map(str::to_string);
+            s.config.engine.external.url = address.clone();
+            s.config.impersonation_engine.external.url = address.clone();
+            s.config.embed.external.url = address.clone();
+            let hint = hinted.then(|| s.loc().t(DESC_EXTERNAL_IS_GATEWAY).to_string());
+            assert_eq!(said(&s, tab, url_row), hint, "{tab:?} {address:?}");
+        }
+    }
+
+    let mut s = gateway_everywhere();
+    s.config.engine.openrouter.url = Some("https://eu.openrouter.ai/api/v1".into());
+    assert_eq!(said(&s, ModelTab::Assistant, FieldId::XUrl), None);
+}
+
+/// The address is judged by its **host** — the gateway's, or a subdomain of
+/// it — however it was typed: a scheme, a port, credentials and capitals are
+/// not what makes it the gateway, and its name in a path, in a longer host or
+/// as the tail of another domain is somebody else's server. Columns: the
+/// address, the verdict, why.
+const GATEWAY_ADDRESSES: &str = "
+    https://openrouter.ai/api/v1              yes | the address the docs give
+    http://OPENROUTER.AI                      yes | a host is not case-sensitive
+    https://eu.openrouter.ai/api/v1           yes | a subdomain of it
+    https://user:pw@openrouter.ai:443/api/v1  yes | credentials and a port around the host
+    openrouter.ai/api/v1                      yes | typed without a scheme
+    https://openrouter.ai?x=1                 yes | a query straight after the host
+    https://example.com/openrouter.ai         no  | its name in a path
+    https://example.com/?next=openrouter.ai   no  | ...or in a query
+    https://notopenrouter.ai/v1               no  | a longer name that ends the same
+    https://openrouter.ai.example.com/v1      no  | its name as a subdomain of another
+    https://openrouter.ai@example.com/v1      no  | its name as the credentials
+    http://127.0.0.1:8000/v1                  no  | a local server
+    -                                         no  | nothing typed
+";
+
+#[test]
+fn an_address_is_the_gateways_by_its_host_alone() {
+    let mut wrong = Vec::new();
+    for row in GATEWAY_ADDRESSES.lines().filter(|l| !l.trim().is_empty()) {
+        let (columns, why) = row.split_once('|').unwrap();
+        let c: Vec<&str> = columns.split_whitespace().collect();
+        let address = c[0].trim_start_matches('-');
+        if is_gateway_url(address) != (c[1] == "yes") {
+            wrong.push(format!("{address:?} — {}", why.trim()));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+    // Pasted with the blanks around it, which a table of words cannot hold.
+    for padded in ["  openrouter.ai/api/v1", "https://openrouter.ai \t"] {
+        assert!(is_gateway_url(padded), "{padded:?}");
+    }
+}
+
+/// The same rule for an address typed **without a scheme**, which the rule
+/// accepts (`openrouter.ai/api/v1`): a proxy of the user's own that is told
+/// its upstream in the query is still the user's proxy. The scheme is what
+/// comes before the host, so a `://` further along — inside the path or the
+/// query — is not where the host starts.
+#[test]
+fn a_gateway_url_inside_a_schemeless_address_is_not_its_host() {
+    for address in [
+        "localhost:8080/v1?upstream=https://openrouter.ai/api/v1",
+        "127.0.0.1:8080/proxy/https://openrouter.ai/api/v1",
+    ] {
+        assert!(
+            !is_gateway_url(address),
+            "{address} is a local server that mentions the gateway"
+        );
+    }
+    // With the scheme typed the same two are read correctly — the control.
+    assert!(!is_gateway_url(
+        "http://localhost:8080/v1?upstream=https://openrouter.ai/api/v1"
+    ));
+}
+
+/// A gateway's row shows facts where a name was, and the name is still what
+/// people remember a model by — so the filter goes on matching it, and a
+/// pick made that way writes the slug, as every pick does.
+#[test]
+fn the_filter_matches_a_name_the_row_no_longer_shows() {
+    let mut s = on_the_model_row(ServerMode::OpenRouter);
+    assert_eq!(
+        s.handle_key(key(KeyCode::Enter)),
+        Some(SettingsIntent::ListModels(ModelSlot::Assistant)),
+        "asked with no key entered: the gateway's catalogue is public"
+    );
+    let with_facts = |id: &str, name: &str| CatalogModel {
+        facts: crate::shared::api::catalogue::ModelFacts {
+            context_length: Some(200_000),
+            ..Default::default()
+        },
+        ..cat(id, Some(name), ModelRole::Chat)
+    };
+    s.set_model_catalogue(
+        ModelSlot::Assistant,
+        Ok(vec![
+            with_facts("google/gemini-3.5-flash", "Google: Gemini 3.5 Flash"),
+            with_facts("anthropic/claude-haiku-4.5", "Anthropic: Claude Haiku 4.5"),
+        ]
+        .into()),
+    );
+    // A colon and a capital are in the name and not in the slug.
+    for c in "Anthropic: Claude".chars() {
+        s.handle_key(key(KeyCode::Char(c)));
+    }
+    let st = s.picker.as_ref().expect("still open");
+    let matched: Vec<&CatalogModel> = st.results.iter().map(|&i| &st.all[i]).collect();
+    assert_eq!(matched.len(), 1, "{matched:?}");
+    let label = s.picker_label(matched[0]);
+    assert!(
+        !label.contains("Anthropic: Claude Haiku"),
+        "the row shows facts, not the name: {label}"
+    );
+    match s.handle_key(key(KeyCode::Enter)) {
+        Some(SettingsIntent::SaveConfig(c)) => assert_eq!(
+            c.engine.openrouter.model_name.as_deref(),
+            Some("anthropic/claude-haiku-4.5")
+        ),
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+}
+
+// ---------- speech through the gateway (docs/research/openrouter-mode.md, fork F9) ----------
+
+const GROK_VOICE: &str = "x-ai/grok-voice-tts-1.0";
+
+/// A speech model as the gateway lists one, with the voices it names.
+fn speaking(id: &str, voices: &[&str]) -> CatalogModel {
+    CatalogModel {
+        voices: voices.iter().copied().map(str::to_string).collect(),
+        ..cat(id, Some("A Vendor: A Voice"), ModelRole::Speech)
+    }
+}
+
+/// What the gateway's speech list answers with in these tests: a model with
+/// voices, another with other voices, and one that lists none.
+fn speech_catalogue() -> crate::shared::api::catalogue::CatalogueAnswer {
+    Ok(vec![
+        speaking(GROK_VOICE, &["eve", "ara", "rex", "sal", "leo"]),
+        speaking("google/gemini-3.8-flash-tts", &["Zephyr", "Puck", "Kore"]),
+        speaking("fish-audio/s1", &[]),
+    ]
+    .into())
+}
+
+/// A screen whose speech slot is on the gateway, with this model named.
+fn speech_on_the_gateway(model: Option<&str>) -> SettingsScreen {
+    let mut s = screen();
+    s.config.tts.mode = TtsMode::OpenRouter;
+    s.config.tts.openrouter.model_name = model.map(str::to_string);
+    s
+}
+
+/// What the open picker offers, as the ids of its entries.
+fn offered(s: &SettingsScreen) -> Vec<String> {
+    let st = s.picker.as_ref().expect("the picker is open");
+    st.all.iter().map(|m| m.id.clone()).collect()
+}
+
+/// The mode is reached where the speech mode is chosen — by the arrows, after
+/// the two clouds and before the server of the user's own — and shows the
+/// gateway's section: the model, the two voices, the provider's key rows, the
+/// address, and the switch that is the provider's. There is no row for
+/// instructions, which the gateway's speech route does not read; the two
+/// clouds keep theirs.
+#[test]
+fn the_speech_tab_has_the_gateway_mode_and_its_section_without_instructions() {
+    let mut s = screen();
+    goto_model_row(&mut s, ModelTab::Tts, FieldId::TtsMode);
+    let mut walked = vec![s.config.tts.mode.label()];
+    for _ in 0..TtsMode::ALL.len() {
+        s.handle_key(key(KeyCode::Right));
+        walked.push(s.config.tts.mode.label());
+    }
+    assert_eq!(
+        walked,
+        ["openai", "gemini", "openrouter", "external", "openai"]
+    );
+
+    let section = |mode| {
+        let mut s = screen();
+        s.config.tts.mode = mode;
+        let rows = s.model_fields_for(ModelTab::Tts);
+        let ids: Vec<FieldId> = rows.iter().map(|r| r.id).collect();
+        let at = |id| ids.iter().position(|row| *row == id).expect("the row");
+        ids[at(FieldId::TtsMode) + 1..at(FieldId::TtsSpeed)].to_vec()
+    };
+    use FieldId as F;
+    assert_eq!(
+        section(TtsMode::OpenRouter),
+        [
+            F::TtsModelName,
+            F::TtsVoice,
+            F::TtsUserVoice,
+            F::TtsApiKey,
+            F::TtsApiKeyEnv,
+            F::TtsUrl,
+            F::GatewayAttribution
+        ]
+    );
+    for cloud in [TtsMode::OpenAi, TtsMode::Gemini] {
+        assert!(section(cloud).contains(&F::TtsInstructions), "{cloud:?}");
+    }
+
+    let s = speech_on_the_gateway(None);
+    for row in [F::TtsApiKey, F::TtsApiKeyEnv] {
+        let label = field_label(&s, row).unwrap_or_default();
+        assert!(label.contains("OpenRouter"), "{row:?}: {label:?}");
+    }
+    assert_eq!(
+        s.secret_field_key(F::TtsApiKey),
+        Some(SecretKey::Provider(CloudProvider::OpenRouter)),
+        "the key the chat slot stored"
+    );
+    // No default model: the row is unset until one is chosen.
+    let rows = s.model_fields_for(ModelTab::Tts);
+    let model = rows
+        .iter()
+        .find(|r| r.id == F::TtsModelName)
+        .expect("a row");
+    let FieldKind::Text(unset) = text_row(F::TtsModelName, "", &None).kind else {
+        unreachable!("a text row")
+    };
+    assert!(matches!(&model.kind, FieldKind::Text(shown) if *shown == unset));
+}
+
+/// `Enter` on the speech model row asks the gateway for its speech models in
+/// the gateway's mode — and in every other mode opens the editor it has
+/// always opened, asking nobody.
+#[test]
+fn the_speech_rows_have_a_list_behind_them_in_the_gateways_mode_alone() {
+    for mode in TtsMode::ALL {
+        for row in [
+            FieldId::TtsModelName,
+            FieldId::TtsVoice,
+            FieldId::TtsUserVoice,
+        ] {
+            let mut s = screen();
+            s.config.tts.mode = mode;
+            goto_model_row(&mut s, ModelTab::Tts, row);
+            let intent = s.handle_key(key(KeyCode::Enter));
+            if mode == TtsMode::OpenRouter {
+                assert_eq!(
+                    intent,
+                    Some(SettingsIntent::ListModels(ModelSlot::Speech)),
+                    "{row:?}"
+                );
+                assert!(s.picker.is_some() && s.editor.is_none(), "{row:?}");
+            } else {
+                assert_eq!(intent, None, "{mode:?} {row:?}");
+                assert!(s.picker.is_none() && s.editor.is_some(), "{mode:?} {row:?}");
+            }
+        }
+    }
+}
+
+/// The model row offers the models, and a pick is written into the gateway's
+/// own section — the other modes' models stay where they were.
+#[test]
+fn a_picked_speech_model_is_written_into_the_gateways_section() {
+    let mut s = speech_on_the_gateway(None);
+    goto_model_row(&mut s, ModelTab::Tts, FieldId::TtsModelName);
+    s.handle_key(key(KeyCode::Enter));
+    s.set_model_catalogue(ModelSlot::Speech, speech_catalogue());
+    assert_eq!(
+        offered(&s),
+        [GROK_VOICE, "google/gemini-3.8-flash-tts", "fish-audio/s1"]
+    );
+    s.handle_key(key(KeyCode::Down));
+    match s.handle_key(key(KeyCode::Enter)) {
+        Some(SettingsIntent::SaveConfig(c)) => {
+            assert_eq!(
+                c.tts.openrouter.model_name.as_deref(),
+                Some("google/gemini-3.8-flash-tts")
+            );
+            assert_eq!(c.tts.openai, AppConfig::default().tts.openai);
+        }
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+}
+
+/// A voice belongs to a model: the voice rows offer the voices of the model
+/// the slot names, out of the same answer the model row reads — asked once,
+/// whichever row was opened first — and what is picked is written as the
+/// assistant's voice or the user's.
+#[test]
+fn a_voice_row_offers_the_voices_of_the_model_the_slot_names() {
+    let mut s = speech_on_the_gateway(Some(GROK_VOICE));
+    goto_model_row(&mut s, ModelTab::Tts, FieldId::TtsVoice);
+    assert_eq!(
+        s.handle_key(key(KeyCode::Enter)),
+        Some(SettingsIntent::ListModels(ModelSlot::Speech))
+    );
+    assert!(offered(&s).is_empty(), "nothing before the answer");
+    s.set_model_catalogue(ModelSlot::Speech, speech_catalogue());
+    assert_eq!(offered(&s), ["eve", "ara", "rex", "sal", "leo"]);
+    assert_eq!(s.picker_label(&s.picker.as_ref().unwrap().all[0]), "eve");
+
+    s.handle_key(key(KeyCode::Down));
+    match s.handle_key(key(KeyCode::Enter)) {
+        Some(SettingsIntent::SaveConfig(c)) => {
+            assert_eq!(c.tts.openrouter.voice.as_deref(), Some("ara"))
+        }
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+
+    // The user's voice: the answer is here already, so nobody is asked.
+    goto_model_row(&mut s, ModelTab::Tts, FieldId::TtsUserVoice);
+    assert_eq!(s.handle_key(key(KeyCode::Enter)), None);
+    assert_eq!(offered(&s), ["eve", "ara", "rex", "sal", "leo"]);
+    for c in "le".chars() {
+        s.handle_key(key(KeyCode::Char(c)));
+    }
+    match s.handle_key(key(KeyCode::Enter)) {
+        Some(SettingsIntent::SaveConfig(c)) => {
+            assert_eq!(c.tts.openrouter.user_voice.as_deref(), Some("leo"));
+            assert_eq!(c.tts.openrouter.voice.as_deref(), Some("ara"));
+        }
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+
+    // Another model, other voices — out of the same answer.
+    s.config.tts.openrouter.model_name = Some(" google/gemini-3.8-flash-tts ".into());
+    goto_model_row(&mut s, ModelTab::Tts, FieldId::TtsVoice);
+    assert_eq!(s.handle_key(key(KeyCode::Enter)), None);
+    assert_eq!(offered(&s), ["Zephyr", "Puck", "Kore"]);
+}
+
+/// A model that lists no voice — four of the gateway's do, and a name typed
+/// by hand is not in the list at all — has nothing to pick from. Once that is
+/// known `Enter` opens the editor; until it is, the picker opens, asks, and
+/// is left with its one row that is always there.
+#[test]
+fn a_model_that_lists_no_voice_gets_the_editor() {
+    for model in [Some("fish-audio/s1"), Some("typed/by-hand"), None] {
+        let mut s = speech_on_the_gateway(model);
+        goto_model_row(&mut s, ModelTab::Tts, FieldId::TtsVoice);
+        assert_eq!(
+            s.handle_key(key(KeyCode::Enter)),
+            Some(SettingsIntent::ListModels(ModelSlot::Speech)),
+            "{model:?}: not known yet"
+        );
+        s.set_model_catalogue(ModelSlot::Speech, speech_catalogue());
+        let st = s.picker.as_ref().expect("the picker stays open");
+        assert_eq!(
+            (st.all.len(), st.rows(), &st.status),
+            (0, 1, &super::picker::PickerStatus::Listed),
+            "{model:?}"
+        );
+        s.handle_key(key(KeyCode::Esc));
+
+        assert_eq!(s.handle_key(key(KeyCode::Enter)), None, "{model:?}");
+        assert!(s.picker.is_none() && s.editor.is_some(), "{model:?}");
+        s.handle_key(key(KeyCode::Esc));
+
+        // The model row is another matter: its list is not empty.
+        goto_model_row(&mut s, ModelTab::Tts, FieldId::TtsModelName);
+        s.handle_key(key(KeyCode::Enter));
+        assert_eq!(offered(&s).len(), 3, "{model:?}");
+        s.handle_key(key(KeyCode::Esc));
+
+        // And the answer is the gateway's mode's: in a mode whose rows have no
+        // list, nothing filed under another mode says anything about them.
+        assert!(s.no_voice_to_pick(FieldId::TtsVoice), "{model:?}");
+        s.config.tts.mode = TtsMode::Gemini;
+        s.config.tts.gemini.model_name = model.map(str::to_string);
+        assert!(!s.no_voice_to_pick(FieldId::TtsVoice), "{model:?}");
+    }
+}
+
+/// A catalogue that could not be read is the voice rows' refusal too: the
+/// editor, as on any row whose provider refused.
+#[test]
+fn a_refused_speech_catalogue_leaves_the_voice_rows_their_editor() {
+    let mut s = speech_on_the_gateway(Some(GROK_VOICE));
+    goto_model_row(&mut s, ModelTab::Tts, FieldId::TtsVoice);
+    s.handle_key(key(KeyCode::Enter));
+    s.set_model_catalogue(ModelSlot::Speech, Err(CatalogueError::Unreachable));
+    s.handle_key(key(KeyCode::Esc));
+    assert_eq!(s.handle_key(key(KeyCode::Enter)), None);
+    assert!(s.picker.is_none() && s.editor.is_some());
+}
+
+/// A speech model's row says how many voices it lists and nothing about what
+/// it costs: the catalogue's number has no unit, and the unit differs by
+/// model. The row is drawn from the gateway's own entry, price and all.
+#[test]
+fn a_speech_models_row_counts_its_voices_and_names_no_price() {
+    use crate::shared::api::catalogue::{CatalogueShape, parse};
+    let mut config = AppConfig::default();
+    config.interface.language = crate::shared::i18n::Lang::En;
+    let s = SettingsScreen::new(config, vec![], vec![]);
+    let listed = parse(
+        CatalogueShape::OpenRouterSpeech,
+        r#"{"data":[
+            {"id":"x-ai/grok-voice-tts-1.0","name":"xAI: Grok Voice TTS 1.0","created":2,
+             "context_length":15000,"architecture":{"output_modalities":["speech"]},
+             "pricing":{"prompt":"0.000015","completion":"0"},"supported_parameters":[],
+             "supported_voices":["eve","ara","rex","sal","leo"]},
+            {"id":"fish-audio/s1","name":"Fish Audio: S1","created":1,"context_length":0,
+             "architecture":{"output_modalities":["speech"]},
+             "pricing":{"prompt":"0.000015","completion":"0"},"supported_voices":null,
+             "expiration_date":"2026-12-01"}]}"#,
+    )
+    .expect("a list");
+    let rows: Vec<String> = listed.iter().map(|m| s.picker_label(m)).collect();
+    assert_eq!(
+        rows,
+        [
+            "x-ai/grok-voice-tts-1.0 · voices: 5",
+            "fish-audio/s1 · retiring 2026-12-01"
+        ]
+    );
+}
+
+/// The speech slot's `external` address that is the gateway's says a mode is
+/// needed — it cannot say the section keeps working, since it does not: the
+/// gateway refuses the format an external server is asked for.
+#[test]
+fn an_external_speech_address_that_is_the_gateway_says_the_mode_is_needed() {
+    let mut s = screen();
+    s.config.tts.mode = TtsMode::External;
+    let said = |s: &SettingsScreen| {
+        let rows = s.model_fields_for(ModelTab::Tts);
+        let row = rows.into_iter().find(|r| r.id == FieldId::TtsUrl);
+        row.expect("the address row").description
+    };
+    for (address, hinted) in [
+        (Some("https://openrouter.ai/api/v1"), true),
+        (Some("http://127.0.0.1:8880/v1"), false),
+        (None, false),
+    ] {
+        s.config.tts.external.url = address.map(str::to_string);
+        let hint = hinted.then(|| s.loc().t(DESC_SPEECH_EXTERNAL_IS_GATEWAY).to_string());
+        assert_eq!(said(&s), hint, "{address:?}");
+    }
+    assert_ne!(
+        s.loc().t(DESC_SPEECH_EXTERNAL_IS_GATEWAY),
+        s.loc().t(DESC_EXTERNAL_IS_GATEWAY),
+        "the other slots' hint promises what this slot cannot"
+    );
+    // Inside the mode the address row recommends nothing.
+    let mut s = speech_on_the_gateway(None);
+    s.config.tts.openrouter.url = Some("https://eu.openrouter.ai/api/v1".into());
+    assert_eq!(said(&s), None);
+}
+
+/// What the speech slot points at is part of what an answer is filed under:
+/// an answer asked for under one address is not shown under another.
+#[test]
+fn a_speech_answer_is_kept_for_the_address_and_the_key_it_was_asked_under() {
+    let mut s = speech_on_the_gateway(Some(GROK_VOICE));
+    let first = s.slot_source(ModelSlot::Speech);
+    goto_model_row(&mut s, ModelTab::Tts, FieldId::TtsModelName);
+    s.handle_key(key(KeyCode::Enter));
+    s.set_model_catalogue(ModelSlot::Speech, speech_catalogue());
+    s.handle_key(key(KeyCode::Esc));
+
+    s.config.tts.openrouter.url = Some("https://eu.openrouter.ai/api/v1".into());
+    assert_ne!(s.slot_source(ModelSlot::Speech), first);
+    assert_eq!(
+        s.handle_key(key(KeyCode::Enter)),
+        Some(SettingsIntent::ListModels(ModelSlot::Speech)),
+        "another address is asked anew"
+    );
+    s.handle_key(key(KeyCode::Esc));
+
+    s.config.tts.openrouter.url = None;
+    s.config.tts.openrouter.api_key_env = Some("MY_ROUTER_VOICE".into());
+    assert_ne!(s.slot_source(ModelSlot::Speech), first);
+    s.config.tts.openrouter.api_key_env = None;
+    assert_eq!(s.slot_source(ModelSlot::Speech), first);
+    s.set_secrets_present(vec![SecretKey::Provider(CloudProvider::OpenRouter)]);
+    assert_ne!(
+        s.slot_source(ModelSlot::Speech),
+        first,
+        "a key moves the list to the account's own"
+    );
+    // The model is not part of it: the voices of any model are in one answer.
+    let keyed = s.slot_source(ModelSlot::Speech);
+    s.config.tts.openrouter.model_name = Some("fish-audio/s1".into());
+    assert_eq!(s.slot_source(ModelSlot::Speech), keyed);
+}
+
+/// The picker says whose list it is showing: the provider's models behind a
+/// model row, the model's voices behind a voice row — and the rows are the
+/// voices' names.
+#[test]
+fn the_picker_names_the_list_it_shows() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    let mut s = speech_on_the_gateway(Some(GROK_VOICE));
+    s.config.interface.language = crate::shared::i18n::Lang::En;
+    let drawn = |s: &mut SettingsScreen| {
+        let mut term = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        term.draw(|f| s.render(f)).unwrap();
+        let buffer = term.backend().buffer().clone();
+        let cells = buffer.content().iter().map(|c| c.symbol());
+        cells.collect::<String>()
+    };
+    goto_model_row(&mut s, ModelTab::Tts, FieldId::TtsModelName);
+    s.handle_key(key(KeyCode::Enter));
+    s.set_model_catalogue(ModelSlot::Speech, speech_catalogue());
+    let models = drawn(&mut s);
+    assert!(models.contains("the provider's models"), "{models}");
+    assert!(models.contains("voices: 5"), "{models}");
+    s.handle_key(key(KeyCode::Esc));
+
+    goto_model_row(&mut s, ModelTab::Tts, FieldId::TtsVoice);
+    s.handle_key(key(KeyCode::Enter));
+    let voices = drawn(&mut s);
+    assert!(voices.contains("the model's voices"), "{voices}");
+    assert!(!voices.contains("the provider's models"), "{voices}");
+    assert!(voices.contains("eve") && voices.contains("leo"), "{voices}");
+}
+
+// ---------- video through the gateway (docs/research/openrouter-mode.md, fork F10) ----------
+
+use crate::shared::config::VideoProvider;
+
+const GEMINI_FLASH: &str = "google/gemini-3.5-flash";
+
+/// A screen whose video slot is the gateway's, with this model named.
+fn video_through_the_gateway(model: Option<&str>) -> SettingsScreen {
+    let mut s = screen();
+    s.config.video.provider = VideoProvider::OpenRouter;
+    s.config.video.openrouter.model_name = model.map(str::to_string);
+    s
+}
+
+/// The rows of the video group, in the order they are shown.
+fn video_group(s: &SettingsScreen) -> Vec<FieldId> {
+    let fields = s.tool_fields();
+    let group = fields
+        .iter()
+        .find(|f| f.id == FieldId::VideoProvider)
+        .map(|f| f.group)
+        .expect("the provider's row");
+    let shown = fields.iter().filter(|f| f.group == group);
+    shown.map(|f| f.id).collect()
+}
+
+/// A model that takes video as the gateway lists one.
+fn watching(id: &str, tools: Option<bool>) -> CatalogModel {
+    CatalogModel {
+        facts: crate::shared::api::catalogue::ModelFacts {
+            context_length: Some(1_048_576),
+            prompt_price: Some(300_000),
+            completion_price: Some(2_500_000),
+            tools,
+            video: Some(true),
+        },
+        ..cat(id, Some("A Vendor: A Model"), ModelRole::Chat)
+    }
+}
+
+/// The group opens with who watches, and shows that provider's rows: through
+/// the gateway there is no row for the resolution — the gateway carries none —
+/// and the provider's own switch closes the group. Every row says what it is
+/// for, in every interface language, and the gateway's key rows name the
+/// gateway.
+#[test]
+fn the_video_group_shows_the_rows_of_whoever_watches() {
+    use FieldId as F;
+    let s = screen();
+    assert_eq!(
+        video_group(&s),
+        [
+            F::VideoProvider,
+            F::VideoModel,
+            F::VideoResolution,
+            F::VideoMaxMinutes,
+            F::VideoApiKey,
+            F::VideoApiKeyEnv
+        ]
+    );
+    for lang in crate::shared::i18n::Lang::ALL.iter().copied() {
+        for provider in VideoProvider::ALL {
+            let mut s = video_through_the_gateway(None);
+            s.config.video.provider = provider;
+            s.config.interface.language = lang;
+            let gateway = provider == VideoProvider::OpenRouter;
+            if gateway {
+                assert_eq!(
+                    video_group(&s),
+                    [
+                        F::VideoProvider,
+                        F::VideoModel,
+                        F::VideoMaxMinutes,
+                        F::VideoApiKey,
+                        F::VideoApiKeyEnv,
+                        F::GatewayAttribution
+                    ]
+                );
+            }
+            for row in video_group(&s) {
+                let hint = field_desc(&s, row).unwrap_or_default();
+                assert!(!hint.is_empty(), "{lang:?} {provider:?} {row:?}");
+            }
+            for row in [F::VideoApiKey, F::VideoApiKeyEnv] {
+                let label = field_label(&s, row).unwrap_or_default();
+                assert_eq!(
+                    label.contains("OpenRouter"),
+                    gateway,
+                    "{lang:?} {provider:?} {row:?}: {label}"
+                );
+                let hint = field_desc(&s, row).unwrap_or_default();
+                assert_eq!(
+                    hint.contains("OpenRouter"),
+                    gateway,
+                    "{lang:?} {provider:?} {row:?}: {hint}"
+                );
+            }
+        }
+    }
+    // The hint of the model's row is the provider's own, and so is the
+    // ceiling's — through the gateway a segment is no way around it — and
+    // each names whom it is about.
+    let gemini = screen();
+    let gateway = video_through_the_gateway(None);
+    for row in [F::VideoModel, F::VideoMaxMinutes] {
+        let of_gemini = field_desc(&gemini, row).unwrap_or_default();
+        let of_the_gateway = field_desc(&gateway, row).unwrap_or_default();
+        assert!(!of_gemini.contains("OpenRouter"), "{row:?}: {of_gemini}");
+        assert!(
+            of_the_gateway.contains("OpenRouter"),
+            "{row:?}: {of_the_gateway}"
+        );
+    }
+}
+
+/// The provider is chosen by the arrows, both ways, and each keeps what is
+/// its own: a model and a variable typed for one are not the other's, and are
+/// there when it is chosen again.
+#[test]
+fn each_video_provider_keeps_its_model_and_its_variable() {
+    let typed = |s: &mut SettingsScreen, row: FieldId, text: &str| {
+        goto_section(s, Section::Tools);
+        goto_field(s, row);
+        s.handle_key(key(KeyCode::Enter));
+        s.handle_key(ctrl('k'));
+        for c in text.chars() {
+            s.handle_key(key(KeyCode::Char(c)));
+        }
+        s.handle_key(key(KeyCode::Enter));
+    };
+    let mut s = screen();
+    typed(&mut s, FieldId::VideoApiKeyEnv, "MY_GEMINI");
+    goto_section(&mut s, Section::Tools);
+    goto_field(&mut s, FieldId::VideoProvider);
+    match s.handle_key(key(KeyCode::Right)) {
+        Some(SettingsIntent::SaveConfig(c)) => {
+            assert_eq!(c.video.provider, VideoProvider::OpenRouter)
+        }
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+    // The model's row is the gateway's list now; its first row is the editor.
+    goto_field_again(&mut s, FieldId::VideoModel);
+    s.handle_key(key(KeyCode::Enter));
+    s.handle_key(key(KeyCode::Home));
+    s.handle_key(key(KeyCode::Enter));
+    assert!(s.editor.is_some(), "typing a name by hand");
+    for c in GEMINI_FLASH.chars() {
+        s.handle_key(key(KeyCode::Char(c)));
+    }
+    s.handle_key(key(KeyCode::Enter));
+    typed(&mut s, FieldId::VideoApiKeyEnv, "MY_ROUTER");
+
+    let video = &s.config.video;
+    assert_eq!(video.openrouter.model_name.as_deref(), Some(GEMINI_FLASH));
+    assert_eq!(video.openrouter.api_key_env.as_deref(), Some("MY_ROUTER"));
+    assert_eq!(
+        video.model_name.as_deref(),
+        Some(crate::shared::config::DEFAULT_VIDEO_MODEL)
+    );
+    assert_eq!(video.api_key_env.as_deref(), Some("MY_GEMINI"));
+
+    goto_section(&mut s, Section::Tools);
+    goto_field(&mut s, FieldId::VideoProvider);
+    s.handle_key(key(KeyCode::Left));
+    assert_eq!(s.config.video.provider, VideoProvider::Gemini);
+    let shown = |s: &SettingsScreen, row: FieldId| {
+        let fields = s.tool_fields();
+        let field = fields.into_iter().find(|f| f.id == row);
+        field
+            .map(|f| value_text(&f.kind, s.loc()))
+            .unwrap_or_default()
+    };
+    assert_eq!(
+        shown(&s, FieldId::VideoModel),
+        crate::shared::config::DEFAULT_VIDEO_MODEL
+    );
+    assert_eq!(shown(&s, FieldId::VideoApiKeyEnv), "MY_GEMINI");
+    typed(&mut s, FieldId::VideoModel, "gemini-2.5-pro");
+    assert_eq!(s.config.video.model_name.as_deref(), Some("gemini-2.5-pro"));
+    assert_eq!(
+        s.config.video.openrouter.model_name.as_deref(),
+        Some(GEMINI_FLASH),
+        "what was typed for Gemini is not the gateway's"
+    );
+}
+
+/// The key row addresses the key of whoever watches — the gateway's one key,
+/// which the other slots use — and what is typed is that secret, never a line
+/// of the settings.
+#[test]
+fn the_video_key_row_addresses_the_key_of_whoever_watches() {
+    let gateway = SecretKey::Provider(CloudProvider::OpenRouter);
+    let mut s = video_through_the_gateway(Some(GEMINI_FLASH));
+    // No engine speaks to the gateway: the video slot does by itself.
+    s.config.engine.mode = ServerMode::Managed;
+    assert_eq!(
+        s.secret_field_key(FieldId::VideoApiKey),
+        Some(gateway.clone())
+    );
+    goto_section(&mut s, Section::Tools);
+    goto_field(&mut s, FieldId::VideoApiKey);
+    assert_eq!(
+        enter_secret(&mut s, "sk-or-v1-test"),
+        Some(SettingsIntent::SetSecret {
+            key: gateway,
+            value: "sk-or-v1-test".into()
+        })
+    );
+    let json = serde_json::to_string(&s.config).unwrap();
+    assert!(!json.contains("sk-or-v1-test"), "the key leaked: {json}");
+    s.config.video.provider = VideoProvider::Gemini;
+    assert_eq!(
+        s.secret_field_key(FieldId::VideoApiKey),
+        Some(SecretKey::Provider(CloudProvider::Gemini))
+    );
+}
+
+/// `Enter` on the model row asks the gateway for the models that take video
+/// — through the gateway, and nobody through Gemini's own API, whose row is
+/// the text field it was. A pick is written into the gateway's section. A row
+/// shows the window and the price, and does not mark a model that takes no
+/// tools: a model that watches is asked to describe, not to act.
+#[test]
+fn the_video_model_row_has_the_gateways_list_behind_it() {
+    let mut s = screen();
+    goto_section(&mut s, Section::Tools);
+    goto_field(&mut s, FieldId::VideoModel);
+    assert_eq!(s.handle_key(key(KeyCode::Enter)), None);
+    assert!(
+        s.picker.is_none() && s.editor.is_some(),
+        "Gemini: the editor"
+    );
+
+    let mut s = video_through_the_gateway(None);
+    s.config.interface.language = crate::shared::i18n::Lang::En;
+    goto_section(&mut s, Section::Tools);
+    goto_field(&mut s, FieldId::VideoModel);
+    assert_eq!(
+        s.handle_key(key(KeyCode::Enter)),
+        Some(SettingsIntent::ListModels(ModelSlot::Video))
+    );
+    s.set_model_catalogue(
+        ModelSlot::Video,
+        Ok(vec![
+            watching(GEMINI_FLASH, Some(false)),
+            watching("qwen/qwen3.6-flash", Some(true)),
+        ]
+        .into()),
+    );
+    let rows: Vec<String> = {
+        let st = s.picker.as_ref().expect("the picker is open");
+        st.all.iter().map(|m| s.picker_label(m)).collect()
+    };
+    assert_eq!(
+        rows,
+        [
+            "google/gemini-3.5-flash · 1.04M context · $0.30 in / $2.50 out per 1M tokens",
+            "qwen/qwen3.6-flash · 1.04M context · $0.30 in / $2.50 out per 1M tokens"
+        ]
+    );
+    match s.handle_key(key(KeyCode::Enter)) {
+        Some(SettingsIntent::SaveConfig(c)) => {
+            assert_eq!(c.video.openrouter.model_name.as_deref(), Some(GEMINI_FLASH));
+            assert_eq!(c.video.model_name, AppConfig::default().video.model_name);
+        }
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+    // The same entry behind the assistant's row is marked: there it matters.
+    let mut chat = on_the_model_row(ServerMode::OpenRouter);
+    chat.config.interface.language = crate::shared::i18n::Lang::En;
+    chat.handle_key(key(KeyCode::Enter));
+    let label = chat.picker_label(&watching(GEMINI_FLASH, Some(false)));
+    assert!(label.ends_with("no tools"), "{label}");
+}
+
+/// What the video slot points at is what its answer is filed under: the
+/// provider, the address, the variable, whether a key is stored.
+#[test]
+fn a_video_answer_is_kept_for_what_it_was_asked_under() {
+    let mut s = video_through_the_gateway(Some(GEMINI_FLASH));
+    let first = s.slot_source(ModelSlot::Video);
+    s.config.video.openrouter.url = Some("https://eu.openrouter.ai/api/v1".into());
+    assert_ne!(s.slot_source(ModelSlot::Video), first, "the address");
+    s.config.video.openrouter.url = None;
+    s.config.video.openrouter.api_key_env = Some("MY_ROUTER".into());
+    assert_ne!(s.slot_source(ModelSlot::Video), first, "the variable");
+    s.config.video.openrouter.api_key_env = None;
+    assert_eq!(s.slot_source(ModelSlot::Video), first);
+    s.set_secrets_present(vec![SecretKey::Provider(CloudProvider::Gemini)]);
+    assert_eq!(
+        s.slot_source(ModelSlot::Video),
+        first,
+        "Gemini's key is not the gateway's"
+    );
+    s.set_secrets_present(vec![SecretKey::Provider(CloudProvider::OpenRouter)]);
+    assert_ne!(s.slot_source(ModelSlot::Video), first, "a stored key");
+    // Gemini's own fields are not what the gateway's list is asked under.
+    let keyed = s.slot_source(ModelSlot::Video);
+    s.config.video.url = Some("https://gemini.example/v1beta".into());
+    s.config.video.api_key_env = Some("MY_GEMINI".into());
+    assert_eq!(s.slot_source(ModelSlot::Video), keyed);
+    // The provider itself, with no key stored for either: what was asked
+    // of the gateway is not an answer for another provider's row.
+    s.set_secrets_present(vec![]);
+    let of_the_gateway = s.slot_source(ModelSlot::Video);
+    s.config.video.provider = VideoProvider::Gemini;
+    assert_ne!(
+        s.slot_source(ModelSlot::Video),
+        of_the_gateway,
+        "the provider"
+    );
 }

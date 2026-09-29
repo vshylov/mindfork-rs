@@ -11,6 +11,8 @@ pub mod embed_calibration;
 pub mod embed_identity;
 pub mod embed_prefix;
 pub mod gguf;
+#[cfg(test)]
+pub(crate) mod http_stub;
 pub mod http_text;
 pub mod i18n;
 pub mod instance;

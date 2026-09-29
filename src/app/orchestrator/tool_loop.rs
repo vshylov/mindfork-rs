@@ -513,7 +513,7 @@ async fn read_round(mut stream: ChatStream) -> RoundOut {
             ChatChunk::Error { message, .. } => {
                 tracing::warn!(error = %message, "engine error in a background tool loop");
             }
-            ChatChunk::Thoughts(_) | ChatChunk::ThoughtsSignature(_) => {}
+            ChatChunk::Thoughts(_) | ChatChunk::ThoughtsSignature(_) | ChatChunk::Served(_) => {}
         }
     }
     (text, acc.finish(), reason, usage)

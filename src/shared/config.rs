@@ -9,7 +9,7 @@ use crate::shared::gguf::display_name;
 use crate::shared::secrets::{ExternalSlot, SecretKey};
 
 /// Current config schema version.
-pub const SCHEMA_VERSION: u32 = 3;
+pub const SCHEMA_VERSION: u32 = 4;
 
 /// Inference-engine connection mode. Local (`Managed`/`External`) and cloud
 /// providers (`OpenAi`/`Gemini`) are equal-footing variants of a single selector
@@ -37,6 +37,14 @@ pub enum ServerMode {
     /// reasoning (`delta.reasoning_content`) and needs no thinking-signature
     /// round-trip. See docs/research/grok-xai-provider.md.
     Grok,
+    /// The OpenRouter gateway (`openrouter.ai`): one key in front of every
+    /// vendor's models, spoken to as Chat Completions (`OpenAiClient`) in the
+    /// gateway's own dialect. A mode of its own rather than a URL typed into
+    /// `external`, so that the local server and the gateway each keep their
+    /// settings and one key serves every slot. See
+    /// docs/research/openrouter-mode.md.
+    #[serde(rename = "openrouter")]
+    OpenRouter,
 }
 
 /// Inference cloud provider. `OpenAi`/`Gemini` speak the OpenAI protocol,
@@ -47,17 +55,19 @@ pub enum CloudProvider {
     Gemini,
     Claude,
     Grok,
+    OpenRouter,
 }
 
 impl CloudProvider {
     /// Every provider, in the order the per-provider arrays taken by
     /// [`cloud_ref`]/[`cloud_mut`] are indexed (and the order the settings UI
     /// cycles through them).
-    pub const ALL: [CloudProvider; 4] = [
+    pub const ALL: [CloudProvider; 5] = [
         CloudProvider::OpenAi,
         CloudProvider::Gemini,
         CloudProvider::Claude,
         CloudProvider::Grok,
+        CloudProvider::OpenRouter,
     ];
 
     /// Position in [`Self::ALL`]. Adding a provider then costs one array element
@@ -70,6 +80,7 @@ impl CloudProvider {
             CloudProvider::Gemini => 1,
             CloudProvider::Claude => 2,
             CloudProvider::Grok => 3,
+            CloudProvider::OpenRouter => 4,
         }
     }
     /// Base URL for **embeddings**/compat access (an OpenAI-compatible
@@ -84,6 +95,9 @@ impl CloudProvider {
             // xAI has no embedding models at all (docs/research/grok-xai-provider.md
             // §2.7) — this URL only serves as the chat base, which is the same path.
             CloudProvider::Grok => "https://api.x.ai/v1",
+            // One base for chat, embeddings, the catalogue and the key check
+            // (docs/research/openrouter-mode.md §3.1).
+            CloudProvider::OpenRouter => "https://openrouter.ai/api/v1",
         }
     }
 
@@ -94,7 +108,10 @@ impl CloudProvider {
     pub fn chat_base_url(self) -> &'static str {
         match self {
             CloudProvider::Gemini => "https://generativelanguage.googleapis.com/v1beta",
-            CloudProvider::OpenAi | CloudProvider::Claude | CloudProvider::Grok => self.base_url(),
+            CloudProvider::OpenAi
+            | CloudProvider::Claude
+            | CloudProvider::Grok
+            | CloudProvider::OpenRouter => self.base_url(),
         }
     }
 
@@ -108,6 +125,7 @@ impl CloudProvider {
             CloudProvider::Gemini => "gemini",
             CloudProvider::Claude => "claude",
             CloudProvider::Grok => "grok",
+            CloudProvider::OpenRouter => "openrouter",
         }
     }
 
@@ -123,6 +141,7 @@ impl CloudProvider {
             CloudProvider::Gemini => "Gemini",
             CloudProvider::Claude => "Claude",
             CloudProvider::Grok => "Grok",
+            CloudProvider::OpenRouter => "OpenRouter",
         }
     }
 }
@@ -135,6 +154,7 @@ impl ServerMode {
             ServerMode::Gemini => Some(CloudProvider::Gemini),
             ServerMode::Claude => Some(CloudProvider::Claude),
             ServerMode::Grok => Some(CloudProvider::Grok),
+            ServerMode::OpenRouter => Some(CloudProvider::OpenRouter),
             ServerMode::Managed | ServerMode::External => None,
         }
     }
@@ -150,6 +170,7 @@ impl ServerMode {
             ServerMode::Gemini => "gemini",
             ServerMode::Claude => "claude",
             ServerMode::Grok => "grok",
+            ServerMode::OpenRouter => "openrouter",
         }
     }
 
@@ -159,13 +180,14 @@ impl ServerMode {
     }
 
     /// Every mode, in the settings UI's order.
-    pub const ALL: [ServerMode; 6] = [
+    pub const ALL: [ServerMode; 7] = [
         ServerMode::Managed,
         ServerMode::External,
         ServerMode::OpenAi,
         ServerMode::Gemini,
         ServerMode::Claude,
         ServerMode::Grok,
+        ServerMode::OpenRouter,
     ];
 
     /// Whether `/continue` can resume a partial reply in this mode and, for
@@ -191,8 +213,13 @@ impl ServerMode {
     /// OpenAI restart, which the echo filter would glue onto the partial
     /// (docs/history/gateway-images-and-continue.md §1.3, fork H2). Without a catalogue
     /// `external` answers as it always did.
+    ///
+    /// `OpenRouter` is that gateway by name, so it asks the slug whether or not
+    /// the catalogue has answered yet: there is no llama.cpp behind this mode
+    /// for silence to mean (docs/research/openrouter-mode.md §2.3).
     pub fn supports_continuation(self, model: Option<&str>, catalogued: bool) -> bool {
         match self {
+            ServerMode::OpenRouter => model.is_some_and(gateway_model_continues),
             ServerMode::External if catalogued => model.is_some_and(gateway_model_continues),
             ServerMode::Managed | ServerMode::External | ServerMode::Gemini => true,
             ServerMode::Claude => model.is_some_and(anthropic_model_continues),
@@ -567,6 +594,7 @@ pub fn named_key_env_vars(cfg: &AppConfig) -> Vec<String> {
             e.gemini.api_key_env.clone(),
             e.claude.api_key_env.clone(),
             e.grok.api_key_env.clone(),
+            e.openrouter.api_key_env.clone(),
         ]
     };
     let imp = &cfg.impersonation_engine;
@@ -579,16 +607,20 @@ pub fn named_key_env_vars(cfg: &AppConfig) -> Vec<String> {
             imp.gemini.api_key_env.clone(),
             imp.claude.api_key_env.clone(),
             imp.grok.api_key_env.clone(),
+            imp.openrouter.api_key_env.clone(),
             embed.external.api_key_env.clone(),
             embed.openai.api_key_env.clone(),
             embed.gemini.api_key_env.clone(),
             embed.claude.api_key_env.clone(),
             embed.grok.api_key_env.clone(),
+            embed.openrouter.api_key_env.clone(),
             cfg.tts.openai.api_key_env.clone(),
             cfg.tts.gemini.api_key_env.clone(),
+            cfg.tts.openrouter.api_key_env.clone(),
             cfg.tts.external.api_key_env.clone(),
             cfg.tools.web_tavily_key_env.clone(),
             cfg.video.api_key_env.clone(),
+            cfg.video.openrouter.api_key_env.clone(),
         ])
         .flatten()
         .map(|n| n.trim().to_string())
@@ -606,6 +638,7 @@ pub struct EngineSettings {
     pub gemini: CloudSettings,
     pub claude: CloudSettings,
     pub grok: CloudSettings,
+    pub openrouter: CloudSettings,
 }
 
 impl EngineSettings {
@@ -613,7 +646,13 @@ impl EngineSettings {
     pub fn cloud(&self) -> Option<&CloudSettings> {
         cloud_ref(
             self.mode.cloud_provider(),
-            [&self.openai, &self.gemini, &self.claude, &self.grok],
+            [
+                &self.openai,
+                &self.gemini,
+                &self.claude,
+                &self.grok,
+                &self.openrouter,
+            ],
         )
     }
 
@@ -626,6 +665,7 @@ impl EngineSettings {
                 &mut self.gemini,
                 &mut self.claude,
                 &mut self.grok,
+                &mut self.openrouter,
             ],
         )
     }
@@ -637,9 +677,11 @@ impl EngineSettings {
         let n = match self.mode {
             ServerMode::Managed => self.managed.sessions,
             ServerMode::External => self.external.sessions,
-            ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude | ServerMode::Grok => {
-                self.cloud().map_or(DEFAULT_SESSIONS, |c| c.sessions)
-            }
+            ServerMode::OpenAi
+            | ServerMode::Gemini
+            | ServerMode::Claude
+            | ServerMode::Grok
+            | ServerMode::OpenRouter => self.cloud().map_or(DEFAULT_SESSIONS, |c| c.sessions),
         };
         n.max(1)
     }
@@ -652,7 +694,11 @@ impl EngineSettings {
         let n = match self.mode {
             ServerMode::Managed => self.managed.concurrent_calls,
             ServerMode::External => self.external.concurrent_calls,
-            ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude | ServerMode::Grok => self
+            ServerMode::OpenAi
+            | ServerMode::Gemini
+            | ServerMode::Claude
+            | ServerMode::Grok
+            | ServerMode::OpenRouter => self
                 .cloud()
                 .map_or(DEFAULT_CONCURRENT_CALLS_CLOUD, |c| c.concurrent_calls),
         };
@@ -668,7 +714,11 @@ impl EngineSettings {
         match self.mode {
             ServerMode::Managed => self.managed.model_path.as_deref().and_then(display_name),
             ServerMode::External => self.external.model_name.clone().filter(|m| !m.is_empty()),
-            ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude | ServerMode::Grok => self
+            ServerMode::OpenAi
+            | ServerMode::Gemini
+            | ServerMode::Claude
+            | ServerMode::Grok
+            | ServerMode::OpenRouter => self
                 .cloud()
                 .and_then(|c| c.model_name.clone())
                 .filter(|m| !m.is_empty()),
@@ -783,6 +833,10 @@ pub enum ImpersonationMode {
     Claude,
     /// xAI cloud (Grok, OpenAI Chat Completions).
     Grok,
+    /// The OpenRouter gateway — on the key every slot of this provider
+    /// shares, with a model of its own.
+    #[serde(rename = "openrouter")]
+    OpenRouter,
 }
 
 impl ImpersonationMode {
@@ -793,6 +847,7 @@ impl ImpersonationMode {
             ImpersonationMode::Gemini => Some(CloudProvider::Gemini),
             ImpersonationMode::Claude => Some(CloudProvider::Claude),
             ImpersonationMode::Grok => Some(CloudProvider::Grok),
+            ImpersonationMode::OpenRouter => Some(CloudProvider::OpenRouter),
             ImpersonationMode::Shared
             | ImpersonationMode::Managed
             | ImpersonationMode::External => None,
@@ -816,6 +871,7 @@ pub struct ImpersonationEngineSettings {
     pub gemini: CloudSettings,
     pub claude: CloudSettings,
     pub grok: CloudSettings,
+    pub openrouter: CloudSettings,
 }
 
 impl Default for ImpersonationEngineSettings {
@@ -832,6 +888,7 @@ impl Default for ImpersonationEngineSettings {
             gemini: CloudSettings::default(),
             claude: CloudSettings::default(),
             grok: CloudSettings::default(),
+            openrouter: CloudSettings::default(),
         }
     }
 }
@@ -841,7 +898,13 @@ impl ImpersonationEngineSettings {
     pub fn cloud(&self) -> Option<&CloudSettings> {
         cloud_ref(
             self.mode.cloud_provider(),
-            [&self.openai, &self.gemini, &self.claude, &self.grok],
+            [
+                &self.openai,
+                &self.gemini,
+                &self.claude,
+                &self.grok,
+                &self.openrouter,
+            ],
         )
     }
 
@@ -854,6 +917,7 @@ impl ImpersonationEngineSettings {
                 &mut self.gemini,
                 &mut self.claude,
                 &mut self.grok,
+                &mut self.openrouter,
             ],
         )
     }
@@ -908,6 +972,7 @@ pub struct EmbedSettings {
     pub gemini: CloudSettings,
     pub claude: CloudSettings,
     pub grok: CloudSettings,
+    pub openrouter: CloudSettings,
     /// How the active model expects its input to be marked (`query:`/`passage:`
     /// and relatives). Independent of the mode — it is a property of the *model*,
     /// not of where it runs. Default [`EmbedConvention::None`], and switching it
@@ -921,7 +986,13 @@ impl EmbedSettings {
     pub fn cloud(&self) -> Option<&CloudSettings> {
         cloud_ref(
             self.mode.cloud_provider(),
-            [&self.openai, &self.gemini, &self.claude, &self.grok],
+            [
+                &self.openai,
+                &self.gemini,
+                &self.claude,
+                &self.grok,
+                &self.openrouter,
+            ],
         )
     }
 
@@ -934,6 +1005,7 @@ impl EmbedSettings {
                 &mut self.gemini,
                 &mut self.claude,
                 &mut self.grok,
+                &mut self.openrouter,
             ],
         )
     }
@@ -952,7 +1024,11 @@ impl EmbedSettings {
         match self.mode {
             ServerMode::Managed => self.managed.model_path.as_deref().and_then(display_name),
             ServerMode::External => self.external.model_name.clone().filter(|m| !m.is_empty()),
-            ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude | ServerMode::Grok => self
+            ServerMode::OpenAi
+            | ServerMode::Gemini
+            | ServerMode::Claude
+            | ServerMode::Grok
+            | ServerMode::OpenRouter => self
                 .cloud()
                 .and_then(|c| c.model_name.clone())
                 .filter(|m| !m.is_empty()),
@@ -2039,15 +2115,80 @@ impl MediaResolution {
     }
 }
 
+/// Who watches the video. Gemini is the family that takes a YouTube link, and it
+/// is reached two ways: by Google's own API, or through the OpenRouter gateway —
+/// for a user whose one key is the gateway's
+/// (docs/research/openrouter-mode.md §4.5, fork F10).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum VideoProvider {
+    /// Google's own `generateContent`: a segment is clipped by the provider and
+    /// only the segment is charged.
+    #[default]
+    Gemini,
+    /// The gateway's `chat/completions` with a `video_url` part: no segment
+    /// bounds and no resolution are carried — the whole video is read and
+    /// charged, and a segment is named in words.
+    #[serde(rename = "openrouter")]
+    OpenRouter,
+}
+
+impl VideoProvider {
+    pub const ALL: [VideoProvider; 2] = [VideoProvider::Gemini, VideoProvider::OpenRouter];
+
+    /// UI label (Choice field), and the settings file's own spelling.
+    pub fn label(self) -> &'static str {
+        match self {
+            VideoProvider::Gemini => "gemini",
+            VideoProvider::OpenRouter => "openrouter",
+        }
+    }
+
+    /// The provider whose stored key the slot reads (ADR 0008).
+    pub fn cloud_provider(self) -> CloudProvider {
+        match self {
+            VideoProvider::Gemini => CloudProvider::Gemini,
+            VideoProvider::OpenRouter => CloudProvider::OpenRouter,
+        }
+    }
+
+    pub fn cycle(self, dir: i32) -> Self {
+        let i = Self::ALL.iter().position(|v| *v == self).unwrap_or(0) as i32;
+        let n = Self::ALL.len() as i32;
+        Self::ALL[(i + dir).rem_euclid(n) as usize]
+    }
+}
+
+/// The video slot's section for the OpenRouter gateway. It has **no default
+/// model**: a default that names a model ages (docs/research/model-picker.md
+/// §1), and the gateway's list of models that take video is one keypress away.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VideoGatewaySettings {
+    /// The model's slug on the gateway (`google/gemini-3.5-flash`).
+    pub model_name: Option<String>,
+    /// Base URL override; empty → the gateway's own.
+    pub url: Option<String>,
+    /// Env-variable name with the gateway's key — a fallback when none is stored.
+    pub api_key_env: Option<String>,
+}
+
 /// Video understanding (`youtube_watch`, docs/research/youtube-integration.md).
 /// A slot of its own, independent of the chat engine: only Gemini ingests video
 /// at all, so a user on a local model or on Claude still gets this — the tool
-/// calls Gemini out of band, exactly like TTS (ADR 0009). The API key is **not**
-/// here: it is the provider key shared with chat/embeddings (ADR 0008).
-/// All fields `#[serde(default)]` → old `settings.json` reads without migration.
+/// calls the provider out of band, exactly like TTS (ADR 0009). The API key is
+/// **not** here: it is the provider key shared with chat/embeddings (ADR 0008).
+/// All fields `#[serde(default)]` → old `settings.json` reads without migration:
+/// the fields a file has always held — `model_name`, `url`, `api_key_env` — are
+/// Gemini's, where they were, and the gateway's are a section beside them, so
+/// that neither model is retyped on a switch.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct VideoSettings {
+    /// Who watches. `gemini` unless chosen otherwise.
+    pub provider: VideoProvider,
+    /// The gateway's section, read when `provider` is `openrouter`.
+    pub openrouter: VideoGatewaySettings,
     /// Gemini model name. Empty → the tool reports itself unconfigured.
     pub model_name: Option<String>,
     /// Base URL override (`…/v1beta`); empty → the provider's own.
@@ -2055,15 +2196,25 @@ pub struct VideoSettings {
     /// Env-variable name with the key — a fallback when nothing is stored in
     /// settings (the same pattern as the engine and TTS sections).
     pub api_key_env: Option<String>,
-    /// Frame sampling detail.
+    /// Frame sampling detail. Gemini's own API reads it; the gateway carries no
+    /// such field (three spellings tried, none honoured).
     pub media_resolution: MediaResolution,
     /// Refuse videos longer than this many minutes (`0` — no ceiling).
     pub max_minutes: u32,
 }
 
+impl VideoSettings {
+    /// The stored secret the slot reads: the chosen provider's one key.
+    pub fn secret_key(&self) -> crate::shared::secrets::SecretKey {
+        crate::shared::secrets::SecretKey::Provider(self.provider.cloud_provider())
+    }
+}
+
 impl Default for VideoSettings {
     fn default() -> Self {
         Self {
+            provider: VideoProvider::default(),
+            openrouter: VideoGatewaySettings::default(),
             model_name: Some(DEFAULT_VIDEO_MODEL.into()),
             url: None,
             api_key_env: None,
@@ -2088,20 +2239,32 @@ pub enum TtsMode {
     OpenAi,
     /// Google Gemini cloud (native `generateContent` with `responseModalities:["AUDIO"]`).
     Gemini,
+    /// The OpenRouter gateway (`POST /audio/speech`): some twenty speech models
+    /// of a dozen vendors behind the key every slot of this provider shares.
+    /// See docs/research/openrouter-mode.md §4.4, fork F9.
+    #[serde(rename = "openrouter")]
+    OpenRouter,
     /// Any local/third-party OpenAI-compatible TTS server (Kokoro-FastAPI,
     /// speaches, LocalAI, …). See docs/research/tts.md §3.4.
     External,
 }
 
 impl TtsMode {
-    /// All variants in UI-cycle order (Choice field).
-    pub const ALL: [TtsMode; 3] = [TtsMode::OpenAi, TtsMode::Gemini, TtsMode::External];
+    /// All variants in UI-cycle order (Choice field): the clouds, then the
+    /// server of the user's own.
+    pub const ALL: [TtsMode; 4] = [
+        TtsMode::OpenAi,
+        TtsMode::Gemini,
+        TtsMode::OpenRouter,
+        TtsMode::External,
+    ];
 
     /// UI label (Choice field).
     pub fn label(self) -> &'static str {
         match self {
             TtsMode::OpenAi => "openai",
             TtsMode::Gemini => "gemini",
+            TtsMode::OpenRouter => "openrouter",
             TtsMode::External => "external",
         }
     }
@@ -2112,6 +2275,7 @@ impl TtsMode {
         match self {
             TtsMode::OpenAi => Some(CloudProvider::OpenAi),
             TtsMode::Gemini => Some(CloudProvider::Gemini),
+            TtsMode::OpenRouter => Some(CloudProvider::OpenRouter),
             TtsMode::External => None,
         }
     }
@@ -2179,9 +2343,15 @@ pub struct TtsSettings {
     pub mode: TtsMode,
     pub openai: TtsCloudSettings,
     pub gemini: TtsCloudSettings,
+    /// The gateway's section. It has **no default model**: a default that names
+    /// a model ages (docs/research/model-picker.md §1), and the gateway's list
+    /// is one keypress away. `instructions` is not a field of the gateway's
+    /// speech route and is never sent there.
+    pub openrouter: TtsCloudSettings,
     pub external: TtsExternalSettings,
     /// Speech speed (where supported). Ignored by `gpt-4o-mini-tts` — there
-    /// speed is requested via words in `instructions`.
+    /// speed is requested via words in `instructions` — and by some of the
+    /// gateway's models (measured on two, docs/research/openrouter-mode.md §4.4).
     pub speed: f32,
     /// Speak role prefixes ("User."/"Assistant.") — in **all**
     /// command variants, including a bare `/tts` (user's decision, R6).
@@ -2206,6 +2376,7 @@ impl Default for TtsSettings {
                 voice: Some(DEFAULT_TTS_GEMINI_VOICE.into()),
                 ..Default::default()
             },
+            openrouter: TtsCloudSettings::default(),
             external: TtsExternalSettings::default(),
             speed: 1.0,
             speak_roles: false,
@@ -2223,6 +2394,7 @@ impl TtsSettings {
         match self.mode.cloud_provider()? {
             CloudProvider::OpenAi => Some(&self.openai),
             CloudProvider::Gemini => Some(&self.gemini),
+            CloudProvider::OpenRouter => Some(&self.openrouter),
             // Neither has a TTS API (and `TtsMode` has no variant for them
             // anyway — these arms exist only to keep the match exhaustive).
             CloudProvider::Claude | CloudProvider::Grok => None,
@@ -2248,6 +2420,7 @@ impl TtsSettings {
         match self.mode.cloud_provider()? {
             CloudProvider::OpenAi => Some(&mut self.openai),
             CloudProvider::Gemini => Some(&mut self.gemini),
+            CloudProvider::OpenRouter => Some(&mut self.openrouter),
             // Neither has a TTS API (and `TtsMode` has no variant for them
             // anyway — these arms exist only to keep the match exhaustive).
             CloudProvider::Claude | CloudProvider::Grok => None,
@@ -2299,6 +2472,26 @@ impl ImpersonationProfile {
     }
 }
 
+/// What is set once for the OpenRouter gateway, whichever slot speaks to it —
+/// unlike a model or a key's variable, which each slot's own section holds.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct OpenRouterSettings {
+    /// Send the two attribution headers — `HTTP-Referer` and
+    /// `X-OpenRouter-Title` — with every request to the gateway. They name the
+    /// **application**, never the user, and are what the gateway's public
+    /// rankings count by; PRIVACY.md says what they hold. On by default, and a
+    /// switch because it is the one thing this app says about itself to a
+    /// provider (docs/research/openrouter-mode.md, fork F5).
+    pub attribution: bool,
+}
+
+impl Default for OpenRouterSettings {
+    fn default() -> Self {
+        Self { attribution: true }
+    }
+}
+
 /// Global application configuration.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -2319,6 +2512,8 @@ pub struct AppConfig {
     pub impersonation_profiles: Vec<ImpersonationProfile>,
     /// Dedicated embedding-server settings (RAG, ADR 0002).
     pub embed: EmbedSettings,
+    /// What is provider-wide about the OpenRouter gateway.
+    pub openrouter: OpenRouterSettings,
     /// Round limit for the client-side agentic loop (spec §6.3).
     pub max_tool_rounds: u32,
     /// Global switches for external tools.
@@ -2393,6 +2588,7 @@ impl Default for AppConfig {
             impersonation_engine: ImpersonationEngineSettings::default(),
             impersonation_profiles: Vec::new(),
             embed: EmbedSettings::default(),
+            openrouter: OpenRouterSettings::default(),
             max_tool_rounds: 8,
             tools: ToolSettings::default(),
             workspace: WorkspaceSettings::default(),
@@ -2675,6 +2871,12 @@ mod tests {
             c.engine.openai.api_key_env.as_deref(),
             Some("OPENAI_API_KEY")
         );
+        // The gateway, in both slots the seed gives it: one variable, as one
+        // key serves them.
+        for section in [&c.engine.openrouter, &c.embed.openrouter] {
+            assert_eq!(section.api_key_env.as_deref(), Some("OPENROUTER_API_KEY"));
+            assert!(section.model_name.is_some());
+        }
 
         // The container ships a real interpreter, so `python_exec` needs no
         // ~300 MB wasmer provisioning to work there.
@@ -3559,5 +3761,451 @@ mod tests {
         assert_eq!(old.engine.openai.model_name, None);
         assert_eq!(old.engine.openai.api_key_env, None);
         assert_eq!(old.engine.managed.binary, None);
+    }
+
+    // ---------- the OpenRouter mode (docs/research/openrouter-mode.md) ----------
+
+    /// Fork F3: the mode's name is storage — `settings.json`, every chat's
+    /// `metadata.mode` and `data.db` hold it — so it is one word in both enums
+    /// that carry it, and no neighbouring spelling reads as it: a typed parse
+    /// that fell back would be an engine switched in silence
+    /// (docs/research/settings-typed-parse.md).
+    #[test]
+    fn the_gateway_mode_is_one_word_in_both_enums_that_carry_it() {
+        let written = |mode: serde_json::Value| mode.as_str().map(str::to_string);
+        assert_eq!(
+            written(serde_json::to_value(ServerMode::OpenRouter).unwrap()).as_deref(),
+            Some("openrouter")
+        );
+        assert_eq!(
+            written(serde_json::to_value(ImpersonationMode::OpenRouter).unwrap()).as_deref(),
+            Some("openrouter")
+        );
+        assert_eq!(
+            serde_json::from_str::<ServerMode>(r#""openrouter""#).ok(),
+            Some(ServerMode::OpenRouter)
+        );
+        assert_eq!(
+            serde_json::from_str::<ImpersonationMode>(r#""openrouter""#).ok(),
+            Some(ImpersonationMode::OpenRouter)
+        );
+        assert_eq!(
+            ServerMode::from_key("openrouter"),
+            Some(ServerMode::OpenRouter)
+        );
+        for other in ["open_router", "open-router", "OpenRouter", "openrouter.ai"] {
+            let json = format!("\"{other}\"");
+            assert!(
+                serde_json::from_str::<ServerMode>(&json).is_err(),
+                "{other}"
+            );
+            assert!(
+                serde_json::from_str::<ImpersonationMode>(&json).is_err(),
+                "{other}"
+            );
+            assert_eq!(ServerMode::from_key(other), None, "{other}");
+        }
+    }
+
+    /// The fifth provider sits where [`CloudProvider::ALL`] says, and in each of
+    /// the three settings structs that position is the `openrouter` section,
+    /// read and written. `provider_index_matches_its_slot_in_all` pins the
+    /// index; this pins what the three hand-written arrays put **at** it, where
+    /// a swap with the neighbour would hand the gateway xAI's model and key
+    /// with no type error to catch it.
+    #[test]
+    fn each_slot_hands_the_gateway_mode_its_own_section() {
+        const SLUG: &str = "anthropic/claude-haiku-4.5";
+        const PICKED: &str = "google/gemini-3.5-flash";
+        assert_eq!(
+            CloudProvider::ALL.get(CloudProvider::OpenRouter.index()),
+            Some(&CloudProvider::OpenRouter)
+        );
+        macro_rules! own_section {
+            ($slot:literal, $settings:expr) => {{
+                let mut s = $settings;
+                s.grok.model_name = Some("grok-4.5".into());
+                s.openrouter.model_name = Some(SLUG.into());
+                let read = s.cloud().and_then(|c| c.model_name.clone());
+                assert_eq!(read.as_deref(), Some(SLUG), "{}: read", $slot);
+                s.cloud_mut().expect("a cloud mode").model_name = Some(PICKED.into());
+                assert_eq!(
+                    (
+                        s.openrouter.model_name.as_deref(),
+                        s.grok.model_name.as_deref()
+                    ),
+                    (Some(PICKED), Some("grok-4.5")),
+                    "{}: written to the gateway's section and to no neighbour",
+                    $slot
+                );
+                s
+            }};
+        }
+        let engine = own_section!(
+            "engine",
+            EngineSettings {
+                mode: ServerMode::OpenRouter,
+                ..Default::default()
+            }
+        );
+        assert_eq!(engine.active_model_name().as_deref(), Some(PICKED));
+        assert_eq!(
+            engine.secret_key(),
+            Some(SecretKey::Provider(CloudProvider::OpenRouter))
+        );
+        let imp = own_section!(
+            "impersonation",
+            ImpersonationEngineSettings {
+                mode: ImpersonationMode::OpenRouter,
+                ..Default::default()
+            }
+        );
+        assert_eq!(imp.secret_key(), engine.secret_key(), "one key, every slot");
+        let embed = own_section!(
+            "embed",
+            EmbedSettings {
+                mode: ServerMode::OpenRouter,
+                ..Default::default()
+            }
+        );
+        assert_eq!(embed.active_model_name().as_deref(), Some(PICKED));
+        assert_eq!(embed.secret_key(), engine.secret_key());
+    }
+
+    /// A `settings.json` written before the mode existed still loads, every
+    /// gateway section at its defaults — the no-migration invariant the Grok
+    /// mode's test pins for its own sections. The schema step 3 → 4 changes no
+    /// value (fork F3), so this is what a migrated file reads as.
+    #[test]
+    fn config_without_openrouter_sections_still_loads() {
+        let old = r#"{"engine":{"mode":"grok","grok":{"model_name":"grok-4.5"}}}"#;
+        let c: AppConfig = serde_json::from_str(old).unwrap();
+        assert_eq!(c.engine.mode, ServerMode::Grok);
+        assert_eq!(c.engine.grok.model_name.as_deref(), Some("grok-4.5"));
+        assert_eq!(c.engine.openrouter, CloudSettings::default());
+        assert_eq!(c.impersonation_engine.openrouter, CloudSettings::default());
+        assert_eq!(c.embed.openrouter, CloudSettings::default());
+        assert_eq!(c.openrouter, OpenRouterSettings::default());
+    }
+
+    /// Fork F5, adopted (b): the application is named to the gateway **until
+    /// somebody turns that off** — so the default is on, a file that never
+    /// heard of the switch reads as on, and an "off" that was written stays
+    /// off through a save and a load.
+    #[test]
+    fn attribution_is_on_until_somebody_turns_it_off() {
+        assert!(AppConfig::default().openrouter.attribution);
+        for silent in ["{}", r#"{"openrouter":{}}"#] {
+            let c: AppConfig =
+                serde_json::from_str(silent).unwrap_or_else(|e| panic!("{silent} must load: {e}"));
+            assert!(c.openrouter.attribution, "{silent}");
+        }
+        let off: AppConfig =
+            serde_json::from_str(r#"{"openrouter":{"attribution":false}}"#).unwrap();
+        assert!(!off.openrouter.attribution);
+        let saved = serde_json::to_value(&off).unwrap();
+        assert_eq!(saved["openrouter"]["attribution"], false, "{saved}");
+        let back: AppConfig = serde_json::from_value(saved).unwrap();
+        assert!(!back.openrouter.attribution, "off survives the round trip");
+    }
+
+    /// The file's own words for the mode: each slot keeps its gateway section
+    /// under `openrouter`, beside the provider-wide one at the top level — the
+    /// layout the settings migration, the docs and a hand-edited file rely on.
+    #[test]
+    fn a_config_on_the_gateway_round_trips_in_the_files_own_words() {
+        let section = |model: &str, env: &str| CloudSettings {
+            model_name: Some(model.into()),
+            api_key_env: Some(env.into()),
+            ..Default::default()
+        };
+        let mut c = AppConfig::default();
+        c.engine.mode = ServerMode::OpenRouter;
+        c.engine.openrouter = section("anthropic/claude-haiku-4.5", "CHAT_KEY");
+        c.impersonation_engine.mode = ImpersonationMode::OpenRouter;
+        c.impersonation_engine.openrouter = section("qwen/qwen3.6-27b", "IMP_KEY");
+        c.embed.mode = ServerMode::OpenRouter;
+        c.embed.openrouter = section("baai/bge-m3", "EMBED_KEY");
+        c.openrouter.attribution = false;
+
+        let json = serde_json::to_value(&c).unwrap();
+        let said: Vec<serde_json::Value> = "/engine/mode /engine/openrouter/model_name \
+            /impersonation_engine/mode /impersonation_engine/openrouter/api_key_env \
+            /embed/mode /embed/openrouter/model_name /openrouter/attribution"
+            .split_whitespace()
+            .map(|path| json.pointer(path).cloned().unwrap_or_default())
+            .collect();
+        let written: serde_json::Value = serde_json::from_str(
+            r#"["openrouter", "anthropic/claude-haiku-4.5", "openrouter", "IMP_KEY",
+                "openrouter", "baai/bge-m3", false]"#,
+        )
+        .unwrap();
+        assert_eq!(serde_json::Value::Array(said), written, "{json}");
+        let back: AppConfig = serde_json::from_value(json).unwrap();
+        assert_eq!(back, c);
+    }
+
+    /// A variable the user named as the gateway's key is a secret whatever it
+    /// is called, in whichever slot it was typed — so all three reach the list
+    /// that model-driven children are started without
+    /// (docs/research/safe-defaults.md D5). A slot left out would hand a
+    /// `python_exec` child the gateway's key.
+    #[test]
+    fn a_variable_named_for_the_gateways_key_is_kept_from_children() {
+        let mut c = AppConfig::default();
+        c.engine.openrouter.api_key_env = Some("MY_ROUTER_CHAT".into());
+        c.impersonation_engine.openrouter.api_key_env = Some(" MY_ROUTER_IMP ".into());
+        c.embed.openrouter.api_key_env = Some("MY_ROUTER_EMBED".into());
+        let named = named_key_env_vars(&c);
+        let missing: Vec<&str> = ["MY_ROUTER_CHAT", "MY_ROUTER_IMP", "MY_ROUTER_EMBED"]
+            .into_iter()
+            .filter(|name| !named.iter().any(|n| n == name))
+            .collect();
+        assert!(missing.is_empty(), "not named: {missing:?} in {named:?}");
+    }
+
+    /// `/continue` through the mode follows the routed vendor, as it does
+    /// through `external` with a catalogue — and **without** one too: the mode
+    /// is the gateway by name, so there is no llama.cpp for silence to mean
+    /// (docs/research/openrouter-mode.md §2.3). Columns: the slug, whether it
+    /// continues, why. One literal, not tuple rows (lessons §2).
+    const GATEWAY_CONTINUES: &str = "
+        anthropic/claude-haiku-4.5        yes | Anthropic up to 4.5 continues
+        anthropic/claude-sonnet-4.6       no  | ...and refuses prefill from 4.6 on
+        google/gemini-3.5-flash           yes | a Gemini continues
+        openai/gpt-5.5                    no  | OpenAI restarts
+        qwen/qwen3.6-27b                  no  | every open-weight route restarts
+        anthropic/claude-haiku-4.5:nitro  yes | a variant answers as its base
+        anthropic/claude-sonnet-4.6:nitro no  | ...and must not hide the minor version
+    ";
+
+    #[test]
+    fn the_gateway_mode_asks_the_slug_whether_or_not_the_catalogue_answered() {
+        let mut wrong = Vec::new();
+        for row in GATEWAY_CONTINUES.lines().filter(|l| !l.trim().is_empty()) {
+            let (columns, why) = row.split_once('|').unwrap();
+            let c: Vec<&str> = columns.split_whitespace().collect();
+            for catalogued in [false, true] {
+                let got = ServerMode::OpenRouter.supports_continuation(Some(c[0]), catalogued);
+                if got != (c[1] == "yes") {
+                    wrong.push(format!(
+                        "{} (catalogued: {catalogued}) — {}",
+                        c[0],
+                        why.trim()
+                    ));
+                }
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+        for catalogued in [false, true] {
+            assert!(
+                !ServerMode::OpenRouter.supports_continuation(None, catalogued),
+                "no model named — nothing to allow by"
+            );
+        }
+        // `external` is unchanged: the same slug is judged only once the
+        // endpoint has said it is a gateway.
+        assert!(ServerMode::External.supports_continuation(Some("openai/gpt-5.5"), false));
+        assert!(!ServerMode::External.supports_continuation(Some("openai/gpt-5.5"), true));
+    }
+
+    /// Speech through the gateway (stage 3, docs/research/openrouter-mode.md
+    /// §7): the mode is written `openrouter`, as in every other slot; it reads
+    /// the provider's one key; and it keeps a section of its own, which the
+    /// other modes' values do not leak into.
+    #[test]
+    fn the_speech_slot_has_a_gateway_mode_on_the_providers_key() {
+        let tts: TtsSettings = serde_json::from_str(
+            r#"{"mode":"openrouter",
+                "openrouter":{"model_name":"x-ai/grok-voice-tts-1.0","voice":"eve"}}"#,
+        )
+        .expect("the mode is read");
+        assert_eq!(tts.mode, TtsMode::OpenRouter);
+        assert_eq!(
+            serde_json::to_value(&tts).unwrap()["mode"],
+            "openrouter",
+            "and written back the same"
+        );
+        assert_eq!(TtsMode::OpenRouter.label(), "openrouter");
+        assert_eq!(
+            tts.secret_key(),
+            Some(SecretKey::Provider(CloudProvider::OpenRouter)),
+            "the key the chat slot stored serves speech too"
+        );
+        assert_eq!(tts.active_voices(), (Some("eve"), None));
+        assert_eq!(
+            tts.cloud().and_then(|c| c.model_name.as_deref()),
+            Some("x-ai/grok-voice-tts-1.0")
+        );
+        // The section is its own: OpenAI's defaults are where they were.
+        assert_eq!(
+            tts.openai.model_name.as_deref(),
+            Some(DEFAULT_TTS_OPENAI_MODEL)
+        );
+        for other in ["open_router", "OpenRouter", "openrouter.ai"] {
+            let asked = format!(r#"{{"mode":"{other}"}}"#);
+            assert!(
+                serde_json::from_str::<TtsSettings>(&asked).is_err(),
+                "{other} is not a mode"
+            );
+        }
+    }
+
+    /// No default model and no default voice: a default that names a model
+    /// ages, and a voice belongs to a model. A speech slot switched to the
+    /// gateway and left empty is "not configured", which `/tts` says.
+    #[test]
+    fn the_gateways_speech_section_starts_empty() {
+        let tts = TtsSettings::default();
+        assert_eq!(tts.openrouter, TtsCloudSettings::default());
+        let written = serde_json::to_value(&tts).unwrap();
+        assert!(written["openrouter"]["model_name"].is_null(), "{written}");
+        // A file written before the section existed reads with it empty.
+        let old: TtsSettings =
+            serde_json::from_str(r#"{"mode":"gemini","gemini":{"voice":"Puck"}}"#).unwrap();
+        assert_eq!(old.openrouter, TtsCloudSettings::default());
+        assert_eq!(old.gemini.voice.as_deref(), Some("Puck"));
+    }
+
+    /// Every speech mode cycles through every other, both ways, and each cloud
+    /// mode edits the section it reads.
+    #[test]
+    fn every_speech_mode_is_reached_by_cycling_and_edits_its_own_section() {
+        for dir in [1, -1] {
+            let mut seen = vec![TtsMode::default()];
+            for _ in 1..TtsMode::ALL.len() {
+                seen.push(seen.last().unwrap().cycle(dir));
+            }
+            for mode in TtsMode::ALL {
+                assert!(seen.contains(&mode), "{mode:?} not reached with {dir}");
+            }
+            assert_eq!(seen.last().unwrap().cycle(dir), TtsMode::default());
+        }
+        for mode in TtsMode::ALL {
+            let mut tts = TtsSettings {
+                mode,
+                ..Default::default()
+            };
+            let Some(section) = tts.cloud_mut() else {
+                assert_eq!(mode, TtsMode::External, "{mode:?} has a section");
+                continue;
+            };
+            section.voice = Some(format!("voice-of-{}", mode.label()));
+            let named = format!("voice-of-{}", mode.label());
+            assert_eq!(tts.active_voices().0, Some(named.as_str()));
+            let sections = [&tts.openai, &tts.gemini, &tts.openrouter];
+            let holding = sections
+                .iter()
+                .filter(|s| s.voice.as_deref() == Some(named.as_str()))
+                .count();
+            assert_eq!(holding, 1, "{mode:?} wrote to one section");
+        }
+    }
+
+    // ---------- video through the gateway (docs/research/openrouter-mode.md, fork F10) ----------
+
+    /// The selector is a new field and the gateway's section a new one beside
+    /// Gemini's fields: a file written before either reads as it always did —
+    /// Gemini, its model where it was — and what each provider holds survives
+    /// a switch to the other and back.
+    #[test]
+    fn the_video_slot_chooses_its_provider_and_keeps_both_models() {
+        let old: VideoSettings = serde_json::from_str(
+            r#"{"model_name":"gemini-2.5-pro","api_key_env":"MY_GEMINI","max_minutes":45}"#,
+        )
+        .expect("a file of before the selector");
+        assert_eq!(old.provider, VideoProvider::Gemini);
+        assert_eq!(old.openrouter, VideoGatewaySettings::default());
+        assert_eq!(old.model_name.as_deref(), Some("gemini-2.5-pro"));
+        assert_eq!(
+            old.secret_key(),
+            SecretKey::Provider(CloudProvider::Gemini),
+            "Gemini's key, as before"
+        );
+
+        let new: VideoSettings = serde_json::from_str(
+            r#"{"provider":"openrouter","model_name":"gemini-2.5-pro",
+                "openrouter":{"model_name":"google/gemini-3.5-flash","api_key_env":"MY_ROUTER"}}"#,
+        )
+        .expect("the selector is read");
+        assert_eq!(new.provider, VideoProvider::OpenRouter);
+        assert_eq!(
+            new.secret_key(),
+            SecretKey::Provider(CloudProvider::OpenRouter)
+        );
+        assert_eq!(
+            new.openrouter.model_name.as_deref(),
+            Some("google/gemini-3.5-flash")
+        );
+        assert_eq!(new.model_name.as_deref(), Some("gemini-2.5-pro"));
+        let written = serde_json::to_value(&new).unwrap();
+        assert_eq!(written["provider"], "openrouter");
+        assert_eq!(written["openrouter"]["api_key_env"], "MY_ROUTER");
+
+        for other in ["open_router", "OpenRouter", "google"] {
+            let asked = format!(r#"{{"provider":"{other}"}}"#);
+            assert!(
+                serde_json::from_str::<VideoSettings>(&asked).is_err(),
+                "{other} is not a provider"
+            );
+        }
+    }
+
+    /// No default model for the gateway — Gemini keeps the one it has — and the
+    /// selector is reached both ways from either provider.
+    #[test]
+    fn the_gateways_video_section_starts_empty_and_the_selector_cycles() {
+        let video = VideoSettings::default();
+        assert_eq!(video.provider, VideoProvider::Gemini);
+        assert_eq!(video.openrouter, VideoGatewaySettings::default());
+        assert_eq!(video.model_name.as_deref(), Some(DEFAULT_VIDEO_MODEL));
+        for dir in [1, -1] {
+            assert_eq!(
+                VideoProvider::Gemini.cycle(dir),
+                VideoProvider::OpenRouter,
+                "{dir}"
+            );
+            assert_eq!(
+                VideoProvider::OpenRouter.cycle(dir),
+                VideoProvider::Gemini,
+                "{dir}"
+            );
+        }
+        let labels: Vec<&str> = VideoProvider::ALL.into_iter().map(|p| p.label()).collect();
+        assert_eq!(labels, ["gemini", "openrouter"]);
+        for provider in VideoProvider::ALL {
+            let written = serde_json::to_value(provider).unwrap();
+            assert_eq!(
+                written,
+                provider.label(),
+                "the label is the file's spelling"
+            );
+        }
+    }
+
+    /// The variable the video slot names for the gateway's key is a secret like
+    /// the others — and Gemini's stays one.
+    #[test]
+    fn the_gateways_video_key_variable_is_named_among_the_secrets() {
+        let mut c = AppConfig::default();
+        c.video.api_key_env = Some("MY_GEMINI_VIDEO".into());
+        c.video.openrouter.api_key_env = Some(" MY_ROUTER_VIDEO ".into());
+        let named = named_key_env_vars(&c);
+        for name in ["MY_GEMINI_VIDEO", "MY_ROUTER_VIDEO"] {
+            assert!(named.contains(&name.to_string()), "{name}: {named:?}");
+        }
+    }
+
+    /// The variable a speech slot names for the gateway's key is a secret like
+    /// the others: removed from what a model-driven child inherits.
+    #[test]
+    fn the_gateways_speech_key_variable_is_named_among_the_secrets() {
+        let mut c = AppConfig::default();
+        c.tts.openrouter.api_key_env = Some(" MY_ROUTER_VOICE ".into());
+        assert!(
+            named_key_env_vars(&c).contains(&"MY_ROUTER_VOICE".to_string()),
+            "{:?}",
+            named_key_env_vars(&c)
+        );
     }
 }

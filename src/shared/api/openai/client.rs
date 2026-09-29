@@ -2,6 +2,9 @@
 //! LM Studio, …), implementing [`EngineBackend`]. Streaming via SSE
 //! (`/v1/chat/completions`), embeddings (`/v1/embeddings`). The protocol is OpenAI
 //! (originally checked against docs/xinfer-contract.md; llama.cpp speaks the same).
+//!
+//! The same client speaks to the **OpenRouter gateway** in that gateway's own
+//! dialect ([`OpenAiClient::for_openrouter`], docs/research/openrouter-mode.md).
 
 use anyhow::{Context, Result, bail};
 use async_stream::stream;
@@ -13,7 +16,7 @@ use super::wire;
 use crate::entities::sampling::ReasoningEffort;
 use crate::shared::api::contract::{
     ChatChunk, ChatRequest, ChatStream, EmbedRole, Embedder, EngineBackend, FinishReason,
-    ModelCapabilities, TokenUsage, ToolCallDelta, VisionSupport,
+    ModelCapabilities, Served, TokenUsage, ToolCallDelta, VisionSupport,
 };
 use crate::shared::api::error::{self, SUBJECT_EMBEDDER, SUBJECT_ENGINE};
 use crate::shared::api::http;
@@ -60,6 +63,54 @@ pub struct OpenAiClient {
     /// background question and the request builder alike
     /// (docs/history/gateway-images-and-continue.md §4, H1.1).
     catalogue: tokio::sync::OnceCell<Option<wire::ModelEntry>>,
+    /// `Some` — the server is the **OpenRouter gateway**, known rather than
+    /// inferred ([`Self::for_openrouter`]).
+    gateway: Option<Gateway>,
+}
+
+/// What a client built for the OpenRouter gateway carries besides the dialect
+/// itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Gateway {
+    /// Send the two attribution headers with every request.
+    attribution: bool,
+}
+
+/// What the gateway's `HTTP-Referer` names: the application's own site. With
+/// [`ATTRIBUTION_TITLE`] it is everything the attribution says — the
+/// application, never the user (PRIVACY.md §3.1).
+pub const ATTRIBUTION_REFERER: &str = "https://mindfork.io";
+/// What the gateway's `X-OpenRouter-Title` names.
+pub const ATTRIBUTION_TITLE: &str = "mindfork";
+
+/// A request with the two headers that name the application to the gateway.
+/// The one place they are written: the engine's requests and the model list's
+/// are made by two clients, and carry the same two lines.
+pub(crate) fn attributed(rb: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+    rb.header("HTTP-Referer", ATTRIBUTION_REFERER)
+        .header("X-OpenRouter-Title", ATTRIBUTION_TITLE)
+}
+
+/// The message of an error envelope (`{"error": {"message": …}}`), when the
+/// body is one and says something.
+fn said_in(body: &str) -> Option<String> {
+    let envelope: serde_json::Value = serde_json::from_str(body).ok()?;
+    let said = envelope.get("error")?.get("message")?.as_str()?.trim();
+    (!said.is_empty()).then(|| said.to_string())
+}
+
+/// What the gateway said about a key ([`OpenAiClient::check_key`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KeyVerdict {
+    /// It is a key of an account.
+    Accepted,
+    /// It is not: `401`/`403`, with the gateway's own words.
+    Refused(String),
+    /// The gateway answered something that is neither — an outage, a rate
+    /// limit. The key was **not judged**, and a request may well work.
+    Unjudged(String),
+    /// No answer at all: DNS, connect, TLS. Nothing was learned.
+    NoAnswer(String),
 }
 
 impl OpenAiClient {
@@ -75,7 +126,29 @@ impl OpenAiClient {
             omit_effort_none: false,
             reasoning_off_refused: std::sync::atomic::AtomicBool::new(false),
             catalogue: tokio::sync::OnceCell::new(),
+            gateway: None,
         }
+    }
+
+    /// The server is the OpenRouter gateway. Builder-style.
+    ///
+    /// What `external` infers from a catalogue that answered, this client is
+    /// told (docs/research/openrouter-mode.md §2.3, §4.1):
+    ///
+    /// - the body is written in the gateway's dialect
+    ///   ([`wire::ChatCompletionRequest::for_gateway`]), and a muted turn on a
+    ///   model that must reason asks for the lowest effort the catalogue lists
+    ///   rather than for `"none"`;
+    /// - a tool's images are re-homed into a user message on **every** request,
+    ///   whether or not the catalogue has answered yet;
+    /// - the model's facts come from `GET /model/{slug}`, which resolves a
+    ///   `:variant` and an alias, and llama.cpp's `/health` and `/props` are never
+    ///   asked — this host answers `404` to both;
+    /// - with `attribution`, every request names the application in
+    ///   `HTTP-Referer` and `X-OpenRouter-Title`.
+    pub fn for_openrouter(mut self, attribution: bool) -> Self {
+        self.gateway = Some(Gateway { attribution });
+        self
     }
 
     /// Sets the API key (Bearer). Builder-style.
@@ -108,11 +181,40 @@ impl OpenAiClient {
         self
     }
 
-    /// Adds a Bearer header if a key is set.
+    /// Adds a Bearer header if a key is set — and, on a gateway that was told
+    /// to, the two headers that name the application.
     fn auth(&self, rb: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        match &self.api_key {
+        let rb = match &self.api_key {
             Some(key) => rb.bearer_auth(key),
             None => rb,
+        };
+        match self.gateway {
+            Some(Gateway { attribution: true }) => attributed(rb),
+            _ => rb,
+        }
+    }
+
+    /// Asks the gateway whether the key is one (`GET /key`) — the one request
+    /// that says so without spending anything
+    /// (docs/research/openrouter-mode.md §3.3, fork F6).
+    pub async fn check_key(&self) -> KeyVerdict {
+        let url = format!("{}/key", self.base_url);
+        let resp = match self.auth(self.http.get(&url)).send().await {
+            Ok(resp) => resp,
+            Err(err) => return KeyVerdict::NoAnswer(error::chain_text(&err)),
+        };
+        let status = resp.status();
+        if status.is_success() {
+            return KeyVerdict::Accepted;
+        }
+        // The sentence the gateway wrote, not the envelope it came in: this is
+        // read in a status line.
+        let body = resp.text().await.unwrap_or_default();
+        let said = said_in(&body).unwrap_or_else(|| status.to_string());
+        if matches!(status.as_u16(), 401 | 403) {
+            KeyVerdict::Refused(said)
+        } else {
+            KeyVerdict::Unjudged(said)
         }
     }
 
@@ -151,6 +253,10 @@ impl OpenAiClient {
     /// a network error, a body that doesn't parse — is `None`, i.e. "cannot say".
     /// Logged at debug, since not answering is normal here.
     async fn props(&self) -> Option<Props> {
+        // A gateway serves none, and asking would be a `404` per question.
+        if self.gateway.is_some() {
+            return None;
+        }
         let url = props_url(&self.base_url);
         let resp = match self.auth(self.http.get(&url)).send().await {
             Ok(r) if r.status().is_success() => r,
@@ -196,6 +302,9 @@ impl OpenAiClient {
         let Some(wanted) = self.model.as_deref() else {
             return Ok(None);
         };
+        if self.gateway.is_some() {
+            return self.fetch_gateway_entry(wanted).await;
+        }
         let url = format!("{}/models", self.base_url);
         let resp = match self.auth(self.http.get(&url)).send().await {
             Ok(r) if r.status().is_success() => r,
@@ -225,6 +334,39 @@ impl OpenAiClient {
         Ok(list.data.into_iter().find(|m| m.id == wanted))
     }
 
+    /// The gateway's entry for one model (`GET /model/{slug}`), under the same
+    /// rule [`Self::fetch_catalogue_entry`] follows for what is remembered and
+    /// what is asked again. A `404` is the gateway's answer — no such model —
+    /// and is kept.
+    async fn fetch_gateway_entry(&self, slug: &str) -> Result<Option<wire::ModelEntry>, ()> {
+        let url = format!("{}/model/{}", self.base_url, slug);
+        let resp = match self.auth(self.http.get(&url)).send().await {
+            Ok(r) if r.status().is_success() => r,
+            Ok(r)
+                if r.status().is_server_error()
+                    || r.status() == reqwest::StatusCode::TOO_MANY_REQUESTS =>
+            {
+                tracing::debug!(%url, status = %r.status(), "the gateway's catalogue is unavailable for now");
+                return Err(());
+            }
+            Ok(r) => {
+                tracing::debug!(%url, status = %r.status(), "the gateway does not know this model");
+                return Ok(None);
+            }
+            Err(err) => {
+                tracing::debug!(%url, error = %err, "no answer from the gateway's catalogue");
+                return Err(());
+            }
+        };
+        match resp.json::<wire::ModelEnvelope>().await {
+            Ok(envelope) => Ok(Some(envelope.data)),
+            Err(err) => {
+                tracing::debug!(%url, error = %err, "the gateway's entry did not parse");
+                Ok(None)
+            }
+        }
+    }
+
     /// The request as this endpoint should receive it. Only a conversation whose
     /// tool results carry images can differ, and only on an endpoint whose
     /// catalogue answered for the model — a gateway, where those images are
@@ -232,7 +374,12 @@ impl OpenAiClient {
     /// docs/history/gateway-images-and-continue.md). Every other request, and every request
     /// to an endpoint that publishes nothing (each llama.cpp), goes out as it came.
     async fn shaped_for_endpoint(&self, req: ChatRequest) -> ChatRequest {
-        if !wire::carries_tool_images(&req.messages) || self.model_capabilities().await.is_none() {
+        if !wire::carries_tool_images(&req.messages) {
+            return req;
+        }
+        // A gateway by name needs no catalogue to be one; everything else is one
+        // only once its catalogue has answered for the model.
+        if self.gateway.is_none() && self.model_capabilities().await.is_none() {
             return req;
         }
         match wire::rehome_tool_images(&req.messages) {
@@ -264,6 +411,11 @@ impl OpenAiClient {
     /// this mode can point at answers it, unlike `/props`, which is llama.cpp's
     /// own. Any failure is `None` ("cannot say"), like [`Self::props`].
     async fn listed_models(&self) -> Option<Vec<String>> {
+        // Asked only to guess a model nobody named, and a gateway's list of
+        // hundreds is never guessed at — so its megabyte is not fetched either.
+        if self.gateway.is_some() {
+            return None;
+        }
         let url = format!("{}/models", self.base_url);
         let resp = match self.auth(self.http.get(&url)).send().await {
             Ok(r) if r.status().is_success() => r,
@@ -299,6 +451,31 @@ impl OpenAiClient {
                 .load(std::sync::atomic::Ordering::Relaxed)
     }
 
+    /// The same question as [`Self::omit_effort_none`] where the catalogue can
+    /// answer it ahead of the refusal: on a gateway, a model whose entry says
+    /// reasoning is mandatory is not asked to stop.
+    async fn omit_effort_none_for(&self, req: &ChatRequest) -> bool {
+        if self.omit_effort_none() {
+            return true;
+        }
+        self.gateway.is_some()
+            && wire::asks_reasoning_off(&req.sampling)
+            && self
+                .catalogue_entry()
+                .await
+                .and_then(|e| e.reasoning_mandatory())
+                == Some(true)
+    }
+
+    /// [`wire::gateway_muted_effort`] for this request, on a gateway.
+    async fn muted_effort(&self, req: &ChatRequest) -> Option<&'static str> {
+        if !wire::asks_reasoning_off(&req.sampling) {
+            return None;
+        }
+        let entry = self.catalogue_entry().await;
+        wire::gateway_muted_effort(&req.sampling, entry.as_ref(), self.omit_effort_none())
+    }
+
     /// One attempt at the chat request. `Ok(None)` — the cancellation token
     /// fired before a response arrived (the caller answers with a cancelled
     /// stream, never an error).
@@ -311,6 +488,15 @@ impl OpenAiClient {
     ) -> Result<Option<reqwest::Response>, error::EngineError> {
         let mut body = wire::build_chat_request(req, true, self.model.as_deref(), omit_effort_none);
         body.reasoning = reasoning;
+        if self.gateway.is_some() {
+            body = body.for_gateway();
+            // A muted turn on a model that must reason: the lowest effort it
+            // lists, in place of a request it would refuse.
+            if let Some(effort) = self.muted_effort(req).await {
+                body.reasoning_effort = Some(effort);
+                body.reasoning = None;
+            }
+        }
         let url = format!("{}/chat/completions", self.base_url);
         // Cancellable: until this moved inside the token's reach, `Esc` could not
         // interrupt a request that had not yet produced a stream.
@@ -373,10 +559,8 @@ impl EngineBackend for OpenAiClient {
     async fn chat_stream(&self, req: ChatRequest, cancel: CancellationToken) -> Result<ChatStream> {
         let req = self.shaped_for_endpoint(req).await;
         let reasoning = self.reasoning_switch(&req).await;
-        let response = match self
-            .send_chat(&req, self.omit_effort_none(), reasoning, &cancel)
-            .await
-        {
+        let omit_none = self.omit_effort_none_for(&req).await;
+        let response = match self.send_chat(&req, omit_none, reasoning, &cancel).await {
             Ok(Some(response)) => response,
             Ok(None) => return Ok(http::cancelled_stream()),
             // The one refusal worth answering rather than reporting: the server
@@ -474,12 +658,20 @@ impl EngineBackend for OpenAiClient {
                                                 tokens: t.prompt_n,
                                                 ms: t.prompt_ms.round().max(0.0) as u32,
                                             });
+                                            // A gateway's own two facts ride the same chunk.
+                                            let served = Served {
+                                                provider: chunk.provider.clone().filter(|p| !p.is_empty()),
+                                                cost_nanos: u.cost_nanos(),
+                                            };
                                             yield ChatChunk::Usage(TokenUsage {
                                                 prompt_tokens: u.prompt_tokens,
                                                 completion_tokens: u.completion_tokens,
                                                 reasoning_tokens: u.completion_tokens_details.reasoning_tokens,
                                                 prefill,
                                             });
+                                            if served != Served::default() {
+                                                yield ChatChunk::Served(served);
+                                            }
                                         }
                                         let Some(choice) = chunk.choices.into_iter().next() else { continue };
                                         let mut delta = choice.delta;
@@ -2516,7 +2708,10 @@ mod ignored_smoke {
             match chunk {
                 ChatChunk::Text(t) => text.push_str(&t),
                 ChatChunk::Thoughts(t) => thoughts.push_str(&t),
-                ChatChunk::ThoughtsSignature(_) | ChatChunk::ToolCall(_) | ChatChunk::Usage(_) => {}
+                ChatChunk::ThoughtsSignature(_)
+                | ChatChunk::ToolCall(_)
+                | ChatChunk::Usage(_)
+                | ChatChunk::Served(_) => {}
                 // Say why: a smoke whose engine failed mid-stream would otherwise
                 // assert on empty text with nothing in the output explaining it.
                 ChatChunk::Error { message, .. } => eprintln!("engine error: {message}"),

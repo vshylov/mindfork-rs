@@ -73,9 +73,7 @@ impl Playback {
                 if bytes.is_empty() {
                     return Ok(());
                 }
-                let decoder = rodio::Decoder::new(Cursor::new(bytes))
-                    .context("failed to decode audio from the TTS server")?;
-                self.player.append(decoder);
+                self.player.append(decoder(bytes)?);
             }
         }
         Ok(())
@@ -113,6 +111,26 @@ impl Playback {
     }
 }
 
+/// The decoder of a container a speech server answered with.
+///
+/// **Not gapless.** Gapless playback trims what the first frame's `Info` tag
+/// says the encoder added, and counts the frames by the same tag — and a speech
+/// server writes that tag before it knows how long the stream will be. Measured
+/// on the MP3 of the OpenRouter gateway's twelve models that answer one
+/// (2026-09-29, docs/research/openrouter-mode.md §13): MiniMax's tag counts no
+/// frames at all, and the demuxer subtracts the encoder's delay from that — an
+/// overflow, which is a panic in a build that checks for one; Kokoro's counts
+/// half of them, and its sentence stopped at 2.35 s of 4.78. Untrimmed, a clip
+/// begins with the encoder's few dozen milliseconds of silence, which a
+/// sentence read aloud does not miss.
+pub(super) fn decoder(bytes: Vec<u8>) -> Result<rodio::Decoder<Cursor<Vec<u8>>>> {
+    rodio::Decoder::builder()
+        .with_data(Cursor::new(bytes))
+        .with_gapless(false)
+        .build()
+        .context("failed to decode audio from the TTS server")
+}
+
 /// Signed 16-bit little-endian PCM → `f32` samples in the range −1.0…1.0
 /// (rodio's internal representation). An odd trailing byte is dropped.
 fn pcm_s16le_to_f32(bytes: &[u8]) -> Vec<f32> {
@@ -134,6 +152,82 @@ mod tests {
         assert_eq!(samples, vec![0.0, -1.0, 0.5]);
         assert!(pcm_s16le_to_f32(&[]).is_empty());
         assert!(pcm_s16le_to_f32(&[0x01]).is_empty());
+    }
+
+    /// Samples in a frame of MPEG-1 Layer III.
+    const PER_FRAME: usize = 1152;
+
+    /// An MP3 of silence the way a streaming encoder writes one: a first frame
+    /// that holds no audio but an `Info` tag — which counts `claimed` frames
+    /// and names the encoder's delay — and `frames` frames after it. Mono,
+    /// 44.1 kHz, 128 kbit/s.
+    fn streamed_mp3(frames: usize, claimed: u32) -> Vec<u8> {
+        const HEADER: [u8; 4] = [0xFF, 0xFB, 0x90, 0xC4];
+        // 144 × 128000 / 44100, no padding.
+        const FRAME: usize = 417;
+        // A mono frame's side information, which the tag stands after.
+        const SIDE_INFO: usize = 17;
+        let mut tag = Vec::new();
+        tag.extend_from_slice(b"Info");
+        // Flags: the frame count follows, and nothing else.
+        tag.extend_from_slice(&1u32.to_be_bytes());
+        tag.extend_from_slice(&claimed.to_be_bytes());
+        tag.extend_from_slice(b"Lavc58.13");
+        // Revision, lowpass, peak, two replay gains, flags, bitrate.
+        tag.extend_from_slice(&[0; 12]);
+        // The encoder's delay, 576 samples, in the upper twelve bits of three
+        // bytes; no padding in the lower twelve.
+        tag.extend_from_slice(&[0x24, 0x00, 0x00]);
+
+        let mut out = Vec::with_capacity(FRAME * (frames + 1));
+        let mut first = vec![0u8; FRAME];
+        first[..4].copy_from_slice(&HEADER);
+        first[4 + SIDE_INFO..4 + SIDE_INFO + tag.len()].copy_from_slice(&tag);
+        out.extend_from_slice(&first);
+        for _ in 0..frames {
+            let mut frame = vec![0u8; FRAME];
+            frame[..4].copy_from_slice(&HEADER);
+            out.extend_from_slice(&frame);
+        }
+        out
+    }
+
+    /// A streamed MP3 is played whole, whatever its first frame says about its
+    /// length: the tag was written before the stream was. Columns: the frames
+    /// there are, the frames the tag counts. None at all is MiniMax's tag, and
+    /// the demuxer's gapless arithmetic overflows on it; half of them is
+    /// Kokoro's, which stopped the sentence half way; the last row is a tag
+    /// that tells the truth.
+    #[test]
+    fn a_streamed_container_is_played_whole_whatever_its_tag_says() {
+        use rodio::Source;
+        for (frames, claimed) in [(8, 0), (8, 4), (8, 8), (40, 1)] {
+            let source = decoder(streamed_mp3(frames, claimed)).expect("an MP3");
+            assert_eq!(
+                (source.sample_rate().get(), source.channels().get()),
+                (44_100, 1),
+                "{frames} frames, {claimed} claimed"
+            );
+            assert_eq!(
+                source.count(),
+                frames * PER_FRAME,
+                "{frames} frames, {claimed} claimed"
+            );
+        }
+    }
+
+    /// What is not audio is an error with a sentence, not a panic and not
+    /// silence — and so is a container cut off inside its first frame.
+    #[test]
+    fn what_cannot_be_decoded_is_an_error() {
+        for bytes in [
+            b"{\"error\":{\"message\":\"no\"}}".to_vec(),
+            vec![0u8; 64],
+            streamed_mp3(4, 4)[..10].to_vec(),
+        ] {
+            let err = decoder(bytes).err().expect("not audio");
+            assert!(err.to_string().contains("failed to decode"), "{err:#}");
+        }
     }
 
     /// A live playback smoke (needs a sound card): synthesize a 440 Hz tone

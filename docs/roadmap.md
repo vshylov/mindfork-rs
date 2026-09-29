@@ -28,9 +28,17 @@ evidence. Adding or closing an item is part of every task's documentation step
 
 ## Most valuable next
 
-No track is open. The ones this section carried before — the first public
-release, images, retry/backoff, the prompt-caching measurement, the attachment
-birth turn, and colour modes with user themes — have all closed
+**No track is open.** The last one — a mode of its own for OpenRouter, in all
+five slots — closed with its fourth stage on 2026-09-29 ([Closed](#closed)); what
+it left on demand is under *Engine and providers* below. **Every stage ships in
+one release, 0.13.0** (the user's decision), and with that release, in a pull
+request of their own, go the site's home page and articles and the one-sentence
+description of the application — merged earlier, they would describe a mode the
+published version does not have.
+
+The tracks this section carried before — the first public release, images,
+retry/backoff, the prompt-caching measurement, the attachment birth turn,
+colour modes with user themes, and the OpenRouter mode — have all closed
 ([Closed](#closed)); the lists below are an idea bank of equal weight.
 
 ## Open
@@ -44,14 +52,24 @@ birth turn, and colour modes with user themes — have all closed
   the OpenRouter review is closed. Left:
   - **on demand** — a **managed custom command**: the supervisor launching an
     arbitrary sidecar proxy ([plugin-system.md §6](research/plugin-system.md)).
-  - **deferred** — **embeddings through a gateway**: the `Embedder` half sends
-    `model`, so the "Embeddings" tab can point at one, but no run has
-    ([openrouter-external.md §4.1](research/openrouter-external.md)).
+  - **on demand** — **`input_type` on the gateway's embeddings**: a field for
+    query-versus-document that two of eight measured models honour; the
+    prefixes the app has cover the rest
+    ([openrouter-mode.md §4.3](research/openrouter-mode.md), F8). The rest of
+    "embeddings through a gateway" is closed by the mode's second stage.
+  - **on demand** — **a part of a video through the gateway.** It carries no
+    segment bounds — four spellings tried — so the whole video is read and
+    charged and the part is named in words; Google's own API cuts the part and
+    charges for it. To be looked at again when the gateway carries them
+    ([openrouter-mode.md §4.5, §14](research/openrouter-mode.md)).
   - **on demand** — **OpenRouter's own request knobs** (`provider` routing, the
     `models` fallback, `transforms`, attribution headers, `usage.cost`) —
-    deliberately not exposed (§6 there). `provider` routing is the one with a
-    measured use: a routed provider that misses its model's tool template, whose
-    special tokens then end the turn as reply text (§8.1 there).
+    deliberately not exposed
+    ([openrouter-external.md §6](research/openrouter-external.md)). `provider`
+    routing is the one with a measured use: a routed provider that misses its
+    model's tool template, whose special tokens then end the turn as reply text
+    (§8.1 there). Where each would go in a mode of its own:
+    [openrouter-mode.md](research/openrouter-mode.md), F5 and F11.
   - **deferred** — **xAI's server-side Live Search / X Search**, and the
     Responses route as the cheap way to xAI-only features
     ([grok-xai-provider.md §5](research/grok-xai-provider.md), F1 and F6).
@@ -217,7 +235,12 @@ birth turn, and colour modes with user themes — have all closed
   vendor or a `yt-dlp` sidecar; **default-model rot** — the default moved from
   `gemini-2.5-flash-lite` (a 404 for new users) to `gemini-3.5-flash`, and
   whatever ships as the default eventually stops existing; the settings picker
-  does not cover the Video row yet.
+  does not cover the Video row yet; **a frame rate** — *Input resolution* is read
+  by the 2.5 generation alone, in every spelling (measured 2026-09-30), and what
+  the default model does read is `video_metadata.fps`: 66 tokens a frame and 25
+  a second for the sound, so half the frames is a third less of a long video.
+  Google's own API only — the gateway carries none
+  ([openrouter-mode.md §15](research/openrouter-mode.md)).
 
 ### Memory, notes and RAG
 
@@ -575,6 +598,14 @@ An index, newest first — one line per track, with the release that shipped it
 and where its story is told. What a track left open is a bullet above, under
 its area.
 
+- **OpenRouter as a provider of its own** — 0.13.0, four stages: `openrouter`
+  is a mode beside `external` in chat and impersonation — one key, the
+  gateway's dialect, the key checked before the first message, a model list
+  with the window and the price; embeddings, whose batch cap and retry became
+  every embedder's; speech, with the audio format settled per model, and a
+  player that no longer trusts a streamed clip's first frame; and a YouTube
+  video, where an answer that counted no video tokens is an error.
+  [openrouter-mode.md](research/openrouter-mode.md), spec §3.4, §9.9, §11.6, §11.9.
 - **Colour modes and user themes** — 0.12.0 (2026-09-28), three stages:
   the *full* mode, where the app paints its own canvas and the built-in `dark`
   and `light` are held to contrast floors; the *monochrome* mode, with

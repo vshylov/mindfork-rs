@@ -52,6 +52,21 @@ Scenarios (`--scenario`):
 * `no-color` — `mindfork demo` three times: with `NO_COLOR=1`, where the very
   first frame must already be bare; with `NO_COLOR=` (empty), which is an
   unset one; and without it.
+* `gateway` — a copy of the binary in a scratch directory whose settings name
+  the `openrouter` mode, against the **real gateway** (it needs
+  `OPENROUTER_API_KEY`, which the settings read by name, and spends a fraction
+  of a cent): a question typed into the chat is answered, both of the mode's
+  slots are ready in the status line, a file is indexed through the gateway's
+  embedder, the settings show the provider's rows with the attribution switch,
+  and `Enter` on the model row lists the gateway's catalogue with the window
+  and the price. Speech goes the same way: `/tts` reads the reply aloud
+  through the gateway — **audibly**, it needs a sound card — the Speech tab
+  shows the provider's rows and none for instructions, its model row lists the
+  gateway's speech models with their voices counted and no price, and its
+  voice row lists the voices of the model named. And video: the settings'
+  search finds the video group, which names its provider and has no row for
+  the resolution, and its model row lists the models that take video, the
+  Gemini family first. Takes the single-instance lock, like `first-frame`.
 * `user-theme` — a copy of the binary in a scratch directory whose
   `data/themes/` holds a theme of one colour (a light canvas) next to a file
   that is not a theme, with the settings naming that theme. The first frame
@@ -70,6 +85,7 @@ Usage:
     python tools/console_probe.py --scenario mono
     python tools/console_probe.py --scenario no-color
     python tools/console_probe.py --scenario user-theme
+    python tools/console_probe.py --scenario gateway
     python tools/console_probe.py --exe target/release/mindfork.exe
 
 Exit code: 0 — every check passed, 1 — a check failed, 2 — cannot run here.
@@ -119,6 +135,11 @@ NOT_STYLING = LEADING_CELL | TRAILING_CELL
 # Legacy colour indexes, as `ReadConsoleOutputW` reports a background.
 BLACK = 0
 BRIGHT_WHITE = 15
+
+# What opens the settings screen, and the file the settings are kept in — each
+# said once, for the scenarios that press the one and write the other.
+SETTINGS_KEY = "ctrl+p"
+SETTINGS_FILE = "settings.json"
 
 # How long the app gets to draw after a key (the loop ticks every 50 ms; a
 # screen switch or a mode change repaints everything).
@@ -207,12 +228,13 @@ KEYS = {
     "enter": (0x0D, "\r", 0),
     "esc": (0x1B, "\x1b", 0),
     "left": (0x25, "\0", ENHANCED_KEY),
+    "up": (0x26, "\0", ENHANCED_KEY),
     "right": (0x27, "\0", ENHANCED_KEY),
     "down": (0x28, "\0", ENHANCED_KEY),
     "f1": (0x70, "\0", 0),
     "shift+left": (0x25, "\0", ENHANCED_KEY | SHIFT_PRESSED),
     "ctrl+b": (0x42, "\x02", LEFT_CTRL_PRESSED),
-    "ctrl+p": (0x50, "\x10", LEFT_CTRL_PRESSED),
+    SETTINGS_KEY: (0x50, "\x10", LEFT_CTRL_PRESSED),
     "ctrl+q": (0x51, "\x11", LEFT_CTRL_PRESSED),
 }
 
@@ -460,7 +482,7 @@ class Report:
 
 
 def to_interface_fields() -> None:
-    press("ctrl+p", SETTLE_REPAINT)
+    press(SETTINGS_KEY, SETTLE_REPAINT)
     for _ in range(TABS_TO_INTERFACE):
         press("tab")
     press("enter")
@@ -528,10 +550,10 @@ def scenario_first_frame(exe: Path, report: Report) -> None:
         shutil.copy(exe, copy)
         (root / "data").mkdir()
         settings = {
-            "schema_version": 3,
+            "schema_version": 4,
             "interface": {"language": "en", "theme_mode": "full", "full_theme": "light"},
         }
-        (root / "data" / "settings.json").write_text(json.dumps(settings), encoding="utf-8")
+        (root / "data" / SETTINGS_FILE).write_text(json.dumps(settings), encoding="utf-8")
 
         print("first run: type the draft")
         session = Session(copy, [], cwd=root)
@@ -639,10 +661,10 @@ def scenario_user_theme(exe: Path, report: Report) -> None:
         theme_file.write_text(json.dumps({"canvas": "#f4ecd8"}), encoding="utf-8")
         (themes / "broken.json").write_text("{", encoding="utf-8")
         settings = {
-            "schema_version": 3,
+            "schema_version": 4,
             "interface": {"language": "en", "theme_mode": "full", "full_theme": theme},
         }
-        (root / "data" / "settings.json").write_text(json.dumps(settings), encoding="utf-8")
+        (root / "data" / SETTINGS_FILE).write_text(json.dumps(settings), encoding="utf-8")
 
         print("first run: the theme is in data/themes")
         session = Session(copy, [], cwd=root)
@@ -684,8 +706,216 @@ def scenario_user_theme(exe: Path, report: Report) -> None:
         report.check(code == 0, f"the app exited with code {code} the second time")
 
 
+# What the status line says while a message is read aloud, the picker's first
+# row, the row of the gateway's key and the unit a listed price is in — each
+# read off the screen more than once.
+SPEAKING = "speaking"
+BY_HAND = "Type a name by hand"
+KEY_ROW = "OpenRouter API key"
+PRICED = "per 1M tokens"
+
+
+def text_of(rows: list[list[tuple[str, int]]]) -> str:
+    return "\n".join("".join(char for char, _ in row).rstrip() for row in rows)
+
+
+def wait_for_text(text: str, seconds: float) -> list[list[tuple[str, int]]]:
+    """The screen once `text` is on it, or as it is when the time is up — the
+    caller's check then says what was there instead."""
+    deadline = time.monotonic() + seconds
+    rows = read_screen()
+    while text not in text_of(rows) and time.monotonic() < deadline:
+        time.sleep(0.5)
+        rows = read_screen()
+    return rows
+
+
+def wait_until_gone(text: str, seconds: float) -> list[list[tuple[str, int]]]:
+    """Reads the screen until `text` has left it, or the time is up."""
+    deadline = time.monotonic() + seconds
+    rows = read_screen()
+    while text in text_of(rows) and time.monotonic() < deadline:
+        time.sleep(0.5)
+        rows = read_screen()
+    return rows
+
+
+def scenario_gateway(exe: Path, report: Report) -> None:
+    if not os.environ.get("OPENROUTER_API_KEY", "").strip():
+        raise RuntimeError("OPENROUTER_API_KEY is not set, and this scenario is the real gateway")
+    model = os.environ.get("MINDFORK_OPENROUTER_MODEL", "anthropic/claude-haiku-4.5")
+    embedder = os.environ.get("MINDFORK_OPENROUTER_EMBED_MODEL", "baai/bge-m3")
+    speaker = os.environ.get("MINDFORK_OPENROUTER_TTS_MODEL", "x-ai/grok-voice-tts-1.0")
+    voice = os.environ.get("MINDFORK_OPENROUTER_TTS_VOICE", "eve")
+    watcher = os.environ.get("MINDFORK_OPENROUTER_VIDEO_MODEL", "google/gemini-3.5-flash-lite")
+    with tempfile.TemporaryDirectory(prefix="mindfork-probe-") as scratch:
+        root = Path(scratch)
+        copy = root / exe.name
+        shutil.copy(exe, copy)
+        (root / "data").mkdir()
+        settings = {
+            "schema_version": 4,
+            "interface": {"language": "en"},
+            "engine": {
+                "mode": "openrouter",
+                # The key is named, not written: the settings hold no secret.
+                "openrouter": {"model_name": model, "api_key_env": "OPENROUTER_API_KEY"},
+            },
+            "embed": {
+                "mode": "openrouter",
+                "openrouter": {"model_name": embedder, "api_key_env": "OPENROUTER_API_KEY"},
+            },
+            "tts": {
+                "mode": "openrouter",
+                "openrouter": {
+                    "model_name": speaker,
+                    "voice": voice,
+                    "api_key_env": "OPENROUTER_API_KEY",
+                },
+            },
+            "video": {
+                "provider": "openrouter",
+                "openrouter": {"model_name": watcher, "api_key_env": "OPENROUTER_API_KEY"},
+            },
+        }
+        (root / "data" / SETTINGS_FILE).write_text(json.dumps(settings), encoding="utf-8")
+        (root / "notes.txt").write_text(
+            "The capital of France is Paris.\n\nThe moon's gravity is a sixth of the earth's.\n",
+            encoding="utf-8",
+        )
+
+        session = Session(copy, [], cwd=root)
+        try:
+            print("the chat: a question through the gateway")
+            type_text("Answer with one word: what is the capital of France?")
+            press("enter", SETTLE_REPAINT)
+            rows = wait_for_text("Paris", 60)
+            print(text_of(rows))
+            report.says("the reply", rows, ("Paris",))
+            # Both keys were judged by now: the chips are the ready ones.
+            report.says("the status line", rows, ("● chat", "● emb"))
+
+            print("the embedder: a file indexed through the gateway")
+            type_text("/rag add notes.txt")
+            press("enter", SETTLE_REPAINT)
+            rows = wait_for_text("indexing finished", 60)
+            print(text_of(rows))
+            report.says("the knowledge base", rows, ("indexing finished", "files: 1"))
+
+            print("speech: the reply read aloud through the gateway (audible)")
+            type_text("/tts")
+            press("enter", SETTLE_REPAINT)
+            rows = wait_for_text(SPEAKING, 30)
+            report.says("the status line while it speaks", rows, (SPEAKING,))
+            rows = wait_until_gone(SPEAKING, 60)
+            print(text_of(rows))
+            said = text_of(rows)
+            report.check(SPEAKING not in said, "the speech ended")
+            report.check(
+                "speech synthesis failed" not in said and "audio is unavailable" not in said,
+                "and nothing failed on the way",
+            )
+
+            print("the settings: the provider's rows")
+            press(SETTINGS_KEY, SETTLE_REPAINT)  # opens on "Model/server"
+            press("enter", SETTLE_REPAINT)  # into its fields: the row of tabs
+            rows = read_screen()
+            print(text_of(rows))
+            report.says(
+                "Model/server",
+                rows,
+                ("openrouter", model, KEY_ROW, "Name the app to OpenRouter"),
+            )
+
+            print("the picker: the gateway's catalogue behind the model row")
+            press("down")  # the tabs -> "Mode"
+            press("down")  # -> "Model"
+            press("enter", SETTLE_REPAINT)
+            rows = wait_for_text(PRICED, 30)
+            print(text_of(rows))
+            report.says("the catalogue", rows, ("context", PRICED, BY_HAND))
+            press("esc")
+
+            print("the settings: the speech slot's rows")
+            press("up")  # "Model" -> "Mode"
+            press("up")  # -> the tabs
+            press("left", SETTLE_REPAINT)  # the first tab wraps onto the last: "Speech"
+            rows = read_screen()
+            print(text_of(rows))
+            report.says(
+                "Speech",
+                rows,
+                ("openrouter", speaker, voice, KEY_ROW, "Name the app to OpenRouter"),
+            )
+            report.check("Instructions" not in text_of(rows), "no row for instructions")
+
+            print("the picker: the gateway's speech models behind the model row")
+            press("down")  # the tabs -> "Mode"
+            press("down")  # -> "Model"
+            press("enter", SETTLE_REPAINT)
+            rows = wait_for_text("voices:", 30)
+            print(text_of(rows))
+            report.says("the speech models", rows, ("voices:", BY_HAND))
+            report.check("per 1M" not in text_of(rows), "a speech model's row names no price")
+            press("esc")
+
+            print("the picker: the model's voices behind the voice row")
+            press("down")  # "Model" -> "Voice"
+            press("enter", SETTLE_REPAINT)
+            rows = wait_for_text("the model's voices", 30)
+            print(text_of(rows))
+            report.says("the voices", rows, (voice, "the model's voices", BY_HAND))
+            press("esc")
+
+            print("the settings: the video group, found by the search")
+            type_text("/")
+            type_text("Max video length")
+            press("enter", SETTLE_REPAINT)  # lands on the row, in "Tools"
+            rows = read_screen()
+            print(text_of(rows))
+            report.says(
+                "Video (YouTube)",
+                rows,
+                ("Provider", "openrouter", watcher, KEY_ROW, "Max video length"),
+            )
+            report.check(
+                "Input resolution" not in text_of(rows),
+                "no row for the resolution: the gateway carries none",
+            )
+
+            print("the picker: the models that take video behind the model row")
+            press("up")  # "Max video length" -> "Model"
+            press("enter", SETTLE_REPAINT)
+            rows = wait_for_text(PRICED, 30)
+            print(text_of(rows))
+            report.says("the video models", rows, ("google/gemini", "context", BY_HAND))
+            listed = [line for line in text_of(rows).splitlines() if " context " in line]
+            report.check(
+                bool(listed) and all("google/gemini" in line for line in listed[:5]),
+                "the Gemini family opens the list",
+            )
+            report.check(
+                "no tools" not in text_of(rows), "a model that watches is not marked for tools"
+            )
+            press("esc")
+            press("esc")
+        finally:
+            code = session.close()
+        report.check(code == 0, f"the app exited with code {code}")
+        log = "\n".join(
+            path.read_text(encoding="utf-8", errors="replace")
+            for path in (root / "data" / "logs").glob("*")
+            if path.is_file()
+        )
+        key = os.environ["OPENROUTER_API_KEY"].strip()
+        report.check(key not in log, "the key is not in the log")
+        saved = (root / "data" / SETTINGS_FILE).read_text(encoding="utf-8")
+        report.check(key not in saved, "nor in the settings")
+
+
 SCENARIOS = {
     "full-mode": scenario_full_mode,
+    "gateway": scenario_gateway,
     "first-frame": scenario_first_frame,
     "mono": scenario_mono,
     "no-color": scenario_no_color,
