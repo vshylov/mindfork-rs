@@ -1020,13 +1020,11 @@ pub fn standard_registry(cfg: &ToolConfig) -> ToolRegistry {
     )));
     reg.register(Arc::new(fetch::FetchUrl::new(policy)));
     // Video understanding is a slot of its own (only Gemini takes video at all),
-    // so the tool gets a client built from `cfg.video` rather than `ctx.engine`.
-    // Unconfigured → registered anyway, degrading to metadata (fork R5a).
+    // so the tool gets a client built from `cfg.video` rather than `ctx.engine`:
+    // Google's own, or the gateway's, as the settings name. Unconfigured →
+    // registered anyway, degrading to metadata (fork R5a).
     reg.register(Arc::new(youtube::YoutubeWatch::new(
-        cfg.video.clone().map(|c| {
-            Arc::new(crate::shared::video::gemini::GeminiVideo::new(c))
-                as Arc<dyn crate::shared::video::VideoUnderstanding>
-        }),
+        cfg.video.clone().map(crate::shared::video::client),
         cfg.video
             .as_ref()
             .map_or(crate::shared::config::DEFAULT_VIDEO_MAX_MINUTES, |c| {

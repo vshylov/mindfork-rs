@@ -1189,3 +1189,124 @@ async fn the_gateways_own_switch_restarts_only_the_slots_that_speak_to_it() {
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
 }
+
+// ---------- video through the gateway (docs/research/openrouter-mode.md, fork F10) ----------
+
+/// The video client is built from what the settings name: the provider, its
+/// own model, the key stored for **that** provider — Gemini's key is not the
+/// gateway's, nor the other way — and the gateway's switch.
+#[test]
+fn the_video_client_is_built_on_the_key_of_the_provider_it_names() {
+    use crate::app::orchestrator::video_config;
+    use crate::shared::config::{CloudProvider, VideoProvider};
+    use crate::shared::secrets::SecretKey;
+
+    let (_d, mut orch) = bare_orch();
+    assert!(video_config(&orch.config).is_none(), "no key anywhere");
+    orch.handle_set_secret(
+        SecretKey::Provider(CloudProvider::OpenRouter),
+        "sk-or-v1-stored".into(),
+    );
+    assert!(
+        video_config(&orch.config).is_none(),
+        "the gateway's key is not Gemini's"
+    );
+
+    let mut config = orch.config.clone();
+    config.video.provider = VideoProvider::OpenRouter;
+    assert!(
+        video_config(&config).is_none(),
+        "a key, and no model: the gateway has no default"
+    );
+    config.video.openrouter.model_name = Some("google/gemini-3.5-flash".into());
+    let built = video_config(&config).expect("a model and the provider's key");
+    assert_eq!(built.provider, VideoProvider::OpenRouter);
+    assert_eq!(built.model, "google/gemini-3.5-flash");
+    assert_eq!(built.api_key, "sk-or-v1-stored");
+    assert_eq!(built.base_url, "https://openrouter.ai/api/v1");
+    assert!(built.attribution, "on until somebody turns it off");
+    config.openrouter.attribution = false;
+    assert!(!video_config(&config).expect("built").attribution);
+
+    config.video.provider = VideoProvider::Gemini;
+    assert!(video_config(&config).is_none(), "Gemini has no key stored");
+}
+
+/// The video client lives in the tool registry, so what it was built from
+/// has to rebuild the registry: the gateway's switch and the gateway's key
+/// while the slot speaks to the gateway — and neither of them while it does
+/// not. Gemini's key goes on rebuilding it for Gemini.
+#[test]
+fn what_the_video_client_is_built_from_rebuilds_it() {
+    use crate::shared::config::{CloudProvider, VideoProvider};
+    use crate::shared::secrets::SecretKey;
+
+    let rebuilt = |orch: &mut Orchestrator, change: &dyn Fn(&mut Orchestrator)| {
+        let before = orch.registry.clone();
+        change(orch);
+        !Arc::ptr_eq(&before, &orch.registry)
+    };
+    let switch = |orch: &mut Orchestrator| {
+        let mut edited = orch.config.clone();
+        edited.openrouter.attribution = !edited.openrouter.attribution;
+        orch.handle_update_config(edited);
+    };
+    let key_of = |provider: CloudProvider| {
+        move |orch: &mut Orchestrator| {
+            orch.handle_set_secret(SecretKey::Provider(provider), "a-key".into())
+        }
+    };
+
+    let (_d, mut orch) = bare_orch();
+    // The chat engine is a local one throughout: the slot is its own.
+    assert_eq!(orch.config.video.provider, VideoProvider::Gemini);
+    assert!(!rebuilt(&mut orch, &switch), "Gemini's client names nobody");
+    assert!(!rebuilt(&mut orch, &key_of(CloudProvider::OpenRouter)));
+    assert!(rebuilt(&mut orch, &key_of(CloudProvider::Gemini)));
+
+    let mut edited = orch.config.clone();
+    edited.video.provider = VideoProvider::OpenRouter;
+    let to_the_gateway = |orch: &mut Orchestrator| orch.handle_update_config(edited.clone());
+    assert!(rebuilt(&mut orch, &to_the_gateway), "the provider changed");
+    assert!(rebuilt(&mut orch, &switch), "the gateway's client is named");
+    assert!(rebuilt(&mut orch, &key_of(CloudProvider::OpenRouter)));
+    assert!(
+        !rebuilt(&mut orch, &key_of(CloudProvider::Gemini)),
+        "Gemini's key is not what the gateway's client was built on"
+    );
+}
+
+/// The video row's list is asked of the gateway through the gateway — at the
+/// address and with the variable of the slot's own section, named or not as
+/// the provider's switch says — and of nobody through Gemini's own API.
+#[test]
+fn the_video_slots_list_is_the_gateways_and_follows_the_slots_own_section() {
+    use crate::shared::api::catalogue::{CatalogueError, CatalogueShape, ModelSlot};
+    use crate::shared::config::VideoProvider;
+
+    let (_d, mut orch) = bare_orch();
+    assert_eq!(
+        orch.catalogue_request(ModelSlot::Video),
+        Err(CatalogueError::NotConfigured),
+        "Gemini's own list says nothing of video"
+    );
+    orch.config.video.provider = VideoProvider::OpenRouter;
+    let asked = orch.catalogue_request(ModelSlot::Video).expect("a request");
+    assert_eq!(asked.shape, CatalogueShape::OpenRouterVideo);
+    assert_eq!(asked.base, "https://openrouter.ai/api/v1");
+    assert_eq!(asked.key, None, "the list is public: asked without a key");
+    assert!(asked.attribution);
+
+    orch.config.openrouter.attribution = false;
+    orch.config.video.openrouter.url = Some(" https://eu.openrouter.ai/api/v1 ".into());
+    // A variable that is certainly set, read and never sent: nothing is asked
+    // here, the request is only built.
+    orch.config.video.openrouter.api_key_env = Some("PATH".into());
+    // Gemini's fields, and the speech slot's section, are somebody else's.
+    orch.config.video.url = Some("https://gemini.example/v1beta".into());
+    orch.config.tts.openrouter.url = Some("https://speech.example/v1".into());
+    let asked = orch.catalogue_request(ModelSlot::Video).expect("a request");
+    assert_eq!(asked.base, "https://eu.openrouter.ai/api/v1");
+    assert!(asked.key.is_some(), "the variable the video section names");
+    assert!(!asked.attribution);
+}

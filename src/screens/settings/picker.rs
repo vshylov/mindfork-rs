@@ -83,6 +83,11 @@ pub(super) fn model_slot(config: &AppConfig, id: FieldId) -> Option<ModelSlot> {
         {
             Some(ModelSlot::Speech)
         }
+        // The video row, likewise: the gateway lists the models that take
+        // video, and Gemini's own catalogue says nothing of it.
+        FieldId::VideoModel if config.video.provider == VideoProvider::OpenRouter => {
+            Some(ModelSlot::Video)
+        }
         _ => None,
     }
 }
@@ -182,6 +187,14 @@ impl SettingsScreen {
                 of(cfg.embed.cloud(), &cfg.embed.external),
                 cfg.embed.secret_key(),
             ),
+            ModelSlot::Video => {
+                let section = &cfg.video.openrouter;
+                (
+                    format!("{:?}", cfg.video.provider),
+                    (section.url.as_deref(), section.api_key_env.as_deref()),
+                    Some(cfg.video.secret_key()),
+                )
+            }
             // The model is not part of it: the voices are read out of the one
             // answer for whichever model the row names when the picker opens.
             ModelSlot::Speech => {
@@ -487,7 +500,13 @@ impl SettingsScreen {
             )),
             _ => {}
         }
-        if m.facts.tools == Some(false) {
+        // A model that watches a video is asked to describe it, not to act:
+        // whether it takes tools says nothing about the row being filled.
+        let watches = self
+            .picker
+            .as_ref()
+            .is_some_and(|st| st.slot == ModelSlot::Video);
+        if m.facts.tools == Some(false) && !watches {
             facts.push(loc.t("ui.settings.models.no_tools").to_string());
         }
         facts
@@ -644,6 +663,7 @@ mod tests {
             prompt_price: price.map(|p| p.0),
             completion_price: price.map(|p| p.1),
             tools,
+            video: None,
         }
     }
 

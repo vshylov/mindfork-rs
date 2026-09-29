@@ -200,6 +200,8 @@ mod tests {
 
     fn client(model: &str) -> GeminiVideo {
         GeminiVideo::new(VideoConfig {
+            provider: crate::shared::config::VideoProvider::Gemini,
+            attribution: false,
             model: model.into(),
             base_url: "https://generativelanguage.googleapis.com/v1beta/".into(),
             api_key: "k".into(),

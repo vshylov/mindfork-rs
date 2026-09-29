@@ -15,7 +15,7 @@
 //! | Gemini | `GET {base}/models` (native) | `supportedGenerationMethods` |
 //! | Anthropic | `GET {base}/v1/models` | the route itself: the Messages API has only chat models |
 //! | xAI | `GET {base}/language-models` | the route itself: the language half of a catalogue that also holds image and video models |
-//! | OpenRouter | `GET {base}/models/user`, `/models`, `/embeddings/models`, `…?output_modalities=speech` | `architecture.output_modalities` — and the window, the price, the parameters and the voices besides |
+//! | OpenRouter | `GET {base}/models/user`, `/models`, `/embeddings/models`, `…?output_modalities=speech`, `…?input_modalities=video` | `architecture.output_modalities` and `input_modalities` — and the window, the price, the parameters and the voices besides |
 //!
 //! Hence [`ModelRole::Unstated`], which is **not** "it does nothing": where the
 //! endpoint publishes no claim, none is invented, and every model it lists is
@@ -70,6 +70,13 @@ pub enum CatalogueShape {
     /// public one does (measured: 21 entries either way,
     /// docs/research/openrouter-mode.md §13).
     OpenRouterSpeech,
+    /// The same gateway's models that **take video**. Without a key it is the
+    /// public list under the gateway's own filter, `?input_modalities=video` —
+    /// 85 entries. With one it is the account's whole list: measured, that list
+    /// does **not** take this filter — 461 entries came back, not 85 — so the
+    /// entries are narrowed here, by the `input_modalities` each of them
+    /// publishes ([`ModelFacts::video`], docs/research/openrouter-mode.md §14).
+    OpenRouterVideo,
 }
 
 /// What the endpoint said a model is for.
@@ -110,6 +117,9 @@ pub enum ModelSlot {
     /// behind it — the gateway's — and its voice rows are filled from the same
     /// answer: a voice belongs to a model ([`CatalogModel::voices`]).
     Speech,
+    /// The model that watches a video for `youtube_watch`. One provider of that
+    /// slot has a catalogue — the gateway.
+    Video,
 }
 
 /// One entry of a provider's catalogue, reduced to what a picker needs.
@@ -171,12 +181,21 @@ pub struct ModelFacts {
     /// its parameters and `tools` is not among them. This application is driven
     /// by tools, so a model without them chats and does nothing else.
     pub tools: Option<bool>,
+    /// Whether the model takes video, from the inputs the entry lists:
+    /// `Some(false)` — it lists its inputs and video is not among them; `None` —
+    /// it lists none. What a row is narrowed by, not what a row shows.
+    pub video: Option<bool>,
 }
 
 impl ModelFacts {
-    /// Whether the endpoint said anything at all.
+    /// Whether the endpoint said anything a row has to show. What an entry
+    /// takes as input is not shown — it is what the list was narrowed by.
     pub fn is_empty(&self) -> bool {
-        *self == ModelFacts::default()
+        let shown = ModelFacts {
+            video: None,
+            ..*self
+        };
+        shown == ModelFacts::default()
     }
 }
 
@@ -259,6 +278,8 @@ impl CatalogueRequest {
                 format!("{base}/models/user?output_modalities=speech")
             }
             CatalogueShape::OpenRouterSpeech => format!("{base}/models?output_modalities=speech"),
+            CatalogueShape::OpenRouterVideo if self.key.is_some() => format!("{base}/models/user"),
+            CatalogueShape::OpenRouterVideo => format!("{base}/models?input_modalities=video"),
         }
     }
 }
@@ -431,7 +452,8 @@ pub fn parse(shape: CatalogueShape, body: &str) -> Result<Vec<CatalogModel>, Cat
         }
         CatalogueShape::OpenRouter
         | CatalogueShape::OpenRouterEmbeddings
-        | CatalogueShape::OpenRouterSpeech => {
+        | CatalogueShape::OpenRouterSpeech
+        | CatalogueShape::OpenRouterVideo => {
             let list: GatewayList = serde_json::from_str(body).map_err(unreadable)?;
             let mut v: Vec<_> = list
                 .data
@@ -500,6 +522,11 @@ const ANOTHER_JOB_IN_A_NAME: [&str; 17] = [
     "music",
 ];
 
+/// The family measured to take a YouTube link as a video — what the video
+/// row's list opens with. An alias (`~google/gemini-flash-latest`) is of the
+/// family too.
+const VIDEO_LINK_IN_A_NAME: [&str; 1] = ["google/gemini"];
+
 /// The mirror of [`ANOTHER_JOB_IN_A_NAME`] for the embedder's row.
 const EMBEDDING_IN_A_NAME: [&str; 1] = ["embed"];
 
@@ -526,6 +553,12 @@ fn rank(m: &CatalogModel, slot: ModelSlot) -> u8 {
         // The one catalogue this slot reads says what every entry is for, so
         // there is no name to guess from: the endpoint's order stands.
         ModelSlot::Speech => 0,
+        // Gemini first. Every entry listed claims video, and the list is
+        // narrowed by that claim alone; that the Gemini family is the one that
+        // takes a YouTube **link** — the others go to download it, and refuse —
+        // is this project's measurement, which may order a list and never
+        // narrow it (docs/research/openrouter-mode.md §4.5, fork F7).
+        ModelSlot::Video => u8::from(!name_hints(&m.id, &VIDEO_LINK_IN_A_NAME)),
     }
 }
 
@@ -546,6 +579,9 @@ pub fn for_slot(models: Vec<CatalogModel>, slot: ModelSlot) -> Vec<CatalogModel>
             (ModelSlot::Assistant | ModelSlot::Impersonation, role) => role == ModelRole::Chat,
             (ModelSlot::Embedder, role) => role == ModelRole::Embedding,
             (ModelSlot::Speech, role) => role == ModelRole::Speech,
+            // What answers with text and takes video — or has not said what it
+            // takes, which is silence.
+            (ModelSlot::Video, role) => role == ModelRole::Chat && m.facts.video != Some(false),
         })
         .collect();
     kept.sort_by_key(|m| rank(m, slot));
@@ -694,6 +730,13 @@ impl GatewayEntry {
                 .as_ref()
                 .filter(|p| !p.is_empty())
                 .map(|p| p.iter().any(|x| x == "tools")),
+            video: self
+                .architecture
+                .as_ref()
+                .and_then(|a| a.get("input_modalities"))
+                .and_then(|i| i.as_array())
+                .filter(|list| !list.is_empty())
+                .map(|list| list.iter().any(|m| m.as_str() == Some("video"))),
         };
         CatalogModel {
             id: self.id,
@@ -1086,6 +1129,70 @@ mod tests {
         assert!(gateway().iter().all(|m| m.voices.is_empty()));
     }
 
+    /// The video row's list: what answers with text and takes video, by the
+    /// inputs each entry publishes — so the account's list, which the gateway
+    /// does not narrow, is narrowed here, to what the public one is narrowed to
+    /// by the gateway. An entry that lists no inputs is silence, and stays.
+    /// Gemini opens the list, in the gateway's order; the rest follow in it.
+    #[test]
+    fn the_video_list_is_what_claims_video_with_gemini_first() {
+        let takes = |id: &str| named(&gateway(), id).facts.video;
+        assert_eq!(takes("google/gemini-3.5-flash"), Some(true));
+        assert_eq!(takes("anthropic/claude-haiku-4.5"), Some(false));
+        assert_eq!(takes("qwen/qwen3.6-27b"), None, "it lists no inputs");
+        assert_eq!(takes("odd/shapes"), None, "not a list of inputs");
+
+        let listed = parse(
+            CatalogueShape::OpenRouterVideo,
+            r#"{"data":[
+            {"id":"qwen/qwen3.6-flash","created":5,"architecture":
+                {"input_modalities":["text","image","video"],"output_modalities":["text"]}},
+            {"id":"google/gemini-3.5-flash","created":4,"architecture":
+                {"input_modalities":["text","video"],"output_modalities":["text"]}},
+            {"id":"anthropic/claude-haiku-4.5","created":3,"architecture":
+                {"input_modalities":["text","image"],"output_modalities":["text"]}},
+            {"id":"~google/gemini-flash-latest","created":2,"architecture":
+                {"input_modalities":["video","text"],"output_modalities":["text"]}},
+            {"id":"vendor/says-nothing-of-inputs","created":1,"architecture":
+                {"input_modalities":[],"output_modalities":["text"]}},
+            {"id":"vendor/films","created":6,"architecture":
+                {"input_modalities":["text","video"],"output_modalities":["video"]}},
+            {"id":"google/gemini-3.5-flash:batch","created":7,"architecture":
+                {"input_modalities":["text","video"],"output_modalities":["text"]}}
+            ]}"#,
+        )
+        .expect("a list");
+        assert_eq!(
+            ids(&for_slot(listed.clone(), ModelSlot::Video)),
+            [
+                "google/gemini-3.5-flash",
+                "~google/gemini-flash-latest",
+                "qwen/qwen3.6-flash",
+                "vendor/says-nothing-of-inputs"
+            ]
+        );
+        // The chat row is not narrowed by what a model takes.
+        assert_eq!(for_slot(listed, ModelSlot::Assistant).len(), 5);
+    }
+
+    /// What an entry takes as input is what a list is narrowed by, not what a
+    /// row shows: an entry that said this and nothing else has nothing to show,
+    /// and keeps the name a row without facts is drawn with.
+    #[test]
+    fn what_a_model_takes_is_not_a_fact_a_row_shows() {
+        let only_inputs = ModelFacts {
+            video: Some(true),
+            ..ModelFacts::default()
+        };
+        assert!(only_inputs.is_empty());
+        let windowed = ModelFacts {
+            context_length: Some(8192),
+            ..only_inputs
+        };
+        assert!(!windowed.is_empty());
+        assert!(ModelFacts::default().is_empty());
+    }
+
     /// A voice is an entry of a list like a model is — the voice rows' picker
     /// offers them — and its name is all the row holds.
     #[test]
@@ -1197,13 +1304,15 @@ mod tests {
         for row in rows {
             let (columns, why) = row.split_once('|').unwrap();
             let c: Vec<&str> = columns.split_whitespace().collect();
+            let got = named(&models, c[0]).facts;
             let want = ModelFacts {
                 context_length: c[1].parse().ok(),
                 prompt_price: c[2].parse().ok(),
                 completion_price: c[3].parse().ok(),
                 tools: Some(c[4] == "yes").filter(|_| c[4] != "-"),
+                // What an entry takes as input has a test of its own.
+                video: got.video,
             };
-            let got = named(&models, c[0]).facts;
             if got != want {
                 wrong.push(format!("{} — {}: {got:?}", c[0], why.trim()));
             }
@@ -1267,6 +1376,17 @@ mod tests {
                 "https://openrouter.ai/api/v1/embeddings/models"
             );
         }
+        // The models that take video: the public list under the gateway's
+        // filter, and the account's list whole — which does not take that
+        // filter, and is narrowed by what its entries say.
+        assert_eq!(
+            url(CatalogueShape::OpenRouterVideo, Some("k")),
+            "https://openrouter.ai/api/v1/models/user"
+        );
+        assert_eq!(
+            url(CatalogueShape::OpenRouterVideo, None),
+            "https://openrouter.ai/api/v1/models?input_modalities=video"
+        );
         // The speech models are the chat list under the gateway's own filter,
         // so the key moves them to the account's list as it moves the chat's.
         assert_eq!(

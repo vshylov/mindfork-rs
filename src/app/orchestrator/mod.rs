@@ -425,6 +425,18 @@ pub async fn run(deps: OrchestratorDeps) {
 /// Observability without spam. See the "refinements" stage 5.
 pub(super) const BACKGROUND_FAILURE_ALERT: u32 = 3;
 
+/// The video slot for `youtube_watch`: its settings, the stored key of the
+/// provider they name (ADR 0008) and the gateway's switch. Independent of the
+/// chat engine — see `shared::video`. `None` — not configured.
+pub(super) fn video_config(config: &AppConfig) -> Option<crate::shared::video::VideoConfig> {
+    let key = config.video.secret_key().storage_name();
+    crate::shared::video::resolve_config(
+        &config.video,
+        crate::shared::secrets::stored_key(&config.api_keys, &key),
+        config.openrouter.attribution,
+    )
+}
+
 /// Builds the tool registry from the configuration (`config.tools`).
 /// `sandbox_dir` — the Python sandbox directory (`data/sandbox/`, from
 /// [`Paths`]) for Wasmer mode.
@@ -449,15 +461,7 @@ fn build_registry(
         fs_root: config.tools.fs_root.clone(),
         named_secrets: crate::shared::config::named_key_env_vars(config),
         subagent_parallel: config.tools.subagent_parallel,
-        // The video slot for `youtube_watch`: settings + the shared Gemini key
-        // (ADR 0008). Independent of the chat engine — see `shared::video`.
-        video: crate::shared::video::resolve_config(
-            &config.video,
-            crate::shared::secrets::stored_key(
-                &config.api_keys,
-                crate::shared::config::CloudProvider::Gemini.key(),
-            ),
-        ),
+        video: video_config(config),
         // The chat-engine mode determines the sampling parameters available in
         // get_sampling/set_sampling (schema + filtering). See ADR 0004.
         sampling_provider: config.engine.mode.cloud_provider(),

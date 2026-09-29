@@ -6,15 +6,14 @@
 //! what left the machine. The bodies the stub answers with are the gateway's
 //! own, measured on 2026-09-29.
 
-use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_util::sync::CancellationToken;
 
 use super::openai::{FormatMemo, GatewayFormat, OpenAiTts};
 use super::{AudioClip, GatewaySpeech, TtsEngine, TtsSetupError, engines_from_config};
 use crate::shared::config::{TtsCloudSettings, TtsMode, TtsSettings};
+use crate::shared::http_stub::{Step, Stub, answered, body_of, refused};
 
 const MODEL: &str = "minimax/speech-2.8-turbo";
 
@@ -31,117 +30,14 @@ const SAMPLES: &[u8] = &[0xFF, 0xFF, 0x00, 0x40, 0x00, 0x80, 0x34, 0x12];
 /// What is served as an MP3. The client does not look inside.
 const FRAMES: &[u8] = &[0xFF, 0xFB, 0x90, 0x64, 0x00, 0x0F, 0xF0, 0x00];
 
-/// One answer of the stub's: the status line, the label, the body.
-#[derive(Clone)]
-struct Step {
-    status: &'static str,
-    label: Option<&'static str>,
-    body: Vec<u8>,
-}
-
 fn audio(label: &'static str, body: &[u8]) -> Step {
-    Step {
-        status: "200 OK",
-        label: Some(label),
-        body: body.to_vec(),
-    }
+    answered(label, body)
 }
 
-fn refused(status: &'static str, body: &str) -> Step {
-    Step {
-        status,
-        label: Some("application/json"),
-        body: body.as_bytes().to_vec(),
-    }
-}
-
-/// A gateway that answers from a script, one step per request, and keeps every
-/// request it was sent — the head and the body. A request beyond the script is
-/// kept too, and answered `500`: a test that counts requests sees the one that
-/// should not have been made.
-struct Stub {
-    url: String,
-    seen: Arc<Mutex<Vec<String>>>,
-}
-
-impl Stub {
-    async fn serving(script: Vec<Step>) -> Self {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}/v1", listener.local_addr().unwrap());
-        let seen = Arc::new(Mutex::new(Vec::new()));
-        let script = Arc::new(Mutex::new(VecDeque::from(script)));
-        let kept = seen.clone();
-        tokio::spawn(async move {
-            while let Ok((mut sock, _)) = listener.accept().await {
-                let request = whole_request(&mut sock).await;
-                kept.lock().unwrap().push(request);
-                let step = script.lock().unwrap().pop_front().unwrap_or(Step {
-                    status: "500 Internal Server Error",
-                    label: None,
-                    body: b"not in the script".to_vec(),
-                });
-                let label = step
-                    .label
-                    .map(|l| format!("Content-Type: {l}\r\n"))
-                    .unwrap_or_default();
-                let head = format!(
-                    "HTTP/1.1 {}\r\n{label}Connection: close\r\nContent-Length: {}\r\n\r\n",
-                    step.status,
-                    step.body.len()
-                );
-                let _ = sock.write_all(head.as_bytes()).await;
-                let _ = sock.write_all(&step.body).await;
-                let _ = sock.shutdown().await;
-            }
-        });
-        Self { url, seen }
-    }
-
-    fn requests(&self) -> Vec<String> {
-        self.seen.lock().unwrap().clone()
-    }
-
-    /// The `response_format` of every request, in the order they came.
-    fn formats_asked(&self) -> Vec<String> {
-        self.requests()
-            .iter()
-            .map(|r| {
-                let body: serde_json::Value = serde_json::from_str(body_of(r)).expect("a body");
-                body["response_format"].as_str().unwrap().to_string()
-            })
-            .collect()
-    }
-}
-
-/// Reads a request to the end of its body: the head, then as many bytes as
-/// `Content-Length` names.
-async fn whole_request(sock: &mut tokio::net::TcpStream) -> String {
-    let mut got = Vec::new();
-    let mut buf = [0u8; 4096];
-    loop {
-        let text = String::from_utf8_lossy(&got).to_string();
-        if let Some((head, body)) = text.split_once("\r\n\r\n") {
-            let wanted = head
-                .lines()
-                .find_map(|l| {
-                    let (name, value) = l.split_once(':')?;
-                    name.eq_ignore_ascii_case("content-length")
-                        .then(|| value.trim().parse::<usize>().ok())?
-                })
-                .unwrap_or(0);
-            if body.len() >= wanted {
-                return text;
-            }
-        }
-        match sock.read(&mut buf).await {
-            Ok(0) | Err(_) => return String::from_utf8_lossy(&got).to_string(),
-            Ok(n) => got.extend_from_slice(&buf[..n]),
-        }
-    }
-}
-
-fn body_of(request: &str) -> &str {
-    request.split_once("\r\n\r\n").map_or("", |(_, body)| body)
+/// The `response_format` of every request, in the order they came.
+fn formats_asked(stub: &Stub) -> Vec<String> {
+    let asked = |body: serde_json::Value| body["response_format"].as_str().map(str::to_string);
+    stub.bodies().into_iter().filter_map(asked).collect()
 }
 
 fn named() -> GatewaySpeech {
@@ -226,7 +122,7 @@ async fn a_refusal_that_names_the_format_is_asked_again_in_the_other_one_and_rem
         said(&engine).await.expect("a clip"),
         AudioClip::Encoded(FRAMES.to_vec())
     );
-    assert_eq!(stub.formats_asked(), ["pcm", "mp3"]);
+    assert_eq!(formats_asked(&stub), ["pcm", "mp3"]);
     assert_eq!(gateway.formats.of(MODEL), GatewayFormat::Mp3);
 
     said(&engine).await.expect("the next fragment");
@@ -235,7 +131,7 @@ async fn a_refusal_that_names_the_format_is_asked_again_in_the_other_one_and_rem
     said(&client(&stub.url, &gateway))
         .await
         .expect("the next command");
-    assert_eq!(stub.formats_asked(), ["pcm", "mp3", "mp3", "mp3"]);
+    assert_eq!(formats_asked(&stub), ["pcm", "mp3", "mp3", "mp3"]);
 }
 
 /// What is remembered is what the gateway did, not a fact about the model: a
@@ -255,7 +151,7 @@ async fn a_remembered_format_that_is_refused_now_is_learned_again() {
     said(&engine).await.expect("learned: mp3");
     let clip = said(&engine).await.expect("learned again: pcm");
     assert!(matches!(clip, AudioClip::Pcm { .. }), "{clip:?}");
-    assert_eq!(stub.formats_asked(), ["pcm", "mp3", "mp3", "pcm"]);
+    assert_eq!(formats_asked(&stub), ["pcm", "mp3", "mp3", "pcm"]);
     assert_eq!(gateway.formats.of(MODEL), GatewayFormat::Pcm);
 }
 
@@ -362,7 +258,7 @@ async fn the_label_decides_what_the_body_is() {
             other => format!("{other:?}"),
         };
         assert_eq!(shown, c[2], "{}", row.trim());
-        assert_eq!(stub.formats_asked().last().map(String::as_str), Some(c[1]));
+        assert_eq!(formats_asked(&stub).last().map(String::as_str), Some(c[1]));
     }
 }
 
@@ -490,7 +386,7 @@ async fn both_voices_share_what_the_session_learned() {
     said(user.expect("the user's engine").as_ref())
         .await
         .expect("the user's line");
-    assert_eq!(stub.formats_asked(), ["pcm", "mp3", "mp3"]);
+    assert_eq!(formats_asked(&stub), ["pcm", "mp3", "mp3"]);
     let voices: Vec<String> = stub
         .requests()
         .iter()
