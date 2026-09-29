@@ -55,7 +55,8 @@ owner of chat state — drives the loop: the model asks for a tool, the tool
 returns a result plus a set of effects, the orchestrator applies them. No
 locks, no shared mutable state, and every provider gets the same tools:
 
-- **the web** — search, page fetching, YouTube — off until you switch it on;
+- **the web** — search, page fetching, YouTube (watched by Gemini, directly
+  or through an OpenRouter key) — off until you switch it on;
 - **files**, and a **code project** attached to the chat: the assistant
   reads, searches and edits it, and runs the build, run and test lines
   *you* typed — never ones it composed — with every change reviewable as a

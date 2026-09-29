@@ -59,8 +59,10 @@ machine or your usage.
   keyed provider is preferred when a key is available, and a key is found
   only where you put it — in the settings, or in an environment variable
   you named there. Result pages are fetched to extract their text. YouTube
-  sends the video's address, not its bytes, to Gemini, if you gave it a
-  key for that.
+  sends the video's address, not its bytes, to whoever you chose to watch it
+  — Gemini by Google's own API, or the same models through the OpenRouter
+  gateway — if you gave it a key for that. The address is the video's id and
+  nothing else of the link you pasted.
 - **Speech** is sent only when you invoke `/tts`: the text of the messages
   being read, to the speech provider you chose — OpenAI, Gemini, a server of
   your own, or the OpenRouter gateway and the vendor behind the model you

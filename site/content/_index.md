@@ -16,7 +16,7 @@ desc = "A managed llama-server under the hood — one command downloads the llam
 
 [[extra.features]]
 title = "Four clouds and a gateway"
-desc = "OpenAI, Anthropic, Gemini and Grok as first-class backends, and OpenRouter as a mode of its own — one key in front of every vendor's models, picked from a list that shows each one's context window and price. Switch per profile; API keys are stored with machine-bound encryption."
+desc = "OpenAI, Anthropic, Gemini and Grok as first-class backends, and OpenRouter as a mode of its own — one key for chat, embeddings, speech and YouTube video, in front of every vendor's models, picked from a list that shows each one's context window and price. Switch per profile; API keys are stored with machine-bound encryption."
 
 [[extra.features]]
 title = "Real tools"

@@ -1321,8 +1321,8 @@ both on `main` at `88e5ce29`, the merge of the pull request.
   kept on a branch of their own, since the site deploys when `main` changes and they
   describe a mode the published version does not have. Two decisions of the owner's
   (2026-09-29) are made here: **the one-sentence description of the application names
-  the gateway**, and the site says that **speech goes through it too**. The stages that
-  are built, 1 to 3, ship in one release — 0.13.0 — and this branch goes with it.
+  the gateway**, and the site says that **speech goes through it too**. Every stage of
+  the track ships in one release — 0.13.0 — and this branch goes with it.
 - **The sentence, in every place it is written** — it had counted four clouds since the
   Grok release: `Cargo.toml` (what crates.io shows), the README's first line,
   `packaging/nfpm.yaml` (what `apt show` prints), `site/zola.toml` (the site-wide
@@ -1343,6 +1343,11 @@ both on `main` at `88e5ce29`, the merge of the pull request.
   chosen — that the audio is played and not kept, and that no audio is ever sent
   anywhere; the image-by-URL sentence, which had shared the bullet, has its own.
   *mindfork at a glance* names the four ways speech comes out.
+- **Video.** Added when the track's last stage was built: the card *Four clouds and a
+  gateway* says what the one key is for — chat, embeddings, speech and YouTube video;
+  *Where the trust boundaries are* says the video's address goes to whoever was chosen
+  to watch it, Gemini directly or through the gateway, and that the address is the
+  video's id and nothing else of the link; *mindfork at a glance* names both ways.
 - **Images.** The card *Show it a picture* had them working with a local vision model
   and all four clouds; it names the gateway too, *wherever the model takes images* —
   which a gateway's catalogue says per model, and the app reads before it attaches
