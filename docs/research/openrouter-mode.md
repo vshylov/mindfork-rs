@@ -654,11 +654,13 @@ departed from this table — the embedder's arm came with it — is §11.
 **Stage 3 is built** (2026-09-29), go/no-go met: §13 — with a defect of the
 player's found on the way, which was every mode's.
 
-**User's decision, 2026-09-29: every stage ships in one release.** The one step
-of the settings schema, 3 → 4, is therefore the track's only one: no released
-build will have read a file of schema 4 and met a mode it does not know (§13.4).
-The site's texts and the one-sentence description of the application, which
-name the gateway, go with that release.
+**User's decision, 2026-09-29: the stages that are built, 1 to 3, ship in one
+release — 0.13.0.** The one step of the settings schema, 3 → 4, therefore covers
+them: no released build will have read a file of schema 4 and met a mode it
+does not know (§13.4). Stage 4 adds a field, `video.provider`, which is
+additive (F3) and owes no step whichever release carries it. The site's texts
+and the one-sentence description of the application, which name the gateway,
+go with 0.13.0, in a pull request of their own.
 
 ## 8. What this does not cover
 
@@ -949,5 +951,5 @@ the voice row lists the five voices of the model named.
 | F7: a row shows the name, the window and the price | A speech model's row shows how many voices it lists, and **no price**: the catalogue's number has no unit and the unit differs by model (§13.1). "Per 1M tokens" beside it would be our claim, and for most of them a wrong one. |
 | F6: `GET /key` once per apply | Not for speech. Nothing is applied: the slot has no engine and no status, its client is built when `/tts` is typed. A refused key is said by the first request, in the gateway's sentence. |
 | F12: a hint under an `external` address that is the gateway's | The speech slot's hint is its own. The other slots' says *"this section keeps working as it is"*, which here is false: `external` asks for `wav`, and the gateway refuses it (§13.1). |
-| F3: the modes' values and `SETTINGS_SCHEMA` 3 → 4 | No step of this stage's: `tts.mode` is one of the four values F3 names, and no build with schema 4 has been released. A release that carried stage 1 without this stage would have owed a step of this stage's own; by the user's decision of 2026-09-29 every stage ships in one release (§7), so none is owed. |
+| F3: the modes' values and `SETTINGS_SCHEMA` 3 → 4 | No step of this stage's: `tts.mode` is one of the four values F3 names, and no build with schema 4 has been released. A release that carried stage 1 without this stage would have owed a step of this stage's own; by the user's decision of 2026-09-29 stages 1 to 3 ship in one release, 0.13.0 (§7), so none is owed. |
 | — | **Found by the live run**: the decoder (§13.2). Fixed for every mode that plays a container. |

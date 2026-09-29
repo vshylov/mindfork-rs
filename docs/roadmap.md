@@ -36,12 +36,13 @@ decided the same day. Four stages: the provider in chat and impersonation
 (**done**, §11 there), embeddings (**done**, §12 — the retry and the batch cap
 for every embedder, not only the gateway's), speech (**done**, §13 — and a
 player that no longer trusts a streamed clip's first frame, in every mode),
-video (**next**); the gateway's own knobs are a fifth, on demand. **Every
-stage ships in one release** (the user's decision, 2026-09-29), so the step of
-the settings schema taken in stage 1 is the track's only one. Waiting for that
-release, on a branch of their own: the site's home page and articles and the
-one-sentence description of the application, which would otherwise describe a
-mode the published version does not have.
+video (**next**); the gateway's own knobs are a fifth, on demand. **Stages 1
+to 3 ship in one release, 0.13.0** (the user's decision, 2026-09-29), so the
+step of the settings schema taken in stage 1 covers them; video adds a field
+and owes none. With that release, in a pull request of their own: the site's
+home page and articles and the one-sentence description of the application,
+which merged earlier would describe a mode the published version does not
+have.
 
 The tracks this section carried before — the first public release, images,
 retry/backoff, the prompt-caching measurement, the attachment birth turn, and
