@@ -5631,3 +5631,16 @@ test that asserted a refusal through it would be asserting the network.
 a part named in words and a transcript of that part, its stamps counted from the video's
 start; a video over the ceiling refused with nothing spent. The engine journal has the
 run.
+
+**Measured after, before the release (2026-09-30).** The research had three adjacent
+findings, and the question was whether any is owed to the release. Two were defects and
+the track fixed them on its way — the embedder's guard in stage 2, the engine's facts in
+stage 1; the research's table says so now. The third, *Input resolution* doing nothing on
+the default model, was measured again in every spelling the API takes, the 3.x
+generation's field on the part included: `gemini-3.5-flash` answers 1821 video tokens for
+the same 20 seconds to each of them, and `gemini-2.5-flash` refuses the part's field with
+a `400`. Nothing to fix — the application sends the documented field, and the hint has
+said where it does nothing since 2026-08-01. What the default model does read is the
+frame rate (`video_metadata.fps`): 66 tokens a frame and 25 a second for the sound, so
+half the frames is a third less. The gateway carries no frame rate either — three places
+tried. A frame rate as a setting is in the roadmap, on demand (research §15).

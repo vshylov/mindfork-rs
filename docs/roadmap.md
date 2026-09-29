@@ -235,7 +235,12 @@ colour modes with user themes, and the OpenRouter mode — have all closed
   vendor or a `yt-dlp` sidecar; **default-model rot** — the default moved from
   `gemini-2.5-flash-lite` (a 404 for new users) to `gemini-3.5-flash`, and
   whatever ships as the default eventually stops existing; the settings picker
-  does not cover the Video row yet.
+  does not cover the Video row yet; **a frame rate** — *Input resolution* is read
+  by the 2.5 generation alone, in every spelling (measured 2026-09-30), and what
+  the default model does read is `video_metadata.fps`: 66 tokens a frame and 25
+  a second for the sound, so half the frames is a third less of a long video.
+  Google's own API only — the gateway carries none
+  ([openrouter-mode.md §15](research/openrouter-mode.md)).
 
 ### Memory, notes and RAG
 
