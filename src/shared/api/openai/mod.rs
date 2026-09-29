@@ -15,7 +15,7 @@
 
 pub mod client;
 #[cfg(test)]
-mod gateway_live;
+mod gateway_live_tests;
 #[cfg(test)]
 mod gateway_tests;
 pub mod responses;

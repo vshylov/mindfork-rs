@@ -128,6 +128,11 @@ NOT_STYLING = LEADING_CELL | TRAILING_CELL
 BLACK = 0
 BRIGHT_WHITE = 15
 
+# What opens the settings screen, and the file the settings are kept in — each
+# said once, for the scenarios that press the one and write the other.
+SETTINGS_KEY = "ctrl+p"
+SETTINGS_FILE = "settings.json"
+
 # How long the app gets to draw after a key (the loop ticks every 50 ms; a
 # screen switch or a mode change repaints everything).
 SETTLE = 0.35
@@ -220,7 +225,7 @@ KEYS = {
     "f1": (0x70, "\0", 0),
     "shift+left": (0x25, "\0", ENHANCED_KEY | SHIFT_PRESSED),
     "ctrl+b": (0x42, "\x02", LEFT_CTRL_PRESSED),
-    "ctrl+p": (0x50, "\x10", LEFT_CTRL_PRESSED),
+    SETTINGS_KEY: (0x50, "\x10", LEFT_CTRL_PRESSED),
     "ctrl+q": (0x51, "\x11", LEFT_CTRL_PRESSED),
 }
 
@@ -468,7 +473,7 @@ class Report:
 
 
 def to_interface_fields() -> None:
-    press("ctrl+p", SETTLE_REPAINT)
+    press(SETTINGS_KEY, SETTLE_REPAINT)
     for _ in range(TABS_TO_INTERFACE):
         press("tab")
     press("enter")
@@ -539,7 +544,7 @@ def scenario_first_frame(exe: Path, report: Report) -> None:
             "schema_version": 4,
             "interface": {"language": "en", "theme_mode": "full", "full_theme": "light"},
         }
-        (root / "data" / "settings.json").write_text(json.dumps(settings), encoding="utf-8")
+        (root / "data" / SETTINGS_FILE).write_text(json.dumps(settings), encoding="utf-8")
 
         print("first run: type the draft")
         session = Session(copy, [], cwd=root)
@@ -650,7 +655,7 @@ def scenario_user_theme(exe: Path, report: Report) -> None:
             "schema_version": 4,
             "interface": {"language": "en", "theme_mode": "full", "full_theme": theme},
         }
-        (root / "data" / "settings.json").write_text(json.dumps(settings), encoding="utf-8")
+        (root / "data" / SETTINGS_FILE).write_text(json.dumps(settings), encoding="utf-8")
 
         print("first run: the theme is in data/themes")
         session = Session(copy, [], cwd=root)
@@ -725,7 +730,7 @@ def scenario_gateway(exe: Path, report: Report) -> None:
                 "openrouter": {"model_name": model, "api_key_env": "OPENROUTER_API_KEY"},
             },
         }
-        (root / "data" / "settings.json").write_text(json.dumps(settings), encoding="utf-8")
+        (root / "data" / SETTINGS_FILE).write_text(json.dumps(settings), encoding="utf-8")
 
         session = Session(copy, [], cwd=root)
         try:
@@ -737,7 +742,7 @@ def scenario_gateway(exe: Path, report: Report) -> None:
             report.says("the reply", rows, ("Paris",))
 
             print("the settings: the provider's rows")
-            press("ctrl+p", SETTLE_REPAINT)  # opens on "Model/server"
+            press(SETTINGS_KEY, SETTLE_REPAINT)  # opens on "Model/server"
             press("enter", SETTLE_REPAINT)  # into its fields: the row of tabs
             rows = read_screen()
             print(text_of(rows))
@@ -766,7 +771,7 @@ def scenario_gateway(exe: Path, report: Report) -> None:
         )
         key = os.environ["OPENROUTER_API_KEY"].strip()
         report.check(key not in log, "the key is not in the log")
-        saved = (root / "data" / "settings.json").read_text(encoding="utf-8")
+        saved = (root / "data" / SETTINGS_FILE).read_text(encoding="utf-8")
         report.check(key not in saved, "nor in the settings")
 
 

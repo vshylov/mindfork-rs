@@ -763,6 +763,63 @@ async fn what_the_previous_engine_said_does_not_outlive_a_settings_edit() {
     );
 }
 
+/// The gateway's switch is the provider's: it reaches **every** slot that
+/// speaks to the gateway — impersonation and the embedder as well as the chat —
+/// and what each was applied with is compared, so the slot is raised again with
+/// the switch as it now stands.
+#[tokio::test]
+async fn the_gateways_switch_reaches_impersonation_and_the_embedder() {
+    use crate::shared::config::ImpersonationMode;
+
+    let (_d, mut orch) = bare_orch();
+    let mut config = orch.config.clone();
+    config.impersonation_engine.mode = ImpersonationMode::OpenRouter;
+    config.embed.mode = ServerMode::OpenRouter;
+    orch.handle_update_config(config.clone());
+    orch.flush_restarts();
+    let current = |orch: &Orchestrator, config: &AppConfig| {
+        (
+            orch.engines.impersonation_is_current(
+                &config.impersonation_engine,
+                &config.api_keys,
+                &config.openrouter,
+            ),
+            orch.engines
+                .embed_is_current(&config.embed, &config.api_keys, &config.openrouter),
+        )
+    };
+    assert_eq!(current(&orch, &config), (true, true));
+
+    // The switch, and nothing else.
+    config.openrouter.attribution = false;
+    orch.handle_update_config(config.clone());
+    assert_eq!(
+        current(&orch, &config),
+        (false, false),
+        "what they were applied with is not what the settings say now"
+    );
+    assert_eq!(
+        orch.restarts.take(),
+        (false, true, true, false),
+        "the embedder and impersonation, and not the chat: its mode is not the gateway's"
+    );
+    orch.restarts.mark_embed();
+    orch.restarts.mark_impersonation();
+    orch.flush_restarts();
+    assert_eq!(current(&orch, &config), (true, true));
+
+    // A slot that is not the gateway's is current whatever the switch says.
+    let mut local = config.clone();
+    local.impersonation_engine.mode = ImpersonationMode::Shared;
+    local.embed.mode = ServerMode::Managed;
+    orch.handle_update_config(local.clone());
+    orch.flush_restarts();
+    local.openrouter.attribution = true;
+    orch.handle_update_config(local.clone());
+    assert_eq!(orch.restarts.take(), (false, false, false, false));
+    assert_eq!(current(&orch, &local), (true, true));
+}
+
 /// The model list's request follows the gateway's switch, on every tab that
 /// speaks to the gateway — and no other provider's request is ever named,
 /// whatever the switch says.

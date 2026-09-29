@@ -5085,14 +5085,14 @@ The site's home page and articles are left for the release's pull request: merge
 they would describe a mode the published 0.12.0 does not have.
 
 **Tests.** Unit tests next to the code, each checked against the mutation it guards —
-33 mutants of the client, the supervisor and the orchestrator, and 154 of the config, the sampling table, the dialect, the catalogue and the settings screen (the half a sub-agent wrote on a worktree of its own); none survived. Two things the mutation runs themselves taught. A runner that undid a
+40 mutants of the client, the supervisor and the orchestrator, and 154 of the config, the sampling table, the dialect, the catalogue and the settings screen (the half a sub-agent wrote on a worktree of its own); none survived. Two things the mutation runs themselves taught. A runner that undid a
 mutation by swapping the replacement back met one that **deleted** a line — the empty
 string "occurs" everywhere — refused inside a `finally`, and left the file mutated; it
 showed only as an unexpected ` M`. The runner keeps the file's text and writes it back
 now, and checks every anchor of the plan before the first mutation. And a test that waits
 for an event without a bound does not fail under the mutation it guards, it **hangs** —
 the run stopped there for half an hour; the wait is bounded now (the clock is paused, so
-the bound costs nothing). The live smokes are `gateway_live` in `shared/api/openai` and
+the bound costs nothing). The live smokes are `gateway_live_tests` in `shared/api/openai` and
 in the orchestrator's tests, declared by `MINDFORK_OPENROUTER_KEY`.
 
 **Smoke — GO** (2026-09-29; the gateway with the user's key, and for the switch a local
@@ -5114,7 +5114,7 @@ llama.cpp b11234, CPU, `gemma-3-4b-it` Q8_0, `-c 8192 --jinja`; Windows 11):
   `anthropic/claude-haiku-4.5` cut at "The capital of France", announced continuable,
   resumed with " is Paris."; `google/gemma-4-31b-it` cut at the same place, announced not
   continuable, refused with the gateway's note.
-- **The client** (`shared::api::openai::gateway_live`, nine smokes), on the three
+- **The client** (`shared::api::openai::gateway_live_tests`, nine smokes), on the three
   families: thoughts, the answer and who served (`qwen/qwen3.6-27b`: 1 263 characters of
   thoughts, then 391; `google/gemini-3.5-flash` the same); a tool call and its result
   (48213 read back by Haiku, Gemini and Qwen); **a muted turn** — through the mode 0
@@ -5133,4 +5133,22 @@ llama.cpp b11234, CPU, `gemma-3-4b-it` Q8_0, `-c 8192 --jinja`; Windows 11):
 
 **Docs.** spec §3.4, §6.1, §6.4, §6.7, §8.1–§8.2, §9.10, §11.6, §12.2, §13.4; architecture §1, §3–§7, §12; ADR 0004 (the status list); install.md §3, §3.2 (the mode) and §7.1 (its smokes); the manual; README; PRIVACY.md and its translation, with the installer's pages and the site's page regenerated from them; CHANGELOG (Added, Changed, Fixed, **Data**); the roadmap; lessons §2, §3 and §9; the research document's §7 and §11; the container lab's seed and its key. Two statements the documents made before this and the code does not bear out were corrected on the way: install.md had `external` sending `repetition_penalty`, which it offers and does not send, and architecture.md put both schemas at 2.
 
-**Gates**: fmt / clippy / test green — **3671 unit tests, 214 `#[ignore]`** (+69 unit tests, +12 live smokes).
+**The quality gate, on the first push: red, twice over.** *Reliability*: the key
+check's loop ended in an unconditional `return`, with its one `continue` inside a
+`select!` — read by the analyzer as a loop that runs once (`rust:S1751`), and by a
+person not much better. It is two functions now: `key_verdict` asks `while` nothing
+answers, the task maps the verdict to a status. *New-code coverage, 77.3 % against 80*:
+computed locally from the same report CI makes (`cargo llvm-cov --lcov`, the lines
+`git diff -U0` adds, their intersection), 352 of the 403 uncovered lines were one file —
+the client's live smokes. The coverage report leaves out what it takes for a test file
+by its path, a `tests/` directory or a name ending in `tests.rs`; `gateway_live.rs` was
+neither, so nine `#[ignore]` smokes were production code at 0 %. Renamed
+`gateway_live_tests.rs`, which is what it is. The production lines by themselves stood
+at 96.5 %, and the 51 they were short of were read rather than waved through: the
+switch reaching impersonation and the embedder, and the catalogue's outage — asked
+about again, where a `404` is kept — had no test, and have one each now, with the
+mutants that go with them. 97.9 % after. Three maintainability findings went with
+them: a wildcard import in a test file whose name does not start with `test`, and two
+literals the console probe's new scenario repeated a third and a fourth time.
+
+**Gates**: fmt / clippy / test green — **3674 unit tests, 214 `#[ignore]`** (+72 unit tests, +12 live smokes).

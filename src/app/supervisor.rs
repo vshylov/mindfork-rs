@@ -947,46 +947,64 @@ fn spawn_key_check_every(client: Arc<OpenAiClient>, monitor: Monitor, recheck: D
         loc,
     } = monitor;
     tokio::spawn(async move {
-        let mut said_waiting = false;
-        loop {
-            let verdict = tokio::select! {
-                biased;
-                _ = cancel.cancelled() => return,
-                verdict = client.check_key() => verdict,
-            };
-            if cancel.is_cancelled() {
-                return;
-            }
-            let status = match verdict {
-                KeyVerdict::Accepted => ServerStatus::Ready,
-                KeyVerdict::Unjudged(said) => {
-                    tracing::info!(reason = %said, "the gateway did not judge the key; taken as usable");
-                    ServerStatus::Ready
-                }
-                KeyVerdict::Refused(said) => ServerStatus::Disconnected(loc.tf(
-                    "ui.err.server.key_refused",
-                    &[
-                        ("provider", CloudProvider::OpenRouter.display_name()),
-                        ("reason", &said),
-                    ],
-                )),
-                KeyVerdict::NoAnswer(said) => {
-                    if !std::mem::replace(&mut said_waiting, true)
-                        && status_tx.send(ServerStatus::Disconnected(said)).is_err()
-                    {
-                        return;
-                    }
-                    tokio::select! {
-                        biased;
-                        _ = cancel.cancelled() => return,
-                        _ = tokio::time::sleep(recheck) => continue,
-                    }
-                }
-            };
-            let _ = status_tx.send(status);
+        let Some(verdict) = key_verdict(&client, &cancel, &status_tx, recheck).await else {
             return;
-        }
+        };
+        let status = match verdict {
+            KeyVerdict::Accepted => ServerStatus::Ready,
+            KeyVerdict::Unjudged(said) => {
+                tracing::info!(reason = %said, "the gateway did not judge the key; taken as usable");
+                ServerStatus::Ready
+            }
+            KeyVerdict::Refused(said) => ServerStatus::Disconnected(loc.tf(
+                "ui.err.server.key_refused",
+                &[
+                    ("provider", CloudProvider::OpenRouter.display_name()),
+                    ("reason", &said),
+                ],
+            )),
+            // What `key_verdict` waits out rather than returns.
+            KeyVerdict::NoAnswer(said) => ServerStatus::Disconnected(said),
+        };
+        let _ = status_tx.send(status);
     });
+}
+
+/// The gateway's word on the key, asked until there is one: while nothing
+/// answers, the slot is told why it waits — once — and the question is put
+/// again every `recheck`. `None`: the check is no longer wanted.
+async fn key_verdict(
+    client: &OpenAiClient,
+    cancel: &CancellationToken,
+    status_tx: &UnboundedSender<ServerStatus>,
+    recheck: Duration,
+) -> Option<KeyVerdict> {
+    let mut verdict = asked_once(client, cancel).await?;
+    let mut said_waiting = false;
+    while let KeyVerdict::NoAnswer(said) = verdict {
+        if !std::mem::replace(&mut said_waiting, true)
+            && status_tx.send(ServerStatus::Disconnected(said)).is_err()
+        {
+            return None;
+        }
+        tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return None,
+            _ = tokio::time::sleep(recheck) => {}
+        }
+        verdict = asked_once(client, cancel).await?;
+    }
+    Some(verdict)
+}
+
+/// One `GET /key`, unless the check was overtaken before it answered.
+async fn asked_once(client: &OpenAiClient, cancel: &CancellationToken) -> Option<KeyVerdict> {
+    let verdict = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => return None,
+        verdict = client.check_key() => verdict,
+    };
+    (!cancel.is_cancelled()).then_some(verdict)
 }
 
 /// Waits for a managed child's exit signal; for a server we don't own (external)

@@ -8,6 +8,12 @@
 //! whose model turns out not to be of that kind fails rather than skips
 //! (docs/lessons.md §9).
 //!
+//! The file is named `…_tests` like every test file of the crate, and not for
+//! tidiness: the coverage report leaves files so named out, and one it does not
+//! recognise is production code to it — these smokes, which no unit run
+//! executes, were 352 lines at 0 % and took the branch's new code under the
+//! quality gate's floor by themselves.
+//!
 //! The client is built the way the supervisor builds it, not by
 //! [`live_client`](crate::shared::api::live_client): that one is the `external`
 //! client, which is the control arm here, not the subject.

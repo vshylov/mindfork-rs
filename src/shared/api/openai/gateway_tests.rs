@@ -528,6 +528,63 @@ async fn a_model_the_gateway_does_not_know_is_asked_about_once() {
     assert_eq!(server.join().unwrap().len(), 1);
 }
 
+/// An outage of the catalogue is not an answer. Nothing is claimed about the
+/// model, and nothing is remembered either: the next question asks again —
+/// where a `404` was the gateway's word and is kept.
+#[tokio::test]
+async fn an_outage_of_the_catalogue_is_asked_about_again() {
+    const DOWN: &[Route] = &[(
+        "/v1/model/anthropic/claude-haiku-4.5",
+        "503 Service Unavailable",
+        JSON,
+        "{}",
+    )];
+    const SLOW_DOWN: &[Route] = &[(
+        "/v1/model/anthropic/claude-haiku-4.5",
+        "429 Too Many Requests",
+        JSON,
+        "{}",
+    )];
+    for routes in [DOWN, SLOW_DOWN] {
+        let (url, server) = stub(2, routes);
+        let client = gateway(url, "anthropic/claude-haiku-4.5");
+        assert!(client.model_capabilities().await.is_none());
+        assert_eq!(client.vision().await, VisionSupport::Unknown);
+        assert_eq!(
+            server.join().unwrap().len(),
+            2,
+            "the second question was put to the gateway as well"
+        );
+    }
+
+    // Nobody listening at all: the same, by the other road.
+    let dead = {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        format!("http://{}/v1", l.local_addr().unwrap())
+    };
+    let client = gateway(dead, "anthropic/claude-haiku-4.5");
+    assert!(client.model_capabilities().await.is_none());
+    assert_eq!(client.vision().await, VisionSupport::Unknown);
+}
+
+/// A `200` that is not an entry claims nothing about the model — and is an
+/// answer, not an outage: a gateway that answers the wrong thing will answer
+/// it again.
+#[tokio::test]
+async fn an_entry_that_does_not_parse_claims_nothing() {
+    const ODD: &[Route] = &[(
+        "/v1/model/anthropic/claude-haiku-4.5",
+        "200 OK",
+        "text/html",
+        "<html>maintenance</html>",
+    )];
+    let (url, server) = stub(1, ODD);
+    let client = gateway(url, "anthropic/claude-haiku-4.5");
+    assert!(client.model_capabilities().await.is_none());
+    assert_eq!(client.vision().await, VisionSupport::Unknown);
+    assert_eq!(server.join().unwrap().len(), 1);
+}
+
 /// `external` re-homes a tool's images once the catalogue has answered — that
 /// is how it knows it is speaking to a gateway. This client was told, so it does
 /// not wait: here the catalogue is down, and the images move all the same.

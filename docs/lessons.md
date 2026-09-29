@@ -2169,6 +2169,20 @@ measured, and say in the smoke why.
 
 ## 10. CI and infrastructure
 
+
+**A test file the coverage report does not recognise is production code to the gate.**
+`cargo llvm-cov` leaves out of its report what it takes for a test file by its path — a
+`tests/` directory, a name ending in `tests.rs` — and counts every other file compiled
+into the test binary. A file of `#[ignore]` live smokes named `gateway_live.rs` was
+therefore 352 executable lines at 0 %, and took a branch whose production lines were
+96.5 % covered to 77.3 %, under the gate's 80. The orchestrator's live smokes had never
+shown it: they live under `tests/`. Name a test file as one. And when the new-code
+figure is red, **compute it before writing a test for it**: the same LCOV report CI
+makes, the lines `git diff -U0` adds against the base, their intersection — ten minutes,
+and it names the lines, where the dashboard gives a percentage. Here it said that one
+rename was the whole of the gate, and that fifty-one lines were worth reading anyway.
+— *OpenRouter as a provider of its own — stage 1*.
+
 **A failed `needs` dependency skips the dependent job regardless of its `if`.** A
 docs-only gate reading `!= 'true'` still skipped the test job when the classifier job
 failed to start — observed for real. Add `!cancelled()`; `always()` would be wrong,
