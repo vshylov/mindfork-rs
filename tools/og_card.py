@@ -53,7 +53,7 @@ PROMPT = "$ mindfork"
 TAGLINE = "An AI chat that lives in your terminal"
 LINES = [
     "Local models via llama.cpp — or OpenAI, Anthropic,",
-    "Gemini and Grok. Memory, notes, RAG and tools.",
+    "Gemini, Grok and OpenRouter. Memory, notes, RAG, tools.",
 ]
 FOOT = "MIT  ·  Windows + Linux  ·  mindfork.io"
 

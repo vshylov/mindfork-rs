@@ -1,6 +1,6 @@
 +++
 title = "mindfork — an AI chat that lives in your terminal"
-description = "Local models via llama.cpp or four cloud providers, persistent memory, notes, RAG and an agentic tool loop — one fast native binary for Windows and Linux."
+description = "Local models via llama.cpp, four cloud providers or an OpenRouter key, persistent memory, notes, RAG and an agentic tool loop — one fast native binary for Windows and Linux."
 
 [extra]
 hero_title = "An AI chat that lives in your terminal"
@@ -48,7 +48,7 @@ desc = "When a conversation outgrows the model's context window, the early part 
 
 [[extra.features]]
 title = "It can read replies aloud"
-desc = "/tts speaks the last message, the last N, or the whole conversation, through OpenAI or Gemini speech — no new vendor to sign up for if you already use one of them."
+desc = "/tts speaks the last message, the last N, or the whole conversation, through OpenAI or Gemini speech — or through any of the speech models behind an OpenRouter key, in a voice picked from the model's own list. No new vendor to sign up for if you already use one of them."
 
 [[extra.features]]
 title = "Private by construction"

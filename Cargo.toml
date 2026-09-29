@@ -10,7 +10,7 @@ edition = "2024"
 # The one sentence that describes the app. The same words are in site/zola.toml,
 # packaging/nfpm.yaml and the README masthead — one description, four places that
 # have to agree (docs/research/public-documents.md N4).
-description = "A terminal AI chat written in Rust: local models via llama.cpp or OpenAI, Anthropic, Gemini and Grok in the cloud, with persistent memory, notes, RAG and tools."
+description = "A terminal AI chat written in Rust: local models via llama.cpp, or OpenAI, Anthropic, Gemini, Grok and OpenRouter in the cloud, with persistent memory, notes, RAG and tools."
 license = "MIT"
 readme = "README.md"
 homepage = "https://mindfork.io"

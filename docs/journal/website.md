@@ -10,7 +10,7 @@ the reasoning behind the site, not its current shape. For the current shape
 read the research/design doc above; for the traps that recur across areas
 read [lessons.md](../lessons.md).
 
-## Entries (25)
+## Entries (26)
 
 - Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 - Post-M9: website — S2 infra: one CloudFormation stack, mindfork.io live (done)
@@ -37,6 +37,7 @@ read [lessons.md](../lessons.md).
 - Post-M9: website — the 0.10.2 release post (done)
 - Post-M9: website — the site waits for the release (done)
 - Post-M9: website — crates.io in the header and on the install page (done)
+- Post-M9: website — the gateway in the description, and speech through it (done)
 
 ### Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 
@@ -1312,3 +1313,42 @@ both on `main` at `88e5ce29`, the merge of the pull request.
   `--check` and `--self-test`, `site_legal_pages.py --check`, `cyrillic_scan`,
   `link_check`, `doc_index_check` — green. No Rust changed, so no test count moves
   and no CHANGELOG line: the app is the same binary.
+
+### Post-M9: website — the gateway in the description, and speech through it (done)
+
+- **What.** The texts the OpenRouter track held back for its release, brought to where
+  the track stands: the home page and three articles had been written after stage 1 and
+  kept on a branch of their own, since the site deploys when `main` changes and they
+  describe a mode the published version does not have. Two decisions of the owner's
+  (2026-09-29) are made here: **the one-sentence description of the application names
+  the gateway**, and the site says that **speech goes through it too**. Every stage of
+  the track ships in one release, and this branch goes with it.
+- **The sentence, in every place it is written** — it had counted four clouds since the
+  Grok release: `Cargo.toml` (what crates.io shows), the README's first line,
+  `packaging/nfpm.yaml` (what `apt show` prints), `site/zola.toml` (the site-wide
+  description, and through it `/llms.txt` and the structured data), the home page's own
+  description, and the social preview card, redrawn by `tools/og_card.py`. It reads
+  *"local models via llama.cpp, or OpenAI, Anthropic, Gemini, Grok and OpenRouter in
+  the cloud"*. The home page's card keeps its count — *Four clouds and a gateway* —
+  because a gateway is not a fifth cloud: it is one key in front of the others' models
+  and many more.
+- **The hero's panel** has a row of its own, `gateway  OpenRouter`, rather than a fifth
+  name on the `cloud` row. The rows do not wrap (`white-space: nowrap`), so a longer row
+  would have widened the panel by some ninety pixels against the headline beside it; a
+  label of seven characters is exactly the width the label column has.
+- **Speech.** The card *It can read replies aloud* says `/tts` speaks through OpenAI or
+  Gemini, or through any of the speech models behind an OpenRouter key, in a voice
+  picked from the model's own list. *Where the trust boundaries are* says what is sent
+  when `/tts` is invoked and to whom — the gateway **and** the vendor behind the model
+  chosen — that the audio is played and not kept, and that no audio is ever sent
+  anywhere; the image-by-URL sentence, which had shared the bullet, has its own.
+  *mindfork at a glance* names the four ways speech comes out.
+- **Verified by building.** Zola 0.23.6, the pinned version: 25 pages, no orphan,
+  `zola check` clean; the home page looked at in a headless browser at 1440 pixels, dark
+  — the panel's eight rows beside the headline, nothing wrapped; the description read out
+  of the built page's `<meta>`; the card looked at — both lines inside the window's
+  frame. `site_llms_txt.py --check`, `link_check`, `cyrillic_scan`, `doc_index_check`
+  green.
+- **Not done here.** No release post: it is the release's. The feature grid stays twelve
+  cards. `docs/research/public-documents.md`, which records the grid's order and the
+  sentence as they were decided, is history and keeps its words.

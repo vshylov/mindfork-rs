@@ -208,7 +208,9 @@ highlighting, tables, Mermaid diagrams and LaTeX — all rendered as text,
 in the terminal, with collapse toggles for thoughts and tool cards, search
 inside the conversation and across every chat, and a spellchecker in the
 input box. Pictures go in — from a file, the clipboard or a URL, to a
-local vision model or a cloud one — and speech comes out, with `/tts`.
+local vision model or a cloud one — and speech comes out, with `/tts`:
+through OpenAI, Gemini, a server of your own, or any speech model behind an
+OpenRouter key.
 Every action has a typed command for a terminal that keeps the chord for
 itself, copying works over SSH, a conversation exports to a file, and `F1`
 opens each screen's own key list.
