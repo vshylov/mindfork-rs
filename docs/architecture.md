@@ -246,7 +246,10 @@ src/
 │  │  │                     pass (stat-only walk of `chats/`), and answers a query —
 │  │  │                     escaping it here, since `shared` may not use `features`
 │  │  ├─ tts.rs             speech synthesis: conversation snapshot → chunks →
-│  │  │                     synth/playback pipeline, stop points (§11.9)
+│  │  │                     synth/playback pipeline, stop points (§11.9);
+│  │  │                     speech_gateway(): what a client of the OpenRouter gateway's
+│  │  │                     is built with besides the slot's settings — the attribution
+│  │  │                     switch and the session's FormatMemo (Orchestrator.tts_formats)
 │  │  ├─ mcp.rs             McpManager: MCP server lifecycle (spawn/status/
 │  │  │                     restart budget/TOFU catalog pinning), epoch-tagged events
 │  │  ├─ reflection.rs      self-model auto-reflection (window/watermark, signals)
@@ -262,6 +265,8 @@ src/
 │  │                        self_model/reflection/rag/request + live.rs #[ignore];
 │  │                        gateway_live.rs and gateway_live_embed.rs — the
 │  │                        `openrouter` mode's smokes on the production supervisor,
+│  │                        and gateway_live_speech.rs — `/tts` through the gateway,
+│  │                        the playback queue and the sound card;
 │  │                        #[ignore], docs/install.md §7.1)
 │  ├─ gen_state.rs          GenState: pure Idle/Generating/Cancelling state machine
 │  │                        (begin/request_cancel/finish transitions, no I/O)
@@ -329,7 +334,14 @@ src/
 │     │                     the one screen-initiated network question (AppCommand::ListModels
 │     │                     → AppEvent::ModelCatalogue), docs/research/model-picker.md;
 │     │                     a row whose entry carries ModelFacts (the OpenRouter gateway's)
-│     │                     shows the window, the price and "no tools" in the name's place
+│     │                     shows the window, the price and "no tools" in the name's place.
+│     │                     The speech rows have a list in one mode, the gateway's:
+│     │                     model_slot(config, field) answers ModelSlot::Speech for the
+│     │                     model row and both voice rows, offered(field, models) turns
+│     │                     the one answer into the models or into the voices of the
+│     │                     model the slot names, no_voice_to_pick(field) sends Enter to
+│     │                     the editor where there are none; a speech model's row shows
+│     │                     "voices: N" and no price (spec §11.6)
 │     ├─ search.rs          field search overlay (`/`): index/filter/jump
 │     ├─ render.rs          rendering: menu, tab strip, field list, popups
 │     └─ helpers.rs         free functions: row builders, descriptions, parsers
@@ -592,12 +604,18 @@ src/
    │  │  └─ responses/          Responses API: ResponsesClient + wire (OpenAI cloud, /v1/responses — reasoning summaries, effort, verbosity)
    │  ├─ gemini/            native Gemini: client.rs + wire.rs (generateContent, x-goog-api-key — thought summaries, thinkingLevel/Budget, per-tool-call thoughtSignature)
    │  ├─ anthropic/         Anthropic Messages API: client.rs + wire.rs (Claude, /v1/messages)
-   │  ├─ catalogue.rs       the provider's model catalogue behind the settings picker: six
+   │  ├─ catalogue.rs       the provider's model catalogue behind the settings picker: seven
    │  │                     endpoint shapes (OpenAI-compatible / Gemini native / Anthropic /
    │  │                     xAI language-models / OpenRouter's text models / OpenRouter's
-   │  │                     embedding models) into one CatalogModel carrying the role the
-   │  │                     endpoint claimed — Unstated where it claimed none — and
-   │  │                     ModelFacts (window, price, tools) where it published them
+   │  │                     embedding models / OpenRouter's speech models —
+   │  │                     CatalogueShape::OpenRouterSpeech, the text list under the
+   │  │                     gateway's own filter `?output_modalities=speech`) into one
+   │  │                     CatalogModel carrying the role the endpoint claimed —
+   │  │                     Unstated where it claimed none, ModelRole::Speech for what
+   │  │                     answers with speech — ModelFacts (window, price, tools) where
+   │  │                     it published them, and `voices` (`supported_voices`, read
+   │  │                     leniently); CatalogModel::voice(name) is a voice as a list
+   │  │                     entry, and ModelSlot::Speech the slot that is offered them
    │  ├─ embed_policy.rs    two Embedder decorators the supervisor stacks over a client:
    │  │                     BatchedEmbedder (a request carries at most MAX_INPUTS = 64
    │  │                     texts; a longer input goes in parts, answered as one list
@@ -879,9 +897,16 @@ src/
    │                       local-model users. Key — the shared Gemini provider key
    │                       (ADR 0008); `VideoConfig`'s `Debug` redacts it. Spec §9.9
    ├─ tts/                 speech synthesis (TTS): `TtsEngine` + `AudioClip` contract,
-   │                       `openai` client (`/audio/speech`, also used for external) and
+   │                       `openai` client (`/audio/speech`: `OpenAiTts::cloud`,
+   │                       `::external` and `::gateway` — the OpenRouter gateway, whose
+   │                       audio format is negotiated and remembered per model in the
+   │                       session's `FormatMemo`, and whose answer is read by its
+   │                       `Content-Type`) and
    │                       `gemini` client (generateContent + AUDIO), `playback` (rodio
-   │                       queue, lazy device open). See spec §11.9
+   │                       queue, lazy device open; `decoder` — a container decoded
+   │                       without gapless trimming). gateway_tests.rs — #[cfg(test)],
+   │                       against a local stub; gateway_live_tests.rs — #[ignore],
+   │                       docs/install.md §7.1. See spec §11.9, §6 below
    ├─ sandbox.rs           SandboxRunner (behind a trait) + two runners: WasmerSandbox,
    │                       the `wasmer` sidecar for sandbox mode (WASIX isolation, §8; runs
    │                       only the packed image, refuses an unpacked site-packages), and
@@ -958,8 +983,12 @@ catalogue, and it carries the *slot*, not a key — the orchestrator holds the
 config and the secrets, and `orchestrator/catalogue.rs::source` turns the slot's
 mode into a `CatalogueRequest`: for the OpenRouter gateway the slot also picks
 the list (`/embeddings/models` for the embedder; `/models/user` with a key and
-the public `/models` without one for the two chat slots), the one cloud that is
-asked without a key; docs/research/model-picker.md), `Quit`.
+the public `/models` without one for the two chat slots, and the same pair
+under `?output_modalities=speech` for `ModelSlot::Speech`), the one cloud that is
+asked without a key; the speech slot is answered `NotConfigured` in every speech
+mode but `openrouter` — `speech_mode` — since no other has a list to read, and
+its one answer serves the model row and both voice rows;
+docs/research/model-picker.md), `Quit`.
 
 `AppEvent` (orchestrator → UI) includes: `ServerStatus`, `ChatList`,
 `ChatRenamed`, `ChatSearchResults` (the reply to `SearchChats`: the chats with at
@@ -1611,13 +1640,43 @@ the mode's own (docs/research/openrouter-mode.md §2.3, §4.1):
   The settings picker's list request is `catalogue::fetch`, a client of its
   own: `CatalogueRequest.attribution`, which the orchestrator sets from the
   same switch for the gateway's mode alone, has it carry the same two lines
-  (`openai::attributed` — the one place they are written).
+  (`openai::attributed` — the one place they are written). The speech client
+  (below) is the third that writes them, through the same function.
 
 `check_key` (`GET /key`) answers a `KeyVerdict` — `Accepted`, `Refused` (`401`/
 `403`, the gateway's words), `Unjudged` (any other status), `NoAnswer` (no HTTP
 answer) — which the supervisor turns into the slot's status (below). The stream
 parser reads two more fields a gateway sends — `provider` on a chunk and
 `usage.cost` on the last — and yields them as `ChatChunk::Served`.
+
+**Speech through the gateway is not this client's** — the speech slot is no
+`EngineBackend`, and its mode (`TtsMode::OpenRouter`, the section
+`TtsSettings.openrouter`) is served by `shared/tts/openai.rs`, where
+`OpenAiTts` has a constructor per mode: `cloud`, `external`, `gateway`. The
+first two ask for one format and know what comes back (`Format::Fixed`: `pcm`,
+`wav`); the gateway's is `Format::Negotiated(Arc<FormatMemo>)`, because over its
+21 speech models no format is taken by all and the route takes `pcm` and `mp3`
+alone. `negotiate` asks for what the memo says of the model — `pcm` for one it
+knows nothing about — and on a refusal `names_the_format` recognises (a `400`
+whose body holds `response_format`) asks for `GatewayFormat::other()`, once,
+and keeps what was answered; any other refusal is `gateway_refusal`, the
+gateway's `error.message` behind the status. `labelled` makes the clip out of
+the answer's `Content-Type` — `audio/pcm` or `audio/L16` is
+`AudioClip::Pcm` at the label's `rate` and `channels` (24 kHz mono where it
+names none, logged), anything else `AudioClip::Encoded` for the decoder, no
+label what was asked — and never looks at the bytes. **The memo is the
+session's, not the client's**: speech clients are stateless and built per
+`/tts` command (ADR 0009), so one held inside would pay the refused request
+with every command. The orchestrator owns it (`tts_formats`) and hands it, with
+the attribution switch as it stands, to `engines_from_config` as a
+`GatewaySpeech` (`Orchestrator::speech_gateway`); the assistant's-voice and the
+user's-voice engines of one command share it. No key check precedes any of
+this: nothing of the speech slot is applied, so the supervisor never sees it,
+and a refused key is the first request's answer. `playback::decoder` builds
+the container decoder **without gapless trimming** for every mode — a streamed
+MP3's `Info` tag is written before the stream's length is known, and trimming
+by it panicked on one model's clip and cut another's in half (spec §11.9;
+docs/research/openrouter-mode.md §13).
 
 Anthropic, xAI and Responses have no
 embeddings — of the clients only `OpenAiClient` implements `Embedder` (RAG uses
@@ -1927,7 +1986,9 @@ posts the verdict to the slot's status channel, under the same per-server
 and a request will speak for itself; `NoAnswer` → `Disconnected` with the
 transport's reason, said once, and the question again every `RECHECK_POLL` until
 something answers. The task ends at the first answer: nothing about a cloud is
-periodic, and `/health` is never asked of this host. It serves all three slots:
+periodic, and `/health` is never asked of this host. It serves the three slots
+the supervisor applies (the speech slot, which has the mode too, is never
+applied and is not asked — §6, "Speech through the gateway"):
 the assistant's and impersonation's engines (`apply_chat`,
 `apply_impersonation`) and the embedder — `cloud_embed_setup` takes the slot's
 `Monitor` (its `CancellationToken`, status channel and locale), returns
@@ -2271,7 +2332,10 @@ Invariants:
   `fixtures/settings_v3.json` (every other value is where it was; an `external`
   section holding the gateway's URL stays `external`) and by a test that reads
   a file naming the gateway with the previous schema's reader and gets
-  `Assessment::Downgrade` (spec §12.2).
+  `Assessment::Downgrade` (spec §12.2). The speech slot's `tts.mode` gained the
+  value with a later stage of the same track and **no step of its own**: it is
+  one more slot whose mode may name the gateway, and no build with schema 4 had
+  been released.
 
 The SQLite branch (`db/mod.rs::migrate`, version-aware): `baseline_ddl`
 (`CREATE … IF NOT EXISTS`) runs **every time** — an additive mechanism for
@@ -3864,6 +3928,15 @@ Principles:
     fields (`spec_type: SpecType` + `draft_model`/`draft_gpu_layers`/
     `draft_n_max`/`draft_n_min`); draft fields are only shown in the UI for
     `draft-*` types — for MTP models (`mtp-gemma-…`) that's `draft-mtp`.
+  - **The speech slot is nested the same way:** `TtsSettings` carries `mode:
+    TtsMode` (`openai`/`gemini`/`openrouter`/`external` — `TtsMode::ALL`, the
+    order the row cycles in) and one `TtsCloudSettings` per cloud mode beside
+    `external: TtsExternalSettings`. The gateway's section, `openrouter`, is
+    the one whose defaults name **no model and no voice**, and its
+    `instructions` — a field of the shared type — is never sent and has no
+    row. Its `api_key_env` is among
+    `named_key_env_vars`, what a model-driven child starts without
+    (`shared/child_env.rs`).
 - **API keys** (`shared/secrets.rs`, docs/research/api-key-storage.md,
   docs/history/external-api-key.md):
   a key can be **entered in settings** — it's encrypted with a **machine
@@ -3884,7 +3957,7 @@ Principles:
   consulted by both the orchestrator and the settings screen, so a row cannot
   address a different secret than the server resolves. A cloud key is shared by
   chat/impersonation/embeddings/speech of that provider (the gateway's, stored
-  as `openrouter`, by the three slots that have the mode); the four **external**
+  as `openrouter`, among them: all four slots have the mode); the four **external**
   slots each have their own, because their four URLs are four independent servers.
   Only the orchestrator writes keys (`AppCommand::SetSecret`); they never land
   in the config snapshot sent to the UI. This protects the **file**

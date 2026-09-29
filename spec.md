@@ -186,7 +186,7 @@ Two modes (chosen in settings):
    **Raw arguments.** Each managed section — the assistant's, impersonation's and the embedder's — has an *Extra arguments* field (`extra_args`, a list stored as argv and edited as one command line through `shared::cmdline`: whitespace separates, `"…"`/`'…'` quote, no shell is involved), appended **last** to the line the fields build: the way to everything llama.cpp offers and the settings do not — `--n-cpu-moe N` or `-ot <regex>=CPU` for a large mixture-of-experts model on a small card (measured on gemma-4-26B-A4B Q4_1, `-c 16384`, an RTX 4090: 17.3 GB of VRAM at 142 tok/s on the GPU alone, 12.8 GB at 45 with `--n-cpu-moe 10`, 8.4 GB at 28 with `--n-cpu-moe 20`), `-t`, `--cache-type-k`, `-ub`, `--kv-unified-per-slot`. Changing it restarts the server. A repeated flag silently wins in llama.cpp — the last occurrence — and upstream has deprecated the repetition itself (`W DEPRECATED: argument '--port' specified multiple times`), so four kinds of flag are **refused** (`shared::api::llama_args`, the table read from build 11191's `--help`): (1) one a field of **the same section** writes, in any spelling (`-c`/`--ctx-size`, `--no-jinja`, `--port=9000`), the refusal naming the field — per section, so `-np` is the assistant's *Sessions* but free on the impersonation server, which shows no such field, and the embedder's section, which shows a model and a port, leaves `-c`, `-ngl` and `-b` to this field; (2) one the app's connection to its own child depends on — `--api-key`/`--api-key-file` (the server would answer `/health` and refuse everything else), `--api-prefix`, `--ssl-*`, `--embeddings` on a chat server, `--host` on the embedder, which the app binds to loopback itself; (3) one that turns the server into an agent with the host's hands — `--tools` (its `exec_shell_command`, `write_file`, …), `--agent`, `--mcp-servers-*`, the web UI's MCP proxy — a shell for whoever reaches the port, past every guard of the app's own tool layer; (4) one that has it fetch or route models by itself — `-hf` and its kin, `--model-url`, `--docker-repo`, `--models-dir`, the Hugging Face token — for the reason router mode is refused above. Kinds 2–4 name the way that works: start `llama-server` yourself and connect in External mode. The settings editor refuses on `Enter` with the reason in its title, and `ServerHandle::launch` asks the same question before anything is spawned, since `settings.json`, `mindfork setup --set` and a restored backup never meet the editor. The child's environment loses the variables of kinds 2–4 (`LLAMA_API_KEY`, `LLAMA_ARG_TOOLS`, `LLAMA_ARG_HF_REPO`, `HF_TOKEN`, …): llama.cpp reads `LLAMA_ARG_*` for every option and the child inherits the app's environment, so a refused flag must not come in by that door — and, measured, a `LLAMA_API_KEY` set for any other tool used to give a managed server whose `/health` said ok and whose every request was a `401`. Every other `LLAMA_ARG_*` stays: it is the process-wide route, reaching all three managed servers, and the command line beats it. What the field cannot check is whether llama.cpp takes the rest; a typo is the early exit above, in llama.cpp's words. Design, the security review and the measurements: [docs/research/managed-extra-args.md](docs/research/managed-extra-args.md).
 2. **External** — connect to an already-running server (URL/port in settings; any OpenAI-compatible one); the application doesn't manage its lifecycle.
 
-**The cloud modes have no lifecycle — with one exception.** `openai`, `gemini`, `claude`, `grok` and `openrouter` ([8.2](#82-consequences), [ADR 0004](docs/decisions/0004-engine-contract-multi-provider.md)) launch nothing and load nothing. A model name and a key are required — without either the status is `Disconnected` with the reason, and no request is made — and otherwise the engine is `Ready` at once, unprobed. **The OpenRouter gateway is the one cloud that is asked before it is called ready** (`app::supervisor::spawn_key_check`): when the assistant's or impersonation's engine, or the embedder, is applied in that mode the status is `Connecting` while `GET /key` — the one request that says whether a key is good without spending anything — is asked **once**, with the key. Accepted → `Ready`. Refused (`401`/`403`) → `Disconnected` in the gateway's own words (*"OpenRouter refused the API key: User not found."*), so a bad key is the slot's status rather than the first message's error. Any other answer — an outage, a rate limit — judges nothing and is `Ready` too: the key was not refused, and a request will speak for itself. **No answer at all** (DNS, connect, TLS) is the one case that repeats: the status says why, and the question is asked again every 5 s until something answers — the recovery a machine that came back online needs. After the first answer nothing is periodic: a cloud is not watched. **The embedder in this mode is asked the same question, on the same terms** (`cloud_embed_setup`), where the other cloud embedders are `Ready` on a key and a model, unasked: a refused key is the embedder's status — the `emb` chip and the settings' status chip, which carries the gateway's sentence — rather than a `401` first met inside the result of whichever tool embedded first. The embedder's status gates nothing ([11.1](#111-screens-and-navigation)), so a call made on a refused key is still made, and fails in the gateway's words. llama.cpp's `/health` and `/props` are never requested in this mode — the host answers `404` to both — and the model's facts come from `GET /model/{slug}` ([6.7](#67-history-compression-rolling-summary)). The mode's settings are a section `openrouter` in each of the three slots (the model, the name of the key's environment variable, an optional base URL — `https://openrouter.ai/api/v1` when empty — and, for the assistant, `sessions` and `concurrent_calls`) and **one provider-wide section**, `openrouter: { attribution }`, for what belongs to no slot ([11.6](#116-the-settings-screen)); one stored key, `openrouter`, serves every slot ([ADR 0008](docs/decisions/0008-api-key-storage.md)). `external` is unchanged and still reaches any gateway, this one included: the mode exists so that a local server and the gateway each keep their settings, and so that what `external` has to **infer** from a catalogue that answered, this mode is **told**. Speech and YouTube video through the gateway are later stages of the track and are not implemented. Design, measurements and the adopted forks: [docs/research/openrouter-mode.md](docs/research/openrouter-mode.md).
+**The cloud modes have no lifecycle — with one exception.** `openai`, `gemini`, `claude`, `grok` and `openrouter` ([8.2](#82-consequences), [ADR 0004](docs/decisions/0004-engine-contract-multi-provider.md)) launch nothing and load nothing. A model name and a key are required — without either the status is `Disconnected` with the reason, and no request is made — and otherwise the engine is `Ready` at once, unprobed. **The OpenRouter gateway is the one cloud that is asked before it is called ready** (`app::supervisor::spawn_key_check`): when the assistant's or impersonation's engine, or the embedder, is applied in that mode the status is `Connecting` while `GET /key` — the one request that says whether a key is good without spending anything — is asked **once**, with the key. Accepted → `Ready`. Refused (`401`/`403`) → `Disconnected` in the gateway's own words (*"OpenRouter refused the API key: User not found."*), so a bad key is the slot's status rather than the first message's error. Any other answer — an outage, a rate limit — judges nothing and is `Ready` too: the key was not refused, and a request will speak for itself. **No answer at all** (DNS, connect, TLS) is the one case that repeats: the status says why, and the question is asked again every 5 s until something answers — the recovery a machine that came back online needs. After the first answer nothing is periodic: a cloud is not watched. **The embedder in this mode is asked the same question, on the same terms** (`cloud_embed_setup`), where the other cloud embedders are `Ready` on a key and a model, unasked: a refused key is the embedder's status — the `emb` chip and the settings' status chip, which carries the gateway's sentence — rather than a `401` first met inside the result of whichever tool embedded first. The embedder's status gates nothing ([11.1](#111-screens-and-navigation)), so a call made on a refused key is still made, and fails in the gateway's words. llama.cpp's `/health` and `/props` are never requested in this mode — the host answers `404` to both — and the model's facts come from `GET /model/{slug}` ([6.7](#67-history-compression-rolling-summary)). The mode's settings are a section `openrouter` in each of the three slots (the model, the name of the key's environment variable, an optional base URL — `https://openrouter.ai/api/v1` when empty — and, for the assistant, `sessions` and `concurrent_calls`) and **one provider-wide section**, `openrouter: { attribution }`, for what belongs to no slot ([11.6](#116-the-settings-screen)); one stored key, `openrouter`, serves every slot ([ADR 0008](docs/decisions/0008-api-key-storage.md)). **The speech slot has the mode too** — `tts.mode`, with a section `tts.openrouter` of the speech slot's own kind (the model, the two voices, the name of the key's variable, the base URL; [11.9](#119-speaking-messages-aloud-tts)) — and it is the one slot in this mode that is **not asked about the key**: it has no engine and no status chip and nothing of it is applied, its client being built when `/tts` is typed, so a refused key is said by the first request, in the gateway's sentence. `external` is unchanged and still reaches any gateway, this one included: the mode exists so that a local server and the gateway each keep their settings, and so that what `external` has to **infer** from a catalogue that answered, this mode is **told**. YouTube video through the gateway is a later stage of the track and is not implemented. Design, measurements and the adopted forks: [docs/research/openrouter-mode.md](docs/research/openrouter-mode.md).
 
 **Obtaining the binary.** Managed mode needs a `llama-server` on disk, and the app can fetch one: `mindfork llama backends` reads the llama.cpp releases, keeps the assets built for the running OS and architecture, and names the backend each was built with; `mindfork llama setup --backend <id>` downloads that one into `data/llama/<backend>-<tag>/`, verifies it against the sha256 the release publishes, unpacks it and then runs it to report the build number (which must equal the tag's) and the compute devices the backend found. The list of backends is **derived from the asset names**, not enumerated in our source — upstream renamed the AMD build (`win-hip-radeon-x64` → `win-rocm-10.0-x64`) and changed the Linux archive format (`.zip` → `.tar.gz`) inside fourteen months, so a fixed table would have gone stale twice; the parse is anchored on both ends (`llama-<tag>-bin-<os>[-<backend…>]-<arch>.<ext>`, an empty middle meaning `cpu`, which is how the Linux CPU build spells itself) and anything that does not match exactly is skipped rather than guessed at. A `cuda-*` backend is downloaded together with the release's separate CUDA-runtime archive, because without it the backend does not load and the server silently runs on the CPU. That archive's name is **derived too**, not formatted: upstream spells it without a build tag on Windows (`cudart-llama-bin-win-cuda-12.4-x64.zip`) and — since it began publishing CUDA builds for Linux, 2026-09-14 — with one, as a tarball, there (`cudart-llama-b11070-bin-ubuntu-cuda-12.8-x64.tar.gz`); formatting the first shape for every OS made `setup` refuse CUDA on Linux, naming a file that was never published. `--backend` also takes a **family** — `cuda-12` for the one `cuda-12.*` the build carries — because the minor in the name moves with upstream's toolkit (`cuda-13.3` became `cuda-13.4` inside twelve days) and a saved command line should outlive that; an exact id wins, a family ends at a token boundary, and one that matches two backends is refused with both named, never guessed. With no `--build`, the release is the newest of the last five that carries the named backend **whole** — with its runtime, when one is to be fetched: nightlies are published with no assets, or partly uploaded, often enough to matter (3 of the 40 newest on 2026-09-21). The version is the line of `--version`'s output that *begins* `version:` — not its first line, since newer builds log ahead of it — and a binary that runs but names no build number is reported as such rather than letting the check skip itself in silence ([docs/research/cloud-provisioning.md](docs/research/cloud-provisioning.md) §3.1). The requests carry **no credentials** — a `GITHUB_TOKEN` in the environment is not read, since no variable is ever read for a credential the user did not name (PRIVACY.md §3.8) — so behind a shared address GitHub's 60-requests-an-hour anonymous limit can refuse them, and the error says so in words. `--set-binary` writes the installed path into the managed configs after a successful install: `engine.managed.binary` always, `impersonation_engine.managed.binary` and `embed.managed.binary` only when they are empty — one install serves all three servers, but a path the user typed is a deliberate choice. The engine **mode is never changed**: `managed` is already the default ([12.1](#121-configuration)), so a config in another mode is one the user switched on purpose, and the command reports that state rather than undoing it. Like `sandbox setup --enable-python` it is long-form only and applied past the `?`, and it goes through the same two precautions every CLI write of user data takes — the ADR 0006 downgrade guard first, and language seeding when `settings.json` does not yet exist. `llama remove <id>` deletes an install, identified by its directory name or by a bare backend while that is unambiguous — two builds of one backend name neither, since guessing between them is how the wrong gigabyte is deleted. It reads `settings.json` and never writes it: a build any of the three managed fields points at is **refused** unless `--force`, because removing it silently would leave them aiming at nothing and the failure would surface only at a later launch. There is deliberately no `--all` and no automatic prune — the build worth deleting and the build the user was about to fall back to are indistinguishable from here. Design, the measured release surface and the forks: [docs/research/llama-cpp-download.md](docs/research/llama-cpp-download.md); the user-facing description — [docs/install.md](docs/install.md) §3.1.
 
@@ -3272,7 +3272,8 @@ section and subsection), `Esc` — cancel.
   cost nothing, while a genuine change still restarts.
 
   **Picking a model from the provider's own catalogue.** `Enter` on a model row —
-  the assistant's, impersonation's or the embedder's — asks the provider what it
+  the assistant's, impersonation's or the embedder's, and in the `openrouter`
+  mode the speech slot's (below) — asks the provider what it
   serves and offers the list, with a filter line; its **first row is always "type
   a name by hand"**, the editor the field has always had, so no failure of the
   catalogue can trap the user in a list. The request goes out on that keypress and
@@ -3320,16 +3321,60 @@ section and subsection), `Esc` — cancel.
   the id; the name is still what the filter searches
   ([docs/research/openrouter-mode.md](docs/research/openrouter-mode.md) §3.2, fork F7).
 
+  **The Speech tab in the `openrouter` mode** shows, in this order, *Model*,
+  *Voice*, *User voice*, *OpenRouter API key*, *OpenRouter API key (env)*, *Base
+  URL (opt.)* and *Name the app to OpenRouter*, then *Speech rate* and the three
+  behaviour toggles every speech mode has
+  ([11.9](#119-speaking-messages-aloud-tts)). There is **no *Instructions* row**
+  in this mode — OpenAI and Gemini keep theirs: `instructions` is not a field of
+  the gateway's speech route, which drops it with a `200` like any unknown key,
+  so the value is never sent and a row for it would offer what no request
+  carries. The *Speech rate* hint says, in every mode, that the rate is sent only
+  where supported **and that a model may ignore it**.
+
+  **It is the one speech mode with a list behind its rows.** `Enter` on *Model*
+  lists the gateway's speech models — the first list the speech slot has ever
+  had. The request is `GET {base}/models/user?output_modalities=speech` when a
+  key is available, the account's own list, and the public
+  `GET {base}/models?output_modalities=speech` when none is (measured: the same
+  21 entries either way), so this picker too opens before a key is entered; the
+  rest is every picker's — "type a name by hand" first, the answer kept for the
+  visit, `Ctrl+R` asks again. A row shows the model's slug and **`voices: N`**
+  where the model lists voices, and **neither a price nor a window**: the
+  catalogue publishes a price without its unit, and the unit differs by model —
+  measured, 50 characters spoken by `x-ai/grok-voice-tts-1.0` cost 50 × its
+  `pricing.prompt`, a price per *character*, while Gemini's speech entries are
+  priced per token — so "per 1M tokens" beside it would be the application's
+  claim, and for most models a wrong one. `Enter` on *Voice* and on *User voice*
+  lists **the voices of the model the *Model* row names** (`supported_voices`),
+  out of the **same answer**: a voice belongs to a model, so one request serves
+  all three rows for the visit. A model that lists no voice, or a name typed by
+  hand that the list does not hold, has nothing to pick from, and there `Enter`
+  opens the ordinary text editor. In the other three speech modes nothing
+  changed — the *Model* and *Voice* rows are text fields: OpenAI's catalogue says
+  nothing about what a model does, Gemini's native list calls its speech models
+  chat models, and an external server is asked for one model or for none. The
+  `external` speech mode's URL row, when its address is the gateway's (the host
+  rule above), carries a hint **of its own**: speech through it needs the mode —
+  an external server is asked for WAV, which OpenRouter refuses. The other
+  slots' hint says their `external` section keeps working as it is, which for
+  speech would be false
+  ([docs/research/openrouter-mode.md](docs/research/openrouter-mode.md) §13,
+  forks F7 and F12).
+
   **Name the app to OpenRouter** (`openrouter.attribution`, on by default) is a
   switch in the *Provider* group of every tab whose mode is `openrouter` — **one**
-  field under three tabs, because it is the provider's and not a slot's. On,
-  every request to the gateway — chat, embeddings, the key check, the question
-  about the model and the picker's list — carries `HTTP-Referer:
+  field under four tabs, the Speech tab among them, because it is the provider's
+  and not a slot's. On,
+  every request to the gateway — chat, embeddings, speech, the key check, the
+  question about the model and the picker's lists — carries `HTTP-Referer:
   https://mindfork.io` and `X-OpenRouter-Title: mindfork`: the application's
   site and its name, by which the gateway counts its public rankings, and
   nothing about the user. Off, neither header is sent by any of them. Changing the
   switch re-applies the slots that speak to the gateway and no others — a managed
-  `llama-server` is not reloaded over a header it never sends. It is a switch at
+  `llama-server` is not reloaded over a header it never sends — and the speech
+  slot has nothing to re-apply: the client the next `/tts` builds reads the
+  switch as it stands. It is a switch at
   all because it is the one thing this application says about itself to a
   provider ([docs/research/openrouter-mode.md](docs/research/openrouter-mode.md),
   fork F5; [PRIVACY.md](PRIVACY.md) §3.1).
@@ -3705,8 +3750,8 @@ entered again, and it's read back when returning here.
 
 Which key a row addresses follows the subsection's **mode**. A **cloud** key is
 **shared** across chat, impersonation, embeddings and speech for one provider — enter
-it once (the OpenRouter gateway's across chat, impersonation and embeddings, the
-three slots that have the mode). An **external** key belongs to that **one slot**: the four `external`
+it once (the OpenRouter gateway's too, across the same four slots: each has the
+`openrouter` mode). An **external** key belongs to that **one slot**: the four `external`
 subsections hold four independent URLs (the common setup is a cloud gateway for chat
 beside a local `llama-server` for embeddings), so one shared key would send a
 gateway's token to localhost. In external mode the key is also **optional** — a local
@@ -4280,10 +4325,12 @@ optional role prefixes ("User." / "Assistant.") are in **the profile's language*
 **The provider** (`AppConfig.tts`, the "Speech" tab in the "Model" section, §11.6) —
 an independent "server slot", like embeddings (ADR 0002): Anthropic has
 no TTS at all, so speech is configured separately from the chat engine. Modes
-(`TtsMode`): `openai` (default, `POST {base}/audio/speech`, model
+(`TtsMode`), in the order the *Mode* row cycles through them: `openai` (default,
+`POST {base}/audio/speech`, model
 `gpt-4o-mini-tts`, voice `onyx` — both verified with a live spike), `gemini` (native
 `generateContent` with `responseModalities:["AUDIO"]`, model
-`gemini-2.5-flash-preview-tts`, voice `Kore`), and `external` — any third-party
+`gemini-2.5-flash-preview-tts`, voice `Kore`), `openrouter` — the OpenRouter
+gateway's speech route, described below — and `external` — any third-party
 OpenAI-compatible TTS server (for offline/non-OpenAI users; a local managed
 sidecar is groundwork). The cloud API key is **shared** with chat (ADR 0008) — no need to
 re-enter it; if unconfigured → the command replies with a clear hint. For `gpt-4o-mini-tts`
@@ -4292,10 +4339,89 @@ ignores the `speed` parameter). Behavior settings: "Speak roles" (applies to
 **every** command variant), "Interrupt on chat switch" (on), and "Interrupt on
 generation" (off).
 
+**The `openrouter` mode** (stage 3 of the track of
+[3.4](#34-managing-the-server-lifecycle)) has a section of its own,
+`tts.openrouter` — `model_name`, `voice`, `user_voice`, `api_key_env`, `url` —
+with **no default model and no default voice**: a default that names a model
+ages, and the gateway's list is one keypress away
+([11.6](#116-the-settings-screen)). Until a model is chosen `/tts` says speech is
+not configured, in the "set a model" words every mode has. The section's type
+is the cloud one OpenAI and Gemini use, so it carries `instructions` too; in
+this mode that field is **never sent** and has no settings row, not being a
+field of the gateway's speech route. The key is the provider's one stored key —
+the one the chat, impersonation and embedder slots use in their `openrouter`
+mode (ADR 0008) — or the environment variable the section names in
+`api_key_env`, which is thereby one of the named key variables a model-driven
+child process starts without ([9.12](#912-the-code-workspace-project-and-the-code_-tools)).
+**The key is not checked ahead of time**, unlike in the other three slots
+([3.4](#34-managing-the-server-lifecycle)): there is no engine, no status chip
+and nothing that is applied, so a refused key is said by the first request.
+
+The client is the one OpenAI and `external` use (`OpenAiTts`, a constructor per
+mode: `cloud`, `external`, `gateway`). It sends `POST {base}/audio/speech` with
+`{model, input, voice?, response_format, speed?}` and the key as a bearer
+token; the base is `https://openrouter.ai/api/v1` unless the section's base URL
+says otherwise, `voice` is sent only when set and `speed` only when it differs
+from 1.0, and the two attribution headers travel under the provider-wide switch
+(§11.6). What differs from the other two modes is how the audio format is
+arrived at:
+
+- **The format is negotiated.** Measured on 2026-09-29 over the gateway's 21
+  speech models, no audio format is taken by all of them — `pcm` by 19, `mp3` by
+  18 — and the route takes only those two: `wav` is refused by the gateway's own
+  schema with a `400`, whichever model is named. So the client asks for `pcm`
+  first (raw samples need no decoder), and on a `400` whose body names
+  `response_format` it asks **once** for the other format. A refusal about
+  anything else is not retried.
+- **The answer is remembered per model, for the session** (`FormatMemo`). Speech
+  clients are stateless and built per `/tts` command, so the memo is held by the
+  orchestrator and handed to each client (`Orchestrator::speech_gateway()` →
+  `GatewaySpeech`); the assistant's-voice engine and the user's-voice engine of
+  one command share it. What is remembered is what the gateway **did**, both
+  ways: a model that stops taking the remembered format costs one refused
+  request and is remembered the new way.
+- **What came back is read from its label.** `Content-Type:
+  audio/pcm;rate=44100;channels=1` (or `audio/L16…`) is raw signed 16-bit
+  little-endian samples at the rate and the channel count the label names —
+  measured: 24 kHz for most, 44.1 kHz for Fish Audio's four models, a 32 kHz MP3
+  from MiniMax, and one model, ByteDance's, answering raw samples in **stereo**.
+  A raw label that names no rate is taken for 24 kHz mono, and that is logged.
+  Any other label is a container handed to the decoder, and no label at all is
+  what was asked for. The label decides and the body is **never sniffed**: raw
+  PCM may begin with `0xFFFF`, which is an MP3 frame sync to anything that
+  sniffs.
+- **A refusal is said in the gateway's own sentence** — `error.message` out of
+  its JSON: `TTS: status 400 Bad Request: An explicit voice is required for this
+  TTS provider.`, `TTS: status 401 Unauthorized: User not found.` It reaches the
+  chat as the localized "speech synthesis failed: …" note every mode has.
+- **A voice** is required by most of the gateway's speech models (the `400`
+  above), while a few — Fish Audio's — list none and speak without. The
+  application does not refuse up front when none is set; the gateway's sentence
+  says what is missing.
+- **`speed`** is sent as for every provider, but a model may ignore it:
+  measured, Gemini and Grok through the gateway produce the same length of audio
+  at 0.5, 1.0 and 2.0.
+
+Measurements and the forks:
+[docs/research/openrouter-mode.md](docs/research/openrouter-mode.md) §4.4, §13.
+
+**A container is decoded without gapless trimming**, in every mode that plays
+one (`shared/tts/playback.rs::decoder`) — a defect the gateway's models exposed
+and that was never the gateway's. Gapless playback trims what the first frame's
+`Info` tag says the encoder added and counts the frames by the same tag, and a
+speech server writes that tag before it knows how long the stream will be.
+Measured on the MP3 of the twelve gateway models that answer one: MiniMax's tag
+counts **zero** frames, and the demuxer subtracted the encoder's delay from zero
+— a panic (integer overflow) in a build that checks for it; Kokoro's counts half
+of them, and its sentence stopped at 2.35 s of 4.78 s. Untrimmed, a clip keeps
+the encoder's few dozen milliseconds of padding (48 and 66 ms on the two clips
+whose tags were true). An `external` server is covered by the same fix: any
+server that streams an MP3 can write such a tag.
+
 **Execution.** The orchestrator (the owner of `Chat`) takes a **snapshot** of the conversation
 at the moment of the command — so the command also works during generation — and starts
 a cancellable background task. The text is cut into chunks along sentence boundaries (per the
-provider's limit: OpenAI 4096, Gemini/External 2000 characters) — a short message goes as a
+provider's limit: OpenAI 4096, Gemini/OpenRouter/External 2000 characters) — a short message goes as a
 **single request**; the task runs as a **pipeline**: while chunk N is playing, N+1 is
 synthesized (the first sound arrives quickly). Playback — a `rodio` queue inside the
 process; when no audio device is available (headless/CI/no sound card) → a "audio unavailable"
@@ -4436,7 +4562,7 @@ not the runs.
 
 - **The neutral exchange format `mindfork-import`** ([docs/import-format.md](docs/import-format.md), stage 1 of the "plugins" track — [docs/research/plugin-system.md §5](docs/research/plugin-system.md)): an external (possibly private) **converter** reads the source application's format and emits one JSON file (profiles + chats + optional global sampling/interface settings); the application imports it via the `mindfork import <file>` command (`features/import.rs`). Knowledge of non-public source applications (LameLLaMA) lives in the converters, not in the monolith. Properties: **idempotency** (deterministic UUIDv5s derived from stable `key`s; an optional explicit `id` — continuity with what was previously imported), strictness about structure (a wrong `format`/duplicate keys/a reference to a missing profile/an unknown role → a clear error) with tolerance for extension (unknown fields are ignored), a downgrade guard on `version`, tolerance for a BOM. Source settings are applied partially (only the fields that are set). The former `import-lamellama` command (an importer baked into the monolith) has been **removed** — its role is now played by the "converter → `import`" pair.
 
-**The first real step** (2026-08-23): `SETTINGS_SCHEMA` 1→2 — when the subagent gained tools ([§9.3.2](#932-call_subagent)) its one-request timeout `tools.subagent_timeout_secs` became the whole-run `subagent_run_timeout_secs` (600 s) and the per-reply cap's default rose to 4096; the step renames the key, drops a value left at the old default (so the new one applies) and carries a changed value over. **`CHAT_SCHEMA` 1→2** (the same track, next stage): every old `call_subagent` record — in `messages` and in the `deleted` archive alike — gets a transcript synthesized from what it already holds (the persona and the message from `arguments`, the reply from `result`, the reply's time from the `Tool` message that answered the call; a record with no result becomes an instruction with no reply and no outcome), under a deterministic id (`Uuid::new_v5` over chat id + call id, so a restored backup migrates to the same `chat://` addresses), and the file is stamped `v = 2` — which `Chat` now **writes on every save**, so a migrated file is never handed to the step again. Nothing existing is removed or rewritten: the migrated file is a superset of the old one. **`CHAT_SCHEMA` 2→3** stamps the version an older binary refuses politely once a file may carry a dialogue run ([§9.13](#913-the-directed-dialogue-run_dialogue)) — no shape change. **`CHAT_SCHEMA` 3→4** repairs data the removed title cap had already cut: a **run** title of exactly the old 100 characters, not the user's own (`renamed_manually`), is rewritten with what `initial_title` would have produced had the cap never existed — the persona's name, else the first line of the instruction, which the run still holds as its first `User` message ([§11.2](#112-the-chat-list-an-overlay)). The re-derivation must **start with** the stored title, so the step can only ever give a title its tail back, never replace one; a chat's own title (model-written or typed) has no source to re-derive from and is left alone, and so is a dialogue's `A ↔ B`, whose labels may be a localized default a `shared` step cannot reproduce. Idempotent by construction: a restored title is no longer the cap's length. **`SETTINGS_SCHEMA` 2→3** (2026-09-18) raises the default reply budget from 2048 to 16384: that number covers the model's **reasoning** as well wherever a provider bills it that way, and 2048 predates all of them — measured on `gemini-2.5-pro` with thinking on, 1697 tokens of thinking left 347 for the answer and the reply came back cut, while the same question at 16384 finished on its own ([docs/research/robustness-and-defaults.md](docs/research/robustness-and-defaults.md) F5). A value left at the old default is **rewritten**, a value the user typed is kept; unlike the 1→2 step this writes the number rather than dropping the key, because `SamplingConfig::default()` has no limit of its own and a dropped key would mean *no cap*, which is a different decision. **`SETTINGS_SCHEMA` 3→4** (2026-09-29) **changes nothing in the file but the version.** 4 is the first schema in which a slot's `mode` — the assistant's, impersonation's, the embedder's — may read `"openrouter"` ([3.4](#34-managing-the-server-lifecycle)), and a mode is a strict enum: a binary that does not know the value fails the parse of the whole file. What such a binary then did depended on its age — 0.12.0 refuses to start, naming an unknown variant; 0.11.2 and earlier fell back to the defaults in silence and wrote them over the file, stored keys included. With the version raised, every older binary that has the downgrade guard refuses **before** it reads a value, and says why: the data was created by a newer version. The step stamps the version **whether or not any slot uses the new mode** — a file stamped only once it held the value would be readable by an older binary until the day the mode was selected, and then not, with nothing about the application having changed that day. A pre-migration backup is made as for every migration, and it is the way back. Nothing is moved into the new mode: an `external` section that holds the gateway's URL is still `external` after the step, and the new sections read as their defaults (`openrouter.attribution` on). Chats (`metadata.mode`) and `data.db` (`llm_history.mode`) carry the same value and need no bump of their own, since an older binary never gets past `settings.json` ([docs/research/openrouter-mode.md](docs/research/openrouter-mode.md), fork F3). `profiles.json` stays at 1.
+**The first real step** (2026-08-23): `SETTINGS_SCHEMA` 1→2 — when the subagent gained tools ([§9.3.2](#932-call_subagent)) its one-request timeout `tools.subagent_timeout_secs` became the whole-run `subagent_run_timeout_secs` (600 s) and the per-reply cap's default rose to 4096; the step renames the key, drops a value left at the old default (so the new one applies) and carries a changed value over. **`CHAT_SCHEMA` 1→2** (the same track, next stage): every old `call_subagent` record — in `messages` and in the `deleted` archive alike — gets a transcript synthesized from what it already holds (the persona and the message from `arguments`, the reply from `result`, the reply's time from the `Tool` message that answered the call; a record with no result becomes an instruction with no reply and no outcome), under a deterministic id (`Uuid::new_v5` over chat id + call id, so a restored backup migrates to the same `chat://` addresses), and the file is stamped `v = 2` — which `Chat` now **writes on every save**, so a migrated file is never handed to the step again. Nothing existing is removed or rewritten: the migrated file is a superset of the old one. **`CHAT_SCHEMA` 2→3** stamps the version an older binary refuses politely once a file may carry a dialogue run ([§9.13](#913-the-directed-dialogue-run_dialogue)) — no shape change. **`CHAT_SCHEMA` 3→4** repairs data the removed title cap had already cut: a **run** title of exactly the old 100 characters, not the user's own (`renamed_manually`), is rewritten with what `initial_title` would have produced had the cap never existed — the persona's name, else the first line of the instruction, which the run still holds as its first `User` message ([§11.2](#112-the-chat-list-an-overlay)). The re-derivation must **start with** the stored title, so the step can only ever give a title its tail back, never replace one; a chat's own title (model-written or typed) has no source to re-derive from and is left alone, and so is a dialogue's `A ↔ B`, whose labels may be a localized default a `shared` step cannot reproduce. Idempotent by construction: a restored title is no longer the cap's length. **`SETTINGS_SCHEMA` 2→3** (2026-09-18) raises the default reply budget from 2048 to 16384: that number covers the model's **reasoning** as well wherever a provider bills it that way, and 2048 predates all of them — measured on `gemini-2.5-pro` with thinking on, 1697 tokens of thinking left 347 for the answer and the reply came back cut, while the same question at 16384 finished on its own ([docs/research/robustness-and-defaults.md](docs/research/robustness-and-defaults.md) F5). A value left at the old default is **rewritten**, a value the user typed is kept; unlike the 1→2 step this writes the number rather than dropping the key, because `SamplingConfig::default()` has no limit of its own and a dropped key would mean *no cap*, which is a different decision. **`SETTINGS_SCHEMA` 3→4** (2026-09-29) **changes nothing in the file but the version.** 4 is the first schema in which a slot's `mode` — the assistant's, impersonation's, the embedder's, and the speech slot's `tts.mode` ([11.9](#119-speaking-messages-aloud-tts)) — may read `"openrouter"` ([3.4](#34-managing-the-server-lifecycle)), and a mode is a strict enum: a binary that does not know the value fails the parse of the whole file. What such a binary then did depended on its age — 0.12.0 refuses to start, naming an unknown variant; 0.11.2 and earlier fell back to the defaults in silence and wrote them over the file, stored keys included. With the version raised, every older binary that has the downgrade guard refuses **before** it reads a value, and says why: the data was created by a newer version. The step stamps the version **whether or not any slot uses the new mode** — a file stamped only once it held the value would be readable by an older binary until the day the mode was selected, and then not, with nothing about the application having changed that day. A pre-migration backup is made as for every migration, and it is the way back. Nothing is moved into the new mode: an `external` section that holds the gateway's URL is still `external` after the step, and the new sections read as their defaults (`openrouter.attribution` on; `tts.openrouter` empty, with no model and no voice). The speech slot's mode came with a later stage of the same track and **has no step of its own**: it is one more slot whose mode may name the gateway, which is what 4 already says, and no build with schema 4 had been released when it was added. Chats (`metadata.mode`) and `data.db` (`llm_history.mode`) carry the same value and need no bump of their own, since an older binary never gets past `settings.json` ([docs/research/openrouter-mode.md](docs/research/openrouter-mode.md), fork F3). `profiles.json` stays at 1.
 
 ### 12.3. Backup and deletion
 

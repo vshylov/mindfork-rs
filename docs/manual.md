@@ -49,7 +49,7 @@ Open settings — `Ctrl+P` (or type `/settings`) — and go to **Model/server**.
 | `managed` | the app launches its own `llama-server` child process from a binary and a GGUF file on this machine |
 | `external` | any OpenAI-compatible server you already run: llama.cpp, vLLM, LM Studio, Ollama, or a gateway such as LiteLLM |
 | `openai` · `gemini` · `claude` · `grok` | the cloud providers, each with its own key and model |
-| `openrouter` | the OpenRouter gateway: one key in front of every vendor's models, the same key for the assistant, impersonation and embeddings |
+| `openrouter` | the OpenRouter gateway: one key in front of every vendor's models, the same key for the assistant, impersonation, embeddings and speech |
 
 For a cloud mode, fill in the API key (it is stored encrypted and bound to this
 machine, and never shown back) and then the **model**: press `Enter` on that
@@ -263,10 +263,23 @@ is open and idle; otherwise the chat list marks it unread.
 
 `/tts` speaks the last message, `/tts N` the last N, `/tts all` the whole
 conversation; `/tts stop|pause|resume` controls playback. The voice is configured
-at `Ctrl+P → Model/server → Speech` — OpenAI, Gemini, or any OpenAI-compatible
-speech server — and your own lines can have a different voice. Code, tables and
+at `Ctrl+P → Model/server → Speech` — OpenAI, Gemini, the OpenRouter gateway, or
+any OpenAI-compatible speech server — and your own lines can have a different
+voice. Code, tables and
 diagrams are skipped with a short spoken note instead of being read out
 character by character.
+
+In the `openrouter` mode the Speech tab has lists where the other modes have
+text fields: `Enter` on **Model** offers the gateway's speech models, each with
+the number of voices it lists, and `Enter` on **Voice** or **User voice** offers
+the voices of the model chosen. The key is the one the other tabs use in that
+mode. There is **no default model** — until you choose one, `/tts` says speech is
+not configured — and no price in the list, because the gateway publishes that
+number without its unit. Most of its models need a voice and a few speak
+without one; when something is missing or refused, the chat shows the gateway's
+own sentence, for instance *"An explicit voice is required for this TTS
+provider."* The speech rate is sent, and a model may ignore it
+([install.md §4.3](install.md)).
 
 ## 8. Settings worth knowing
 

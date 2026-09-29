@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (78)
+## Entries (79)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -90,6 +90,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: raw `llama-server` arguments in managed settings (done)
 - Post-M9: OpenRouter as a provider of its own — stage 1 (done)
 - Post-M9: embeddings through the gateway — stage 2 of the OpenRouter mode (done)
+- Post-M9: speech through the gateway — stage 3 of the OpenRouter mode (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -5264,3 +5265,137 @@ defects that are its area's.
 
 **Gates**: fmt / clippy / test green — **3693 unit tests, 218 `#[ignore]`**
 (+19 unit tests, +4 live smokes).
+
+### Post-M9: speech through the gateway — stage 3 of the OpenRouter mode (done)
+
+**What.** Stage 3 of [docs/research/openrouter-mode.md](../research/openrouter-mode.md)
+(§7, fork F9): the speech slot gets the mode the other three slots have — one client, the
+audio format negotiated, the voice chosen from a list. The go/no-go is two sentences and
+both are about the **text**: a model that takes raw samples only and a model that takes
+MP3 only are each heard back saying what they were given, and a model at 44.1 kHz plays
+at its own rate. The second sentence failed on its first run, in a place the plan did not
+name — the player's decoder — and that defect was every mode's.
+
+**Measured first** (research §13.1), where the matrix of §4.4 had left a question:
+- the gateway's own filter, `?output_modalities=speech`, works on the account's list as
+  on the public one — 21 entries either way — so the picker's rule of stage 1 (the
+  account's list with a key, the public one without) holds for this slot unchanged;
+- the route takes `pcm` and `mp3` and refuses anything else from its schema, before a
+  model is asked. `external` asks a server for `wav`: **there was no way to speak through
+  this gateway before this stage**;
+- seven of eight models tried without a voice refuse with a sentence that says so; the
+  eighth lists none and speaks;
+- **the catalogue's price has no unit**. Fifty characters through
+  `x-ai/grok-voice-tts-1.0` cost fifty times its `pricing.prompt` on the gateway's own
+  record of the request — a price per character — while Gemini's speech entries are
+  priced per token.
+
+**Built.**
+- `shared/config.rs`: `TtsMode::OpenRouter`, written `openrouter`, third in the cycle —
+  the clouds, then the server of the user's own — and `TtsSettings::openrouter`, a section
+  with **no default model and no default voice**. The key is the provider's one key; the
+  variable the section may name joins the names removed from a model-driven child's
+  environment. No schema step: `tts.mode` is one of the four values F3 names, and no build
+  with schema 4 has been released.
+- `shared/tts/openai.rs`: a third constructor, `OpenAiTts::gateway`. The format is
+  `Format::Fixed` for the two modes that ask for one and `Format::Negotiated` for this
+  one: `pcm` first, and on a `400` that names `response_format` the other format, once.
+  **What is remembered is what the gateway did** (`FormatMemo`, by model) — so it is
+  learned both ways, and a model that stops taking the remembered format costs one
+  refused request. The memo is the **session's**: `Orchestrator::speech_gateway` hands
+  every command's clients the same one, since a speech client is built per command and a
+  memo inside it would pay the refusal with every `/tts`.
+- The answer is read from its **label**: `audio/pcm;rate=…;channels=…` (and `audio/L16`)
+  is raw samples at that rate and that many channels, anything else a container, no label
+  what was asked for. The body is never looked into — raw samples may begin `0xFFFF`,
+  which is an MP3 frame's first two bytes.
+- A refusal is said in the gateway's sentence, `error.message` out of its JSON; the
+  attribution headers follow the provider's switch; `instructions` is not sent — it is
+  not a field of this route, and the mode has no row for it.
+- `shared/api/catalogue.rs`: `CatalogueShape::OpenRouterSpeech`, `ModelRole::Speech`,
+  `ModelSlot::Speech`, and `CatalogModel::voices` — read leniently, as the rest of an
+  entry is: what is not a name costs that name, never the row.
+- `screens/settings`: the mode's rows, with the provider's switch closing them as under
+  the other three tabs. `Enter` on the model row lists the gateway's speech models; on
+  either voice row, the voices of the model named — **out of the same answer**, so one
+  request serves the three rows for a visit. A model that lists no voice, or a name typed
+  by hand, leaves the voice row the editor it was. A speech model's row says how many
+  voices it lists, and **names no price**.
+- The speech slot's `external` address row says a mode is needed when the address is the
+  gateway's. Not the other slots' sentence — that one ends *"this section keeps working
+  as it is"*, which for speech is false.
+
+**The defect.** `attempt to subtract with overflow`, in the MP3 demuxer, on MiniMax's
+first answer. Gapless playback — the player's default — trims what the first frame's
+`Info` tag says the encoder added and counts the frames by the same tag, and a speech
+server writes that tag before it knows how long the stream will be. Every model that
+answers an MP3 was then asked for one and decoded both ways (research §13.2): MiniMax's
+two count **no frames**, which is the overflow — a panic in a build that checks, a wrapped
+number in one that does not; Kokoro's counts half, and its sentence stopped at 2.35 s of
+4.78. The decoder is built without the trim. Entry of its own in
+[the tools journal](tools.md), whose area the player is.
+
+**Rejected / not built.** No `GET /key` for this slot (F6): nothing is applied — the slot
+has no engine and no status — and a key asked about when `/tts` is typed would be a
+second request in front of the one that says the same. No refusal up front for a missing
+voice: four models speak without one, and the gateway's sentence names what is missing.
+No retry: no speech provider has one, and a fragment that failed is a sentence the user
+hears missing either way. No list for the other three speech modes — OpenAI's catalogue
+says nothing of what a model does, Gemini's calls its speech models chat models. No
+sorting of the voices, no filter by language: the catalogue publishes names and nothing
+about them. No `catch_unwind` around the decoder: the panic hook is the terminal's, and a
+caught panic would still run it over the interface.
+
+**Tests.** Next to the code, each checked against the mutation it guards — 48
+mutants, and none survives. One did at first — the mode, in what a speech answer is
+filed under — and got the assertion it lacked; and one line fell to the pass itself, a
+write to the memo of what the memo already held. The client over a real socket, against a stub that answers from a
+script and keeps every request whole: the bodies are the gateway's own, and what is
+counted is the requests. The label as a table of fifteen rows, every one served with a
+body that begins as an MP3 frame does. The decoder against an MP3 of silence built in the
+test the way a streaming encoder writes one — a first frame that holds an `Info` tag and
+no audio — whose tag counts none of its frames, half of them, all of them: the panic is
+the library's own line, reproduced without a network.
+
+**Smoke — GO** (2026-09-29; the gateway with the user's key; Windows 11, a sound card).
+`cargo test gateway_live -- --ignored --test-threads=1` is 26 smokes now, ten of them
+this stage's. Every clip is transcribed back by `openai/whisper-large-v3-turbo` through
+the gateway's `/audio/transcriptions`, and the sentence is looked for in what was heard.
+- `a_model_that_takes_raw_samples_only_is_heard_back_live`
+  (`google/gemini-3.8-flash-lite-tts`) — asked once, 24 kHz mono, the English sentence and
+  the Russian one heard back word for word. Control: asked for `mp3` alone, the model
+  refuses.
+- `a_model_that_takes_mp3_only_is_heard_back_live` (`minimax/speech-2.8-turbo`) —
+  refused, asked again, answered; what is transcribed is **what the application's decoder
+  made of the container** — 32 kHz, 4.28 s — and the sentence is there to its last word.
+  **Red before it was green**: that is the defect above.
+- `a_model_at_44_khz_plays_at_its_own_rate_live` (`fish-audio/s1`) — 44 100 Hz in the
+  label and in the clip; through the sound card a clip of 3.44 s played in 3.53 s, where
+  at 24 kHz it would have taken 6.32.
+- `a_refused_key_is_said_in_the_gateways_words_live` — *"TTS: status 401 Unauthorized:
+  User not found."*; `the_gateways_speech_list_answers_live` — 21 models with a key and
+  without, 16 with voices.
+- **Through the application** (`gateway_live_speech`): `/tts` over a chat, to the sound
+  card. The MP3-only model in two voices — two engines on one memo — 8.04 s for two
+  sentences; the 44.1 kHz model with no voice set, 5.58 s; the raw-samples model, 6.72 s;
+  a model that needs a voice and has none is an error in the feed, in the gateway's
+  sentence, and the speech ends.
+- **The app itself** (`tools/console_probe.py --scenario gateway`, extended): `/tts`
+  lights `speaking` in the status line and it goes out with nothing said of a failure;
+  the Speech tab's rows, without one for instructions; 21 models, their voices counted
+  and no price beside them; the five voices of the model named.
+- **Not spoken**: the one model that answers raw samples in stereo
+  (`bytedance-seed/seed-audio-1-0`, 11–23 s a sentence). Its label is read by a unit
+  test, and the player is timed without a network
+  (`a_clip_lasts_what_its_rate_and_channels_say_live`): a second of audio at 24 kHz in
+  stereo played in 1.06 s, at 44.1 kHz mono in 1.07 s.
+
+**Docs.** spec §3.4, §11.6, §11.9, §12.2; architecture §3, §4, §6, §7, §12; install.md
+§3.2, §4.3, §7.1; the manual §1, §7; README; ADR 0009, an amendment; PRIVACY.md and its
+translation (§3.1, §3.4, §4 — what a speech request carries, that a fragment may be sent
+twice, that the lists carry no text), with the derived pages regenerated; CHANGELOG (Added,
+Fixed); the roadmap; lessons §9; research §7, §13; the tools journal, for the player's
+defect.
+
+**Gates**: fmt / clippy / test green — **3724 unit tests, 228 `#[ignore]`**
+(+31 unit tests, +10 live smokes: nine of the gateway's, one of the player's).

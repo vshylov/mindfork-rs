@@ -130,3 +130,25 @@ revert), built, and passed the gates unchanged.
   smoother multi-paragraph delivery); SSE streaming within a chunk; audio caching;
   native Gemini multi-speaker (one request, several voices); speaking a selected message
   from the feed; OS TTS.
+
+## Amendment (2026-09-29) — a fourth mode: the OpenRouter gateway
+
+Decision 1 counted three `TtsMode` variants and decision 3 one client for two of
+them. Stage 3 of the OpenRouter track
+([docs/research/openrouter-mode.md](../research/openrouter-mode.md) §4.4, §13,
+fork F9) adds **`openrouter`** — the order is now `openai`, `gemini`,
+`openrouter`, `external` — served by the same `OpenAiTts` through a third
+constructor, `gateway`, on the key every slot of that provider shares
+(ADR 0008) and with no default model or voice. Two things in this record bend
+for it. **The format is negotiated rather than fixed**: no format is taken by
+all of the gateway's speech models, so the client asks for `pcm`, asks once for
+`mp3` where that is refused, and reads what came back from the answer's
+`Content-Type`. And decision 2's stateless clients stay stateless **because
+what they learn is held outside them**: the format a model answered in is kept
+for the session in a `FormatMemo` the orchestrator owns and hands to each
+client it builds. One thing changed for every mode: decision 5's player decodes
+a container **without gapless trimming**, since a streamed MP3's first-frame
+tag is written before the stream's length is known. The `TtsSettings` config is
+still `#[serde(default)]` throughout, and the mode needed no migration step of
+its own (spec §12.2). Decisions 4, 6 and 7 stand unchanged; the gateway's
+per-request ceiling is 2000 characters, as Gemini's is.

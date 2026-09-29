@@ -2180,6 +2180,18 @@ property of production it leaves out. (The finding itself was worth keeping — 
 label turned out to be load-bearing, and is documented where it is built.)
 — *OpenRouter as a provider of its own — stage 1*.
 
+**"Heard back" has to be said of what the application plays, not of what the server
+sent.** The research for the speech stage transcribed every model's answer with a
+speech-to-text model and found eighteen that answer an MP3. What was transcribed was the
+gateway's bytes. The application's decoder had seen none of them: on the first it saw it
+panicked, and another it would have cut at half its length without a word — both from one
+default of the library, which trusts a number a streaming server writes before it knows
+it. A check that goes around the application's last step proves the service. Put that
+step in the loop: the smoke now transcribes **what the decoder made of the container**,
+and the sentence has to be there to its last word — "a clip came back" and "the clip
+decodes" would both have passed on the one that was cut.
+— *speech through the gateway — stage 3 of the OpenRouter mode*.
+
 **A reply can arrive whole and in the wrong channel.** One reasoning model, on the
 provider a gateway routed it to, delivered its entire reply — the answer included — as
 `reasoning`, with no `content` and `finish_reason: "stop"`, in 2 runs of 4. Read the

@@ -890,8 +890,7 @@ computer** (Windows — the system DPAPI; Linux — a key derived from
 - a saved key **cannot be viewed or copied** from the app — editing means re-entering
   it; the field only shows "configured (this computer)";
 - one key serves **chat, impersonation, embeddings and speech** for that provider
-  (for OpenRouter: chat, impersonation and embeddings — it has no speech mode
-  yet).
+  (OpenRouter's key included: all four tabs have its mode).
 
 The key is protected against moving/copying the file, but not against programs
 running under your own user account on the same computer (this is how browser
@@ -920,10 +919,11 @@ Two differences from a cloud key:
 #### The OpenRouter gateway (`openrouter`)
 
 OpenRouter is one account and one key in front of several hundred models from
-many vendors. It is a mode of its own on three tabs — **Assistant**,
-**Impersonation** and **Embeddings** — next to `managed`, `external` and the four
-clouds, so a local server and the gateway each keep their settings and switching
-between them retypes nothing. Design and measurements:
+many vendors. It is a mode of its own on all four tabs of the section: on
+**Assistant**, **Impersonation** and **Embeddings** next to `managed`,
+`external` and the four clouds, and on **Speech** next to `openai`, `gemini` and
+`external` (§4.3) — so a local server and the gateway each keep their settings
+and switching between them retypes nothing. Design and measurements:
 [docs/research/openrouter-mode.md](research/openrouter-mode.md).
 
 **Setting it up.**
@@ -931,8 +931,8 @@ between them retypes nothing. Design and measurements:
 1. `Ctrl+P` → "Model/server" → set **Mode** to `openrouter`.
 2. Enter the key in "OpenRouter API key" — or name the environment variable that
    holds it (`OPENROUTER_API_KEY`, say) in the field below; no variable name is
-   assumed. **One stored key serves every tab in this mode**: the impersonation
-   and embedding slots need no key of their own, only a model.
+   assumed. **One stored key serves every tab in this mode**: the impersonation,
+   embedding and speech slots need no key of their own, only a model.
 3. `Enter` on the **Model** row lists the gateway's catalogue. Each row is the
    model's id, its context window, the price of a million tokens in and out
    (`free` where both are zero) and `no tools` for a model that lists none —
@@ -961,12 +961,14 @@ moment that takes:
 | no answer at all (no network, DNS, TLS) | the reason, and the question repeats every 5 s until something answers |
 
 After the first answer nothing is asked periodically. The check is made for
-each of the three tabs in this mode — the assistant's engine, impersonation's
-and the embedder — so a key the gateway refuses shows on the Embeddings tab's
+each of the three tabs that have a chip — the assistant's engine,
+impersonation's and the embedder — so a key the gateway refuses shows on the Embeddings tab's
 chip as well, instead of first appearing inside the result of whichever tool
 embedded first. The embedder's chip is informational, as in every mode: it holds
 no call back, so an embedding asked for on a refused key is still asked for, and
-fails in the gateway's words.
+fails in the gateway's words. The Speech tab has no chip and its key is not
+asked about ahead of time — nothing of it is running until `/tts` is typed — so
+there a refused key is what the first `/tts` says (§4.3).
 
 **What the app learns from the gateway.** The model's context window (what
 automatic compaction measures against), the sampling parameters it takes, whether
@@ -997,8 +999,8 @@ message right after the tool's result, and `/continue` resumes a reply on Claude
 up to the 4.5 generation and on Gemini, and refuses on every other model.
 
 **The app names itself to OpenRouter.** Every request to the gateway — chat,
-embeddings, the key check, the question about the model and the list of models
-for the picker — carries two headers: `HTTP-Referer: https://mindfork.io` and `X-OpenRouter-Title: mindfork`.
+embeddings, speech, the key check, the question about the model and the lists
+of models for the picker — carries two headers: `HTTP-Referer: https://mindfork.io` and `X-OpenRouter-Title: mindfork`.
 They name the application and say nothing about you; by OpenRouter's own
 description, it counts its public application rankings by them. On by default; **"Name the app to
 OpenRouter"**, in the provider's group on any tab whose mode is `openrouter`,
@@ -1026,13 +1028,21 @@ of the same vector size that is another model
 request, and `rag_search` refuses over the knowledge base until `/reindex` —
 the search that noticed the change included.
 
-**Not there yet.** Speech (`/tts`) and watching a YouTube video have no
-`openrouter` mode: the Speech tab and the video tool keep their own providers
-(§4.3, §4.4).
+**Speech.** `/tts` speaks through the gateway when the Speech tab's mode is
+`openrouter`: the same key, a list of the gateway's speech models behind the
+Model row and of the chosen model's voices behind the two voice rows. It has no
+default model — nothing is spoken until one is chosen. Setup, and what differs
+from the other speech providers: §4.3.
+
+**Not there yet.** Watching a YouTube video has no `openrouter` mode: the video
+tool keeps its own provider (§4.4).
 
 **Coming from `external`.** An `external` section whose URL is on `openrouter.ai`
 shows a hint that this mode exists. Nothing is moved automatically: set the mode,
-enter the key once, pick the model.
+enter the key once, pick the model. On the Speech tab the hint says more,
+because there the `external` section does **not** keep working with that
+address: an external speech server is asked for WAV, and OpenRouter answers in
+PCM or MP3 and refuses anything else — speech through it needs the mode.
 
 **Older versions and `settings.json`.** This version writes `settings.json` at
 schema 4. A mindfork older than it refuses to start on that file, saying the data
@@ -1561,7 +1571,10 @@ The provider is configured **separately from the chat** — the "Speech" tab of 
 |---|---|
 | `openai` (default) | model (`gpt-4o-mini-tts`), voice (`onyx`, `cedar`, …) — key **shared with chat** (ADR 0008) |
 | `gemini` | model (`gemini-2.5-flash-preview-tts`), voice (`Kore`, `Puck`, …) — key shared with chat |
+| `openrouter` | model and voice, each picked from the gateway's own list — no default for either; key shared with the other tabs in the `openrouter` mode (§3.2) |
 | `external` | URL of any OpenAI-compatible TTS server (`http://127.0.0.1:8880/v1`), opt. model/voice |
+
+The **Mode** row cycles through them in that order.
 
 The OpenAI key is **the same as for chat** — if it's already entered (in settings
 or via an env variable), OpenAI speech works with no extra setup. Speed for the
@@ -1575,6 +1588,75 @@ Only the "speakable" text from markdown is read aloud: code, ` ```mermaid `
 diagrams, tables, and block formulas are skipped with a short note; "thoughts" and
 tool calls aren't read. No sound card (headless/SSH) — the command shows "audio
 unavailable", the app keeps running.
+
+### Speech through the OpenRouter gateway (`openrouter`)
+
+Some twenty speech models of a dozen vendors behind the key the rest of the
+`openrouter` mode uses (§3.2). The tab shows, in this order: **Model**,
+**Voice**, **User voice**, **OpenRouter API key**, **OpenRouter API key
+(env)**, **Base URL (opt.)**, **Name the app to OpenRouter**, and then
+**Speech rate** and the three behaviour switches every speech mode has. There
+is **no "Instructions" row**: it is not a field of the gateway's speech route,
+so nothing typed there would reach a model.
+
+1. Set **Mode** to `openrouter`. If the key is already stored for another tab,
+   there is nothing to enter; otherwise enter it here, or name the variable that
+   holds it.
+2. `Enter` on **Model** lists the gateway's speech models — with a key your
+   account's own list, without one the public list, so it opens before a key is
+   entered. The first row is "Type a name by hand…". A row is the model's slug
+   and `voices: N` where the model lists voices. It shows **no price**: the
+   catalogue publishes a number without its unit, and the unit differs by model
+   — measured, `x-ai/grok-voice-tts-1.0` is priced per *character*, Gemini's
+   speech models per token — so "per 1M tokens" beside it would be the app's
+   claim, and for most models a wrong one.
+   **There is no default model**: until one is chosen, `/tts` says speech is not
+   configured.
+3. `Enter` on **Voice** — and on **User voice**, for a second voice that reads
+   your own lines — lists the voices of the model the Model row names. The list
+   comes out of the same answer as the model list, so it costs no second
+   request; `Ctrl+R` in the list asks again. A model that lists no voice, or a
+   model name typed by hand that the list does not hold, has nothing to pick
+   from: there `Enter` opens the ordinary text field.
+
+What to expect, all of it measured on 2026-09-29
+([docs/research/openrouter-mode.md](research/openrouter-mode.md) §4.4, §13):
+
+- **Most models need a voice.** Without one the gateway refuses — *"An explicit
+  voice is required for this TTS provider."* — while a few (Fish Audio's) list
+  none and speak without. The app does not refuse ahead of the gateway: what is
+  missing is said in the gateway's own sentence, in the chat.
+- **A refusal reads as the gateway wrote it**: `TTS: status 401 Unauthorized:
+  User not found.` for a key it does not know. The key is **not checked ahead
+  of time** on this tab (§3.2), so that sentence arrives with the first `/tts`.
+- **The audio format is settled by the app.** No format is taken by all of the
+  gateway's speech models — raw samples (`pcm`) by 19 of 21, `mp3` by 18, and
+  nothing else by the route. The app asks for raw samples first; a model that
+  refuses them is asked **once** for MP3, and the answer is remembered for that
+  model until the app is closed, so the refused request is paid once a session
+  rather than once a fragment. Rate and channels are read from the answer's own
+  label: most models speak at 24 kHz, Fish Audio's at 44.1 kHz, one answers in
+  stereo.
+- **Speech rate may do nothing.** The rate is sent, and a model may ignore it:
+  Gemini and Grok through the gateway produce the same length of audio at 0.5,
+  1.0 and 2.0.
+- **Long messages** go out in fragments of at most 2000 characters, cut on
+  sentence boundaries, as for every speech provider (OpenAI: 4096).
+- **The two headers** that name the app to OpenRouter (§3.2) travel with speech
+  requests and with the list request too, under the same switch.
+
+**An `external` speech server pointed at `openrouter.ai` does not work**, unlike
+the other tabs' `external` sections: an external server is asked for WAV, which
+the gateway refuses. The URL row says so when the address is OpenRouter's; use
+the mode.
+
+> **MP3 from any speech server is played whole now.** A server that streams an
+> MP3 writes the length into the file's first frame before it knows it. The
+> player used to trust that number: on one of the gateway's models its
+> arithmetic overflowed — a panic in a build that checks for it — and another's
+> sentence stopped at 2.35 s of 4.78 s. It no longer trims by that tag — in
+> every speech mode, `external` included — at the cost of the encoder's few
+> dozen milliseconds of padding left in.
 
 ## 4.4. Watching YouTube videos (`youtube_watch`)
 
@@ -1796,8 +1878,9 @@ $env:MINDFORK_ENGINE_URL     = "http://127.0.0.1:8000/v1"   # a local llama.cpp,
 cargo test gateway_live -- --ignored --nocapture --test-threads=1
 ```
 
-That filter is the mode's whole live gate: the twelve smokes of the chat side,
-described here, and the embedder's four, described below. The twelve are about
+That filter is the mode's whole live gate, **26 smokes**: the twelve of the
+chat side, described here, the embedder's four and the ten of speech, both
+described below. The twelve are about
 ten cents — most of it the orchestrator's turns, which send the app's whole
 prompt and tool set: the client's nine (thoughts and who
 served, a tool round trip, a muted turn against its `external` control, a tool's
@@ -1853,12 +1936,65 @@ did not move by a millionth of a dollar over one. What they hold:
 
 A smoke whose variable is unset is skipped and says which.
 
+**Speech through the gateway has ten**, in two modules: five on the mode's own
+client and one on the player, which needs no network
+(`shared/tts/gateway_live_tests.rs`), and four on `/tts` through the
+application (`app/orchestrator/tests/gateway_live_speech.rs`). They are declared
+by the same one variable and need no local server:
+
+```powershell
+$env:MINDFORK_OPENROUTER_KEY = $env:OPENROUTER_API_KEY
+
+cargo test gateway_live_speech -- --ignored --nocapture --test-threads=1   # the application's four alone
+```
+
+A few cents at most. **The assertion is the text**: a `200` with audio in it is
+not yet speech, so each clip is transcribed back through the gateway's own
+`/audio/transcriptions` and the sentence is looked for in what was heard. What
+they hold:
+
+- **The client's five**: the speech list, with a key and without; a model that
+  takes raw samples only, asked once; a model that takes MP3 only — refused,
+  asked again, remembered — where what is transcribed is what the
+  application's own decoder made of the container; a model at 44.1 kHz, its
+  rate read from the label and, through the sound card, heard to last what the
+  clip lasts; a refused key, in the gateway's words.
+- **The player's one**: a second of audio at 44.1 kHz mono and a second at
+  24 kHz in stereo each last a second through the sound card. It stands in for
+  the one model that answers in stereo, which takes 11 to 23 s a sentence and
+  is not spoken by the smokes.
+- **The application's four**: `/tts` over a chat, with the engines built from
+  the settings, the playback queue and the sound card — the MP3-only model in
+  **two voices** (the assistant's and the user's, two engines on one memo), the
+  44.1 kHz model with no voice set, the raw-samples model, and a model that
+  needs a voice and has none, which is an error in the feed in the gateway's
+  sentence.
+
+Each names the model it was measured on and takes another from a variable of
+its own, on the terms of the chat side's — the **kind** is the subject, and a
+model that is not of that kind fails the smoke:
+
+| Variable | The kind | Measured on |
+|---|---|---|
+| `MINDFORK_OPENROUTER_TTS_RAW_MODEL` | takes raw samples only | `google/gemini-3.8-flash-lite-tts` |
+| `MINDFORK_OPENROUTER_TTS_MP3_MODEL` | takes MP3 only | `minimax/speech-2.8-turbo` |
+| `MINDFORK_OPENROUTER_TTS_44K_MODEL` | answers at 44.1 kHz | `fish-audio/s1` |
+| `MINDFORK_OPENROUTER_LISTENER` | the speech-to-text model that hears the speech back | `openai/whisper-large-v3-turbo` |
+
+**The playback halves need a sound card, and are audible.** On a machine
+without one they skip, saying so: the application's four and the player's one
+whole, and of the client's five the half of the 44.1 kHz smoke that hears the
+rate — the half that reads it still runs.
+
 On Windows the application itself can be driven through the mode, in a hidden
 console on a scratch data root: `python tools/console_probe.py --scenario
 gateway` types a question into the chat, reads both of the mode's chips off
 the status line, indexes a file through the gateway's embedder (`/rag add`),
 opens the settings and the model list, and checks that the key reached neither
-the log nor the settings file. It reads
+the log nor the settings file. It also types `/tts` and reads the `speaking`
+chip on and off the status line, then reads the Speech tab, the list of speech
+models and the list of voices off the screen — so it, too, is **audible**, and
+needs a sound card. It reads
 `OPENROUTER_API_KEY` by name, as the settings do.
 
 ### 7.2. The remote gate (rented GPU, no local stack)

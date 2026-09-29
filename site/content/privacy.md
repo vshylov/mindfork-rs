@@ -114,9 +114,9 @@ of its own. By default it shares the chat engine; pointed elsewhere, it sends th
 conversation to that external server, cloud provider or gateway instead.
 
 **What the app says about itself.** To OpenRouter, and to no other provider,
-every request the app makes in the `openrouter` mode — chat, embeddings, the two
-questions listed under "Probes" below and the request for the model list —
-carries two headers:
+every request the app makes in the `openrouter` mode — chat, embeddings, speech
+(§3.4), the two questions listed under "Probes" below and the requests for the
+lists of models — carries two headers:
 
 - `HTTP-Referer: https://mindfork.io`
 - `X-OpenRouter-Title: mindfork`
@@ -176,7 +176,9 @@ The OpenRouter gateway is asked two things, both with your key:
   again the next time the answer is needed.
 
 In this mode `/health`, `/props` and the full model list are never requested by
-the engine.
+the engine. The speech setting in the `openrouter` mode (§3.4) asks neither of
+the two questions: whether its key is accepted is learned from the first request
+that speaks.
 
 **The model list.** `Enter` on a model row of the settings screen asks that
 tab's provider or server for the list of models it serves — when you press it,
@@ -187,6 +189,15 @@ configured and the public list (`/models`) when none is — the one case in whic
 the app contacts a cloud before you have given it a key — and
 `/embeddings/models` on the Embeddings tab; like every request to OpenRouter it
 carries the two headers described above, unless you switched them off.
+
+On the Speech tab, in the `openrouter` mode only, three rows ask: `Enter` on the
+Model row, on the Voice row or on the User voice row requests the gateway's list
+of speech models — the same two lists, `/models/user` with a key and `/models`
+without one, narrowed by `?output_modalities=speech` — and the voices offered
+are read out of that same answer. The request carries no text of yours; it
+carries your key when there is one, so that the list is your account's, and the
+two headers unless you switched them off. In the other speech modes these rows
+are text fields and ask nothing.
 
 ### 3.2 Embeddings (notes, RAG, search reranking)
 
@@ -262,8 +273,34 @@ file says, so if you had it on, it stays on.)
 
 Nothing is ever spoken automatically: text is sent only when you invoke `/tts`.
 When you do, the **default provider is OpenAI's cloud** (`api.openai.com`), with
-Gemini and any OpenAI-compatible server as alternatives. What is sent is the
-message text, flattened out of markdown and split into chunks.
+Gemini, the OpenRouter gateway and any OpenAI-compatible server as alternatives.
+What is sent is the message text, flattened out of markdown and split into
+chunks. The audio that comes back is played and is not stored.
+
+**Through the OpenRouter gateway** — the speech setting's `openrouter` mode —
+what is read aloud is sent to `openrouter.ai`, or to the base URL you set. A
+request carries the text of the messages being spoken, as speakable text in
+fragments of at most 2000 characters; the name of the model; the name of the
+voice, when one is set; the audio format asked for; and the speech rate, when
+it is not 1.0. It is sent with your key, and with the two headers that name the
+application (§3.1) unless you switched them off. OpenRouter passes the text on
+to the provider behind the model you chose — Google, xAI, MiniMax and others —
+which processes it under its own terms, as with a chat request (§3.1).
+
+The gateway's speech models do not all take the same audio format. When a model
+refuses the format asked for first, **the same fragment is sent a second time**,
+asking for the other format. Which format the model answered in is remembered
+until the app is closed, so this happens once for a model in a session — and
+once more if the model later stops taking the format it answered in.
+
+In this mode nothing is sent until you type `/tts` — or until you press `Enter`
+on the Model, Voice or User voice row of the Speech tab, which asks the gateway
+for its list of speech models and carries no text of yours (§3.1, "The model
+list").
+
+The application has no speech-to-text, and never sends audio anywhere. (The
+project's own live tests transcribe synthesized test sentences back through the
+gateway; that is a developer's test run, not the application.)
 
 ### 3.5 Images you attach by URL
 
@@ -365,8 +402,8 @@ text passes through whatever is between you and the host.
 - **showing the model the images a tool produced** — charts from Python, images
   from MCP tools — once those tools are on;
 - **network access inside the Python sandbox**, once Python is enabled;
-- the two headers that **name the application to OpenRouter**, once an engine is
-  in the `openrouter` mode (§3.1);
+- the two headers that **name the application to OpenRouter**, once an engine
+  or the speech setting is in the `openrouter` mode (§3.1);
 - the cloud as the **default speech provider** — though nothing is spoken until
   you invoke `/tts`;
 - the ordinary local tools: notes, the knowledge base, the time, and so on.

@@ -1,7 +1,7 @@
 # Research: a mode of its own for OpenRouter
 
-**Status: research complete, all forks decided — the track is open, stage 1 in
-progress.** Measured against the service on **2026-09-29** with a paid account;
+**Status: research complete, all forks decided — the track is open, stages 1
+to 3 built (§11–§13), video next.** Measured against the service on **2026-09-29** with a paid account;
 every number below is from that day. **User's decision, 2026-09-29: every
 recommendation of §6 is taken as written** — a provider of its own, in all five
 slots, over the four stages of §7.
@@ -651,6 +651,9 @@ departed from this table — the embedder's arm came with it — is §11.
 
 **Stage 2 is built** (2026-09-29), go/no-go met: §12.
 
+**Stage 3 is built** (2026-09-29), go/no-go met: §13 — with a defect of the
+player's found on the way, which was every mode's.
+
 ## 8. What this does not cover
 
 Speech-to-text (24 models — it would be voice input, a feature nobody has
@@ -837,3 +840,108 @@ answers `429` and then the vectors.
 | §11.5: whether the embedder's key is checked | It is, like the chat engine's: `Connecting` until `GET /key` answered. |
 | §9 A1: not this track's to fix | Fixed here, as the go/no-go could not be met without it: "no reindex was offered" says nothing from a guard that was not there. The dress is an argument of the one function that installs an embedder. |
 | — | **Found by the control arm**: the first search after a change of model ran against the stale index. `rag_search` looked whether the base was stale, *then* embedded the query — and the guard checks on the first request an embedder serves, which was that one. It looks again after the embedding. |
+
+## 13. Measured while stage 3 was built (2026-09-29)
+
+### 13.1 What the matrix of §4.4 left open **[live]**
+
+- **The speech filter works on the account's list too.**
+  `GET /models?output_modalities=speech` and
+  `GET /models/user?output_modalities=speech` answer the same 21 entries, with
+  a key and without one; every entry's `output_modalities` is `["speech"]`.
+- **The route takes two formats and refuses the rest before any model is
+  asked.** `response_format: "wav"` is a `400` from the gateway's own schema —
+  *"Invalid option: expected one of "mp3"|"pcm""* — whichever model is named.
+  So the `external` speech mode, which asks a server for `wav`, cannot speak
+  through this gateway at all: there was no way to use it for speech before
+  this stage.
+- **A voice is required by most.** Seven of eight models tried without one
+  answer `400 "An explicit voice is required for this TTS provider."`; Fish
+  Audio, which lists none, speaks. A voice nobody has is `400 "Provider
+  returned 400"` from most, `404` from xAI, `502` from MiniMax; Deepgram alone
+  names the voices it does have.
+- **A wrong key** is `401 "User not found."`, as on every other route; a model
+  that is not a speech model is `400 "Model … does not exist"`, a chat model
+  included.
+- **The price has no unit.** Fifty characters spoken by
+  `x-ai/grok-voice-tts-1.0` cost $0.00075 on the gateway's own record of the
+  request (`GET /generation?id=`, which answers some ten seconds after the
+  speech) — fifty times its `pricing.prompt` of `0.000015`, while the same
+  record counts 13 prompt tokens. That price is **per character**. Gemini's
+  entries price a prompt and a completion, per token. The catalogue says which
+  in neither case.
+
+### 13.2 An MP3 that was streamed, and a decoder that trusts its first frame **[live]**
+
+The go/no-go's second half failed on its first run, in the decoder: `attempt
+to subtract with overflow`, inside the MP3 demuxer. So every model that
+answers an MP3 was asked for one — twelve of the 21 — and each answer decoded
+twice, as the player decodes by default (gapless) and without the trim:
+
+| model | gapless | untrimmed |
+|---|---|---|
+| `minimax/speech-2.8-hd`, `-turbo` | **a panic** | 4.21 s, 4.03 s |
+| `hexgrad/kokoro-82m` | **2.35 s** | 4.78 s |
+| `sesame/csm-1b` | 1.83 s | 1.90 s |
+| `canopylabs/orpheus-3b-0.1-ft` | 4.61 s | 4.66 s |
+| the other seven | the same | the same |
+
+Gapless playback trims what the first frame's `Info` tag says the encoder
+added, and counts the frames by the same tag. A speech server writes that tag
+**before it knows how long the stream will be**: MiniMax's counts no frames at
+all, and the demuxer subtracts the encoder's delay from zero — a panic in a
+build that checks for overflow, a wrapped number in one that does not;
+Kokoro's counts half of them, and the sentence stops half way. The other
+models write no tag, or a true one.
+
+The application's decoder is built without the trim. What that costs is the
+encoder's own padding left in — 48 ms and 66 ms on the two clips whose tags
+told the truth — which a sentence read aloud does not miss.
+
+This is not the gateway's: any server that streams an MP3 can write such a
+tag, and the `external` mode plays what it is given.
+
+### 13.3 The go/no-go **[live]**
+
+Through the mode's own client (`shared::tts::gateway_live_tests`), each answer
+transcribed back by `openai/whisper-large-v3-turbo` through the gateway's
+`/audio/transcriptions`, and the sentence looked for in what was heard:
+
+| | model | what happened |
+|---|---|---|
+| raw samples only | `google/gemini-3.8-flash-lite-tts`, voice `Zephyr` | asked once; 24 kHz mono; *"Testing 1, 2, 3. The weather is fine today."* heard back, and the Russian sentence word for word. The control: asked for `mp3` alone, the model refuses |
+| MP3 only | `minimax/speech-2.8-turbo`, voice `English_expressive_narrator` | refused, asked again, answered; the session remembers `mp3`. What is transcribed is **what the application's decoder made of the container** — 32 kHz, 4.28 s — and the sentence is there to its last word, in both languages |
+| 44.1 kHz | `fish-audio/s1`, no voice | 44 100 Hz in the label and in the clip; heard back; through the sound card a clip of 3.44 s played in 3.53 s — at 24 kHz it would have taken 6.32 s |
+| a refused key | — | `TTS: status 401 Unauthorized: User not found.` |
+| the list | — | 21 models with a key and without, 16 of them with voices |
+
+Through the application (`gateway_live_speech`): `/tts` over a chat, the
+engines built from the settings, the playback queue and the sound card. The
+MP3-only model in **two voices** — the assistant's and the user's, two engines
+on one memo — 8.04 s for two sentences; the 44.1 kHz model with no voice set,
+5.58 s; the raw-samples model, 6.72 s; a model that needs a voice and has none
+is an error in the feed, in the gateway's sentence, and the speech ends.
+
+**Not spoken**: the one model that answers raw samples in stereo (11–23 s a
+sentence, §4.4). Its label is read by a unit test, and the player is timed
+without a network: a second of audio at 24 kHz in stereo lasts 1.06 s through
+the sound card, a second at 44.1 kHz mono 1.07 s.
+
+In the terminal (`tools/console_probe.py --scenario gateway`): `/tts` lights
+the status line's `speaking` and it goes out with nothing said about a
+failure; the Speech tab shows the provider's rows and none for instructions;
+the model row lists 21 models, their voices counted and no price beside them;
+the voice row lists the five voices of the model named.
+
+### 13.4 Where stage 3 departed from the plan
+
+| the plan | what was built, and why |
+|---|---|
+| F9: ask for `pcm`, on a refusal ask once for `mp3`, remember it for the model | As planned, and **both ways**: what is remembered is what the gateway did, so a model that stops taking the remembered format costs one refused request and is remembered the new way. The memo is the session's, not the client's — a speech client is built per command, and a memo inside it would pay the refusal with every `/tts`. |
+| F9: the rate and the channels from `Content-Type` | As planned. The label also decides **what the body is**: raw samples are samples though they begin as an MP3 frame does, and a container is one whatever was asked. A label of raw samples that names no rate is taken for 24 kHz, and logged. |
+| F7: the voice row gets a list of its own | From the **same answer** as the model row's — a voice belongs to a model — so whichever row is opened first asks, and the other does not. A model that lists no voice, or a name typed by hand, leaves the voice row the editor it was. |
+| F7: a row shows the name, the window and the price | A speech model's row shows how many voices it lists, and **no price**: the catalogue's number has no unit and the unit differs by model (§13.1). "Per 1M tokens" beside it would be our claim, and for most of them a wrong one. |
+| F6: `GET /key` once per apply | Not for speech. Nothing is applied: the slot has no engine and no status, its client is built when `/tts` is typed. A refused key is said by the first request, in the gateway's sentence. |
+| F12: a hint under an `external` address that is the gateway's | The speech slot's hint is its own. The other slots' says *"this section keeps working as it is"*, which here is false: `external` asks for `wav`, and the gateway refuses it (§13.1). |
+| F3: the modes' values and `SETTINGS_SCHEMA` 3 → 4 | No step of this stage's: `tts.mode` is one of the four values F3 names, and no build with schema 4 has been released. **If a release carries stage 1 without this stage, this stage needs a step of its own.** |
+| — | **Found by the live run**: the decoder (§13.2). Fixed for every mode that plays a container. |

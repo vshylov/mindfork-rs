@@ -29,7 +29,7 @@ Two rules that follow from that:
   and from the code. Loading either whole spends context on twelve chapters to
   use one.
 - **The engineering journal is per area.** What was done, why, what was measured
-  and what was rejected lives in `docs/journal/<area>.md` — 549 entries, split by
+  and what was rejected lives in `docs/journal/<area>.md` — 551 entries, split by
   subsystem. Read the file for the area you are touching; grep across them when
   hunting a specific past decision.
 
@@ -179,8 +179,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-29, version 0.12.0)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3693 unit tests
-green, 218 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **3724 unit tests
+green, 228 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -192,16 +192,18 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
-- **OpenRouter as a provider of its own — stages 1 and 2** (chat, impersonation,
-  embeddings). `openrouter` is a mode beside `external`: one key, a dialect on
-  the client (`repetition_penalty`, the lowest listed effort on a muted turn), the
+- **OpenRouter as a provider of its own — stages 1 to 3** (chat, impersonation,
+  embeddings, speech). `openrouter` is a mode beside `external`: one key, a dialect
+  on the client (`repetition_penalty`, the lowest listed effort on a muted turn), the
   key checked before `Ready`, the picker's rows with window and price, attribution
   behind a switch; `settings.json` 3 → 4. Stage 2 is every embedder's: requests of
   at most 64 texts, a retry for a cloud, and the guard and the convention applied
-  by every road that installs an embedder. Live **GO** — the switch local →
-  gateway → back, and a local index answering the gateway's query. Next: speech
-  ([docs/research/openrouter-mode.md](docs/research/openrouter-mode.md) §7, §11–§12,
-  spec §3.4, §11.6, [docs/journal/engine.md](docs/journal/engine.md)).
+  by every road that installs an embedder. Stage 3: the audio format negotiated per
+  model, the rate read from the answer's label, the voices listed — and a player
+  that no longer trusts a streamed MP3's first frame, in every mode. Live **GO**,
+  each stage; the speech is transcribed back. Next: video
+  ([docs/research/openrouter-mode.md](docs/research/openrouter-mode.md) §7, §11–§13,
+  spec §3.4, §11.6, §11.9, [docs/journal/engine.md](docs/journal/engine.md)).
 - **`Ctrl+←/→` stop at punctuation** — three character classes, not two: a run of
   marks is a stop of its own, and deletion and selection share it
   ([docs/journal/ui-input.md](docs/journal/ui-input.md), spec §11.5).

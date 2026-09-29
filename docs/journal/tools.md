@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (83)
+## Entries (84)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -95,6 +95,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a chart's line no longer says it was shown to a model that takes no images (done)
 - Post-M9: safe defaults 2a — the file tools need a root and never reach the app's own folders (done)
 - Post-M9: safe defaults 2b — the sandbox's network is public-only, and model-driven children lose the keys (done)
+- Post-M9: a streamed MP3, and a decoder that trusted its first frame (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -5537,3 +5538,52 @@ entries above).
   answered `IndentationError` before reaching the network — a test that would have "passed"
   a broken sandbox by never getting there.
 - **Gates**: fmt / clippy / test green — **3288 unit tests, 188 `#[ignore]`**.
+
+### Post-M9: a streamed MP3, and a decoder that trusted its first frame (done)
+
+**What.** Found by stage 3 of the OpenRouter mode
+([the engine journal](engine.md), research
+[openrouter-mode.md](../research/openrouter-mode.md) §13.2), and not the gateway's: the
+player decoded a container with the library's default, which is gapless playback, and an
+MP3 that a speech server **streams** carries a first frame that gapless playback cannot
+be given.
+
+**The defect.** The first frame of an MP3 may hold no audio but an `Info` tag: how many
+frames follow, and how many samples the encoder added in front and behind. Gapless
+playback trims by it. A server that streams writes the tag before the stream — so the
+count is what it knew then. Measured on the twelve of the gateway's speech models that
+answer an MP3, each decoded both ways:
+- MiniMax's two models count **no frames**. The demuxer computes the length as the frames
+  times their size, less the delay and the padding — less than nothing. In a build that
+  checks for overflow that is a panic, `attempt to subtract with overflow`, inside the
+  speech task; in a release build the number wraps.
+- Kokoro's counts about half of them: the clip was 4.78 s and the decoder ended it at
+  2.35, mid-sentence, with no error.
+- Two more differ by the trim alone, 48 and 66 ms; seven write no tag, or a true one.
+
+Until this stage the only container the application asked anybody for was `wav`, of an
+`external` server, where there is no such tag. But the player plays what it is given, and
+nothing holds a server to the format it was asked for.
+
+**The fix.** `shared/tts/playback.rs`, `decoder`: built by the library's builder with
+gapless playback off. A clip keeps the encoder's padding — tens of milliseconds of
+silence, in speech.
+
+**Rejected.** Catching the panic: the panic hook is the terminal's, and it runs for a
+caught panic too — over the interface. Decoding a clip whole before it is queued, to move
+the decoder off the audio thread: it would not have helped, for the same reason, and costs
+the memory of the clip in samples. Repairing the tag: the frames are there to be counted,
+and with the trim off nobody reads the count.
+
+**Tests.** `a_streamed_container_is_played_whole_whatever_its_tag_says`: an MP3 of silence
+built in the test as a streaming encoder writes one — MPEG-1 Layer III, mono, 44.1 kHz; a
+first frame with an `Info` tag and an encoder's delay in it — whose tag counts none of its
+eight frames, four of them, all eight, and one of forty. Each decodes to its frames times
+1152 samples. With the trim on the first row is the library's panic at the library's own
+line, and the second a clip of half its length — the mutation the test was checked
+against. `what_cannot_be_decoded_is_an_error`: JSON, zeros, and a container cut off inside
+its first frame.
+
+**Smoke — GO** (2026-09-29): the MP3-only model's clip, through this decoder, transcribed
+back to its last word; and played by `/tts`, in two voices. The engine journal has the
+run.

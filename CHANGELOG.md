@@ -49,11 +49,28 @@ split by subsystem.
   Settings → Model/server → *Name the app to OpenRouter*; on by default, off —
   the headers are not sent.
 
+- **Speech through OpenRouter.** Settings → Model/server → Speech → *Mode* →
+  `openrouter`: `/tts` reads messages aloud through the gateway's speech
+  models — some twenty, of a dozen vendors — on the key the other slots use.
+  `Enter` on the model row lists them, with the number of voices each has, and
+  `Enter` on a voice row lists the voices of the model you chose. There is no
+  default model: choose one. The audio format and the sample rate are the
+  model's own and differ between models; the app settles them with the gateway
+  and there is nothing to set. `external` pointed at `openrouter.ai` could never
+  speak — the gateway refuses the format an external server is asked for — and
+  its address row now says that the mode exists.
+
 ### Changed
 - A reply that came through OpenRouter records, in the chat file, which
   provider served it and what it cost. Nothing shows them yet.
 
 ### Fixed
+- **A message read aloud could stop half way, or not start.** A speech server
+  that streams an MP3 writes the clip's length into its first frame before it
+  knows it, and the player believed the number: one model's sentence ended at
+  2.35 s of 4.78, and another's count of zero was an error inside the player.
+  The clip is played to its end now, whatever its first frame says. For every
+  speech mode that plays a container — a server of your own included.
 - **A long text could not be added to the knowledge base on a Gemini
   embedder.** `rag_add` sent every chunk of a text in one request, and Gemini
   refuses the hundred-and-first — on Google's own endpoint and through a
