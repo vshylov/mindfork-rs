@@ -177,12 +177,13 @@ impl Tool for RagSearch {
         // Refuse plainly instead — and say what fixes it, since only the user can
         // run `/reindex`. Unlike notes and attachments, the knowledge base is
         // never retired silently: it is the user's own data.
-        if ctx
-            .storage
-            .db()
-            .rag_is_stale(ctx.profile_id)
-            .unwrap_or(false)
-        {
+        let stale = || {
+            ctx.storage
+                .db()
+                .rag_is_stale(ctx.profile_id)
+                .unwrap_or(false)
+        };
+        if stale() {
             return Ok(ToolOutcome::text(ctx.loc.t("tool.rag_search.err.stale")));
         }
 
@@ -190,6 +191,16 @@ impl Tool for RagSearch {
             .embedder
             .embed(vec![query.to_string()], EmbedRole::Query)
             .await?;
+        // Asked again, because the embedding just made is where a change of
+        // model is noticed: the guard checks lazily, on the first request an
+        // embedder serves, and that request may be this one. The base was sound
+        // a line ago and is another model's now — and the query in hand would
+        // be measured against it, which is the noise the refusal above exists
+        // to withhold. Seen on a live switch: five passages "found", with the
+        // notice of the change beside them.
+        if stale() {
+            return Ok(ToolOutcome::text(ctx.loc.t("tool.rag_search.err.stale")));
+        }
         let query_vec = embeddings
             .pop()
             .ok_or_else(|| anyhow::anyhow!(ctx.loc.t("tool.rag_search.err.no_query_vec")))?;
@@ -957,6 +968,53 @@ mod tests {
             out.result
         );
         assert!(out.result.contains("факты"));
+    }
+
+    /// The search that **notices** the change refuses as well. The guard checks
+    /// on the first request an embedder serves, so the knowledge base can turn
+    /// stale between the check at the top of the tool and the search at its
+    /// bottom — by the very embedding of the query.
+    #[tokio::test]
+    async fn the_search_that_notices_the_change_refuses_too() {
+        /// Marks the base stale while it embeds, as the guard does on a model
+        /// it has not seen.
+        struct Noticing {
+            storage: std::sync::Arc<crate::shared::storage::Storage>,
+            profile: Uuid,
+        }
+        #[async_trait::async_trait]
+        impl crate::shared::api::Embedder for Noticing {
+            async fn embed(&self, texts: Vec<String>, role: EmbedRole) -> Result<Vec<Vec<f32>>> {
+                self.storage.db().set_rag_stale_profiles(&[self.profile])?;
+                crate::shared::api::mock::MockEmbedder::new(16)
+                    .embed(texts, role)
+                    .await
+            }
+        }
+
+        let profile = Uuid::new_v4();
+        let (_d, storage, mut ctx) = ctx_with_storage(profile);
+        RagAdd
+            .invoke(
+                &ctx,
+                serde_json::json!({"text": "cats like fish", "source": "facts"}),
+            )
+            .await
+            .unwrap();
+        ctx.embedder = std::sync::Arc::new(Noticing {
+            storage: storage.clone(),
+            profile,
+        });
+        let answered = RagSearch
+            .invoke(&ctx, serde_json::json!({"query": "cats"}))
+            .await
+            .unwrap();
+        assert!(
+            !answered.result.contains("cats like fish"),
+            "{}",
+            answered.result
+        );
+        assert!(answered.result.contains("/reindex"), "{}", answered.result);
     }
 
     /// A knowledge base indexed by a previous embedding model cannot be searched:

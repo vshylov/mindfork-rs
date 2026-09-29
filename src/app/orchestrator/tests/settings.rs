@@ -763,6 +763,134 @@ async fn what_the_previous_engine_said_does_not_outlive_a_settings_edit() {
     );
 }
 
+/// An embedder that keeps the texts it was asked to embed, as they arrived.
+struct Recording {
+    asked: std::sync::Mutex<Vec<String>>,
+}
+
+#[async_trait::async_trait]
+impl Embedder for Recording {
+    async fn embed(
+        &self,
+        texts: Vec<String>,
+        _role: crate::shared::api::EmbedRole,
+    ) -> anyhow::Result<Vec<Vec<f32>>> {
+        let vectors = texts.iter().map(|t| vec![t.len() as f32, 1.0]).collect();
+        self.asked.lock().unwrap().extend(texts);
+        Ok(vectors)
+    }
+}
+
+/// An orchestrator whose supervisor hands out `embedder`, bare, every time an
+/// embedding engine is applied — what the production supervisor does.
+fn orch_on(embedder: Arc<Recording>) -> (tempfile::TempDir, Orchestrator) {
+    let (dir, mut orch) = bare_orch();
+    orch.engines = EngineManager::new(
+        Arc::new(MockSupervisor::with_backend_and_embedder(
+            None,
+            Some(embedder as Arc<dyn Embedder>),
+        )),
+        unbounded_channel().0,
+        unbounded_channel().0,
+        unbounded_channel().0,
+    );
+    orch.config.embed.convention = crate::shared::embed_prefix::EmbedConvention::E5;
+    (dir, orch)
+}
+
+/// Embeds one passage through whatever the orchestrator would hand a tool now,
+/// and says what reached the embedder for it: every text asked since the last
+/// call, the guard's own among them.
+async fn embedded(orch: &Orchestrator, seen: &Recording, text: &str) -> Vec<String> {
+    orch.engines
+        .embedder()
+        .embed(
+            vec![text.to_string()],
+            crate::shared::api::EmbedRole::Passage,
+        )
+        .await
+        .expect("an embedding");
+    std::mem::take(&mut *seen.asked.lock().unwrap())
+}
+
+/// The canary, as the model-change guard asks for it under the e5 convention.
+fn canary() -> String {
+    format!("passage: {}", crate::shared::embed_identity::CANARY_TEXT)
+}
+
+/// An embedder is dressed by **every** road that installs one: its input
+/// convention applied, and the model-change guard armed.
+///
+/// Start-up dressed it; a settings edit and a relaunch installed what the
+/// supervisor built as it was — so from the first change of the embedding
+/// settings to the restart there were no `query:`/`passage:` markers, and
+/// nothing checked that the stored vectors belong to the model now answering.
+/// A switch of the embedder is the moment that check exists for
+/// (docs/research/openrouter-mode.md §9, A1).
+#[tokio::test]
+async fn an_embedder_is_dressed_by_every_road_that_installs_one() {
+    let seen = Arc::new(Recording {
+        asked: Default::default(),
+    });
+    let (_d, mut orch) = orch_on(seen.clone());
+
+    // Start-up.
+    orch.apply_embed_settings();
+    let asked = embedded(&orch, &seen, "first").await;
+    assert_eq!(asked.last().map(String::as_str), Some("passage: first"));
+    assert!(asked.contains(&canary()), "the guard asked: {asked:?}");
+    // Once per embedder: the guard does not ask again for the next text.
+    assert_eq!(embedded(&orch, &seen, "second").await, ["passage: second"]);
+
+    // A settings edit, as the settings screen makes it.
+    let mut edited = orch.config.clone();
+    edited.embed.external.model_name = Some("another-model".into());
+    orch.handle_update_config(edited);
+    orch.flush_restarts();
+    let asked = embedded(&orch, &seen, "third").await;
+    assert_eq!(
+        asked.last().map(String::as_str),
+        Some("passage: third"),
+        "the convention survives the edit"
+    );
+    assert!(
+        asked.contains(&canary()),
+        "and the guard is armed for the embedder the edit installed: {asked:?}"
+    );
+
+    // A convention changed in the session is the one applied.
+    let mut edited = orch.config.clone();
+    edited.embed.convention = crate::shared::embed_prefix::EmbedConvention::None;
+    orch.handle_update_config(edited);
+    orch.flush_restarts();
+    let asked = embedded(&orch, &seen, "fourth").await;
+    assert_eq!(asked.last().map(String::as_str), Some("fourth"));
+    assert!(
+        asked.contains(&crate::shared::embed_identity::CANARY_TEXT.to_string()),
+        "{asked:?}"
+    );
+}
+
+/// The third road: a managed embedding server that died is relaunched, and
+/// what the relaunch installs is dressed as well.
+#[tokio::test]
+async fn a_relaunched_embedder_is_dressed() {
+    let seen = Arc::new(Recording {
+        asked: Default::default(),
+    });
+    let (_d, mut orch) = orch_on(seen.clone());
+    orch.config.embed.mode = ServerMode::Managed;
+    orch.apply_embed_settings();
+    embedded(&orch, &seen, "before").await;
+
+    orch.engines
+        .set_embed_status(ServerStatus::Disconnected("the process exited".into()));
+    orch.relaunch_dead_managed_servers();
+    let asked = embedded(&orch, &seen, "after").await;
+    assert_eq!(asked.last().map(String::as_str), Some("passage: after"));
+    assert!(asked.contains(&canary()), "{asked:?}");
+}
+
 /// The gateway's switch is the provider's: it reaches **every** slot that
 /// speaks to the gateway — impersonation and the embedder as well as the chat —
 /// and what each was applied with is compared, so the slot is raised again with

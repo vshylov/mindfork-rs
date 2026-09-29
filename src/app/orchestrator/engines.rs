@@ -46,6 +46,9 @@ fn gateway_for(
     (provider == Some(CloudProvider::OpenRouter)).then(|| gateway.clone())
 }
 
+/// What the application puts around an embedder before anything uses it.
+pub(super) type EmbedderDress = Box<dyn FnOnce(Arc<dyn Embedder>) -> Arc<dyn Embedder>>;
+
 /// What a slot was last launched with: its settings, the key blob they were
 /// resolved from, and the gateway's settings where they applied
 /// ([`gateway_for`]).
@@ -241,12 +244,23 @@ impl EngineManager {
     /// (Re-)raises the embedding server from settings. Like [`Self::apply_chat`]: the
     /// previous managed process is dropped, the previous probe is invalidated, and the
     /// immediate status is stored (real readiness arrives via `embed_status_tx`).
+    ///
+    /// `dress` is what the application puts around the embedder the supervisor
+    /// built — the input convention and the model-change guard
+    /// (`Orchestrator::embedder_dress`). It is an argument, not a step a caller
+    /// takes afterwards, because it used to be one: start-up took it, a
+    /// settings edit and a relaunch did not, and from the first change of the
+    /// embedding settings to the restart the application ran on the bare
+    /// client — no `query:`/`passage:` markers, and no check that the stored
+    /// vectors belong to the model now answering, at the one moment that check
+    /// exists for (docs/research/openrouter-mode.md §9, A1).
     pub(super) fn apply_embed(
         &mut self,
         settings: &EmbedSettings,
         api_keys: &[ApiKeyEntry],
         gateway: &OpenRouterSettings,
         loc: &'static Locale,
+        dress: EmbedderDress,
     ) {
         self.supervisor.set_gateway(gateway);
         self.embed_handle = None; // drop the old managed process (kill_on_drop)
@@ -263,7 +277,7 @@ impl EngineManager {
             self.embed_status_tx.clone(),
             loc,
         );
-        self.embedder = setup.embedder;
+        self.embedder = dress(setup.embedder);
         self.embed_handle = setup.handle;
         self.embed_status = setup.status;
         self.applied_embed = Some((

@@ -385,44 +385,239 @@ async fn impersonation_through_the_gateway_is_checked_the_same_way() {
     let _ = requests(seen).await;
 }
 
-/// The gateway's embeddings ride with its chat mode (the same enum selects
-/// both): the slot is ready at once, like the other clouds' — the embedder has
-/// no probe — and its request carries the model, the key and the app's name.
-#[tokio::test]
-async fn the_gateways_embedder_is_built_like_a_clouds() {
-    const SCRIPT: &[Step] = &[Step::Answer(
-        "200 OK",
-        r#"{"data":[{"embedding":[0.6,0.8],"index":0}]}"#,
-    )];
-    let (url, seen) = stub(SCRIPT);
-    let settings = EmbedSettings {
-        mode: ServerMode::OpenRouter,
-        openrouter: CloudSettings {
-            model_name: Some("baai/bge-m3".into()),
-            ..section(&url)
+/// An embeddings answer of `n` vectors, as a body the stub can serve.
+fn vectors(n: usize) -> &'static str {
+    let data: Vec<String> = (0..n)
+        .map(|i| format!(r#"{{"embedding":[{i}.0,1.0],"index":{i}}}"#))
+        .collect();
+    Box::leak(format!(r#"{{"data":[{}]}}"#, data.join(",")).into_boxed_str())
+}
+
+fn script(steps: Vec<Step>) -> &'static [Step] {
+    Box::leak(steps.into_boxed_slice())
+}
+
+/// An embedder's settings in `mode`, its section pointed at the stub.
+fn embedder(mode: ServerMode, url: &str) -> EmbedSettings {
+    let section = CloudSettings {
+        model_name: Some("baai/bge-m3".into()),
+        ..section(url)
+    };
+    EmbedSettings {
+        mode,
+        openai: section.clone(),
+        openrouter: section,
+        external: crate::shared::config::ExternalSettings {
+            url: Some(url.to_string()),
+            ..Default::default()
         },
         ..Default::default()
-    };
-    let (tx, _rx) = unbounded_channel();
+    }
+}
+
+/// `n` short texts, each a token the request's body can be counted by.
+fn texts(n: usize) -> Vec<String> {
+    (0..n).map(|i| format!("t{i}")).collect()
+}
+
+/// How many texts a request carried.
+fn inputs(request: &str) -> usize {
+    request.matches("\"t").count()
+}
+
+/// The gateway's embedder is asked about its key as its chat engine is: the
+/// slot is `Connecting` until the gateway answered, and the request that
+/// follows carries the model, the key and the app's name.
+#[tokio::test]
+async fn the_gateways_embedder_is_asked_about_its_key_too() {
+    let (url, seen) = stub(script(vec![ACCEPTED, Step::Answer("200 OK", vectors(1))]));
+    let (tx, mut rx) = unbounded_channel();
     let setup = LlamaSupervisor::default().apply_embed(
-        &settings,
+        &embedder(ServerMode::OpenRouter, &url),
         Some("sk-or-stored"),
         CancellationToken::new(),
         tx,
         en(),
     );
-    assert_eq!(setup.status, ServerStatus::Ready);
-    let vectors = setup
+    assert_eq!(setup.status, ServerStatus::Connecting);
+    assert_eq!(next(&mut rx).await, Some(ServerStatus::Ready));
+
+    let answered = setup
         .embedder
         .embed(vec!["hello".into()], EmbedRole::Passage)
         .await
         .expect("an embedding");
-    assert_eq!(vectors, vec![vec![0.6, 0.8]]);
-    let head = requests(seen).await[0].to_ascii_lowercase();
-    assert!(head.starts_with("post /v1/embeddings "), "{head}");
-    assert!(
-        head.contains("authorization: bearer sk-or-stored"),
-        "{head}"
+    assert_eq!(answered, vec![vec![0.0, 1.0]]);
+    let seen = requests(seen).await;
+    let heads: Vec<String> = seen.iter().map(|r| r.to_ascii_lowercase()).collect();
+    assert!(heads[0].starts_with("get /v1/key "), "{}", heads[0]);
+    assert!(heads[1].starts_with("post /v1/embeddings "), "{}", heads[1]);
+    for head in &heads {
+        assert!(
+            head.contains("authorization: bearer sk-or-stored"),
+            "{head}"
+        );
+        assert!(head.contains("x-openrouter-title: mindfork"), "{head}");
+    }
+    assert!(seen[1].contains(r#""model":"baai/bge-m3""#), "{}", seen[1]);
+}
+
+/// A key the gateway refuses is the embedder's status, in the gateway's words
+/// — not a `401` inside the result of the first tool that embeds.
+#[tokio::test]
+async fn a_refused_key_is_the_embedders_status() {
+    let (url, seen) = stub(script(vec![REFUSED]));
+    let (tx, mut rx) = unbounded_channel();
+    let setup = LlamaSupervisor::default().apply_embed(
+        &embedder(ServerMode::OpenRouter, &url),
+        Some("sk-or-wrong"),
+        CancellationToken::new(),
+        tx,
+        en(),
     );
-    assert!(head.contains("x-openrouter-title: mindfork"), "{head}");
+    assert_eq!(setup.status, ServerStatus::Connecting);
+    assert_eq!(
+        next(&mut rx).await,
+        Some(ServerStatus::Disconnected(
+            "OpenRouter refused the API key: User not found.".into()
+        ))
+    );
+    let _ = requests(seen).await;
+}
+
+/// No other cloud is asked anything before it is used: its embedder is ready
+/// at once, and the first request it makes is the first embedding.
+#[tokio::test]
+async fn another_clouds_embedder_is_ready_at_once_and_asks_nothing() {
+    let (url, seen) = stub(script(vec![Step::Answer("200 OK", vectors(1))]));
+    let (tx, mut rx) = unbounded_channel();
+    let setup = LlamaSupervisor::default().apply_embed(
+        &embedder(ServerMode::OpenAi, &url),
+        Some("sk-stored"),
+        CancellationToken::new(),
+        tx,
+        en(),
+    );
+    assert_eq!(setup.status, ServerStatus::Ready);
+    setup
+        .embedder
+        .embed(texts(1), EmbedRole::Passage)
+        .await
+        .expect("an embedding");
+    let seen = requests(seen).await;
+    assert_eq!(seen.len(), 1);
+    assert!(seen[0].starts_with("POST /v1/embeddings "), "{}", seen[0]);
+    assert!(
+        !seen[0].to_ascii_lowercase().contains("x-openrouter-title"),
+        "the app's name is the gateway's to be told: {}",
+        seen[0]
+    );
+    assert!(rx.try_recv().is_err(), "and no status follows");
+}
+
+/// A cloud sheds load as a matter of course, and its embedder asks again: a
+/// rate limit followed by an answer is an answer.
+#[tokio::test]
+async fn a_clouds_embedder_asks_again_after_a_rate_limit() {
+    const SLOW_DOWN: Step = Step::Answer(
+        "429 Too Many Requests",
+        r#"{"error":{"message":"The engine is currently overloaded","code":429}}"#,
+    );
+    for mode in [ServerMode::OpenAi, ServerMode::OpenRouter] {
+        let mut steps = vec![SLOW_DOWN, Step::Answer("200 OK", vectors(2))];
+        if mode == ServerMode::OpenRouter {
+            steps.insert(0, ACCEPTED);
+        }
+        let asked = steps.len();
+        let (url, seen) = stub(script(steps));
+        let (tx, mut rx) = unbounded_channel();
+        let setup = LlamaSupervisor::default().apply_embed(
+            &embedder(mode, &url),
+            Some("k"),
+            CancellationToken::new(),
+            tx,
+            en(),
+        );
+        if mode == ServerMode::OpenRouter {
+            assert_eq!(next(&mut rx).await, Some(ServerStatus::Ready));
+        }
+        let answered = setup
+            .embedder
+            .embed(texts(2), EmbedRole::Passage)
+            .await
+            .unwrap_or_else(|e| panic!("{mode:?}: {e}"));
+        assert_eq!(answered.len(), 2, "{mode:?}");
+        assert_eq!(requests(seen).await.len(), asked, "{mode:?}");
+    }
+}
+
+/// A server of the user's own is not retried: it is up or it is down, and a
+/// wait before saying so is a wait on a server nobody started.
+#[tokio::test]
+async fn a_server_of_the_users_own_is_asked_once() {
+    const DOWN: Step = Step::Answer(
+        "503 Service Unavailable",
+        r#"{"error":{"message":"Loading model","code":503}}"#,
+    );
+    let (url, seen) = stub(script(vec![DOWN]));
+    // Cancelled before it starts: the readiness probe is not what is asked
+    // about here, and would take the stub's one answer.
+    let overtaken = CancellationToken::new();
+    overtaken.cancel();
+    let (tx, _rx) = unbounded_channel();
+    let setup = LlamaSupervisor::default().apply_embed(
+        &embedder(ServerMode::External, &url),
+        None,
+        overtaken,
+        tx,
+        en(),
+    );
+    let failed = setup
+        .embedder
+        .embed(texts(1), EmbedRole::Passage)
+        .await
+        .expect_err("the server answered 503");
+    assert!(failed.to_string().contains("Loading model"), "{failed}");
+    assert_eq!(requests(seen).await.len(), 1);
+}
+
+/// Every embedder's requests are bounded, the user's own server's and a
+/// cloud's alike: one text more than the cap is two requests, and the answer
+/// is one list in the order the texts were given.
+#[tokio::test]
+async fn a_long_input_reaches_any_embedder_in_parts() {
+    use crate::shared::api::embed_policy::MAX_INPUTS;
+
+    for mode in [ServerMode::External, ServerMode::OpenAi] {
+        let (url, seen) = stub(script(vec![
+            Step::Answer("200 OK", vectors(MAX_INPUTS)),
+            Step::Answer("200 OK", vectors(1)),
+        ]));
+        let overtaken = CancellationToken::new();
+        overtaken.cancel();
+        let (tx, _rx) = unbounded_channel();
+        let setup = LlamaSupervisor::default().apply_embed(
+            &embedder(mode, &url),
+            Some("k"),
+            overtaken,
+            tx,
+            en(),
+        );
+        let answered = setup
+            .embedder
+            .embed(texts(MAX_INPUTS + 1), EmbedRole::Passage)
+            .await
+            .unwrap_or_else(|e| panic!("{mode:?}: {e}"));
+        assert_eq!(answered.len(), MAX_INPUTS + 1, "{mode:?}");
+        // The stub numbers its vectors from zero in every answer: the last
+        // one is the second request's first.
+        assert_eq!(answered[MAX_INPUTS - 1][0], (MAX_INPUTS - 1) as f32);
+        assert_eq!(answered[MAX_INPUTS][0], 0.0);
+        let seen = requests(seen).await;
+        assert_eq!(
+            seen.iter().map(|r| inputs(r)).collect::<Vec<_>>(),
+            [MAX_INPUTS, 1],
+            "{mode:?}"
+        );
+    }
 }

@@ -222,8 +222,9 @@ impl Orchestrator {
                 .engines
                 .embed_is_current(&self.config.embed, keys, gateway)
         {
+            let dress = self.embedder_dress();
             self.engines
-                .apply_embed(&self.config.embed, keys, gateway, loc);
+                .apply_embed(&self.config.embed, keys, gateway, loc, dress);
             applied_any = true;
         }
         if imp
@@ -315,12 +316,26 @@ impl Orchestrator {
     /// (the embeddings chip in the status line appears/disappears based on the setting).
     pub(super) fn apply_embed_settings(&mut self) {
         let loc = self.ui_locale();
+        let dress = self.embedder_dress();
         self.engines.apply_embed(
             &self.config.embed,
             &self.config.api_keys,
             &self.config.openrouter,
             loc,
+            dress,
         );
+        self.emit_server_status();
+    }
+
+    /// What goes around the embedder the supervisor built, as the settings
+    /// stand now. Taken by every road that installs one
+    /// ([`EngineManager::apply_embed`]) — start-up, a settings edit, a relaunch.
+    ///
+    /// [`EngineManager::apply_embed`]: super::engines::EngineManager::apply_embed
+    pub(super) fn embedder_dress(&self) -> super::engines::EmbedderDress {
+        let convention = self.config.embed.convention;
+        let model = self.config.embed.active_model_name();
+        let (storage, loc, evt_tx) = (self.storage.clone(), self.ui_locale(), self.evt_tx.clone());
         // Two decorators, and the order is load-bearing:
         //
         //   EmbedGuard { PrefixedEmbedder { real embedder } }
@@ -338,19 +353,14 @@ impl Orchestrator {
         // embedding settings change — exactly when the model is most likely to
         // have been swapped. The check is lazy (embeddings have no readiness
         // probe, ADR 0002).
-        let prefixed = std::sync::Arc::new(crate::shared::embed_prefix::PrefixedEmbedder::new(
-            self.engines.embedder.clone(),
-            self.config.embed.convention,
-        ));
-        self.engines.embedder = std::sync::Arc::new(super::embed_guard::EmbedGuard::new(
-            prefixed,
-            self.storage.clone(),
-            self.config.embed.active_model_name(),
-            self.config.embed.convention,
-            self.ui_locale(),
-            self.evt_tx.clone(),
-        ));
-        self.emit_server_status();
+        Box::new(move |built| {
+            let prefixed = std::sync::Arc::new(crate::shared::embed_prefix::PrefixedEmbedder::new(
+                built, convention,
+            ));
+            std::sync::Arc::new(super::embed_guard::EmbedGuard::new(
+                prefixed, storage, model, convention, loc, evt_tx,
+            ))
+        })
     }
 
     /// Revives a **managed** server whose process is gone.
@@ -386,11 +396,13 @@ impl Orchestrator {
         if self.config.embed.mode == ServerMode::Managed && self.needs_relaunch(Server::Embed, now)
         {
             tracing::warn!("managed embedding server is down — relaunching");
+            let dress = self.embedder_dress();
             self.engines.apply_embed(
                 &self.config.embed,
                 &self.config.api_keys,
                 &self.config.openrouter,
                 loc,
+                dress,
             );
             relaunched = true;
         }

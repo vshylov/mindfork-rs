@@ -652,6 +652,7 @@ mod confirm;
 mod demo;
 mod dialogue;
 mod files;
+mod gateway_embed_live;
 mod gateway_live;
 mod generation;
 mod images;

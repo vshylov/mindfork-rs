@@ -106,7 +106,7 @@ impl Default for RetryPolicy {
 
 /// What to do after an attempt failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Decision {
+pub(super) enum Decision {
     /// Wait this long, then try again.
     Wait(Duration),
     /// Report the failure.
@@ -114,8 +114,14 @@ enum Decision {
 }
 
 impl RetryPolicy {
-    /// Decides what happens after `attempt` failed.
-    fn decide(self, attempt: u32, transient: bool, retry_after: Option<Duration>) -> Decision {
+    /// Decides what happens after `attempt` failed. One verdict for a chat turn
+    /// and for an embedding request ([`super::embed_policy::RetryEmbedder`]).
+    pub(super) fn decide(
+        self,
+        attempt: u32,
+        transient: bool,
+        retry_after: Option<Duration>,
+    ) -> Decision {
         if !transient || attempt >= self.max_attempts {
             return Decision::GiveUp;
         }

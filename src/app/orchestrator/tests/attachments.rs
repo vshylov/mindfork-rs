@@ -507,7 +507,7 @@ async fn attaching_a_missing_file_reports_an_error() {
 
 /// Builds the turn snapshot `start_generation` builds, for a chat that already
 /// holds `attachments`.
-fn turn_ctx(
+pub(super) fn turn_ctx(
     orch: &Orchestrator,
     profile_id: Uuid,
     chat_id: Uuid,

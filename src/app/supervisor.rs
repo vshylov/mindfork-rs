@@ -13,6 +13,7 @@ use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio_util::sync::CancellationToken;
 
+use crate::shared::api::embed_policy::{BatchedEmbedder, RetryEmbedder};
 use crate::shared::api::llama_args::ManagedRole;
 use crate::shared::api::managed::ChildExit;
 use crate::shared::api::{
@@ -331,7 +332,7 @@ impl ServerSupervisor for LlamaSupervisor {
                         loc,
                     );
                     EmbedSetup {
-                        embedder: client,
+                        embedder: BatchedEmbedder::wrap(client),
                         handle: None,
                         status: ServerStatus::Connecting,
                     }
@@ -367,7 +368,7 @@ impl ServerSupervisor for LlamaSupervisor {
                                 loc,
                             );
                             EmbedSetup {
-                                embedder: client,
+                                embedder: BatchedEmbedder::wrap(client),
                                 handle: Some(handle),
                                 status: ServerStatus::Connecting,
                             }
@@ -388,10 +389,8 @@ impl ServerSupervisor for LlamaSupervisor {
                 _ => unavailable_embed(),
             },
             // The gateway's embeddings ride with its chat mode: `embed.mode` is
-            // the same enum, so the alternative was a mode that can be selected
-            // and does nothing. The wire is the one the other two clouds use,
-            // measured as it is (docs/research/openrouter-mode.md §4.3); the
-            // retry and the batch cap are the track's next stage.
+            // the same enum. The wire is the one the other two clouds use,
+            // measured as it is (docs/research/openrouter-mode.md §4.3).
             ServerMode::OpenAi | ServerMode::Gemini | ServerMode::OpenRouter => {
                 let cloud = settings.cloud().expect("cloud mode");
                 cloud_embed_setup(
@@ -403,6 +402,11 @@ impl ServerSupervisor for LlamaSupervisor {
                         model_name: cloud.model_name.as_deref(),
                     },
                     &self.gateway(),
+                    Monitor {
+                        cancel,
+                        status_tx,
+                        loc,
+                    },
                 )
             }
             // Anthropic and xAI have no embeddings API — RAG uses a separate embedder
@@ -739,13 +743,25 @@ fn cloud_chat_setup(
     }
 }
 
-/// Builds a cloud embedding backend (OpenAI/Gemini). On an incomplete configuration
-/// (no model or key) — `UnavailableEmbedder` (RAG returns a clear error, doesn't
-/// crash), same as for other unconfigured embedders.
+/// Builds a cloud embedding backend (OpenAI/Gemini/the OpenRouter gateway). On
+/// an incomplete configuration (no model or key) — `UnavailableEmbedder` (RAG
+/// returns a clear error, doesn't crash), same as for other unconfigured
+/// embedders.
+///
+/// A cloud's embedder is retried as its chat backend is, and for the reason
+/// given there: every provider sheds load as a matter of course — a `429` was
+/// the answer to 4 requests of 10 on one of the gateway's — and nothing else
+/// will ever recover a request to a server nobody here can restart
+/// (docs/research/openrouter-mode.md §4.3, fork F8).
+///
+/// The gateway's is `Connecting` until its key was judged, like its chat
+/// engine ([`spawn_key_check`]): a refused key is the slot's status rather
+/// than a `401` inside the result of the first tool that embeds.
 fn cloud_embed_setup(
     provider: CloudProvider,
     entry: CloudEntry<'_>,
     gateway: &OpenRouterSettings,
+    monitor: Monitor,
 ) -> EmbedSetup {
     let CloudEntry {
         url_override,
@@ -766,13 +782,17 @@ fn cloud_embed_setup(
     let client = OpenAiClient::new(base)
         .with_api_key(Some(key))
         .with_model(Some(model.to_string()));
-    let client = match provider {
-        CloudProvider::OpenRouter => client.for_openrouter(gateway.attribution),
-        _ => client,
+    let (client, status) = match provider {
+        CloudProvider::OpenRouter => {
+            let client = Arc::new(client.for_openrouter(gateway.attribution));
+            spawn_key_check(client.clone(), monitor);
+            (client, ServerStatus::Connecting)
+        }
+        _ => (Arc::new(client), ServerStatus::Ready),
     };
     EmbedSetup {
-        status: ServerStatus::Ready,
-        embedder: Arc::new(client),
+        status,
+        embedder: BatchedEmbedder::wrap(RetryEmbedder::wrap(client)),
         handle: None,
     }
 }
