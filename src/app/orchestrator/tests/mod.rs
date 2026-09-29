@@ -655,6 +655,7 @@ mod dialogue;
 mod files;
 mod gateway_live;
 mod gateway_live_embed;
+mod gateway_live_speech;
 mod generation;
 mod images;
 mod impersonation;

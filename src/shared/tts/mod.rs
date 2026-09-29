@@ -21,6 +21,8 @@ pub mod openai;
 pub mod playback;
 
 #[cfg(test)]
+mod gateway_live_tests;
+#[cfg(test)]
 mod gateway_tests;
 
 use std::sync::Arc;

@@ -59,8 +59,12 @@ Scenarios (`--scenario`):
   slots are ready in the status line, a file is indexed through the gateway's
   embedder, the settings show the provider's rows with the attribution switch,
   and `Enter` on the model row lists the gateway's catalogue with the window
-  and the price. Takes the
-  single-instance lock, like `first-frame`.
+  and the price. Speech goes the same way: `/tts` reads the reply aloud
+  through the gateway — **audibly**, it needs a sound card — the Speech tab
+  shows the provider's rows and none for instructions, its model row lists the
+  gateway's speech models with their voices counted and no price, and its
+  voice row lists the voices of the model named. Takes the single-instance
+  lock, like `first-frame`.
 * `user-theme` — a copy of the binary in a scratch directory whose
   `data/themes/` holds a theme of one colour (a light canvas) next to a file
   that is not a theme, with the settings naming that theme. The first frame
@@ -222,6 +226,7 @@ KEYS = {
     "enter": (0x0D, "\r", 0),
     "esc": (0x1B, "\x1b", 0),
     "left": (0x25, "\0", ENHANCED_KEY),
+    "up": (0x26, "\0", ENHANCED_KEY),
     "right": (0x27, "\0", ENHANCED_KEY),
     "down": (0x28, "\0", ENHANCED_KEY),
     "f1": (0x70, "\0", 0),
@@ -699,6 +704,12 @@ def scenario_user_theme(exe: Path, report: Report) -> None:
         report.check(code == 0, f"the app exited with code {code} the second time")
 
 
+# What the status line says while a message is read aloud, and the picker's
+# first row — each read off the screen more than once.
+SPEAKING = "speaking"
+BY_HAND = "Type a name by hand"
+
+
 def text_of(rows: list[list[tuple[str, int]]]) -> str:
     return "\n".join("".join(char for char, _ in row).rstrip() for row in rows)
 
@@ -714,11 +725,23 @@ def wait_for_text(text: str, seconds: float) -> list[list[tuple[str, int]]]:
     return rows
 
 
+def wait_until_gone(text: str, seconds: float) -> list[list[tuple[str, int]]]:
+    """Reads the screen until `text` has left it, or the time is up."""
+    deadline = time.monotonic() + seconds
+    rows = read_screen()
+    while text in text_of(rows) and time.monotonic() < deadline:
+        time.sleep(0.5)
+        rows = read_screen()
+    return rows
+
+
 def scenario_gateway(exe: Path, report: Report) -> None:
     if not os.environ.get("OPENROUTER_API_KEY", "").strip():
         raise RuntimeError("OPENROUTER_API_KEY is not set, and this scenario is the real gateway")
     model = os.environ.get("MINDFORK_OPENROUTER_MODEL", "anthropic/claude-haiku-4.5")
     embedder = os.environ.get("MINDFORK_OPENROUTER_EMBED_MODEL", "baai/bge-m3")
+    speaker = os.environ.get("MINDFORK_OPENROUTER_TTS_MODEL", "x-ai/grok-voice-tts-1.0")
+    voice = os.environ.get("MINDFORK_OPENROUTER_TTS_VOICE", "eve")
     with tempfile.TemporaryDirectory(prefix="mindfork-probe-") as scratch:
         root = Path(scratch)
         copy = root / exe.name
@@ -735,6 +758,14 @@ def scenario_gateway(exe: Path, report: Report) -> None:
             "embed": {
                 "mode": "openrouter",
                 "openrouter": {"model_name": embedder, "api_key_env": "OPENROUTER_API_KEY"},
+            },
+            "tts": {
+                "mode": "openrouter",
+                "openrouter": {
+                    "model_name": speaker,
+                    "voice": voice,
+                    "api_key_env": "OPENROUTER_API_KEY",
+                },
             },
         }
         (root / "data" / SETTINGS_FILE).write_text(json.dumps(settings), encoding="utf-8")
@@ -761,6 +792,20 @@ def scenario_gateway(exe: Path, report: Report) -> None:
             print(text_of(rows))
             report.says("the knowledge base", rows, ("indexing finished", "files: 1"))
 
+            print("speech: the reply read aloud through the gateway (audible)")
+            type_text("/tts")
+            press("enter", SETTLE_REPAINT)
+            rows = wait_for_text(SPEAKING, 30)
+            report.says("the status line while it speaks", rows, (SPEAKING,))
+            rows = wait_until_gone(SPEAKING, 60)
+            print(text_of(rows))
+            said = text_of(rows)
+            report.check(SPEAKING not in said, "the speech ended")
+            report.check(
+                "speech synthesis failed" not in said and "audio is unavailable" not in said,
+                "and nothing failed on the way",
+            )
+
             print("the settings: the provider's rows")
             press(SETTINGS_KEY, SETTLE_REPAINT)  # opens on "Model/server"
             press("enter", SETTLE_REPAINT)  # into its fields: the row of tabs
@@ -778,7 +823,38 @@ def scenario_gateway(exe: Path, report: Report) -> None:
             press("enter", SETTLE_REPAINT)
             rows = wait_for_text("per 1M tokens", 30)
             print(text_of(rows))
-            report.says("the catalogue", rows, ("context", "per 1M tokens", "Type a name by hand"))
+            report.says("the catalogue", rows, ("context", "per 1M tokens", BY_HAND))
+            press("esc")
+
+            print("the settings: the speech slot's rows")
+            press("up")  # "Model" -> "Mode"
+            press("up")  # -> the tabs
+            press("left", SETTLE_REPAINT)  # the first tab wraps onto the last: "Speech"
+            rows = read_screen()
+            print(text_of(rows))
+            report.says(
+                "Speech",
+                rows,
+                ("openrouter", speaker, voice, "OpenRouter API key", "Name the app to OpenRouter"),
+            )
+            report.check("Instructions" not in text_of(rows), "no row for instructions")
+
+            print("the picker: the gateway's speech models behind the model row")
+            press("down")  # the tabs -> "Mode"
+            press("down")  # -> "Model"
+            press("enter", SETTLE_REPAINT)
+            rows = wait_for_text("voices:", 30)
+            print(text_of(rows))
+            report.says("the speech models", rows, ("voices:", BY_HAND))
+            report.check("per 1M" not in text_of(rows), "a speech model's row names no price")
+            press("esc")
+
+            print("the picker: the model's voices behind the voice row")
+            press("down")  # "Model" -> "Voice"
+            press("enter", SETTLE_REPAINT)
+            rows = wait_for_text("the model's voices", 30)
+            print(text_of(rows))
+            report.says("the voices", rows, (voice, "the model's voices", BY_HAND))
             press("esc")
             press("esc")
         finally:
