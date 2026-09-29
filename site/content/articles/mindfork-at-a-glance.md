@@ -1,7 +1,7 @@
 +++
 title = "mindfork at a glance"
 description = "The shape of the app: an engine contract over OpenAI-compatible servers, a client-side agentic loop, one turn from start to finish, layered memory, boring durable storage — and where the trust boundaries are."
-updated = "2026-09-20"
+updated = "2026-09-29"
 weight = 1
 
 [extra]
@@ -23,8 +23,10 @@ mindfork does not embed an inference runtime. The engine is an
 mode the app launches and supervises a local llama.cpp `llama-server`
 itself; in external mode any OpenAI-compatible endpoint works — vLLM,
 LM Studio, Ollama, a remote box of your own. OpenAI, Anthropic, Gemini and
-Grok are sibling implementations of the same trait, so a chat can hop
-between a local Gemma and a cloud frontier model without changing shape.
+Grok are sibling implementations of the same trait, and the OpenRouter
+gateway is a mode beside them — one key in front of every vendor's models —
+so a chat can hop between a local Gemma and a cloud frontier model without
+changing shape.
 
 Two deliberate consequences follow. Embedding an inference library as a
 Rust dependency was rejected — it drags GPU toolchains into every build and
@@ -53,7 +55,8 @@ owner of chat state — drives the loop: the model asks for a tool, the tool
 returns a result plus a set of effects, the orchestrator applies them. No
 locks, no shared mutable state, and every provider gets the same tools:
 
-- **the web** — search, page fetching, YouTube — off until you switch it on;
+- **the web** — search, page fetching, YouTube (watched by Gemini, directly
+  or through an OpenRouter key) — off until you switch it on;
 - **files**, and a **code project** attached to the chat: the assistant
   reads, searches and edits it, and runs the build, run and test lines
   *you* typed — never ones it composed — with every change reviewable as a
@@ -206,7 +209,9 @@ highlighting, tables, Mermaid diagrams and LaTeX — all rendered as text,
 in the terminal, with collapse toggles for thoughts and tool cards, search
 inside the conversation and across every chat, and a spellchecker in the
 input box. Pictures go in — from a file, the clipboard or a URL, to a
-local vision model or a cloud one — and speech comes out, with `/tts`.
+local vision model or a cloud one — and speech comes out, with `/tts`:
+through OpenAI, Gemini, a server of your own, or any speech model behind an
+OpenRouter key.
 Every action has a typed command for a terminal that keeps the chord for
 itself, copying works over SSH, a conversation exports to a file, and `F1`
 opens each screen's own key list.

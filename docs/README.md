@@ -6,7 +6,7 @@ Two audiences, and they want different documents.
 
 | Document | What it answers |
 |---|---|
-| **[install.md](install.md)** | installing on Windows and Linux, where the data lives, connecting an engine (managed `llama-server`, an external server, the four clouds), the Python sandbox, MCP servers, speech, backups, the environment variables |
+| **[install.md](install.md)** | installing on Windows and Linux, where the data lives, connecting an engine (managed `llama-server`, an external server, the four clouds, the OpenRouter gateway), the Python sandbox, MCP servers, speech, backups, the environment variables |
 | **[manual.md](manual.md)** | how to use it: the screens, chats and profiles, what it remembers, files and images, your code project, the tools and their switches, the keys and the commands, and what to do when something goes wrong |
 | **[import-format.md](import-format.md)** | the neutral JSON format for bringing conversations in from another application |
 | **[../CHANGELOG.md](../CHANGELOG.md)** | what each release changed, in user language |

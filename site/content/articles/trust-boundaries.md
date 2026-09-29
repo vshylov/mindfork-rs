@@ -1,7 +1,7 @@
 +++
 title = "Where the trust boundaries are"
 description = "An assistant that can browse, run code and edit your project needs edges, not promises: what leaves the machine, where the model may not point, what the code can touch, when the app asks — and what the author receives, which is nothing."
-updated = "2026-09-13"
+updated = "2026-09-29"
 weight = 7
 
 [extra]
@@ -43,7 +43,11 @@ machine or your usage.
 - **The model.** In managed mode the app starts `llama-server` on your own
   machine and talks to `127.0.0.1` only. In external mode the conversation
   goes to the URL you typed; with a cloud provider, to that vendor, under
-  their terms. The impersonation engine follows the same rule.
+  their terms; through the OpenRouter gateway, to the gateway **and** to the
+  provider it routes the request to, each under its own. To that gateway the
+  app also names itself — two headers holding the project's site and the
+  program's name, nothing about you — unless you switch that off. The
+  impersonation engine follows the same rule.
 - **Embeddings.** A separate setting, which may well be a different vendor
   from the chat's. What is embedded, and therefore sent there: note text,
   the knowledge base's chunks, chunks of attachments — and, less obviously,
@@ -55,10 +59,17 @@ machine or your usage.
   keyed provider is preferred when a key is available, and a key is found
   only where you put it — in the settings, or in an environment variable
   you named there. Result pages are fetched to extract their text. YouTube
-  sends the video's address, not its bytes, to Gemini, if you gave it a
-  key for that.
-- **Speech** is sent only when you invoke `/tts`. An image attached by URL
-  is downloaded by the app itself and never handed to a provider to fetch.
+  sends the video's address, not its bytes, to whoever you chose to watch it
+  — Gemini by Google's own API, or the same models through the OpenRouter
+  gateway — if you gave it a key for that. The address is the video's id and
+  nothing else of the link you pasted.
+- **Speech** is sent only when you invoke `/tts`: the text of the messages
+  being read, to the speech provider you chose — OpenAI, Gemini, a server of
+  your own, or the OpenRouter gateway and the vendor behind the model you
+  picked there. The audio that comes back is played and not kept, and the
+  app has no speech-to-text: no audio is ever sent anywhere.
+- An image attached by URL is downloaded by the app itself and never handed
+  to a provider to fetch.
 - **Plugins.** MCP servers run as local subprocesses over the process's own
   pipes; what they send onward is theirs. They are a double opt-in — a
   master switch and a per-profile approval — and a server that changes its

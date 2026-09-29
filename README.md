@@ -13,9 +13,9 @@
 [![crates.io](https://img.shields.io/crates/v/mindfork.svg)](https://crates.io/crates/mindfork)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-**A terminal AI chat written in Rust: local models via llama.cpp or OpenAI,
-Anthropic, Gemini and Grok in the cloud, with persistent memory, notes, RAG and
-tools.** One native binary for **Windows** and **Linux**, built on
+**A terminal AI chat written in Rust: local models via llama.cpp, or OpenAI,
+Anthropic, Gemini, Grok and OpenRouter in the cloud, with persistent memory,
+notes, RAG and tools.** One native binary for **Windows** and **Linux**, built on
 [ratatui](https://ratatui.rs).
 
 **No model yet?** `mindfork demo` opens the app with sample chats and a scripted

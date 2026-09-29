@@ -10,7 +10,7 @@
 
 base_url = "https://mindfork.io"
 title = "mindfork"
-description = "A terminal AI chat written in Rust: local models via llama.cpp or OpenAI, Anthropic, Gemini and Grok in the cloud — with persistent memory, notes, RAG and tools. Windows and Linux."
+description = "A terminal AI chat written in Rust: local models via llama.cpp, or OpenAI, Anthropic, Gemini, Grok and OpenRouter in the cloud — with persistent memory, notes, RAG and tools. Windows and Linux."
 default_language = "en"
 
 compile_sass = true

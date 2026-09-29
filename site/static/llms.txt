@@ -1,8 +1,8 @@
 # mindfork
 
-> A terminal AI chat written in Rust: local models via llama.cpp or OpenAI, Anthropic, Gemini and Grok in the cloud — with persistent memory, notes, RAG and tools. Windows and Linux.
+> A terminal AI chat written in Rust: local models via llama.cpp, or OpenAI, Anthropic, Gemini, Grok and OpenRouter in the cloud — with persistent memory, notes, RAG and tools. Windows and Linux.
 
-Run local models through llama.cpp — or bring OpenAI, Anthropic, Gemini and Grok. Persistent memory, notes and RAG, an agentic tool loop that reaches your own code project: one fast native binary for Windows and Linux.
+Run local models through llama.cpp — or bring OpenAI, Anthropic, Gemini, Grok or an OpenRouter key. Persistent memory, notes and RAG, an agentic tool loop that reaches your own code project: one fast native binary for Windows and Linux.
 
 ## Start here
 

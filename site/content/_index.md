@@ -1,10 +1,10 @@
 +++
 title = "mindfork — an AI chat that lives in your terminal"
-description = "Local models via llama.cpp or four cloud providers, persistent memory, notes, RAG and an agentic tool loop — one fast native binary for Windows and Linux."
+description = "Local models via llama.cpp, four cloud providers or an OpenRouter key, persistent memory, notes, RAG and an agentic tool loop — one fast native binary for Windows and Linux."
 
 [extra]
 hero_title = "An AI chat that lives in your terminal"
-hero_sub = "Run local models through llama.cpp — or bring OpenAI, Anthropic, Gemini and Grok. Persistent memory, notes and RAG, an agentic tool loop that reaches your own code project: one fast native binary for Windows and Linux."
+hero_sub = "Run local models through llama.cpp — or bring OpenAI, Anthropic, Gemini, Grok or an OpenRouter key. Persistent memory, notes and RAG, an agentic tool loop that reaches your own code project: one fast native binary for Windows and Linux."
 
 [[extra.features]]
 title = "Memory that persists"
@@ -15,8 +15,8 @@ title = "Local first"
 desc = "A managed llama-server under the hood — one command downloads the llama.cpp build for your GPU — or any OpenAI-compatible endpoint you point it at. Your conversations never have to leave your machine."
 
 [[extra.features]]
-title = "Four cloud providers"
-desc = "OpenAI, Anthropic, Gemini and Grok as first-class backends. Switch per profile; API keys are stored with machine-bound encryption."
+title = "Four clouds and a gateway"
+desc = "OpenAI, Anthropic, Gemini and Grok as first-class backends, and OpenRouter as a mode of its own — one key for chat, embeddings, speech and YouTube video, in front of every vendor's models, picked from a list that shows each one's context window and price. Switch per profile; API keys are stored with machine-bound encryption."
 
 [[extra.features]]
 title = "Real tools"
@@ -36,7 +36,7 @@ desc = "Markdown, syntax highlighting, Mermaid diagrams and LaTeX rendered as te
 
 [[extra.features]]
 title = "Show it a picture"
-desc = "Attach a screenshot, a photo or a diagram to your message — from a file, straight off the clipboard, or by its web address. Works with a local vision model and with all four clouds."
+desc = "Attach a screenshot, a photo or a diagram to your message — from a file, straight off the clipboard, or by its web address. Works with a local vision model, with all four clouds and through OpenRouter, wherever the model takes images."
 
 [[extra.features]]
 title = "Find anything you said"
@@ -48,7 +48,7 @@ desc = "When a conversation outgrows the model's context window, the early part 
 
 [[extra.features]]
 title = "It can read replies aloud"
-desc = "/tts speaks the last message, the last N, or the whole conversation, through OpenAI or Gemini speech — no new vendor to sign up for if you already use one of them."
+desc = "/tts speaks the last message, the last N, or the whole conversation, through OpenAI or Gemini speech — or through any of the speech models behind an OpenRouter key, in a voice picked from the model's own list. No new vendor to sign up for if you already use one of them."
 
 [[extra.features]]
 title = "Private by construction"
