@@ -5115,11 +5115,11 @@ llama.cpp b11234, CPU, `gemma-3-4b-it` Q8_0, `-c 8192 --jinja`; Windows 11):
   resumed with " is Paris."; `google/gemma-4-31b-it` cut at the same place, announced not
   continuable, refused with the gateway's note.
 - **The client** (`shared::api::openai::gateway_live`, nine smokes), on the three
-  families: thoughts, the answer and who served (`qwen/qwen3.6-27b`: 2 174 characters of
-  thoughts, 391, `Phala`; `google/gemini-3.5-flash` the same); a tool call and its result
+  families: thoughts, the answer and who served (`qwen/qwen3.6-27b`: 1 263 characters of
+  thoughts, then 391; `google/gemini-3.5-flash` the same); a tool call and its result
   (48213 read back by Haiku, Gemini and Qwen); **a muted turn** — through the mode 0
-  reasoning tokens and $0.0000675, through `external` the refusal, the re-send and 267
-  tokens at $0.0024, the control arm; a mandatory model with no list answered; a tool's
+  reasoning tokens and $0.0000765, through `external` the refusal, the re-send and 307
+  tokens at $0.0028, the control arm; a mandatory model with no list answered; a tool's
   image seen with the control arm blind (Haiku, Qwen; Gemini once the fixture was
   labelled); a `:nitro` slug with its model's facts where `external` has none; the key
   judged; the three catalogues — 384 entries for the account, 387 public, 33 embedding
