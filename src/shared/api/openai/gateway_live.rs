@@ -435,6 +435,8 @@ async fn the_gateways_catalogues_answer_live() {
         shape,
         base: base().to_string(),
         key,
+        // As the app asks: named, since the switch is on by default.
+        attribution: true,
     };
     for (label, request, role) in [
         (

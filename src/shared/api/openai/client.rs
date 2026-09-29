@@ -83,6 +83,14 @@ pub const ATTRIBUTION_REFERER: &str = "https://mindfork.io";
 /// What the gateway's `X-OpenRouter-Title` names.
 pub const ATTRIBUTION_TITLE: &str = "mindfork";
 
+/// A request with the two headers that name the application to the gateway.
+/// The one place they are written: the engine's requests and the model list's
+/// are made by two clients, and carry the same two lines.
+pub(crate) fn attributed(rb: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+    rb.header("HTTP-Referer", ATTRIBUTION_REFERER)
+        .header("X-OpenRouter-Title", ATTRIBUTION_TITLE)
+}
+
 /// The message of an error envelope (`{"error": {"message": …}}`), when the
 /// body is one and says something.
 fn said_in(body: &str) -> Option<String> {
@@ -181,9 +189,7 @@ impl OpenAiClient {
             None => rb,
         };
         match self.gateway {
-            Some(Gateway { attribution: true }) => rb
-                .header("HTTP-Referer", ATTRIBUTION_REFERER)
-                .header("X-OpenRouter-Title", ATTRIBUTION_TITLE),
+            Some(Gateway { attribution: true }) => attributed(rb),
             _ => rb,
         }
     }

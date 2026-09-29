@@ -1798,6 +1798,7 @@
   "ui.settings.models.window": "{size} context",
   "ui.settings.models.price": "${input} in / ${output} out per 1M tokens",
   "ui.settings.models.price_free": "free",
+  "ui.settings.models.price_in": "${input} per 1M tokens",
   "ui.settings.models.no_tools": "no tools",
   "ui.settings.models.err.no_key": "no API key for this provider yet",
   "ui.settings.models.err.unreachable": "the provider did not answer",

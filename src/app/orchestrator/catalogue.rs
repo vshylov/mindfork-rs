@@ -58,7 +58,10 @@ impl Orchestrator {
     /// then the environment variable the slot names
     /// ([`resolve_api_key`](crate::app::supervisor::resolve_api_key)) — so the
     /// picker cannot claim "no key" for a setup that chats perfectly well.
-    fn catalogue_request(&self, slot: ModelSlot) -> Result<CatalogueRequest, CatalogueError> {
+    pub(super) fn catalogue_request(
+        &self,
+        slot: ModelSlot,
+    ) -> Result<CatalogueRequest, CatalogueError> {
         use crate::shared::config::SecretSlot;
         let cfg = &self.config;
         let (mode, external, cloud, secret) = match slot {
@@ -95,7 +98,12 @@ impl Orchestrator {
         let stored = secret
             .and_then(|k| crate::shared::secrets::stored_key(&cfg.api_keys, &k.storage_name()));
         let key = crate::app::supervisor::resolve_api_key(stored.as_deref(), env.as_deref()).ok();
-        source(slot, mode, external, cloud, key)
+        let mut request = source(slot, mode, external, cloud, key)?;
+        // The switch is the provider's, not the engine's: the model list is a
+        // request to the gateway like any other, and is named — or not — with
+        // the rest (docs/research/openrouter-mode.md, fork F5).
+        request.attribution = mode == ServerMode::OpenRouter && cfg.openrouter.attribution;
+        Ok(request)
     }
 }
 
@@ -152,6 +160,7 @@ fn source(
                 // A local `llama-server` needs none, and sending nothing is what
                 // every other request to it does.
                 key,
+                attribution: false,
             })
         }
         ServerMode::OpenRouter => {
@@ -165,7 +174,12 @@ fn source(
                 .filter(|u| !u.is_empty())
                 .unwrap_or_else(|| mode_base(mode))
                 .to_string();
-            Ok(CatalogueRequest { shape, base, key })
+            Ok(CatalogueRequest {
+                shape,
+                base,
+                key,
+                attribution: false,
+            })
         }
         ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude | ServerMode::Grok => {
             let provider = mode.cloud_provider().ok_or(CatalogueError::NotConfigured)?;
@@ -195,6 +209,7 @@ fn source(
                 shape,
                 base,
                 key: Some(key),
+                attribution: false,
             })
         }
     }
@@ -247,6 +262,7 @@ mod tests {
                 shape: CatalogueShape::OpenAi,
                 base: "http://127.0.0.1:8000/v1".to_string(),
                 key: None,
+                attribution: false,
             }
         );
     }
@@ -359,6 +375,7 @@ mod tests {
                 shape: CatalogueShape::OpenRouter,
                 base: GATEWAY_BASE.to_string(),
                 key: None,
+                attribution: false,
             })
         );
         // A key, once there is one, travels: it is what makes the list the

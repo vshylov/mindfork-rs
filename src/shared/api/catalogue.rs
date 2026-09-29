@@ -197,6 +197,11 @@ pub struct CatalogueRequest {
     /// `llama-server`'s normal case; a cloud slot without a key never gets here
     /// (the caller answers [`CatalogueError::NoKey`] without a request).
     pub key: Option<String>,
+    /// Whether the request names this application to the OpenRouter gateway,
+    /// in the two headers every other request to it carries
+    /// ([`super::openai::attributed`]). The gateway's switch, and nobody
+    /// else's: `false` for every other provider.
+    pub attribution: bool,
 }
 
 impl CatalogueRequest {
@@ -243,6 +248,9 @@ pub async fn fetch(req: &CatalogueRequest) -> Result<Vec<CatalogModel>, Catalogu
         // A local server with no key at all — the shape that needs none.
         (_, None) => rb,
     };
+    if req.attribution {
+        rb = super::openai::attributed(rb);
+    }
     let resp = match rb.send().await {
         Ok(r) => r,
         Err(err) => {
@@ -857,6 +865,7 @@ mod tests {
             shape,
             base: "https://example.test/v1/".to_string(),
             key: None,
+            attribution: false,
         };
         assert_eq!(
             req(CatalogueShape::OpenAi).url(),
@@ -876,6 +885,7 @@ mod tests {
                 shape: CatalogueShape::Anthropic,
                 base: "https://api.anthropic.com".to_string(),
                 key: None,
+                attribution: false,
             }
             .url(),
             "https://api.anthropic.com/v1/models?limit=1000",
@@ -1090,6 +1100,7 @@ mod tests {
                 shape,
                 base: "https://openrouter.ai/api/v1/".to_string(),
                 key: key.map(str::to_string),
+                attribution: false,
             }
             .url()
         };
@@ -1151,6 +1162,7 @@ mod live_smoke {
             shape,
             base: base.to_string(),
             key,
+            attribution: false,
         })
         .await
         .expect("the catalogue answered")

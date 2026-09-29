@@ -21,6 +21,7 @@ mod gateway_tests;
 pub mod responses;
 mod wire;
 
+pub(crate) use client::attributed;
 pub use client::{KeyVerdict, OpenAiClient};
 pub use responses::ResponsesClient;
 pub use wire::tools_json;

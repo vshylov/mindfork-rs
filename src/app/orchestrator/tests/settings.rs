@@ -763,6 +763,46 @@ async fn what_the_previous_engine_said_does_not_outlive_a_settings_edit() {
     );
 }
 
+/// The model list's request follows the gateway's switch, on every tab that
+/// speaks to the gateway — and no other provider's request is ever named,
+/// whatever the switch says.
+#[test]
+fn the_model_list_names_the_app_where_the_gateways_switch_says_so() {
+    use crate::shared::api::catalogue::ModelSlot;
+    use crate::shared::config::{CloudSettings, EmbedSettings, ImpersonationMode};
+
+    let (_d, mut orch) = bare_orch();
+    orch.config.engine.mode = ServerMode::OpenRouter;
+    orch.config.impersonation_engine.mode = ImpersonationMode::OpenRouter;
+    orch.config.embed = EmbedSettings {
+        mode: ServerMode::OpenRouter,
+        ..Default::default()
+    };
+    let slots = [
+        ModelSlot::Assistant,
+        ModelSlot::Impersonation,
+        ModelSlot::Embedder,
+    ];
+    let named = |orch: &Orchestrator| {
+        slots.map(|slot| orch.catalogue_request(slot).expect("a request").attribution)
+    };
+    assert_eq!(named(&orch), [true; 3], "on until somebody turns it off");
+    orch.config.openrouter.attribution = false;
+    assert_eq!(named(&orch), [false; 3]);
+
+    // Another cloud, the switch on: the headers are the gateway's.
+    orch.config.openrouter.attribution = true;
+    orch.config.engine.mode = ServerMode::Grok;
+    orch.config.engine.grok = CloudSettings {
+        api_key_env: Some("PATH".into()),
+        ..Default::default()
+    };
+    let grok = orch
+        .catalogue_request(ModelSlot::Assistant)
+        .expect("a request");
+    assert!(!grok.attribution);
+}
+
 /// An answer of the engine that is gone says nothing to the screens.
 ///
 /// The memo dropped it — and the list of sampling fields it carried was sent to

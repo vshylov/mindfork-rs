@@ -8,7 +8,9 @@
 //! for the other reason. What it shares is [`ListScroll`], the one implementation
 //! of a list's scroll state (`tools/list_scroll_check.py`).
 
-use crate::shared::api::catalogue::{CatalogModel, CatalogueAnswer, CatalogueError, ModelSlot};
+use crate::shared::api::catalogue::{
+    CatalogModel, CatalogueAnswer, CatalogueError, ModelRole, ModelSlot,
+};
 
 use super::*;
 
@@ -378,9 +380,15 @@ impl SettingsScreen {
                 &[("size", &compact_tokens(window))],
             ));
         }
-        match (m.facts.prompt_price, m.facts.completion_price) {
-            (Some(0), Some(0)) => facts.push(loc.t("ui.settings.models.price_free").to_string()),
-            (Some(input), Some(output)) => facts.push(loc.tf(
+        match (m.role, m.facts.prompt_price, m.facts.completion_price) {
+            (_, Some(0), Some(0)) => facts.push(loc.t("ui.settings.models.price_free").to_string()),
+            // An embedder answers with vectors: it has a price for what it
+            // reads and none for what it writes, which the gateway publishes
+            // as `0` — thirty-three rows ending `$0.000 out`.
+            (ModelRole::Embedding, Some(input), _) => {
+                facts.push(loc.tf("ui.settings.models.price_in", &[("input", &dollars(input))]))
+            }
+            (_, Some(input), Some(output)) => facts.push(loc.tf(
                 "ui.settings.models.price",
                 &[("input", &dollars(input)), ("output", &dollars(output))],
             )),
@@ -574,9 +582,18 @@ mod tests {
             "meta-llama/llama-3.3-70b-instruct:free · 65K context · free · no tools"
         );
         assert_eq!(
-            row("baai/bge-m3", facts(8192, Some((10_000, 0)), None)),
-            "baai/bge-m3 · 8K context · $0.010 in / $0.000 out per 1M tokens",
+            row("vendor/reads-for-pay", facts(8192, Some((10_000, 0)), None)),
+            "vendor/reads-for-pay · 8K context · $0.010 in / $0.000 out per 1M tokens",
             "free on one side is a price, not the word"
+        );
+        let embedder = CatalogModel {
+            role: ModelRole::Embedding,
+            ..described("baai/bge-m3", facts(8192, Some((10_000, 0)), None))
+        };
+        assert_eq!(
+            s.picker_label(&embedder),
+            "baai/bge-m3 · 8K context · $0.010 per 1M tokens",
+            "an embedder writes nothing to price"
         );
         assert_eq!(
             row("openrouter/auto", facts(2_000_000, None, Some(true))),

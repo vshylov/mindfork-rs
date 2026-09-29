@@ -2118,6 +2118,7 @@
   "ui.settings.models.window": "контекст {size}",
   "ui.settings.models.price": "${input} вход / ${output} выход за 1 млн токенов",
   "ui.settings.models.price_free": "бесплатно",
+  "ui.settings.models.price_in": "${input} за 1 млн токенов",
   "ui.settings.models.no_tools": "без инструментов",
   "ui.settings.models.err.no_key": "для этого провайдера ещё нет ключа",
   "ui.settings.models.err.unreachable": "провайдер не ответил",

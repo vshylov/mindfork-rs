@@ -2776,6 +2776,12 @@ mod tests {
             c.engine.openai.api_key_env.as_deref(),
             Some("OPENAI_API_KEY")
         );
+        // The gateway, in both slots the seed gives it: one variable, as one
+        // key serves them.
+        for section in [&c.engine.openrouter, &c.embed.openrouter] {
+            assert_eq!(section.api_key_env.as_deref(), Some("OPENROUTER_API_KEY"));
+            assert!(section.model_name.is_some());
+        }
 
         // The container ships a real interpreter, so `python_exec` needs no
         // ~300 MB wasmer provisioning to work there.

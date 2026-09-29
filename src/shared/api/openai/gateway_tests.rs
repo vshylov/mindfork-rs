@@ -202,6 +202,40 @@ fn chat_body(seen: &[Seen]) -> serde_json::Value {
         .json()
 }
 
+/// The model list is asked by another client than the engine's
+/// (`catalogue::fetch`), and is a request to the gateway all the same: named
+/// when the switch is on, silent when it is off. Without this the switch's own
+/// description — every request — was true of the engine and not of the picker.
+#[tokio::test]
+async fn the_model_list_is_named_by_the_same_switch() {
+    use crate::shared::api::catalogue::{CatalogueRequest, CatalogueShape, fetch};
+    const ROUTES: &[Route] = &[("/v1/models/user", "200 OK", JSON, r#"{"data":[]}"#)];
+
+    for attribution in [true, false] {
+        let (url, server) = stub(1, ROUTES);
+        let listed = fetch(&CatalogueRequest {
+            shape: CatalogueShape::OpenRouter,
+            base: url,
+            key: Some("k".into()),
+            attribution,
+        })
+        .await;
+        assert_eq!(listed, Ok(vec![]), "the stub answered an empty list");
+        let seen = server.join().unwrap();
+        let named = (
+            seen[0].header("http-referer"),
+            seen[0].header("x-openrouter-title"),
+        );
+        let expected = attribution.then_some((ATTRIBUTION_REFERER, ATTRIBUTION_TITLE));
+        assert_eq!(
+            (named.0.zip(named.1)),
+            expected,
+            "attribution={attribution}: {seen:?}"
+        );
+        assert_eq!(seen[0].header("authorization"), Some("Bearer k"));
+    }
+}
+
 /// Fork F5: with the switch on, **every** request to the gateway names the
 /// application — the catalogue's and the key's as well as the chat's — and with
 /// it off none does. A client that is not the gateway's never does, whatever it

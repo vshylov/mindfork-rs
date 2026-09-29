@@ -376,7 +376,12 @@ pub(super) fn provider_wide_rows(
 /// name is somebody else's server.
 pub(super) fn is_gateway_url(url: &str) -> bool {
     let rest = url.trim();
-    let rest = rest.split_once("://").map_or(rest, |(_, r)| r);
+    // A scheme stands before the host: a `://` further along — in the path or
+    // the query of an address typed without one — is somebody's upstream.
+    let rest = match rest.split_once("://") {
+        Some((scheme, after)) if !scheme.contains(['/', '?', '#']) => after,
+        _ => rest,
+    };
     let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
     // `user:pass@host:port` — the host is what is left between the two.
     let host = authority.rsplit('@').next().unwrap_or_default();
