@@ -22,7 +22,7 @@
 //!   MP3 frame sync to anything that sniffs.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use anyhow::{Context, Result};
 use reqwest::StatusCode;
@@ -94,12 +94,12 @@ impl FormatMemo {
     /// The format to ask `model` for first: the one it answered in, or `pcm`
     /// for a model nothing is known about.
     pub fn of(&self, model: &str) -> GatewayFormat {
-        let known = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let known = self.0.lock().unwrap_or_else(PoisonError::into_inner);
         known.get(model).copied().unwrap_or(GatewayFormat::Pcm)
     }
 
     fn keep(&self, model: &str, format: GatewayFormat) {
-        let mut known = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let mut known = self.0.lock().unwrap_or_else(PoisonError::into_inner);
         known.insert(model.to_string(), format);
     }
 }

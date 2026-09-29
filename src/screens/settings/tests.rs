@@ -6535,7 +6535,7 @@ const GROK_VOICE: &str = "x-ai/grok-voice-tts-1.0";
 /// A speech model as the gateway lists one, with the voices it names.
 fn speaking(id: &str, voices: &[&str]) -> CatalogModel {
     CatalogModel {
-        voices: voices.iter().map(|v| v.to_string()).collect(),
+        voices: voices.iter().copied().map(str::to_string).collect(),
         ..cat(id, Some("A Vendor: A Voice"), ModelRole::Speech)
     }
 }
