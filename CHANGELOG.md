@@ -14,6 +14,17 @@ split by subsystem.
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-09-30
+
+**OpenRouter is a mode of its own.** One key for the assistant, impersonation,
+the embedder, speech and YouTube video, beside the four clouds and a server of
+your own: a model list that shows each model's context window and price, a key
+checked before the first message, and a switch for the headers that name the
+app. With it, fixes for every setup: a message read aloud no longer stops half
+way, an edit of the embedding settings no longer switches the embedder's checks
+off until the restart, and a change of engine no longer leaves the previous
+one's context window in charge. `settings.json` moves to version 4.
+
 ### Added
 - **OpenRouter is a mode of its own.** Settings → Model/server → *Mode* →
   `openrouter` — for the assistant, for impersonation and for the embedder. The
@@ -2874,7 +2885,8 @@ history is in the [docs/journal/](docs/journal/) log).
   (notes/RAG/self-model, sqlite-vec, per-profile isolation). Schema format is
   v1; schema versioning and migrations are formalized in later releases.
 
-[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/vshylov/mindfork-rs/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/vshylov/mindfork-rs/compare/v0.11.2...v0.12.0
 [0.11.2]: https://github.com/vshylov/mindfork-rs/compare/v0.11.1...v0.11.2
 [0.11.1]: https://github.com/vshylov/mindfork-rs/compare/v0.11.0...v0.11.1
