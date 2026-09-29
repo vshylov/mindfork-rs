@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (52)
+## Entries (53)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -64,6 +64,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Release 0.11.1 (prepared)
 - Release 0.11.2 (prepared)
 - Release 0.12.0 (prepared)
+- Release 0.13.0 (prepared)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -2974,3 +2975,72 @@ every reversible check first. Full record —
   without it, before a single test runs; it is the package CI's test job installs
   and the one `docs/install.md` names for a source build. Installed, and the gates
   run after it.
+
+### Release 0.13.0 (prepared)
+
+- **A release PR** per the checklist in [AGENTS.md §6](../../AGENTS.md), branch
+  `chore/release-0.13.0`: bumped `Cargo.toml` `0.12.0 → 0.13.0` (+ `Cargo.lock`,
+  one line), `site/zola.toml` `app_version`, `CHANGELOG.md` — `[Unreleased]` →
+  `[0.13.0] — 2026-09-30` under a lead paragraph, a fresh empty `[Unreleased]`
+  opened, comparison links updated; the closed-tracks index of `docs/roadmap.md`
+  dates the OpenRouter track. The `v0.13.0` tag is applied by the user after the
+  merge. Gates green, on Windows: **3751 passed, 236 `#[ignore]`**, `clippy -D
+  warnings`, `fmt`, every Python gate of the Lints job by exit code, and
+  `release_guard.py --tag v0.13.0` accepting the tag — its notes the `[0.13.0]`
+  section, 106 lines (the `notes.md` it writes into the working tree is untracked
+  and was removed, not committed).
+- **A MINOR: a track shipped, whole.** Since `v0.12.0`: the OpenRouter mode — the
+  research (PR 644) and its four stages, chat and impersonation (645), embeddings
+  (646), speech (647) and video (649) — and the site's header naming crates.io
+  (643, live since its merge). The owner's decision of 2026-09-29 was that every
+  stage ships in one release, so stage 3's and stage 4's values needed no schema
+  step of their own.
+- **The `Data` rubric is filled, and the schema constant moved**:
+  `config::SCHEMA_VERSION` 3 → 4, a step that rewrites nothing and stamps the
+  version (the research's fork F3). It exists for the way back, not the way
+  forward: `openrouter` is a value of four mode rows that no older version
+  knows. Unstamped, 0.12.0 would refuse such a file on the value it cannot read,
+  and 0.11.2 and earlier would reset the settings in silence, stored keys
+  included; stamped, every older version that has the downgrade guard refuses
+  with "created by a newer version" before it reads a value, whether or not the
+  mode was ever chosen. The backup taken before the migration is the downgrade
+  path, as for every schema step. `video.provider` and the gateway's sections
+  are additive.
+- **The site's texts went out ahead of the release.** PR 648 — the home page,
+  three articles and the one-sentence description, which now names the gateway —
+  was stacked on the track and was meant to reach `main` with the version bump:
+  `site.yml` holds a deploy only while `Cargo.toml` names an unpublished version,
+  and 0.12.0 is published. This branch was built on 648's for that, so that the
+  texts and the bump would be one merge. 648 was merged with the stack instead
+  (2026-09-29, 23:04 UTC), and the site deployed 72 seconds later: until the
+  publication mindfork.io describes a mode the published version does not have,
+  over structured data that says `0.12.0`. Nothing was taken back — a revert is a
+  second deploy, for a gap the release closes. What the gate still holds is the
+  post and `app_version`.
+- **What had said "do not merge" was a paragraph.** It stood at the top of 648's
+  description and of this pull request's, and in three reports; the pull request
+  itself was open, green and mergeable, in a row of five that were to be merged.
+  A pull request that must wait is a **draft** — the one state the merge button
+  reads ([lessons.md](../lessons.md) §1).
+- **Opened as a draft, and `main` merged in before it was made ready.** Against
+  `main` the diff was the whole track until the stack landed. After, the branch
+  and `main` had two merge bases — stage 4's tip and the site branch's, neither
+  the other's ancestor — and the diff GitHub showed was still the track's 125
+  files. With `main` merged into the branch the base is `main`'s tip and the
+  diff is the release alone: ten files.
+- **The release post** has one subject and says what it costs not to have it:
+  what `external` pointed at the gateway made a user retype, and what it could
+  never do (speech). Then the list's rows, the key checked before the first
+  message, the three slots on the same key — with the two things a user has to
+  know about video through a gateway, that the whole video is charged and that
+  an answer without the video read is refused — where a request goes, the four
+  fixes that are every setup's, and the data. `llms.txt` regenerated from its
+  front matter; the site checked and built with the pinned Zola 0.23.6 after
+  `site_sync_assets.py` — 29 pages, the post at `blog/mindfork-0-13-0/`, the home
+  page's structured data says `0.13.0`. `site.yml` holds the deploy until the
+  release is public.
+- **Looked at before the release: the research's three adjacent findings**
+  ([openrouter-mode.md](../research/openrouter-mode.md) §9, §15). Two were
+  defects the track had fixed on its way; the third, the video's *Input
+  resolution* doing nothing on the default model, was measured again in every
+  spelling and is the provider's. Nothing was owed to the release.

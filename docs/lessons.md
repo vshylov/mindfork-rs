@@ -57,6 +57,18 @@ the consequence is a binary with no icon. `cargo package --no-verify` reports
 neither. Run the real one, and read its warnings.
 — *stage 5a of the public-release track*.
 
+**A pull request that must not be merged yet is a draft, not a paragraph.** The
+site's texts for a release were a pull request of their own, to be merged after
+the version bump — before it, the site deploys at once, since the gate holds a
+deploy only while `Cargo.toml` names an unpublished version. That was written at
+the top of its description, of the release's, and in three reports. It was
+merged with the four pull requests under it, and the site described the mode a
+release early. A description is read by whoever opens it; the merge button reads
+one thing, and a stack being merged is a row of green buttons. Mark what must
+wait as a draft the moment it is opened, and say in the body what makes it
+ready.
+— *release 0.13.0*.
+
 **Never `git checkout -- <file>` to undo a scripted mutation.** It discards *all*
 uncommitted work in that file, not just the mutation. Commit first, back the file up,
 or apply the mutation as a reversible patch. **Recorded five times** — the fifth

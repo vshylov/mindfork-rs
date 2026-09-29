@@ -31,10 +31,10 @@ evidence. Adding or closing an item is part of every task's documentation step
 **No track is open.** The last one — a mode of its own for OpenRouter, in all
 five slots — closed with its fourth stage on 2026-09-29 ([Closed](#closed)); what
 it left on demand is under *Engine and providers* below. **Every stage ships in
-one release, 0.13.0** (the user's decision), and with that release, in a pull
-request of their own, go the site's home page and articles and the one-sentence
-description of the application — merged earlier, they would describe a mode the
-published version does not have.
+one release, 0.13.0** (the user's decision). The site's home page and articles
+and the one-sentence description of the application were merged with the track,
+a release ahead of the mode they describe
+([the release journal](journal/release.md)).
 
 The tracks this section carried before — the first public release, images,
 retry/backoff, the prompt-caching measurement, the attachment birth turn,
@@ -598,7 +598,7 @@ An index, newest first — one line per track, with the release that shipped it
 and where its story is told. What a track left open is a bullet above, under
 its area.
 
-- **OpenRouter as a provider of its own** — 0.13.0, four stages: `openrouter`
+- **OpenRouter as a provider of its own** — 0.13.0 (2026-09-30), four stages: `openrouter`
   is a mode beside `external` in chat and impersonation — one key, the
   gateway's dialect, the key checked before the first message, a model list
   with the window and the price; embeddings, whose batch cap and retry became
