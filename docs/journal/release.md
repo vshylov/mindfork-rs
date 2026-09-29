@@ -3006,16 +3006,28 @@ every reversible check first. Full record —
   mode was ever chosen. The backup taken before the migration is the downgrade
   path, as for every schema step. `video.provider` and the gateway's sections
   are additive.
-- **The site's texts ride in this pull request, not in their own.** PR 648 — the
-  home page, three articles and the one-sentence description, which now names
-  the gateway — was stacked on the track. Merged into `main` while `Cargo.toml`
-  said 0.12.0 it would have deployed at once: `site.yml` holds a deploy only
-  while the version named is unpublished, and 0.12.0 is published. So the release
-  branch is built on that branch, with stage 4's last commits merged in, and the
-  version bump and the texts reach `main` in one merge; 648 closes as merged by
-  it. The pull request was opened as a **draft** while the stack was still being
-  merged — against `main` its diff is the whole track until the stack lands, and
-  the release alone after.
+- **The site's texts went out ahead of the release.** PR 648 — the home page,
+  three articles and the one-sentence description, which now names the gateway —
+  was stacked on the track and was meant to reach `main` with the version bump:
+  `site.yml` holds a deploy only while `Cargo.toml` names an unpublished version,
+  and 0.12.0 is published. This branch was built on 648's for that, so that the
+  texts and the bump would be one merge. 648 was merged with the stack instead
+  (2026-09-29, 23:04 UTC), and the site deployed 72 seconds later: until the
+  publication mindfork.io describes a mode the published version does not have,
+  over structured data that says `0.12.0`. Nothing was taken back — a revert is a
+  second deploy, for a gap the release closes. What the gate still holds is the
+  post and `app_version`.
+- **What had said "do not merge" was a paragraph.** It stood at the top of 648's
+  description and of this pull request's, and in three reports; the pull request
+  itself was open, green and mergeable, in a row of five that were to be merged.
+  A pull request that must wait is a **draft** — the one state the merge button
+  reads ([lessons.md](../lessons.md) §1).
+- **Opened as a draft, and `main` merged in before it was made ready.** Against
+  `main` the diff was the whole track until the stack landed. After, the branch
+  and `main` had two merge bases — stage 4's tip and the site branch's, neither
+  the other's ancestor — and the diff GitHub showed was still the track's 125
+  files. With `main` merged into the branch the base is `main`'s tip and the
+  diff is the release alone: ten files.
 - **The release post** has one subject and says what it costs not to have it:
   what `external` pointed at the gateway made a user retype, and what it could
   never do (speech). Then the list's rows, the key checked before the first

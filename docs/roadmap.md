@@ -31,10 +31,10 @@ evidence. Adding or closing an item is part of every task's documentation step
 **No track is open.** The last one — a mode of its own for OpenRouter, in all
 five slots — closed with its fourth stage on 2026-09-29 ([Closed](#closed)); what
 it left on demand is under *Engine and providers* below. **Every stage ships in
-one release, 0.13.0** (the user's decision), and the release's own pull request
-carries the site's home page and articles and the one-sentence description of
-the application — merged earlier, they would have described a mode the
-published version did not have.
+one release, 0.13.0** (the user's decision). The site's home page and articles
+and the one-sentence description of the application were merged with the track,
+a release ahead of the mode they describe
+([the release journal](journal/release.md)).
 
 The tracks this section carried before — the first public release, images,
 retry/backoff, the prompt-caching measurement, the attachment birth turn,
