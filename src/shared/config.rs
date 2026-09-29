@@ -616,6 +616,7 @@ pub fn named_key_env_vars(cfg: &AppConfig) -> Vec<String> {
             embed.openrouter.api_key_env.clone(),
             cfg.tts.openai.api_key_env.clone(),
             cfg.tts.gemini.api_key_env.clone(),
+            cfg.tts.openrouter.api_key_env.clone(),
             cfg.tts.external.api_key_env.clone(),
             cfg.tools.web_tavily_key_env.clone(),
             cfg.video.api_key_env.clone(),
@@ -2162,20 +2163,32 @@ pub enum TtsMode {
     OpenAi,
     /// Google Gemini cloud (native `generateContent` with `responseModalities:["AUDIO"]`).
     Gemini,
+    /// The OpenRouter gateway (`POST /audio/speech`): some twenty speech models
+    /// of a dozen vendors behind the key every slot of this provider shares.
+    /// See docs/research/openrouter-mode.md §4.4, fork F9.
+    #[serde(rename = "openrouter")]
+    OpenRouter,
     /// Any local/third-party OpenAI-compatible TTS server (Kokoro-FastAPI,
     /// speaches, LocalAI, …). See docs/research/tts.md §3.4.
     External,
 }
 
 impl TtsMode {
-    /// All variants in UI-cycle order (Choice field).
-    pub const ALL: [TtsMode; 3] = [TtsMode::OpenAi, TtsMode::Gemini, TtsMode::External];
+    /// All variants in UI-cycle order (Choice field): the clouds, then the
+    /// server of the user's own.
+    pub const ALL: [TtsMode; 4] = [
+        TtsMode::OpenAi,
+        TtsMode::Gemini,
+        TtsMode::OpenRouter,
+        TtsMode::External,
+    ];
 
     /// UI label (Choice field).
     pub fn label(self) -> &'static str {
         match self {
             TtsMode::OpenAi => "openai",
             TtsMode::Gemini => "gemini",
+            TtsMode::OpenRouter => "openrouter",
             TtsMode::External => "external",
         }
     }
@@ -2186,6 +2199,7 @@ impl TtsMode {
         match self {
             TtsMode::OpenAi => Some(CloudProvider::OpenAi),
             TtsMode::Gemini => Some(CloudProvider::Gemini),
+            TtsMode::OpenRouter => Some(CloudProvider::OpenRouter),
             TtsMode::External => None,
         }
     }
@@ -2253,9 +2267,15 @@ pub struct TtsSettings {
     pub mode: TtsMode,
     pub openai: TtsCloudSettings,
     pub gemini: TtsCloudSettings,
+    /// The gateway's section. It has **no default model**: a default that names
+    /// a model ages (docs/research/model-picker.md §1), and the gateway's list
+    /// is one keypress away. `instructions` is not a field of the gateway's
+    /// speech route and is never sent there.
+    pub openrouter: TtsCloudSettings,
     pub external: TtsExternalSettings,
     /// Speech speed (where supported). Ignored by `gpt-4o-mini-tts` — there
-    /// speed is requested via words in `instructions`.
+    /// speed is requested via words in `instructions` — and by some of the
+    /// gateway's models (measured on two, docs/research/openrouter-mode.md §4.4).
     pub speed: f32,
     /// Speak role prefixes ("User."/"Assistant.") — in **all**
     /// command variants, including a bare `/tts` (user's decision, R6).
@@ -2280,6 +2300,7 @@ impl Default for TtsSettings {
                 voice: Some(DEFAULT_TTS_GEMINI_VOICE.into()),
                 ..Default::default()
             },
+            openrouter: TtsCloudSettings::default(),
             external: TtsExternalSettings::default(),
             speed: 1.0,
             speak_roles: false,
@@ -2297,11 +2318,10 @@ impl TtsSettings {
         match self.mode.cloud_provider()? {
             CloudProvider::OpenAi => Some(&self.openai),
             CloudProvider::Gemini => Some(&self.gemini),
+            CloudProvider::OpenRouter => Some(&self.openrouter),
             // Neither has a TTS API (and `TtsMode` has no variant for them
             // anyway — these arms exist only to keep the match exhaustive).
-            // OpenRouter has one; its speech mode is a later stage of the track
-            // (docs/research/openrouter-mode.md §7).
-            CloudProvider::Claude | CloudProvider::Grok | CloudProvider::OpenRouter => None,
+            CloudProvider::Claude | CloudProvider::Grok => None,
         }
     }
 
@@ -2324,11 +2344,10 @@ impl TtsSettings {
         match self.mode.cloud_provider()? {
             CloudProvider::OpenAi => Some(&mut self.openai),
             CloudProvider::Gemini => Some(&mut self.gemini),
+            CloudProvider::OpenRouter => Some(&mut self.openrouter),
             // Neither has a TTS API (and `TtsMode` has no variant for them
             // anyway — these arms exist only to keep the match exhaustive).
-            // OpenRouter has one; its speech mode is a later stage of the track
-            // (docs/research/openrouter-mode.md §7).
-            CloudProvider::Claude | CloudProvider::Grok | CloudProvider::OpenRouter => None,
+            CloudProvider::Claude | CloudProvider::Grok => None,
         }
     }
 }
@@ -3914,31 +3933,109 @@ mod tests {
         assert!(!ServerMode::External.supports_continuation(Some("openai/gpt-5.5"), true));
     }
 
-    /// Speech through the gateway is stage 3 of the track
-    /// (docs/research/openrouter-mode.md §7), so stage 1 leaves the speech slot
-    /// exactly as it was: no mode of that name — a file that asks for one is
-    /// refused rather than read as another provider — no section, and no speech
-    /// mode that reads the gateway's key.
+    /// Speech through the gateway (stage 3, docs/research/openrouter-mode.md
+    /// §7): the mode is written `openrouter`, as in every other slot; it reads
+    /// the provider's one key; and it keeps a section of its own, which the
+    /// other modes' values do not leak into.
     #[test]
-    fn the_speech_slot_has_no_gateway_mode() {
-        assert!(serde_json::from_str::<TtsSettings>(r#"{"mode":"openrouter"}"#).is_err());
-        let written = serde_json::to_value(TtsSettings::default()).unwrap();
-        assert!(written.get("openrouter").is_none(), "{written}");
+    fn the_speech_slot_has_a_gateway_mode_on_the_providers_key() {
+        let tts: TtsSettings = serde_json::from_str(
+            r#"{"mode":"openrouter",
+                "openrouter":{"model_name":"x-ai/grok-voice-tts-1.0","voice":"eve"}}"#,
+        )
+        .expect("the mode is read");
+        assert_eq!(tts.mode, TtsMode::OpenRouter);
+        assert_eq!(
+            serde_json::to_value(&tts).unwrap()["mode"],
+            "openrouter",
+            "and written back the same"
+        );
+        assert_eq!(TtsMode::OpenRouter.label(), "openrouter");
+        assert_eq!(
+            tts.secret_key(),
+            Some(SecretKey::Provider(CloudProvider::OpenRouter)),
+            "the key the chat slot stored serves speech too"
+        );
+        assert_eq!(tts.active_voices(), (Some("eve"), None));
+        assert_eq!(
+            tts.cloud().and_then(|c| c.model_name.as_deref()),
+            Some("x-ai/grok-voice-tts-1.0")
+        );
+        // The section is its own: OpenAI's defaults are where they were.
+        assert_eq!(
+            tts.openai.model_name.as_deref(),
+            Some(DEFAULT_TTS_OPENAI_MODEL)
+        );
+        for other in ["open_router", "OpenRouter", "openrouter.ai"] {
+            let asked = format!(r#"{{"mode":"{other}"}}"#);
+            assert!(
+                serde_json::from_str::<TtsSettings>(&asked).is_err(),
+                "{other} is not a mode"
+            );
+        }
+    }
+
+    /// No default model and no default voice: a default that names a model
+    /// ages, and a voice belongs to a model. A speech slot switched to the
+    /// gateway and left empty is "not configured", which `/tts` says.
+    #[test]
+    fn the_gateways_speech_section_starts_empty() {
+        let tts = TtsSettings::default();
+        assert_eq!(tts.openrouter, TtsCloudSettings::default());
+        let written = serde_json::to_value(&tts).unwrap();
+        assert!(written["openrouter"]["model_name"].is_null(), "{written}");
+        // A file written before the section existed reads with it empty.
+        let old: TtsSettings =
+            serde_json::from_str(r#"{"mode":"gemini","gemini":{"voice":"Puck"}}"#).unwrap();
+        assert_eq!(old.openrouter, TtsCloudSettings::default());
+        assert_eq!(old.gemini.voice.as_deref(), Some("Puck"));
+    }
+
+    /// Every speech mode cycles through every other, both ways, and each cloud
+    /// mode edits the section it reads.
+    #[test]
+    fn every_speech_mode_is_reached_by_cycling_and_edits_its_own_section() {
+        for dir in [1, -1] {
+            let mut seen = vec![TtsMode::default()];
+            for _ in 1..TtsMode::ALL.len() {
+                seen.push(seen.last().unwrap().cycle(dir));
+            }
+            for mode in TtsMode::ALL {
+                assert!(seen.contains(&mode), "{mode:?} not reached with {dir}");
+            }
+            assert_eq!(seen.last().unwrap().cycle(dir), TtsMode::default());
+        }
         for mode in TtsMode::ALL {
-            let tts = TtsSettings {
+            let mut tts = TtsSettings {
                 mode,
                 ..Default::default()
             };
-            assert_ne!(
-                tts.provider(),
-                Some(CloudProvider::OpenRouter),
-                "{mode:?} must not read the gateway's key"
-            );
-            assert_eq!(
-                tts.cloud().is_some(),
-                mode != TtsMode::External,
-                "{mode:?} keeps its own section"
-            );
+            let Some(section) = tts.cloud_mut() else {
+                assert_eq!(mode, TtsMode::External, "{mode:?} has a section");
+                continue;
+            };
+            section.voice = Some(format!("voice-of-{}", mode.label()));
+            let named = format!("voice-of-{}", mode.label());
+            assert_eq!(tts.active_voices().0, Some(named.as_str()));
+            let sections = [&tts.openai, &tts.gemini, &tts.openrouter];
+            let holding = sections
+                .iter()
+                .filter(|s| s.voice.as_deref() == Some(named.as_str()))
+                .count();
+            assert_eq!(holding, 1, "{mode:?} wrote to one section");
         }
+    }
+
+    /// The variable a speech slot names for the gateway's key is a secret like
+    /// the others: removed from what a model-driven child inherits.
+    #[test]
+    fn the_gateways_speech_key_variable_is_named_among_the_secrets() {
+        let mut c = AppConfig::default();
+        c.tts.openrouter.api_key_env = Some(" MY_ROUTER_VOICE ".into());
+        assert!(
+            named_key_env_vars(&c).contains(&"MY_ROUTER_VOICE".to_string()),
+            "{:?}",
+            named_key_env_vars(&c)
+        );
     }
 }

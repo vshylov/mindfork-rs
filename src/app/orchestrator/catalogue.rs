@@ -15,7 +15,9 @@ use crate::app::events::AppEvent;
 use crate::shared::api::catalogue::{
     self, CatalogueError, CatalogueRequest, CatalogueShape, ModelSlot,
 };
-use crate::shared::config::{CloudSettings, ExternalSettings, ImpersonationMode, ServerMode};
+use crate::shared::config::{
+    CloudSettings, ExternalSettings, ImpersonationMode, ServerMode, TtsMode,
+};
 
 use super::Orchestrator;
 
@@ -64,7 +66,20 @@ impl Orchestrator {
     ) -> Result<CatalogueRequest, CatalogueError> {
         use crate::shared::config::SecretSlot;
         let cfg = &self.config;
+        // The speech slot has modes and sections of its own kind, and one of
+        // them has a catalogue.
+        let speech = CloudSettings {
+            url: cfg.tts.openrouter.url.clone(),
+            api_key_env: cfg.tts.openrouter.api_key_env.clone(),
+            ..CloudSettings::default()
+        };
         let (mode, external, cloud, secret) = match slot {
+            ModelSlot::Speech => (
+                speech_mode(cfg.tts.mode).ok_or(CatalogueError::NotConfigured)?,
+                &cfg.engine.external,
+                Some(&speech),
+                cfg.tts.secret_key(),
+            ),
             ModelSlot::Assistant => (
                 cfg.engine.mode,
                 &cfg.engine.external,
@@ -122,6 +137,20 @@ fn impersonation_mode(mode: ImpersonationMode) -> Option<ServerMode> {
     }
 }
 
+/// The speech slot's mode as the [`ServerMode`] whose catalogue it reads, or
+/// `None` where there is none to read. OpenAI's list says nothing about what a
+/// model does and mixes 132 of them, Gemini's native list calls its speech
+/// models chat models, and a server of the user's own is asked for one model
+/// or for none — so those rows stay the text fields they are. The gateway
+/// publishes its speech models as a list, and each one's voices
+/// (docs/research/openrouter-mode.md, fork F7).
+fn speech_mode(mode: TtsMode) -> Option<ServerMode> {
+    match mode {
+        TtsMode::OpenRouter => Some(ServerMode::OpenRouter),
+        TtsMode::OpenAi | TtsMode::Gemini | TtsMode::External => None,
+    }
+}
+
 /// The request for a mode, or why there is none.
 ///
 /// The base URL is the slot's override when it has one — a proxy or a gateway
@@ -166,6 +195,7 @@ fn source(
         ServerMode::OpenRouter => {
             let shape = match slot {
                 ModelSlot::Embedder => CatalogueShape::OpenRouterEmbeddings,
+                ModelSlot::Speech => CatalogueShape::OpenRouterSpeech,
                 ModelSlot::Assistant | ModelSlot::Impersonation => CatalogueShape::OpenRouter,
             };
             let base = cloud
@@ -424,6 +454,27 @@ mod tests {
             Some("k".into()),
         );
         assert_eq!(openai.map(|req| req.shape), Ok(CatalogueShape::OpenAi));
+    }
+
+    /// The speech row asks the gateway for the models that speak — keyless
+    /// like its other lists — and no other speech mode asks anybody anything.
+    #[test]
+    fn the_speech_slot_asks_the_gateway_for_its_speech_models_and_nobody_else() {
+        assert_eq!(
+            gateway(ModelSlot::Speech, None, None),
+            Ok(CatalogueRequest {
+                shape: CatalogueShape::OpenRouterSpeech,
+                base: GATEWAY_BASE.to_string(),
+                key: None,
+                attribution: false,
+            })
+        );
+        let asked: Vec<&str> = TtsMode::ALL
+            .into_iter()
+            .filter(|mode| speech_mode(*mode).is_some())
+            .map(TtsMode::label)
+            .collect();
+        assert_eq!(asked, ["openrouter"]);
     }
 
     /// The section's base URL moves the gateway's catalogue with the chat — a

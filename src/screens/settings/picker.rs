@@ -68,13 +68,28 @@ impl PickerState {
 
 /// Which catalogue a model row is filled from (`None` — not a row a catalogue
 /// can fill: a managed GGUF path, or anything else).
-pub(super) fn model_slot(id: FieldId) -> Option<ModelSlot> {
+///
+/// The speech rows have a list behind them in one mode, the gateway's
+/// (docs/research/openrouter-mode.md, fork F7) — the model's, and the two
+/// voices' from the same answer, since a voice belongs to a model. In every
+/// other speech mode they are the text fields they have always been.
+pub(super) fn model_slot(config: &AppConfig, id: FieldId) -> Option<ModelSlot> {
     match id {
         FieldId::XModelName => Some(ModelSlot::Assistant),
         FieldId::IxModelName => Some(ModelSlot::Impersonation),
         FieldId::EModelName => Some(ModelSlot::Embedder),
+        FieldId::TtsModelName | FieldId::TtsVoice | FieldId::TtsUserVoice
+            if config.tts.mode == TtsMode::OpenRouter =>
+        {
+            Some(ModelSlot::Speech)
+        }
         _ => None,
     }
+}
+
+/// Whether the row takes a voice rather than a model.
+pub(super) fn is_voice_row(id: FieldId) -> bool {
+    matches!(id, FieldId::TtsVoice | FieldId::TtsUserVoice)
 }
 
 impl SettingsScreen {
@@ -84,7 +99,7 @@ impl SettingsScreen {
     /// Returns `true` when the picker took the key, `false` to let the caller
     /// open the editor as it always did.
     pub(super) fn open_model_picker(&mut self, id: FieldId) -> Option<SettingsIntent> {
-        let slot = model_slot(id)?;
+        let slot = model_slot(&self.config, id)?;
         let source = self.slot_source(slot);
         let mut input = InputBox::new();
         input.set_single_line(true);
@@ -93,7 +108,7 @@ impl SettingsScreen {
             .iter()
             .find(|(s, src, _)| *s == slot && *src == source);
         let (all, status, intent) = match cached {
-            Some((_, _, Ok(models))) => (models.to_vec(), PickerStatus::Listed, None),
+            Some((_, _, Ok(models))) => (self.offered(id, models), PickerStatus::Listed, None),
             Some((_, _, Err(err))) => (Vec::new(), PickerStatus::Failed(*err), None),
             // Nothing asked for *this* provider yet — and the asking happens
             // here, on the keypress, never when the screen opens (fork F4).
@@ -135,30 +150,50 @@ impl SettingsScreen {
     /// 2026-09-18). Where the key comes from is in here too, so correcting a
     /// mistyped variable name asks again instead of repeating "no key".
     pub(super) fn slot_source(&self, slot: ModelSlot) -> String {
+        use crate::shared::config::{CloudSettings, ExternalSettings};
+        /// An engine slot's address and the variable its key is read from: its
+        /// cloud section's, or its `external` one's.
+        fn of<'a>(
+            cloud: Option<&'a CloudSettings>,
+            external: &'a ExternalSettings,
+        ) -> (Option<&'a str>, Option<&'a str>) {
+            match cloud {
+                Some(c) => (c.url.as_deref(), c.api_key_env.as_deref()),
+                None => (external.url.as_deref(), external.api_key_env.as_deref()),
+            }
+        }
         let cfg = &self.config;
-        let (mode, external, cloud, secret) = match slot {
+        let (mode, (url, env), secret) = match slot {
             ModelSlot::Assistant => (
                 format!("{:?}", cfg.engine.mode),
-                &cfg.engine.external,
-                cfg.engine.cloud(),
+                of(cfg.engine.cloud(), &cfg.engine.external),
                 cfg.engine.secret_key(),
             ),
             ModelSlot::Impersonation => (
                 format!("{:?}", cfg.impersonation_engine.mode),
-                &cfg.impersonation_engine.external,
-                cfg.impersonation_engine.cloud(),
+                of(
+                    cfg.impersonation_engine.cloud(),
+                    &cfg.impersonation_engine.external,
+                ),
                 cfg.impersonation_engine.secret_key(),
             ),
             ModelSlot::Embedder => (
                 format!("{:?}", cfg.embed.mode),
-                &cfg.embed.external,
-                cfg.embed.cloud(),
+                of(cfg.embed.cloud(), &cfg.embed.external),
                 cfg.embed.secret_key(),
             ),
-        };
-        let (url, env) = match cloud {
-            Some(c) => (c.url.as_deref(), c.api_key_env.as_deref()),
-            None => (external.url.as_deref(), external.api_key_env.as_deref()),
+            // The model is not part of it: the voices are read out of the one
+            // answer for whichever model the row names when the picker opens.
+            ModelSlot::Speech => {
+                let section = cfg.tts.cloud();
+                let url = section.and_then(|c| c.url.as_deref());
+                let env = section.and_then(|c| c.api_key_env.as_deref());
+                (
+                    format!("{:?}", cfg.tts.mode),
+                    (url, env),
+                    cfg.tts.secret_key(),
+                )
+            }
         };
         let stored = secret
             .as_ref()
@@ -189,25 +224,68 @@ impl SettingsScreen {
         self.catalogues
             .retain(|(s, src, _)| !(*s == slot && *src == asked));
         self.catalogues.push((slot, asked.clone(), models.clone()));
-        let Some(st) = self
+        let waiting = self
             .picker
-            .as_mut()
+            .as_ref()
             .filter(|st| st.slot == slot && st.source == asked)
-        else {
+            .map(|st| st.field);
+        let Some(field) = waiting else {
             return;
         };
-        match models {
-            Ok(list) => {
-                st.all = list.to_vec();
-                st.status = PickerStatus::Listed;
+        let offered = models.map(|list| self.offered(field, &list));
+        if let Some(st) = &mut self.picker {
+            match offered {
+                Ok(list) => {
+                    st.all = list;
+                    st.status = PickerStatus::Listed;
+                }
+                Err(err) => {
+                    st.all.clear();
+                    st.status = PickerStatus::Failed(err);
+                }
             }
-            Err(err) => {
-                st.all.clear();
-                st.status = PickerStatus::Failed(err);
-            }
+            st.selected = 1;
         }
-        st.selected = 1;
         self.picker_filter();
+    }
+
+    /// What a row is offered out of a catalogue: the models, or — for a voice
+    /// row — the voices of the model the speech slot names. A model that lists
+    /// none, or that the catalogue does not hold (a name typed by hand), has
+    /// none to offer.
+    pub(super) fn offered(&self, field: FieldId, models: &[CatalogModel]) -> Vec<CatalogModel> {
+        if !is_voice_row(field) {
+            return models.to_vec();
+        }
+        let section = self.config.tts.cloud();
+        let named = section
+            .and_then(|c| c.model_name.as_deref())
+            .map(str::trim)
+            .unwrap_or_default();
+        let speaking = models.iter().find(|m| m.id == named);
+        speaking
+            .map(|m| m.voices.iter().map(|v| CatalogModel::voice(v)).collect())
+            .unwrap_or_default()
+    }
+
+    /// Whether a voice row has been answered and there is nothing to pick from:
+    /// the catalogue is here and the model lists no voice. `Enter` then opens
+    /// the editor, as it does on a row whose provider refused — a picker could
+    /// only show its one row, "type a name by hand".
+    pub(super) fn no_voice_to_pick(&self, id: FieldId) -> bool {
+        if !is_voice_row(id) {
+            return false;
+        }
+        // A voice row's list is the speech slot's, and what the slot points at
+        // names its mode: in a mode that has no list nothing is filed under it.
+        let source = self.slot_source(ModelSlot::Speech);
+        self.catalogues.iter().any(|(s, src, answer)| {
+            *s == ModelSlot::Speech
+                && *src == source
+                && answer
+                    .as_ref()
+                    .is_ok_and(|models| self.offered(id, models).is_empty())
+        })
     }
 
     /// Recomputes the matching entries (case-insensitive, every word must
@@ -326,7 +404,7 @@ impl SettingsScreen {
     /// give — in which case `Enter` opens the editor directly rather than a
     /// picker that could only repeat the refusal (fork F1(a)).
     pub(super) fn catalogue_refused(&self, id: FieldId) -> bool {
-        let Some(slot) = model_slot(id) else {
+        let Some(slot) = model_slot(&self.config, id) else {
             return false;
         };
         let source = self.slot_source(slot);
@@ -346,9 +424,24 @@ impl SettingsScreen {
     /// publishes them the name repeats the id (`Anthropic: Claude Haiku 4.5` for
     /// `anthropic/claude-haiku-4.5`), and the row is one line. The name is still
     /// what the filter searches.
+    ///
+    /// A **speech** model's row says how many voices it lists and nothing
+    /// about its price. The catalogue publishes a number there without its
+    /// unit, and the unit differs by model — measured, Grok's is a price per
+    /// character (50 characters cost 50 × its `prompt` price) and Gemini's per
+    /// token — so "per 1M tokens" beside it would be our claim, and a wrong
+    /// one (docs/research/openrouter-mode.md §13).
     pub(super) fn picker_label(&self, m: &CatalogModel) -> String {
         let mut line = m.id.clone();
-        if !m.facts.is_empty() {
+        if m.role == ModelRole::Speech {
+            if !m.voices.is_empty() {
+                line.push_str(" · ");
+                line.push_str(&self.loc().tf(
+                    "ui.settings.models.voices",
+                    &[("count", &m.voices.len().to_string())],
+                ));
+            }
+        } else if !m.facts.is_empty() {
             for fact in self.picker_facts(m) {
                 line.push_str(" · ");
                 line.push_str(&fact);
@@ -443,6 +536,7 @@ mod tests {
             role: ModelRole::Unstated,
             retiring: None,
             facts: Default::default(),
+            voices: Vec::new(),
         }
     }
 

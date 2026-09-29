@@ -5434,6 +5434,7 @@ fn cat(id: &str, display: Option<&str>, role: ModelRole) -> CatalogModel {
         role,
         retiring: None,
         facts: Default::default(),
+        voices: Vec::new(),
     }
 }
 
@@ -6302,7 +6303,16 @@ fn the_attribution_switch_belongs_to_the_gateway_mode_alone() {
             "{mode:?}"
         );
     }
-    assert!(!shown(&s, ModelTab::Tts), "speech is a later stage");
+    // Speech has modes of its own, and the switch is under the one that
+    // speaks to the gateway.
+    for mode in TtsMode::ALL {
+        s.config.tts.mode = mode;
+        assert_eq!(
+            shown(&s, ModelTab::Tts),
+            mode == TtsMode::OpenRouter,
+            "{mode:?}"
+        );
+    }
 }
 
 /// The switch is **one** setting under three tabs: flipping it on any of them
@@ -6516,4 +6526,398 @@ fn the_filter_matches_a_name_the_row_no_longer_shows() {
         ),
         other => panic!("expected SaveConfig, got {other:?}"),
     }
+}
+
+// ---------- speech through the gateway (docs/research/openrouter-mode.md, fork F9) ----------
+
+const GROK_VOICE: &str = "x-ai/grok-voice-tts-1.0";
+
+/// A speech model as the gateway lists one, with the voices it names.
+fn speaking(id: &str, voices: &[&str]) -> CatalogModel {
+    CatalogModel {
+        voices: voices.iter().map(|v| v.to_string()).collect(),
+        ..cat(id, Some("A Vendor: A Voice"), ModelRole::Speech)
+    }
+}
+
+/// What the gateway's speech list answers with in these tests: a model with
+/// voices, another with other voices, and one that lists none.
+fn speech_catalogue() -> crate::shared::api::catalogue::CatalogueAnswer {
+    Ok(vec![
+        speaking(GROK_VOICE, &["eve", "ara", "rex", "sal", "leo"]),
+        speaking("google/gemini-3.8-flash-tts", &["Zephyr", "Puck", "Kore"]),
+        speaking("fish-audio/s1", &[]),
+    ]
+    .into())
+}
+
+/// A screen whose speech slot is on the gateway, with this model named.
+fn speech_on_the_gateway(model: Option<&str>) -> SettingsScreen {
+    let mut s = screen();
+    s.config.tts.mode = TtsMode::OpenRouter;
+    s.config.tts.openrouter.model_name = model.map(str::to_string);
+    s
+}
+
+/// What the open picker offers, as the ids of its entries.
+fn offered(s: &SettingsScreen) -> Vec<String> {
+    let st = s.picker.as_ref().expect("the picker is open");
+    st.all.iter().map(|m| m.id.clone()).collect()
+}
+
+/// The mode is reached where the speech mode is chosen — by the arrows, after
+/// the two clouds and before the server of the user's own — and shows the
+/// gateway's section: the model, the two voices, the provider's key rows, the
+/// address, and the switch that is the provider's. There is no row for
+/// instructions, which the gateway's speech route does not read; the two
+/// clouds keep theirs.
+#[test]
+fn the_speech_tab_has_the_gateway_mode_and_its_section_without_instructions() {
+    let mut s = screen();
+    goto_model_row(&mut s, ModelTab::Tts, FieldId::TtsMode);
+    let mut walked = vec![s.config.tts.mode.label()];
+    for _ in 0..TtsMode::ALL.len() {
+        s.handle_key(key(KeyCode::Right));
+        walked.push(s.config.tts.mode.label());
+    }
+    assert_eq!(
+        walked,
+        ["openai", "gemini", "openrouter", "external", "openai"]
+    );
+
+    let section = |mode| {
+        let mut s = screen();
+        s.config.tts.mode = mode;
+        let rows = s.model_fields_for(ModelTab::Tts);
+        let ids: Vec<FieldId> = rows.iter().map(|r| r.id).collect();
+        let at = |id| ids.iter().position(|row| *row == id).expect("the row");
+        ids[at(FieldId::TtsMode) + 1..at(FieldId::TtsSpeed)].to_vec()
+    };
+    use FieldId as F;
+    assert_eq!(
+        section(TtsMode::OpenRouter),
+        [
+            F::TtsModelName,
+            F::TtsVoice,
+            F::TtsUserVoice,
+            F::TtsApiKey,
+            F::TtsApiKeyEnv,
+            F::TtsUrl,
+            F::GatewayAttribution
+        ]
+    );
+    for cloud in [TtsMode::OpenAi, TtsMode::Gemini] {
+        assert!(section(cloud).contains(&F::TtsInstructions), "{cloud:?}");
+    }
+
+    let s = speech_on_the_gateway(None);
+    for row in [F::TtsApiKey, F::TtsApiKeyEnv] {
+        let label = field_label(&s, row).unwrap_or_default();
+        assert!(label.contains("OpenRouter"), "{row:?}: {label:?}");
+    }
+    assert_eq!(
+        s.secret_field_key(F::TtsApiKey),
+        Some(SecretKey::Provider(CloudProvider::OpenRouter)),
+        "the key the chat slot stored"
+    );
+    // No default model: the row is unset until one is chosen.
+    let rows = s.model_fields_for(ModelTab::Tts);
+    let model = rows
+        .iter()
+        .find(|r| r.id == F::TtsModelName)
+        .expect("a row");
+    let FieldKind::Text(unset) = text_row(F::TtsModelName, "", &None).kind else {
+        unreachable!("a text row")
+    };
+    assert!(matches!(&model.kind, FieldKind::Text(shown) if *shown == unset));
+}
+
+/// `Enter` on the speech model row asks the gateway for its speech models in
+/// the gateway's mode — and in every other mode opens the editor it has
+/// always opened, asking nobody.
+#[test]
+fn the_speech_rows_have_a_list_behind_them_in_the_gateways_mode_alone() {
+    for mode in TtsMode::ALL {
+        for row in [
+            FieldId::TtsModelName,
+            FieldId::TtsVoice,
+            FieldId::TtsUserVoice,
+        ] {
+            let mut s = screen();
+            s.config.tts.mode = mode;
+            goto_model_row(&mut s, ModelTab::Tts, row);
+            let intent = s.handle_key(key(KeyCode::Enter));
+            if mode == TtsMode::OpenRouter {
+                assert_eq!(
+                    intent,
+                    Some(SettingsIntent::ListModels(ModelSlot::Speech)),
+                    "{row:?}"
+                );
+                assert!(s.picker.is_some() && s.editor.is_none(), "{row:?}");
+            } else {
+                assert_eq!(intent, None, "{mode:?} {row:?}");
+                assert!(s.picker.is_none() && s.editor.is_some(), "{mode:?} {row:?}");
+            }
+        }
+    }
+}
+
+/// The model row offers the models, and a pick is written into the gateway's
+/// own section — the other modes' models stay where they were.
+#[test]
+fn a_picked_speech_model_is_written_into_the_gateways_section() {
+    let mut s = speech_on_the_gateway(None);
+    goto_model_row(&mut s, ModelTab::Tts, FieldId::TtsModelName);
+    s.handle_key(key(KeyCode::Enter));
+    s.set_model_catalogue(ModelSlot::Speech, speech_catalogue());
+    assert_eq!(
+        offered(&s),
+        [GROK_VOICE, "google/gemini-3.8-flash-tts", "fish-audio/s1"]
+    );
+    s.handle_key(key(KeyCode::Down));
+    match s.handle_key(key(KeyCode::Enter)) {
+        Some(SettingsIntent::SaveConfig(c)) => {
+            assert_eq!(
+                c.tts.openrouter.model_name.as_deref(),
+                Some("google/gemini-3.8-flash-tts")
+            );
+            assert_eq!(c.tts.openai, AppConfig::default().tts.openai);
+        }
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+}
+
+/// A voice belongs to a model: the voice rows offer the voices of the model
+/// the slot names, out of the same answer the model row reads — asked once,
+/// whichever row was opened first — and what is picked is written as the
+/// assistant's voice or the user's.
+#[test]
+fn a_voice_row_offers_the_voices_of_the_model_the_slot_names() {
+    let mut s = speech_on_the_gateway(Some(GROK_VOICE));
+    goto_model_row(&mut s, ModelTab::Tts, FieldId::TtsVoice);
+    assert_eq!(
+        s.handle_key(key(KeyCode::Enter)),
+        Some(SettingsIntent::ListModels(ModelSlot::Speech))
+    );
+    assert!(offered(&s).is_empty(), "nothing before the answer");
+    s.set_model_catalogue(ModelSlot::Speech, speech_catalogue());
+    assert_eq!(offered(&s), ["eve", "ara", "rex", "sal", "leo"]);
+    assert_eq!(s.picker_label(&s.picker.as_ref().unwrap().all[0]), "eve");
+
+    s.handle_key(key(KeyCode::Down));
+    match s.handle_key(key(KeyCode::Enter)) {
+        Some(SettingsIntent::SaveConfig(c)) => {
+            assert_eq!(c.tts.openrouter.voice.as_deref(), Some("ara"))
+        }
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+
+    // The user's voice: the answer is here already, so nobody is asked.
+    goto_model_row(&mut s, ModelTab::Tts, FieldId::TtsUserVoice);
+    assert_eq!(s.handle_key(key(KeyCode::Enter)), None);
+    assert_eq!(offered(&s), ["eve", "ara", "rex", "sal", "leo"]);
+    for c in "le".chars() {
+        s.handle_key(key(KeyCode::Char(c)));
+    }
+    match s.handle_key(key(KeyCode::Enter)) {
+        Some(SettingsIntent::SaveConfig(c)) => {
+            assert_eq!(c.tts.openrouter.user_voice.as_deref(), Some("leo"));
+            assert_eq!(c.tts.openrouter.voice.as_deref(), Some("ara"));
+        }
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+
+    // Another model, other voices — out of the same answer.
+    s.config.tts.openrouter.model_name = Some(" google/gemini-3.8-flash-tts ".into());
+    goto_model_row(&mut s, ModelTab::Tts, FieldId::TtsVoice);
+    assert_eq!(s.handle_key(key(KeyCode::Enter)), None);
+    assert_eq!(offered(&s), ["Zephyr", "Puck", "Kore"]);
+}
+
+/// A model that lists no voice — four of the gateway's do, and a name typed
+/// by hand is not in the list at all — has nothing to pick from. Once that is
+/// known `Enter` opens the editor; until it is, the picker opens, asks, and
+/// is left with its one row that is always there.
+#[test]
+fn a_model_that_lists_no_voice_gets_the_editor() {
+    for model in [Some("fish-audio/s1"), Some("typed/by-hand"), None] {
+        let mut s = speech_on_the_gateway(model);
+        goto_model_row(&mut s, ModelTab::Tts, FieldId::TtsVoice);
+        assert_eq!(
+            s.handle_key(key(KeyCode::Enter)),
+            Some(SettingsIntent::ListModels(ModelSlot::Speech)),
+            "{model:?}: not known yet"
+        );
+        s.set_model_catalogue(ModelSlot::Speech, speech_catalogue());
+        let st = s.picker.as_ref().expect("the picker stays open");
+        assert_eq!(
+            (st.all.len(), st.rows(), &st.status),
+            (0, 1, &super::picker::PickerStatus::Listed),
+            "{model:?}"
+        );
+        s.handle_key(key(KeyCode::Esc));
+
+        assert_eq!(s.handle_key(key(KeyCode::Enter)), None, "{model:?}");
+        assert!(s.picker.is_none() && s.editor.is_some(), "{model:?}");
+        s.handle_key(key(KeyCode::Esc));
+
+        // The model row is another matter: its list is not empty.
+        goto_model_row(&mut s, ModelTab::Tts, FieldId::TtsModelName);
+        s.handle_key(key(KeyCode::Enter));
+        assert_eq!(offered(&s).len(), 3, "{model:?}");
+        s.handle_key(key(KeyCode::Esc));
+
+        // And the answer is the gateway's mode's: in a mode whose rows have no
+        // list, nothing filed under another mode says anything about them.
+        assert!(s.no_voice_to_pick(FieldId::TtsVoice), "{model:?}");
+        s.config.tts.mode = TtsMode::Gemini;
+        s.config.tts.gemini.model_name = model.map(str::to_string);
+        assert!(!s.no_voice_to_pick(FieldId::TtsVoice), "{model:?}");
+    }
+}
+
+/// A catalogue that could not be read is the voice rows' refusal too: the
+/// editor, as on any row whose provider refused.
+#[test]
+fn a_refused_speech_catalogue_leaves_the_voice_rows_their_editor() {
+    let mut s = speech_on_the_gateway(Some(GROK_VOICE));
+    goto_model_row(&mut s, ModelTab::Tts, FieldId::TtsVoice);
+    s.handle_key(key(KeyCode::Enter));
+    s.set_model_catalogue(ModelSlot::Speech, Err(CatalogueError::Unreachable));
+    s.handle_key(key(KeyCode::Esc));
+    assert_eq!(s.handle_key(key(KeyCode::Enter)), None);
+    assert!(s.picker.is_none() && s.editor.is_some());
+}
+
+/// A speech model's row says how many voices it lists and nothing about what
+/// it costs: the catalogue's number has no unit, and the unit differs by
+/// model. The row is drawn from the gateway's own entry, price and all.
+#[test]
+fn a_speech_models_row_counts_its_voices_and_names_no_price() {
+    use crate::shared::api::catalogue::{CatalogueShape, parse};
+    let mut config = AppConfig::default();
+    config.interface.language = crate::shared::i18n::Lang::En;
+    let s = SettingsScreen::new(config, vec![], vec![]);
+    let listed = parse(
+        CatalogueShape::OpenRouterSpeech,
+        r#"{"data":[
+            {"id":"x-ai/grok-voice-tts-1.0","name":"xAI: Grok Voice TTS 1.0","created":2,
+             "context_length":15000,"architecture":{"output_modalities":["speech"]},
+             "pricing":{"prompt":"0.000015","completion":"0"},"supported_parameters":[],
+             "supported_voices":["eve","ara","rex","sal","leo"]},
+            {"id":"fish-audio/s1","name":"Fish Audio: S1","created":1,"context_length":0,
+             "architecture":{"output_modalities":["speech"]},
+             "pricing":{"prompt":"0.000015","completion":"0"},"supported_voices":null,
+             "expiration_date":"2026-12-01"}]}"#,
+    )
+    .expect("a list");
+    let rows: Vec<String> = listed.iter().map(|m| s.picker_label(m)).collect();
+    assert_eq!(
+        rows,
+        [
+            "x-ai/grok-voice-tts-1.0 · voices: 5",
+            "fish-audio/s1 · retiring 2026-12-01"
+        ]
+    );
+}
+
+/// The speech slot's `external` address that is the gateway's says a mode is
+/// needed — it cannot say the section keeps working, since it does not: the
+/// gateway refuses the format an external server is asked for.
+#[test]
+fn an_external_speech_address_that_is_the_gateway_says_the_mode_is_needed() {
+    let mut s = screen();
+    s.config.tts.mode = TtsMode::External;
+    let said = |s: &SettingsScreen| {
+        let rows = s.model_fields_for(ModelTab::Tts);
+        let row = rows.into_iter().find(|r| r.id == FieldId::TtsUrl);
+        row.expect("the address row").description
+    };
+    for (address, hinted) in [
+        (Some("https://openrouter.ai/api/v1"), true),
+        (Some("http://127.0.0.1:8880/v1"), false),
+        (None, false),
+    ] {
+        s.config.tts.external.url = address.map(str::to_string);
+        let hint = hinted.then(|| s.loc().t(DESC_SPEECH_EXTERNAL_IS_GATEWAY).to_string());
+        assert_eq!(said(&s), hint, "{address:?}");
+    }
+    assert_ne!(
+        s.loc().t(DESC_SPEECH_EXTERNAL_IS_GATEWAY),
+        s.loc().t(DESC_EXTERNAL_IS_GATEWAY),
+        "the other slots' hint promises what this slot cannot"
+    );
+    // Inside the mode the address row recommends nothing.
+    let mut s = speech_on_the_gateway(None);
+    s.config.tts.openrouter.url = Some("https://eu.openrouter.ai/api/v1".into());
+    assert_eq!(said(&s), None);
+}
+
+/// What the speech slot points at is part of what an answer is filed under:
+/// an answer asked for under one address is not shown under another.
+#[test]
+fn a_speech_answer_is_kept_for_the_address_and_the_key_it_was_asked_under() {
+    let mut s = speech_on_the_gateway(Some(GROK_VOICE));
+    let first = s.slot_source(ModelSlot::Speech);
+    goto_model_row(&mut s, ModelTab::Tts, FieldId::TtsModelName);
+    s.handle_key(key(KeyCode::Enter));
+    s.set_model_catalogue(ModelSlot::Speech, speech_catalogue());
+    s.handle_key(key(KeyCode::Esc));
+
+    s.config.tts.openrouter.url = Some("https://eu.openrouter.ai/api/v1".into());
+    assert_ne!(s.slot_source(ModelSlot::Speech), first);
+    assert_eq!(
+        s.handle_key(key(KeyCode::Enter)),
+        Some(SettingsIntent::ListModels(ModelSlot::Speech)),
+        "another address is asked anew"
+    );
+    s.handle_key(key(KeyCode::Esc));
+
+    s.config.tts.openrouter.url = None;
+    s.config.tts.openrouter.api_key_env = Some("MY_ROUTER_VOICE".into());
+    assert_ne!(s.slot_source(ModelSlot::Speech), first);
+    s.config.tts.openrouter.api_key_env = None;
+    assert_eq!(s.slot_source(ModelSlot::Speech), first);
+    s.set_secrets_present(vec![SecretKey::Provider(CloudProvider::OpenRouter)]);
+    assert_ne!(
+        s.slot_source(ModelSlot::Speech),
+        first,
+        "a key moves the list to the account's own"
+    );
+    // The model is not part of it: the voices of any model are in one answer.
+    let keyed = s.slot_source(ModelSlot::Speech);
+    s.config.tts.openrouter.model_name = Some("fish-audio/s1".into());
+    assert_eq!(s.slot_source(ModelSlot::Speech), keyed);
+}
+
+/// The picker says whose list it is showing: the provider's models behind a
+/// model row, the model's voices behind a voice row — and the rows are the
+/// voices' names.
+#[test]
+fn the_picker_names_the_list_it_shows() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    let mut s = speech_on_the_gateway(Some(GROK_VOICE));
+    s.config.interface.language = crate::shared::i18n::Lang::En;
+    let drawn = |s: &mut SettingsScreen| {
+        let mut term = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        term.draw(|f| s.render(f)).unwrap();
+        let buffer = term.backend().buffer().clone();
+        let cells = buffer.content().iter().map(|c| c.symbol());
+        cells.collect::<String>()
+    };
+    goto_model_row(&mut s, ModelTab::Tts, FieldId::TtsModelName);
+    s.handle_key(key(KeyCode::Enter));
+    s.set_model_catalogue(ModelSlot::Speech, speech_catalogue());
+    let models = drawn(&mut s);
+    assert!(models.contains("the provider's models"), "{models}");
+    assert!(models.contains("voices: 5"), "{models}");
+    s.handle_key(key(KeyCode::Esc));
+
+    goto_model_row(&mut s, ModelTab::Tts, FieldId::TtsVoice);
+    s.handle_key(key(KeyCode::Enter));
+    let voices = drawn(&mut s);
+    assert!(voices.contains("the model's voices"), "{voices}");
+    assert!(!voices.contains("the provider's models"), "{voices}");
+    assert!(voices.contains("eve") && voices.contains("leo"), "{voices}");
 }

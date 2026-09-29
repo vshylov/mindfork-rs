@@ -53,6 +53,8 @@ pub(super) const DESC_GATEWAY_ATTRIBUTION: &str = "ui.settings.desc.gateway_attr
 /// Shown under an `external` URL that is the OpenRouter gateway: there is a
 /// mode for it.
 pub(super) const DESC_EXTERNAL_IS_GATEWAY: &str = "ui.settings.desc.external_is_gateway";
+/// The same under the speech slot's `external` URL, where it has more to say.
+pub(super) const DESC_SPEECH_EXTERNAL_IS_GATEWAY: &str = "ui.settings.desc.tts_external_is_gateway";
 /// Key: the profile's scaffold language (axis A).
 pub(super) const DESC_PROFILE_LANGUAGE: &str = "ui.settings.desc.profile_language";
 /// Key: `-ngl` for the assistant engine (text differs from impersonation).
@@ -405,6 +407,20 @@ pub(super) fn external_url_row(
     let row = text_row(id, "URL (external)", url);
     match url.as_deref() {
         Some(u) if is_gateway_url(u) => row.describe(loc.t(DESC_EXTERNAL_IS_GATEWAY)),
+        _ => row,
+    }
+}
+
+/// The speech slot's `external` address row. An address that is the gateway's
+/// says there is a mode for it, as the other slots' rows do — and says what
+/// they do not have to: here the section does **not** keep working. A server
+/// of the user's own is asked for `wav`, and the gateway's speech route takes
+/// `pcm` and `mp3` and refuses anything else (measured,
+/// docs/research/openrouter-mode.md §13).
+pub(super) fn speech_url_row(id: FieldId, url: &Option<String>, loc: &'static Locale) -> FieldRow {
+    let row = text_row(id, "URL (external)", url);
+    match url.as_deref() {
+        Some(u) if is_gateway_url(u) => row.describe(loc.t(DESC_SPEECH_EXTERNAL_IS_GATEWAY)),
         _ => row,
     }
 }

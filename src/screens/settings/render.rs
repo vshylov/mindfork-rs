@@ -276,6 +276,11 @@ impl SettingsScreen {
             st.results.len(),
             st.all.len(),
         );
+        let list_title = if super::picker::is_voice_row(st.field) {
+            "ui.settings.ui.voices_list"
+        } else {
+            "ui.settings.ui.models_list"
+        };
         let mut rows: Vec<String> = vec![loc.t("ui.settings.models.by_hand").to_string()];
         rows.extend(
             st.results
@@ -327,7 +332,7 @@ impl SettingsScreen {
             })
             .collect();
         let block = palette
-            .panel(loc.t("ui.settings.ui.models_list"), true)
+            .panel(loc.t(list_title), true)
             .border_style(palette.border_style(true));
         let list = List::new(items)
             .block(block)

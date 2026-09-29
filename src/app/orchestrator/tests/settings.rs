@@ -988,6 +988,49 @@ fn the_model_list_names_the_app_where_the_gateways_switch_says_so() {
     assert!(!grok.attribution);
 }
 
+/// The speech slot's list is asked of the gateway in the gateway's mode — at
+/// the address and with the key variable of the slot's own section, named or
+/// not as the provider's switch says — and of nobody in any other mode: no
+/// other speech provider publishes a list of what speaks.
+#[test]
+fn the_speech_slots_list_is_the_gateways_and_follows_the_slots_own_section() {
+    use crate::shared::api::catalogue::{CatalogueError, CatalogueShape, ModelSlot};
+    use crate::shared::config::TtsMode;
+
+    let (_d, mut orch) = bare_orch();
+    // The chat slot is somewhere else entirely: speech has a mode of its own.
+    orch.config.engine.mode = ServerMode::Managed;
+    for mode in TtsMode::ALL {
+        orch.config.tts.mode = mode;
+        let asked = orch.catalogue_request(ModelSlot::Speech);
+        if mode != TtsMode::OpenRouter {
+            assert_eq!(asked, Err(CatalogueError::NotConfigured), "{mode:?}");
+            continue;
+        }
+        let asked = asked.expect("a request");
+        assert_eq!(asked.shape, CatalogueShape::OpenRouterSpeech);
+        assert_eq!(asked.base, "https://openrouter.ai/api/v1");
+        assert_eq!(asked.key, None, "the list is public: asked without a key");
+        assert!(asked.attribution, "on until somebody turns it off");
+    }
+
+    orch.config.tts.mode = TtsMode::OpenRouter;
+    orch.config.openrouter.attribution = false;
+    orch.config.tts.openrouter.url = Some(" https://eu.openrouter.ai/api/v1 ".into());
+    // A variable that is certainly set, read and never sent: nothing is asked
+    // here, the request is only built.
+    orch.config.tts.openrouter.api_key_env = Some("PATH".into());
+    // The chat slot's section names another address; it is not the speech
+    // slot's.
+    orch.config.engine.openrouter.url = Some("https://chat.example/v1".into());
+    let asked = orch
+        .catalogue_request(ModelSlot::Speech)
+        .expect("a request");
+    assert_eq!(asked.base, "https://eu.openrouter.ai/api/v1");
+    assert!(asked.key.is_some(), "the variable the speech section names");
+    assert!(!asked.attribution);
+}
+
 /// An answer of the engine that is gone says nothing to the screens.
 ///
 /// The memo dropped it — and the list of sampling fields it carried was sent to

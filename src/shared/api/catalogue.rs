@@ -15,7 +15,7 @@
 //! | Gemini | `GET {base}/models` (native) | `supportedGenerationMethods` |
 //! | Anthropic | `GET {base}/v1/models` | the route itself: the Messages API has only chat models |
 //! | xAI | `GET {base}/language-models` | the route itself: the language half of a catalogue that also holds image and video models |
-//! | OpenRouter | `GET {base}/models/user`, `/models`, `/embeddings/models` | `architecture.output_modalities` — and the window, the price and the parameters besides |
+//! | OpenRouter | `GET {base}/models/user`, `/models`, `/embeddings/models`, `…?output_modalities=speech` | `architecture.output_modalities` — and the window, the price, the parameters and the voices besides |
 //!
 //! Hence [`ModelRole::Unstated`], which is **not** "it does nothing": where the
 //! endpoint publishes no claim, none is invented, and every model it lists is
@@ -64,6 +64,12 @@ pub enum CatalogueShape {
     OpenRouter,
     /// The same gateway's `/embeddings/models`.
     OpenRouterEmbeddings,
+    /// The same gateway's models that answer with **speech**: the list of
+    /// [`Self::OpenRouter`] narrowed by the gateway's own filter,
+    /// `?output_modalities=speech` — which the account's list takes as the
+    /// public one does (measured: 21 entries either way,
+    /// docs/research/openrouter-mode.md §13).
+    OpenRouterSpeech,
 }
 
 /// What the endpoint said a model is for.
@@ -78,6 +84,8 @@ pub enum ModelRole {
     Chat,
     /// The endpoint says this model embeds text.
     Embedding,
+    /// The endpoint says this model answers with speech.
+    Speech,
     /// The endpoint says this model does something else (Gemini's video, music
     /// and live-only models).
     Other,
@@ -98,6 +106,10 @@ pub enum ModelSlot {
     Impersonation,
     /// The model that embeds notes and attachments.
     Embedder,
+    /// The model that reads messages aloud. One speech mode has a catalogue
+    /// behind it — the gateway's — and its voice rows are filled from the same
+    /// answer: a voice belongs to a model ([`CatalogModel::voices`]).
+    Speech,
 }
 
 /// One entry of a provider's catalogue, reduced to what a picker needs.
@@ -121,6 +133,27 @@ pub struct CatalogModel {
     /// What else the endpoint published about the model. Empty for every
     /// catalogue that publishes names alone.
     pub facts: ModelFacts,
+    /// The voices the endpoint says this model speaks in, in its order
+    /// (`supported_voices`). Empty for a model that is not a speech model, and
+    /// for one that lists none — four of the gateway's 21 speak without a
+    /// voice being named.
+    pub voices: Vec<String>,
+}
+
+impl CatalogModel {
+    /// A voice as an entry of a list: what the voice rows' picker offers.
+    /// The name is all there is to a voice — the catalogue says nothing else
+    /// about one.
+    pub fn voice(name: &str) -> Self {
+        Self {
+            id: name.to_string(),
+            display: None,
+            role: ModelRole::Speech,
+            retiring: None,
+            facts: ModelFacts::default(),
+            voices: Vec::new(),
+        }
+    }
 }
 
 /// What a catalogue says about a model besides its name — each field the
@@ -222,6 +255,10 @@ impl CatalogueRequest {
             CatalogueShape::OpenRouter if self.key.is_some() => format!("{base}/models/user"),
             CatalogueShape::OpenRouter => format!("{base}/models"),
             CatalogueShape::OpenRouterEmbeddings => format!("{base}/embeddings/models"),
+            CatalogueShape::OpenRouterSpeech if self.key.is_some() => {
+                format!("{base}/models/user?output_modalities=speech")
+            }
+            CatalogueShape::OpenRouterSpeech => format!("{base}/models?output_modalities=speech"),
         }
     }
 }
@@ -297,6 +334,7 @@ pub fn parse(shape: CatalogueShape, body: &str) -> Result<Vec<CatalogModel>, Cat
                             role: ModelRole::Unstated,
                             retiring: e.shutdown_date.filter(|d| !d.is_empty()),
                             facts: ModelFacts::default(),
+                            voices: Vec::new(),
                         },
                     )
                 })
@@ -333,6 +371,7 @@ pub fn parse(shape: CatalogueShape, body: &str) -> Result<Vec<CatalogModel>, Cat
                         role: gemini_role(&e.supported_generation_methods),
                         retiring: None,
                         facts: ModelFacts::default(),
+                        voices: Vec::new(),
                     })
                 })
                 .collect()
@@ -355,6 +394,7 @@ pub fn parse(shape: CatalogueShape, body: &str) -> Result<Vec<CatalogModel>, Cat
                             role: ModelRole::Chat,
                             retiring: None,
                             facts: ModelFacts::default(),
+                            voices: Vec::new(),
                         },
                     )
                 })
@@ -381,6 +421,7 @@ pub fn parse(shape: CatalogueShape, body: &str) -> Result<Vec<CatalogModel>, Cat
                             role: ModelRole::Chat,
                             retiring: None,
                             facts: ModelFacts::default(),
+                            voices: Vec::new(),
                         },
                     )
                 })
@@ -388,7 +429,9 @@ pub fn parse(shape: CatalogueShape, body: &str) -> Result<Vec<CatalogModel>, Cat
             v.sort_by_key(|(created, _)| std::cmp::Reverse(*created));
             v.into_iter().map(|(_, m)| m).collect()
         }
-        CatalogueShape::OpenRouter | CatalogueShape::OpenRouterEmbeddings => {
+        CatalogueShape::OpenRouter
+        | CatalogueShape::OpenRouterEmbeddings
+        | CatalogueShape::OpenRouterSpeech => {
             let list: GatewayList = serde_json::from_str(body).map_err(unreadable)?;
             let mut v: Vec<_> = list
                 .data
@@ -480,6 +523,9 @@ fn rank(m: &CatalogModel, slot: ModelSlot) -> u8 {
             !(m.role == ModelRole::Embedding
                 || (m.role == ModelRole::Unstated && name_hints(&m.id, &EMBEDDING_IN_A_NAME))),
         ),
+        // The one catalogue this slot reads says what every entry is for, so
+        // there is no name to guess from: the endpoint's order stands.
+        ModelSlot::Speech => 0,
     }
 }
 
@@ -499,6 +545,7 @@ pub fn for_slot(models: Vec<CatalogModel>, slot: ModelSlot) -> Vec<CatalogModel>
             (_, ModelRole::Unstated) => true,
             (ModelSlot::Assistant | ModelSlot::Impersonation, role) => role == ModelRole::Chat,
             (ModelSlot::Embedder, role) => role == ModelRole::Embedding,
+            (ModelSlot::Speech, role) => role == ModelRole::Speech,
         })
         .collect();
     kept.sort_by_key(|m| rank(m, slot));
@@ -587,6 +634,8 @@ struct GatewayEntry {
     #[serde(default)]
     supported_parameters: Option<Vec<String>>,
     #[serde(default)]
+    supported_voices: Option<serde_json::Value>,
+    #[serde(default)]
     expiration_date: Option<String>,
 }
 
@@ -605,9 +654,26 @@ impl GatewayEntry {
             ModelRole::Chat
         } else if outputs.contains(&"embeddings") {
             ModelRole::Embedding
+        } else if outputs.contains(&"speech") {
+            ModelRole::Speech
         } else {
             ModelRole::Other
         };
+        // `null` for a model that lists none. Read leniently, like the rest:
+        // an entry that is not a name costs that entry, never the list.
+        let voices = self
+            .supported_voices
+            .as_ref()
+            .and_then(|v| v.as_array())
+            .map(|list| {
+                list.iter()
+                    .filter_map(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|v| !v.is_empty())
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default();
         let price = |key: &str| {
             self.pricing
                 .as_ref()
@@ -635,6 +701,7 @@ impl GatewayEntry {
             role,
             retiring: self.expiration_date.filter(|d| !d.is_empty()),
             facts,
+            voices,
         }
     }
 }
@@ -944,8 +1011,90 @@ mod tests {
          "pricing":{"prompt":"0.00000001","completion":"0"}}
     ]}"#;
 
+    /// `GET /models?output_modalities=speech`, measured 2026-09-29 and cut to
+    /// the keys this client reads: a model with voices, one that lists `null`,
+    /// one whose list holds what is not a name, and — were the filter ever to
+    /// let one through — a chat model.
+    const GATEWAY_SPEECH_BODY: &str = r#"{"data":[
+        {"id":"x-ai/grok-voice-tts-1.0","name":"xAI: Grok Voice TTS 1.0","created":1782000000,
+         "context_length":15000,
+         "architecture":{"modality":"text->speech","input_modalities":["text"],"output_modalities":["speech"]},
+         "pricing":{"prompt":"0.000015","completion":"0"},"supported_parameters":[],
+         "supported_voices":["eve","ara","rex","sal","leo"]},
+        {"id":"fish-audio/s1","name":"Fish Audio: S1","created":1788000000,"context_length":0,
+         "architecture":{"input_modalities":["text"],"output_modalities":["speech"]},
+         "pricing":{"prompt":"0.000015","completion":"0"},"supported_parameters":[],
+         "supported_voices":null},
+        {"id":"odd/voices","created":1700000000,
+         "architecture":{"output_modalities":["speech"]},
+         "supported_voices":["Kore",""," Puck ",7,null,{"name":"Zephyr"}]},
+        {"id":"odd/voice-list","created":1600000000,
+         "architecture":{"output_modalities":["speech"]},"supported_voices":"alloy"},
+        {"id":"google/gemini-3.5-flash","created":1779000000,
+         "architecture":{"output_modalities":["text"]},"supported_voices":null}
+    ]}"#;
+
     fn gateway() -> Vec<CatalogModel> {
         parse(CatalogueShape::OpenRouter, GATEWAY_BODY).expect("a catalogue")
+    }
+
+    /// The speech list: what answers with speech is a speech model by the
+    /// gateway's word, and is offered for the speech row and no other; its
+    /// voices are the ones it lists, in its order. A list that holds what is
+    /// not a name costs those entries, and one that is not a list — all of
+    /// them; neither costs the model its row.
+    #[test]
+    fn the_gateway_says_which_models_speak_and_in_which_voices() {
+        let listed = parse(CatalogueShape::OpenRouterSpeech, GATEWAY_SPEECH_BODY).expect("a list");
+        let voices = |id: &str| named(&listed, id).voices.join(" ");
+        assert_eq!(voices("x-ai/grok-voice-tts-1.0"), "eve ara rex sal leo");
+        assert_eq!(voices("fish-audio/s1"), "");
+        assert_eq!(voices("odd/voices"), "Kore Puck");
+        assert_eq!(voices("odd/voice-list"), "");
+        assert_eq!(
+            named(&listed, "x-ai/grok-voice-tts-1.0").role,
+            ModelRole::Speech
+        );
+
+        let offered = for_slot(listed.clone(), ModelSlot::Speech);
+        assert_eq!(
+            ids(&offered),
+            [
+                "fish-audio/s1",
+                "x-ai/grok-voice-tts-1.0",
+                "odd/voices",
+                "odd/voice-list"
+            ],
+            "newest first, and the chat model is not a speech model"
+        );
+        for slot in [
+            ModelSlot::Assistant,
+            ModelSlot::Impersonation,
+            ModelSlot::Embedder,
+        ] {
+            let others = for_slot(listed.clone(), slot);
+            assert!(
+                others.iter().all(|m| m.role != ModelRole::Speech),
+                "{slot:?}: {:?}",
+                ids(&others)
+            );
+        }
+        // Silence narrows nothing, here as everywhere.
+        let unstated = for_slot(gateway(), ModelSlot::Speech);
+        assert_eq!(ids(&unstated), ["odd/shapes", "odd/window"]);
+        // A chat model lists no voices, whatever its entry holds.
+        assert!(gateway().iter().all(|m| m.voices.is_empty()));
+    }
+
+    /// A voice is an entry of a list like a model is — the voice rows' picker
+    /// offers them — and its name is all the row holds.
+    #[test]
+    fn a_voice_is_an_entry_with_a_name_and_nothing_else() {
+        let voice = CatalogModel::voice("Kore");
+        assert_eq!(voice.id, "Kore");
+        assert_eq!(voice.role, ModelRole::Speech);
+        assert!(voice.facts.is_empty() && voice.voices.is_empty());
+        assert_eq!((voice.display, voice.retiring), (None, None));
     }
 
     fn ids(models: &[CatalogModel]) -> Vec<&str> {
@@ -1118,6 +1267,16 @@ mod tests {
                 "https://openrouter.ai/api/v1/embeddings/models"
             );
         }
+        // The speech models are the chat list under the gateway's own filter,
+        // so the key moves them to the account's list as it moves the chat's.
+        assert_eq!(
+            url(CatalogueShape::OpenRouterSpeech, Some("k")),
+            "https://openrouter.ai/api/v1/models/user?output_modalities=speech"
+        );
+        assert_eq!(
+            url(CatalogueShape::OpenRouterSpeech, None),
+            "https://openrouter.ai/api/v1/models?output_modalities=speech"
+        );
         // No other shape asks a different route for having a key.
         assert_eq!(
             url(CatalogueShape::OpenAi, Some("k")),

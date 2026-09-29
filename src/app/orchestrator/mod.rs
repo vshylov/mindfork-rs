@@ -249,6 +249,7 @@ pub async fn run(deps: OrchestratorDeps) {
         tts_gen: None,
         tts_playback: None,
         tts_done_tx,
+        tts_formats: Default::default(),
         bg: HashMap::new(),
         bg_done_tx,
         consolidate_counts: HashMap::new(),
@@ -718,6 +719,11 @@ struct Orchestrator {
     tts_playback: Option<std::sync::Arc<crate::shared::tts::playback::Playback>>,
     /// "Speech finished" channel (background task → loop).
     tts_done_tx: UnboundedSender<Uuid>,
+    /// The audio format each of the gateway's speech models was last answered
+    /// in. Speech clients are built per command, so what a refused request
+    /// taught is kept here, for the session
+    /// ([`FormatMemo`](crate::shared::tts::FormatMemo)).
+    tts_formats: std::sync::Arc<crate::shared::tts::FormatMemo>,
     /// A registry of "silent" background-task slots (auto-reflection/
     /// consolidation): one slot per [`BackgroundKind`] — a "running" flag
     /// (cancellation token) + a failure streak. Lifecycle — in

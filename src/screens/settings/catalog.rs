@@ -587,7 +587,7 @@ impl SettingsScreen {
                 ];
                 let mut engine = match t.mode {
                     TtsMode::External => vec![
-                        text_row(FieldId::TtsUrl, "URL (external)", &t.external.url),
+                        speech_url_row(FieldId::TtsUrl, &t.external.url, loc),
                         text_row(
                             FieldId::TtsModelName,
                             loc.t("ui.settings.field.model_opt"),
@@ -618,7 +618,53 @@ impl SettingsScreen {
                         )
                         .describe(loc.t(DESC_EXT_API_KEY_ENV)),
                     ],
-                    _ => {
+                    // The gateway: the model and the voices have the
+                    // gateway's lists behind them, and there is no row for
+                    // instructions — not a field of its speech route, which
+                    // drops it with a `200` (docs/research/openrouter-mode.md
+                    // §4.4). The provider-wide switch closes the section, as
+                    // under every tab whose mode is the gateway.
+                    TtsMode::OpenRouter => {
+                        let c = &t.openrouter;
+                        let provider = t.mode.cloud_provider();
+                        let name = provider.map(CloudProvider::display_name);
+                        let mut section = vec![
+                            text_row(
+                                FieldId::TtsModelName,
+                                loc.t("ui.settings.field.model"),
+                                &c.model_name,
+                            )
+                            .describe(loc.t("ui.settings.desc.tts_model_gateway")),
+                            text_row(
+                                FieldId::TtsVoice,
+                                loc.t("ui.settings.field.voice"),
+                                &c.voice,
+                            )
+                            .describe(loc.t("ui.settings.desc.tts_voice_gateway")),
+                            text_row(
+                                FieldId::TtsUserVoice,
+                                loc.t("ui.settings.field.tts_user_voice"),
+                                &c.user_voice,
+                            )
+                            .describe(loc.t("ui.settings.desc.tts_user_voice")),
+                            api_key_row(
+                                FieldId::TtsApiKey,
+                                self.secret_field_present(FieldId::TtsApiKey),
+                                name,
+                                loc,
+                            ),
+                            text_row(
+                                FieldId::TtsApiKeyEnv,
+                                &api_key_env_label(name, loc),
+                                &c.api_key_env,
+                            )
+                            .describe(loc.t(DESC_API_KEY_ENV)),
+                            text_row(FieldId::TtsUrl, loc.t("ui.settings.field.base_url"), &c.url),
+                        ];
+                        section.extend(provider_wide_rows(provider, &self.config, loc));
+                        section
+                    }
+                    TtsMode::OpenAi | TtsMode::Gemini => {
                         let none = TtsCloudSettings::default();
                         let c = t.cloud().unwrap_or(&none);
                         let name = t.mode.cloud_provider().map(CloudProvider::display_name);
