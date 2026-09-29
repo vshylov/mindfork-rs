@@ -72,9 +72,10 @@ use crate::shared::storage::Storage;
 use crate::shared::storage::db::ReembedPending;
 
 /// Wraps the real embedder and verifies, once per instance, that the stored
-/// vectors were produced by the same model. Rebuilt whenever the embedding
-/// settings change (see `Orchestrator::apply_embed_settings`), so switching the
-/// model in settings re-arms the check.
+/// vectors were produced by the same model. Built anew by every road that
+/// installs an embedder (see `Orchestrator::embedder_dress`) — start-up, an
+/// edit of the embedding settings, the relaunch of a managed server — so
+/// switching the model in settings re-arms the check.
 pub(super) struct EmbedGuard {
     inner: Arc<dyn Embedder>,
     storage: Arc<Storage>,

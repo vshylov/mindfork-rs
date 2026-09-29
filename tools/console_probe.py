@@ -55,9 +55,11 @@ Scenarios (`--scenario`):
 * `gateway` — a copy of the binary in a scratch directory whose settings name
   the `openrouter` mode, against the **real gateway** (it needs
   `OPENROUTER_API_KEY`, which the settings read by name, and spends a fraction
-  of a cent): a question typed into the chat is answered, the settings show the
-  provider's rows with the attribution switch, and `Enter` on the model row
-  lists the gateway's catalogue with the window and the price. Takes the
+  of a cent): a question typed into the chat is answered, both of the mode's
+  slots are ready in the status line, a file is indexed through the gateway's
+  embedder, the settings show the provider's rows with the attribution switch,
+  and `Enter` on the model row lists the gateway's catalogue with the window
+  and the price. Takes the
   single-instance lock, like `first-frame`.
 * `user-theme` — a copy of the binary in a scratch directory whose
   `data/themes/` holds a theme of one colour (a light canvas) next to a file
@@ -716,6 +718,7 @@ def scenario_gateway(exe: Path, report: Report) -> None:
     if not os.environ.get("OPENROUTER_API_KEY", "").strip():
         raise RuntimeError("OPENROUTER_API_KEY is not set, and this scenario is the real gateway")
     model = os.environ.get("MINDFORK_OPENROUTER_MODEL", "anthropic/claude-haiku-4.5")
+    embedder = os.environ.get("MINDFORK_OPENROUTER_EMBED_MODEL", "baai/bge-m3")
     with tempfile.TemporaryDirectory(prefix="mindfork-probe-") as scratch:
         root = Path(scratch)
         copy = root / exe.name
@@ -729,8 +732,16 @@ def scenario_gateway(exe: Path, report: Report) -> None:
                 # The key is named, not written: the settings hold no secret.
                 "openrouter": {"model_name": model, "api_key_env": "OPENROUTER_API_KEY"},
             },
+            "embed": {
+                "mode": "openrouter",
+                "openrouter": {"model_name": embedder, "api_key_env": "OPENROUTER_API_KEY"},
+            },
         }
         (root / "data" / SETTINGS_FILE).write_text(json.dumps(settings), encoding="utf-8")
+        (root / "notes.txt").write_text(
+            "The capital of France is Paris.\n\nThe moon's gravity is a sixth of the earth's.\n",
+            encoding="utf-8",
+        )
 
         session = Session(copy, [], cwd=root)
         try:
@@ -740,6 +751,15 @@ def scenario_gateway(exe: Path, report: Report) -> None:
             rows = wait_for_text("Paris", 60)
             print(text_of(rows))
             report.says("the reply", rows, ("Paris",))
+            # Both keys were judged by now: the chips are the ready ones.
+            report.says("the status line", rows, ("● chat", "● emb"))
+
+            print("the embedder: a file indexed through the gateway")
+            type_text("/rag add notes.txt")
+            press("enter", SETTLE_REPAINT)
+            rows = wait_for_text("indexing finished", 60)
+            print(text_of(rows))
+            report.says("the knowledge base", rows, ("indexing finished", "files: 1"))
 
             print("the settings: the provider's rows")
             press(SETTINGS_KEY, SETTLE_REPAINT)  # opens on "Model/server"

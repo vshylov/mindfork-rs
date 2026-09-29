@@ -755,8 +755,12 @@ fn cloud_chat_setup(
 /// (docs/research/openrouter-mode.md §4.3, fork F8).
 ///
 /// The gateway's is `Connecting` until its key was judged, like its chat
-/// engine ([`spawn_key_check`]): a refused key is the slot's status rather
-/// than a `401` inside the result of the first tool that embeds.
+/// engine ([`spawn_key_check`]): a refused key is the slot's status from the
+/// moment the engine is applied, where it used to be first heard of as a `401`
+/// inside the result of the first tool that embedded. The status withholds
+/// nothing — an embedder is called whatever its chip says — so that tool is
+/// still answered by the gateway's refusal; what changes is that the user was
+/// told before.
 fn cloud_embed_setup(
     provider: CloudProvider,
     entry: CloudEntry<'_>,

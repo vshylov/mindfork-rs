@@ -462,8 +462,9 @@ async fn the_gateways_embedder_is_asked_about_its_key_too() {
     assert!(seen[1].contains(r#""model":"baai/bge-m3""#), "{}", seen[1]);
 }
 
-/// A key the gateway refuses is the embedder's status, in the gateway's words
-/// — not a `401` inside the result of the first tool that embeds.
+/// A key the gateway refuses is the embedder's status, in the gateway's words,
+/// when the engine is applied — and not first heard of as a `401` inside the
+/// result of a tool that embeds.
 #[tokio::test]
 async fn a_refused_key_is_the_embedders_status() {
     let (url, seen) = stub(script(vec![REFUSED]));
