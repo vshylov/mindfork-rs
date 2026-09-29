@@ -127,8 +127,8 @@ there (stored encrypted and machine-bound, never shown back), and choose the
 list, filtered as you type.
 
 **The OpenRouter gateway** is the `openrouter` mode: one key serves the
-assistant, impersonation, embeddings and speech, each with a model of its own.
-Its model
+assistant, impersonation, embeddings, speech and video, each with a model of
+its own. Its model
 list opens before a key is entered and shows, per model, the context window, the
 price per million tokens in and out, and a mark on a model that takes no tools.
 The key is checked when an engine in this mode is applied — the embedder
@@ -140,7 +140,10 @@ application — never you — and a switch in the same section turns them off
 ([PRIVACY.md](PRIVACY.md) §3.1). `/tts` speaks through the gateway as well: the
 Speech tab lists its speech models and each model's voices, and settles the
 audio format with the model by itself ([install.md](docs/install.md) §4.3).
-YouTube video through the gateway is not there yet. Details:
+And a YouTube video can be watched through it: the video tool has a provider of
+its own to choose — Google's API or the gateway — and through the gateway the
+whole video is read and charged, even when a part of it is asked for
+([install.md](docs/install.md) §4.4). Details:
 [install.md](docs/install.md) §3.2.
 
 **An external server.** Run any OpenAI-compatible server and point the app at it

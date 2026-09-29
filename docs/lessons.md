@@ -2192,6 +2192,25 @@ and the sentence has to be there to its last word — "a clip came back" and "th
 decodes" would both have passed on the one that was cut.
 — *speech through the gateway — stage 3 of the OpenRouter mode*.
 
+**What the wrong request costs is a measurement too — make it before the request
+goes into a gate.** A probe's negative arm — a YouTube address with a time in it, to see
+the gateway not read it as a video — was answered as expected, with no video tokens, and
+with 558 136 prompt tokens of the page instead: seventeen cents for one request, ninety
+times the price of watching the video. A smoke built on it would have spent that on every
+run of the gate. The gate sends the cheap form of the same defect (a link to a page of a
+few bytes: a `200`, no video tokens, $0.000005), and the expensive one is a recorded
+measurement and a unit test on the body that came back. Before a negative arm becomes
+permanent, read its bill, not only its verdict.
+— *a video through the gateway — stage 4 of the OpenRouter mode*.
+
+**A filter one list takes, its sibling may not.** The gateway's public list takes
+`?input_modalities=video` — 85 entries — and so, by stage 3's measurement, its account
+list takes `?output_modalities=speech`. The account list asked for video answered 461: the
+whole list, the filter ignored with a `200`. Read from the code, the two requests were one
+pattern; a picker written from the pattern would have offered every chat model as a model
+that watches. A parameter that is ignored is not refused — count what came back.
+— *a video through the gateway — stage 4 of the OpenRouter mode*.
+
 **A reply can arrive whole and in the wrong channel.** One reasoning model, on the
 provider a gateway routed it to, delivered its entire reply — the answer included — as
 `reasoning`, with no `content` and `finish_reason: "stop"`, in 2 runs of 4. Read the

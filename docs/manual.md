@@ -49,7 +49,7 @@ Open settings — `Ctrl+P` (or type `/settings`) — and go to **Model/server**.
 | `managed` | the app launches its own `llama-server` child process from a binary and a GGUF file on this machine |
 | `external` | any OpenAI-compatible server you already run: llama.cpp, vLLM, LM Studio, Ollama, or a gateway such as LiteLLM |
 | `openai` · `gemini` · `claude` · `grok` | the cloud providers, each with its own key and model |
-| `openrouter` | the OpenRouter gateway: one key in front of every vendor's models, the same key for the assistant, impersonation, embeddings and speech |
+| `openrouter` | the OpenRouter gateway: one key in front of every vendor's models, the same key for the assistant, impersonation, embeddings and speech — and for watching videos, if you choose it there (§6) |
 
 For a cloud mode, fill in the API key (it is stored encrypted and bound to this
 machine, and never shown back) and then the **model**: press `Enter` on that
@@ -234,12 +234,31 @@ per-tool toggles, so a companion can be given less than the machine allows.
 | **Web search** | `web_search` and `fetch_url` — off until you turn it on. Local and LAN addresses stay refused unless **Allow local addresses** is also on |
 | **Python execution** | `python_exec` in a WASI sandbox with no host file access; `mindfork sandbox setup` installs it once |
 | **File access** | `fs_read` / `fs_write` / `fs_list`, jailed to the one directory you name. The app's own data and program folders are never reachable |
-| **Video (YouTube)** | `youtube_watch` — needs a Gemini key, and works whatever your chat engine is |
+| **Video (YouTube)** | `youtube_watch` — needs a Gemini key or an OpenRouter one, by the group's **Provider** row, and works whatever your chat engine is |
 | **MCP servers** | tools from any Model Context Protocol server; a double opt-in, and a server that changes its tool list has to be re-confirmed |
 | **Background runs (subagent/dialogue)** | `start_subagent` and `start_dialogue` — work that outlives the reply |
 
 Two tools are always available and always safe: `calculate` and `current_time` —
 no network, no disk.
+
+### Who watches a video
+
+The **Provider** row of the Video (YouTube) group says who watches. `gemini` is
+Google's own API. `openrouter` is the same Gemini models behind the key the
+`openrouter` mode uses: `Enter` on **Model** then offers the models the gateway
+lists as taking video, the Gemini family first — it is the one that takes a
+YouTube link — and there is **no default model**, so until you choose one the
+tool answers from the video's page alone: its title, channel, length and the
+author's description. Each provider keeps its own model and key, and switching
+retypes nothing.
+
+What differs is the price of a part. Google cuts out the segment that was asked
+for and charges for the segment. Through the gateway **the whole video is read
+and charged, whatever part is asked for**: the answer is about the part and says
+that the whole was read, and the length ceiling measures the whole video — one
+longer than the ceiling is refused even for a minute of it. Any link you paste
+is fine: the app hands over the video's own address and nothing else of the
+link ([install.md §4.4](install.md)).
 
 ### Confirmation
 
@@ -292,7 +311,8 @@ Eight sections, and these four are the ones worth a visit early.
   calls run together (1 on a local engine, 4 on a cloud). A tab whose mode is
   `openrouter` also has **Name the app to OpenRouter**: on by default, it adds
   two headers naming the application — never you — to every request the app
-  makes to the gateway, and off, they are not sent.
+  makes to the gateway, and off, they are not sent. The same switch closes the
+  video group in **Tools** while its provider is `openrouter`.
 - **Sampling** — temperature and the rest, per slot. What the screen offers is
   narrowed to what the endpoint says it accepts, so a gateway stops showing knobs
   it would silently drop; in the `openrouter` mode the list starts from what the

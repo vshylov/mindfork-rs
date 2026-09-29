@@ -28,26 +28,18 @@ evidence. Adding or closing an item is part of every task's documentation step
 
 ## Most valuable next
 
-**One track is open: a mode of its own for OpenRouter**
-([openrouter-mode.md](research/openrouter-mode.md)). Measured 2026-09-29 in all
-five slots — chat, impersonation, embeddings, speech, a YouTube video — of
-which speech and video have no road through `external` at all; the forks were
-decided the same day. Four stages: the provider in chat and impersonation
-(**done**, §11 there), embeddings (**done**, §12 — the retry and the batch cap
-for every embedder, not only the gateway's), speech (**done**, §13 — and a
-player that no longer trusts a streamed clip's first frame, in every mode),
-video (**next**); the gateway's own knobs are a fifth, on demand. **Stages 1
-to 3 ship in one release, 0.13.0** (the user's decision, 2026-09-29), so the
-step of the settings schema taken in stage 1 covers them; video adds a field
-and owes none. With that release, in a pull request of their own: the site's
-home page and articles and the one-sentence description of the application,
-which merged earlier would describe a mode the published version does not
-have.
+**No track is open.** The last one — a mode of its own for OpenRouter, in all
+five slots — closed with its fourth stage on 2026-09-29 ([Closed](#closed)); what
+it left on demand is under *Engine and providers* below. **Every stage ships in
+one release, 0.13.0** (the user's decision), and with that release, in a pull
+request of their own, go the site's home page and articles and the one-sentence
+description of the application — merged earlier, they would describe a mode the
+published version does not have.
 
 The tracks this section carried before — the first public release, images,
-retry/backoff, the prompt-caching measurement, the attachment birth turn, and
-colour modes with user themes — have all closed ([Closed](#closed)); the lists
-below are an idea bank of equal weight.
+retry/backoff, the prompt-caching measurement, the attachment birth turn,
+colour modes with user themes, and the OpenRouter mode — have all closed
+([Closed](#closed)); the lists below are an idea bank of equal weight.
 
 ## Open
 
@@ -65,6 +57,11 @@ below are an idea bank of equal weight.
     prefixes the app has cover the rest
     ([openrouter-mode.md §4.3](research/openrouter-mode.md), F8). The rest of
     "embeddings through a gateway" is closed by the mode's second stage.
+  - **on demand** — **a part of a video through the gateway.** It carries no
+    segment bounds — four spellings tried — so the whole video is read and
+    charged and the part is named in words; Google's own API cuts the part and
+    charges for it. To be looked at again when the gateway carries them
+    ([openrouter-mode.md §4.5, §14](research/openrouter-mode.md)).
   - **on demand** — **OpenRouter's own request knobs** (`provider` routing, the
     `models` fallback, `transforms`, attribution headers, `usage.cost`) —
     deliberately not exposed
@@ -596,6 +593,14 @@ An index, newest first — one line per track, with the release that shipped it
 and where its story is told. What a track left open is a bullet above, under
 its area.
 
+- **OpenRouter as a provider of its own** — 0.13.0, four stages: `openrouter`
+  is a mode beside `external` in chat and impersonation — one key, the
+  gateway's dialect, the key checked before the first message, a model list
+  with the window and the price; embeddings, whose batch cap and retry became
+  every embedder's; speech, with the audio format settled per model, and a
+  player that no longer trusts a streamed clip's first frame; and a YouTube
+  video, where an answer that counted no video tokens is an error.
+  [openrouter-mode.md](research/openrouter-mode.md), spec §3.4, §9.9, §11.6, §11.9.
 - **Colour modes and user themes** — 0.12.0 (2026-09-28), three stages:
   the *full* mode, where the app paints its own canvas and the built-in `dark`
   and `light` are held to contrast floors; the *monochrome* mode, with

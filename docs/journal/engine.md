@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (79)
+## Entries (80)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -91,6 +91,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: OpenRouter as a provider of its own — stage 1 (done)
 - Post-M9: embeddings through the gateway — stage 2 of the OpenRouter mode (done)
 - Post-M9: speech through the gateway — stage 3 of the OpenRouter mode (done)
+- Post-M9: a video through the gateway — stage 4 of the OpenRouter mode, track complete (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -5399,3 +5400,122 @@ defect.
 
 **Gates**: fmt / clippy / test green — **3724 unit tests, 228 `#[ignore]`**
 (+31 unit tests, +10 live smokes: nine of the gateway's, one of the player's).
+
+### Post-M9: a video through the gateway — stage 4 of the OpenRouter mode, track complete (done)
+
+**What.** Stage 4 of [docs/research/openrouter-mode.md](../research/openrouter-mode.md)
+(§7, fork F10), the last: `youtube_watch` watches through the Gemini models behind an
+OpenRouter key, for a user whose one key is the gateway's. The video slot gets its first
+provider selector. The go/no-go is two sentences — the video of 2026-09-08 is watched,
+with video tokens counted and a line of what is said in it; a link the gateway does not
+read is an error, not a description — and both are met. With it the mode serves all five
+slots, and every stage ships in one release, 0.13.0 (the user's decision).
+
+**Measured first** (research §14.1–§14.2), and two of the three measurements changed what
+was built:
+- **the account's list does not take the video filter.** `/models?input_modalities=video`
+  answers 85 entries; `/models/user?input_modalities=video` answers 461, the whole list.
+  It takes the speech filter (stage 3), so the two were not alike. The list behind the
+  video row is narrowed here, by the `input_modalities` each entry publishes;
+- **one more parameter in the address and the link is not a video.** `…watch?v=<id>` is
+  6 119 prompt tokens, $0.0019; the same with `&feature=share` or `&t=20s` is **551 337**
+  and **$0.165**, no video tokens among them, and one of the two answers was a description
+  all the same — of the page. Research §4.5 had met the zero; the bill is new. The tool has
+  always built the address from the video's id, so nothing of the application sent one —
+  and a smoke pastes such a link now, so that nothing ever does;
+- the body of an answer, whole, for the parser: `usage.prompt_tokens_details` with
+  `video_tokens` and `audio_tokens` apart.
+
+**Built.**
+- `shared/config.rs`: `VideoProvider` — `gemini`, the default, and `openrouter` — as
+  `video.provider`, and `video.openrouter`, a section with **no default model**. Gemini's
+  fields stay where a file has always held them, so the change is additive: no step of the
+  schema, and a file of before reads as it did. `VideoSettings::secret_key` is the
+  settings' own answer to whose key is read.
+- `shared/video/gateway.rs`, `GatewayVideo`: the link as a `video_url` part of a
+  non-streaming chat completion. It asks for **the lowest reasoning effort the gateway
+  lists for the model** — the model's own entry, asked once; an outage is not an answer
+  and is asked about again; a model that lists none is told nothing. It sends no bounds,
+  no resolution and no `processing`: the gateway carries none of the first two, and the
+  third moves the video to where the usage does not show it.
+- **What of an answer is believed**, in this order: the body's `error`, whatever the
+  status — one refusal arrives as a `200`; then the count of video tokens — **none, and
+  the answer is an error**, its text never looked at; then the text. A refusal is said in
+  the gateway's words and, where it passed a provider's on, in the provider's.
+- `shared/video`: the contract says whether a segment is the provider's to cut
+  (`VideoUnderstanding::reads_segments`), and one function builds the client the settings
+  name.
+- `features/tools/youtube.rs`: with a provider that reads the whole video the segment is
+  a sentence of the prompt, the ceiling measures the whole video, and the result says the
+  whole of it was read. Entry of its own in [the tools journal](tools.md).
+- `shared/api/catalogue.rs`: `CatalogueShape::OpenRouterVideo`, `ModelSlot::Video`, and
+  `ModelFacts::video` — what an entry takes, which a list is narrowed by and a row does
+  not show. The Gemini family opens the list: our measurement orders it and does not
+  narrow it.
+- `screens/settings`: the video group's *Provider* row and the rows of each provider —
+  through the gateway no row for the resolution, the provider's own switch closing the
+  group, the key row addressing the key of whoever watches — and the list behind the
+  gateway's model row, its rows unmarked for tools.
+- `app/orchestrator`: the client is built on the key of the provider the settings name
+  (`video_config`), and the registry that holds it is rebuilt by what it was built from —
+  the gateway's switch and the gateway's key while the slot speaks to the gateway, and
+  neither while it does not.
+- `shared/http_stub.rs`: the scripted server the speech tests had written for themselves,
+  moved out for both clients' tests to stand on.
+
+**Rejected / not built.** No guard in the client against an address with parameters: the
+tool builds the address, and a second normaliser in the layer below would be a second
+opinion about what a YouTube link is. No retry: a video is minutes of somebody's money,
+and a failure is said. No clip for a video of unknown length — the gateway takes no bound
+to clip by — so it is refused, where the native provider's is clipped. No default model.
+No list for Gemini's own provider: its catalogue says nothing of video. No section for
+Gemini: it would have been a rename, and a step of the schema, for nothing a user would
+see. The knobs of F11 — the provider pinned, the cost shown — stay on demand.
+
+**Tests.** Next to the code, each checked against the mutation it guards — 58
+mutants, and none survives. Two did at first — a hint that named the other provider and
+still differed from its neighbour's, and the provider in what a video answer is filed
+under — and each got the assertion it lacked. The documents' author found a third thing by
+reading: a limit reached on the catalogue (`429`) was remembered as the model's answer,
+where an outage was not.
+The client over a real socket, on the bodies the gateway answered with: the answer with
+551 337 prompt tokens and no video among them is one of them, and what the test asserts
+is that not a word of its description reaches the caller. The length gate as a table of
+seven rows, each judged twice — by a provider that cuts segments and by one that reads
+the whole video.
+
+**Smoke — GO** (2026-09-29; the gateway with the user's key; YouTube for the video's
+title and length; Windows 11). `cargo test gateway_live -- --ignored --test-threads=1` is
+34 smokes of the mode now, eight of them this stage's. The video is one no model can
+describe from memory: 67 seconds, published 2026-09-08.
+- `a_video_is_watched_through_the_gateway_live` — 4.4 s; *"This is the moment where we
+  should all start believing again. Now, bound for the moon. America is returning to the
+  moon to build a moon base."*
+- `a_link_the_gateway_does_not_read_is_an_error_not_a_description_live` — a `200` from
+  the gateway, and the client's *"answered without reading the video — no video tokens
+  among the 0 prompt tokens it counted"*. The link is `https://example.com/`, at $0.000005;
+  the form of the same defect that costs $0.165 is not what a gate sends every time.
+- `a_video_that_is_not_there_…` — *"502 Bad Gateway: Provider returned error: The caller
+  does not have permission"*; `a_refused_key_…` — *"401 Unauthorized: User not found."*;
+  `the_gateways_video_list_answers_live` — 72 without a key, 70 with one, out of 85 and
+  461 sent; Gemini opens both.
+- **The tool** (`features::tools::gateway_live_tests`): a link pasted with `&t=20s&feature=share`
+  is watched — the header YouTube gave, a description, a transcript of twelve lines from
+  the video's first words; a segment, 0:20–0:40, named in words — the note that the whole
+  video was read, and a transcript of three lines, at 0:26, 0:29 and 0:38; the video under
+  a ceiling of one minute, thirty seconds of it asked for, refused in half a second with
+  nothing spent.
+- **The app itself** (`tools/console_probe.py --scenario gateway`, extended): the search
+  finds the video group; it names the provider and has no row for the resolution; the
+  model row lists 70 models, the Gemini family first, none marked for tools.
+
+**Docs.** spec §3.4, §9.9, §11.6, §12.2, §13; architecture §3, §4, §6, §7, §8, §12;
+install.md §3.2, §4.4, §7.1; the manual §1, §6, §8; README; PRIVACY.md and its translation
+(§3.1, §3.3, §4, §5 — what a video request carries, the question about the model, the
+list behind the model row), with the derived pages regenerated; CHANGELOG (Added, Data);
+the roadmap, where the track is closed; lessons §9; research §7, §14; the tools journal,
+for the tool's part.
+
+**Gates**: fmt / clippy / test green — **3751 unit tests, 236 `#[ignore]`**
+(+27 unit tests, +8 live smokes). The screenshots of the settings were redrawn: the
+tools' section counts a row more.

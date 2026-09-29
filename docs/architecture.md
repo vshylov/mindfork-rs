@@ -168,7 +168,10 @@ src/
 │  ├─ orchestrator/         state owner, split by feature (god object broken up,
 │  │  │                     `Chat` still has a single owner — see §11 below):
 │  │  ├─ mod.rs             scaffold: Orchestrator (17 fields), run() loop, command
-│  │  │                     dispatcher, shared helpers (emitters, chat_mut, mark_dirty)
+│  │  │                     dispatcher, shared helpers (emitters, chat_mut, mark_dirty);
+│  │  │                     video_config(config): the video slot resolved — its
+│  │  │                     settings, the stored key of the provider they name and
+│  │  │                     the gateway's switch (spec §9.9)
 │  │  ├─ engines.rs         EngineManager: server lifecycle, readiness,
 │  │  │                     apply_chat/embed/impersonation, backend_if_ready.
 │  │  │                     apply_embed takes the embedder's `dress` (EmbedderDress)
@@ -224,7 +227,11 @@ src/
 │  │  ├─ profiles.rs        create/edit/delete profiles
 │  │  ├─ settings.rs        config + server (re)start via the supervisor;
 │  │  │                     embedder_dress — EmbedGuard { PrefixedEmbedder { … } },
-│  │  │                     built for the start-up, a settings edit and a relaunch alike
+│  │  │                     built for the start-up, a settings edit and a relaunch alike;
+│  │  │                     the tool registry rebuilt by what the video client is
+│  │  │                     built from — `video`, the key of the provider that
+│  │  │                     watches, and the gateway's switch while the slot speaks
+│  │  │                     to the gateway (video_follows)
 │  │  ├─ title.rs           chat auto-title (background task) + the automatic
 │  │  │                     trigger (`interface.auto_title`, spec §11.2): fires
 │  │  │                     once per conversation from handle_send/handle_done,
@@ -325,7 +332,11 @@ src/
 │     │                     God object broken up (docs/history/refactoring-god-objects.md, stage 1):
 │     ├─ mod.rs             SettingsIntent, section/subsection enums, field types
 │     │                     (FieldId/FieldRow/Editor/…), struct SettingsScreen
-│     ├─ catalog.rs         section/subsection field builders + availability gates
+│     ├─ catalog.rs         section/subsection field builders + availability gates;
+│     │                     video_rows — the Tools section's video group by its provider:
+│     │                     FieldId::VideoProvider first, the rows of the section that
+│     │                     provider reads, no resolution row and the provider-wide
+│     │                     switch last through the gateway (spec §11.6)
 │     ├─ apply.rs           key handling, field editor, toggles/cycles, saving
 │     ├─ spec.rs            field_spec: access table for a config field's value (get/set/cycle/num)
 │     ├─ choice.rs          Choice-field selection popup + reset field to default
@@ -341,7 +352,11 @@ src/
 │     │                     the one answer into the models or into the voices of the
 │     │                     model the slot names, no_voice_to_pick(field) sends Enter to
 │     │                     the editor where there are none; a speech model's row shows
-│     │                     "voices: N" and no price (spec §11.6)
+│     │                     "voices: N" and no price (spec §11.6).
+│     │                     The video group's model row has one too, while its provider
+│     │                     is the gateway: model_slot answers ModelSlot::Video,
+│     │                     slot_source reads the section `video.openrouter`, and the
+│     │                     row shows the window and the price without "no tools"
 │     ├─ search.rs          field search overlay (`/`): index/filter/jump
 │     ├─ render.rs          rendering: menu, tab strip, field list, popups
 │     └─ helpers.rs         free functions: row builders, descriptions, parsers
@@ -447,7 +462,13 @@ src/
 │  │  │                     call via shared/video; degrades to metadata when no
 │  │  │                     provider is configured. transcript: true adds the
 │  │  │                     words — one call, split on a marker; a large one
-│  │  │                     becomes a chat attachment — spec §9.9
+│  │  │                     becomes a chat attachment. With a provider that reads
+│  │  │                     the whole video (reads_segments() is false — the
+│  │  │                     gateway's) the segment is a sentence of the prompt
+│  │  │                     (segment_in_words), length_gate measures the whole
+│  │  │                     video, and the result says the whole was read — spec §9.9
+│  │  ├─ gateway_live_tests.rs  #[ignore]: youtube_watch on the gateway's client, as
+│  │  │                     the agentic loop calls it (docs/install.md §7.1)
 │  │  ├─ calc.rs            calculate (our own math expression evaluator)
 │  │  ├─ datetime.rs        current_time (date/time, chrono)
 │  │  ├─ fs.rs              fs_read/fs_write/fs_list (files; fs_enabled gate + sandbox)
@@ -604,18 +625,27 @@ src/
    │  │  └─ responses/          Responses API: ResponsesClient + wire (OpenAI cloud, /v1/responses — reasoning summaries, effort, verbosity)
    │  ├─ gemini/            native Gemini: client.rs + wire.rs (generateContent, x-goog-api-key — thought summaries, thinkingLevel/Budget, per-tool-call thoughtSignature)
    │  ├─ anthropic/         Anthropic Messages API: client.rs + wire.rs (Claude, /v1/messages)
-   │  ├─ catalogue.rs       the provider's model catalogue behind the settings picker: seven
+   │  ├─ catalogue.rs       the provider's model catalogue behind the settings picker: eight
    │  │                     endpoint shapes (OpenAI-compatible / Gemini native / Anthropic /
    │  │                     xAI language-models / OpenRouter's text models / OpenRouter's
    │  │                     embedding models / OpenRouter's speech models —
    │  │                     CatalogueShape::OpenRouterSpeech, the text list under the
-   │  │                     gateway's own filter `?output_modalities=speech`) into one
+   │  │                     gateway's own filter `?output_modalities=speech` /
+   │  │                     OpenRouter's models that take video —
+   │  │                     CatalogueShape::OpenRouterVideo, the public list under
+   │  │                     `?input_modalities=video` without a key and the account's
+   │  │                     whole list with one, which does not take that filter) into one
    │  │                     CatalogModel carrying the role the endpoint claimed —
    │  │                     Unstated where it claimed none, ModelRole::Speech for what
    │  │                     answers with speech — ModelFacts (window, price, tools) where
    │  │                     it published them, and `voices` (`supported_voices`, read
    │  │                     leniently); CatalogModel::voice(name) is a voice as a list
-   │  │                     entry, and ModelSlot::Speech the slot that is offered them
+   │  │                     entry, and ModelSlot::Speech the slot that is offered them.
+   │  │                     ModelFacts::video is what an entry takes as input
+   │  │                     (`architecture.input_modalities`) — what ModelSlot::Video's
+   │  │                     list is narrowed by, not what a row shows, so
+   │  │                     ModelFacts::is_empty ignores it; that list opens with the
+   │  │                     Gemini family, which orders it and never narrows it
    │  ├─ embed_policy.rs    two Embedder decorators the supervisor stacks over a client:
    │  │                     BatchedEmbedder (a request carries at most MAX_INPUTS = 64
    │  │                     texts; a longer input goes in parts, answered as one list
@@ -757,6 +787,10 @@ src/
    │                       name as key sources, removed from the local Python
    │                       interpreter and the workspace commands. llama-server and
    │                       MCP servers keep the whole environment (spec §9.6, D5/D6)
+   ├─ http_stub.rs         #[cfg(test)]: a scripted HTTP server over a real socket
+   │                       for the clients that are not engines — speech and
+   │                       video — one step per request, every request kept, one
+   │                       beyond the script answered `500`
    ├─ http_text.rs         a fetched page's body → text, for both readers of
    │                       model-chosen pages (fetch_url, web_search's result
    │                       fetches): Content-Encoding undone (gzip/deflate — the
@@ -890,12 +924,23 @@ src/
    │                       docs/research/admission-by-budget.md, silent-tasks-budget.md,
    │                       silent-preemption.md
    ├─ video/               video understanding for `youtube_watch`: the
-   │                       `VideoUnderstanding` contract + `GeminiVideo`
-   │                       (`generateContent` with a `file_data` YouTube URL).
-   │                       A slot of its own, like TTS — only Gemini takes video,
-   │                       so routing it through the chat engine would deny it to
-   │                       local-model users. Key — the shared Gemini provider key
-   │                       (ADR 0008); `VideoConfig`'s `Debug` redacts it. Spec §9.9
+   │                       `VideoUnderstanding` contract + two clients of it,
+   │                       `GeminiVideo` (`generateContent` with a `file_data`
+   │                       YouTube URL) and `GatewayVideo` (gateway.rs — the
+   │                       OpenRouter gateway's `chat/completions` with a
+   │                       `video_url` part, non-streaming; §6 below);
+   │                       `client(cfg)` builds the one `VideoConfig.provider`
+   │                       names, and `reads_segments()` says whether a segment
+   │                       is the provider's to cut — `true` by default, `false`
+   │                       for the gateway's. A slot of its own, like TTS — only
+   │                       Gemini takes video, so routing it through the chat
+   │                       engine would deny it to local-model users. Key — the
+   │                       shared key of the provider the settings name, Gemini's
+   │                       or the gateway's (ADR 0008); `VideoConfig`'s `Debug`
+   │                       redacts it. gateway_tests.rs — #[cfg(test)], against a
+   │                       local stub answering with the gateway's own measured
+   │                       bodies; gateway_live_tests.rs — #[ignore],
+   │                       docs/install.md §7.1. Spec §9.9
    ├─ tts/                 speech synthesis (TTS): `TtsEngine` + `AudioClip` contract,
    │                       `openai` client (`/audio/speech`: `OpenAiTts::cloud`,
    │                       `::external` and `::gateway` — the OpenRouter gateway, whose
@@ -983,11 +1028,16 @@ catalogue, and it carries the *slot*, not a key — the orchestrator holds the
 config and the secrets, and `orchestrator/catalogue.rs::source` turns the slot's
 mode into a `CatalogueRequest`: for the OpenRouter gateway the slot also picks
 the list (`/embeddings/models` for the embedder; `/models/user` with a key and
-the public `/models` without one for the two chat slots, and the same pair
-under `?output_modalities=speech` for `ModelSlot::Speech`), the one cloud that is
+the public `/models` without one for the two chat slots, the same pair
+under `?output_modalities=speech` for `ModelSlot::Speech`, and for
+`ModelSlot::Video` the account's list whole with a key and the public one under
+`?input_modalities=video` without — `CatalogueShape::OpenRouterVideo`), the one
+cloud that is
 asked without a key; the speech slot is answered `NotConfigured` in every speech
 mode but `openrouter` — `speech_mode` — since no other has a list to read, and
-its one answer serves the model row and both voice rows;
+its one answer serves the model row and both voice rows; the video slot is
+answered `NotConfigured` unless its provider is `openrouter` — `video_mode` —
+Gemini's own list saying nothing of video;
 docs/research/model-picker.md), `Quit`.
 
 `AppEvent` (orchestrator → UI) includes: `ServerStatus`, `ChatList`,
@@ -1641,7 +1691,8 @@ the mode's own (docs/research/openrouter-mode.md §2.3, §4.1):
   own: `CatalogueRequest.attribution`, which the orchestrator sets from the
   same switch for the gateway's mode alone, has it carry the same two lines
   (`openai::attributed` — the one place they are written). The speech client
-  (below) is the third that writes them, through the same function.
+  and the video client (both below) are the third and the fourth that write
+  them, through the same function.
 
 `check_key` (`GET /key`) answers a `KeyVerdict` — `Accepted`, `Refused` (`401`/
 `403`, the gateway's words), `Unjudged` (any other status), `NoAnswer` (no HTTP
@@ -1677,6 +1728,36 @@ the container decoder **without gapless trimming** for every mode — a streamed
 MP3's `Info` tag is written before the stream's length is known, and trimming
 by it panicked on one model's clip and cut another's in half (spec §11.9;
 docs/research/openrouter-mode.md §13).
+
+**Video through the gateway is not this client's either.** The video slot has
+no mode: `VideoSettings.provider` (`VideoProvider`: `Gemini`, the default, or
+`OpenRouter`) names who watches, and `shared::video::client(cfg)` builds
+`GeminiVideo` or `shared/video/gateway.rs`'s `GatewayVideo` behind the one
+contract, `VideoUnderstanding`. `VideoConfig` carries the `provider` and the
+`attribution` the client is built with — the second `false` for Gemini whatever
+the switch says (`resolve_config`). What `GatewayVideo` borrows from
+`shared::api::openai` is the model's entry (`ModelEnvelope`,
+`ModelEntry::lowest_effort`) and `attributed`. `describe` is two requests at
+most. `lowest_effort` asks `GET {base}/model/{slug}` and keeps the answer in the
+client (`effort: Mutex<Option<Option<&'static str>>>` — `Some(None)` is "it
+lists none", which a `4xx` is too, the gateway not knowing the model; a `5xx`,
+a `429` or no answer sets nothing and is asked again with the next video).
+`body` is `POST {base}/chat/completions`,
+non-streaming: the prompt and a `video_url` part in one user message,
+`max_tokens`, and `reasoning: {effort}` only where an effort was found — no
+bounds, no resolution, no `processing`, since the gateway honours none of them.
+`answer_from(status, text)` is pure, and reads the answer **in the order of what
+can be trusted**: the body's `error` before the status (`refusal_in` — the
+gateway's `error.message` and, from `error.metadata.raw`, the provider's — since
+one refusal arrives as a `200`); `usage.prompt_tokens_details.video_tokens`
+before the text, zero or absent being an error whatever the text says; then the
+text, `truncated` when `finish_reason` is `length`, an empty one an error naming
+the finish reason. `reads_segments()` answers `false`, which is what
+`youtube_watch` reads to name a segment in the prompt and measure the whole
+video (§8). The client lives in the tool registry, so there is no key check and
+no status here either: `orchestrator::video_config` resolves the slot, and the
+registry is rebuilt by what the client is built from (§12, "Configuration";
+spec §9.9; docs/research/openrouter-mode.md §4.5, §14).
 
 Anthropic, xAI and Responses have no
 embeddings — of the clients only `OpenAiClient` implements `Embedder` (RAG uses
@@ -1987,8 +2068,9 @@ and a request will speak for itself; `NoAnswer` → `Disconnected` with the
 transport's reason, said once, and the question again every `RECHECK_POLL` until
 something answers. The task ends at the first answer: nothing about a cloud is
 periodic, and `/health` is never asked of this host. It serves the three slots
-the supervisor applies (the speech slot, which has the mode too, is never
-applied and is not asked — §6, "Speech through the gateway"):
+the supervisor applies (the speech slot, which has the mode too, and the video
+slot, whose provider may be the gateway, are never applied and are not asked —
+§6, "Speech through the gateway" and "Video through the gateway"):
 the assistant's and impersonation's engines (`apply_chat`,
 `apply_impersonation`) and the embedder — `cloud_embed_setup` takes the slot's
 `Monitor` (its `CancellationToken`, status channel and locale), returns
@@ -2335,7 +2417,13 @@ Invariants:
   `Assessment::Downgrade` (spec §12.2). The speech slot's `tts.mode` gained the
   value with a later stage of the same track and **no step of its own**: it is
   one more slot whose mode may name the gateway, and no build with schema 4 had
-  been released.
+  been released. The video slot's `provider` and its section `openrouter`, the
+  track's last stage, are the other case — **additive**: new fields under
+  `#[serde(default)]` beside the ones a file has always held, read as Gemini
+  where absent and ignored by a build that does not know them, so they owe no
+  step in any release. That a file written before the selector reads as it
+  always did is pinned by
+  `the_video_slot_chooses_its_provider_and_keeps_both_models`.
 
 The SQLite branch (`db/mod.rs::migrate`, version-aware): `baseline_ddl`
 (`CREATE … IF NOT EXISTS`) runs **every time** — an additive mechanism for
@@ -2497,7 +2585,7 @@ by `ToolGroup` (`Ord`).
 |----------------|-----------------------------------------------------------------|
 | Memory/knowledge  | `note_save` (embeds + a compatibility gate), `note_recall` (semantic search + spreading activation over the graph, falls back to substring match; **hides `@self` self-notes**), `note_revise` (in-place edit), `note_link`/`note_neighbors` (typed link graph), `note_supersede`/`note_merge` (supersession with a scar / merge with link transfer; **inherit tags**, including `@self`), `consolidate_notes` (a consolidation overview), `rag_add`, `rag_search`. Notes connectivity (accumulation → integration) + auto "sleep": see [docs/notes-connectivity.md](history/notes-connectivity.md). Self-model observations are ordinary notes tagged `@self` ([docs/narrative-as-notes.md](history/narrative-as-notes.md), §9) |
 | Introspection  | `get_sampling`, `set_sampling`, `get_system_message`, `set_system_message`, `get_last_user_message_time`; `get_llm_name`/`get_llm_history` (spec §9.14) — the **language model's** name (from the turn snapshot `ToolContext.model_name`/`engine_mode`, the same single `effective_model_name()` read the header and `MessageMetadata` use) and the profile's dated history of model changes (`data.db` `llm_history`, written by `handle_done` → `record_llm_history` when the pair name+mode differs from the newest record; a history with no records at all is seeded once at bootstrap from the chats' stored metadata — `orchestrator/llm_history.rs`). Named `llm_*` deliberately — the counterpart of the `self_model` family below, never a bare "model" |
-| External       | `web_search` (multi-provider + anti-bot), `fetch_url` (fetch+summarize; a YouTube link → metadata + a pointer to `youtube_watch`), `youtube_watch` (what a video says **and shows** — its own Gemini slot, degrades to free metadata; `transcript: true` lands the words as a chat attachment; spec §9.9), `python_exec` (the Wasmer sandbox or a local interpreter; what the code saves to `/w/out` is stored with the chat, and the chat's files a call names in `files` are copied into `/w/in` before it runs, spec §9.7, §13.2) — gated by `web_enabled`/`python_enabled` |
+| External       | `web_search` (multi-provider + anti-bot), `fetch_url` (fetch+summarize; a YouTube link → metadata + a pointer to `youtube_watch`), `youtube_watch` (what a video says **and shows** — a slot of its own, Gemini by Google's API or through the OpenRouter gateway, degrades to free metadata; `transcript: true` lands the words as a chat attachment; spec §9.9), `python_exec` (the Wasmer sandbox or a local interpreter; what the code saves to `/w/out` is stored with the chat, and the chat's files a call names in `files` are copied into `/w/in` before it runs, spec §9.7, §13.2) — gated by `web_enabled`/`python_enabled` |
 | Files          | `fs_read`, `fs_write`, `fs_list` — gated by `fs_enabled`, confined to `fs_root` (empty → refused), the app's own directories out of reach (`reach.rs`); `attachment_read` (one page of a file the user attached with `/file attach`) and `attachment_search` (by meaning, over the chat-scoped index) — **not gated and on by default**: unlike `fs_read` they *narrow* access to what the user explicitly attached, reading the stored snapshot/index rather than the disk. See spec §9.7 |
 | Utilities      | `calculate` (our own expression evaluator), `current_time` (chrono) — no I/O, not gated |
 | Files (project) | `code_list`, `code_read`, `code_grep`, `code_edit`, `code_write`, `code_build`, `code_run`, `code_test` — the code workspace attached to *this chat* with `/project attach` (spec §9.12). One `CodeTool` enum with one `impl Tool` dispatching to free functions, and `code::ALL` is what the registry loops, so a new member cannot be registered without joining the family's list. The editing pair and the three command tools are `danger()` (so §9.8's confirmation can park them); the editors journal a file's previous bytes before touching it; the whole family is exempt from `max_tool_rounds` and bounded instead by `workspace.max_rounds`. **No global gate**: the project's presence is the gate — and for a command tool, a line in its slot — so with none attached the schemas never reach the prompt and the request is byte-identical to what it was before the feature. The rule lives in `code::offered`, which `effective_tool_ids` consults. Stateless — the root, the command lines and the limits are per-turn snapshots (`ToolContext.workspace`, `ToolContext.workspace_cfg`), not registry parameters |
@@ -2671,7 +2759,7 @@ Implementation notes:
   `Backend::Scraped`). Keys are resolved in `orchestrator::web_search_keys`
   (stored beats the named env variable) and reach the tool as strings, so the
   secret store stays in one layer; a `SecretKey::Search` edit rebuilds the
-  registry, as the Gemini/video key does. With no key the order *is* the
+  registry, as the key of the video provider does. With no key the order *is* the
   scraped chain, which a test pins. Recognizes anti-bot throttling (HTTP
   202/403/429, and a keyed provider's 429) and
   switches providers instead of parsing an empty result set. A block behind a
@@ -2682,6 +2770,21 @@ Implementation notes:
   previous check knew. Chain order is not fixed: a family that blocked is
   remembered for `PROVIDER_COOLDOWN` and reordered to the back (the two DDG
   entries share one `Provider::family`, hence one throttle), never skipped.
+- **`youtube_watch`** (`youtube.rs`, spec §9.9) — the client is the registry's:
+  the tool is registered with `shared::video::client(cfg)`, the client of the
+  provider the settings name, or with none, and then it degrades to the
+  metadata. What the tool asks its client is `reads_segments()`. `true` — the
+  native Gemini client — and the request is what it has always been: the bounds
+  travel, and the segment is what `length_gate` measures. `false` — the
+  gateway's — and the tool treats the video as read whole: `segment_in_words`
+  puts the segment in front of the task as a sentence of the prompt, in the
+  profile's language; `length_gate` measures the video's own length whatever
+  bounds were asked, and refuses a video whose length could not be read unless
+  the ceiling is 0, in words that advise no segment (`too_long_whole`,
+  `unknown_length_whole`); and the result carries the note that the whole video
+  was read and charged (`whole_video_read`). The address handed over is
+  `watch_url(id)` — the video's id and nothing else of the pasted link — for
+  either provider.
 - **Cross-chat pair (`chats.rs`)** — the full-text index is profile-blind
   and includes the current chat, so the scope lives in a turn snapshot
   (`ToolContext::other_chats`, built by `snapshot_other_chats` in
@@ -3937,6 +4040,21 @@ Principles:
     row. Its `api_key_env` is among
     `named_key_env_vars`, what a model-driven child starts without
     (`shared/child_env.rs`).
+  - **The video slot has a selector, not a mode:** `VideoSettings` carries
+    `provider: VideoProvider` (`gemini`, the default, or `openrouter` —
+    `VideoProvider::ALL`) and `openrouter: VideoGatewaySettings` (`model_name`,
+    `url`, `api_key_env`) **beside** `model_name`/`url`/`api_key_env`, which
+    are Gemini's and stay where a file has always held them; `media_resolution`
+    and `max_minutes` are the slot's, shared. The gateway's section names **no
+    default model**. `shared::video::resolve_config(video, stored_key,
+    attribution)` reads the section of the provider named and nothing of the
+    other's, and `orchestrator::video_config` gives it the stored key of that
+    provider and `openrouter.attribution`. Both `api_key_env`s are among
+    `named_key_env_vars`. The client lives in the tool registry, so the
+    registry is rebuilt by what the client is built from: any change of
+    `video`, a change of the key of the provider that watches, and — while the
+    slot speaks to the gateway — a change of `openrouter`
+    (`Orchestrator::video_follows`).
 - **API keys** (`shared/secrets.rs`, docs/research/api-key-storage.md,
   docs/history/external-api-key.md):
   a key can be **entered in settings** — it's encrypted with a **machine
@@ -3953,11 +4071,14 @@ Principles:
   (`api_key_env` remains for CI and power users). Which secret a slot reads is
   the settings struct's own answer — `EngineSettings`/`ImpersonationEngineSettings`/
   `EmbedSettings`/`TtsSettings::secret_key()` → `SecretKey::Provider(p)` in a cloud
-  mode, `SecretKey::External(slot)` in `external`, `None` for managed — one source
+  mode, `SecretKey::External(slot)` in `external`, `None` for managed, and
+  `VideoSettings::secret_key()` → `SecretKey::Provider` of the provider that
+  watches — one source
   consulted by both the orchestrator and the settings screen, so a row cannot
   address a different secret than the server resolves. A cloud key is shared by
   chat/impersonation/embeddings/speech of that provider (the gateway's, stored
-  as `openrouter`, among them: all four slots have the mode); the four **external**
+  as `openrouter`, among them: all four slots have the mode) and by the video
+  slot where it names that provider; the four **external**
   slots each have their own, because their four URLs are four independent servers.
   Only the orchestrator writes keys (`AppCommand::SetSecret`); they never land
   in the config snapshot sent to the UI. This protects the **file**
