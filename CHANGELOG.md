@@ -24,8 +24,8 @@ split by subsystem.
   did, and its address row now says that the mode exists.
 - **The model list shows what a model is.** In the `openrouter` mode `Enter` on
   the model row lists the gateway's catalogue with each model's context window,
-  its price per million tokens in and out, and *no tools* where the gateway
-  says the model takes none. With a key the list is the models your account's
+  its price per million tokens in and out — an embedding model has the one —
+  and *no tools* where the gateway says the model takes none. With a key the list is the models your account's
   privacy settings allow; the entries that cannot answer a chat request are
   left out.
 - **A key the gateway refuses is said before the first message.** The key is
@@ -58,7 +58,8 @@ split by subsystem.
   `openrouter` block holds the attribution switch. Nothing is rewritten — the
   step stamps the version, because a version that does not know the value
   refuses the whole file rather than reading the rest of it. As with every
-  schema change, the file is backed up before it is migrated.
+  schema change, the file is backed up before it is migrated; an older version
+  refuses a file this one has written, and that backup is the way back.
 
 ## [0.12.0] — 2026-09-28
 

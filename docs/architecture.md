@@ -1575,7 +1575,9 @@ the mode's own (docs/research/openrouter-mode.md §2.3, §4.1):
   (`ATTRIBUTION_REFERER`, `ATTRIBUTION_TITLE`) to every request this client
   makes — chat, embeddings, `/key`, `/model/{slug}` — when the switch is on.
   The settings picker's list request is `catalogue::fetch`, a client of its
-  own, and carries neither.
+  own: `CatalogueRequest.attribution`, which the orchestrator sets from the
+  same switch for the gateway's mode alone, has it carry the same two lines
+  (`openai::attributed` — the one place they are written).
 
 `check_key` (`GET /key`) answers a `KeyVerdict` — `Accepted`, `Refused` (`401`/
 `403`, the gateway's words), `Unjudged` (any other status), `NoAnswer` (no HTTP

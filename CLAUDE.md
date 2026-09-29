@@ -3,8 +3,9 @@
 A console (TUI) AI chat application in Rust. Local models **Gemma 3/4** and
 **Qwen 3.5/3.6** via **llama.cpp `llama-server`** (an OpenAI-compatible server;
 in external mode any such server works — vLLM/LM Studio/Ollama), plus the cloud
-providers OpenAI, Gemini and Anthropic. UI on **ratatui**. Platforms: Windows +
-Linux. Architecture — **Feature-Sliced Design (FSD)**.
+providers OpenAI, Gemini, Anthropic and xAI, and the OpenRouter gateway. UI on
+**ratatui**. Platforms: Windows + Linux. Architecture — **Feature-Sliced Design
+(FSD)**.
 
 > **Engine:** originally designed around `xinfer`, which turned out too raw
 > (incoherent output on Gemma 4, builds poorly on Windows) — switched to
@@ -176,10 +177,10 @@ Backend selection: `MINDFORK_ENGINE_URL` (external, any OpenAI server) OR
 rented instead of hosted — `python tools/e2e_hf.py run`, see
 `docs/history/remote-e2e-hf.md`.
 
-## Status (2026-09-28, version 0.12.0)
+## Status (2026-09-29, version 0.12.0)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3602 unit tests
-green, 202 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **3671 unit tests
+green, 214 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -191,6 +192,14 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **OpenRouter as a provider of its own — stage 1** (chat, impersonation, the
+  embedder's arm). `openrouter` is a mode beside `external`: one key, a dialect on
+  the client (`repetition_penalty`, the lowest listed effort on a muted turn), the
+  key checked before `Ready`, the picker's rows with window and price, attribution
+  behind a switch; `settings.json` 3 → 4. Live **GO**, the switch local → gateway →
+  back included. Next: stage 2, the embedder's retry and batch cap
+  ([docs/research/openrouter-mode.md](docs/research/openrouter-mode.md) §7, §11,
+  spec §3.4, §11.6, [docs/journal/engine.md](docs/journal/engine.md)).
 - **`Ctrl+←/→` stop at punctuation** — three character classes, not two: a run of
   marks is a stop of its own, and deletion and selection share it
   ([docs/journal/ui-input.md](docs/journal/ui-input.md), spec §11.5).
@@ -376,23 +385,6 @@ being recent is dropped, not shortened.
   resolver now reads a bare number as `#N` unless an item is called that, for `/file`,
   `/image remove` and `python_exec`'s `files` alike, and a miss answers with the numbers
   there are (spec §9.7, [docs/journal/rag.md](docs/journal/rag.md)).
-- **Through a gateway, a tool's image and `/continue` belong to the route** — M3 ran
-  the app itself through OpenRouter (GO on Bedrock-routed Haiku: a chart only the
-  image could answer for, the `/file` round trip), and per pinned route with blind
-  controls both halves of F6 turned out real: of 29 route-and-model pairs 3 answer
-  about a tool image they never received (in a user message 28 of 28 see it, so
-  stage H1 re-homes them there on a gateway), and `/continue` restarts on OpenAI and every
-  open-weight route, which the echo filter stored glued onto the partial. Stage H2
-  gates it: on an `external` endpoint whose catalogue answered, the slug's vendor
-  is read against the spec §6.4 table (Anthropic ≤ 4.5, Gemini continue; the rest
-  refuse with a gateway note), one answer feeds the gate, `Finished.continuable`
-  and the notes, and the catalogue is asked when the engine is applied so the
-  first command after a restart is not answered blind. **Silence is never a
-  claim**: no catalogue, no change. F5 closed on a measurement — a garbage
-  signature is a `400` through the gateway and direct, sending no blocks never is,
-  so there is nothing to build
-  ([docs/history/gateway-images-and-continue.md](docs/history/gateway-images-and-continue.md),
-  spec §6.4, [docs/journal/engine.md](docs/journal/engine.md)).
 - **A headless launch (no TTY) exits with code 2** and a one-line reason — the
   TUI cannot be run from an agent's shell; how it *looks* needs a real terminal
   and a person. What a console *holds* can be measured on Windows:

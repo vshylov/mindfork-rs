@@ -690,8 +690,10 @@ The discipline that mattered, each time:
 ## 11. Measured while stage 1 was built (2026-09-29)
 
 What §4.1 stated as design, measured before the code was made to rest on it;
-and where the stage departed from the plan of §6–§7. Same method as §10; about
-60 requests more, under five cents.
+and where the stage departed from the plan of §6–§7. Same method as §10 for the
+probes; with the live runs of the stage's smokes, about fifty cents on the
+gateway's meter — most of it the orchestrator's turns, each of which sends the
+app's whole prompt and tool set.
 
 ### 11.1 A muted turn, by kind of model **[live]**
 

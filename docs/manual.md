@@ -277,7 +277,7 @@ Eight sections, and these four are the ones worth a visit early.
   take turns), and **Parallel tool calls**, how many of one reply's read-only
   calls run together (1 on a local engine, 4 on a cloud). A tab whose mode is
   `openrouter` also has **Name the app to OpenRouter**: on by default, it adds
-  two headers naming the application — never you — to the requests the engine
+  two headers naming the application — never you — to every request the app
   makes to the gateway, and off, they are not sent.
 - **Sampling** — temperature and the rest, per slot. What the screen offers is
   narrowed to what the endpoint says it accepts, so a gateway stops showing knobs

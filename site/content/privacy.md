@@ -113,10 +113,10 @@ Where your conversation goes depends on the engine mode you chose:
 of its own. By default it shares the chat engine; pointed elsewhere, it sends the
 conversation to that external server, cloud provider or gateway instead.
 
-**What the app says about itself.** To OpenRouter, and to no other provider, the
-requests the app makes as your engine in the `openrouter` mode — chat,
-embeddings, and the two questions listed under "Probes" below — carry two
-headers:
+**What the app says about itself.** To OpenRouter, and to no other provider,
+every request the app makes in the `openrouter` mode — chat, embeddings, the two
+questions listed under "Probes" below and the request for the model list —
+carries two headers:
 
 - `HTTP-Referer: https://mindfork.io`
 - `X-OpenRouter-Title: mindfork`
@@ -128,8 +128,8 @@ it counts by them which application its traffic comes from and shows those
 counts in its public application rankings. They are **on by default**. To stop sending them: Settings →
 Model/server → any tab whose mode is `openrouter` → "Name the app to OpenRouter".
 It is one switch for every slot that uses the gateway, and with it off neither
-header is sent. An `external` engine pointed at the same address never sends
-them, and neither does the request for the model list described below.
+header is sent by any of them. An `external` engine pointed at the same address
+never sends them.
 
 The `MINDFORK_ENGINE_URL`, `MINDFORK_LLAMA_BIN`, `MINDFORK_EMBED_URL` and
 `MINDFORK_EMBED_BIN` environment variables, when set, replace the chat or
@@ -185,7 +185,8 @@ carries your key where one is configured, and nothing else of yours. For
 OpenRouter it is your account's own list (`/models/user`) when a key is
 configured and the public list (`/models`) when none is — the one case in which
 the app contacts a cloud before you have given it a key — and
-`/embeddings/models` on the Embeddings tab.
+`/embeddings/models` on the Embeddings tab; like every request to OpenRouter it
+carries the two headers described above, unless you switched them off.
 
 ### 3.2 Embeddings (notes, RAG, search reranking)
 

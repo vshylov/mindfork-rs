@@ -287,6 +287,11 @@ touch a test file, bound **every** stub a test joins, through one shared accept
 emits no note, so the red run sat for ten minutes instead of failing in eighteen
 seconds. The event a change *produces* is exactly the one its control arm will not:
 bound every wait for it, in the unit test as well as in the smoke.
+**A fifth**, and what it cost this time was a verdict: a test on a paused clock waited
+with bare `wait_for` for the status of a restart, its mutant made the restart never
+happen, and the run stopped there; killing the hung process to let the run go on
+recorded the mutant as *survived*, since a killed process prints no `FAILED`. On a
+paused clock a bound costs nothing — the timeout fires the moment the runtime is idle.
 — *engine failures stop being silent*, *a tool's images reach the model through a
 gateway*, *whether a gateway's model takes images comes from its catalogue*, *a chat
 whose history carries images, on an engine that takes none*.
@@ -623,9 +628,24 @@ once — 25 seconds a mutant instead of 150 — and there is one restore, from a
 copy, at the end. A mutant that cannot be an expression under a switch is rarer
 than it looks: a deleted statement is `if !mutant(N) { … }`, a flipped guard is
 `guard && !mutant(N)`.
+**The restore is from the text, never by the reverse replacement.** A runner that
+undid each mutant by swapping `new` back to `old` met a mutant that *deleted* a line:
+`new` was the empty string, which occurs everywhere, so the undo refused — inside a
+`finally`, which ended the run with the file mutated. Read the file before touching
+it and write that back; and check every anchor of the whole plan before the first
+mutant, so that one the formatter has since re-wrapped costs nothing.
 — *colour modes — the monochrome mode*.
 
 ## 3. Measure; do not assume
+
+**Write the user's document from the code, and treat a sentence that cannot be
+written as a finding.** The privacy policy's paragraph on two attribution headers was
+drafted as "every request carries them", which is what the switch's own description
+said; writing it from the code, the model list's request turned out to be made by
+another client and to carry neither. No test had asked. A document that promises
+something to a reader is a specification with an audience — the place to find that a
+claim is true of one call site and not of the next.
+— *OpenRouter as a provider of its own — stage 1*.
 
 **A measured fact about someone else's release has a date on it — and a check
 that cannot parse must not pass.** The download research measured, on
@@ -2117,6 +2137,35 @@ the plotting area's colour, through `matplotlibrc` — asked in a follow-up with
 4/5 and 5/5 with the image on two model families, 0/5 blind on both. Before trusting "the model saw it", name the other channel
 the answer could have come through, and close it.
 — *sandbox file exchange — stage 1* ([sandbox-file-exchange.md](history/sandbox-file-exchange.md) §10).
+
+**The first event of a kind is not the answer.** A live test of a switch between two
+engines read the engine's facts off the first `EngineSlots` and `EngineSamplingFields`
+it saw. The slot count is announced twice — as gone, when the engine is replaced, and
+as answered — and the engine is asked again on every flip of its status, so the test
+asserted on the announcement and then sent its message while the new engine was still
+`Connecting`, which the app refuses: no `Finished`, and a wait with no bound. Wait for
+the **state** — ready, and both facts said after it became ready — under a deadline
+that reports the last thing seen; and give a turn helper an arm for the error, since a
+refused turn ends with one.
+— *OpenRouter as a provider of its own — stage 1*.
+
+**A fixture the app would never send measures the fixture.** A smoke of a tool's image
+built the image without the label every image of the app carries, and on one model the
+reply came back with the model's scratch text in it, or empty — 8 of 8, and 8 clean of
+8 with the label. Nothing in the app was wrong; the smoke had been asking about a
+request the app does not make. It is the ordering entry of §2 met on a live run: build
+the fixture through what production builds it with, or state in the smoke which
+property of production it leaves out. (The finding itself was worth keeping — the
+label turned out to be load-bearing, and is documented where it is built.)
+— *OpenRouter as a provider of its own — stage 1*.
+
+**A reply can arrive whole and in the wrong channel.** One reasoning model, on the
+provider a gateway routed it to, delivered its entire reply — the answer included — as
+`reasoning`, with no `content` and `finish_reason: "stop"`, in 2 runs of 4. Read the
+raw stream outside the app before blaming the client, and do not let a smoke's
+assertion depend on a split the provider makes: pick the model whose split was
+measured, and say in the smoke why.
+— *OpenRouter as a provider of its own — stage 1*.
 
 ## 10. CI and infrastructure
 

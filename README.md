@@ -133,8 +133,8 @@ price per million tokens in and out, and a mark on a model that takes no tools.
 The key is checked once when the engine is applied, so a refused key is the
 engine's status rather than the first message's error; the context window, the
 sampling fields on offer and image support are read from the gateway's own entry
-for the model. The engine's requests to the gateway carry two headers that name
-the application — never you — and a switch in the same section turns them off
+for the model. Requests to the gateway carry two headers that name the
+application — never you — and a switch in the same section turns them off
 ([PRIVACY.md](PRIVACY.md) §3.1). Speech and YouTube video through the gateway
 are not there yet. Details: [install.md](docs/install.md) §3.2.
 
@@ -271,7 +271,7 @@ for convenience: the English originals are the texts with legal force.
 
 Actively developed, in small reviewed tracks; the original ten-milestone plan
 ([docs/history/plan.md](docs/history/plan.md)) is long finished. The suite stands
-at **3337 unit tests** plus **196 `#[ignore]` smoke tests** that are run against
+at **3671 unit tests** plus **214 `#[ignore]` smoke tests** that are run against
 real stacks — a local `llama-server` and the live cloud APIs — before
 provider-touching changes ship. See the [changelog](CHANGELOG.md) for what is new
 and the [roadmap](docs/roadmap.md) for what may come next.

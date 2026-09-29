@@ -1,7 +1,7 @@
 +++
 title = "Why the engine is a server, not a library"
 description = "mindfork nearly embedded an inference runtime. The contract that replaced it made a local GGUF and a cloud frontier model the same thing."
-updated = "2026-09-29"
+updated = "2026-08-11"
 weight = 2
 
 [extra]
@@ -42,14 +42,6 @@ Anthropic, Gemini and Grok are **sibling implementations of the same small
 trait** the local server sits behind — streamed text, "thoughts", tool
 calls, token usage, finish. A conversation can hop from a local Gemma to a
 cloud frontier model and back without changing shape.
-
-A **gateway** is the same contract once more. OpenRouter — one key in front
-of many vendors' models — is a mode of its own, served by the very client
-that talks to a local `llama-server`, writing the request in the gateway's
-dialect instead of llama.cpp's. It could have stayed a URL typed into
-external mode, and still works that way; the mode exists because a client
-that is *told* where it is speaking need not infer it from whether a
-catalogue happened to answer.
 
 ## The details that keep it honest
 

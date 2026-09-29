@@ -992,12 +992,11 @@ waiting for a catalogue to answer: a picture a tool returns is sent in a user
 message right after the tool's result, and `/continue` resumes a reply on Claude
 up to the 4.5 generation and on Gemini, and refuses on every other model.
 
-**The app names itself to OpenRouter.** Requests the engine makes to the gateway
-— chat, embeddings, the key check and the question about the model — carry two
-headers: `HTTP-Referer: https://mindfork.io` and `X-OpenRouter-Title: mindfork`.
+**The app names itself to OpenRouter.** Every request to the gateway — chat,
+embeddings, the key check, the question about the model and the list of models
+for the picker — carries two headers: `HTTP-Referer: https://mindfork.io` and `X-OpenRouter-Title: mindfork`.
 They name the application and say nothing about you; by OpenRouter's own
-description, it counts its public application rankings by them. The request that
-lists models for the picker carries neither. On by default; **"Name the app to
+description, it counts its public application rankings by them. On by default; **"Name the app to
 OpenRouter"**, in the provider's group on any tab whose mode is `openrouter`,
 turns them off for every slot at once ([PRIVACY.md](../PRIVACY.md) §3.1).
 
@@ -1740,6 +1739,39 @@ green: it runs only when `MINDFORK_LIVE_GATEWAY_MODEL` **declares** a model that
 reasons, and then fails rather than skips if no "thoughts" arrive — the
 gateway's field name is the thing it is there to prove
 ([docs/research/openrouter-external.md](research/openrouter-external.md) §8).
+
+**The `openrouter` mode has smokes of its own**, since everything above reaches
+the gateway through the `external` client — which is their control arm, not
+their subject. They are declared by one variable and build the client the way
+the supervisor builds it:
+
+```powershell
+$env:MINDFORK_OPENROUTER_KEY = $env:OPENROUTER_API_KEY
+$env:MINDFORK_ENGINE_URL     = "http://127.0.0.1:8000/v1"   # a local llama.cpp, for the switch
+
+cargo test gateway_live -- --ignored --nocapture --test-threads=1
+```
+
+That is twelve smokes and about ten cents — most of it the orchestrator's
+turns, which send the app's whole prompt and tool set: the client's nine (thoughts and who
+served, a tool round trip, a muted turn against its `external` control, a tool's
+image with a blind control, a `:nitro` slug, the key, the catalogues,
+embeddings), and the orchestrator's three on the production supervisor — a chat
+moved from the local server to the gateway and back inside one session,
+`/continue` on both arms of the route table, a refused key as the status. Each
+names the model it was measured on and takes another from a variable of its own
+— `MINDFORK_OPENROUTER_MODEL`, `…_REASONING_MODEL`, `…_MUST_REASON_MODEL`,
+`…_ALWAYS_REASONS_MODEL`, `…_VISION_MODEL`, `…_EMBED_MODEL`, `…_CONTINUES_MODEL`,
+`…_RESTARTS_MODEL` — because a model's name ages and its **kind** is what the
+smoke is about; a model that turns out not to be of that kind fails the smoke
+rather than skipping it. Without `MINDFORK_ENGINE_URL` the switch is skipped and
+the rest run.
+
+On Windows the application itself can be driven through the mode, in a hidden
+console on a scratch data root: `python tools/console_probe.py --scenario
+gateway` types a question into the chat, opens the settings and the model list,
+and checks that the key reached neither the log nor the settings file. It reads
+`OPENROUTER_API_KEY` by name, as the settings do.
 
 ### 7.2. The remote gate (rented GPU, no local stack)
 

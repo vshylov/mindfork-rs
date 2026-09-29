@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (76)
+## Entries (77)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -88,6 +88,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: CUDA for Linux, refused — and a version check that stopped checking (done)
 - Post-M9: `mindfork setup` — a working managed engine from one command (done)
 - Post-M9: raw `llama-server` arguments in managed settings (done)
+- Post-M9: OpenRouter as a provider of its own — stage 1 (done)
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
   a long time (up to the `MANAGED_READY_TIMEOUT=600s` timeout) in "server:
@@ -4976,3 +4977,160 @@ The settings screenshots were regenerated (two rows more in *Model/server*).
 
 **Gates**: fmt / clippy / test green — **3434 unit tests, 199 `#[ignore]`**
 (+23 unit tests, +2 live smokes).
+
+### Post-M9: OpenRouter as a provider of its own — stage 1 (done)
+
+**What.** Stage 1 of the track [docs/research/openrouter-mode.md](../research/openrouter-mode.md)
+opened: `openrouter` is a mode of the assistant, of impersonation and of the embedder,
+with a section of its own beside `external`'s — so a local server's address and the
+gateway's key are both kept, and moving between them is the *Mode* row. The twelve forks
+were settled by the user on 2026-09-29, **every one at its recommendation**: a provider
+rather than named `external` connections (F1), all five slots in four stages (F2), a new
+value of the existing enums with `SETTINGS_SCHEMA` 3 → 4 (F3), Chat Completions with a
+dialect (F4), attribution headers on by default behind a switch (F5), the key checked
+once per apply (F6), the picker from the provider's claims (F7), a hint on an `external`
+address that is the gateway's (F12). `external` keeps reaching the gateway exactly as it
+did.
+
+**Built.**
+- `shared/config.rs`: `ServerMode::OpenRouter`, `ImpersonationMode::OpenRouter`,
+  `CloudProvider::OpenRouter` (the fifth of `ALL`), an `openrouter: CloudSettings` in each
+  of the three engine structs, and `AppConfig.openrouter: OpenRouterSettings { attribution }`
+  — the one setting that is the provider's rather than a slot's. One stored key serves
+  every slot (`SecretKey::Provider`). `storage/schema.rs`: `settings_to_v4` stamps the
+  version and rewrites nothing — the step exists because an older binary's typed parse
+  refuses a value it does not know, and a refusal that names the version is the better one.
+- `shared/api/openai`: `OpenAiClient::for_openrouter(attribution)` — the first provider
+  the client is **told** about instead of inferring from whether a catalogue answered.
+  Told, it writes the body in the gateway's dialect (`ChatCompletionRequest::for_gateway`:
+  `repeat_penalty` → `repetition_penalty`, the llama.cpp-only fields left out — the first
+  was measured to be dropped in silence, research §3.5); asks `GET /model/{slug}` for the
+  model's facts and never `/props`, `/health` or the 755 KB list; re-homes a tool's images
+  on every request without waiting for a catalogue; on a turn that asks reasoning off,
+  asks a model that must reason for the lowest effort it lists (`gateway_muted_effort`);
+  and names the application in `HTTP-Referer` / `X-OpenRouter-Title` when the switch says
+  so (`attributed`, the one place the two lines are written). `ChatChunk::Served` carries
+  the `provider` of the chunks and the `usage.cost` of the last one; the orchestrator
+  records both on the message (`MessageMetadata.provider`, `cost_nanos` — billionths of a
+  dollar, an integer) and shows them nowhere yet (F11).
+- `app/supervisor.rs`: the gateway's arm of `cloud_chat_setup` is `Connecting` until
+  `GET /key` answers (`spawn_key_check`). Accepted — `Ready`; refused (`401`/`403`) —
+  `Disconnected`, worded by the gateway's own sentence; anything else the gateway
+  answered (an outage, a `429`) — `Ready`, because the key was **not judged** and a
+  request may well work; no answer at all — said once and asked again every 5 s. A check
+  overtaken by a newer apply says nothing. The embedder's arm is built like a cloud's.
+- `app/orchestrator`: the engine's facts are asked again on **every** applied change of
+  the chat engine (`refresh_chat_engine`), not only on a status flip; the gateway's switch
+  restarts the slots that speak to the gateway and no other (`gateway_for`); `/continue`
+  in the mode reads the route table of spec §6.4 by the slug with no catalogue to wait for.
+- The picker: `CatalogueShape::OpenRouter` (`/models/user` with a key, `/models` without —
+  the one cloud whose list opens before a key was entered) and `OpenRouterEmbeddings`;
+  `ModelFacts` — window, the two prices in millionths of a dollar per million tokens,
+  `tools`; a row is the id, the window, the price, `no tools`; `:batch` slugs are left out
+  (they answer `404` to a chat request). `entities/sampling`: the static list of what the
+  gateway's schema reads, narrowed per model by the catalogue.
+- The settings screen: the mode in both cycles, the provider's rows, *Name the app to
+  OpenRouter*, and under an `external` address whose host is `openrouter.ai` a hint that
+  the mode exists.
+
+**The embedder's arm came with stage 1**, against the stage table: `ServerMode` is one
+enum for the chat engine and the embedder, so a value the first takes is a value the
+second has to answer for. Stage 2 is what is left — the retry, the batch cap, and whether
+the embedder's key is checked.
+
+**Measured while building** (research §11, the same method as its §10). A model that must
+reason refuses both spellings of "off" — `400 "Reasoning is mandatory for this endpoint
+and cannot be disabled."`, 4 models of 4 — and takes its lowest listed effort: on
+`google/gemini-3.5-flash` that is 0 reasoning tokens and $0.0000675 where the default
+depth is 277 and $0.00256. An effort the entry does not list is accepted (4 of 4), so the
+list describes and does not validate. `GET /model/{slug}` is 2 148 bytes and resolves
+`:nitro` / `:floor`, which the list does not carry. `deepseek/deepseek-r1` on the provider
+it was routed to delivered the whole reply as `reasoning` with no `content` in 2 runs of
+4 — the stream as sent, read outside the app. And a `user` message that is an image and
+nothing else gets `google/gemini-3.5-flash` to put its scratch text into the reply
+(`0The background…`, `_thought…`) or to answer nothing, 8 of 8; with a text part before
+the image, 8 clean of 8. The app never sends the bare form — every image it builds is
+labelled — so the label turned out to be load-bearing; it was met because a smoke's
+fixture had none.
+
+**Found on the way, and fixed.**
+- *The engine's facts survived a settings edit that flips no status* (research §9, A2 —
+  read there, not run): from `external` to a cloud the previous engine's window went on
+  deciding when compaction fires. The mode would have met it on every change of model.
+- *An answer of the engine that was replaced reached the screens.* `handle_budget_result`
+  sent the list of sampling fields before it looked at the answer's epoch; the memo
+  dropped the answer and the UI kept it. Harmless while the question was asked twice a
+  session; with every apply asking, the slower of two engines answers last.
+- *The `/continue` note waited for a catalogue in the gateway's own mode*, so the first
+  command after a switch was answered by the generic note.
+- *An address without a scheme was read as the gateway's when a `://` stood further
+  along* — `localhost:8080/v1?upstream=https://openrouter.ai/api/v1`. Found by the test
+  written against the function's own stated contract.
+- *The model list's request did not follow the switch.* It is made by another client
+  (`catalogue::fetch`) than the engine's, and carried neither header — while the switch's
+  description, and the privacy policy's first draft, said "every request". Found while
+  the policy was being written from the code; the code was brought to the sentence rather
+  than the sentence to the code, so there is one rule to state: on — every request to the
+  gateway, off — none.
+- *A refused key was worded by the whole error envelope* in the status line.
+- *An embedder's row ended `$0.000 out`* — 33 of 33: an embedder writes nothing to price.
+
+**Rejected / not built.** `524` is not added to `RETRYABLE_STATUSES`: it is in the
+gateway's description and was never met. The embedder's key is not checked — stage 2's to
+decide. Nothing of `reasoning_details` is sent back: the earlier review measured that no
+route needs it. `provider` and `cost` are recorded and not shown (F11). The one-sentence
+description of the app in `Cargo.toml`, the site's configuration and the package metadata
+still counts four clouds — it is a decision about the masthead, not a fact to correct.
+The site's home page and articles are left for the release's pull request: merged now,
+they would describe a mode the published 0.12.0 does not have.
+
+**Tests.** Unit tests next to the code, each checked against the mutation it guards —
+33 mutants of the client, the supervisor and the orchestrator, and 154 of the config, the sampling table, the dialect, the catalogue and the settings screen (the half a sub-agent wrote on a worktree of its own); none survived. Two things the mutation runs themselves taught. A runner that undid a
+mutation by swapping the replacement back met one that **deleted** a line — the empty
+string "occurs" everywhere — refused inside a `finally`, and left the file mutated; it
+showed only as an unexpected ` M`. The runner keeps the file's text and writes it back
+now, and checks every anchor of the plan before the first mutation. And a test that waits
+for an event without a bound does not fail under the mutation it guards, it **hangs** —
+the run stopped there for half an hour; the wait is bounded now (the clock is paused, so
+the bound costs nothing). The live smokes are `gateway_live` in `shared/api/openai` and
+in the orchestrator's tests, declared by `MINDFORK_OPENROUTER_KEY`.
+
+**Smoke — GO** (2026-09-29; the gateway with the user's key, and for the switch a local
+llama.cpp b11234, CPU, `gemma-3-4b-it` Q8_0, `-c 8192 --jinja`; Windows 11):
+- **The switch**, on the production supervisor
+  (`a_chat_moves_to_the_gateway_and_back_in_one_session_live`), three times — through
+  `anthropic/claude-haiku-4.5`, `google/gemini-3.5-flash` and `qwen/qwen3.6-27b`. On the
+  local server: no sampling list, 4 slots, "Paris". One field of the config changes: the
+  gateway's list lands — 12 fields for Haiku, 12 others for Gemini, 19 for Qwen, none of
+  them llama.cpp's — no slots, "Paris", and the message records `Amazon Bedrock` /
+  `Google` / `Phala` and a cost. Back: the list is gone by an event that says so, 4 slots,
+  "Paris". Both sections are in the saved settings. **The first run was red**, and
+  rightly: the test took the first event of each kind for the answer, and sent its message
+  while the mode was still `Connecting` — which the app refuses.
+- **A refused key** (`a_refused_key_is_the_chats_status_live`): the status is
+  *"OpenRouter refused the API key: User not found."* before any message, and a message
+  sent anyway is refused with the same words.
+- **`/continue`** (`continue_in_the_mode_follows_the_route_table_live`), both arms:
+  `anthropic/claude-haiku-4.5` cut at "The capital of France", announced continuable,
+  resumed with " is Paris."; `google/gemma-4-31b-it` cut at the same place, announced not
+  continuable, refused with the gateway's note.
+- **The client** (`shared::api::openai::gateway_live`, nine smokes), on the three
+  families: thoughts, the answer and who served (`qwen/qwen3.6-27b`: 2 174 characters of
+  thoughts, 391, `Phala`; `google/gemini-3.5-flash` the same); a tool call and its result
+  (48213 read back by Haiku, Gemini and Qwen); **a muted turn** — through the mode 0
+  reasoning tokens and $0.0000675, through `external` the refusal, the re-send and 267
+  tokens at $0.0024, the control arm; a mandatory model with no list answered; a tool's
+  image seen with the control arm blind (Haiku, Qwen; Gemini once the fixture was
+  labelled); a `:nitro` slug with its model's facts where `external` has none; the key
+  judged; the three catalogues — 384 entries for the account, 387 public, 33 embedding
+  models, a window on every one; and embeddings through `baai/bge-m3` — 1024 wide, unit
+  length, the same text to the same place.
+- **The app itself** (`tools/console_probe.py --scenario gateway`, a copy of the binary
+  on a scratch data root whose settings name the mode and the key's variable): a question
+  typed into the chat is answered "Paris." with its thoughts folded above; the settings
+  show the mode, the provider's rows and the switch; `Enter` on the model row lists 384
+  models with their windows and prices; the key is in neither the log nor the settings.
+
+**Docs.** spec §3.4, §6.1, §6.4, §6.7, §8.1–§8.2, §9.10, §11.6, §12.2, §13.4; architecture §1, §3–§7, §12; ADR 0004 (the status list); install.md §3, §3.2 (the mode) and §7.1 (its smokes); the manual; README; PRIVACY.md and its translation, with the installer's pages and the site's page regenerated from them; CHANGELOG (Added, Changed, Fixed, **Data**); the roadmap; lessons §2, §3 and §9; the research document's §7 and §11; the container lab's seed and its key. Two statements the documents made before this and the code does not bear out were corrected on the way: install.md had `external` sending `repetition_penalty`, which it offers and does not send, and architecture.md put both schemas at 2.
+
+**Gates**: fmt / clippy / test green — **3671 unit tests, 214 `#[ignore]`** (+69 unit tests, +12 live smokes).

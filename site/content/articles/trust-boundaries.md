@@ -1,7 +1,7 @@
 +++
 title = "Where the trust boundaries are"
 description = "An assistant that can browse, run code and edit your project needs edges, not promises: what leaves the machine, where the model may not point, what the code can touch, when the app asks — and what the author receives, which is nothing."
-updated = "2026-09-29"
+updated = "2026-09-13"
 weight = 7
 
 [extra]
@@ -43,11 +43,7 @@ machine or your usage.
 - **The model.** In managed mode the app starts `llama-server` on your own
   machine and talks to `127.0.0.1` only. In external mode the conversation
   goes to the URL you typed; with a cloud provider, to that vendor, under
-  their terms; through the OpenRouter gateway, to the gateway **and** to the
-  provider it routes the request to, each under its own. To that gateway the
-  app also names itself — two headers holding the project's site and the
-  program's name, nothing about you — unless you switch that off. The
-  impersonation engine follows the same rule.
+  their terms. The impersonation engine follows the same rule.
 - **Embeddings.** A separate setting, which may well be a different vendor
   from the chat's. What is embedded, and therefore sent there: note text,
   the knowledge base's chunks, chunks of attachments — and, less obviously,

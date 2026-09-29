@@ -4795,12 +4795,13 @@ fn the_field_pane_scrolls_only_once_the_selection_leaves_the_window() {
 
 // ---------- parallel sessions (spec §11.6) ----------
 
-/// Every cloud provider's mode, for the loops below.
-const CLOUD_MODES: [ServerMode; 4] = [
+/// Every cloud provider's mode, the gateway's included, for the loops below.
+const CLOUD_MODES: [ServerMode; 5] = [
     ServerMode::OpenAi,
     ServerMode::Gemini,
     ServerMode::Claude,
     ServerMode::Grok,
+    ServerMode::OpenRouter,
 ];
 
 /// Reads the active mode's `sessions` from a config the way the field does.

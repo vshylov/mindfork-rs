@@ -3273,13 +3273,12 @@ section and subsection), `Esc` — cancel.
 
   **Name the app to OpenRouter** (`openrouter.attribution`, on by default) is a
   switch in the *Provider* group of every tab whose mode is `openrouter` — **one**
-  field under three tabs, because it is the provider's and not a slot's. On, the
-  requests the engine clients make to the gateway — chat, embeddings, the key
-  check and the question about the model — carry `HTTP-Referer:
+  field under three tabs, because it is the provider's and not a slot's. On,
+  every request to the gateway — chat, embeddings, the key check, the question
+  about the model and the picker's list — carries `HTTP-Referer:
   https://mindfork.io` and `X-OpenRouter-Title: mindfork`: the application's
   site and its name, by which the gateway counts its public rankings, and
-  nothing about the user. Off, neither header is sent. The picker's list request
-  carries the key, where one is configured, and neither header. Changing the
+  nothing about the user. Off, neither header is sent by any of them. Changing the
   switch re-applies the slots that speak to the gateway and no others — a managed
   `llama-server` is not reloaded over a header it never sends. It is a switch at
   all because it is the one thing this application says about itself to a
