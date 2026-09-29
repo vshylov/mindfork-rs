@@ -1321,8 +1321,8 @@ both on `main` at `88e5ce29`, the merge of the pull request.
   kept on a branch of their own, since the site deploys when `main` changes and they
   describe a mode the published version does not have. Two decisions of the owner's
   (2026-09-29) are made here: **the one-sentence description of the application names
-  the gateway**, and the site says that **speech goes through it too**. Every stage of
-  the track ships in one release, and this branch goes with it.
+  the gateway**, and the site says that **speech goes through it too**. The stages that
+  are built, 1 to 3, ship in one release — 0.13.0 — and this branch goes with it.
 - **The sentence, in every place it is written** — it had counted four clouds since the
   Grok release: `Cargo.toml` (what crates.io shows), the README's first line,
   `packaging/nfpm.yaml` (what `apt show` prints), `site/zola.toml` (the site-wide
@@ -1343,6 +1343,10 @@ both on `main` at `88e5ce29`, the merge of the pull request.
   chosen — that the audio is played and not kept, and that no audio is ever sent
   anywhere; the image-by-URL sentence, which had shared the bullet, has its own.
   *mindfork at a glance* names the four ways speech comes out.
+- **Images.** The card *Show it a picture* had them working with a local vision model
+  and all four clouds; it names the gateway too, *wherever the model takes images* —
+  which a gateway's catalogue says per model, and the app reads before it attaches
+  one.
 - **Verified by building.** Zola 0.23.6, the pinned version: 25 pages, no orphan,
   `zola check` clean; the home page looked at in a headless browser at 1440 pixels, dark
   — the panel's eight rows beside the headline, nothing wrapped; the description read out

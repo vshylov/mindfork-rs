@@ -36,7 +36,7 @@ desc = "Markdown, syntax highlighting, Mermaid diagrams and LaTeX rendered as te
 
 [[extra.features]]
 title = "Show it a picture"
-desc = "Attach a screenshot, a photo or a diagram to your message — from a file, straight off the clipboard, or by its web address. Works with a local vision model and with all four clouds."
+desc = "Attach a screenshot, a photo or a diagram to your message — from a file, straight off the clipboard, or by its web address. Works with a local vision model, with all four clouds and through OpenRouter, wherever the model takes images."
 
 [[extra.features]]
 title = "Find anything you said"
