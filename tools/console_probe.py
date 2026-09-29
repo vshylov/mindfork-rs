@@ -706,10 +706,13 @@ def scenario_user_theme(exe: Path, report: Report) -> None:
         report.check(code == 0, f"the app exited with code {code} the second time")
 
 
-# What the status line says while a message is read aloud, and the picker's
-# first row — each read off the screen more than once.
+# What the status line says while a message is read aloud, the picker's first
+# row, the row of the gateway's key and the unit a listed price is in — each
+# read off the screen more than once.
 SPEAKING = "speaking"
 BY_HAND = "Type a name by hand"
+KEY_ROW = "OpenRouter API key"
+PRICED = "per 1M tokens"
 
 
 def text_of(rows: list[list[tuple[str, int]]]) -> str:
@@ -821,16 +824,16 @@ def scenario_gateway(exe: Path, report: Report) -> None:
             report.says(
                 "Model/server",
                 rows,
-                ("openrouter", model, "OpenRouter API key", "Name the app to OpenRouter"),
+                ("openrouter", model, KEY_ROW, "Name the app to OpenRouter"),
             )
 
             print("the picker: the gateway's catalogue behind the model row")
             press("down")  # the tabs -> "Mode"
             press("down")  # -> "Model"
             press("enter", SETTLE_REPAINT)
-            rows = wait_for_text("per 1M tokens", 30)
+            rows = wait_for_text(PRICED, 30)
             print(text_of(rows))
-            report.says("the catalogue", rows, ("context", "per 1M tokens", BY_HAND))
+            report.says("the catalogue", rows, ("context", PRICED, BY_HAND))
             press("esc")
 
             print("the settings: the speech slot's rows")
@@ -842,7 +845,7 @@ def scenario_gateway(exe: Path, report: Report) -> None:
             report.says(
                 "Speech",
                 rows,
-                ("openrouter", speaker, voice, "OpenRouter API key", "Name the app to OpenRouter"),
+                ("openrouter", speaker, voice, KEY_ROW, "Name the app to OpenRouter"),
             )
             report.check("Instructions" not in text_of(rows), "no row for instructions")
 
@@ -873,7 +876,7 @@ def scenario_gateway(exe: Path, report: Report) -> None:
             report.says(
                 "Video (YouTube)",
                 rows,
-                ("Provider", "openrouter", watcher, "OpenRouter API key", "Max video length"),
+                ("Provider", "openrouter", watcher, KEY_ROW, "Max video length"),
             )
             report.check(
                 "Input resolution" not in text_of(rows),
@@ -883,7 +886,7 @@ def scenario_gateway(exe: Path, report: Report) -> None:
             print("the picker: the models that take video behind the model row")
             press("up")  # "Max video length" -> "Model"
             press("enter", SETTLE_REPAINT)
-            rows = wait_for_text("per 1M tokens", 30)
+            rows = wait_for_text(PRICED, 30)
             print(text_of(rows))
             report.says("the video models", rows, ("google/gemini", "context", BY_HAND))
             listed = [line for line in text_of(rows).splitlines() if " context " in line]

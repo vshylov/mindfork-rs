@@ -202,6 +202,15 @@ Two things fall out, and neither is in the documentation:
 Net: the current default is **~12% cheaper** than the old one at low detail
 (91 vs 103 tok/s), so a 30-minute ceiling is ~164k tokens rather than ~186k.
 
+**Measured again on 2026-09-30, in every spelling** — `HIGH`, the `v1alpha`
+version, and the field the 3.x generation documents on the part itself
+(`media_resolution: {level: …}`): `gemini-3.5-flash` answers 1821 video tokens to
+each, and 2.5 refuses the part's field with a `400`. What 3.5 does read is
+`video_metadata.fps` — 1161 tokens at `0.5`, 3141 at `2`: **66 tokens a frame,
+and 25 a second that do not depend on the frames** — the sound, folded into the
+video's count as above. The table is in
+[openrouter-mode.md](openrouter-mode.md) §15.
+
 ### 3.4 The other providers
 
 - **OpenAI Responses API** — no video input at all (images, PDFs, documents,

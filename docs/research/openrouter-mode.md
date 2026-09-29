@@ -2,7 +2,8 @@
 
 **Status: the track is complete — all four stages built (§11–§14), for the
 release 0.13.0.** Measured against the service on **2026-09-29** with a paid account;
-every number below is from that day. **User's decision, 2026-09-29: every
+every number below is from that day, §15's but for — a day later, when the
+adjacent findings of §9 were looked at again. **User's decision, 2026-09-29: every
 recommendation of §6 is taken as written** — a provider of its own, in all five
 slots, over the four stages of §7.
 
@@ -676,13 +677,16 @@ and the six `openrouter/*` router slugs, which were not tried.
 
 ## 9. Adjacent findings — not this track's to fix
 
-Found while reading for this research. A1 and A2 are read, **not run**.
+Found while reading for this research. A1 and A2 were read, **not run**, and
+the findings are worded as they stood on that day. **None of the three is open**:
+the track fixed the two defects on its way, and the third is not the
+application's to fix — the last column, written on 2026-09-30.
 
-| | finding |
-|---|---|
-| **A1** | **The embedding guard and the prefixer are lost on the first in-session change of the embedding settings.** `apply_embed_settings` — the only place that wraps the embedder in `EmbedGuard { PrefixedEmbedder { … } }` — runs once, at start-up ([mod.rs:267](../../src/app/orchestrator/mod.rs)); a settings edit goes through `flush_restarts` → `engines.apply_embed`, which installs the bare client ([engines.rs:236](../../src/app/orchestrator/engines.rs)), and so does a managed relaunch. Until the restart: no canary check, no `query:`/`passage:` prefixes. It bears on this track — a switch of the embedder is the moment the guard exists for. |
-| **A2** | **The engine's facts survive a switch that flips no status** (§4.1): from `external` to a cloud, the previous engine's window keeps deciding when compaction fires. |
-| **A3** | **`video.media_resolution` does nothing on the default video model** (§4.5): identical token counts on `gemini-3.5-flash` at every value. It still matters on the 2.5 generation. |
+| | finding | what became of it |
+|---|---|---|
+| **A1** | **The embedding guard and the prefixer are lost on the first in-session change of the embedding settings.** `apply_embed_settings` — the only place that wraps the embedder in `EmbedGuard { PrefixedEmbedder { … } }` — runs once, at start-up ([mod.rs:267](../../src/app/orchestrator/mod.rs)); a settings edit goes through `flush_restarts` → `engines.apply_embed`, which installs the bare client ([engines.rs:236](../../src/app/orchestrator/engines.rs)), and so does a managed relaunch. Until the restart: no canary check, no `query:`/`passage:` prefixes. It bears on this track — a switch of the embedder is the moment the guard exists for. | **Fixed in stage 2** (§12.3). What goes around an embedder is an argument of the one function that installs it, so no road can leave it out: `an_embedder_is_dressed_by_every_road_that_installs_one`, `a_relaunched_embedder_is_dressed`. |
+| **A2** | **The engine's facts survive a switch that flips no status** (§4.1): from `external` to a cloud, the previous engine's window keeps deciding when compaction fires. | **Fixed in stage 1** (§11.5). Every path that applies a chat engine asks again for what was learned from the previous one, and an answer of the engine that is gone is dropped: `what_the_previous_engine_said_does_not_outlive_a_settings_edit`, `an_answer_of_the_engine_that_is_gone_tells_the_screens_nothing`. |
+| **A3** | **`video.media_resolution` does nothing on the default video model** (§4.5): identical token counts on `gemini-3.5-flash` at every value. It still matters on the 2.5 generation. | **Nothing to fix in the application** (§15). Measured again in every spelling the API takes: the model reads none of them. The setting's hint has said so since 2026-08-01. What the model does read is the frame rate, which the application does not set — the roadmap has it. |
 
 ## 10. How this was measured
 
@@ -1046,3 +1050,51 @@ marked "no tools".
 | F7: `?input_modalities=video` | Without a key. With one, the account's whole list, narrowed here by what each entry says it takes: the account's list does not take the filter (§14.1). |
 | F7: a row marks a model that lists no `tools` | Not behind the video row: a model that watches is asked to describe, not to act. |
 | — | **Measured on the way**: what a link with a parameter costs (§14.2). Nothing of the application sent one; the smoke that pastes such a link is there so that nothing ever does. |
+
+## 15. The resolution, in every spelling (2026-09-30)
+
+A3 of §9 was a measurement of one spelling — `generationConfig.mediaResolution`,
+the one the application sends. Before the release the question was whether the
+default model ignores the *setting* or only that *spelling* of it: the 3.x
+generation documents a second one, on the part that carries the video.
+
+Google's own API, the 20 seconds from 0:20 to 0:40 of the 213-second video of
+[youtube-integration.md](youtube-integration.md) §3.2, a prompt of 9 tokens, the
+thinking muted as the application mutes it. What is counted is the prompt's
+video tokens **[live]**:
+
+| the request | `gemini-3.5-flash` | `gemini-2.5-flash` |
+|---|---|---|
+| nothing about resolution | 1821 | 5260 + 640 audio |
+| `generationConfig.mediaResolution`: `LOW` | 1821 | **1420** + 640 |
+| — `MEDIUM` | 1821 | 5260 + 640 |
+| — `HIGH` | 1821 | 5260 + 640 |
+| — `HIGH`, on `v1alpha` | 1821 | 5260 + 640 |
+| on the part, `media_resolution: {level: media_resolution_low}`, `v1alpha` and `v1beta` | 1821, a `200` | `400 "Request contains an invalid argument."` |
+| — `media_resolution_high`, both versions, and in camel case | 1821, a `200` | `400` |
+| `video_metadata.fps`: `0.5` | **1161** | **2630** + 640 |
+| — `2` | **3141** | **10 520** + 640 |
+
+- **On 3.5 no spelling of the resolution is read.** The part's own field is
+  taken — a `200` — and changes nothing; on 2.5 the same field is a `400`, so
+  the application could not send it to every model in any case.
+- **It is not a defect of the application.** What it sends is the documented
+  field, honoured by the generation that honours any. A frame on 3.5 costs **66
+  tokens** whatever is asked — what `LOW` buys on 2.5 (71) — so the default model
+  already reads at the cheaper of the two rates the setting offers.
+- **What 3.5 does read is the frame rate**: 660 tokens for every 10 frames, and
+  501 for the 20 seconds that do not depend on the frames — 25 tokens a second,
+  which is where this generation counts the sound
+  ([youtube-integration.md](youtube-integration.md) §3.3a). Half the frames is 58
+  tokens a second against 91, a third less; on 2.5 it is a frame's 263 tokens
+  that halve.
+
+**Through the gateway** the frame rate is not carried, like the bounds and the
+resolution before it (§4.5). The whole video of §14.3 on
+`google/gemini-3.5-flash-lite`, the link alone and three places for `fps: 0.5`
+— inside `video_url`, as `video_metadata` beside it and inside it: 4422 video
+tokens of 6102 each time, $0.0018 each **[live]**.
+
+So the release owes nothing to A3. A frame rate as a setting is a feature of the
+native provider, and it is in the [roadmap](../roadmap.md) as one to be asked
+for.
