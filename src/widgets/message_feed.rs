@@ -2271,6 +2271,12 @@ mod tests {
         feed
     }
 
+    /// No caption: the header most tests draw.
+    const BARE: FeedCaption = FeedCaption {
+        name: String::new(),
+        detail: None,
+    };
+
     fn caption(name: &str, detail: Option<&str>) -> FeedCaption {
         FeedCaption {
             name: name.to_string(),
@@ -2909,15 +2915,7 @@ mod tests {
         use ratatui::backend::TestBackend;
         let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
         term.draw(|f| {
-            feed.render(
-                f,
-                f.area(),
-                "Чат",
-                &FeedCaption::default(),
-                msgs,
-                &Palette::default(),
-                ru(),
-            );
+            feed.render(f, f.area(), "Чат", &BARE, msgs, &Palette::default(), ru());
         })
         .unwrap();
         let hit = feed.link_hits.first().copied().expect("a drawn reference");
@@ -3004,15 +3002,7 @@ mod tests {
         // The tail is what a fresh feed shows, and the address is far above it.
         let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(60, 10)).unwrap();
         term.draw(|f| {
-            feed.render(
-                f,
-                f.area(),
-                "Чат",
-                &FeedCaption::default(),
-                &msgs,
-                &Palette::default(),
-                ru(),
-            );
+            feed.render(f, f.area(), "Чат", &BARE, &msgs, &Palette::default(), ru());
         })
         .unwrap();
         assert!(
@@ -3022,15 +3012,7 @@ mod tests {
 
         feed.scroll_up(usize::MAX);
         term.draw(|f| {
-            feed.render(
-                f,
-                f.area(),
-                "Чат",
-                &FeedCaption::default(),
-                &msgs,
-                &Palette::default(),
-                ru(),
-            );
+            feed.render(f, f.area(), "Чат", &BARE, &msgs, &Palette::default(), ru());
         })
         .unwrap();
         let hit = feed.link_hits.first().copied().expect("scrolled into view");
@@ -3783,7 +3765,7 @@ mod tests {
                 f,
                 f.area(),
                 "Чат",
-                &FeedCaption::default(),
+                &BARE,
                 messages,
                 &Palette::default(),
                 ru(),
@@ -4491,10 +4473,7 @@ mod tests {
         assert_eq!((wrap::str_width(&cut), shown), (10, short));
         assert_eq!(fit_header(title, &plain, 20).1, None);
         // An empty caption has no form at all.
-        assert_eq!(
-            fit_header(title, &FeedCaption::default(), 60),
-            (title.to_string(), None)
-        );
+        assert_eq!(fit_header(title, &BARE, 60), (title.to_string(), None));
         assert_eq!(cap.full(), "gemma-4-12B-it-Q5_K_M · 16k ctx");
     }
 
@@ -4548,18 +4527,8 @@ mod tests {
         let mut feed = MessageFeed::new();
         let mut term = Terminal::new(TestBackend::new(30, 8)).unwrap();
         let short = vec![msg(FeedRole::User, "привет", "")];
-        term.draw(|f| {
-            feed.render(
-                f,
-                f.area(),
-                "Чат",
-                &FeedCaption::default(),
-                &short,
-                &Palette::default(),
-                ru(),
-            )
-        })
-        .unwrap();
+        term.draw(|f| feed.render(f, f.area(), "Чат", &BARE, &short, &Palette::default(), ru()))
+            .unwrap();
         assert!(
             !right_col(&term).iter().any(|s| s == "█"),
             "a short feed — no scrollbar thumb"
@@ -4567,18 +4536,8 @@ mod tests {
         let many: Vec<FeedMessage> = (0..30)
             .map(|i| msg(FeedRole::User, &format!("строка {i}"), ""))
             .collect();
-        term.draw(|f| {
-            feed.render(
-                f,
-                f.area(),
-                "Чат",
-                &FeedCaption::default(),
-                &many,
-                &Palette::default(),
-                ru(),
-            )
-        })
-        .unwrap();
+        term.draw(|f| feed.render(f, f.area(), "Чат", &BARE, &many, &Palette::default(), ru()))
+            .unwrap();
         assert!(
             right_col(&term).iter().any(|s| s == "█"),
             "an overflowing feed — with a scrollbar thumb"
