@@ -148,9 +148,11 @@ NOT_STYLING = LEADING_CELL | TRAILING_CELL
 BLACK = 0
 BRIGHT_WHITE = 15
 
-# What opens the settings screen, and the file the settings are kept in — each
-# said once, for the scenarios that press the one and write the other.
+# What opens the settings screen and the emoji picker, and the file the settings
+# are kept in — each said once, for the scenarios that press the one and write
+# the other.
 SETTINGS_KEY = "ctrl+p"
+EMOJI_KEY = "ctrl+b"
 SETTINGS_FILE = "settings.json"
 
 # How long the app gets to draw after a key (the loop ticks every 50 ms; a
@@ -245,7 +247,7 @@ KEYS = {
     "down": (0x28, "\0", ENHANCED_KEY),
     "f1": (0x70, "\0", 0),
     "shift+left": (0x25, "\0", ENHANCED_KEY | SHIFT_PRESSED),
-    "ctrl+b": (0x42, "\x02", LEFT_CTRL_PRESSED),
+    EMOJI_KEY: (0x42, "\x02", LEFT_CTRL_PRESSED),
     SETTINGS_KEY: (0x50, "\x10", LEFT_CTRL_PRESSED),
     "ctrl+q": (0x51, "\x11", LEFT_CTRL_PRESSED),
 }
@@ -517,7 +519,7 @@ def to_interface_fields() -> None:
 
 
 def open_emoji_picker() -> None:
-    press("ctrl+b", SETTLE_REPAINT)
+    press(EMOJI_KEY, SETTLE_REPAINT)
 
 
 def scenario_full_mode(exe: Path, report: Report) -> None:
@@ -1004,7 +1006,7 @@ def a_layer_that_does_not_fit(exe: Path, report: Report) -> None:
         report.check(TOO_SMALL not in chat and "│❯" in chat, "45x12: the chat fits")
         for title, key, need in (
             ("the settings", SETTINGS_KEY, "46×12"),
-            ("the emoji picker", "ctrl+b", "46×9"),
+            ("the emoji picker", EMOJI_KEY, "46×9"),
         ):
             press(key, SETTLE_REPAINT)
             rows = read_screen()
