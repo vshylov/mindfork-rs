@@ -724,6 +724,26 @@ mod tests {
         assert_eq!(s.confirming, None);
     }
 
+    /// The revert question raises the window the screen needs to the rows
+    /// the question wraps into: a path long enough to wrap past the screen's
+    /// own eight rows is asked whole or not at all (spec §11.1).
+    #[test]
+    fn a_revert_question_raises_the_minimum_to_its_own_rows() {
+        let area = Rect::new(0, 0, 40, 8);
+        let long = format!("{}/file.rs", "a/deeply/nested/directory".repeat(12));
+        let mut s = screen(vec![modified(&long)]);
+        assert_eq!(s.min_size(area), MinSize::new(40, 8), "no question yet");
+        press(&mut s, KeyCode::Char('r'));
+        let need = s.min_size(area);
+        assert!(need.height > 8, "the question wraps past eight rows: {need:?}");
+        // At exactly that height the box is whole: both borders, and the keys.
+        let mut term = Terminal::new(TestBackend::new(40, need.height)).unwrap();
+        term.draw(|f| s.render(f)).unwrap();
+        let rows = crate::shared::ui::tests::buffer_rows(term.backend().buffer());
+        assert!(rows[0].contains('╭') && rows.last().unwrap().contains('╯'), "{rows:#?}");
+        assert!(rows.last().unwrap().contains("Enter"), "{rows:#?}");
+    }
+
     /// Quitting must never sit behind a question the user did not ask for.
     #[test]
     fn quit_punches_through_the_confirmation() {

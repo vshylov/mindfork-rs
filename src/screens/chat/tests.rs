@@ -900,6 +900,35 @@ fn ctrl_q_breaks_through_confirm_popup_to_quit() {
     assert_eq!(s.confirm, None);
 }
 
+/// A popup raises the window the chat needs (spec §11.1): a list to its key
+/// legend, a question to the rows it wraps into at the window's width.
+#[test]
+fn an_open_popup_raises_the_chats_minimum_window() {
+    use crate::shared::ui::MinSize;
+    let area = Rect::new(0, 0, 20, 9);
+    let mut s = with_confirm();
+    assert_eq!(s.min_size(area), MinSize::new(20, 9), "the chat alone");
+
+    // A question with a long name in it wraps past the chat's nine rows.
+    s.confirm = Some(ConfirmAction::DeleteProfile {
+        id: Uuid::new_v4(),
+        name: "a profile with a name as long as a sentence, and then some".into(),
+        chats: 12,
+    });
+    let need = s.min_size(area);
+    assert_eq!(need.width, 20);
+    assert!(need.height > 9, "{need:?}");
+    // In a wider window the same question is shorter — and the chat's own
+    // nine rows are the floor again.
+    assert_eq!(s.min_size(Rect::new(0, 0, 80, 24)), MinSize::new(20, 9));
+    s.confirm = None;
+
+    // A picker needs its key legend whole: wider than the chat's 20 columns.
+    s.emoji = Some(EmojiPickerState::new());
+    let need = s.min_size(area);
+    assert!(need.width >= 46 && need.height == 9, "{need:?}");
+}
+
 #[test]
 fn ctrl_r_and_e_emit_directly_without_confirm() {
     // By default (with no settings snapshot) confirmation is off.
