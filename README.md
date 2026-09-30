@@ -12,6 +12,7 @@
 [![Release](https://img.shields.io/github/v/release/vshylov/mindfork-rs)](https://github.com/vshylov/mindfork-rs/releases)
 [![crates.io](https://img.shields.io/crates/v/mindfork.svg)](https://crates.io/crates/mindfork)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Built With Ratatui](https://img.shields.io/badge/Built_With_Ratatui-000?logo=ratatui&logoColor=fff)](https://ratatui.rs/)
 
 **A terminal AI chat written in Rust: local models via llama.cpp, or OpenAI,
 Anthropic, Gemini, Grok and OpenRouter in the cloud, with persistent memory,
