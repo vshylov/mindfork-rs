@@ -451,9 +451,69 @@ pub fn hint_grid_layout(
 /// The most columns whose grid fits into `avail` (→ the fewest rows); `None`
 /// when not even a single column does.
 pub fn widest_hint_grid(cell_w: &[usize], avail: usize) -> Option<usize> {
-    (1..=cell_w.len())
+    capped_hint_grid(cell_w, avail, cell_w.len())
+}
+
+/// The most columns whose grid fits `avail` within `max_rows` rows (→ the
+/// fewest rows); `None` when no column count that deep fits — the grid is
+/// never made deeper to fit, it sheds instead ([`keep_hints`]). `None` for
+/// no cells.
+pub fn capped_hint_grid(cell_w: &[usize], avail: usize, max_rows: usize) -> Option<usize> {
+    (cell_w.len().div_ceil(max_rows.max(1)).max(1)..=cell_w.len())
         .rev()
         .find(|&c| hint_grid_layout(cell_w, c).2 <= avail)
+}
+
+/// The hints a block of at most `max_rows` rows keeps at `avail` columns:
+/// `order` is walked, and each hint is kept when the grid with it still fits
+/// ([`capped_hint_grid`]) — one that does not is passed over, so the narrower
+/// ones behind it still get their chance. Returned in display order (the
+/// indices sorted), whatever order they were kept in.
+///
+/// The one shedding rule of the application: the chat bar walks its own
+/// order beside the status pill, a screen's footer walks [`footer_keep_order`]
+/// within a third of the window (spec §11.1, §11.1.1).
+pub fn keep_hints(
+    cell_w: &[usize],
+    avail: usize,
+    max_rows: usize,
+    order: impl IntoIterator<Item = usize>,
+) -> Vec<usize> {
+    let mut kept: Vec<usize> = Vec::new();
+    for idx in order {
+        let mut candidate = kept.clone();
+        candidate.push(idx);
+        candidate.sort_unstable();
+        let w: Vec<usize> = candidate.iter().map(|&i| cell_w[i]).collect();
+        if capped_hint_grid(&w, avail, max_rows).is_some() {
+            kept = candidate;
+        }
+    }
+    kept
+}
+
+/// The order a screen's footer keeps its hints when it has to shed
+/// (docs/research/small-terminal.md §5, F3(b)): `F1` first — it opens the
+/// full list of every key the footer hides, the reason the chat bar sheds it
+/// last — then `Esc`, the way back that every screen has; then the screen's
+/// own hints in the order it lists them. No per-screen table: the order is
+/// the list's, with the two keys every screen shares pulled to the front.
+pub fn footer_keep_order(items: &[(&str, &str, bool)]) -> Vec<usize> {
+    let first = |key: &str| items.iter().position(|(k, ..)| *k == key);
+    let lead: Vec<usize> = [first("F1"), first("Esc")].into_iter().flatten().collect();
+    let rest = (0..items.len()).filter(|i| !lead.contains(i));
+    lead.iter().copied().chain(rest).collect()
+}
+
+/// The most rows a screen's footer takes in a window `height` rows tall,
+/// under a panel that needs `panel_min` of them (spec §11.1.1): **a third of
+/// the window**, and never a row the panel needs — at a screen's minimum
+/// window that is the one row the minimum was counted with. One at least.
+///
+/// A function of the window and of the screen, never of the hints: the
+/// footer's share does not move with the selection, only what fills it.
+pub fn footer_rows(height: u16, panel_min: u16) -> usize {
+    usize::from((height / 3).min(height.saturating_sub(panel_min)).max(1))
 }
 
 /// Everything a hint block needs beyond its items: how wide the strip is, how
@@ -558,25 +618,33 @@ fn push_row_lead(
 }
 
 /// A screen's footer: hints laid out **right-aligned** into the widest grid
-/// that fits `width`, wrapping to as many rows as they need. Empty for an empty
-/// list.
+/// that fits `width`, wrapping to as many rows as they need — up to
+/// `max_rows` ([`footer_rows`]). Empty for an empty list.
 ///
-/// Unlike the chat bar's corner block, a footer never sheds a hint: it has the
-/// whole width and no status pill competing for it, so it grows a row instead
-/// (user's decision, 2026-08-31 — docs/history/status-hints-unified.md §2.1).
+/// A footer grows a row before it hides a key: it has the whole width and no
+/// status pill competing for it (user's decision, 2026-08-31 —
+/// docs/history/status-hints-unified.md §2.1). But not past `max_rows`: a
+/// legend that wrapped without end took 13 rows of a 57-column window in
+/// `ru` and left the list above it one chat (docs/research/small-terminal.md
+/// §2.4), so past the bound it sheds, in [`footer_keep_order`] — `F1`, which
+/// lists everything shed, last of all (user's decision, 2026-09-30, F3(b)).
+/// What it keeps stays in the order the screen lists it.
 pub fn hotkey_grid(
     palette: &Palette,
     items: &[(&str, &str, bool)],
     width: usize,
+    max_rows: usize,
 ) -> Vec<Line<'static>> {
-    if items.is_empty() {
+    let all_w = hint_cell_widths(items);
+    let kept = keep_hints(&all_w, width, max_rows, footer_keep_order(items));
+    let items: Vec<(&str, &str, bool)> = kept.iter().map(|&i| items[i]).collect();
+    let cell_w: Vec<usize> = kept.iter().map(|&i| all_w[i]).collect();
+    let Some(cols) = widest_hint_grid(&cell_w, width) else {
         return Vec::new();
-    }
-    let cell_w = hint_cell_widths(items);
-    let cols = widest_hint_grid(&cell_w, width).unwrap_or(1);
+    };
     render_hint_grid(
         &HintGrid {
-            items,
+            items: &items,
             cell_w: &cell_w,
             cols,
             width,
@@ -618,17 +686,22 @@ pub struct ScreenChrome {
 ///
 /// `right` is the muted, right-aligned title some screens carry (a match count,
 /// a summary); the caller still renders `hotkeys` into `status`, because a screen
-/// with a confirmation to show puts that there instead.
+/// with a confirmation to show puts that there instead. `min` is the screen's
+/// own minimum window, which holds its panel whole over one row of hints: the
+/// footer takes the rows the panel can spare, up to a third of the window
+/// ([`footer_rows`]).
 pub fn screen_chrome(
     frame: &mut Frame,
     palette: &Palette,
     title: String,
     right: Option<String>,
     hk: &[(&str, &str, bool)],
+    min: MinSize,
 ) -> ScreenChrome {
     let area = frame.area();
     frame.render_widget(Clear, area);
-    let hotkeys = hotkey_grid(palette, hk, area.width as usize);
+    let max_rows = footer_rows(area.height, min.height.saturating_sub(1));
+    let hotkeys = hotkey_grid(palette, hk, area.width as usize, max_rows);
     let status_h = (hotkeys.len() as u16).max(1);
     let [panel_area, status] =
         Layout::vertical([Constraint::Min(3), Constraint::Length(status_h)]).areas(area);
@@ -920,13 +993,13 @@ pub(crate) mod tests {
 
     /// A hint block's rows as plain strings.
     fn grid_text(items: &[(&str, &str, bool)], width: usize) -> Vec<String> {
-        hotkey_grid(&Palette::default(), items, width)
+        hotkey_grid(&Palette::default(), items, width, usize::MAX)
             .iter()
             .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
             .collect()
     }
 
-    /// Every footer in the application is right-aligned and wraps rather than
+    /// Every footer in the application is right-aligned and wraps before it
     /// sheds — the one property the screens share with the chat bar's corner
     /// block (docs/history/status-hints-unified.md §2.1).
     #[test]
@@ -948,7 +1021,8 @@ pub(crate) mod tests {
         );
         assert!(wide[0].trim_end().ends_with("quit"), "{:?}", wide[0]);
         assert!(wide[0].starts_with("    "), "left margin: {:?}", wide[0]);
-        // Narrow — more rows, and every hint is still there: a footer never sheds.
+        // Narrow — more rows, and with the rows to spare every hint is still
+        // there: a footer wraps before it sheds.
         let narrow = grid_text(items, 24);
         assert!(narrow.len() > 1);
         let all = narrow.join("");
@@ -956,13 +1030,90 @@ pub(crate) mod tests {
             assert!(all.contains(key), "{key} was shed: {narrow:?}");
         }
         // An empty set — no rows at all (the caller reserves a minimum height).
-        assert!(hotkey_grid(&Palette::default(), &[], 80).is_empty());
-        // A width no single cell fits into still lays out (one column, clipped
-        // by the terminal) rather than panicking — `render` is called on every
-        // frame, including the first one on a 1-column pane.
+        assert!(hotkey_grid(&Palette::default(), &[], 80, 4).is_empty());
+        // A width no single cell fits into is an empty footer, not a panic and
+        // not a cell cut at the edge — `render` is called on every frame,
+        // including the first one on a 1-column pane.
         for w in [0usize, 1, 2] {
-            assert_eq!(grid_text(items, w).len(), items.len());
+            assert!(grid_text(items, w).is_empty(), "{w}");
         }
+    }
+
+    /// Past the rows it is given a footer sheds (spec §11.1.1, F3(b)): `F1`
+    /// is kept first — it lists every key that was shed — then `Esc`, then
+    /// the screen's hints in the order it lists them, each one kept while the
+    /// grid still fits; what is kept stays in the screen's order.
+    #[test]
+    fn a_footer_sheds_past_its_rows_keeping_f1_then_esc() {
+        let items: &[(&str, &str, bool)] = &[
+            ("Tab", "section", false),
+            ("Enter", "open", false),
+            ("Del", "delete", true),
+            ("F1", "help", false),
+            ("Esc", "back", false),
+            ("Ctrl+Q", "quit", false),
+        ];
+        assert_eq!(footer_keep_order(items), vec![3, 4, 0, 1, 2, 5]);
+        let rows = |width: usize, max_rows: usize| -> Vec<String> {
+            hotkey_grid(&Palette::default(), items, width, max_rows)
+                .iter()
+                .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+                .collect()
+        };
+        // Wide enough for all of them on one row: nothing is shed.
+        let wide = rows(200, 1);
+        assert_eq!(wide.len(), 1);
+        assert!(items.iter().all(|(k, ..)| wide[0].contains(k)), "{wide:?}");
+        // At 24 columns the six need several rows; within one row `F1` and
+        // `Esc` are what is left — side by side, in the list's order.
+        let one = rows(24, 1);
+        assert_eq!(one.len(), 1, "{one:?}");
+        assert_eq!(one[0].trim(), "F1  help    Esc  back", "{one:?}");
+        // Two rows at 26: the screen's own hints, first ones first, fill
+        // what is left — `Tab` does, and nothing after it does.
+        let two = rows(26, 2);
+        assert_eq!(two.len(), 2, "{two:?}");
+        let text = two.join("\n");
+        assert!(
+            text.contains("F1") && text.contains("Esc") && text.contains("Tab"),
+            "{text}"
+        );
+        assert!(
+            text.find("Tab") < text.find("F1"),
+            "the list's order: {text}"
+        );
+        assert!(
+            !text.contains("Enter") && !text.contains("Ctrl+Q"),
+            "{text}"
+        );
+        // With the rows to spare, all of them.
+        let all = rows(24, 6).join("\n");
+        assert!(items.iter().all(|(k, ..)| all.contains(k)), "{all}");
+        // Where not even `F1`'s cell fits, nothing: a hint cut at the edge is
+        // not a hint.
+        assert!(rows(7, 3).is_empty());
+        // A list without the two keys sheds in its own order.
+        let plain: &[(&str, &str, bool)] = &[("A", "one", false), ("B", "two", false)];
+        assert_eq!(footer_keep_order(plain), vec![0, 1]);
+    }
+
+    /// A footer's share of the window (spec §11.1.1): a third of it, never a
+    /// row the panel above needs, one at least — so a screen at its minimum
+    /// window keeps the one row of hints its minimum was counted with.
+    #[test]
+    fn a_footer_takes_a_third_of_the_window_and_no_row_the_panel_needs() {
+        // A list screen's panel needs seven rows (SCREEN_MIN_SIZE is 8).
+        assert_eq!(footer_rows(8, 7), 1, "at the minimum: the one row");
+        assert_eq!(footer_rows(9, 7), 2);
+        assert_eq!(footer_rows(12, 7), 4, "a third");
+        assert_eq!(footer_rows(24, 7), 8);
+        // The settings' panel needs eleven: at twelve rows, one of hints.
+        assert_eq!(footer_rows(12, 11), 1);
+        assert_eq!(footer_rows(14, 11), 3);
+        assert_eq!(footer_rows(15, 11), 4);
+        // Below the panel's need (the placeholder is up then) — still one.
+        assert_eq!(footer_rows(3, 11), 1);
+        assert_eq!(footer_rows(0, 0), 1);
     }
 
     /// An incomplete bottom row takes the **rightmost** columns, so a wrapped
@@ -1021,7 +1172,7 @@ pub(crate) mod tests {
     fn a_dangerous_key_gets_a_red_keycap() {
         let p = Palette::default();
         let items: &[(&str, &str, bool)] = &[("Del", "delete", true), ("Esc", "back", false)];
-        let line = &hotkey_grid(&p, items, 80)[0];
+        let line = &hotkey_grid(&p, items, 80, 4)[0];
         let keycap = |key: &str| {
             line.spans
                 .iter()

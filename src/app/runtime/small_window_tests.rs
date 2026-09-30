@@ -440,17 +440,33 @@ fn chat_is_whole(shot: &Shot, _loc: &'static Locale) -> Result<(), String> {
     }
 }
 
-/// A full-screen panel is open: its border, and a row inside it. That is all
-/// a panel is held to while its footer wraps without ever shedding a hint —
-/// in a narrow window the key legend still takes the rows the panel wanted
-/// (docs/research/small-terminal.md §2.4, the track's stage 3).
+/// A full-screen panel is open and whole: its border with a row inside, and
+/// under its bottom border a footer of no more than a third of the window —
+/// one row at the least — with `F1` in it, the key that lists whatever the
+/// footer shed (spec §11.1.1, docs/research/small-terminal.md §5 F3(b)).
+/// Until stage 3 the footer wrapped without end, and at 57 columns the `ru`
+/// chat list's took 13 rows (§2.4). What the panel holds is each case's to
+/// check.
 fn panel_is_open(shot: &Shot, _loc: &'static Locale) -> Result<(), String> {
     let starts = |row: usize, with: &str| shot.rows.get(row).is_some_and(|r| r.starts_with(with));
-    if starts(0, "╭") && starts(1, "│") {
-        Ok(())
-    } else {
-        Err("the panel has no row inside its border".into())
+    if !starts(0, "╭") || !starts(1, "│") {
+        return Err("the panel has no row inside its border".into());
     }
+    let Some(bottom) = shot.rows.iter().rposition(|r| r.starts_with('╰')) else {
+        return Err("the panel has no bottom border".into());
+    };
+    let footer = &shot.rows[bottom + 1..];
+    let allowed = (shot.rows.len() / 3).max(1);
+    if footer.len() > allowed {
+        return Err(format!(
+            "{} rows of footer, {allowed} allowed",
+            footer.len()
+        ));
+    }
+    if !footer.iter().any(|r| r.contains("F1")) {
+        return Err("the footer has lost `F1`".into());
+    }
+    Ok(())
 }
 
 /// The text inside the box titled `title`, its rows joined by spaces — a
@@ -553,16 +569,32 @@ const CASES: &[(&str, Build, Check)] = &[
     ("tool confirmation", chat_tool_confirm, |s, _| {
         answer_keys(s, &["python_exec", "import os", "print(os.getcwd())"])
     }),
-    ("chat list", chat_list, panel_is_open),
+    ("chat list", chat_list, |s, l| {
+        // The selected row: the rail and the chat's dot.
+        panel_is_open(s, l).and_then(|()| shows(s, &["▌ ●"]))
+    }),
     ("settings", settings, |s, l| {
-        panel_is_open(s, l).and_then(|()| shows(s, &[l.t("ui.settings.ui.title").trim()]))
+        // The menu whole: its last section is on screen.
+        panel_is_open(s, l).and_then(|()| {
+            shows(
+                s,
+                &[
+                    l.t("ui.settings.ui.title").trim(),
+                    l.t("ui.settings.section.interface"),
+                ],
+            )
+        })
     }),
     ("settings editor", settings_editor, |s, _| shows(s, &["│❯"])),
     ("settings search", settings_search, |s, _| shows(s, &["│❯"])),
     ("self-model", self_model, |s, l| {
         panel_is_open(s, l).and_then(|()| shows(s, &[l.t("ui.self_model.title")]))
     }),
-    ("message search", search, panel_is_open),
+    ("message search", search, |s, l| {
+        // The query the results answer — it used to be squeezed out by a
+        // footer of five rows at 30×8.
+        panel_is_open(s, l).and_then(|()| shows(s, &["marker"]))
+    }),
     ("changes", changes, |s, l| {
         panel_is_open(s, l).and_then(|()| shows(s, &["main.rs", "the old"]))
     }),
@@ -689,6 +721,62 @@ fn the_reported_windows_say_what_they_need() {
     let shot = chat_idle(Lang::Ru).draw(20, 3);
     assert_eq!(shot.placeholder, None, "{}", shot.text());
     assert!(shot.rows[2].starts_with("❯ "), "{}", shot.text());
+}
+
+/// The footers of stage 3 (docs/research/small-terminal.md §5 F3(b)), in
+/// the case the research measured: the `ru` chat list at 57 columns spent 13
+/// rows of a 14-row window on its legend and showed one chat. Within a third
+/// of the window it spends four and shows five — and at 80×24, where seven
+/// rows are inside a third, nothing changes.
+#[test]
+fn a_footer_takes_no_more_than_a_third_of_the_window() {
+    let footer = |shot: &Shot| -> Vec<String> {
+        let bottom = shot.rows.iter().rposition(|r| r.starts_with('╰')).unwrap();
+        shot.rows[bottom + 1..].to_vec()
+    };
+    let chats = |shot: &Shot| shot.rows.iter().filter(|r| r.contains(" ● ")).count();
+
+    let mut rig = chat_list(Lang::Ru);
+    let shot = rig.draw(57, 14);
+    let rows = footer(&shot);
+    assert_eq!(rows.len(), 4, "{}", shot.text());
+    assert!(rows.iter().any(|r| r.contains("F1")), "{}", shot.text());
+    assert!(rows.iter().any(|r| r.contains("Esc")), "{}", shot.text());
+    assert_eq!(chats(&shot), 5, "{}", shot.text());
+
+    let shot = rig.draw(80, 24);
+    let rows = footer(&shot);
+    assert_eq!(
+        rows.len(),
+        7,
+        "the legend whole, as it was:\n{}",
+        shot.text()
+    );
+    for key in ["Del", "F5", "Ctrl+Q", "Tab"] {
+        assert!(
+            rows.iter().any(|r| r.contains(key)),
+            "{key}:\n{}",
+            shot.text()
+        );
+    }
+
+    // At a screen's minimum the footer is the one row the minimum was counted
+    // with, and the panel is whole: the settings' menu to its last section.
+    let shot = settings(Lang::Ru).draw(46, 12);
+    let rows = footer(&shot);
+    assert_eq!(rows.len(), 1, "{}", shot.text());
+    assert!(
+        rows[0].contains("F1") && rows[0].contains("Esc"),
+        "{}",
+        shot.text()
+    );
+    let interface = locale(Lang::Ru).t("ui.settings.section.interface");
+    assert!(shot.text().contains(interface), "{}", shot.text());
+    // One row more, and the footer takes it: the panel needs eleven rows,
+    // not twelve — the minimum's one row of hints is the footer's own.
+    let shot = settings(Lang::Ru).draw(46, 13);
+    assert_eq!(footer(&shot).len(), 2, "{}", shot.text());
+    assert!(shot.text().contains(interface), "{}", shot.text());
 }
 
 /// The ladder, frame by frame, in the reported window's 57 columns: from ten

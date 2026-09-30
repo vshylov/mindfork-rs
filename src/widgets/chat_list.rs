@@ -20,7 +20,7 @@ use crate::shared::i18n::Locale;
 use crate::shared::keys;
 use crate::shared::theme::Palette;
 use crate::shared::title::sanitize_title;
-use crate::shared::ui::{ListScroll, hotkey_grid, render_scrollbar};
+use crate::shared::ui::{ListScroll, MinSize, footer_rows, hotkey_grid, render_scrollbar};
 use crate::shared::wrap;
 use crate::widgets::help_dialog::{HelpContext, HelpSection};
 use crate::widgets::input_box::{InputBox, RenderOpts};
@@ -699,6 +699,11 @@ impl ChatListState {
         true
     }
 
+    /// The smallest window the list is drawn in (spec §11.1.1): the search
+    /// line, which is also the rename field, a row of the list under it, the
+    /// border around both and a row of key hints.
+    pub const MIN_SIZE: MinSize = MinSize::new(24, 7);
+
     /// Draws the fullscreen chat-list window (`area`). `active` — the current
     /// active chat (the marker). `&mut self` — the rename field draws an [`InputBox`]
     /// (it needs `&mut` for scroll/cursor). See spec §11.2.
@@ -713,9 +718,11 @@ impl ChatListState {
         frame.render_widget(Clear, area);
 
         // At the bottom — a status line with "keycaps" (like on the chat screen): a neat
-        // hotkey grid (the row count depends on width). Compute it ahead of time to
-        // reserve exactly the height it needs.
-        let status_lines = self.status_lines(palette, area.width as usize, loc);
+        // hotkey grid (the row count depends on width, up to the rows the panel
+        // spares — `footer_rows`). Compute it ahead of time to reserve exactly
+        // the height it needs.
+        let max_rows = footer_rows(area.height, Self::MIN_SIZE.height - 1);
+        let status_lines = self.status_lines(palette, area.width as usize, max_rows, loc);
         let status_h = (status_lines.len() as u16).max(1);
         let [main_area, status_area] =
             Layout::vertical([Constraint::Min(3), Constraint::Length(status_h)]).areas(area);
@@ -988,11 +995,13 @@ impl ChatListState {
     /// Status (hotkey) lines at the bottom of the screen — like on the chat screen: "keycaps"
     /// on a muted background + muted descriptions, laid out by the one hint grid
     /// ([`hotkey_grid`]): right-aligned, columns lined up vertically, wrapping
-    /// to as many rows as `width` needs. In rename mode — a single hint line.
+    /// to as many rows as `width` needs up to `max_rows`, and shedding past
+    /// them. In rename mode — a single hint line.
     fn status_lines(
         &self,
         palette: &Palette,
         width: usize,
+        max_rows: usize,
         loc: &'static Locale,
     ) -> Vec<Line<'static>> {
         if let Mode::Rename { .. } = self.mode {
@@ -1077,7 +1086,7 @@ impl ChatListState {
         if self.scope == SearchScope::Content {
             items.push(("Ctrl+G", loc.t("ui.chatlist.hk.search_messages"), false));
         }
-        hotkey_grid(palette, &items, width)
+        hotkey_grid(palette, &items, width, max_rows)
     }
 }
 
@@ -1870,7 +1879,7 @@ mod tree_tests {
     /// assertions read.
     fn status_text(s: &ChatListState) -> String {
         let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru);
-        s.status_lines(&Palette::default(), 200, loc)
+        s.status_lines(&Palette::default(), 200, usize::MAX, loc)
             .iter()
             .flat_map(|l| l.spans.iter().map(|sp| sp.content.to_string()))
             .collect()
@@ -2053,7 +2062,7 @@ mod tree_tests {
         let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru);
         let s = ChatListState::new(family(), None);
         let rows: Vec<String> = s
-            .status_lines(&Palette::default(), 116, loc)
+            .status_lines(&Palette::default(), 116, usize::MAX, loc)
             .iter()
             .map(|l| l.spans.iter().map(|sp| sp.content.as_ref()).collect())
             .collect();

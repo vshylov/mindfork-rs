@@ -202,11 +202,10 @@ impl ChatListScreen {
         self.state.recheck_rename_spelling(spell)
     }
 
-    /// The smallest window the list is drawn in (spec §11.1.1): the search
-    /// line, which is also the rename field, a row of the list under it, the
-    /// border around both and a row of key hints.
+    /// The smallest window the list is drawn in (spec §11.1.1) — the
+    /// widget's own ([`ChatListState::MIN_SIZE`]).
     pub fn min_size(&self) -> MinSize {
-        MinSize::new(24, 7)
+        ChatListState::MIN_SIZE
     }
 
     /// Draws the list full-screen. `&mut self` — the rename field draws

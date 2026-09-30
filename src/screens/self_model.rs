@@ -570,6 +570,7 @@ impl SelfModelScreen {
             ),
             None,
             &hints,
+            SCREEN_MIN_SIZE,
         );
         let (inner, status_area, hotkeys) = (chrome.inner, chrome.status, chrome.hotkeys);
 
