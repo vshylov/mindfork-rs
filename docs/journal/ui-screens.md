@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (71)
+## Entries (72)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -83,6 +83,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: help keycaps are no longer looked up as locale keys (done)
 - Post-M9: a setting at its default reads as unchanged in every interface language (done)
 - Post-M9: a screen's footer takes a third of the window at most (done)
+- Post-M9: titles and tabs a narrow window used to cut (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -3773,3 +3774,61 @@ chat list at 57×14 and the settings at 46×12, each console started at its size
 
 **Tests**: 3784 unit tests green, 236 ignored (+3). The screenshot dumps are unchanged:
 nothing moves at the sizes they are taken at.
+
+### Post-M9: titles and tabs a narrow window used to cut (done)
+
+The three leftovers the small-terminal track recorded and left alone
+([docs/research/small-terminal.md](../research/small-terminal.md) §7.3, §9.4), done on the
+user's word right after it (branch `fix/narrow-window-leftovers`). All three were the same
+defect: ratatui draws a border title, or a line, past the room it has by cutting it at the
+edge, with no mark — and what was cut was the part that mattered.
+
+**A border title keeps whole parts** (`shared::ui::fit_title`). An editor's title read
+`edit · Enter ok · Esc cance` at 46 columns (and the same in `ru`); the in-feed search's counter
+(`match 1 of 3 · Enter/↓ next · Shift+Enter/↑ previous · Esc close`) lost everything
+after its number. The titles are ` · `-joined parts, so the fit is the footers' rule
+again: the part naming `Esc` first — the way out — then the parts in their order, each kept
+while the title fits and passed over when it does not. One exception, found by the error
+case: the first part — what the box is, a counter, a validation error — is cut with a mark
+rather than left out, because a title that dropped its error would say `Esc cancel` and
+nothing about why. The input box fits every bordered title (the chat's input at ten rows and
+more, every settings and self-model editor, the settings search and the model picker, the
+chat list's rename field); the impersonation preview and the help dialog fit theirs.
+Accepted: an editor at 46 columns reads `edit · Esc cancel` — the box's name outranks
+`Enter ok`, the key every input takes.
+
+**A panel's two titles are fitted like the feed's header** (`ui::titled_panel`). The message
+search's `matches: 2` and the changes screen's `files: 2 · +24 −8` are right-aligned
+titles, drawn after the left one and over it when the two did not fit. The feed's header
+solved this in stage 1 (`fit_header`: the left title owed half the row, the right one in
+the widest form that leaves it); that function moved into `shared::ui` as `fit_title_pair`
+and the feed calls it, and `title_forms` gives a right-hand title its forms by parts —
+`files: 2 · +24 −8`, then `files: 2`. `screen_chrome` and the chat list build their panel
+through it. The `ru` chat list's title and chat count at exactly 24 columns used to abut with
+one shared space; it drops the count there now, which reads better than a title and a count
+run together.
+
+**The help's tab strip keeps the active tab whole** (`help_dialog::tab_window`). The whole
+strip needs the dialog's 76 columns, and the dialog can be as narrow as its legend (41 in
+`en`); the last tabs were
+cut at the edge and, once `Tab` reached them, the active one was off the screen. Narrower
+than the strip, it shows a run of whole tabs containing the active one, with a `…` cell on
+each side that hides some. The run is the **leftmost** that holds the active tab — stateless,
+and stable: moving through the tabs already on screen moves nothing, and moving past the
+edge slides the run by as little as it must. The help dialog's own title is fitted too
+(the version goes before the name does).
+
+**Tests**: `fit_title` on the editor, the counter, the error and the input's titles at every
+width to 60; the panel's two titles at every width from 4 to 70, never one over the other;
+the tab strip in both languages at every width from the dialog's narrowest to the whole
+strip, for every active tab — whole, a run, marks exactly where tabs hide, stable within the
+run; a narrow input box's border; and the gate's impersonation case now asks for the way
+out whole on the preview's border. **Mutation**: 14 mutants (each clause of the fit, the
+forms, the owed half, each call site, the window's start, extension and marks), 12 killed at
+once; the two survivors — the walk stopping at the first part that does not fit, the
+preview's title left unfitted — each got the check it was missing and are killed. **Live
+run — GO**: `tools/console_probe.py --scenario small-window`, 76 checks, gained a 41×12
+case: the input's title by whole parts, each of the six tabs whole on the strip as `Tab`
+walks it (the help opens on *Shortcuts* from the chat, which the first draft of the check
+assumed was *About*), and `…` on every strip. `full-mode`, `mono` and `first-frame` re-run,
+all pass. **Tests**: 3788 green, 236 ignored (+4).

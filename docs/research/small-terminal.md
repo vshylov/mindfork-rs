@@ -673,5 +673,10 @@ that narrow.
   panel's two titles collide in a narrow window (the message search, the
   changes screen); the help dialog's tab strip is whole only from 78 columns;
   the cursor under the help dialog blinks through it (a task of its own).
+  *The first three were fixed right after the track (2026-10-01, spec
+  §11.1.1): a border title keeps whole parts, `Esc`'s first
+  (`ui::fit_title`); a panel's two titles are fitted like the feed's header
+  (`ui::titled_panel`); the tab strip shows a window of whole tabs around the
+  active one. The cursor is still its own task.*
 - The chat list's rename mode keeps its one line of `Enter`/`Esc` — it is
   already a row.

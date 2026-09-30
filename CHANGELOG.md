@@ -54,6 +54,17 @@ split by subsystem.
   narrow window the header gives the title its share first; the model caption
   drops its context size, then itself.
 - **No cursor blinks through a tool confirmation.**
+- **A box's title is no longer cut off at its corner.** In a narrow window an
+  editor's key hints were cut mid-word, and the in-feed search's counter lost
+  everything after its number. A title that does not fit now
+  drops whole hints, keeping the one for `Esc` and the box's own name or
+  count.
+- **A screen's two titles no longer run into each other.** The message search
+  and the changes screen drew their count over their title in a narrow
+  window; the count now makes room or steps aside.
+- **The help's tabs stay whole in a narrow window.** Below 78 columns the last
+  tabs were cut at the edge, and the one you were on could be off the screen;
+  now the tabs around it are shown, `…` where others are hidden.
 
 ## [0.13.0] — 2026-09-30
 
