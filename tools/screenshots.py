@@ -488,16 +488,18 @@ def render_svg(dump: Path, out_dir: Path, faces: Faces, pad: int, px: int, font_
             f"src:url('{font_base}{filename}') format('woff2');"
             f"font-weight:{weight};font-style:{style};font-display:swap}}"
         )
-    out.append(
-        f"#{sid} text{{font:{px}px 'JetBrains Mono',monospace;fill:{hexs(canvas_fg)}}}"
-        f"#{sid} .b{{font-weight:700}}"
-        f"#{sid} .i{{font-style:italic}}"
-        f"#{sid} .u{{text-decoration:underline}}"
-        f"#{sid} .st{{text-decoration:line-through}}"
-        f"#{sid} .u.st{{text-decoration:underline line-through}}"
-    )
-    out.append("</style>")
-    out.append(f'<rect width="100%" height="100%" fill="{hexs(canvas_bg)}"/>')
+    out.extend([
+        (
+            f"#{sid} text{{font:{px}px 'JetBrains Mono',monospace;fill:{hexs(canvas_fg)}}}"
+            f"#{sid} .b{{font-weight:700}}"
+            f"#{sid} .i{{font-style:italic}}"
+            f"#{sid} .u{{text-decoration:underline}}"
+            f"#{sid} .st{{text-decoration:line-through}}"
+            f"#{sid} .u.st{{text-decoration:underline line-through}}"
+        ),
+        "</style>",
+        f'<rect width="100%" height="100%" fill="{hexs(canvas_bg)}"/>',
+    ])
 
     for y, row in enumerate(frame["rows"]):
         row_y = pad + y * grid.cell_h

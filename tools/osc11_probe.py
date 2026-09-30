@@ -421,13 +421,13 @@ def report(reply: Reply, timeout_ms: int) -> list[str]:
         lum = relative_luminance(rgb)
         luma = simple_luma(rgb)
         verdict = "DARK" if lum < DARK_THRESHOLD else "LIGHT"
-        lines.append(f"  parsed rgb           : #{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}  {rgb}")
-        lines.append(f"  relative luminance   : {lum:.4f}   (WCAG, linearised)")
-        lines.append(f"  gamma-space luma     : {luma:.4f}")
-        lines.append(
+        lines.extend([
+            f"  parsed rgb           : #{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}  {rgb}",
+            f"  relative luminance   : {lum:.4f}   (WCAG, linearised)",
+            f"  gamma-space luma     : {luma:.4f}",
             f"  verdict              : {verdict}  "
-            f"(threshold {DARK_THRESHOLD} on relative luminance)"
-        )
+            f"(threshold {DARK_THRESHOLD} on relative luminance)",
+        ])
     elif reply.status == "ok":
         lines.append("  parsed rgb           : (could not parse - record the raw reply)")
     return lines
@@ -540,10 +540,12 @@ def main() -> int:
 
     with open_terminal() as term:
         if IS_WINDOWS and not term.vt_input:
-            out.append("")
-            out.append("  WARNING: ENABLE_VIRTUAL_TERMINAL_INPUT could not be set on stdin.")
-            out.append("  This is legacy conhost behaviour: the reply, if any, will not reach")
-            out.append("  us as VT bytes. Record this row as 'no VT input', not 'no answer'.")
+            out.extend([
+                "",
+                "  WARNING: ENABLE_VIRTUAL_TERMINAL_INPUT could not be set on stdin.",
+                "  This is legacy conhost behaviour: the reply, if any, will not reach",
+                "  us as VT bytes. Record this row as 'no VT input', not 'no answer'.",
+            ])
 
         replies = collect(term, args)
 
