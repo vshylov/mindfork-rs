@@ -468,7 +468,9 @@ colour modes with user themes, and the OpenRouter mode — have all closed
   crates.io page links.
 - **Small things from the public-release audit** — **on demand**
   ([public-release-readiness.md §2.4](research/public-release-readiness.md),
-  "nice to have"): a "terminal too small" message (`NO_COLOR` was done in the
+  "nice to have"): a "terminal too small" message — researched, with the
+  wrong frames measured and the forks open, in
+  [small-terminal.md](research/small-terminal.md) (`NO_COLOR` was done in the
   colour-modes track, stage 2); a port-in-use
   diagnosis for the managed server (only `setup --verify` refuses a busy port
   today); per-release debuginfo; the commit hash in `--version`; a demo
