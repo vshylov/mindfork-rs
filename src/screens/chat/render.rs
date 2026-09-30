@@ -2,9 +2,27 @@
 //! split out of the chat.rs monolith (see
 //! docs/history/refactoring-god-objects.md, stage 2).
 
-use super::popups::{render_confirm, render_suggest, render_tool_confirm};
+use super::popups::{
+    confirm_prompt, render_confirm, render_suggest, render_tool_confirm, suggest_min_size,
+    tool_prompt,
+};
 use super::*;
 use crate::shared::wrap;
+use crate::widgets::message_feed::FeedCaption;
+
+/// The rows the feed always has: its border and one row of the conversation.
+const FEED_MIN_ROWS: u16 = 3;
+
+/// The smallest window the chat is drawn in (spec §11.1). Nine rows hold the
+/// layout whole at its tallest: the feed's three, the indexing banner, the
+/// input box with one row of text, and two rows of status bar. Twenty columns
+/// are where wrapped text stops being a word a row.
+///
+/// A constant, not the sum of what this frame happens to show: a minimum that
+/// followed the banner or the status bar's second row would put the
+/// placeholder up and take it down as they came and went
+/// (docs/research/small-terminal.md §4.3).
+pub(super) const CHAT_MIN_SIZE: MinSize = MinSize::new(20, 9);
 
 impl ChatScreen {
     // ---------- rendering ----------
@@ -19,25 +37,24 @@ impl ChatScreen {
     /// (`AppEvent::EngineModel`, docs/research/external-model-name.md §4). Both
     /// empty still means an empty caption, byte-for-byte the header drawn before
     /// the engine was ever asked.
-    pub(super) fn model_meta(&self) -> String {
+    pub(super) fn model_meta(&self) -> FeedCaption {
         use crate::shared::config::ServerMode;
         let Some((cfg, _, _, _, _)) = &self.settings_snapshot else {
-            return String::new();
+            return FeedCaption::default();
         };
         let Some(name) = cfg
             .engine
             .active_model_name()
             .or_else(|| self.engine_model.clone())
         else {
-            return String::new();
+            return FeedCaption::default();
         };
-        // For managed, context is meaningful — add "· Nk ctx".
+        // For managed, context is meaningful — "· Nk ctx" follows the name
+        // where the header has room for it (`message_feed::fit_header`).
         let ctx = cfg.engine.managed.context_size;
-        if cfg.engine.mode == ServerMode::Managed && ctx > 0 {
-            format!("{name} · {}k ctx", (ctx + 512) / 1024)
-        } else {
-            name
-        }
+        let detail = (cfg.engine.mode == ServerMode::Managed && ctx > 0)
+            .then(|| format!("{}k ctx", (ctx + 512) / 1024));
+        FeedCaption { name, detail }
     }
 
     /// Assembles the status-bar state snapshot in one place — a new indicator
@@ -77,6 +94,33 @@ impl ChatScreen {
     pub fn spinner_due(&self) -> bool {
         self.rag.as_ref().is_some_and(|b| b.spinner.due())
             || self.impersonation.as_ref().is_some_and(|i| i.spinner.due())
+    }
+
+    /// The smallest window this frame is drawn in: the chat's own layout,
+    /// and the popup open over it — a list's key legend whole, a question
+    /// whole at the width `area` gives it. The runtime draws the placeholder
+    /// below it rather than a frame with parts missing (spec §11.1).
+    pub fn min_size(&self, area: Rect) -> MinSize {
+        let (palette, loc) = (&self.palette, self.loc);
+        [
+            self.profile_overlay
+                .as_ref()
+                .map(|_| ProfileListState::min_size(loc)),
+            self.suggest.as_ref().map(|_| suggest_min_size(loc)),
+            self.emoji.as_ref().map(|_| EmojiPickerState::min_size(loc)),
+            self.chat_links
+                .as_ref()
+                .map(|_| ChatLinkPickerState::min_size(loc)),
+            self.tool_confirm
+                .as_ref()
+                .map(|pending| tool_prompt(pending, palette, loc).min_size(palette, area)),
+            self.confirm
+                .as_ref()
+                .map(|action| confirm_prompt(action, palette, loc).min_size(palette, area)),
+        ]
+        .into_iter()
+        .flatten()
+        .fold(CHAT_MIN_SIZE, MinSize::max)
     }
 
     pub fn render(&mut self, frame: &mut Frame) {
@@ -120,8 +164,21 @@ impl ChatScreen {
             &self.palette,
             self.loc,
         );
+        // The input's rows are what the feed's three, the banner and the
+        // status bar leave — decided here, so that the solver below is never
+        // handed rows that do not add up: which `Length` it shortens then is
+        // nobody's choice (docs/research/small-terminal.md §1). In a window
+        // of [`CHAT_MIN_SIZE`] there is always room for the box's three.
+        let input_h = input_h
+            .min(
+                frame
+                    .area()
+                    .height
+                    .saturating_sub(FEED_MIN_ROWS + banner_h + status_h),
+            )
+            .max(3);
         let [feed_area, banner_area, input_area, status_area] = Layout::vertical([
-            Constraint::Min(3),
+            Constraint::Min(FEED_MIN_ROWS),
             Constraint::Length(banner_h),
             Constraint::Length(input_h),
             Constraint::Length(status_h),
@@ -133,12 +190,12 @@ impl ChatScreen {
         } else {
             self.title.clone()
         };
-        let meta = self.model_meta();
+        let caption = self.model_meta();
         self.feed_view.render(
             frame,
             feed_area,
             &title,
-            &meta,
+            &caption,
             &self.feed,
             &self.palette,
             self.loc,
@@ -226,11 +283,15 @@ impl ChatScreen {
                     &[("newline", crate::shared::keys::newline_chord())],
                 )
             };
+            // A popup takes the keys, so the box under it is not where the
+            // cursor is — the tool confirmation included: the cursor used to
+            // keep blinking through its border.
             let focused = self.profile_overlay.is_none()
                 && self.suggest.is_none()
                 && self.emoji.is_none()
                 && self.chat_links.is_none()
-                && self.confirm.is_none();
+                && self.confirm.is_none()
+                && self.tool_confirm.is_none();
             let command = self.input_is_command();
             // Whether `Enter` will run the text as a command is said by its
             // colour; where there is none, by a word in the title — a `/…`

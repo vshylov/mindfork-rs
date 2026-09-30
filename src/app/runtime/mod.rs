@@ -27,6 +27,7 @@ use ratatui::crossterm::execute;
 #[cfg(unix)]
 use ratatui::crossterm::terminal::supports_keyboard_enhancement;
 use ratatui::crossterm::terminal::{BeginSynchronizedUpdate, EndSynchronizedUpdate};
+use ratatui::layout::Rect;
 use ratatui::style::Color;
 use tokio::sync::mpsc::error::TryRecvError;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
@@ -42,7 +43,7 @@ use crate::screens::self_model::{SelfModelIntent, SelfModelScreen};
 use crate::screens::settings::{SettingsIntent, SettingsScreen};
 use crate::screens::tasks::{TasksIntent, TasksScreen};
 use crate::shared::theme::Palette;
-use crate::shared::ui::{self, SPINNER_STEP, dim_background};
+use crate::shared::ui::{self, MinSize, SPINNER_STEP, dim_background};
 use crate::widgets::help_dialog::{
     self, DEFAULT_HELP_TAB, HelpContext, HelpKeyOutcome, HelpSection, HelpState, HelpTab,
 };
@@ -622,6 +623,7 @@ fn run_loop(
             cmd_tx,
             &mut clipboard,
             &mut dirty,
+            drawn.too_small,
         )? {
             quit = true;
         }
@@ -727,6 +729,12 @@ struct Drawn {
     /// The canvas the terminal was last erased to (`Color::Reset` — its own
     /// background, which is what `ratatui::init` leaves). See [`canvas_repaint`].
     canvas: Color,
+    /// Whether the frame was the "window too small" placeholder
+    /// ([`too_small`]). It decides two things: the keys of the next tick act
+    /// on what the user was looking at — under the placeholder nothing but
+    /// quit works ([`handle_input_tick`]) — and the placeholder coming or
+    /// going is a wholesale change of the frame, like a screen switch.
+    too_small: bool,
 }
 
 impl Drawn {
@@ -735,6 +743,7 @@ impl Drawn {
             screen: std::mem::discriminant(active),
             overlay: false,
             canvas: Color::Reset,
+            too_small: false,
         }
     }
 }
@@ -915,6 +924,20 @@ fn draw_frame(
     let overlay = help.open.is_some();
     let overlay_toggled = overlay != last.overlay;
     last.overlay = overlay;
+    // So is the placeholder's coming or going — and that needs no resize: a
+    // popup opening over a screen raises what the window has to hold. Decided
+    // from the size the frame is about to get, before the render, like the
+    // other triggers (docs/lessons.md §5).
+    let cramped = terminal.size().is_ok_and(|size| {
+        too_small(
+            Rect::new(0, 0, size.width, size.height),
+            active,
+            screen,
+            help,
+        )
+        .is_some()
+    });
+    let cramped_toggled = cramped != last.too_small;
     // The palette of this frame: the screen in front, the help dialog over it
     // and the canvas under both are drawn with the same one.
     let palette = front_palette(active, screen);
@@ -927,7 +950,12 @@ fn draw_frame(
     );
     last.canvas = palette.canvas;
     set_colour_output(&palette);
-    if requested || switched || overlay_toggled || repaint == CanvasRepaint::Erase {
+    if requested
+        || switched
+        || overlay_toggled
+        || cramped_toggled
+        || repaint == CanvasRepaint::Erase
+    {
         ui::prime_full_redraw(terminal.current_buffer_mut());
         terminal.swap_buffers();
     }
@@ -938,11 +966,47 @@ fn draw_frame(
         CanvasRepaint::None => Ok(()),
         _ => erase_to_canvas(terminal, palette.canvas, repaint),
     };
-    let drawn = terminal.draw(|frame| compose_frame(frame, screen, active, help, &palette));
+    // What the frame turned out to be is read back from the render itself:
+    // the keys of the next tick are judged by what was on screen, and the
+    // size asked about above can be a resize behind the one `draw` sees.
+    let mut placeholder = cramped;
+    let drawn = terminal.draw(|frame| {
+        placeholder = compose_frame(frame, screen, active, help, &palette);
+    });
+    last.too_small = placeholder;
     let _ = execute!(stdout(), EndSynchronizedUpdate);
     erased?;
     drawn?;
     Ok(())
+}
+
+/// The window the frame in front needs, when `area` is smaller than that
+/// (spec §11.1, docs/research/small-terminal.md F4): the active screen's
+/// minimum — which already counts the popup open over it — and the help
+/// dialog's while it is up. `None` — the frame fits.
+///
+/// Every minimum is a function of the window and of **which** layers are
+/// open, never of what they hold at the moment, so the placeholder comes and
+/// goes with a resize or with a popup and not with a token counter.
+fn too_small(
+    area: Rect,
+    active: &ActiveScreen,
+    screen: &ChatScreen,
+    help: &HelpOverlay,
+) -> Option<MinSize> {
+    let mut need = match active {
+        ActiveScreen::Chat => screen.min_size(area),
+        ActiveScreen::ChatList(list) => list.min_size(),
+        ActiveScreen::Settings(settings) => settings.min_size(),
+        ActiveScreen::SelfModel(view) => view.min_size(),
+        ActiveScreen::Search(search) => search.min_size(),
+        ActiveScreen::Changes(changes) => changes.min_size(area),
+        ActiveScreen::Tasks(tasks) => tasks.min_size(),
+    };
+    if help.open.is_some() {
+        need = need.max(help_dialog::min_size(screen.loc()));
+    }
+    (!need.fits(area)).then_some(need)
 }
 
 /// What one frame is made of, in the order it is drawn: the active screen,
@@ -950,16 +1014,25 @@ fn draw_frame(
 /// the canvas under everything either of them left at the terminal's default
 /// (the full colour mode, spec §11.6). Apart from [`draw_frame`] because that
 /// needs a real terminal, and the order is the part worth a test.
+///
+/// A window smaller than the frame in front needs gets the placeholder
+/// instead of a frame with parts missing ([`too_small`]); the return value
+/// says that it did.
 fn compose_frame(
     frame: &mut ratatui::Frame,
     screen: &mut ChatScreen,
     active: &mut ActiveScreen,
     help: &mut HelpOverlay,
     palette: &Palette,
-) {
+) -> bool {
     // The locale comes from the chat screen, the base that always exists and
     // receives every settings event.
     let loc = screen.loc();
+    if let Some(need) = too_small(frame.area(), active, screen, help) {
+        ui::render_too_small(frame, palette, loc, need);
+        ui::finish_frame(frame.buffer_mut(), palette);
+        return true;
+    }
     match active {
         ActiveScreen::Chat => screen.render(frame),
         ActiveScreen::ChatList(list) => list.render(frame),
@@ -976,12 +1049,20 @@ fn compose_frame(
     // Last, so it also catches what the overlay's `Clear` reset — and, in the
     // monochrome mode, what the overlay drew.
     ui::finish_frame(frame.buffer_mut(), palette);
+    false
 }
 
 /// One input tick: polls the terminal for [`TICK`], collects the available
 /// events into a batch (chasing a paste's tail — see the comments inside) and
 /// processes it. Sets `dirty` when any terminal event arrived; returns `true`
 /// if quitting was requested.
+///
+/// `too_small` — the frame on screen is the "window too small" placeholder
+/// ([`Drawn::too_small`]): the batch is then read for a quit key and for
+/// nothing else ([`quit_requested`]).
+// The loop's state, one borrow each — the same set `process_input_batch`
+// takes, plus the two flags the tick itself reads and writes.
+#[allow(clippy::too_many_arguments)]
 fn handle_input_tick(
     screen: &mut ChatScreen,
     active: &mut ActiveScreen,
@@ -990,6 +1071,7 @@ fn handle_input_tick(
     cmd_tx: &UnboundedSender<AppCommand>,
     clipboard: &mut Option<arboard::Clipboard>,
     dirty: &mut bool,
+    too_small: bool,
 ) -> Result<bool> {
     if !event::poll(TICK)? {
         return Ok(false);
@@ -1016,8 +1098,8 @@ fn handle_input_tick(
             collect_press(&mut batch, event::read()?);
         }
     }
-    Ok(process_input_batch(
-        batch, screen, active, help, back, cmd_tx, clipboard,
+    Ok(route_batch(
+        too_small, batch, screen, active, help, back, cmd_tx, clipboard,
     ))
 }
 
@@ -1031,5 +1113,7 @@ mod input;
 // dispatch (dispatch), the clipboard (clipboard). The external surface is run.
 use self::{clipboard::*, dispatch::*, input::*};
 
+#[cfg(test)]
+mod small_window_tests;
 #[cfg(test)]
 mod tests;

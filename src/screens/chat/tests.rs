@@ -5483,14 +5483,18 @@ fn the_caption_prefers_settings_and_falls_back_to_the_engine() {
 
     let mut s = ChatScreen::new();
     settings(&mut s, None);
-    assert_eq!(s.model_meta(), "", "nothing configured, nothing discovered");
+    assert_eq!(
+        s.model_meta().full(),
+        "",
+        "nothing configured, nothing discovered"
+    );
 
     s.set_engine_model(Some("gemma-4-31B_q4_0-it".into()));
-    assert_eq!(s.model_meta(), "gemma-4-31B_q4_0-it");
+    assert_eq!(s.model_meta().full(), "gemma-4-31B_q4_0-it");
 
     settings(&mut s, Some("qwen-3.6-27b"));
     assert_eq!(
-        s.model_meta(),
+        s.model_meta().full(),
         "qwen-3.6-27b",
         "a name the user typed outranks the server's opinion"
     );
@@ -5499,7 +5503,7 @@ fn the_caption_prefers_settings_and_falls_back_to_the_engine() {
     // keeping the previous server's model.
     settings(&mut s, None);
     s.set_engine_model(None);
-    assert_eq!(s.model_meta(), "");
+    assert_eq!(s.model_meta().full(), "");
 }
 
 /// Several runs at once (spec §9.3.2): the chip counts them and names the

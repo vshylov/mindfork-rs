@@ -1319,6 +1319,17 @@ impl InputBox {
             .title(Span::styled(format!(" {title} "), palette.muted_style()));
         let full_inner = block.inner(area);
         frame.render_widget(&block, area);
+        // A box too small to have a text cell draws its border and nothing
+        // else. `Block::inner` of such a box is an empty rectangle standing
+        // **outside** it — on the row below, or past its right edge — and
+        // the prompt and the cursor, placed from it, used to land there: on
+        // the status bar under a two-row input box, and outside the terminal
+        // under a one-row one (docs/research/small-terminal.md §1). There is
+        // nothing to click on either, so the click map is dropped with it.
+        if full_inner.height == 0 || full_inner.width <= PROMPT_W {
+            self.last_area = None;
+            return;
+        }
 
         // The `❯` prompt column on the left; text is drawn to its right.
         let prompt_style = if focused {
@@ -1326,19 +1337,17 @@ impl InputBox {
         } else {
             palette.muted_style()
         };
-        if full_inner.width > PROMPT_W {
-            let prompt_area = Rect {
-                height: 1,
-                ..full_inner
-            };
-            frame.render_widget(
-                Paragraph::new(Line::from(Span::styled(
-                    palette.glyphs().prompt,
-                    prompt_style,
-                ))),
-                prompt_area,
-            );
-        }
+        let prompt_area = Rect {
+            height: 1,
+            ..full_inner
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                palette.glyphs().prompt,
+                prompt_style,
+            ))),
+            prompt_area,
+        );
         // Inner text area — without the prompt column.
         let inner = Rect {
             x: full_inner.x + PROMPT_W,
@@ -2197,6 +2206,69 @@ mod tests {
             ib.content_rows(area_width) > 1,
             "the field should grow to two rows on the character past the wrap boundary"
         );
+    }
+
+    /// A box with no room for a text cell draws its border and nothing else
+    /// — not a prompt on the row under it, and not a cursor there either
+    /// (docs/research/small-terminal.md §1: the prompt over the status bar).
+    /// The rows around the box are filled with a mark, so a cell written
+    /// outside the box shows.
+    #[test]
+    fn a_box_without_a_text_cell_draws_nothing_outside_itself() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        use ratatui::widgets::Paragraph;
+        let palette = Palette::default();
+        let draw = |ib: &mut InputBox, area: Rect| {
+            let mut term = Terminal::new(TestBackend::new(12, 6)).unwrap();
+            term.draw(|f| {
+                let full = f.area();
+                f.render_widget(Paragraph::new(vec![Line::raw("············"); 6]), full);
+                ib.render(f, area, RenderOpts::focused("in"), &palette);
+            })
+            .unwrap();
+            let rows = crate::shared::ui::tests::buffer_rows(term.backend().buffer());
+            (rows, term.backend().cursor_visible())
+        };
+        let mut ib = InputBox::new();
+        ib.insert_str("text");
+        // Two rows: both borders and no row between them. One row: a border.
+        // Three columns: the prompt's two and no column for the text.
+        for area in [
+            Rect::new(0, 1, 12, 2),
+            Rect::new(0, 1, 12, 1),
+            Rect::new(0, 1, 4, 3),
+            Rect::new(0, 1, 2, 3),
+            Rect::new(0, 1, 0, 0),
+        ] {
+            let (rows, cursor) = draw(&mut ib, area);
+            assert!(
+                !cursor,
+                "{area:?}: there is no text cell to put a cursor in"
+            );
+            assert!(ib.last_area_for_test().is_none(), "{area:?}: nor to click");
+            let text = rows.join("\n");
+            assert!(
+                !text.contains('❯') && !text.contains("text"),
+                "{area:?}:\n{text}"
+            );
+            for (y, row) in rows.iter().enumerate() {
+                let inside = (area.top()..area.bottom()).contains(&(y as u16));
+                let outside: String = row
+                    .chars()
+                    .enumerate()
+                    .filter(|(x, _)| !inside || *x as u16 >= area.right())
+                    .map(|(_, c)| c)
+                    .collect();
+                assert!(
+                    outside.chars().all(|c| c == '·'),
+                    "{area:?}: row {y} was written outside the box: {row:?}"
+                );
+            }
+        }
+        // The control: three rows and a column of text — prompt, text, cursor.
+        let (rows, cursor) = draw(&mut ib, Rect::new(0, 1, 12, 3));
+        assert!(cursor && rows[2].starts_with("│❯ text"), "{rows:#?}");
     }
 
     #[test]

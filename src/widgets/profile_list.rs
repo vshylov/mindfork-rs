@@ -14,7 +14,7 @@ use uuid::Uuid;
 
 use crate::entities::profile::ProfileSummary;
 use crate::shared::theme::Palette;
-use crate::shared::ui::{ListScroll, mark_selected};
+use crate::shared::ui::{ListScroll, MinSize, legend_width, mark_selected};
 
 /// Action the overlay asks the layer above to perform.
 #[derive(Debug, Clone, PartialEq)]
@@ -76,6 +76,13 @@ impl ProfileListState {
         }
     }
 
+    /// The smallest window the overlay is drawn in (spec §11.1): its key
+    /// legend whole on the border — the overlay is never narrower than that —
+    /// around three rows of the list.
+    pub fn min_size(loc: &'static crate::shared::i18n::Locale) -> MinSize {
+        MinSize::new(legend_width(loc.t("ui.profile_list.footer")), 5)
+    }
+
     /// Draws the overlay centered in `area`.
     pub fn render(
         &mut self,
@@ -85,7 +92,7 @@ impl ProfileListState {
         loc: &'static crate::shared::i18n::Locale,
     ) {
         let rows = (self.profiles.len() as u16 + 2).clamp(5, area.height);
-        let popup = centered_rect(50, 30, rows, area);
+        let popup = centered_rect(50, 30.max(Self::min_size(loc).width), rows, area);
         frame.render_widget(Clear, popup);
 
         let block = palette
@@ -222,6 +229,34 @@ mod tests {
         let rows = drawn(&mut s, &Palette::default());
         assert!(row_of(&rows, "Alpha").contains("│Alpha"), "{rows:#?}");
         assert!(row_of(&rows, "Beta").contains("│Beta"), "{rows:#?}");
+    }
+
+    /// The overlay is never narrower than its key legend, in either
+    /// language: its width was a share of the window with a floor of 30, so
+    /// between 60 and 82 columns the legend — 41 — was cut at the corner.
+    #[test]
+    fn the_overlay_is_never_narrower_than_its_legend() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        for &lang in crate::shared::i18n::Lang::ALL {
+            let loc = crate::shared::i18n::locale(lang);
+            let legend = loc.t("ui.profile_list.footer").trim();
+            let need = ProfileListState::min_size(loc);
+            for width in need.width..=120 {
+                let mut state = ProfileListState::new(vec![ProfileSummary {
+                    id: Uuid::new_v4(),
+                    name: "Assistant".into(),
+                }]);
+                let mut term = Terminal::new(TestBackend::new(width, 12)).unwrap();
+                term.draw(|f| state.render(f, f.area(), &Palette::default(), loc))
+                    .unwrap();
+                let rows = crate::shared::ui::tests::buffer_rows(term.backend().buffer());
+                assert!(
+                    rows.iter().any(|r| r.contains(legend)),
+                    "{lang:?} {width}: {rows:#?}"
+                );
+            }
+        }
     }
 
     #[test]

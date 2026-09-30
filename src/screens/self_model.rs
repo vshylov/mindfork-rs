@@ -22,7 +22,7 @@ use crate::shared::config::NoteOrder;
 use crate::shared::i18n::Locale;
 use crate::shared::keys;
 use crate::shared::theme::Palette;
-use crate::shared::ui::{dim_background, screen_chrome};
+use crate::shared::ui::{MinSize, SCREEN_MIN_SIZE, dim_background, screen_chrome};
 use crate::shared::wrap::wrap_line;
 use crate::widgets::help_dialog::{HelpContext, HelpSection};
 use crate::widgets::input_box::{InputBox, RenderOpts};
@@ -535,6 +535,11 @@ impl SelfModelScreen {
             ("Ctrl+Q", loc.t("ui.self_model.hk.quit"), false),
         ]);
         hk
+    }
+
+    /// The smallest window the screen is drawn in (spec §11.1).
+    pub fn min_size(&self) -> MinSize {
+        SCREEN_MIN_SIZE
     }
 
     /// Draws the screen full-screen: the field list + a hotkey line (below the

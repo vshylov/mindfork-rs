@@ -2458,8 +2458,10 @@ fn composed(
     }
     let palette = front_palette(&active, &screen);
     let mut term = Terminal::new(TestBackend::new(100, 30)).unwrap();
-    term.draw(|frame| compose_frame(frame, &mut screen, &mut active, &mut help, &palette))
-        .unwrap();
+    term.draw(|frame| {
+        compose_frame(frame, &mut screen, &mut active, &mut help, &palette);
+    })
+    .unwrap();
     term.backend().buffer().clone()
 }
 

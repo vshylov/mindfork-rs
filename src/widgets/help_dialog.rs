@@ -14,7 +14,7 @@ use crate::shared::credits;
 use crate::shared::i18n::Locale;
 use crate::shared::keys;
 use crate::shared::theme::Palette;
-use crate::shared::ui::{centered_rect, render_scrollbar};
+use crate::shared::ui::{MinSize, centered_rect, legend_width, render_scrollbar};
 use crate::shared::wrap;
 use crate::widgets::logo::{LOCKUP_COLS, LOCKUP_ROWS, lockup_lines};
 
@@ -404,6 +404,14 @@ pub fn help_size(cols: u16, rows: u16) -> (u16, u16) {
         rows.saturating_sub(HELP_AIR)
             .clamp(HELP_MIN_HEIGHT, HELP_MAX_HEIGHT),
     )
+}
+
+/// The smallest window the dialog is drawn in (spec §11.1): the legend of its
+/// keys whole on the border, and under the tab strip and its rule four rows of
+/// the open tab. The tab strip itself is whole only from [`HELP_MIN_WIDTH`]
+/// up — below that its last tabs are cut, which `Tab` still reaches.
+pub fn min_size(loc: &'static Locale) -> MinSize {
+    MinSize::new(legend_width(loc.t("ui.help.footer.tabs")), 8)
 }
 
 /// Draws the help/"About" dialog centered on screen (KDE/Qt-style): the logo

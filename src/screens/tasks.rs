@@ -30,7 +30,7 @@ use crate::screens::awaited_chat::AwaitedChat;
 use crate::shared::i18n::Locale;
 use crate::shared::keys;
 use crate::shared::theme::Palette;
-use crate::shared::ui::{keep_visible, render_scrollbar, screen_chrome};
+use crate::shared::ui::{MinSize, SCREEN_MIN_SIZE, keep_visible, render_scrollbar, screen_chrome};
 use crate::shared::wrap;
 use crate::widgets::chat_list::run_state_key;
 use crate::widgets::help_dialog::{HelpContext, HelpSection};
@@ -334,6 +334,11 @@ impl TasksScreen {
                 ("landed", &landed.to_string()),
             ],
         ))
+    }
+
+    /// The smallest window the screen is drawn in (spec §11.1).
+    pub fn min_size(&self) -> MinSize {
+        SCREEN_MIN_SIZE
     }
 
     /// Draws the screen full-screen.

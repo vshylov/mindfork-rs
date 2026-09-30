@@ -146,6 +146,50 @@ pub(super) fn chunk_batch(batch: Vec<Event>) -> Vec<Chunk> {
     out
 }
 
+/// Whether a batch read under the "window too small" placeholder asks to
+/// quit — the one thing a key does there (spec §11.1,
+/// docs/research/small-terminal.md F2). Everything else in it is dropped:
+/// the screen the keys were meant for is not the one on the terminal, so
+/// `Enter` would answer a tool confirmation nobody read and a typed line
+/// would be sent unseen. The way out is the window's edge.
+///
+/// The two quit keys are the ones every screen answers to (spec §11.7),
+/// matched the way the screens match them — `Ctrl+Q` by the physical key, so
+/// it works under any layout.
+pub(super) fn quit_requested(batch: &[Event]) -> bool {
+    batch.iter().any(|event| match event {
+        Event::Key(key) if key.kind == KeyEventKind::Press => {
+            key.code == KeyCode::F(10)
+                || (key.modifiers.contains(KeyModifiers::CONTROL)
+                    && crate::shared::keys::hotkey_char(key) == Some('q'))
+        }
+        _ => false,
+    })
+}
+
+/// One batch of terminal events, read against the frame that was on screen
+/// when they were made: under the placeholder (`too_small`) it is a quit or
+/// nothing ([`quit_requested`]), otherwise it goes to the screens. Apart from
+/// the tick that reads the terminal, so that the rule has a test. Returns
+/// `true` if quitting was requested.
+// The loop's state, one borrow each, and the flag.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn route_batch(
+    too_small: bool,
+    batch: Vec<Event>,
+    screen: &mut ChatScreen,
+    active: &mut ActiveScreen,
+    help: &mut HelpOverlay,
+    back: &mut Option<Back>,
+    cmd_tx: &UnboundedSender<AppCommand>,
+    clipboard: &mut Option<arboard::Clipboard>,
+) -> bool {
+    if too_small {
+        return quit_requested(&batch);
+    }
+    process_input_batch(batch, screen, active, help, back, cmd_tx, clipboard)
+}
+
 /// Processes a batch of terminal events in one pass. Coalesced pastes
 /// go into the active editor (the settings screen) or into the chat's input box as
 /// text — never sending, even if they contain line breaks. Single events — the regular way.

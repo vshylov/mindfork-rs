@@ -27,7 +27,9 @@ use crate::features::workspace_diff::{ChangeSet, DiffKind, FileChange, FileState
 use crate::shared::i18n::Locale;
 use crate::shared::keys;
 use crate::shared::theme::Palette;
-use crate::shared::ui::{confirm_popup, keep_visible, render_scrollbar, screen_chrome};
+use crate::shared::ui::{
+    MinSize, Prompt, confirm_prompt, keep_visible, render_scrollbar, screen_chrome,
+};
 use crate::widgets::help_dialog::{HelpContext, HelpSection};
 
 /// The changes screen's "Shortcuts" section (`F1`): one row per key
@@ -263,6 +265,29 @@ impl ChangesScreen {
         hk
     }
 
+    /// The revert question, while one is asked.
+    fn revert_prompt(&self) -> Option<Prompt> {
+        let path = self.confirming.as_ref()?;
+        Some(confirm_prompt(
+            &self.palette,
+            self.loc.t("ui.confirm.title"),
+            &self.loc.tf("ui.changes.confirm_revert", &[("path", path)]),
+            self.loc.t("ui.confirm.footer"),
+        ))
+    }
+
+    /// The smallest window the screen is drawn in (spec §11.1): the two
+    /// panes side by side — a file's name and counts, the rule, a diff line
+    /// one can read — and, while a revert is being confirmed, the question
+    /// whole at the width `area` gives it.
+    pub fn min_size(&self, area: Rect) -> MinSize {
+        let base = MinSize::new(40, 8);
+        match self.revert_prompt() {
+            Some(prompt) => base.max(prompt.min_size(&self.palette, area)),
+            None => base,
+        }
+    }
+
     /// Draws the screen full-screen.
     pub fn render(&mut self, frame: &mut Frame) {
         let palette = self.palette;
@@ -318,14 +343,8 @@ impl ChangesScreen {
         self.render_diff(frame, diff_area);
         frame.render_widget(Paragraph::new(hotkeys), status_area);
 
-        if let Some(path) = &self.confirming {
-            confirm_popup(
-                frame,
-                &palette,
-                loc.t("ui.confirm.title"),
-                &loc.tf("ui.changes.confirm_revert", &[("path", path)]),
-                loc.t("ui.confirm.footer"),
-            );
+        if let Some(prompt) = self.revert_prompt() {
+            prompt.render(frame, &palette);
         }
     }
 

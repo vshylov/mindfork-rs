@@ -20,6 +20,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
 
 use crate::shared::theme::Palette;
+use crate::shared::ui::{MinSize, legend_width};
 
 /// The most common emoji (4 rows of [`COLS`]). Order — from "faces" to gestures and
 /// symbols; the list is fixed (extend it by editing here). The grid's width was chosen
@@ -133,6 +134,16 @@ impl EmojiPickerState {
         }
     }
 
+    /// The popup's size, which is also the smallest window it is drawn in
+    /// (spec §11.1): the whole grid — a cell cut off at the edge is one the
+    /// selection can still walk onto, unseen — and the key legend whole on the
+    /// border.
+    pub fn min_size(loc: &'static crate::shared::i18n::Locale) -> MinSize {
+        let rows = EMOJIS.len().div_ceil(COLS) as u16;
+        let grid = COLS as u16 * CELL_W + 2; // +2 — the border
+        MinSize::new(grid.max(legend_width(loc.t("ui.emoji.footer"))), rows + 2)
+    }
+
     /// Draws the popup centered in `area`: an emoji grid, the selected cell — reversed.
     pub fn render(
         &self,
@@ -141,9 +152,8 @@ impl EmojiPickerState {
         palette: &Palette,
         loc: &'static crate::shared::i18n::Locale,
     ) {
-        let rows = EMOJIS.len().div_ceil(COLS) as u16;
-        let width = COLS as u16 * CELL_W + 2; // +2 — the border
-        let popup = centered_rect(width, rows + 2, area);
+        let size = Self::min_size(loc);
+        let popup = centered_rect(size.width, size.height, area);
         frame.render_widget(Clear, popup);
 
         let block = palette
