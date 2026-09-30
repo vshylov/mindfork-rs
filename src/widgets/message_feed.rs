@@ -468,6 +468,20 @@ impl Default for MessageFeed {
     }
 }
 
+/// What is drawn around the feed's rows (spec §11.1.1): the panel's border,
+/// with the chat's title and the model caption on it — or nothing, in a
+/// window with no rows to spare for a border. A bare feed wraps to the
+/// window's full width, has no scrollbar, and ends on the last line of text
+/// rather than on the padding row under it.
+#[derive(Debug, Clone, Copy)]
+pub enum FeedFrame<'a> {
+    Bordered {
+        title: &'a str,
+        caption: &'a FeedCaption,
+    },
+    Bare,
+}
+
 /// The feed header's right-hand caption — the model behind the chat — in the
 /// forms the header can afford ([`fit_header`]).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -897,46 +911,25 @@ impl MessageFeed {
         self.highlight.as_deref()
     }
 
-    /// Draws the feed. `messages` — the active chat's current content. `caption` —
-    /// the right-hand title caption (e.g. "gemma-4 · 16k ctx"; empty — don't show).
-    // Title/caption/palette/locale — render context; bundling them into a struct for
-    // the sake of one call from `chat/render.rs` isn't worth it.
-    #[allow(clippy::too_many_arguments)]
+    /// Draws the feed. `messages` — the active chat's current content;
+    /// `header` — the panel's border with the chat's title and the model
+    /// caption on it, or nothing around the rows ([`FeedFrame`]).
     pub fn render(
         &mut self,
         frame: &mut Frame,
         area: Rect,
-        title: &str,
-        caption: &FeedCaption,
+        header: FeedFrame,
         messages: &[FeedMessage],
         palette: &Palette,
         loc: &'static Locale,
     ) {
-        // A rounded panel: title with a ◆ marker on the left, the caption
-        // (model/ctx) on the right.
-        let glyphs = palette.glyphs();
-        let marker = format!(" {} ", glyphs.title_marker);
-        // The border is a fixed row: the title and the caption share what the
-        // marker and the corners leave ([`fit_header`]). A title is not bounded
-        // in storage; every surface that draws one in a row bounds it itself
-        // (`shared::title::sanitize_title`, spec §11.2).
-        let avail = (area.width as usize).saturating_sub(2 + wrap::str_width(&marker) + 1);
-        let (title, caption) = fit_header(title, caption, avail);
-        let meta_cell = caption.map(|form| format!(" {form} "));
-        let mut block = Block::default()
-            .borders(Borders::ALL)
-            .border_type(glyphs.border)
-            .border_style(palette.border_style(false))
-            .title(Line::from(vec![
-                Span::styled(marker, palette.muted_style()),
-                Span::styled(format!("{title} "), Style::new().fg(palette.text)),
-            ]));
-        if let Some(cell) = meta_cell {
-            block =
-                block.title(Line::from(Span::styled(cell, palette.muted_style())).right_aligned());
-        }
-        let inner = block.inner(area);
-        frame.render_widget(&block, area);
+        let inner = match header {
+            FeedFrame::Bordered { title, caption } => {
+                self.render_border(frame, area, title, caption, palette)
+            }
+            FeedFrame::Bare => area,
+        };
+        let bare = matches!(header, FeedFrame::Bare);
 
         // Wrap lines to the feed's width ahead of time: this way the number of visual
         // rows matches `lines.len()`, and the scroll/"follow the tail" math
@@ -992,7 +985,12 @@ impl MessageFeed {
 
         let total = lines.len();
         let view_h = inner.height.max(1) as usize;
-        let max_scroll = total.saturating_sub(view_h);
+        // The tail of the stream is the separator under the last message — a
+        // blank row. A bare feed has few rows (spec §11.1.1) and ends on the
+        // last line of text instead: the tail it follows is the stream less
+        // that row, so a four-row feed shows four rows of the conversation.
+        let tail_pad = usize::from(bare && lines.last().is_some_and(|l| l.width() == 0));
+        let max_scroll = (total - tail_pad).saturating_sub(view_h);
 
         if self.follow {
             self.scroll = max_scroll;
@@ -1013,15 +1011,54 @@ impl MessageFeed {
         // Scrollbar on the panel's right border (corners untouched) — only when
         // the feed doesn't fit vertically. Doesn't take width away from content; the
         // feed's border is always non-focused (see `border_style(false)` above).
-        render_scrollbar(
-            frame,
-            area.inner(Margin::new(0, 1)),
-            total,
-            view_h,
-            self.scroll,
-            false,
-            palette,
-        );
+        // A bare feed has no border column for it.
+        if !bare {
+            render_scrollbar(
+                frame,
+                area.inner(Margin::new(0, 1)),
+                total,
+                view_h,
+                self.scroll,
+                false,
+                palette,
+            );
+        }
+    }
+
+    /// The bordered feed's panel: rounded, the title with a ◆ marker on the
+    /// left, the caption (model/ctx) on the right. Returns the rows inside.
+    fn render_border(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        title: &str,
+        caption: &FeedCaption,
+        palette: &Palette,
+    ) -> Rect {
+        let glyphs = palette.glyphs();
+        let marker = format!(" {} ", glyphs.title_marker);
+        // The border is a fixed row: the title and the caption share what the
+        // marker and the corners leave ([`fit_header`]). A title is not bounded
+        // in storage; every surface that draws one in a row bounds it itself
+        // (`shared::title::sanitize_title`, spec §11.2).
+        let avail = (area.width as usize).saturating_sub(2 + wrap::str_width(&marker) + 1);
+        let (title, caption) = fit_header(title, caption, avail);
+        let meta_cell = caption.map(|form| format!(" {form} "));
+        let mut block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(glyphs.border)
+            .border_style(palette.border_style(false))
+            .title(Line::from(vec![
+                Span::styled(marker, palette.muted_style()),
+                Span::styled(format!("{title} "), Style::new().fg(palette.text)),
+            ]));
+        if let Some(cell) = meta_cell {
+            block =
+                block.title(Line::from(Span::styled(cell, palette.muted_style())).right_aligned());
+        }
+        let inner = block.inner(area);
+        frame.render_widget(&block, area);
+        inner
     }
 
     /// What an empty feed says: an invitation to write, or — with no engine to
@@ -2277,6 +2314,12 @@ mod tests {
         detail: None,
     };
 
+    /// The bordered panel most tests draw, titled and without a caption.
+    const PANEL: FeedFrame<'static> = FeedFrame::Bordered {
+        title: "Чат",
+        caption: &BARE,
+    };
+
     fn caption(name: &str, detail: Option<&str>) -> FeedCaption {
         FeedCaption {
             name: name.to_string(),
@@ -2915,7 +2958,7 @@ mod tests {
         use ratatui::backend::TestBackend;
         let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
         term.draw(|f| {
-            feed.render(f, f.area(), "Чат", &BARE, msgs, &Palette::default(), ru());
+            feed.render(f, f.area(), PANEL, msgs, &Palette::default(), ru());
         })
         .unwrap();
         let hit = feed.link_hits.first().copied().expect("a drawn reference");
@@ -2964,6 +3007,80 @@ mod tests {
         assert_eq!(at.width as usize, uri.chars().count());
     }
 
+    /// A bare feed (spec §11.1.1) is rows of the conversation to the window's
+    /// edges: no border, no title, the text wrapped to the full width, no
+    /// scrollbar column, and — with few rows — the last row is the last line
+    /// of text, not the padding under it. The click map moves with the
+    /// origin: the rail is at column 0, the address at 2.
+    #[test]
+    fn a_bare_feed_is_rows_of_the_conversation_to_the_edge() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let id = chat_uuid(1);
+        let uri = crate::features::chat_links::uri(id);
+        let mut feed = MessageFeed::new();
+        feed.set_known_chats(vec![id]);
+        // A line of exactly 38 columns: whole in a bare 40-column feed, and
+        // wrapped inside a bordered one, whose rows hold 36.
+        let line = format!("{uri} {}", "x".repeat(38 - uri.chars().count() - 1));
+        let msgs = vec![
+            msg(FeedRole::User, "a question", ""),
+            msg(FeedRole::Assistant, &line, ""),
+        ];
+        let rows = |feed: &mut MessageFeed, header: FeedFrame, h: u16| -> Vec<String> {
+            let mut term = Terminal::new(TestBackend::new(40, h)).unwrap();
+            term.draw(|f| feed.render(f, f.area(), header, &msgs, &Palette::default(), ru()))
+                .unwrap();
+            crate::shared::ui::tests::buffer_rows(term.backend().buffer())
+        };
+
+        let bare = rows(&mut feed, FeedFrame::Bare, 4);
+        assert!(
+            bare.iter().all(|r| !r.contains(['╭', '│', '╰', '█'])),
+            "{bare:?}"
+        );
+        assert!(bare[3].starts_with(&format!("▌ {uri} x")), "{bare:?}");
+        assert!(
+            bare[3].ends_with('x'),
+            "the line is whole, to the edge: {:?}",
+            bare[3]
+        );
+        assert_eq!(
+            feed.link_hit_for_test(0),
+            Some((2, 3, 2 + uri.chars().count() as u16))
+        );
+        assert!(feed.is_following());
+
+        // The same feed with a border: the line wraps, and the padding row
+        // under the message is the last one.
+        let boxed = rows(&mut feed, PANEL, 6);
+        assert!(
+            boxed[0].starts_with('╭') && boxed[5].starts_with('╰'),
+            "{boxed:?}"
+        );
+        assert_eq!(
+            boxed[4].trim_matches(['│', '█', ' ']),
+            "",
+            "the padding row: {boxed:?}"
+        );
+        assert!(
+            boxed[3].contains("xx") && !boxed[3].ends_with("x│"),
+            "wrapped: {boxed:?}"
+        );
+
+        // Not following: a bare feed scrolled up shows what it is scrolled
+        // to, and the bottom is reached one row before the padding.
+        let bare = rows(&mut feed, FeedFrame::Bare, 2);
+        assert!(bare[1].starts_with(&format!("▌ {uri}")), "{bare:?}");
+        feed.scroll_up(1);
+        let up = rows(&mut feed, FeedFrame::Bare, 2);
+        assert!(up[1].starts_with("▌ ✦"), "the header row: {up:?}");
+        assert!(!feed.is_following());
+        feed.scroll_down(1);
+        let _ = rows(&mut feed, FeedFrame::Bare, 2);
+        assert!(feed.is_following(), "the bottom is the last line of text");
+    }
+
     /// An unrendered feed has no map, and answering "no link" is the honest
     /// answer rather than a guess against a layout that does not exist.
     #[test]
@@ -3002,7 +3119,7 @@ mod tests {
         // The tail is what a fresh feed shows, and the address is far above it.
         let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(60, 10)).unwrap();
         term.draw(|f| {
-            feed.render(f, f.area(), "Чат", &BARE, &msgs, &Palette::default(), ru());
+            feed.render(f, f.area(), PANEL, &msgs, &Palette::default(), ru());
         })
         .unwrap();
         assert!(
@@ -3012,7 +3129,7 @@ mod tests {
 
         feed.scroll_up(usize::MAX);
         term.draw(|f| {
-            feed.render(f, f.area(), "Чат", &BARE, &msgs, &Palette::default(), ru());
+            feed.render(f, f.area(), PANEL, &msgs, &Palette::default(), ru());
         })
         .unwrap();
         let hit = feed.link_hits.first().copied().expect("scrolled into view");
@@ -3760,18 +3877,8 @@ mod tests {
     /// has to go through a real frame.
     fn visible(feed: &mut MessageFeed, messages: &[FeedMessage], w: u16, h: u16) -> Vec<String> {
         let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
-        term.draw(|f| {
-            feed.render(
-                f,
-                f.area(),
-                "Чат",
-                &BARE,
-                messages,
-                &Palette::default(),
-                ru(),
-            )
-        })
-        .unwrap();
+        term.draw(|f| feed.render(f, f.area(), PANEL, messages, &Palette::default(), ru()))
+            .unwrap();
         let buf = term.backend().buffer().clone();
         let area = buf.area;
         (area.top()..area.bottom())
@@ -4375,8 +4482,10 @@ mod tests {
             feed.render(
                 f,
                 f.area(),
-                "Чат",
-                &caption("gemma-4", Some("16k ctx")),
+                FeedFrame::Bordered {
+                    title: "Чат",
+                    caption: &caption("gemma-4", Some("16k ctx")),
+                },
                 &messages,
                 &Palette::default(),
                 ru(),
@@ -4402,7 +4511,11 @@ mod tests {
         let long = "заголовок который не помещается в верхнюю рамку никак";
         let meta = "gemma-4 · 16k ctx";
         let cap = caption("gemma-4", Some("16k ctx"));
-        term.draw(|f| feed.render(f, f.area(), long, &cap, &[], &Palette::default(), ru()))
+        let header = FeedFrame::Bordered {
+            title: long,
+            caption: &cap,
+        };
+        term.draw(|f| feed.render(f, f.area(), header, &[], &Palette::default(), ru()))
             .unwrap();
         let row = top(&term);
         assert!(row.contains('…'), "a cut title says so: {row}");
@@ -4410,7 +4523,7 @@ mod tests {
         assert!(row.starts_with('╭') && row.ends_with('╮'), "{row}");
         // Room for all of it — no marker, and the title is whole.
         let mut term = Terminal::new(TestBackend::new(100, 8)).unwrap();
-        term.draw(|f| feed.render(f, f.area(), long, &cap, &[], &Palette::default(), ru()))
+        term.draw(|f| feed.render(f, f.area(), header, &[], &Palette::default(), ru()))
             .unwrap();
         let row = top(&term);
         assert!(row.contains(long), "{row}");
@@ -4484,10 +4597,14 @@ mod tests {
     fn a_narrow_header_keeps_the_title_and_sheds_the_caption() {
         let cap = caption("gemma-4-12B-it-Q5_K_M", Some("16k ctx"));
         let title = "Gemma 4 on a 12 GB GPU";
+        let header = FeedFrame::Bordered {
+            title,
+            caption: &cap,
+        };
         let top = |width: u16| -> String {
             let mut feed = MessageFeed::new();
             let mut term = Terminal::new(TestBackend::new(width, 5)).unwrap();
-            term.draw(|f| feed.render(f, f.area(), title, &cap, &[], &Palette::default(), ru()))
+            term.draw(|f| feed.render(f, f.area(), header, &[], &Palette::default(), ru()))
                 .unwrap();
             crate::shared::ui::tests::buffer_rows(term.backend().buffer()).remove(0)
         };
@@ -4527,7 +4644,7 @@ mod tests {
         let mut feed = MessageFeed::new();
         let mut term = Terminal::new(TestBackend::new(30, 8)).unwrap();
         let short = vec![msg(FeedRole::User, "привет", "")];
-        term.draw(|f| feed.render(f, f.area(), "Чат", &BARE, &short, &Palette::default(), ru()))
+        term.draw(|f| feed.render(f, f.area(), PANEL, &short, &Palette::default(), ru()))
             .unwrap();
         assert!(
             !right_col(&term).iter().any(|s| s == "█"),
@@ -4536,7 +4653,7 @@ mod tests {
         let many: Vec<FeedMessage> = (0..30)
             .map(|i| msg(FeedRole::User, &format!("строка {i}"), ""))
             .collect();
-        term.draw(|f| feed.render(f, f.area(), "Чат", &BARE, &many, &Palette::default(), ru()))
+        term.draw(|f| feed.render(f, f.area(), PANEL, &many, &Palette::default(), ru()))
             .unwrap();
         assert!(
             right_col(&term).iter().any(|s| s == "█"),

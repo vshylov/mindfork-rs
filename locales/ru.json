@@ -751,6 +751,7 @@
   "ui.chat.search.placeholder": "найти в этом чате…",
   "ui.chat.search.counter": "совпадение {n} из {total} · Enter/↓ дальше · Shift+Enter/↑ назад · Esc закрыть",
   "ui.chat.search.none": "совпадений нет · Esc закрыть",
+  "ui.chat.search.tag": "{n}/{total}",
   "ui.chat.bg.reflect": "рефлексия",
   "ui.chat.bg.consolidate": "сон заметок",
   "ui.chat.bg.self_consolidate": "сон себя",

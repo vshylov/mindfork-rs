@@ -577,11 +577,19 @@ does not vanish with the window.
 
 **"Window too small".** The window is smaller than the screen in front can be
 drawn in, and the line under the title says both sizes: the one the window has
-and the one it needs — 20×9 for the chat, 46×12 for the settings. Enlarge the
+and the one it needs — 20×3 for the chat, 46×12 for the settings. Enlarge the
 window and the screen is back as you left it. Until then the keys are off, so
 that nothing is sent or confirmed unseen: `Ctrl+Q` quits, and where the line
 names `Esc` — something opened over the chat is what does not fit — `Esc`
 closes it.
+
+**The chat looks stripped down.** In a window of ten rows or fewer the chat
+gives up its frame a piece at a time to keep four rows of the conversation on
+screen: first the status bar's second row, then the input box's border, then
+the feed's, and below six rows the status bar itself. A window of five rows is
+four rows of the conversation over the `❯` prompt. The keys a border used to
+name are all on `F1`; the search's counter stays at the right end of its row.
+Eleven rows and up look as they always did.
 
 **The engine says "not configured".** The empty chat lists the ways to connect
 one; `Ctrl+P → Model/server` is where they are. A managed server needs both a

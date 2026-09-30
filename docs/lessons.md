@@ -1501,7 +1501,10 @@ whichever `Length` the solver likes; ratatui's documentation calls the result
 because the solver happened to pick the same part to shorten. When several parts compete
 for rows, compute the rectangles by arithmetic in a pure function and test that function
 over every height: what gives way is then written down, and a mutant that removes it fails.
-— *a window too small for the frame says so*.
+The same shape a stage later: `status_bar::height` clamped its result to a ceiling that
+`lines_within` already kept, and the clamp survived every test — a bound the callee holds
+is not a bound, it is dead code with the callee's name on it; take it out.
+— *a window too small for the frame says so*; *the chat sheds its chrome*.
 
 **A terminal computes some of its own state in the quiet — an animation that never
 pauses keeps that state stale.** Windows Terminal re-finds the URLs it detects in the

@@ -179,7 +179,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-30, version 0.13.0)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3772 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **3781 unit tests
 green, 236 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
@@ -192,13 +192,16 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
-- **Small windows — stage 1 of 3** (2026-09-30). A window below what the frame in
-  front needs gets a notice — the size it is, the size it needs, the keys that
-  work — instead of a frame with parts missing; under it only quit works, and
-  `Esc` where something is open over the chat. A question is a `Prompt`: as tall
-  as its text, its keys never cut (the tool confirmation's legend is 69 columns
-  in `ru`). The chat's rows are arithmetic, not the solver's. Gate: 20 states ×
-  459 sizes. Live **GO**. Next: the chat sheds its chrome, then bounded footers
+- **Small windows — stages 1 and 2 of 3** (2026-09-30). A window below what the
+  frame in front needs gets a notice — the size it is, the size it needs, the
+  keys that work — instead of a frame with parts missing; under it only quit
+  works, and `Esc` where something is open over the chat. A question is a
+  `Prompt`: as tall as its text, its keys never cut. Stage 2: the chat sheds its
+  chrome one piece at a time (`ChatChrome::at`, a function of the window's rows
+  alone) and keeps four rows of the conversation down to 20×3; the input box,
+  the feed and the preview draw bare; the status bar is laid out within the
+  rows it is given and its pill fitted to the row. Gate: 20 states × 459 sizes.
+  Live **GO**, 57 checks. Next: bounded footers
   ([docs/research/small-terminal.md](docs/research/small-terminal.md), spec
   §11.1.1, [docs/journal/ui-feed.md](docs/journal/ui-feed.md)).
 - **OpenRouter as a provider of its own — track complete** (2026-09-29, four

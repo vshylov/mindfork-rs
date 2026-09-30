@@ -383,12 +383,15 @@ src/
 │  │                        viewport-sized map rebuilt by each render),
 │  │                        the model name on the assistant's header
 │  │                        (`FeedMessage.model` ← `MessageMetadata.model`,
-│  │                        `set_show_model_name` → CacheKey, spec §11.3)
+│  │                        `set_show_model_name` → CacheKey, spec §11.3);
+│  │                        drawn bordered or bare (`FeedFrame`, spec §11.1.1)
 │  ├─ chat_link_picker.rs   the Ctrl+L overlay over a chat's `chat://` references
 │  │                        (spec §11.3) — the profile-picker shape: snapshot in,
 │  │                        ChatLinkAction out
 │  ├─ input_box.rs          our own multiline input (ADR 0001): cursor, wrap, spellcheck,
-│  │                        single-line mode (settings fields), visual navigation
+│  │                        single-line mode (settings fields), visual navigation;
+│  │                        bordered, or bare with the title as a tag
+│  │                        (`RenderOpts::bare`/`text_width`, spec §11.1.1)
 │  ├─ logo.rs               brand mark drawn with terminal cells (half blocks
 │  │                        `▀`/`▄`/`█`): 10×6 glyph + wordmark in our own pixel
 │  │                        font → 65×6 horizontal lockup, left-aligned in the
@@ -408,9 +411,11 @@ src/
 │  │                        block's geometry is shared::ui's; what is local is the
 │  │                        capped, shedding column choice the status pill's
 │  │                        competition for the row makes chat-specific
-│  │                        (HINT_ROWS_MAX/corner_cols/trim_to_fit/keep_order)
+│  │                        (HINT_ROWS_MAX/corner_cols/trim_to_fit/keep_order),
+│  │                        within the rows the chat allows (`height`'s ceiling),
+│  │                        and the pill fitted to the row (`fit_pill`)
 │  ├─ profile_list.rs       profile selection overlay when creating a chat
-│  └─ impersonation_preview.rs  streaming preview of the reply (Ctrl+U)
+│  └─ impersonation_preview.rs  streaming preview of the reply (Ctrl+U), bordered or bare
 │
 ├─ features/                user-facing scenarios (FSD "features")
 │  ├─ tools/                tool registry and implementations (client-side)
@@ -3751,6 +3756,28 @@ is a function of the window and of which layers are open, never of their
 content, so the notice cannot flicker with a token counter; and whatever raises
 a minimum is something `Esc` leaves (`ChatScreen::popup_needs` is the one list
 behind both `min_size` and `has_popup`).
+
+Above its minimum of three rows the chat is drawn with as much chrome as the
+rows allow: `ChatChrome::at(rows)` (`screens/chat/render.rs`) is the ladder of
+spec §11.1.1 as one function of the window's height — how many rows the status
+bar may take (two, one, none), whether the input box and the feed have their
+borders — and `render` builds everything else from it: the input box's
+`RenderOpts` (bare, and what its title is — a tag or nothing) **before** the
+layout, since the rows a draft wraps into depend on the frame's text width
+(`RenderOpts::text_width`, the one source `content_rows` measures with and the
+widget wraps with); `input_height` with its border flag (half the window
+bordered, a third bare); `status_bar::height` with the ceiling; `chat_areas`
+with the chrome, for the feed's minimum rows; the feed's `FeedFrame`. The three
+widgets each own their bare form — `InputBox::render` with `RenderOpts::bare`
+(the title as a right-hand tag whose columns come off every row, no
+scrollbar), `MessageFeed::render` with `FeedFrame::Bare` (full-width wrap, no
+scrollbar, and the tail it follows is the last line of text rather than the
+padding row), `impersonation_preview::render` with `Preview::bare` (the
+spinner in the prompt column) — and the chat only chooses. The status bar lays
+itself out within the rows it is given (`render` reads the ceiling off its
+area, so a one-row area never gets the top row of a two-row grid) and fits its
+pill to the row at every height (`fit_pill`: a prefix of `state_chips`, the
+chat chip alone cut with a mark).
 
 The **monochrome** mode is the same shape with the roles swapped: the palette
 (`Palette::mono`) carries a flag instead of a canvas, and the pass
