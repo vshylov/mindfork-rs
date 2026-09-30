@@ -900,6 +900,47 @@ fn ctrl_q_breaks_through_confirm_popup_to_quit() {
     assert_eq!(s.confirm, None);
 }
 
+/// The chat's rows are arithmetic (spec §11.1): whatever the banner, the
+/// draft and the status bar ask for, the four areas tile the window top to
+/// bottom with no row in two of them — and from the chat's minimum window up
+/// each part has the rows it needs, the input box being the one cut back.
+#[test]
+fn the_chats_areas_tile_the_window_and_the_input_gives_way() {
+    use super::render::{CHAT_MIN_SIZE, chat_areas};
+    for height in 0..=40u16 {
+        for banner in [0u16, 1] {
+            for status in [1u16, 2] {
+                for wanted in 3..=12u16 {
+                    let at =
+                        format!("{height} rows, banner {banner}, status {status}, input {wanted}");
+                    let window = Rect::new(0, 0, 57, height);
+                    let [feed, b, input, s] = chat_areas(window, banner, wanted, status);
+                    // Top to bottom, edge to edge, nothing shared.
+                    assert_eq!(feed.y, 0, "{at}");
+                    assert_eq!(feed.bottom(), b.y, "{at}");
+                    assert_eq!(b.bottom(), input.y, "{at}");
+                    assert_eq!(input.bottom(), s.y, "{at}");
+                    assert_eq!(s.bottom(), height, "{at}");
+                    for part in [feed, b, input, s] {
+                        assert_eq!((part.x, part.width), (0, 57), "{at}");
+                    }
+                    if height < CHAT_MIN_SIZE.height {
+                        continue;
+                    }
+                    assert_eq!((b.height, s.height), (banner, status), "{at}");
+                    assert!(feed.height >= 3, "{at}: the feed keeps its three rows");
+                    assert!(input.height >= 3, "{at}: the box keeps a row of text");
+                    assert!(input.height <= wanted, "{at}");
+                    // The box is cut back only as far as the feed's three rows
+                    // require — a draft gets every row that is really free.
+                    let free = height - 3 - banner - status;
+                    assert_eq!(input.height, wanted.min(free), "{at}");
+                }
+            }
+        }
+    }
+}
+
 /// A popup raises the window the chat needs (spec §11.1): a list to its key
 /// legend, a question to the rows it wraps into at the window's width.
 #[test]

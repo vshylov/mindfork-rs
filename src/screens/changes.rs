@@ -735,12 +735,18 @@ mod tests {
         assert_eq!(s.min_size(area), MinSize::new(40, 8), "no question yet");
         press(&mut s, KeyCode::Char('r'));
         let need = s.min_size(area);
-        assert!(need.height > 8, "the question wraps past eight rows: {need:?}");
+        assert!(
+            need.height > 8,
+            "the question wraps past eight rows: {need:?}"
+        );
         // At exactly that height the box is whole: both borders, and the keys.
         let mut term = Terminal::new(TestBackend::new(40, need.height)).unwrap();
         term.draw(|f| s.render(f)).unwrap();
         let rows = crate::shared::ui::tests::buffer_rows(term.backend().buffer());
-        assert!(rows[0].contains('╭') && rows.last().unwrap().contains('╯'), "{rows:#?}");
+        assert!(
+            rows[0].contains('╭') && rows.last().unwrap().contains('╯'),
+            "{rows:#?}"
+        );
         assert!(rows.last().unwrap().contains("Enter"), "{rows:#?}");
     }
 

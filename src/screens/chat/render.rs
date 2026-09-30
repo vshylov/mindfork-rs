@@ -13,6 +13,11 @@ use crate::widgets::message_feed::FeedCaption;
 /// The rows the feed always has: its border and one row of the conversation.
 const FEED_MIN_ROWS: u16 = 3;
 
+// The minimum is exactly the layout at its tallest — the feed's rows, the
+// banner, the input box's and the status bar's two — so a window of that size
+// never has to cut anything (`chat_areas`).
+const _: () = assert!(CHAT_MIN_SIZE.height == FEED_MIN_ROWS + 1 + INPUT_MIN_ROWS + 2);
+
 /// The smallest window the chat is drawn in (spec §11.1). Nine rows hold the
 /// layout whole at its tallest: the feed's three, the indexing banner, the
 /// input box with one row of text, and two rows of status bar. Twenty columns
@@ -164,26 +169,8 @@ impl ChatScreen {
             &self.palette,
             self.loc,
         );
-        // The input's rows are what the feed's three, the banner and the
-        // status bar leave — decided here, so that the solver below is never
-        // handed rows that do not add up: which `Length` it shortens then is
-        // nobody's choice (docs/research/small-terminal.md §1). In a window
-        // of [`CHAT_MIN_SIZE`] there is always room for the box's three.
-        let input_h = input_h
-            .min(
-                frame
-                    .area()
-                    .height
-                    .saturating_sub(FEED_MIN_ROWS + banner_h + status_h),
-            )
-            .max(3);
-        let [feed_area, banner_area, input_area, status_area] = Layout::vertical([
-            Constraint::Min(FEED_MIN_ROWS),
-            Constraint::Length(banner_h),
-            Constraint::Length(input_h),
-            Constraint::Length(status_h),
-        ])
-        .areas(frame.area());
+        let [feed_area, banner_area, input_area, status_area] =
+            chat_areas(frame.area(), banner_h, input_h, status_h);
 
         let title = if self.title.is_empty() {
             crate::shared::credits::APP_NAME.to_string()
@@ -344,6 +331,51 @@ impl ChatScreen {
             render_confirm(frame, action, &self.palette, self.loc);
         }
     }
+}
+
+/// The input box's three rows: its border and one row of text.
+const INPUT_MIN_ROWS: u16 = 3;
+
+/// The chat's four areas in the window `area`, top to bottom: the feed, the
+/// indexing banner, the input box, the status bar — given the rows the last
+/// three ask for.
+///
+/// Arithmetic, not the layout solver. The solver was asked for
+/// `[Min(3), Length, Length, Length]`, and when those did not add up to the
+/// window it shortened whichever `Length` it liked: the input box lost its
+/// text row while the status bar kept two rows of key hints
+/// (docs/research/small-terminal.md §1). Here what gives way is written down:
+/// **the input box is cut back first**, to what the feed's three rows, the
+/// banner and the status bar leave — never below its own three — and the
+/// feed takes every row that is left. In a window of [`CHAT_MIN_SIZE`] that
+/// is three or more, whatever the banner, the draft and the status bar are
+/// doing.
+///
+/// Below that size the chat is not drawn at all ([`ChatScreen::min_size`]);
+/// the function is total anyway — the parts are fitted from the bottom up,
+/// each taking what is left — so no size makes two of them overlap.
+pub(super) fn chat_areas(area: Rect, banner_h: u16, input_h: u16, status_h: u16) -> [Rect; 4] {
+    let input_h = input_h
+        .min(
+            area.height
+                .saturating_sub(FEED_MIN_ROWS + banner_h + status_h),
+        )
+        .max(INPUT_MIN_ROWS);
+    let mut bottom = area.bottom();
+    let mut above = |rows: u16| {
+        let rows = rows.min(bottom - area.y);
+        bottom -= rows;
+        Rect {
+            y: bottom,
+            height: rows,
+            ..area
+        }
+    };
+    let status = above(status_h);
+    let input = above(input_h);
+    let banner = above(banner_h);
+    let feed = above(u16::MAX);
+    [feed, banner, input, status]
 }
 
 /// The input row's height — text rows plus the border — for `content_rows` of
