@@ -906,15 +906,20 @@ fn ctrl_q_breaks_through_confirm_popup_to_quit() {
 /// each part has the rows it needs, the input box being the one cut back.
 #[test]
 fn the_chats_areas_tile_the_window_and_the_input_gives_way() {
-    use super::render::{CHAT_MIN_SIZE, chat_areas};
+    use super::render::{CHAT_MIN_SIZE, ChatChrome, chat_areas};
     for height in 0..=40u16 {
+        let chrome = ChatChrome::at(height);
+        let (feed_min, input_min) = (
+            if chrome.feed_border { 3 } else { 1 },
+            if chrome.input_border { 3 } else { 1 },
+        );
         for banner in [0u16, 1] {
-            for status in [1u16, 2] {
-                for wanted in 3..=12u16 {
+            for status in 0..=chrome.status_rows {
+                for wanted in input_min..=12u16 {
                     let at =
                         format!("{height} rows, banner {banner}, status {status}, input {wanted}");
                     let window = Rect::new(0, 0, 57, height);
-                    let [feed, b, input, s] = chat_areas(window, banner, wanted, status);
+                    let [feed, b, input, s] = chat_areas(window, chrome, banner, wanted, status);
                     // Top to bottom, edge to edge, nothing shared.
                     assert_eq!(feed.y, 0, "{at}");
                     assert_eq!(feed.bottom(), b.y, "{at}");
@@ -928,16 +933,65 @@ fn the_chats_areas_tile_the_window_and_the_input_gives_way() {
                         continue;
                     }
                     assert_eq!((b.height, s.height), (banner, status), "{at}");
-                    assert!(feed.height >= 3, "{at}: the feed keeps its three rows");
-                    assert!(input.height >= 3, "{at}: the box keeps a row of text");
+                    assert!(feed.height >= feed_min, "{at}: the feed keeps its rows");
+                    assert!(
+                        input.height >= input_min,
+                        "{at}: the box keeps a row of text"
+                    );
                     assert!(input.height <= wanted, "{at}");
-                    // The box is cut back only as far as the feed's three rows
-                    // require — a draft gets every row that is really free.
-                    let free = height - 3 - banner - status;
+                    // The box is cut back only as far as the feed's minimum
+                    // requires — a draft gets every row that is really free.
+                    let free = height - feed_min - banner - status;
                     assert_eq!(input.height, wanted.min(free), "{at}");
                 }
             }
         }
+    }
+}
+
+/// The ladder of spec §11.1.1: what the chat keeps at each height, and the
+/// four rows of the conversation it buys — a one-row draft, no banner, a
+/// status bar that fits its row.
+#[test]
+fn the_chat_sheds_its_chrome_one_piece_at_a_time() {
+    use super::render::{ChatChrome, chat_areas, input_height};
+    // (rows, status rows allowed, input bordered, feed bordered, rows of the
+    // conversation on screen)
+    let ladder = [
+        (40, 2, true, true, 33),
+        (11, 2, true, true, 4),
+        (10, 1, true, true, 4),
+        (9, 1, false, true, 5),
+        (8, 1, false, true, 4),
+        (7, 1, false, false, 5),
+        (6, 1, false, false, 4),
+        (5, 0, false, false, 4),
+        (4, 0, false, false, 3),
+        (3, 0, false, false, 2),
+    ];
+    for (rows, status, input_border, feed_border, conversation) in ladder {
+        let chrome = ChatChrome::at(rows);
+        assert_eq!(
+            (chrome.status_rows, chrome.input_border, chrome.feed_border),
+            (status, input_border, feed_border),
+            "{rows} rows"
+        );
+        let input_h = input_height(1, 6, rows, chrome.input_border);
+        let [feed, _, input, bar] =
+            chat_areas(Rect::new(0, 0, 57, rows), chrome, 0, input_h, status);
+        let inside = feed.height - if feed_border { 2 } else { 0 };
+        assert_eq!(inside, conversation, "{rows} rows: the conversation's rows");
+        assert_eq!(
+            input.height,
+            if input_border { 3 } else { 1 },
+            "{rows} rows"
+        );
+        assert_eq!(bar.height, status, "{rows} rows");
+    }
+    // Eleven rows and up is the layout as it always was: seven rows of
+    // chrome, and the conversation gets every row past them.
+    for rows in 11..=40u16 {
+        assert_eq!(ChatChrome::at(rows), ChatChrome::at(11), "{rows} rows");
     }
 }
 
@@ -948,9 +1002,9 @@ fn an_open_popup_raises_the_chats_minimum_window() {
     use crate::shared::ui::MinSize;
     let area = Rect::new(0, 0, 20, 9);
     let mut s = with_confirm();
-    assert_eq!(s.min_size(area), MinSize::new(20, 9), "the chat alone");
+    assert_eq!(s.min_size(area), MinSize::new(20, 3), "the chat alone");
 
-    // A question with a long name in it wraps past the chat's nine rows.
+    // A question with a long name in it wraps past the chat's three rows.
     s.confirm = Some(ConfirmAction::DeleteProfile {
         id: Uuid::new_v4(),
         name: "a profile with a name as long as a sentence, and then some".into(),
@@ -959,15 +1013,19 @@ fn an_open_popup_raises_the_chats_minimum_window() {
     let need = s.min_size(area);
     assert_eq!(need.width, 20);
     assert!(need.height > 9, "{need:?}");
-    // In a wider window the same question is shorter — and the chat's own
-    // nine rows are the floor again.
-    assert_eq!(s.min_size(Rect::new(0, 0, 80, 24)), MinSize::new(20, 9));
+    // In a wider window the same question is shorter, and still taller than
+    // the chat's own three rows: the question is the floor.
+    let wide = s.min_size(Rect::new(0, 0, 80, 24));
+    assert!(
+        wide.width == 20 && wide.height > 3 && wide.height < need.height,
+        "{wide:?}"
+    );
     s.confirm = None;
 
     // A picker needs its key legend whole: wider than the chat's 20 columns.
     s.emoji = Some(EmojiPickerState::new());
     let need = s.min_size(area);
-    assert!(need.width >= 46 && need.height == 9, "{need:?}");
+    assert!(need.width >= 46 && need.height > 3, "{need:?}");
 }
 
 #[test]
@@ -5861,33 +5919,50 @@ mod tasks_stop {
 #[test]
 fn input_height_follows_the_ceiling_within_half_the_window() {
     use super::render::input_height;
+    let bordered = |rows, ceiling, screen_h| input_height(rows, ceiling, screen_h, true);
     // Text rows plus the two border rows.
-    assert_eq!(input_height(0, 6, 40), 3, "an empty box is one row high");
-    assert_eq!(input_height(1, 6, 40), 3);
-    assert_eq!(input_height(6, 6, 40), 8);
-    assert_eq!(
-        input_height(30, 6, 40),
-        8,
-        "past the ceiling the text scrolls"
-    );
-    assert_eq!(input_height(30, 12, 40), 14);
+    assert_eq!(bordered(0, 6, 40), 3, "an empty box is one row high");
+    assert_eq!(bordered(1, 6, 40), 3);
+    assert_eq!(bordered(6, 6, 40), 8);
+    assert_eq!(bordered(30, 6, 40), 8, "past the ceiling the text scrolls");
+    assert_eq!(bordered(30, 12, 40), 14);
     // Half the window, border included: 24 rows leave 10 for text.
-    assert_eq!(input_height(30, 50, 24), 12);
-    assert_eq!(
-        input_height(3, 50, 24),
-        5,
-        "the cap bounds, it does not pad"
-    );
+    assert_eq!(bordered(30, 50, 24), 12);
+    assert_eq!(bordered(3, 50, 24), 5, "the cap bounds, it does not pad");
     // The default is what it always was on any window of 16 rows or more.
     for screen_h in 16..=80 {
-        assert_eq!(input_height(30, 6, screen_h), 8, "{screen_h} rows");
+        assert_eq!(bordered(30, 6, screen_h), 8, "{screen_h} rows");
     }
     // A window too small for even that keeps one text row.
-    assert_eq!(input_height(30, 6, 5), 3);
-    assert_eq!(input_height(30, 6, 0), 3);
+    assert_eq!(bordered(30, 6, 5), 3);
+    assert_eq!(bordered(30, 6, 0), 3);
     // A ceiling of 0 cannot reach here through the config's clamp, but the
     // function does not rely on it.
-    assert_eq!(input_height(30, 0, 40), 3);
+    assert_eq!(bordered(30, 0, 40), 3);
+}
+
+/// A bare input row (spec §11.1.1) has no border rows to add, and a draft of
+/// several rows takes at most a third of the window: in a window that short
+/// every row it takes is a row of the conversation.
+#[test]
+fn a_bare_input_row_takes_at_most_a_third_of_the_window() {
+    use super::render::input_height;
+    let bare = |rows, ceiling, screen_h| input_height(rows, ceiling, screen_h, false);
+    assert_eq!(bare(0, 6, 9), 1, "an empty row is one row");
+    assert_eq!(bare(1, 6, 9), 1);
+    assert_eq!(bare(2, 6, 9), 2);
+    assert_eq!(bare(30, 6, 9), 3, "a third of nine rows");
+    assert_eq!(bare(30, 6, 8), 2);
+    assert_eq!(bare(30, 6, 6), 2);
+    assert_eq!(
+        bare(30, 6, 5),
+        1,
+        "three to five rows: one, whatever the draft"
+    );
+    assert_eq!(bare(30, 6, 3), 1);
+    assert_eq!(bare(30, 2, 9), 2, "the setting still bounds it");
+    assert_eq!(bare(30, 0, 9), 1);
+    assert_eq!(bare(30, 6, 0), 1);
 }
 
 /// The ceiling reaches the rendered box: the text rows the box shows are the
@@ -5998,4 +6073,101 @@ fn the_input_title_names_a_command_in_the_monochrome_mode() {
     type_str(&mut s, "/help");
     assert!(s.input_is_command());
     assert!(!title_row(&mut s).contains(word), "{}", title_row(&mut s));
+}
+
+/// A bare input row (spec §11.1.1) has no border for the key hints, and they
+/// are given up — `F1` lists them, the status bar says *generating* while it
+/// has a row — except the one word colour cannot replace: in the monochrome
+/// mode a command is still named, as the row's tag.
+#[test]
+fn a_bare_input_row_gives_up_its_hints_and_keeps_the_command_word() {
+    let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru);
+    let word = loc.t("ui.chat.input.command");
+    let prompt_row = |s: &mut ChatScreen, h: u16| -> String {
+        screen_rows(s, 57, h)
+            .into_iter()
+            .find(|r| r.starts_with("❯") || r.starts_with("│❯"))
+            .expect("the input's row")
+    };
+    let mut s = ChatScreen::new();
+    s.set_server_status(ready_statuses());
+
+    // Generating: on the border the title names `Esc`; the bare row says
+    // nothing of it, and the bar's chip says *generating*.
+    let turn = gen_id();
+    s.begin_generation(turn, None);
+    s.push_chunk(turn, "a reply");
+    let title = "генерация… Esc отмена";
+    let rows = screen_rows(&mut s, 57, 12);
+    assert!(rows.iter().any(|r| r.contains(title)), "{rows:?}");
+    let rows = screen_rows(&mut s, 57, 7);
+    assert!(!rows.iter().any(|r| r.contains(title)), "{rows:?}");
+    assert!(
+        rows[5].starts_with("❯ ") && rows[6].contains("генерация"),
+        "{rows:?}"
+    );
+    assert_eq!(prompt_row(&mut s, 7).trim_end(), "❯");
+
+    // A command in the monochrome mode: the word is the tag of the bare row,
+    // and in colour it is the colour's to say, so no tag.
+    s.finish_generation(turn, FinishReason::Stop, false);
+    s.palette = Palette::mono();
+    type_str(&mut s, "/help");
+    assert!(s.input_is_command(), "the premise");
+    let row = prompt_row(&mut s, 7);
+    assert!(
+        row.starts_with("❯ /help") && row.trim_end().ends_with(word),
+        "{row:?}"
+    );
+    s.palette = Palette::default();
+    let row = prompt_row(&mut s, 7);
+    assert!(!row.contains(word), "{row:?}");
+}
+
+/// The in-feed search's bare row (spec §11.1.1) carries the counter alone,
+/// as its tag — `n/total` — where the border used to carry the counter and
+/// the keys.
+#[test]
+fn the_bare_search_row_tags_its_counter() {
+    let mut s = ChatScreen::new();
+    s.set_server_status(ready_statuses());
+    s.activate_chat(
+        gen_id(),
+        "Чат".into(),
+        &[
+            Message::user("первое про маркер"),
+            Message::assistant("второе про маркер и снова маркер"),
+        ],
+        "",
+        FeedView::default(),
+        None,
+        None,
+    );
+    s.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL));
+    type_str(&mut s, "маркер");
+    // The matches are counted by a render; the next frame shows the count.
+    let _ = screen_rows(&mut s, 57, 12);
+    let rows = screen_rows(&mut s, 57, 12);
+    assert!(
+        rows.iter().any(|r| r.contains("совпадение 1 из 3")),
+        "{rows:?}"
+    );
+
+    let rows = screen_rows(&mut s, 57, 5);
+    assert!(
+        rows[4].starts_with("❯ маркер ") && rows[4].ends_with(" 1/3"),
+        "{rows:?}"
+    );
+    assert!(!rows.iter().any(|r| r.contains("совпадение")), "{rows:?}");
+
+    // Nothing found: `0/0`.
+    s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    s.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL));
+    for _ in 0..6 {
+        s.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+    }
+    type_str(&mut s, "ничего");
+    let _ = screen_rows(&mut s, 57, 5);
+    let rows = screen_rows(&mut s, 57, 5);
+    assert!(rows[4].trim_end().ends_with("0/0"), "{rows:?}");
 }

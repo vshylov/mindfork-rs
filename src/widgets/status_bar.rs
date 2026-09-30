@@ -167,7 +167,9 @@ const TRANSCRIPT_GLYPH: char = '≡';
 /// Draws the status line in `area`. The hotkeys sit beside the status pill as
 /// a right-aligned corner grid at most [`HINT_ROWS_MAX`] rows deep — a crowded
 /// pill sheds hints rather than growing the bar (see [`lines`]); the caller
-/// reserves height via [`height`]. See spec §11.1, §11.3.
+/// reserves height via [`height`], and `area` is that many rows: the bar is
+/// laid out within them, so a one-row area gets a one-row bar, not the top
+/// row of a two-row one. See spec §11.1, §11.3.
 pub fn render(
     frame: &mut Frame,
     area: Rect,
@@ -175,17 +177,32 @@ pub fn render(
     palette: &Palette,
     loc: &'static Locale,
 ) {
-    let lines = lines(area.width as usize, model, palette, loc);
+    let lines = lines_within(
+        area.width as usize,
+        model,
+        palette,
+        loc,
+        area.height as usize,
+    );
     frame.render_widget(Paragraph::new(lines), area);
 }
 
-/// How many lines the status bar takes at width `width` — the caller reserves
-/// exactly this height (minimum 1). Never more than [`HINT_ROWS_MAX`]: the
-/// corner grid is capped, and the degenerate fallback is one `F1` row.
-pub fn height(width: usize, model: &StatusModel, palette: &Palette, loc: &'static Locale) -> u16 {
-    lines(width, model, palette, loc)
-        .len()
-        .clamp(1, u16::MAX as usize) as u16
+/// How many lines the status bar takes at width `width` within `max_rows` —
+/// the caller reserves exactly this height. One at least while a row is
+/// allowed at all (the pill's), and never more than allowed: the corner grid
+/// is capped at the rows, and the degenerate `F1` row below the pill needs a
+/// second one (spec §11.1.1 — the chat gives the bar two rows, then one, then
+/// none). Both bounds are [`lines_within`]'s own, so there is no clamp here
+/// to keep them a second time.
+pub fn height(
+    width: usize,
+    model: &StatusModel,
+    palette: &Palette,
+    loc: &'static Locale,
+    max_rows: u16,
+) -> u16 {
+    // At most `max_rows` lines, so the narrowing cast cannot truncate.
+    lines_within(width, model, palette, loc, usize::from(max_rows)).len() as u16
 }
 
 /// Builds the status bar's lines. On the left of the **top** row — "state"
@@ -208,13 +225,23 @@ pub fn height(width: usize, model: &StatusModel, palette: &Palette, loc: &'stati
 /// list, which is why `F1` sheds last; in the degenerate case where not even
 /// it fits beside the pill, it alone takes a row below — the sole remnant of
 /// the old layout. See spec §11.1, §11.3.
-fn lines(
+///
+/// `max_rows` is the ceiling the window sets (spec §11.1.1): two in a window
+/// with rows to spare, one where the chat has shed its chrome, none below
+/// that. Within one row the corner block is one row deep and the `F1` row
+/// below the pill does not exist; the pill itself is fitted first, whatever
+/// the rows ([`fit_pill`]).
+fn lines_within(
     width: usize,
     model: &StatusModel,
     palette: &Palette,
     loc: &'static Locale,
+    max_rows: usize,
 ) -> Vec<Line<'static>> {
-    let state = state_spans(model, palette, loc);
+    if max_rows == 0 {
+        return Vec::new();
+    }
+    let state = fit_pill(state_chips(model, palette, loc), width);
     let state_w = spans_width(&state);
 
     let hotkeys = hotkey_list(model, loc);
@@ -225,7 +252,7 @@ fn lines(
     let cell_w = ui::hint_cell_widths(&hotkeys);
 
     let avail = width.saturating_sub(state_w + ui::HINT_GAP);
-    let kept = trim_to_fit(&cell_w, avail, model.mouse_scroll);
+    let kept = trim_to_fit(&cell_w, avail, model.mouse_scroll, max_rows);
     if !kept.is_empty() {
         let sub: Vec<(&str, &str, bool)> = kept.iter().map(|&i| hotkeys[i]).collect();
         let sub_w: Vec<usize> = kept.iter().map(|&i| cell_w[i]).collect();
@@ -233,7 +260,7 @@ fn lines(
         // dropped with it (it never is while anything is kept: scroll mode
         // pins the toggle at the top of `keep_order`).
         let accent = accent_idx.and_then(|a| kept.iter().position(|&i| i == a));
-        let cols = corner_cols(&sub_w, avail).unwrap_or(1);
+        let cols = corner_cols(&sub_w, avail, max_rows).unwrap_or(1);
         return ui::render_hint_grid(
             &ui::HintGrid {
                 items: &sub,
@@ -249,10 +276,11 @@ fn lines(
 
     // Degenerate: the pill leaves no corner that could anchor on `F1`. The
     // help entry stays reachable — alone on a row of its own, right-aligned
-    // (the sole remnant of the old grid-below-the-pill layout).
+    // (the sole remnant of the old grid-below-the-pill layout) — where the
+    // bar has a second row to put it on.
     debug_assert_eq!(hotkeys[HELP_IDX].0, HELP_KEY);
     let mut out = vec![Line::from(state)];
-    if cell_w[HELP_IDX] <= width {
+    if max_rows >= 2 && cell_w[HELP_IDX] <= width {
         out.extend(ui::hotkey_grid(
             palette,
             &hotkeys[HELP_IDX..=HELP_IDX],
@@ -266,8 +294,9 @@ fn lines(
 /// that still reads as a corner legend — the reference look is the 3×2 grid
 /// beside a quiet pill; deeper, and it becomes the one-hint-per-line column
 /// the bar used to stack beside a busy pill. Past this depth the block sheds
-/// hints ([`trim_to_fit`]) rather than growing.
-const HINT_ROWS_MAX: usize = 2;
+/// hints ([`trim_to_fit`]) rather than growing. The chat gives the bar this
+/// many rows while its window has rows to spare (spec §11.1.1).
+pub const HINT_ROWS_MAX: u16 = 2;
 
 /// [`HELP_KEY`]'s index in [`hotkey_list`]'s order (right after the prepended
 /// mouse toggle). `keep_order_matches_the_hotkey_list` pins the mapping.
@@ -308,22 +337,22 @@ fn keep_order(mouse_pinned: bool, with_stop: bool) -> Vec<usize> {
 }
 
 /// The hints the corner block shows at `avail` columns: walk [`keep_order`]
-/// and keep every hint whose addition still fits a ≤[`HINT_ROWS_MAX`]-row grid
-/// (one that does not is passed over, so the narrower ones after it still
-/// get their chance). Returned in display order; empty when nothing fits.
-/// A block that lost `F1` is refused outright — a legend hiding its own door
-/// to the full list while lesser hints stay would be an artifact of cell
+/// and keep every hint whose addition still fits a grid of at most `max_rows`
+/// rows (one that does not is passed over, so the narrower ones after it
+/// still get their chance). Returned in display order; empty when nothing
+/// fits. A block that lost `F1` is refused outright — a legend hiding its own
+/// door to the full list while lesser hints stay would be an artifact of cell
 /// widths, not a priority — and the caller falls back to the `F1`-below row.
 /// Within a turn the pill only grows (the token counter), so hints shed
 /// monotonically — no flicker — and return when the turn's chips leave.
-fn trim_to_fit(cell_w: &[usize], avail: usize, mouse_pinned: bool) -> Vec<usize> {
+fn trim_to_fit(cell_w: &[usize], avail: usize, mouse_pinned: bool, max_rows: usize) -> Vec<usize> {
     let mut kept: Vec<usize> = Vec::new();
     for idx in keep_order(mouse_pinned, cell_w.len() > STOP_IDX) {
         let mut candidate = kept.clone();
         candidate.push(idx);
         candidate.sort_unstable();
         let w: Vec<usize> = candidate.iter().map(|&i| cell_w[i]).collect();
-        if corner_cols(&w, avail).is_some() {
+        if corner_cols(&w, avail, max_rows).is_some() {
             kept = candidate;
         }
     }
@@ -333,29 +362,37 @@ fn trim_to_fit(cell_w: &[usize], avail: usize, mouse_pinned: bool) -> Vec<usize>
     kept
 }
 
-/// The most columns whose grid fits `avail` within [`HINT_ROWS_MAX`] rows (→
-/// the fewest rows); `None` when no allowed column count fits. Unlike
+/// The most columns whose grid fits `avail` within `max_rows` rows (→ the
+/// fewest rows); `None` when no allowed column count fits. Unlike
 /// [`ui::widest_hint_grid`], which every screen's footer uses, it refuses to go
 /// deeper instead of narrower — the chat bar sheds hints at that point
 /// ([`trim_to_fit`]).
-fn corner_cols(cell_w: &[usize], avail: usize) -> Option<usize> {
-    (cell_w.len().div_ceil(HINT_ROWS_MAX)..=cell_w.len())
+fn corner_cols(cell_w: &[usize], avail: usize, max_rows: usize) -> Option<usize> {
+    (cell_w.len().div_ceil(max_rows.max(1))..=cell_w.len())
         .rev()
         .find(|&c| ui::hint_grid_layout(cell_w, c).2 <= avail)
 }
 
-/// The "state" cluster on the left of the top row: server chips + generation +
-/// token counter + the quiet background/speaking/attachment chips.
+/// The "state" cluster on the left of the top row, chip by chip: the server
+/// chips, generation, the token counter and the quiet background, speaking
+/// and attachment chips. Each chip carries the join drawn before it — the
+/// server chips stand two spaces apart, the rest behind a `│` separator — so
+/// that [`fit_pill`] can take a prefix of them and get a pill that ends
+/// where a chip ends.
 ///
 /// The chat server is always shown (with the disconnect reason — it blocks
 /// generation); embeddings and impersonation — separate chips, only when configured
 /// (`NotConfigured`, including impersonation in `shared`, → the chip is hidden).
-fn state_spans(model: &StatusModel, palette: &Palette, loc: &'static Locale) -> Vec<Span<'static>> {
+fn state_chips(
+    model: &StatusModel,
+    palette: &Palette,
+    loc: &'static Locale,
+) -> Vec<Vec<Span<'static>>> {
     let statuses = model.statuses;
     let sep = || Span::styled("  │  ", Style::new().fg(palette.border));
     let muted = palette.muted_style();
 
-    let mut state = chat_chip(&statuses.chat, palette, loc);
+    let mut chips = vec![chat_chip(&statuses.chat, palette, loc)];
     for chip in [
         secondary_chip(loc.t("ui.status.chip.embed"), &statuses.embed, palette),
         secondary_chip(
@@ -367,13 +404,14 @@ fn state_spans(model: &StatusModel, palette: &Palette, loc: &'static Locale) -> 
     .into_iter()
     .flatten()
     {
-        state.push(Span::raw("  ")); // gap between chips
-        state.extend(chip);
+        let mut spaced = vec![Span::raw("  ")]; // gap between chips
+        spaced.extend(chip);
+        chips.push(spaced);
     }
+    let mut behind_sep = |span: Span<'static>| chips.push(vec![sep(), span]);
 
     if model.generating {
-        state.push(sep());
-        state.push(Span::styled(
+        behind_sep(Span::styled(
             format!(
                 "{} {}",
                 palette.glyphs().busy,
@@ -383,14 +421,12 @@ fn state_spans(model: &StatusModel, palette: &Palette, loc: &'static Locale) -> 
         ));
     }
     if let Some(counter) = token_counter_span(model, palette, loc) {
-        state.push(sep());
-        state.push(counter);
+        behind_sep(counter);
     }
     // A quiet indicator of the running background tasks (composed by the caller) — muted,
     // the `✻` glyph (compat — `*`) width 1 column (the grid layout doesn't "shift").
     if let Some(hint) = model.background {
-        state.push(sep());
-        state.push(Span::styled(
+        behind_sep(Span::styled(
             format!("{} {hint}", palette.glyphs().background),
             muted,
         ));
@@ -399,8 +435,7 @@ fn state_spans(model: &StatusModel, palette: &Palette, loc: &'static Locale) -> 
     // is in WGL4 and width 1 column, so it isn't replaced in compat mode
     // (like the feed's `▌` rails and the `█` scrollbar). See spec §11.9.
     if model.speaking {
-        state.push(sep());
-        state.push(Span::styled(
+        behind_sep(Span::styled(
             format!("{SPEAKING_GLYPH} {}", loc.t("ui.status.speaking")),
             muted,
         ));
@@ -408,26 +443,63 @@ fn state_spans(model: &StatusModel, palette: &Palette, loc: &'static Locale) -> 
     // Attached files (`/file attach`): a quiet chip — they are re-sent on every
     // turn, so their standing cost must be visible without opening anything.
     if let Some(files) = model.attachments {
-        state.push(sep());
-        state.push(Span::styled(format!("{ATTACH_GLYPH} {files}"), muted));
+        behind_sep(Span::styled(format!("{ATTACH_GLYPH} {files}"), muted));
     }
     // Images staged for the next message (`/image attach`): the same quiet
     // style, its own chip — this cost is about to be paid once, by the send the
     // user is composing, and it disappears with it.
     if let Some(images) = model.staged_images {
-        state.push(sep());
-        state.push(Span::styled(format!("{IMAGE_GLYPH} {images}"), muted));
+        behind_sep(Span::styled(format!("{IMAGE_GLYPH} {images}"), muted));
     }
     // A sub-agent transcript is read-only: the chip is the standing reminder,
     // the refusals say it again when a key is pressed.
     if model.read_only {
-        state.push(sep());
-        state.push(Span::styled(
+        behind_sep(Span::styled(
             format!("{TRANSCRIPT_GLYPH} {}", loc.t("ui.status.read_only")),
             muted,
         ));
     }
-    state
+    chips
+}
+
+/// The pill at `width` columns: the longest run of its chips, from the first,
+/// that ends inside the row. A chip that would cross the edge is left out with
+/// every chip behind it — the bar used to be clipped at the edge with no mark,
+/// and the chip that fell off was the token counter, cut mid-number
+/// (docs/research/small-terminal.md §2.3). A prefix, not the chips that
+/// happen to fit: within a turn the pill only grows, so chips leave one by
+/// one and none jumps left. The first chip, the chat server's, is the one
+/// exception — cut to the width with the mark a cut carries, so that a row of
+/// any width says what the server is doing.
+fn fit_pill(chips: Vec<Vec<Span<'static>>>, width: usize) -> Vec<Span<'static>> {
+    let mut pill: Vec<Span<'static>> = Vec::new();
+    let mut used = 0usize;
+    for (i, chip) in chips.into_iter().enumerate() {
+        let w = spans_width(&chip);
+        if used + w <= width {
+            used += w;
+            pill.extend(chip);
+        } else {
+            if i == 0 {
+                pill.extend(cut_chip(chip, width));
+            }
+            break;
+        }
+    }
+    pill
+}
+
+/// `chip` cut to `width` columns — its glyph kept, its label truncated with
+/// the mark [`wrap::truncate_to_width`] puts on a cut.
+fn cut_chip(chip: Vec<Span<'static>>, width: usize) -> Vec<Span<'static>> {
+    let mut left = width;
+    chip.into_iter()
+        .filter_map(|span| {
+            let (text, w) = wrap::truncate_to_width(&span.content, left);
+            left -= w;
+            (!text.is_empty()).then(|| Span::styled(text, span.style))
+        })
+        .collect()
 }
 
 /// The combined token counter (conversation + reply): bright during generation (grows
@@ -567,6 +639,17 @@ fn spans_width(spans: &[Span<'_>]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The bar as the chat lays it out with rows to spare: within
+    /// [`HINT_ROWS_MAX`] rows.
+    fn lines(
+        width: usize,
+        model: &StatusModel,
+        palette: &Palette,
+        loc: &'static Locale,
+    ) -> Vec<Line<'static>> {
+        lines_within(width, model, palette, loc, usize::from(HINT_ROWS_MAX))
+    }
 
     fn ru() -> &'static Locale {
         crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru)
@@ -857,7 +940,7 @@ mod tests {
         // F1 help list) instead of stacking extra rows.
         let statuses = ready();
         let m = model(&statuses, false, 0, None, false, false);
-        assert_eq!(height(40, &m, &Palette::default(), ru()), 2);
+        assert_eq!(height(40, &m, &Palette::default(), ru(), HINT_ROWS_MAX), 2);
         let text = rows_of(40, &m).join("\n");
         for kept in ["F1", "справка", "чаты", "новый", "выход"] {
             assert!(text.contains(kept), "{kept} kept: {text}");
@@ -900,7 +983,7 @@ mod tests {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
         let p = Palette::default();
-        let h = height(w as usize, m, &p, ru());
+        let h = height(w as usize, m, &p, ru(), HINT_ROWS_MAX);
         let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
         term.draw(|f| render(f, f.area(), m, &p, ru())).unwrap();
         let buf = term.backend().buffer().clone();
@@ -972,26 +1055,26 @@ mod tests {
         // the rule is about widths, and shouldn't be re-measured against wording.
         let cells = [24, 12, 10, 14, 18, 14];
         // Room for one row — everything stays, as one row of six.
-        assert_eq!(trim_to_fit(&cells, 107, false), vec![0, 1, 2, 3, 4, 5]);
-        assert_eq!(corner_cols(&cells, 107), Some(6));
+        assert_eq!(trim_to_fit(&cells, 107, false, 2), vec![0, 1, 2, 3, 4, 5]);
+        assert_eq!(corner_cols(&cells, 107, 2), Some(6));
         // The quiet pill's remainder at 120 columns — everything stays, as the
         // reference 3×2 grid.
-        assert_eq!(trim_to_fit(&cells, 71, false), vec![0, 1, 2, 3, 4, 5]);
-        assert_eq!(corner_cols(&cells, 71), Some(3));
+        assert_eq!(trim_to_fit(&cells, 71, false, 2), vec![0, 1, 2, 3, 4, 5]);
+        assert_eq!(corner_cols(&cells, 71, 2), Some(3));
         // The generating pill's remainder — settings and new-chat shed.
-        assert_eq!(trim_to_fit(&cells, 54, false), vec![0, 1, 2, 5]);
+        assert_eq!(trim_to_fit(&cells, 54, false, 2), vec![0, 1, 2, 5]);
         // Tighter still — the wide mouse toggle sheds too, and new-chat comes
         // back in its place: a too-wide cell is passed over, not a lock-out.
-        assert_eq!(trim_to_fit(&cells, 32, false), vec![1, 2, 3, 5]);
+        assert_eq!(trim_to_fit(&cells, 32, false, 2), vec![1, 2, 3, 5]);
         // Barely a corner: F1 anchors a one-column block, then nothing — a
         // block that cannot hold F1 is refused even when Esc alone would fit.
-        assert_eq!(trim_to_fit(&cells, 12, false), vec![1, 2]);
-        assert!(trim_to_fit(&cells, 11, false).is_empty());
+        assert_eq!(trim_to_fit(&cells, 12, false, 2), vec![1, 2]);
+        assert!(trim_to_fit(&cells, 11, false, 2).is_empty());
         // Scroll mode pins the mouse toggle ahead of everything: it stays at a
         // width where it shed above (a one-column block with F1)…
-        assert_eq!(trim_to_fit(&cells, 25, true), vec![0, 1]);
+        assert_eq!(trim_to_fit(&cells, 25, true, 2), vec![0, 1]);
         // …and where even it cannot fit, it is passed over like any other.
-        assert_eq!(trim_to_fit(&cells, 23, true), vec![1, 2]);
+        assert_eq!(trim_to_fit(&cells, 23, true, 2), vec![1, 2]);
     }
 
     /// `keep_order` addresses hints by index into `hotkey_list`'s order — this
@@ -1233,7 +1316,7 @@ mod tests {
                 for m in [&quiet, &scroll, &busy] {
                     let ls = lines(w, m, &p, loc);
                     assert!(
-                        ls.len() <= HINT_ROWS_MAX,
+                        ls.len() <= usize::from(HINT_ROWS_MAX),
                         "{lang:?} w={w}: {} rows",
                         ls.len()
                     );
@@ -1385,5 +1468,137 @@ mod tests {
             ru().t("ui.chat.input.generating").contains(cancel),
             "the bar and the input box must not use two words for one key"
         );
+    }
+
+    /// The pill fitted to the row (spec §11.1): a row too narrow for every
+    /// chip ends where a chip ends — the chips past the edge are left out
+    /// from the tail, whole — and the first chip, the chat server's, is cut
+    /// with a mark rather than left out, so a row of any width says what the
+    /// server is doing. The bar used to be clipped at the edge with no mark,
+    /// and the counter was cut mid-number (docs/research/small-terminal.md
+    /// §2.3).
+    #[test]
+    fn a_pill_wider_than_the_row_sheds_whole_chips_from_its_tail() {
+        let statuses = ready();
+        let m = StatusModel {
+            speaking: true,
+            ..busy(&statuses)
+        };
+        let p = Palette::default();
+        let text = |width: usize| -> String {
+            let lines = lines_within(width, &m, &p, ru(), 1);
+            assert_eq!(lines.len(), 1);
+            let row: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
+            assert!(str_w(&row) <= width, "{width}: {row:?} runs past the edge");
+            row
+        };
+        let whole = text(200);
+        let chips = ["● чат", "генерация", "токены", "озвучка", "файлы"];
+        assert!(
+            chips.iter().all(|c| whole.contains(c)),
+            "the premise: {whole}"
+        );
+        // Wide enough for the pill and the hints; then for the pill alone.
+        assert!(whole.contains("F1"));
+        let pill_w = spans_width(&fit_pill(state_chips(&m, &p, ru()), 200));
+        let alone = text(pill_w);
+        assert!(
+            chips.iter().all(|c| alone.contains(c)) && !alone.contains("F1"),
+            "{alone}"
+        );
+        // One column short: the last chip goes, whole — and the room it
+        // leaves is a corner again, which `F1` takes.
+        let short = text(pill_w - 1);
+        assert!(
+            !short.contains("файлы") && short.contains("озвучка"),
+            "{short}"
+        );
+        assert!(short.contains("F1"), "{short}");
+        // Narrower still: chips leave from the tail one by one, never from
+        // the middle, and the counter is whole or gone.
+        let mut left = pill_w - 1;
+        let mut seen = 5usize;
+        while left > 0 {
+            let row = text(left);
+            let present = chips.iter().filter(|c| row.contains(*c)).count();
+            assert!(present <= seen, "{left}: a chip came back: {row}");
+            assert_eq!(
+                chips
+                    .iter()
+                    .take(present)
+                    .filter(|c| row.contains(*c))
+                    .count(),
+                present,
+                "{left}: a chip left from the middle: {row}"
+            );
+            if row.contains("токены") {
+                assert!(row.contains("37708"), "{left}: the counter whole: {row}");
+            }
+            seen = present;
+            left -= 1;
+        }
+        // The chat chip alone, cut to the width with the mark.
+        let cut = text(4);
+        assert!(cut.starts_with("● ч") && cut.ends_with('…'), "{cut:?}");
+        assert_eq!(str_w(&cut), 4);
+        assert_eq!(text(0), "");
+    }
+
+    /// The rows the bar is given are a ceiling (spec §11.1.1): within one
+    /// row the corner block is one row deep and sheds to it, the `F1` row
+    /// below the pill does not exist, and `height` never exceeds the ceiling
+    /// — zero rows are zero rows.
+    #[test]
+    fn the_bar_lays_itself_out_within_the_rows_it_is_given() {
+        let statuses = ready();
+        let quiet = model(&statuses, false, 0, None, false, false);
+        let p = Palette::default();
+        let flat = |lines: Vec<Line<'static>>| -> Vec<String> {
+            lines
+                .iter()
+                .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+                .collect()
+        };
+        // At 40 columns the quiet pill's hints need two rows.
+        assert_eq!(height(40, &quiet, &p, ru(), HINT_ROWS_MAX), 2);
+        assert_eq!(height(40, &quiet, &p, ru(), 1), 1);
+        assert_eq!(height(40, &quiet, &p, ru(), 0), 0);
+        let one = flat(lines_within(40, &quiet, &p, ru(), 1));
+        assert_eq!(one.len(), 1);
+        assert!(
+            one[0].contains("F1") && one[0].starts_with("● чат"),
+            "{one:?}"
+        );
+        let two = flat(lines_within(40, &quiet, &p, ru(), 2));
+        assert_eq!(two.len(), 2);
+        assert!(
+            two.iter().flat_map(|r| r.matches("  ")).count() >= one[0].matches("  ").count(),
+            "one row holds no more than two did"
+        );
+
+        // A busy pill leaves no corner for `F1`: within two rows it takes a
+        // row below the pill, within one it is not shown.
+        let m = busy(&statuses);
+        let tight = spans_width(&fit_pill(state_chips(&m, &p, ru()), 200)) + 2;
+        let below = flat(lines_within(tight, &m, &p, ru(), 2));
+        assert_eq!(below.len(), 2, "{below:?}");
+        assert!(below[1].contains("F1"), "{below:?}");
+        let capped = flat(lines_within(tight, &m, &p, ru(), 1));
+        assert_eq!(capped.len(), 1);
+        assert!(
+            !capped[0].contains("F1") && capped[0].contains("файлы"),
+            "{capped:?}"
+        );
+        assert!(lines_within(tight, &m, &p, ru(), 0).is_empty());
+
+        // `render` lays the bar out within its area: a one-row area gets the
+        // one-row bar, not the top row of a two-row one.
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let mut term = Terminal::new(TestBackend::new(40, 1)).unwrap();
+        term.draw(|f| render(f, f.area(), &quiet, &p, ru()))
+            .unwrap();
+        let row = crate::shared::ui::tests::buffer_rows(term.backend().buffer()).remove(0);
+        assert_eq!(row, one[0]);
     }
 }

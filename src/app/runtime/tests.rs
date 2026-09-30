@@ -2540,10 +2540,10 @@ fn the_too_small_notice_goes_through_the_colour_mode_passes() {
         buf.content.iter().map(|c| c.symbol()).collect()
     };
     // A window too small for the chat: the notice, not the screen.
-    let size = (57, 5);
+    let size = (57, 2);
 
     let full = composed_at(mode(ThemeMode::Full), false, false, size);
-    assert!(text(&full).contains("57×5"), "{}", text(&full));
+    assert!(text(&full).contains("57×2"), "{}", text(&full));
     assert!(
         full.content
             .iter()
@@ -2552,7 +2552,7 @@ fn the_too_small_notice_goes_through_the_colour_mode_passes() {
     );
 
     let mono = composed_at(mode(ThemeMode::Mono), false, false, size);
-    assert!(text(&mono).contains("57×5"));
+    assert!(text(&mono).contains("57×2"));
     assert!(
         mono.content.iter().all(|c| c.fg == Color::Reset
             && c.bg == Color::Reset

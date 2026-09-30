@@ -948,25 +948,25 @@ QUIT_HINT = "Ctrl+Q"
 
 
 def too_small_for_the_chat(exe: Path, report: Report) -> None:
-    """57x5, the window of the report: too small for the chat itself."""
-    session = Session(exe, ["demo"], size=(57, 5))
+    """57x2: below the chat's three rows, the notice and one key."""
+    session = Session(exe, ["demo"], size=(57, 2))
     try:
         rows = read_screen()
         shown = text_of(rows)
-        report.screen("57x5, as launched", rows)
-        report.says("57x5", rows, (TOO_SMALL, "57×5", "20×9", QUIT_HINT))
+        report.screen("57x2, as launched", rows)
+        report.says("57x2", rows, (TOO_SMALL, "57×2", "20×3"))
         report.check(
             not any(glyph in shown for glyph in "╭│❯●"),
-            "57x5: nothing of the chat is on the screen",
+            "57x2: nothing of the chat is on the screen",
         )
-        report.check("Esc" not in shown, "57x5: only the quit key is named")
+        report.check("Esc" not in shown, "57x2: the way back is not named")
         press("enter")
         type_text("h")
         press("esc")
-        report.check(text_of(read_screen()) == shown, "57x5: Enter, a letter and Esc change nothing")
+        report.check(text_of(read_screen()) == shown, "57x2: Enter, a letter and Esc change nothing")
     finally:
         code = session.close(esc_first=False)
-    report.check(code == 0, f"57x5: Ctrl+Q alone ended the session (exit code {code})")
+    report.check(code == 0, f"57x2: Ctrl+Q alone ended the session (exit code {code})")
 
 
 def row_starting(lines: list[str], prefix: str, after: int = -1) -> int | None:
@@ -974,27 +974,66 @@ def row_starting(lines: list[str], prefix: str, after: int = -1) -> int | None:
     return next((y for y, line in enumerate(lines) if y > after and line.startswith(prefix)), None)
 
 
-def the_chat_whole(exe: Path, report: Report) -> None:
-    """57x9, the control: four rows more, and every part is on its own rows."""
-    session = Session(exe, ["demo"], size=(57, 9))
+def the_reported_window(exe: Path, report: Report) -> None:
+    """57x5, the window of the report: four rows of the conversation over the
+    `❯` row, where the prompt used to stand on the status bar."""
+    session = Session(exe, ["demo"], size=(57, 5))
     try:
         rows = read_screen()
-        lines = text_of(rows).split("\n")
-        report.screen("57x9, as launched", rows)
-        report.check(TOO_SMALL not in text_of(rows), "57x9: the chat, not the notice")
-        prompt = row_starting(lines, "│❯")
-        report.check(prompt is not None, "57x9: the input box has its row of text")
-        closed = row_starting(lines, "╰", after=prompt if prompt is not None else len(lines))
-        under = lines[closed + 1 : closed + 2] if closed is not None else []
+        shown = text_of(rows)
+        lines = shown.split("\n")
+        report.screen("57x5, as launched", rows)
+        report.check(TOO_SMALL not in shown, "57x5: the chat, not the notice")
+        report.check(lines[4].startswith("❯"), "57x5: the prompt is on the last row")
         report.check(
-            bool(under) and under[0].startswith("●"),
-            "57x9: the status bar is under the input box, not over it",
+            not any(line.startswith(("╭", "│", "●")) for line in lines[:4]),
+            "57x5: four bare rows of the conversation above it",
         )
+        report.check(lines[3].strip() != "", "57x5: the row over the prompt is text, not padding")
         type_text("hey")
-        report.check("hey" in text_of(read_screen()), "57x9: a typed word reaches the input box")
+        typed = text_of(read_screen()).split("\n")[4]
+        report.check(
+            typed.startswith("❯") and "hey" in typed,
+            "57x5: a typed word lands on the prompt's row",
+        )
     finally:
         code = session.close()
-    report.check(code == 0, f"57x9: the app exited with code {code}")
+    report.check(code == 0, f"57x5: the app exited with code {code}")
+
+
+def the_ladder(exe: Path, report: Report) -> None:
+    """From ten rows down, one piece of chrome a step (spec §11.1.1): the
+    status bar's second row, the input's border, the feed's border, the
+    status row — each window started at its size."""
+    for height, feed_border, prompt, status in (
+        (10, True, "│❯", True),
+        (9, True, "❯", True),
+        (8, True, "❯", True),
+        (7, False, "❯", True),
+        (6, False, "❯", True),
+    ):
+        at = f"57x{height}"
+        session = Session(exe, ["demo"], size=(57, height))
+        try:
+            rows = read_screen()
+            lines = text_of(rows).split("\n")
+            report.screen(f"{at}, as launched", rows)
+            report.check(TOO_SMALL not in text_of(rows), f"{at}: the chat, not the notice")
+            report.check(
+                lines[0].startswith("╭") == feed_border,
+                f"{at}: the feed {'has' if feed_border else 'has no'} border",
+            )
+            input_row = row_starting(lines, prompt)
+            report.check(input_row is not None, f"{at}: the input's row starts with {prompt!r}")
+            bar = row_starting(lines, "●")
+            report.check(
+                (bar is not None) == status and (bar is None or bar == height - 1),
+                f"{at}: the status bar {'is the last row' if status else 'is gone'}",
+            )
+            report.check(lines[-1].strip() != "", f"{at}: the frame is used to its last row")
+        finally:
+            code = session.close()
+        report.check(code == 0, f"{at}: the app exited with code {code}")
 
 
 def a_layer_that_does_not_fit(exe: Path, report: Report) -> None:
@@ -1006,7 +1045,7 @@ def a_layer_that_does_not_fit(exe: Path, report: Report) -> None:
         report.check(TOO_SMALL not in chat and "│❯" in chat, "45x12: the chat fits")
         for title, key, need in (
             ("the settings", SETTINGS_KEY, "46×12"),
-            ("the emoji picker", EMOJI_KEY, "46×9"),
+            ("the emoji picker", EMOJI_KEY, "46×6"),
         ):
             press(key, SETTLE_REPAINT)
             rows = read_screen()
@@ -1028,7 +1067,8 @@ def a_layer_that_does_not_fit(exe: Path, report: Report) -> None:
 
 def scenario_small_window(exe: Path, report: Report) -> None:
     too_small_for_the_chat(exe, report)
-    the_chat_whole(exe, report)
+    the_reported_window(exe, report)
+    the_ladder(exe, report)
     a_layer_that_does_not_fit(exe, report)
 
 

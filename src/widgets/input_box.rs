@@ -185,10 +185,17 @@ impl KeyOutcome {
 /// settings/rename/search fields (they were only saved by always being
 /// `focused`, so the placeholder never rendered). See audit item 12, spec §11.5.
 pub struct RenderOpts<'a> {
+    /// On the border — or, `bare`, the tag at the right end of the first
+    /// row: what the box has to say about itself in the columns the row
+    /// spares (the in-feed search's counter). Empty — no tag.
     pub title: &'a str,
     pub focused: bool,
     pub command: bool,
     pub placeholder: &'a str,
+    /// No border and no title row: the box is its rows of text behind the
+    /// prompt, the way the chat draws it in a window with no rows to spare
+    /// for a frame (spec §11.1.1).
+    pub bare: bool,
 }
 
 impl<'a> RenderOpts<'a> {
@@ -202,6 +209,43 @@ impl<'a> RenderOpts<'a> {
             focused: true,
             command: false,
             placeholder: "",
+            bare: false,
+        }
+    }
+
+    /// The columns of an `area_width`-wide box that hold text: past the
+    /// border and the `❯` prompt column — or, bare, past the prompt and the
+    /// tag ([`Self::tag_width`]). One source for [`InputBox::content_rows`]
+    /// and [`InputBox::render`]: the layer above measures the field's height
+    /// with the first, the widget wraps with the second, and a text width
+    /// that differed between them by a column would make the field grow one
+    /// or two characters late (spec §11.5).
+    pub fn text_width(&self, area_width: u16) -> u16 {
+        let chrome = if self.bare {
+            self.tag_columns(area_width)
+        } else {
+            2
+        };
+        area_width
+            .saturating_sub(chrome)
+            .saturating_sub(PROMPT_W)
+            .max(1)
+    }
+
+    /// The columns a bare box's tag takes at the right end of its rows in a
+    /// box `area_width` wide: the title and the space before it. None for an
+    /// empty title, and none for a tag the row cannot hold beside a prompt —
+    /// the text is what the row is for, so such a tag is not drawn.
+    fn tag_columns(&self, area_width: u16) -> u16 {
+        if self.title.is_empty() {
+            return 0;
+        }
+        // A tag is a few words; the cast cannot truncate.
+        let tag_w = wrap::str_width(self.title) as u16 + 1;
+        if tag_w + PROMPT_W < area_width {
+            tag_w
+        } else {
+            0
         }
     }
 }
@@ -328,20 +372,20 @@ impl InputBox {
     }
 
     /// Number of visual content rows when rendering into an area of **outer**
-    /// width `area_width` (including the border). Subtracts the border (2) and
-    /// the prompt column ([`PROMPT_W`]) — the exact same text width
-    /// [`Self::render`] uses. The layer above computes the field's height via
-    /// this method so it matches the real wrapping: otherwise computing height
-    /// from "width minus border" would overstate the available width by
-    /// [`PROMPT_W`], and the field wouldn't grow by one-two characters past the
-    /// wrap boundary (the cursor would pin to the edge, see spec §11.5). In
+    /// width `area_width` (including the border) with `opts` — the exact
+    /// same text width [`Self::render`] uses ([`RenderOpts::text_width`]).
+    /// The layer above computes the field's height via this method so it
+    /// matches the real wrapping: otherwise computing height from "width
+    /// minus border" would overstate the available width by [`PROMPT_W`],
+    /// and the field wouldn't grow by one-two characters past the wrap
+    /// boundary (the cursor would pin to the edge, see spec §11.5). In
     /// single-line mode wrapping is off — always one row.
-    pub fn content_rows(&mut self, area_width: u16) -> usize {
+    pub fn content_rows(&mut self, area_width: u16, opts: &RenderOpts) -> usize {
         if self.single_line {
             return 1;
         }
-        let text_w = area_width.saturating_sub(2).saturating_sub(PROMPT_W).max(1) as usize;
-        self.rows_cached(text_w).len()
+        self.rows_cached(usize::from(opts.text_width(area_width)))
+            .len()
     }
 
     /// Clears the field **programmatically** (sending a message, a reset).
@@ -1299,26 +1343,35 @@ impl InputBox {
         }
     }
 
-    /// Draws the field in `area` with a border and title. Parameters — in
-    /// [`RenderOpts`] (title, focus, command highlighting, placeholder); the
-    /// palette — separately (as with `StatusModel`). Places the cursor when
-    /// `focused`. When `command`, the whole text is highlighted `warning`
-    /// colored (it's a command like `/rag …`), and spelling underlines aren't
-    /// drawn. See spec §11.5.
+    /// Draws the field in `area` with a border and title — or, `bare`, as
+    /// rows of text with the title as a tag on the first row. Parameters —
+    /// in [`RenderOpts`] (title, focus, command highlighting, placeholder,
+    /// the frame); the palette — separately (as with `StatusModel`). Places
+    /// the cursor when `focused`. When `command`, the whole text is
+    /// highlighted `warning` colored (it's a command like `/rag …`), and
+    /// spelling underlines aren't drawn. See spec §11.5.
     pub fn render(&mut self, frame: &mut Frame, area: Rect, opts: RenderOpts, palette: &Palette) {
+        let full_inner = if opts.bare {
+            self.render_tag(frame, area, &opts, palette)
+        } else {
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .border_type(palette.glyphs().border)
+                .border_style(palette.border_style(opts.focused))
+                .title(Span::styled(
+                    format!(" {} ", opts.title),
+                    palette.muted_style(),
+                ));
+            frame.render_widget(&block, area);
+            block.inner(area)
+        };
         let RenderOpts {
-            title,
             focused,
             command,
             placeholder,
+            bare,
+            ..
         } = opts;
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_type(palette.glyphs().border)
-            .border_style(palette.border_style(focused))
-            .title(Span::styled(format!(" {title} "), palette.muted_style()));
-        let full_inner = block.inner(area);
-        frame.render_widget(&block, area);
         // A box too small to have a text cell draws its border and nothing
         // else. `Block::inner` of such a box is an empty rectangle standing
         // **outside** it — on the row below, or past its right edge — and
@@ -1408,16 +1461,19 @@ impl InputBox {
 
         // A scrollbar on the right border — when there are more visual rows than
         // fit (the field grew to its height ceiling and scrolls). Track color —
-        // same as the field's border (which depends on focus).
-        render_scrollbar(
-            frame,
-            area.inner(Margin::new(0, 1)),
-            vrows.len(),
-            visible_rows,
-            self.scroll,
-            focused,
-            palette,
-        );
+        // same as the field's border (which depends on focus). A bare box has
+        // no border column to draw it on; its rows still scroll to the cursor.
+        if !bare {
+            render_scrollbar(
+                frame,
+                area.inner(Margin::new(0, 1)),
+                vrows.len(),
+                visible_rows,
+                self.scroll,
+                focused,
+                palette,
+            );
+        }
 
         if focused {
             let cursor_y = inner.y + (cursor_row.saturating_sub(self.scroll)) as u16;
@@ -1426,6 +1482,38 @@ impl InputBox {
             let x = cursor_x.min(inner.x + inner.width.saturating_sub(1));
             let y = cursor_y.min(inner.y + inner.height.saturating_sub(1));
             frame.set_cursor_position((x, y));
+        }
+    }
+
+    /// The bare box's chrome: no border, and the title — when there is one —
+    /// as a muted tag at the right end of the first row, with its columns
+    /// taken off **every** row so the text wraps the same on each
+    /// ([`RenderOpts::text_width`]). Returns the rectangle left to the prompt
+    /// and the text.
+    fn render_tag(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        opts: &RenderOpts,
+        palette: &Palette,
+    ) -> Rect {
+        let tag_w = opts.tag_columns(area.width);
+        if tag_w == 0 || area.height == 0 {
+            return area;
+        }
+        let tag = Rect {
+            x: area.right() - (tag_w - 1),
+            width: tag_w - 1,
+            height: 1,
+            ..area
+        };
+        frame.render_widget(
+            Paragraph::new(Span::styled(opts.title.to_string(), palette.muted_style())),
+            tag,
+        );
+        Rect {
+            width: area.width - tag_w,
+            ..area
         }
     }
 
@@ -2187,13 +2275,15 @@ mod tests {
 
     #[test]
     fn content_rows_matches_render_text_width() {
-        // `content_rows(area_width)` must count wrapping against the SAME text
-        // width as `render` (minus the border 2 and the prompt column
-        // PROMPT_W), otherwise field height diverges from actual wrapping (the
-        // field doesn't grow by 1-2 characters past the boundary). Outer width
-        // 14 → text width = 14 − 2 − PROMPT_W = 10.
+        // `content_rows(area_width, opts)` must count wrapping against the
+        // SAME text width as `render` (minus the border 2 and the prompt
+        // column PROMPT_W), otherwise field height diverges from actual
+        // wrapping (the field doesn't grow by 1-2 characters past the
+        // boundary). Outer width 14 → text width = 14 − 2 − PROMPT_W = 10.
         let area_width: u16 = 14;
+        let opts = RenderOpts::focused("ввод");
         let text_w = (area_width - 2 - PROMPT_W) as usize; // 10
+        assert_eq!(usize::from(opts.text_width(area_width)), text_w);
         let mut ib = InputBox::new();
         // A word exactly one character longer than the text width → render wraps to 2 rows.
         let word = "a".repeat(text_w + 1);
@@ -2201,10 +2291,94 @@ mod tests {
         // Render into an outer area of this width — last_width becomes the real width.
         render_at(&mut ib, area_width - 2 - PROMPT_W);
         let rendered_rows = ib.visual_rows(ib.last_width).len();
-        assert_eq!(ib.content_rows(area_width), rendered_rows);
+        assert_eq!(ib.content_rows(area_width, &opts), rendered_rows);
         assert!(
-            ib.content_rows(area_width) > 1,
+            ib.content_rows(area_width, &opts) > 1,
             "the field should grow to two rows on the character past the wrap boundary"
+        );
+    }
+
+    /// A bare box (spec §11.1.1) is its rows of text behind the prompt: no
+    /// border, the tag at the right end of the first row with its columns
+    /// off every row, the cursor on the text — and the rows it says it
+    /// wraps into are the rows it draws.
+    #[test]
+    fn a_bare_box_is_the_prompt_and_the_text_with_the_tag_on_its_first_row() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let mut ib = InputBox::new();
+        type_str(&mut ib, "one two three four five six");
+        let opts = RenderOpts {
+            title: "3/7",
+            focused: true,
+            command: false,
+            placeholder: "",
+            bare: true,
+        };
+        // 20 columns: the prompt's two, the tag's three and its space — 14
+        // for text, so the draft wraps into two rows.
+        assert_eq!(opts.text_width(20), 14);
+        assert_eq!(ib.content_rows(20, &opts), 2);
+        let mut term = Terminal::new(TestBackend::new(20, 2)).unwrap();
+        term.draw(|f| {
+            ib.render(
+                f,
+                f.area(),
+                RenderOpts {
+                    title: "3/7",
+                    ..opts
+                },
+                &Palette::default(),
+            )
+        })
+        .unwrap();
+        let rows = crate::shared::ui::tests::buffer_rows(term.backend().buffer());
+        assert_eq!(rows[0], "❯ one two three  3/7");
+        assert_eq!(rows[1], "  four five six     ");
+        let cursor = term.backend().cursor_position();
+        assert_eq!((cursor.x, cursor.y), (15, 1), "the cursor after the text");
+        assert_eq!(
+            ib.last_area_for_test(),
+            Some(Rect::new(2, 0, 14, 2)),
+            "clicks map to the text, not the tag"
+        );
+
+        // No tag: every column past the prompt is text.
+        let plain = RenderOpts { title: "", ..opts };
+        assert_eq!(plain.text_width(20), 18);
+        // A tag the row cannot hold beside the prompt is not drawn and takes
+        // nothing — the row is for the text.
+        let wide = RenderOpts {
+            title: "a tag wider than the row",
+            ..opts
+        };
+        assert_eq!(wide.text_width(20), 18);
+        let mut term = Terminal::new(TestBackend::new(20, 1)).unwrap();
+        term.draw(|f| ib.render(f, f.area(), wide, &Palette::default()))
+            .unwrap();
+        let rows = crate::shared::ui::tests::buffer_rows(term.backend().buffer());
+        assert!(
+            rows[0].starts_with("❯ ") && !rows[0].contains("tag"),
+            "{:?}",
+            rows[0]
+        );
+
+        // A draft taller than the box scrolls to the cursor, and no scrollbar
+        // is drawn — a bare box has no border column for one, and the last
+        // column is text like every other.
+        type_str(
+            &mut ib,
+            " seven eight nine ten eleven twelve thirteen fourteen fifteen",
+        );
+        assert!(ib.content_rows(20, &plain) > 3, "the premise");
+        let mut term = Terminal::new(TestBackend::new(20, 3)).unwrap();
+        term.draw(|f| ib.render(f, f.area(), plain, &Palette::default()))
+            .unwrap();
+        let rows = crate::shared::ui::tests::buffer_rows(term.backend().buffer());
+        assert!(rows.iter().all(|r| !r.contains(['█', '│'])), "{rows:?}");
+        assert!(
+            rows[2].contains("fifteen"),
+            "scrolled to the cursor: {rows:?}"
         );
     }
 
@@ -2276,7 +2450,7 @@ mod tests {
         let mut ib = InputBox::new();
         ib.set_single_line(true);
         ib.set_text("очень длинное значение не помещающееся в узкое поле");
-        assert_eq!(ib.content_rows(12), 1);
+        assert_eq!(ib.content_rows(12, &RenderOpts::focused("поле")), 1);
     }
 
     #[test]
@@ -3343,6 +3517,7 @@ mod tests {
                     focused: true,
                     command: false,
                     placeholder: "",
+                    bare: false,
                 },
                 &pal,
             )
@@ -3402,6 +3577,7 @@ mod tests {
                         focused: false,
                         command: false,
                         placeholder: "type a message…",
+                        bare: false,
                     },
                     palette,
                 )
@@ -3614,6 +3790,7 @@ mod tests {
                         focused: false,
                         command: false,
                         placeholder: ph,
+                        bare: false,
                     },
                     &Palette::default(),
                 )

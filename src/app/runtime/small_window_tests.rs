@@ -375,26 +375,68 @@ fn tasks(lang: Lang) -> Rig {
 
 // ---------- what a drawn frame has to show ----------
 
-/// The chat's own parts, top to bottom, none standing on another: the feed's
-/// border with a row of the conversation inside, the input box with a row of
-/// text, and the status bar under it.
+/// The chat's own parts, top to bottom, none standing on another — what the
+/// ladder of spec §11.1.1 keeps at the window's height, stated here as the
+/// table it is rather than read off the code: the feed's border with a row
+/// of the conversation inside it from eight rows up, and a bare row of the
+/// conversation below; the input box with its border from ten rows up, and
+/// a bare `❯` row below; the status bar under it from six rows up, two rows
+/// deep at most from eleven, one row otherwise, and no row at all below six.
+/// The cursor is on the input's rows.
 fn chat_is_whole(shot: &Shot, _loc: &'static Locale) -> Result<(), String> {
+    let height = shot.rows.len();
     let starts = |row: usize, with: &str| shot.rows.get(row).is_some_and(|r| r.starts_with(with));
-    if !starts(0, "╭") || !starts(1, "│") {
-        return Err("the feed has no row inside its border".into());
+    let framed = |part: &str, on: bool| {
+        if on {
+            format!("{part} has no row inside its border")
+        } else {
+            format!("{part} is bare")
+        }
+    };
+    let feed_border = height >= 8;
+    if feed_border != (starts(0, "╭") && starts(1, "│")) {
+        return Err(framed("the feed", feed_border));
     }
-    let Some(input) = shot.rows.iter().position(|r| r.starts_with("│❯")) else {
-        return Err("the input box has no text row".into());
+    let (input_border, prompt) = if height >= 10 {
+        (true, "│❯")
+    } else {
+        (false, "❯")
     };
-    let Some(closed) = shot.rows[input..].iter().position(|r| r.starts_with('╰')) else {
-        return Err("the input box has no bottom border".into());
+    let Some(input) = shot.rows.iter().position(|r| r.starts_with(prompt)) else {
+        return Err(framed("the input box", input_border));
     };
-    if !starts(input + closed + 1, "●") {
-        return Err("the status bar is not under the input box".into());
+    // The input's rows of text end at its `╰` row, and the rows past the box
+    // start after it; a bare box's rows of text run to the status bar or the
+    // frame's end.
+    let (past_text, past_box) = if input_border {
+        let Some(closed) = shot.rows[input..].iter().position(|r| r.starts_with('╰')) else {
+            return Err("the input box has no bottom border".into());
+        };
+        (input + closed, input + closed + 1)
+    } else {
+        let bar = shot.rows[input..].iter().position(|r| r.starts_with('●'));
+        let past = bar.map_or(height, |at| input + at);
+        (past, past)
+    };
+    let status = shot.rows[past_box..]
+        .iter()
+        .filter(|r| !r.trim().is_empty())
+        .count();
+    let allowed = match height {
+        ..=5 => 0..=0,
+        6..=10 => 1..=1,
+        _ => 1..=2,
+    };
+    if !allowed.contains(&status) || (status > 0 && !starts(past_box, "●")) {
+        return Err(format!(
+            "{status} rows of status bar under the input, {allowed:?} allowed"
+        ));
     }
     match shot.cursor {
-        Some((_, y)) if usize::from(y) >= input && usize::from(y) < input + closed => Ok(()),
-        other => Err(format!("the cursor is not in the input box: {other:?}")),
+        Some((_, y)) if usize::from(y) >= input && usize::from(y) < past_text => Ok(()),
+        other => Err(format!(
+            "the cursor is not on the input's rows {input}..{past_text}: {other:?}"
+        )),
     }
 }
 
@@ -452,6 +494,34 @@ fn answer_keys(shot: &Shot, extra: &[&str]) -> Result<(), String> {
     shows(shot, &["Enter", "Esc"]).and_then(|()| shows(shot, extra))
 }
 
+/// The impersonation preview, streaming: the tail of its text, and at the
+/// left edge of that row what says the preview is at work — the box's
+/// border from ten rows up, the spinner in the bare row's prompt column
+/// below (spec §11.1.1); the status bar's chip from six rows up.
+fn preview_is_streaming(shot: &Shot, loc: &'static Locale) -> Result<(), String> {
+    let Some(row) = shot.rows.iter().find(|r| r.contains("user.")) else {
+        return Err("the preview's text is not on screen".into());
+    };
+    let spinner = crate::shared::theme::Palette::default().glyphs().spinner;
+    let at_work = if shot.rows.len() >= 10 {
+        row.starts_with('│')
+    } else {
+        // The spinner is on the preview's first row, which is the tail's
+        // when the text fits it and the row above otherwise.
+        shot.rows.iter().any(|r| {
+            let first = r.chars().next().unwrap_or(' ');
+            spinner.contains(&first)
+                && r[first.len_utf8()..].starts_with(' ')
+                && (r.contains("written") || r.contains("user."))
+        })
+    };
+    if !at_work {
+        return Err(format!("nothing says the preview is at work: {row:?}"));
+    }
+    let chip = (shot.rows.len() >= 6).then(|| loc.t("ui.status.chip.chat"));
+    shows(shot, chip.as_slice())
+}
+
 type Build = fn(Lang) -> Rig;
 type Check = fn(&Shot, &'static Locale) -> Result<(), String>;
 
@@ -461,9 +531,7 @@ const CASES: &[(&str, Build, Check)] = &[
     ("chat", chat_idle, chat_is_whole),
     ("chat at its tallest", chat_at_its_tallest, chat_is_whole),
     ("in-feed search", chat_search, chat_is_whole),
-    ("impersonation", chat_impersonation, |s, l| {
-        shows(s, &[l.t("ui.status.chip.chat")])
-    }),
+    ("impersonation", chat_impersonation, preview_is_streaming),
     ("help", chat_help, |s, l| {
         legend(s, l, "ui.help.footer.tabs")
     }),
@@ -576,11 +644,14 @@ fn every_state_is_whole_or_the_placeholder_at_every_size() {
 
 /// The three windows of the report (docs/research/small-terminal.md §1), in
 /// the language they were reported in: each used to be a frame with parts
-/// missing, and is now a line that says what size it needs.
+/// missing. Two are a line that says what size they need; the chat's, 57×5,
+/// is the chat — four rows of the conversation over the `❯` row, its cursor
+/// on it (stage 2 of the track), where the prompt used to stand on the
+/// status bar.
 #[test]
 fn the_reported_windows_say_what_they_need() {
     for (build, width, height, need) in [
-        (chat_idle as Build, 57, 5, "20×9"),
+        (chat_idle as Build, 57, 2, "20×3"),
         (settings as Build, 45, 6, "46×12"),
         (chat_list as Build, 45, 2, "24×7"),
     ] {
@@ -592,9 +663,88 @@ fn the_reported_windows_say_what_they_need() {
             "{width}×{height}: the size it is and the size it needs — {need}:\n{text}"
         );
     }
-    // One row more than the chat's minimum asks for, and it is the chat.
-    let shot = chat_idle(Lang::Ru).draw(57, 9);
+    let shot = chat_idle(Lang::Ru).draw(57, 5);
     assert_eq!(shot.placeholder, None, "{}", shot.text());
+    assert!(
+        shot.rows[4].starts_with("❯ ") && shot.cursor == Some((2, 4)),
+        "the `❯` row is the last one, with the cursor:\n{}",
+        shot.text()
+    );
+    assert!(
+        shot.rows[..4].iter().all(|r| !r.contains(['╭', '│', '●'])),
+        "four bare rows of the conversation above it:\n{}",
+        shot.text()
+    );
+    assert!(
+        !shot.rows[3].trim().is_empty(),
+        "the row over the prompt is text, not the padding under the last message:\n{}",
+        shot.text()
+    );
+    assert!(
+        shot.text().contains("The second one."),
+        "the last message's text:\n{}",
+        shot.text()
+    );
+    // The chat's minimum, three rows: a row of it, the `❯` row, nothing else.
+    let shot = chat_idle(Lang::Ru).draw(20, 3);
+    assert_eq!(shot.placeholder, None, "{}", shot.text());
+    assert!(shot.rows[2].starts_with("❯ "), "{}", shot.text());
+}
+
+/// The ladder, frame by frame, in the reported window's 57 columns: from ten
+/// rows down each step gives up one thing and the conversation keeps its
+/// four rows — the numbers of docs/research/small-terminal.md §5 F1(b).
+#[test]
+fn the_chat_sheds_its_chrome_as_the_window_shrinks() {
+    let mut rig = chat_idle(Lang::En);
+    // (rows, the rows of the feed's border, the input's first row, status rows)
+    for (height, feed_border, prompt, status) in [
+        (11, true, "│❯", 2),
+        (10, true, "│❯", 1),
+        (9, true, "❯", 1),
+        (8, true, "❯", 1),
+        (7, false, "❯", 1),
+        (6, false, "❯", 1),
+        (5, false, "❯", 0),
+        (3, false, "❯", 0),
+    ] {
+        let shot = rig.draw(57, height);
+        let text = shot.text();
+        assert_eq!(shot.placeholder, None, "{height} rows:\n{text}");
+        assert_eq!(
+            shot.rows[0].starts_with('╭'),
+            feed_border,
+            "{height} rows:\n{text}"
+        );
+        let input = shot.rows.iter().position(|r| r.starts_with(prompt));
+        assert!(input.is_some(), "{height} rows, {prompt:?}:\n{text}");
+        let bar = shot.rows.iter().filter(|r| r.starts_with('●')).count();
+        assert_eq!(
+            bar.min(1),
+            status.min(1),
+            "{height} rows, the status bar:\n{text}"
+        );
+        let under = shot
+            .rows
+            .iter()
+            .rposition(|r| !r.trim().is_empty())
+            .unwrap()
+            + 1;
+        assert_eq!(
+            under,
+            usize::from(height),
+            "{height} rows: the frame is used to its last row:\n{text}"
+        );
+    }
+    // Four rows of the conversation from six rows up: the `❯` row is the
+    // fifth at six, and at ten, with the feed bordered and the input boxed.
+    assert!(rig.draw(57, 6).rows[4].starts_with('❯'));
+    let ten = rig.draw(57, 10);
+    assert!(
+        ten.rows[4].starts_with('│') && ten.rows[7].starts_with("│❯"),
+        "{}",
+        ten.text()
+    );
 }
 
 /// A popup raises what the window has to hold: a chat that fits its window
@@ -608,7 +758,7 @@ fn a_popup_raises_the_minimum_and_lowers_it_back() {
     rig = rig.key(ctrl('b'));
     let shot = rig.draw(40, 12);
     assert_eq!(shot.placeholder, Some(WayOut::EscOrQuit), "{}", shot.text());
-    assert!(shot.text().contains("46×9"), "{}", shot.text());
+    assert!(shot.text().contains("46×6"), "{}", shot.text());
     assert!(
         shot.text().contains("Esc"),
         "the way back is named: {}",
@@ -690,7 +840,7 @@ fn tick(rig: &mut Rig, shot: &Shot, keys: &[KeyEvent]) -> (bool, Vec<AppCommand>
 #[test]
 fn a_window_too_small_for_the_chat_takes_only_a_quit_key() {
     let mut rig = chat_idle(Lang::En);
-    let shot = rig.draw(57, 5);
+    let shot = rig.draw(57, 2);
     assert_eq!(shot.placeholder, Some(WayOut::Quit));
     assert!(!shot.text().contains("Esc"), "{}", shot.text());
 

@@ -750,6 +750,7 @@
   "ui.chat.search.placeholder": "find in this chat…",
   "ui.chat.search.counter": "match {n} of {total} · Enter/↓ next · Shift+Enter/↑ previous · Esc close",
   "ui.chat.search.none": "no matches · Esc close",
+  "ui.chat.search.tag": "{n}/{total}",
   "ui.chat.bg.reflect": "reflection",
   "ui.chat.bg.consolidate": "notes sleep",
   "ui.chat.bg.self_consolidate": "self sleep",
