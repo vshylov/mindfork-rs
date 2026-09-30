@@ -1169,6 +1169,7 @@
   "ui.confirm.footer": " Enter — yes · Esc — no ",
   "ui.too_small.title": "Window too small",
   "ui.too_small.size": "{have} — needs {need}",
+  "ui.too_small.esc": "Esc — back",
   "ui.too_small.quit": "Ctrl+Q — quit",
   "ui.confirm.tool.title": "Tool call",
   "ui.confirm.tool.inputs": "goes into the sandbox: {files} · {net}",

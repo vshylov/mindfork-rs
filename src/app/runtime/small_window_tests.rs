@@ -28,6 +28,7 @@ use crate::features::workspace_diff::{ChangeSet, DiffKind, DiffLine, FileChange,
 use crate::shared::config::NoteOrder;
 use crate::shared::i18n::{Lang, Locale, locale};
 use crate::shared::server::{ServerStatus, ServerStatuses};
+use crate::shared::ui::WayOut;
 
 /// The widths and heights of the sweep: every size up to the smallest window
 /// anything is drawn in, both sides of each screen's and each popup's
@@ -48,7 +49,8 @@ struct Rig {
 /// One drawn frame, read back.
 struct Shot {
     rows: Vec<String>,
-    placeholder: bool,
+    /// The frame is the placeholder, and these are the keys it names.
+    placeholder: Option<WayOut>,
     /// `None` — hidden.
     cursor: Option<(u16, u16)>,
 }
@@ -133,7 +135,7 @@ impl Rig {
     fn draw(&mut self, width: u16, height: u16) -> Shot {
         let palette = front_palette(&self.active, &self.screen);
         let mut term = Terminal::new(TestBackend::new(width, height)).unwrap();
-        let mut placeholder = false;
+        let mut placeholder = None;
         term.draw(|frame| {
             placeholder = compose_frame(
                 frame,
@@ -528,7 +530,7 @@ fn sweep(name: &str, build: Build, check: Check) {
                 let at = At(format!("{name}, {lang:?}, {width}×{height}"));
                 let shot = rig.draw(width, height);
                 let text = shot.text();
-                if shot.placeholder {
+                if shot.placeholder.is_some() {
                     refused += 1;
                     assert_eq!(shot.cursor, None, "{}: a cursor on the placeholder", at.0);
                     assert!(
@@ -584,7 +586,7 @@ fn the_reported_windows_say_what_they_need() {
     ] {
         let shot = build(Lang::Ru).draw(width, height);
         let text = shot.text();
-        assert!(shot.placeholder, "{width}×{height}:\n{text}");
+        assert!(shot.placeholder.is_some(), "{width}×{height}:\n{text}");
         assert!(
             text.contains(&format!("{width}×{height}")) && text.contains(need),
             "{width}×{height}: the size it is and the size it needs — {need}:\n{text}"
@@ -592,7 +594,7 @@ fn the_reported_windows_say_what_they_need() {
     }
     // One row more than the chat's minimum asks for, and it is the chat.
     let shot = chat_idle(Lang::Ru).draw(57, 9);
-    assert!(!shot.placeholder, "{}", shot.text());
+    assert_eq!(shot.placeholder, None, "{}", shot.text());
 }
 
 /// A popup raises what the window has to hold: a chat that fits its window
@@ -602,13 +604,18 @@ fn the_reported_windows_say_what_they_need() {
 #[test]
 fn a_popup_raises_the_minimum_and_lowers_it_back() {
     let mut rig = chat_idle(Lang::En);
-    assert!(!rig.draw(40, 12).placeholder);
+    assert_eq!(rig.draw(40, 12).placeholder, None);
     rig = rig.key(ctrl('b'));
     let shot = rig.draw(40, 12);
-    assert!(shot.placeholder, "{}", shot.text());
+    assert_eq!(shot.placeholder, Some(WayOut::EscOrQuit), "{}", shot.text());
     assert!(shot.text().contains("46×9"), "{}", shot.text());
+    assert!(
+        shot.text().contains("Esc"),
+        "the way back is named: {}",
+        shot.text()
+    );
     rig = rig.key(plain(KeyCode::Esc));
-    assert!(!rig.draw(40, 12).placeholder);
+    assert_eq!(rig.draw(40, 12).placeholder, None);
 }
 
 /// The tool confirmation in the reported 57-column window, in `ru`: its
@@ -646,59 +653,131 @@ fn the_tool_confirmation_is_asked_whole_or_not_at_all() {
     // Twenty columns wrap the question into eleven rows. A window of ten —
     // tall enough for the chat under it — is too short for the question:
     // nothing of it is drawn, and the line that is says how tall it has to be.
-    assert!(!rig.draw(20, 11).placeholder);
+    assert_eq!(rig.draw(20, 11).placeholder, None);
     let shot = rig.draw(20, 10);
-    assert!(shot.placeholder, "{}", shot.text());
+    assert!(shot.placeholder.is_some(), "{}", shot.text());
     assert!(shot.text().contains("20×11"), "{}", shot.text());
     assert!(!shot.text().contains("python_exec"), "{}", shot.text());
 }
 
 // ---------- the keys under the placeholder ----------
 
-/// Under the placeholder a key does one thing, and only a quit key does it
-/// (F2): `Enter` does not run the tool call whose question is not on screen,
-/// a typed character does not reach the input box, and `Ctrl+Q` — under any
-/// keyboard layout — and `F10` end the session.
-#[test]
-fn under_the_placeholder_only_a_quit_key_works() {
-    let mut rig = chat_tool_confirm(Lang::En);
+/// One batch of keys, read against `shot` — the frame that was on screen.
+/// Returns whether it asked to quit, and the commands it sent.
+fn tick(rig: &mut Rig, shot: &Shot, keys: &[KeyEvent]) -> (bool, Vec<AppCommand>) {
     let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::unbounded_channel();
-    let tick = |rig: &mut Rig, too_small: bool, key: KeyEvent| {
-        route_batch(
-            too_small,
-            vec![Event::Key(key)],
-            &mut rig.screen,
-            &mut rig.active,
-            &mut rig.help,
-            &mut None,
-            &cmd_tx,
-            &mut None,
-        )
-    };
-
-    assert!(rig.draw(57, 6).placeholder);
-    for key in [
-        plain(KeyCode::Enter),
-        plain(KeyCode::Char('a')),
-        plain(KeyCode::Esc),
-    ] {
-        assert!(!tick(&mut rig, true, key), "{key:?} is not a quit key");
+    let quit = route_batch(
+        shot.placeholder,
+        keys.iter().copied().map(Event::Key).collect(),
+        &mut rig.screen,
+        &mut rig.active,
+        &mut rig.help,
+        &mut None,
+        &cmd_tx,
+        &mut None,
+    );
+    let mut sent = Vec::new();
+    while let Ok(command) = cmd_rx.try_recv() {
+        sent.push(command);
     }
-    assert!(cmd_rx.try_recv().is_err(), "nothing was answered or sent");
-    // The question is still waiting, and still unanswered, once there is room.
-    assert!(rig.draw(100, 24).text().contains("python_exec"));
+    (quit, sent)
+}
 
-    assert!(tick(&mut rig, true, plain(KeyCode::F(10))));
-    assert!(tick(&mut rig, true, ctrl('q')));
+/// In a window too small for the chat itself the placeholder names one key,
+/// and only that one works (F2): nothing is typed, nothing is sent, `Esc`
+/// goes nowhere, and `Ctrl+Q` — under any keyboard layout — and `F10` end
+/// the session.
+#[test]
+fn a_window_too_small_for_the_chat_takes_only_a_quit_key() {
+    let mut rig = chat_idle(Lang::En);
+    let shot = rig.draw(57, 5);
+    assert_eq!(shot.placeholder, Some(WayOut::Quit));
+    assert!(!shot.text().contains("Esc"), "{}", shot.text());
+
+    let typed = [
+        plain(KeyCode::Char('h')),
+        plain(KeyCode::Enter),
+        plain(KeyCode::Esc),
+    ];
+    for key in typed {
+        let (quit, sent) = tick(&mut rig, &shot, &[key]);
+        assert!(!quit && sent.is_empty(), "{key:?}: {sent:?}");
+    }
+    assert!(rig.active.is_chat(), "`Esc` did not open the chat list");
+    let roomy = rig.draw(100, 24);
     assert!(
-        tick(&mut rig, true, ctrl('й')),
-        "the same key under a Cyrillic layout"
+        roomy.rows.iter().any(|r| r.starts_with("│❯  ")),
+        "nothing reached the input box:\n{}",
+        roomy.text()
     );
 
-    // The control: on a frame that shows the question, `Enter` answers it.
-    assert!(!tick(&mut rig, false, plain(KeyCode::Enter)));
+    for key in [plain(KeyCode::F(10)), ctrl('q'), ctrl('й')] {
+        assert!(tick(&mut rig, &shot, &[key]).0, "{key:?} quits");
+    }
+    // A quit key is found wherever it is in the batch.
+    assert!(tick(&mut rig, &shot, &[plain(KeyCode::Enter), ctrl('q')]).0);
+
+    // The control: the same keys against a frame that shows the chat.
+    let (quit, sent) = tick(&mut rig, &roomy, &[plain(KeyCode::Char('h'))]);
+    assert!(!quit && sent.is_empty());
     assert!(
-        matches!(cmd_rx.try_recv(), Ok(AppCommand::ConfirmTool { .. })),
-        "the same key, with the question on screen, runs the call"
+        rig.draw(100, 24).text().contains("│❯ h"),
+        "typed, this time"
     );
+}
+
+/// A question the window cannot hold is not answered by `Enter` — and is not
+/// a trap either: it was opened by the turn, not by a resize, so `Esc`, the
+/// key that declines, reaches it. One `Esc` a batch: a second would act on
+/// the chat the first uncovered, before a frame of it was drawn.
+#[test]
+fn a_question_that_does_not_fit_can_be_declined_but_not_run() {
+    let mut rig = chat_tool_confirm(Lang::Ru);
+    let shot = rig.draw(20, 10);
+    assert_eq!(shot.placeholder, Some(WayOut::EscOrQuit), "{}", shot.text());
+    assert!(shot.text().contains("Esc"), "{}", shot.text());
+
+    for key in [plain(KeyCode::Enter), plain(KeyCode::Char('a'))] {
+        let (quit, sent) = tick(&mut rig, &shot, &[key]);
+        assert!(!quit && sent.is_empty(), "{key:?} ran nothing: {sent:?}");
+    }
+    assert!(
+        rig.draw(100, 24).text().contains("python_exec"),
+        "the question is still waiting"
+    );
+
+    let esc = plain(KeyCode::Esc);
+    let (quit, sent) = tick(&mut rig, &shot, &[plain(KeyCode::Enter), esc, esc]);
+    assert!(!quit);
+    assert!(
+        matches!(
+            sent.as_slice(),
+            [AppCommand::ConfirmTool {
+                decision: crate::features::tools::confirm::ToolDecision::Deny,
+                ..
+            }]
+        ),
+        "one answer, and it is the refusal: {sent:?}"
+    );
+    assert!(rig.active.is_chat(), "the second `Esc` went nowhere");
+    assert_eq!(rig.draw(20, 10).placeholder, None, "the chat is back");
+}
+
+/// A screen opened over the chat in a window it does not fit — the settings
+/// need 46 columns — is left by `Esc`, not only by quitting: the key that
+/// opened it was pressed in a window that showed the chat whole.
+#[test]
+fn a_screen_that_does_not_fit_is_left_by_esc() {
+    let mut rig = settings(Lang::En);
+    let shot = rig.draw(45, 12);
+    assert_eq!(shot.placeholder, Some(WayOut::EscOrQuit), "{}", shot.text());
+    assert!(shot.text().contains("46×12"), "{}", shot.text());
+    // `Enter` would have walked into the fields; it does nothing.
+    let (quit, _) = tick(&mut rig, &shot, &[plain(KeyCode::Enter)]);
+    assert!(!quit && !rig.active.is_chat());
+
+    let (quit, _) = tick(&mut rig, &shot, &[plain(KeyCode::Esc)]);
+    assert!(!quit);
+    assert!(rig.active.is_chat(), "`Esc` closed the settings");
+    assert_eq!(rig.draw(45, 12).placeholder, None, "and the chat fits");
 }

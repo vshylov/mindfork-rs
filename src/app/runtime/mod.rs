@@ -43,7 +43,7 @@ use crate::screens::self_model::{SelfModelIntent, SelfModelScreen};
 use crate::screens::settings::{SettingsIntent, SettingsScreen};
 use crate::screens::tasks::{TasksIntent, TasksScreen};
 use crate::shared::theme::Palette;
-use crate::shared::ui::{self, MinSize, SPINNER_STEP, dim_background};
+use crate::shared::ui::{self, MinSize, SPINNER_STEP, WayOut, dim_background};
 use crate::widgets::help_dialog::{
     self, DEFAULT_HELP_TAB, HelpContext, HelpKeyOutcome, HelpSection, HelpState, HelpTab,
 };
@@ -623,7 +623,7 @@ fn run_loop(
             cmd_tx,
             &mut clipboard,
             &mut dirty,
-            drawn.too_small,
+            drawn.placeholder,
         )? {
             quit = true;
         }
@@ -730,11 +730,12 @@ struct Drawn {
     /// background, which is what `ratatui::init` leaves). See [`canvas_repaint`].
     canvas: Color,
     /// Whether the frame was the "window too small" placeholder
-    /// ([`too_small`]). It decides two things: the keys of the next tick act
-    /// on what the user was looking at — under the placeholder nothing but
-    /// quit works ([`handle_input_tick`]) — and the placeholder coming or
-    /// going is a wholesale change of the frame, like a screen switch.
-    too_small: bool,
+    /// ([`too_small`]), and the keys it named as working. It decides two
+    /// things: the keys of the next tick act on what the user was looking at
+    /// — under the placeholder only those it names ([`route_batch`]) — and
+    /// the placeholder coming or going is a wholesale change of the frame,
+    /// like a screen switch.
+    placeholder: Option<WayOut>,
 }
 
 impl Drawn {
@@ -743,7 +744,7 @@ impl Drawn {
             screen: std::mem::discriminant(active),
             overlay: false,
             canvas: Color::Reset,
-            too_small: false,
+            placeholder: None,
         }
     }
 }
@@ -937,7 +938,7 @@ fn draw_frame(
         )
         .is_some()
     });
-    let cramped_toggled = cramped != last.too_small;
+    let cramped_toggled = cramped != last.placeholder.is_some();
     // The palette of this frame: the screen in front, the help dialog over it
     // and the canvas under both are drawn with the same one.
     let palette = front_palette(active, screen);
@@ -969,11 +970,11 @@ fn draw_frame(
     // What the frame turned out to be is read back from the render itself:
     // the keys of the next tick are judged by what was on screen, and the
     // size asked about above can be a resize behind the one `draw` sees.
-    let mut placeholder = cramped;
+    let mut placeholder = None;
     let drawn = terminal.draw(|frame| {
         placeholder = compose_frame(frame, screen, active, help, &palette);
     });
-    last.too_small = placeholder;
+    last.placeholder = placeholder;
     let _ = execute!(stdout(), EndSynchronizedUpdate);
     erased?;
     drawn?;
@@ -988,12 +989,18 @@ fn draw_frame(
 /// Every minimum is a function of the window and of **which** layers are
 /// open, never of what they hold at the moment, so the placeholder comes and
 /// goes with a resize or with a popup and not with a token counter.
+///
+/// With the size comes the way out of the placeholder ([`WayOut`]): `Esc`
+/// works, beside quit, exactly while something is open over the chat — the
+/// help, a popup, another screen. That something may be all that does not
+/// fit, and opening it took a key, not a resize: a picker opened in a window
+/// the chat fits has to be closable from the keyboard.
 fn too_small(
     area: Rect,
     active: &ActiveScreen,
     screen: &ChatScreen,
     help: &HelpOverlay,
-) -> Option<MinSize> {
+) -> Option<(MinSize, WayOut)> {
     let mut need = match active {
         ActiveScreen::Chat => screen.min_size(area),
         ActiveScreen::ChatList(list) => list.min_size(),
@@ -1006,7 +1013,12 @@ fn too_small(
     if help.open.is_some() {
         need = need.max(help_dialog::min_size(screen.loc()));
     }
-    (!need.fits(area)).then_some(need)
+    let way_out = if help.open.is_some() || !active.is_chat() || screen.has_popup() {
+        WayOut::EscOrQuit
+    } else {
+        WayOut::Quit
+    };
+    (!need.fits(area)).then_some((need, way_out))
 }
 
 /// What one frame is made of, in the order it is drawn: the active screen,
@@ -1017,21 +1029,21 @@ fn too_small(
 ///
 /// A window smaller than the frame in front needs gets the placeholder
 /// instead of a frame with parts missing ([`too_small`]); the return value
-/// says that it did.
+/// says that it did, and which keys it named.
 fn compose_frame(
     frame: &mut ratatui::Frame,
     screen: &mut ChatScreen,
     active: &mut ActiveScreen,
     help: &mut HelpOverlay,
     palette: &Palette,
-) -> bool {
+) -> Option<WayOut> {
     // The locale comes from the chat screen, the base that always exists and
     // receives every settings event.
     let loc = screen.loc();
-    if let Some(need) = too_small(frame.area(), active, screen, help) {
-        ui::render_too_small(frame, palette, loc, need);
+    if let Some((need, way_out)) = too_small(frame.area(), active, screen, help) {
+        ui::render_too_small(frame, palette, loc, need, way_out);
         ui::finish_frame(frame.buffer_mut(), palette);
-        return true;
+        return Some(way_out);
     }
     match active {
         ActiveScreen::Chat => screen.render(frame),
@@ -1049,7 +1061,7 @@ fn compose_frame(
     // Last, so it also catches what the overlay's `Clear` reset — and, in the
     // monochrome mode, what the overlay drew.
     ui::finish_frame(frame.buffer_mut(), palette);
-    false
+    None
 }
 
 /// One input tick: polls the terminal for [`TICK`], collects the available
@@ -1057,9 +1069,9 @@ fn compose_frame(
 /// processes it. Sets `dirty` when any terminal event arrived; returns `true`
 /// if quitting was requested.
 ///
-/// `too_small` — the frame on screen is the "window too small" placeholder
-/// ([`Drawn::too_small`]): the batch is then read for a quit key and for
-/// nothing else ([`quit_requested`]).
+/// `placeholder` — the frame on screen is the "window too small" placeholder
+/// ([`Drawn::placeholder`]): the batch is then read for the keys it names and
+/// for nothing else ([`route_batch`]).
 // The loop's state, one borrow each — the same set `process_input_batch`
 // takes, plus the two flags the tick itself reads and writes.
 #[allow(clippy::too_many_arguments)]
@@ -1071,7 +1083,7 @@ fn handle_input_tick(
     cmd_tx: &UnboundedSender<AppCommand>,
     clipboard: &mut Option<arboard::Clipboard>,
     dirty: &mut bool,
-    too_small: bool,
+    placeholder: Option<WayOut>,
 ) -> Result<bool> {
     if !event::poll(TICK)? {
         return Ok(false);
@@ -1099,7 +1111,14 @@ fn handle_input_tick(
         }
     }
     Ok(route_batch(
-        too_small, batch, screen, active, help, back, cmd_tx, clipboard,
+        placeholder,
+        batch,
+        screen,
+        active,
+        help,
+        back,
+        cmd_tx,
+        clipboard,
     ))
 }
 

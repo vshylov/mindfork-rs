@@ -805,35 +805,58 @@ fn size_label(width: u16, height: u16) -> String {
     format!("{width}×{height}")
 }
 
+/// The keys that work under the placeholder (spec §11.1). Everything else
+/// is dropped: the screen a key was meant for is not the one on the terminal,
+/// so `Enter` would answer a question nobody read and a typed line would be
+/// sent unseen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WayOut {
+    /// Quit, and nothing else: the window is too small for the screen itself,
+    /// and the way back to it is the window's edge.
+    Quit,
+    /// `Esc` as well: something is open **over** the screen — a popup, the
+    /// help, a screen over the chat — and it may be all that does not fit.
+    /// `Esc` is the key that closes, declines or goes back, never the one
+    /// that confirms or sends, and without it a picker opened in a window the
+    /// chat fits and the picker does not could only be left by resizing or by
+    /// quitting.
+    EscOrQuit,
+}
+
 /// The placeholder's lines for a window `area`, top to bottom: what is wrong,
-/// the size the window has against the one it needs, and the one key that
-/// works. A line that does not fit the width is left out rather than cut — the
-/// size falls back to the needed one alone — and when the rows run short the
-/// size outlives the title, which outlives the key.
-fn too_small_lines(area: Rect, need: MinSize, loc: &'static Locale) -> Vec<(TooSmallLine, String)> {
+/// the size the window has against the one it needs, and the keys that work.
+/// A line that does not fit the width is left out rather than cut — the size
+/// falls back to the needed one alone, the keys to `Esc` alone — and when the
+/// rows run short the size outlives the title, which outlives the keys.
+fn too_small_lines(
+    area: Rect,
+    need: MinSize,
+    way_out: WayOut,
+    loc: &'static Locale,
+) -> Vec<(TooSmallLine, String)> {
     let have = size_label(area.width, area.height);
     let want = size_label(need.width, need.height);
-    let fits = |s: &str| str_width(s) <= area.width as usize;
-    let size = [
+    let fits = |s: &String| str_width(s) <= area.width as usize;
+    let size = vec![
         loc.tf("ui.too_small.size", &[("have", &have), ("need", &want)]),
         want.clone(),
-    ]
-    .into_iter()
-    .find(|s| fits(s));
+    ];
+    let (esc, quit) = (loc.t("ui.too_small.esc"), loc.t("ui.too_small.quit"));
+    let keys = match way_out {
+        WayOut::Quit => vec![quit.to_string()],
+        WayOut::EscOrQuit => vec![format!("{esc} · {quit}"), esc.to_string()],
+    };
     // In keeping order; drawn in the order of the enum.
     let mut lines: Vec<(TooSmallLine, String)> = [
         (TooSmallLine::Size, size),
         (
             TooSmallLine::Title,
-            Some(loc.t("ui.too_small.title").to_string()),
+            vec![loc.t("ui.too_small.title").to_string()],
         ),
-        (
-            TooSmallLine::Quit,
-            Some(loc.t("ui.too_small.quit").to_string()),
-        ),
+        (TooSmallLine::Keys, keys),
     ]
     .into_iter()
-    .filter_map(|(kind, text)| text.filter(|t| fits(t)).map(|t| (kind, t)))
+    .filter_map(|(kind, forms)| forms.into_iter().find(fits).map(|text| (kind, text)))
     .take(area.height as usize)
     .collect();
     lines.sort_by_key(|(kind, _)| *kind);
@@ -845,24 +868,28 @@ fn too_small_lines(area: Rect, need: MinSize, loc: &'static Locale) -> Vec<(TooS
 enum TooSmallLine {
     Title,
     Size,
-    Quit,
+    Keys,
 }
 
 /// Draws the "window too small" notice over the whole frame: the window is
 /// smaller than the layer in front needs (`need`), and a frame with parts
-/// missing would be drawn otherwise (spec §11.1).
-///
-/// While it is up the keys do nothing but quit (`app/runtime`): a key pressed
-/// at a screen that is not shown would be an answer to a question nobody read.
-pub fn render_too_small(frame: &mut Frame, palette: &Palette, loc: &'static Locale, need: MinSize) {
+/// missing would be drawn otherwise (spec §11.1). `way_out` — the keys that
+/// work while it is up, which its last line names.
+pub fn render_too_small(
+    frame: &mut Frame,
+    palette: &Palette,
+    loc: &'static Locale,
+    need: MinSize,
+    way_out: WayOut,
+) {
     let area = frame.area();
     frame.render_widget(Clear, area);
-    let lines: Vec<Line> = too_small_lines(area, need, loc)
+    let lines: Vec<Line> = too_small_lines(area, need, way_out, loc)
         .into_iter()
         .map(|(kind, text)| {
             let style = match kind {
                 TooSmallLine::Title => Style::new().fg(palette.text).add_modifier(Modifier::BOLD),
-                TooSmallLine::Size | TooSmallLine::Quit => palette.muted_style(),
+                TooSmallLine::Size | TooSmallLine::Keys => palette.muted_style(),
             };
             Line::from(Span::styled(text, style)).centered()
         })
@@ -1722,32 +1749,51 @@ pub(crate) mod tests {
         let need = MinSize::new(46, 12);
         for &lang in Lang::ALL {
             let loc = locale(lang);
+            let lines = |w: u16, h: u16, way_out: WayOut| {
+                too_small_lines(Rect::new(0, 0, w, h), need, way_out, loc)
+            };
             let kinds = |w: u16, h: u16| -> Vec<TooSmallLine> {
-                too_small_lines(Rect::new(0, 0, w, h), need, loc)
+                lines(w, h, WayOut::Quit)
                     .into_iter()
                     .map(|(kind, _)| kind)
                     .collect()
             };
-            use TooSmallLine::{Quit, Size, Title};
-            assert_eq!(kinds(45, 6), [Title, Size, Quit], "{lang:?}");
+            use TooSmallLine::{Keys, Size, Title};
+            assert_eq!(kinds(45, 6), [Title, Size, Keys], "{lang:?}");
             assert_eq!(kinds(45, 2), [Title, Size], "{lang:?}");
             assert_eq!(kinds(45, 1), [Size], "{lang:?}");
             assert_eq!(kinds(45, 0), [], "{lang:?}");
             // Every line is within the width it was given, at any width.
             for w in 0..=60u16 {
-                for (_, text) in too_small_lines(Rect::new(0, 0, w, 3), need, loc) {
-                    assert!(str_width(&text) <= w as usize, "{lang:?} {w}: {text:?}");
+                for way_out in [WayOut::Quit, WayOut::EscOrQuit] {
+                    for (_, text) in lines(w, 3, way_out) {
+                        assert!(str_width(&text) <= w as usize, "{lang:?} {w}: {text:?}");
+                    }
                 }
             }
             // Too narrow for the sentence, the size is the needed one alone…
-            let narrow = too_small_lines(Rect::new(0, 0, 8, 1), need, loc);
+            let narrow = lines(8, 1, WayOut::Quit);
             assert_eq!(narrow, [(Size, "46×12".to_string())], "{lang:?}");
             // …and too narrow for that, there is nothing to say.
-            assert!(too_small_lines(Rect::new(0, 0, 4, 3), need, loc).is_empty());
+            assert!(lines(4, 3, WayOut::Quit).is_empty());
 
-            let full = too_small_lines(Rect::new(0, 0, 45, 6), need, loc);
+            let full = lines(45, 6, WayOut::Quit);
             assert!(full[1].1.contains("45×6") && full[1].1.contains("46×12"));
-            assert!(full[2].1.contains("Ctrl+Q"), "the key that works: {full:?}");
+            // The last line names the keys that work, and only those.
+            assert!(
+                full[2].1.contains("Ctrl+Q") && !full[2].1.contains("Esc"),
+                "{full:?}"
+            );
+            let both = lines(45, 6, WayOut::EscOrQuit);
+            assert!(
+                both[2].1.contains("Esc") && both[2].1.contains("Ctrl+Q"),
+                "{both:?}"
+            );
+            // Too narrow for both keys: the one that leads back, not the one
+            // that ends the session.
+            let esc = lines(20, 6, WayOut::EscOrQuit);
+            let keys = esc.iter().find(|(kind, _)| *kind == Keys).unwrap();
+            assert_eq!(keys.1, loc.t("ui.too_small.esc"), "{lang:?}");
         }
     }
 
@@ -1763,7 +1809,7 @@ pub(crate) mod tests {
             term.draw(|f| {
                 let area = f.area();
                 f.render_widget(Paragraph::new(vec![Line::raw("XXXXXXXXXXXX"); 40]), area);
-                render_too_small(f, &palette, loc, need);
+                render_too_small(f, &palette, loc, need, WayOut::Quit);
             })
             .unwrap();
             buffer_rows(term.backend().buffer())

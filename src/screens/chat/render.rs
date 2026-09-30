@@ -106,6 +106,21 @@ impl ChatScreen {
     /// whole at the width `area` gives it. The runtime draws the placeholder
     /// below it rather than a frame with parts missing (spec §11.1).
     pub fn min_size(&self, area: Rect) -> MinSize {
+        self.popup_needs(area)
+            .map_or(CHAT_MIN_SIZE, |popup| CHAT_MIN_SIZE.max(popup))
+    }
+
+    /// Whether a popup is open over the chat — one `Esc` closes, or whose
+    /// question `Esc` declines. The placeholder lets that key through while
+    /// one is ([`crate::shared::ui::WayOut`]).
+    pub fn has_popup(&self) -> bool {
+        self.popup_needs(Rect::default()).is_some()
+    }
+
+    /// The window the open popup needs; `None` — no popup is open. One list
+    /// for [`Self::min_size`] and [`Self::has_popup`], so that a popup which
+    /// raises the minimum is always one `Esc` can leave.
+    fn popup_needs(&self, area: Rect) -> Option<MinSize> {
         let (palette, loc) = (&self.palette, self.loc);
         [
             self.profile_overlay
@@ -125,7 +140,7 @@ impl ChatScreen {
         ]
         .into_iter()
         .flatten()
-        .fold(CHAT_MIN_SIZE, MinSize::max)
+        .reduce(MinSize::max)
     }
 
     pub fn render(&mut self, frame: &mut Frame) {
