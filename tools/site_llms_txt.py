@@ -176,11 +176,14 @@ def render(root: Path) -> str:
     if home.get("hero_sub"):
         out += [home["hero_sub"], ""]
 
-    out += ["## Start here", ""]
-    out.append(f"- [Install]({base}/install/): {install['description']}")
-    out.append(f"- [Source on GitHub]({conf('github')}): {REPO_NOTE}")
-    out.append(f"- [mindfork on crates.io]({conf('crates')}): {CRATE_NOTE}")
-    out.append("")
+    out += [
+        "## Start here",
+        "",
+        f"- [Install]({base}/install/): {install['description']}",
+        f"- [Source on GitHub]({conf('github')}): {REPO_NOTE}",
+        f"- [mindfork on crates.io]({conf('crates')}): {CRATE_NOTE}",
+        "",
+    ]
 
     for heading, folder, by in [("Articles", "articles", "weight"),
                                 ("News", "blog", "date")]:
