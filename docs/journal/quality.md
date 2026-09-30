@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (29)
+## Entries (30)
 
 - Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - Post-M9: SonarQube Cloud analysis in CI (done)
@@ -41,6 +41,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: SonarQube follow-up — the IndexNow tool's three findings (done)
 - Post-M9: SonarQube follow-up — the pod probe's shell findings (done)
 - Post-M9: the gate judges new-code coverage again, and the file says so (done)
+- Post-M9: SonarQube follow-up — four runs of `append()` become one call (done)
 
 ### Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - **28 relative links in the docs pointed at nothing**, and had for a while.
@@ -1639,3 +1640,36 @@ structure (AGENTS.md §3).
   premise of that decision has changed; the decision has not been revisited.
 - No code touched — test totals unchanged. No CHANGELOG entry: nothing a user
   sees (AGENTS.md §4).
+
+### Post-M9: SonarQube follow-up — four runs of `append()` become one call (done)
+
+- **Four open findings on `main`, one rule, the gate green and no hotspots**
+  (read through the Sonar MCP on 2026-09-30; branch
+  `refactor/sonar-list-extend`). `python:S9409`, MINOR — "use `list.extend()`
+  instead of consecutive `append()` calls" — in three tools: `site_llms_txt.py`
+  (the "Start here" block), `osc11_probe.py` ×2 (the luminance lines of
+  `report` and the no-VT-input warning in `main`) and `screenshots.py` (the
+  SVG's last style rule, `</style>` and the background `rect`).
+- **A rule new to the analyzer, not a merge.** Each finding is dated to the
+  newest blame line of its run — the osc11 pair to 2026-08-26, the screenshot
+  one to 2026-08-10 — and none was among the twenty open on 2026-09-28, all in
+  `pod_probe.sh` (the entry above), though the August lines were there then.
+  The backdated-backlog shape [lessons.md](../lessons.md) already records, so
+  no new line there. Two `append()`s in a row are not raised: the three such
+  pairs left in these files are left as they are.
+- **Each file keeps its own idiom.** `site_llms_txt.py` builds its output with
+  `out += [...]` everywhere else, so the "Start here" heading and its three
+  links join the one `+=` list; the other two already grow their lists with
+  `.extend(...)`. In `screenshots.py` the six-part style rule, which relied on
+  implicit concatenation inside `append(...)`, is parenthesised inside the list
+  so it stays one element.
+- **Measured, not argued: every touched path run old against new, byte for
+  byte.** The ten SVG screenshots rendered from the committed dumps (`--format
+  svg` into `target/`); `report` over a dark, a light-with-note, an unparseable
+  and a no-answer reply; `main` on a stubbed console that refuses VT input, so
+  the warning block runs; and `site_llms_txt.py --check` against the committed
+  `/llms.txt`. All identical; both tools' `--self-test` green.
+- No Rust touched — test totals unchanged (fmt, clippy `-D warnings` and the
+  suite green on the branch); the documentation gates green. No CHANGELOG
+  entry: internal tooling (AGENTS.md §4). No live run: developer tools, no
+  engine path (AGENTS.md §3).
