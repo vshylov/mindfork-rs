@@ -3044,3 +3044,62 @@ every reversible check first. Full record —
   defects the track had fixed on its way; the third, the video's *Input
   resolution* doing nothing on the default model, was measured again in every
   spelling and is the provider's. Nothing was owed to the release.
+- **The draft, checked before anyone else could see it** (§6 step 5). `v0.13.0` sat
+  on the merge commit `a7d05357`, which was `origin/main`; `release.yml` was green in
+  all six jobs and left a draft that was not a prerelease, with eight assets. Its
+  notes were the CHANGELOG's `[0.13.0]` section (106 lines) plus the standard footer.
+  All seven lines of `sha256sums.txt` equalled GitHub's own digest per asset, and the
+  four files downloaded hashed to the same. `install.sh` was byte for byte 0.12.0's
+  (`d0c4a156…`), and carries four attestations by now — one per release it shipped
+  in unchanged; the job's install step said `passed=27 failed=0` and `installed:
+  mindfork 0.13.0 (expected: mindfork 0.13.0)`. `gh attestation verify` passed for
+  both archives and the script — eight subjects, `release.yml`, `refs/tags/v0.13.0`.
+  Its control arm has to be a file the release never made, which exits 1:
+  `sha256sums.txt`, tried first, is one of the eight subjects and verifies.
+- **The Windows binary, without a terminal**: `mindfork 0.13.0`; a bare launch with
+  no console refuses with exit 2; no name of a C runtime library in the executable;
+  `stats` on the archive's own root says there is no data, and the 43 files of the
+  unpacked archive are the same 43 after.
+- **The schema step, on the released binary.** A release that moves
+  `SCHEMA_VERSION` is checked on a file of the version before, and the repository
+  has one: `settings_v3.json`, the fixture — `external` pointed at
+  `openrouter.ai`, the setup the mode was built for. In a temporary root, the
+  binary driven in a hidden console by `tools/console_probe.py` taken as a module:
+  it started, the settings showed the mode still `external` with its address and
+  its model, and it exited with 0. Read back: the file is version 4; **every value
+  it held is kept**; one `pre-migrate-*.zip`, of three files, holds it as version
+  3; the log names the step; the key is in neither the log nor the file. 13 checks.
+  Only what writes migrates — the interface, `import`, `setup --set`, `sandbox
+  setup --enable-python` — so `stats`, which the earlier releases' checks ran, could
+  not have shown it.
+- **The released interface, through the gateway**: `console_probe.py --exe` on the
+  archive's binary, `--scenario gateway` — a chat turn, an indexed file, a message
+  read aloud, the settings of the assistant, of speech and of video, and the four
+  lists behind their rows: the catalogue, the speech models, a model's voices, the
+  models that take video. 41 checks, about a cent.
+- **The Linux archive, installed by the draft's own script, offline** (`--from`): in
+  a bare `ubuntu:24.04` as root — `sha256 ok`, unpacked, exit 3 for the missing
+  `libasound`, which is the pass there; the same without `CAP_CHOWN`, a rented pod's
+  shape — no complaint about ownership; and in an image that has the library, as an
+  unprivileged user — installed, `mindfork 0.13.0`, exit 2 for a launch with no
+  terminal and for a bare `setup`, `stats` 0.
+- **Not run**: the Windows installer and the three Linux packages, of which only the
+  digests were compared; 0.12.0's refusal of a file this version has written, which
+  needs 0.12.0's binary; the interface on real data, which is the owner's.
+- **Published, and the numbers of it.** The owner published at 23:52:37Z on
+  2026-09-29 (immutable); `crates-io.yml` 23:52:39Z → 23:55:21Z, `mindfork 0.13.0`
+  on the registry at 23:55:17Z (4 283 055 bytes, the default version, its
+  description naming the gateway); `Site` started by itself three seconds after
+  `crates.io` completed and deployed at 23:56:30Z — **3 min 53 s after the
+  publication**, to the second what 0.12.0 took (0.11.2: 3 min 14 s). The hold on
+  the merge had shown as before: "Is this version out?" green, the deploy skipped.
+  From outside: the post answers 200 and is whole, the home page's structured data
+  says `"softwareVersion": "0.13.0"`, the blog's index opens with the post,
+  `/llms.txt`, the feed and the sitemap list it, the install page names no other
+  version, and `releases/latest` resolves to `v0.13.0`. The README's install line,
+  run as written in a container as an unprivileged user without `CAP_CHOWN`:
+  `mindfork v0.13.0`, `sha256 ok`, unpacked, `mindfork 0.13.0`.
+- **What the early merge cost, measured.** The site's texts were live from
+  23:05:19Z; the release that has the mode, from 23:52:37Z. For **47 minutes** the
+  site described a mode nobody could download, and for 51 its structured data said
+  0.12.0 beside it.
