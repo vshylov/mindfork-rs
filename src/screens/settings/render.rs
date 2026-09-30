@@ -5,6 +5,12 @@
 use super::helpers::*;
 use super::*;
 
+/// The section menu's width, and the narrowest the field pane beside it is
+/// laid out — the two halves of the screen, and of its minimum window
+/// ([`SettingsScreen::min_size`]).
+const MENU_WIDTH: u16 = 24;
+const FIELDS_MIN_WIDTH: u16 = 20;
+
 impl SettingsScreen {
     // ---------- rendering ----------
 
@@ -19,6 +25,15 @@ impl SettingsScreen {
     /// The interface locale from the working config copy (axis B, docs/i18n-ui.md).
     pub(super) fn loc(&self) -> &'static crate::shared::i18n::Locale {
         crate::shared::i18n::locale(self.config.interface.language)
+    }
+
+    /// The smallest window the settings are drawn in (spec §11.1.1). The
+    /// width is the layout's own arithmetic — the section menu's 24 columns,
+    /// the 20 the field pane refuses to go below, the border; under it the
+    /// menu is squeezed to a few letters. The height holds the menu's nine
+    /// sections under its title, inside the border, over a row of key hints.
+    pub fn min_size(&self) -> MinSize {
+        MinSize::new(MENU_WIDTH + FIELDS_MIN_WIDTH + 2, 12)
     }
 
     pub fn render(&mut self, frame: &mut Frame) {
@@ -49,8 +64,11 @@ impl SettingsScreen {
         let area = frame.area();
         frame.render_widget(Paragraph::new(hotkeys), status_area);
 
-        let [menu_area, fields_area] =
-            Layout::horizontal([Constraint::Length(24), Constraint::Min(20)]).areas(inner);
+        let [menu_area, fields_area] = Layout::horizontal([
+            Constraint::Length(MENU_WIDTH),
+            Constraint::Min(FIELDS_MIN_WIDTH),
+        ])
+        .areas(inner);
 
         // Section counters are tied to the selected modes (from the search index) —
         // the sum matches the number of fields in search.

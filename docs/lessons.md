@@ -1275,6 +1275,18 @@ from the user and written it into the file.
 
 ## 5. Terminal and ratatui rendering
 
+**A state that a key can put the user into needs a key that takes them out — check a
+"keys are off" rule against the keys that *open* things.** The "window too small" notice
+was designed for a window the user had shrunk: every key but quit is dropped, since a key
+pressed at a screen that is not shown answers something nobody read, and the way out is
+the window's edge. But a popup raises what the window has to hold, so `Ctrl+P` in a window
+that fits the chat and not the settings put the notice up **with no resize** — and no key
+to take it down. The research had reasoned about how one *arrives* under the notice by
+resizing only; the live run arrived by a keypress in its third scenario. `Esc`, which only
+ever closes or declines, now reaches the layer in front. Enumerate the ways into a modal
+state, not just the way the design had in mind.
+— *a window too small for the frame says so*.
+
 **A feed note that arrives while a reply streams splits the reply.** `push_note` appends
 after the streaming bubble, and the next chunk, finding the note last, opens a new bubble
 (`ensure_streaming_bubble`). Anything a background job reports during a turn — an index
@@ -1472,6 +1484,25 @@ never answered, the refusal that answers with a different event, and the answer
 that never comes.
 — *a chat asked for from another screen arrives in one frame*.
 
+**`Block::inner` of a box smaller than its border is an empty rectangle outside the
+box.** ratatui saturates the arithmetic, so a two-row bordered box has an inner area of
+height 0 whose `y` is the row **below** it — and a widget that forces `height: 1` onto
+that, or places a cursor from it, draws on its neighbour. The input box's prompt stood on
+the status bar in every window of seven rows or fewer, and the cursor went below the
+terminal's last row; `Frame::set_cursor_position` clamps nothing. Check the inner area for
+a cell before drawing anything derived from it, and treat "the area is too small" as a
+state the widget has, not one the layout will keep away from it.
+— *a window too small for the frame says so*.
+
+**Do not hand the layout solver rows that do not add up — and a test will not tell you
+that you did.** `[Min(3), Length, Length, Length]` in a window too short shortens
+whichever `Length` the solver likes; ratatui's documentation calls the result
+"non-deterministic". A guard added to keep the sum honest survived its own mutation,
+because the solver happened to pick the same part to shorten. When several parts compete
+for rows, compute the rectangles by arithmetic in a pure function and test that function
+over every height: what gives way is then written down, and a mutant that removes it fails.
+— *a window too small for the frame says so*.
+
 **A terminal computes some of its own state in the quiet — an animation that never
 pauses keeps that state stale.** Windows Terminal re-finds the URLs it detects in the
 text only after 100 ms without output (a *debounce*: every write re-arms it), and on
@@ -1487,6 +1518,17 @@ tick (`SPINNER_STEP`, asserted at compile time against `TICK`).
 ---
 
 ## 6. Windows and cross-platform
+
+**A hidden console cannot be resized under a running app, but it can be started at a
+size.** From a process attached to it, `SetConsoleWindowInfo` returns success and changes
+nothing, and `SetConsoleScreenBufferSize` fails with error 87 — hidden, or minimized and
+not activated, alike. What works is `cmd /d /c mode con: cols=57 lines=5 && app.exe`: the
+console is shrunk by its first command and the app starts in a 57×5 one, its exit code
+handed on by `cmd`. Pass it as an argument **list** — a command string with the quoted
+path nested inside the quoted `/c` argument died at once. This is how
+`tools/console_probe.py` measures a small window (`Session(size=…)`); a resize itself
+still needs a person and a real terminal.
+— *a window too small for the frame says so*.
 
 **Root in a container is not root: `tar` as root restores the archive's owner,
 and a pod refuses it.** A release archive records whoever packed it (the CI

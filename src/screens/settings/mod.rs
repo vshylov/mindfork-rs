@@ -36,7 +36,7 @@ use crate::shared::secrets::SecretKey;
 use crate::shared::server::{ServerStatus, ServerStatuses};
 use crate::shared::theme::{FULL_THEMES, Palette};
 use crate::shared::ui::{
-    ListScroll, dim_background, mark_selected, render_scrollbar, screen_chrome,
+    ListScroll, MinSize, dim_background, mark_selected, render_scrollbar, screen_chrome,
 };
 use crate::widgets::help_dialog::{HelpContext, HelpSection};
 use crate::widgets::input_box::{InputBox, RenderOpts};

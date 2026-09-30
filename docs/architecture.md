@@ -280,8 +280,15 @@ src/
 │  ├─ events.rs             AppCommand (UI→orchestrator) and AppEvent (orchestrator→UI)
 │  ├─ runtime/              tokio↔TUI bridge. God object broken up (docs/refactoring-god-
 │  │  │                     objects.md, stage 7; external surface — only run):
-│  │  ├─ mod.rs             run/run_loop (the loop, dirty redraw), ActiveScreen, SpellLoader
-│  │  ├─ input.rs           input batching + clipboard paste (Windows path): Chunk, coalescing
+│  │  ├─ mod.rs             run/run_loop (the loop, dirty redraw), ActiveScreen, SpellLoader;
+│  │  │                     compose_frame (the frame in its drawing order) and too_small
+│  │  │                     (the window the layers in front need — below it the frame is
+│  │  │                     the "window too small" notice, spec §11.1.1)
+│  │  ├─ input.rs           input batching + clipboard paste (Windows path): Chunk, coalescing;
+│  │  │                     route_batch (a batch against the frame that was on screen: under
+│  │  │                     the notice, a quit key or one Esc to the layer in front)
+│  │  ├─ small_window_tests.rs  #[cfg(test)]: the gate — every screen and popup at 459
+│  │  │                     window sizes, each frame the notice or the screen whole
 │  │  ├─ dispatch.rs        apply_event (AppEvent→screen) + Intent→AppCommand translation
 │  │  └─ clipboard.rs       read/write the system clipboard (arboard)
 │  ├─ supervisor.rs         ServerSupervisor: (re)start managed / connect to external;
@@ -310,7 +317,9 @@ src/
 │  │  │                     fitted to the row at render time — location dropped, name elided)
 │  │  └─ render.rs          screen rendering; input_height: the input row grows with its
 │  │                        text up to `interface.input_max_rows`, never past half the
-│  │                        window (spec §11.5)
+│  │                        window (spec §11.5); chat_areas: the screen's four areas by
+│  │                        arithmetic, the input box the one cut back; min_size: the
+│  │                        chat's minimum window and the open popup's (spec §11.1.1)
 │  ├─ chat_list.rs          ChatListScreen: full-screen chat list (Esc), → ChatListIntent
 │  ├─ awaited_chat.rs       AwaitedChat: the chat a screen asked for and stays in front for
 │  │                        (the list, the results, the tasks screen) — so the previous
@@ -845,7 +854,13 @@ src/
    │                       its capped/shedding column choice locally. Every
    │                       footer and the bar come out of here, so they cannot
    │                       drift (spec §11.1,
-   │                       docs/history/status-hints-unified.md)
+   │                       docs/history/status-hints-unified.md); and the small
+   │                       window's pieces (spec §11.1.1): MinSize (the smallest
+   │                       window a layer is drawn in), render_too_small + WayOut
+   │                       (the notice, and the keys it names), Prompt (a modal
+   │                       question as tall as its wrapped text, its keys on the
+   │                       border or in the body — never cut) with confirm_prompt,
+   │                       legend_width (what a popup's border needs for its keys)
    ├─ wrap.rs              word wrap by column (unicode-width) + width-aware truncation
    │                       (truncate_to_width — tail, elide_middle — both ends kept);
    │                       wrap_hanging — a wrap under a prefix repeated on every
@@ -3720,6 +3735,23 @@ new canvas (`erase_to_canvas`: the canvas as the current background, the erase �
 ratatui's own `autoresize` when the terminal was resized — and the reset), which
 also primes a full redraw.
 
+**Small windows (spec §11.1.1, docs/research/small-terminal.md).** Before it
+draws anything `compose_frame` asks `too_small` what window the layers in front
+need: the active screen's `min_size` — which already counts its open popup —
+and the help dialog's while it is up. A smaller window gets
+`ui::render_too_small` in place of the frame, and `compose_frame` returns which
+keys that notice named (`WayOut`). `Drawn` keeps the verdict for two readers:
+`draw_frame`, for which the notice coming or going is a wholesale change of the
+frame and therefore a full redraw (decided before the render, from the size the
+frame is about to get — a popup raises the minimum with no resize); and
+`route_batch`, which reads the next tick's keys **against the frame that was on
+screen** — under the notice a quit key quits, one `Esc` goes to the layer in
+front where there is one, and everything else is dropped. Invariant: a minimum
+is a function of the window and of which layers are open, never of their
+content, so the notice cannot flicker with a token counter; and whatever raises
+a minimum is something `Esc` leaves (`ChatScreen::popup_needs` is the one list
+behind both `min_size` and `has_popup`).
+
 The **monochrome** mode is the same shape with the roles swapped: the palette
 (`Palette::mono`) carries a flag instead of a canvas, and the pass
 (`ui::strip_styles`, run by `ui::finish_frame` right after `paint_canvas`)
@@ -3806,7 +3838,10 @@ Decisions recorded in ADRs:
   single-line mode for settings fields. The widget draws into whatever height
   it is given and scrolls past it; how tall the chat's box is — its text, up to
   `interface.input_max_rows`, within half the window — is the chat screen's
-  layout (`screens/chat/render.rs::input_height`, spec §11.5).
+  layout (`screens/chat/render.rs::input_height`, spec §11.5). A rectangle with
+  no cell for text gets the border and nothing else: `Block::inner` of it is an
+  empty rectangle **outside** the box, and a prompt or a cursor placed from
+  that would land on the neighbour (spec §11.1.1).
 - **Our own markdown renderer** ([ADR 0003](decisions/0003-own-markdown-renderer.md)):
   a walker over `pulldown-cmark` events (`render(input, width, palette)`).
   Supports tables (box-drawing, "water-fill" column layout), delimiter-scoped

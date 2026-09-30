@@ -146,6 +146,69 @@ pub(super) fn chunk_batch(batch: Vec<Event>) -> Vec<Chunk> {
     out
 }
 
+/// Whether a batch read under the "window too small" placeholder asks to
+/// quit (spec §11.1.1, docs/research/small-terminal.md F2).
+///
+/// The two quit keys are the ones every screen answers to (spec §11.7),
+/// matched the way the screens match them — `Ctrl+Q` by the physical key, so
+/// it works under any layout.
+pub(super) fn quit_requested(batch: &[Event]) -> bool {
+    batch.iter().any(|event| match event {
+        Event::Key(key) if key.kind == KeyEventKind::Press => {
+            key.code == KeyCode::F(10)
+                || (key.modifiers.contains(KeyModifiers::CONTROL)
+                    && crate::shared::keys::hotkey_char(key) == Some('q'))
+        }
+        _ => false,
+    })
+}
+
+/// One batch of terminal events, read against the frame that was on screen
+/// when they were made. A screen takes all of it. The placeholder takes the
+/// keys it names and drops the rest: the screen a key was meant for is not
+/// the one on the terminal, so `Enter` would run a tool call whose question
+/// nobody read and a typed line would be sent unseen.
+///
+/// * a quit key quits, whatever else is in the batch;
+/// * **one** `Esc` reaches the layer in front, where the placeholder says it
+///   does ([`WayOut::EscOrQuit`]) — it closes a popup, declines a question,
+///   leaves a screen. One per batch: the second would act on whatever the
+///   first uncovered, before a frame of it was drawn.
+///
+/// Apart from the tick that reads the terminal, so that the rule has a test.
+/// Returns `true` if quitting was requested.
+// The loop's state, one borrow each, and the frame's verdict.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn route_batch(
+    placeholder: Option<WayOut>,
+    batch: Vec<Event>,
+    screen: &mut ChatScreen,
+    active: &mut ActiveScreen,
+    help: &mut HelpOverlay,
+    back: &mut Option<Back>,
+    cmd_tx: &UnboundedSender<AppCommand>,
+    clipboard: &mut Option<arboard::Clipboard>,
+) -> bool {
+    let Some(way_out) = placeholder else {
+        return process_input_batch(batch, screen, active, help, back, cmd_tx, clipboard);
+    };
+    if quit_requested(&batch) {
+        return true;
+    }
+    let esc = batch.into_iter().find(|event| {
+        matches!(event, Event::Key(key)
+            if key.kind == KeyEventKind::Press
+                && key.code == KeyCode::Esc
+                && key.modifiers.is_empty())
+    });
+    match (way_out, esc) {
+        (WayOut::EscOrQuit, Some(esc)) => {
+            process_input_batch(vec![esc], screen, active, help, back, cmd_tx, clipboard)
+        }
+        _ => false,
+    }
+}
+
 /// Processes a batch of terminal events in one pass. Coalesced pastes
 /// go into the active editor (the settings screen) or into the chat's input box as
 /// text — never sending, even if they contain line breaks. Single events — the regular way.

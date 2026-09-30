@@ -18,6 +18,7 @@ use crate::features::spellcheck::SpellChecker;
 use crate::screens::awaited_chat::AwaitedChat;
 use crate::shared::i18n::Locale;
 use crate::shared::theme::Palette;
+use crate::shared::ui::MinSize;
 use crate::widgets::chat_list::{ChatListAction, ChatListState};
 
 /// Intent from the chat-list screen (translated by `app`). A counterpart to
@@ -199,6 +200,13 @@ impl ChatListScreen {
     /// is lent from the chat screen — its owner (`app` reconciles this in the loop).
     pub fn recheck_spelling(&mut self, spell: &SpellChecker) -> bool {
         self.state.recheck_rename_spelling(spell)
+    }
+
+    /// The smallest window the list is drawn in (spec §11.1.1): the search
+    /// line, which is also the rename field, a row of the list under it, the
+    /// border around both and a row of key hints.
+    pub fn min_size(&self) -> MinSize {
+        MinSize::new(24, 7)
     }
 
     /// Draws the list full-screen. `&mut self` — the rename field draws

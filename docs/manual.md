@@ -575,6 +575,14 @@ and also exits 2. On Windows, a refusal printed into a console the app owns alon
 — a double-click from Explorer — waits for `Enter` before closing, so the message
 does not vanish with the window.
 
+**"Window too small".** The window is smaller than the screen in front can be
+drawn in, and the line under the title says both sizes: the one the window has
+and the one it needs — 20×9 for the chat, 46×12 for the settings. Enlarge the
+window and the screen is back as you left it. Until then the keys are off, so
+that nothing is sent or confirmed unseen: `Ctrl+Q` quits, and where the line
+names `Esc` — something opened over the chat is what does not fit — `Esc`
+closes it.
+
 **The engine says "not configured".** The empty chat lists the ways to connect
 one; `Ctrl+P → Model/server` is where they are. A managed server needs both a
 binary and a GGUF file — with a binary alone it deliberately starts nothing,

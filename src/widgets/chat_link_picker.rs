@@ -22,7 +22,7 @@ use uuid::Uuid;
 use crate::entities::chat::ChatSummary;
 use crate::shared::i18n::Locale;
 use crate::shared::theme::Palette;
-use crate::shared::ui::{ListScroll, mark_selected};
+use crate::shared::ui::{ListScroll, MinSize, legend_width, mark_selected};
 use crate::shared::wrap;
 
 /// Action the overlay asks the layer above to perform.
@@ -93,6 +93,13 @@ impl ChatLinkPickerState {
         }
     }
 
+    /// The smallest window the overlay is drawn in (spec §11.1.1): its key
+    /// legend whole on the border — the overlay is never narrower than that —
+    /// around three rows of the list.
+    pub fn min_size(loc: &'static Locale) -> MinSize {
+        MinSize::new(legend_width(loc.t("ui.chat_links.footer")), 5)
+    }
+
     /// Draws the overlay centered in `area`.
     pub fn render(
         &mut self,
@@ -102,7 +109,7 @@ impl ChatLinkPickerState {
         loc: &'static Locale,
     ) {
         let rows = (self.chats.len() as u16 + 2).clamp(5, area.height);
-        let popup = centered_rect(60, 40, rows, area);
+        let popup = centered_rect(60, 40.max(Self::min_size(loc).width), rows, area);
         frame.render_widget(Clear, popup);
 
         let block = palette

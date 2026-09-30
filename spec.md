@@ -1418,7 +1418,10 @@ application. Design record: [docs/history/tool-confirmation.md](docs/history/too
   JSON blob; long arguments are cut with "…" — it is a decision prompt, not a
   viewer. `Enter` runs the call, `A` runs it and stops asking about **that tool**
   for the rest of the turn, `Esc` declines. Any other key is ignored and the popup
-  stays. `Ctrl+Q`/`F10` punch through to quit, as in every other popup.
+  stays. `Ctrl+Q`/`F10` punch through to quit, as in every other popup. The three
+  keys are named on the popup's border where it is wide enough for them and as
+  the last lines of its text where it is not, and a window that cannot show the
+  question whole does not ask it ([11.1.1](#1111-small-windows)).
 - **A `python_exec` call also states what would go into the sandbox**: the chat's
   files the call named, **resolved** to their names and sizes, and whether the
   sandbox has the network — the two halves of what is being consented to. Not a
@@ -2559,6 +2562,85 @@ Two main screens + overlays (modals):
   dimming an inapplicable hint, would add a third keycap style and contradict
   the rule.
 
+#### 11.1.1. Small windows
+
+**A frame is drawn whole or not at all.** Every layer — a screen, a popup over
+it, the help dialog — has a smallest window it is drawn in, and a window below
+the minimum of what is in front gets one centred notice instead of a frame with
+parts missing: *Window too small*, the size the window has and the size it
+needs (`57×5 — needs 20×9`), and the keys that work. What was drawn there
+before was nobody's design — an input box with no row of text and its prompt
+standing on the status bar, a cursor below the last row of the terminal, a
+panel that was a border around nothing
+([docs/research/small-terminal.md](docs/research/small-terminal.md) §1). No
+size panics, 0×0 included, which is a size real hosts report.
+
+- **The minimums.** The chat — 20×9: the layout at its tallest (the feed's
+  three rows, the indexing banner, the input box's three, two rows of status
+  bar). The chat list — 24×7; the settings — 46×12, the width being the
+  layout's own arithmetic (the menu's 24 columns, the 20 the fields are never
+  laid out below, the border); the self-model, the message search and the
+  tasks — 30×8; the changes — 40×8. A popup raises its screen's minimum to its
+  own: a list to its key legend whole on the border, the emoji picker to its
+  whole grid (a cell cut off at the edge can still be selected, unseen), the
+  help dialog to its legend over eight rows, a question to the rows its text
+  wraps into at the window's width.
+- **A minimum depends on the window and on which layers are open, never on
+  what they hold.** The chat's nine rows are a constant, not the sum of what
+  this frame happens to show: a minimum that followed the banner or the status
+  bar's second row would put the notice up and take it down as they came and
+  went. The notice appears with a resize or with a key that opens something —
+  the emoji picker in a 40-column window — and with nothing else.
+- **The keys under the notice.** A key pressed at a screen that is not on the
+  terminal would be an answer to something nobody read: `Enter` would run a
+  tool call, a typed line would be sent. So the batch is read for what the
+  notice names and the rest is dropped. `Ctrl+Q`/`F10` always quit. **`Esc`
+  reaches the layer in front, while there is one** — the help, a popup, a
+  screen over the chat: it is the key that closes, declines or goes back, never
+  the one that confirms or sends, and without it a picker opened in a window
+  the chat fits and the picker does not could be left only by resizing or by
+  quitting. One `Esc` a batch — a second would act on what the first
+  uncovered, before a frame of it was drawn. In a window too small for the chat
+  itself there is nothing to leave, and only quit works: `Esc` there would
+  cancel a running turn unseen. The notice's last line says which of the two
+  it is.
+- **A question is asked whole or not at all.** A modal question — the tool
+  confirmation ([9.8](#98-confirmation-for-dangerous-tool-calls)), a
+  destructive key's, a revert's — is a box as tall as its wrapped text, with
+  the keys that answer it on its bottom border while the border holds them and
+  as the last lines of its body when it does not. A border title longer than
+  the border is cut at the corner with no mark, and the tool confirmation's
+  legend is 57 columns in `en` and 69 in `ru`: in any window narrower than
+  that the key that runs the call was off the screen. A window that cannot
+  hold the box is one the question is not asked in — the notice, and `Esc` to
+  decline.
+- **A popup is never narrower than its key legend.** The profile picker and the
+  `chat://` picker were a share of the window with a floor below their
+  legends: the profile picker's was cut in every window under 82 columns, the
+  `chat://` picker's under 70 in `ru`.
+- **The chat's rows are arithmetic** (`screens/chat/render.rs::chat_areas`),
+  not the layout solver's: the solver, handed rows that did not add up,
+  shortened whichever it liked — the input box lost its row of text while the
+  status bar kept two rows of hints. The input box is what is cut back, to
+  what the feed's three rows, the banner and the status bar leave; at the
+  chat's minimum that is its own three.
+- **A widget draws inside its rectangle.** An input box with no cell for text
+  draws its border and nothing else — no prompt on the row under it, no cursor
+  there. The cursor of a frame is inside the frame or hidden; under a popup
+  that takes the keys, the tool confirmation included, the box is not where the
+  cursor is.
+- **Not yet**: the footers of the screens other than the chat still wrap
+  without shedding ([11.1](#111-screens-and-navigation)), so between a screen's
+  minimum and the height its legend wants, the panel is squeezed to three rows
+  and the footer is cut from the bottom — the frame it always was. Bounding
+  them, and the chat shedding its borders down to three rows, are the track's
+  next stages ([docs/research/small-terminal.md](docs/research/small-terminal.md) §6).
+- **The gate** (`app/runtime/small_window_tests.rs`) draws twenty states —
+  every screen, every popup of the chat — at 459 window sizes from 0×0 up, in
+  every built-in language, through the function the loop draws with; each
+  frame is the notice or the screen whole, with the cursor inside it or
+  hidden. On a real console: `tools/console_probe.py --scenario small-window`.
+
 ### 11.2. The chat list (an overlay)
 
 A direct requirement from the task:
@@ -2968,6 +3050,16 @@ this?"*; this screen answers *"where exactly, and take me there."*
   → `gemma-4-31B_q4_0-it`); an org-qualified id (`meta-llama/Llama-3-8B`) is left
   alone. An engine that cannot say still shows nothing. See
   docs/research/external-model-name.md.
+- **The header's row is shared title-first.** The chat's title and the model
+  caption stand on the feed's top border, and the title is owed half that row —
+  or all of itself, when it is shorter. The caption is shown in the widest form
+  that leaves that much: whole, then without a managed model's context size
+  (`gemma-4-12B-it-Q5_K_M` for `gemma-4-12B-it-Q5_K_M · 16k ctx`), then not at
+  all. Where the row has room for both, a long title is the one cut, with its
+  "…", as before. The caption used to be whole at any width and the title got
+  what was left: a 45-column window showed five letters of the title beside a
+  33-column model name, and a 30-column one no title and a caption clipped
+  from its left (`widgets/message_feed.rs::fit_header`).
 - Contextual message actions: copy thoughts/message/the whole chat; **edit in place** (both user and assistant — a direct requirement); regenerate; delete last.
 - **Scrolling**: `PageUp`/`PageDown` (by `PAGE_SCROLL` lines) and the **mouse wheel** (by `WHEEL_SCROLL` lines), with automatic "tail-following" when scrolled to the bottom. Terminal mouse capture is a **toggle**, `Ctrl+W` (off by default, so native text selection with the mouse works; when captured, the wheel goes to the application, and selection stays available with `Shift`). The wheel and selection share one terminal mouse-reporting mechanism, so "wheel only" can't be enabled separately. The current mode is shown in the status bar.
 - **Who may scroll to the tail** — split by *who asked*. **User-initiated** actions go
@@ -3233,7 +3325,7 @@ Design record: [docs/history/in-feed-search.md](docs/history/in-feed-search.md).
 ### 11.5. Input and editing, spellcheck
 
 - **Input/editing**: a **custom multiline widget** (`widgets/input_box.rs`, [ADR 0001](docs/decisions/0001-ui-crates-ratatui-030.md)) — for a new message and for editing existing messages in place. Off-the-shelf crates (`tui-textarea`/`ratatui-textarea`) are incompatible with ratatui 0.30 and don't support highlighting arbitrary ranges — hence a custom widget.
-- **The input box's height** follows its text, counted in wrapped rows: from one row up to **`interface.input_max_rows`** (Settings → Interface → Appearance, *Input box height*; `6` by default — the value that was hard-coded before the setting, `1–50`, an entry outside the range is clamped rather than refused, and a hand-edited `settings.json` is bounded the same way when read). Past the ceiling the text scrolls inside the box, which keeps the cursor in view and draws a scrollbar on its right border. The ceiling is a wish, not a guarantee: the box — border included — **never takes more than half the window**. Without that cap the layout would honour any ceiling at the feed's expense: the feed's `Constraint::Min(3)` outranks the `Length`s of the input and the status bar in ratatui's solver, so a 20-row window with a ceiling of 50 was measured to leave the chat one visible line. The default is unchanged on any window of 16 rows or more; the impersonation preview (§11.8), which stands in the same row, follows the same rule, and a changed setting applies at once (`screens/chat/render.rs::input_height`).
+- **The input box's height** follows its text, counted in wrapped rows: from one row up to **`interface.input_max_rows`** (Settings → Interface → Appearance, *Input box height*; `6` by default — the value that was hard-coded before the setting, `1–50`, an entry outside the range is clamped rather than refused, and a hand-edited `settings.json` is bounded the same way when read). Past the ceiling the text scrolls inside the box, which keeps the cursor in view and draws a scrollbar on its right border. The ceiling is a wish, not a guarantee: the box — border included — **never takes more than half the window**. Without that cap the layout would honour any ceiling at the feed's expense: a 20-row window with a ceiling of 50 was measured to leave the chat one visible line. And it takes no more than the feed's three rows, the banner and the status bar leave — the chat's rows are arithmetic, not the layout solver's ([11.1.1](#1111-small-windows)). The default is unchanged on any window of 16 rows or more; the impersonation preview (§11.8), which stands in the same row, follows the same rule, and a changed setting applies at once (`screens/chat/render.rs::input_height`).
   - The `spellbook` engine (Hunspell dictionaries from the `dictionaries/` directory at the data root; in non-portable mode — with a fallback lookup in the portable layout `data/dictionaries/` next to the binary, where an installer/package puts them).
   - **The data root's `dictionaries/` is created at startup when it is missing** (`Paths::ensure_dirs`), with a `README.txt` in it written in the interface language: the `*.aff` + `*.dic` naming convention, where ready-made dictionaries are published, and that a dictionary added under a bundled one's name replaces it. Under a `system`/`path` install the bundled dictionaries sit next to the binary — a program folder the user should not write into — so without this the data root had no `dictionaries/` at all and adding one had no obvious place. The file is written **only** on creating the directory, so deleting or editing it sticks and a portable install (where the directory arrives with the dictionaries in it) is left untouched; it is not a dictionary, the loader reads `*.aff`/`*.dic` pairs and ignores everything else.
   - A word is correct if accepted by **at least one** active dictionary (support for mixed ru/en text).

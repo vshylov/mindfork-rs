@@ -900,6 +900,76 @@ fn ctrl_q_breaks_through_confirm_popup_to_quit() {
     assert_eq!(s.confirm, None);
 }
 
+/// The chat's rows are arithmetic (spec §11.1.1): whatever the banner, the
+/// draft and the status bar ask for, the four areas tile the window top to
+/// bottom with no row in two of them — and from the chat's minimum window up
+/// each part has the rows it needs, the input box being the one cut back.
+#[test]
+fn the_chats_areas_tile_the_window_and_the_input_gives_way() {
+    use super::render::{CHAT_MIN_SIZE, chat_areas};
+    for height in 0..=40u16 {
+        for banner in [0u16, 1] {
+            for status in [1u16, 2] {
+                for wanted in 3..=12u16 {
+                    let at =
+                        format!("{height} rows, banner {banner}, status {status}, input {wanted}");
+                    let window = Rect::new(0, 0, 57, height);
+                    let [feed, b, input, s] = chat_areas(window, banner, wanted, status);
+                    // Top to bottom, edge to edge, nothing shared.
+                    assert_eq!(feed.y, 0, "{at}");
+                    assert_eq!(feed.bottom(), b.y, "{at}");
+                    assert_eq!(b.bottom(), input.y, "{at}");
+                    assert_eq!(input.bottom(), s.y, "{at}");
+                    assert_eq!(s.bottom(), height, "{at}");
+                    for part in [feed, b, input, s] {
+                        assert_eq!((part.x, part.width), (0, 57), "{at}");
+                    }
+                    if height < CHAT_MIN_SIZE.height {
+                        continue;
+                    }
+                    assert_eq!((b.height, s.height), (banner, status), "{at}");
+                    assert!(feed.height >= 3, "{at}: the feed keeps its three rows");
+                    assert!(input.height >= 3, "{at}: the box keeps a row of text");
+                    assert!(input.height <= wanted, "{at}");
+                    // The box is cut back only as far as the feed's three rows
+                    // require — a draft gets every row that is really free.
+                    let free = height - 3 - banner - status;
+                    assert_eq!(input.height, wanted.min(free), "{at}");
+                }
+            }
+        }
+    }
+}
+
+/// A popup raises the window the chat needs (spec §11.1.1): a list to its key
+/// legend, a question to the rows it wraps into at the window's width.
+#[test]
+fn an_open_popup_raises_the_chats_minimum_window() {
+    use crate::shared::ui::MinSize;
+    let area = Rect::new(0, 0, 20, 9);
+    let mut s = with_confirm();
+    assert_eq!(s.min_size(area), MinSize::new(20, 9), "the chat alone");
+
+    // A question with a long name in it wraps past the chat's nine rows.
+    s.confirm = Some(ConfirmAction::DeleteProfile {
+        id: Uuid::new_v4(),
+        name: "a profile with a name as long as a sentence, and then some".into(),
+        chats: 12,
+    });
+    let need = s.min_size(area);
+    assert_eq!(need.width, 20);
+    assert!(need.height > 9, "{need:?}");
+    // In a wider window the same question is shorter — and the chat's own
+    // nine rows are the floor again.
+    assert_eq!(s.min_size(Rect::new(0, 0, 80, 24)), MinSize::new(20, 9));
+    s.confirm = None;
+
+    // A picker needs its key legend whole: wider than the chat's 20 columns.
+    s.emoji = Some(EmojiPickerState::new());
+    let need = s.min_size(area);
+    assert!(need.width >= 46 && need.height == 9, "{need:?}");
+}
+
 #[test]
 fn ctrl_r_and_e_emit_directly_without_confirm() {
     // By default (with no settings snapshot) confirmation is off.
@@ -5483,14 +5553,18 @@ fn the_caption_prefers_settings_and_falls_back_to_the_engine() {
 
     let mut s = ChatScreen::new();
     settings(&mut s, None);
-    assert_eq!(s.model_meta(), "", "nothing configured, nothing discovered");
+    assert_eq!(
+        s.model_meta().full(),
+        "",
+        "nothing configured, nothing discovered"
+    );
 
     s.set_engine_model(Some("gemma-4-31B_q4_0-it".into()));
-    assert_eq!(s.model_meta(), "gemma-4-31B_q4_0-it");
+    assert_eq!(s.model_meta().full(), "gemma-4-31B_q4_0-it");
 
     settings(&mut s, Some("qwen-3.6-27b"));
     assert_eq!(
-        s.model_meta(),
+        s.model_meta().full(),
         "qwen-3.6-27b",
         "a name the user typed outranks the server's opinion"
     );
@@ -5499,7 +5573,7 @@ fn the_caption_prefers_settings_and_falls_back_to_the_engine() {
     // keeping the previous server's model.
     settings(&mut s, None);
     s.set_engine_model(None);
-    assert_eq!(s.model_meta(), "");
+    assert_eq!(s.model_meta().full(), "");
 }
 
 /// Several runs at once (spec §9.3.2): the chip counts them and names the

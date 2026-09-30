@@ -252,6 +252,15 @@ impl ChatScreen {
     }
 }
 
+/// The suggestion popup's width where its legend needs no more.
+const SUGGEST_WIDTH: u16 = 40;
+
+/// The smallest window the suggestion popup is drawn in: its key legend whole
+/// on the border, and the border around three rows of the list (spec §11.1.1).
+pub(super) fn suggest_min_size(loc: &'static Locale) -> MinSize {
+    MinSize::new(legend_width(loc.t("ui.suggest.footer")), 5)
+}
+
 /// Draws the spellcheck-suggestion popup centered on screen.
 pub(super) fn render_suggest(
     frame: &mut Frame,
@@ -260,15 +269,13 @@ pub(super) fn render_suggest(
     loc: &'static Locale,
 ) {
     let rows = (popup.items.len() as u16 + 2).min(frame.area().height);
-    let area = centered_rect(40, rows, frame.area());
+    let legend = loc.t("ui.suggest.footer");
+    let area = centered_rect(SUGGEST_WIDTH.max(legend_width(legend)), rows, frame.area());
     frame.render_widget(Clear, area);
 
     let block = palette
         .panel(popup.word.clone(), true)
-        .title_bottom(Line::from(Span::styled(
-            loc.t("ui.suggest.footer"),
-            palette.muted_style(),
-        )));
+        .title_bottom(Line::from(Span::styled(legend, palette.muted_style())));
     let selected = popup.selected.min(popup.items.len().saturating_sub(1));
     let items: Vec<ListItem> = popup
         .items
@@ -318,7 +325,7 @@ pub(super) fn render_suggest(
 /// The modal confirmation popup for a destructive chat action (`Ctrl+R`,
 /// `Ctrl+E`, `/profile delete`, `/self clear`).
 ///
-/// The drawing lives in [`crate::shared::ui::confirm_popup`], shared with the
+/// The drawing lives in [`crate::shared::ui::confirm_prompt`], shared with the
 /// changes screen's revert question; what stays here is *which* question, since
 /// that is the part the two screens do not have in common.
 pub(super) fn render_confirm(
@@ -327,13 +334,22 @@ pub(super) fn render_confirm(
     palette: &Palette,
     loc: &'static Locale,
 ) {
-    crate::shared::ui::confirm_popup(
-        frame,
+    confirm_prompt(action, palette, loc).render(frame, palette);
+}
+
+/// The destructive-action question as a [`Prompt`] — what [`render_confirm`]
+/// draws, and what the screen sizes its minimum window by.
+pub(super) fn confirm_prompt(
+    action: &ConfirmAction,
+    palette: &Palette,
+    loc: &'static Locale,
+) -> Prompt {
+    crate::shared::ui::confirm_prompt(
         palette,
         loc.t("ui.confirm.title"),
         &action.prompt(loc),
         loc.t("ui.confirm.footer"),
-    );
+    )
 }
 
 /// Draws the dangerous-tool confirmation popup (spec §9.8).
@@ -349,6 +365,20 @@ pub(super) fn render_tool_confirm(
     palette: &Palette,
     loc: &'static Locale,
 ) {
+    tool_prompt(pending, palette, loc).render(frame, palette);
+}
+
+/// The dangerous-tool question as a [`Prompt`]: what is asked, the call, what
+/// it would be handed, and its arguments. The box is sized by the rows this
+/// text takes once wrapped, and its keys move into the body when the border
+/// cannot hold them ([`Prompt`]) — 69 columns in `ru`, which is why a
+/// 57-column window used to show this question without the key that runs the
+/// call (docs/research/small-terminal.md §2.5).
+pub(super) fn tool_prompt(
+    pending: &ToolConfirm,
+    palette: &Palette,
+    loc: &'static Locale,
+) -> Prompt {
     use crate::features::tools::present::{ArgDetail, ToolBlock, present};
 
     // Compact: this is a decision prompt, not a viewer — long arguments are cut
@@ -358,7 +388,7 @@ pub(super) fn render_tool_confirm(
         Some(suffix) => format!("{}({suffix})", pending.name),
         None => pending.name.clone(),
     };
-    let mut body: Vec<Line> = vec![
+    let mut body: Vec<Line<'static>> = vec![
         Line::from(Span::styled(
             loc.t("ui.confirm.tool.question"),
             Style::new().fg(palette.text),
@@ -434,28 +464,19 @@ pub(super) fn render_tool_confirm(
         }
     }
 
-    let width = 72u16.min(frame.area().width);
-    let block = palette
-        .panel(loc.t("ui.confirm.tool.title"), true)
-        .title_bottom(
-            Line::from(Span::styled(
-                loc.t("ui.confirm.tool.footer"),
-                palette.muted_style(),
-            ))
-            .centered(),
-        );
-    let paragraph = Paragraph::new(body).block(block).wrap(Wrap { trim: false });
-    // Sized by the rows it will actually take, not by the lines it holds. The two part
-    // company as soon as one wraps — which the `files` line does at two named files — and
-    // counting lines then clipped the last row off the bottom: the code being approved.
-    // `line_count` is ratatui's own, over ratatui's own word wrapping and including the
-    // block's two border rows; counting it here by hand would be a second implementation of
-    // word wrapping whose only job is to agree with the first, and every disagreement is a
-    // consent given to something the user could not see.
-    let rows = paragraph.line_count(width.saturating_sub(2)) as u16;
-    let area = centered_rect(width, rows.min(frame.area().height), frame.area());
-    frame.render_widget(Clear, area);
-    frame.render_widget(paragraph, area);
+    // Sized by the rows it will actually take, not by the lines it holds
+    // (`Prompt::rows`). The two part company as soon as one wraps — which the
+    // `files` line does at two named files — and counting lines then clipped
+    // the last row off the bottom: the code being approved.
+    Prompt {
+        title: loc.t("ui.confirm.tool.title").to_string(),
+        body,
+        legend: loc.t("ui.confirm.tool.footer").to_string(),
+        max_width: 72,
+        min_rows: 0,
+        // Code keeps its indentation.
+        trim: false,
+    }
 }
 
 /// How many lines of a call's arguments the confirmation popup shows before

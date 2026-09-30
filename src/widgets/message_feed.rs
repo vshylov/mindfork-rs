@@ -468,6 +468,62 @@ impl Default for MessageFeed {
     }
 }
 
+/// The feed header's right-hand caption — the model behind the chat — in the
+/// forms the header can afford ([`fit_header`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FeedCaption {
+    /// The model's name; empty — there is no caption.
+    pub name: String,
+    /// What follows the name where the row has room for it: a managed model's
+    /// context size.
+    pub detail: Option<String>,
+}
+
+impl FeedCaption {
+    /// The caption in full: the name and, behind a `·`, its detail.
+    pub fn full(&self) -> String {
+        match &self.detail {
+            Some(detail) if !self.name.is_empty() => format!("{} · {detail}", self.name),
+            _ => self.name.clone(),
+        }
+    }
+
+    /// The forms the header may show, widest first: with the detail, then the
+    /// name alone. None for an empty caption.
+    fn forms(&self) -> Vec<String> {
+        if self.name.is_empty() {
+            return Vec::new();
+        }
+        let mut forms = vec![self.full()];
+        if self.detail.is_some() {
+            forms.push(self.name.clone());
+        }
+        forms
+    }
+}
+
+/// What the feed's header holds in `avail` columns: the chat's title — cut,
+/// with the "…" a cut carries, when it has to be — and the caption beside it.
+///
+/// **The title outranks the caption** (spec §11.3): the title is owed half the
+/// row, or all of itself when it is shorter, and the caption is shown in the
+/// widest form that leaves that much — first without its detail, then not at
+/// all. The caption used to be whole at any width and the title got the
+/// remainder: a 45-column window showed five letters of the title beside a
+/// 33-column model name, and a 30-column one showed no title and a caption
+/// clipped from its left (docs/research/small-terminal.md §2.3). Where the row
+/// has room for both, nothing changes — a long title is still the one cut.
+fn fit_header(title: &str, caption: &FeedCaption, avail: usize) -> (String, Option<String>) {
+    let owed = wrap::str_width(title).min(avail / 2);
+    let cell_width = |form: &str| wrap::str_width(form) + 2;
+    let form = caption
+        .forms()
+        .into_iter()
+        .find(|form| cell_width(form) + owed <= avail);
+    let budget = avail - form.as_deref().map_or(0, cell_width);
+    (wrap::truncate_to_width(title, budget).0, form)
+}
+
 impl MessageFeed {
     pub fn new() -> Self {
         Self {
@@ -841,9 +897,9 @@ impl MessageFeed {
         self.highlight.as_deref()
     }
 
-    /// Draws the feed. `messages` — the active chat's current content. `meta` —
+    /// Draws the feed. `messages` — the active chat's current content. `caption` —
     /// the right-hand title caption (e.g. "gemma-4 · 16k ctx"; empty — don't show).
-    // Title/meta/palette/locale — render context; bundling them into a struct for
+    // Title/caption/palette/locale — render context; bundling them into a struct for
     // the sake of one call from `chat/render.rs` isn't worth it.
     #[allow(clippy::too_many_arguments)]
     pub fn render(
@@ -851,23 +907,22 @@ impl MessageFeed {
         frame: &mut Frame,
         area: Rect,
         title: &str,
-        meta: &str,
+        caption: &FeedCaption,
         messages: &[FeedMessage],
         palette: &Palette,
         loc: &'static Locale,
     ) {
-        // A rounded panel: title with a ◆ marker on the left, meta (model/ctx) on the right.
+        // A rounded panel: title with a ◆ marker on the left, the caption
+        // (model/ctx) on the right.
         let glyphs = palette.glyphs();
         let marker = format!(" {} ", glyphs.title_marker);
-        let meta_cell = (!meta.is_empty()).then(|| format!(" {meta} "));
-        // The border is a fixed row, so the title is cut to what the marker,
-        // the meta and the corners leave — with the "…" that cut carries. A
-        // title is not bounded in storage; every surface that draws one in a
-        // row bounds it itself (`shared::title::sanitize_title`, spec §11.2).
-        let budget = (area.width as usize).saturating_sub(
-            2 + wrap::str_width(&marker) + 1 + meta_cell.as_deref().map_or(0, wrap::str_width),
-        );
-        let (title, _) = wrap::truncate_to_width(title, budget);
+        // The border is a fixed row: the title and the caption share what the
+        // marker and the corners leave ([`fit_header`]). A title is not bounded
+        // in storage; every surface that draws one in a row bounds it itself
+        // (`shared::title::sanitize_title`, spec §11.2).
+        let avail = (area.width as usize).saturating_sub(2 + wrap::str_width(&marker) + 1);
+        let (title, caption) = fit_header(title, caption, avail);
+        let meta_cell = caption.map(|form| format!(" {form} "));
         let mut block = Block::default()
             .borders(Borders::ALL)
             .border_type(glyphs.border)
@@ -2216,6 +2271,19 @@ mod tests {
         feed
     }
 
+    /// No caption: the header most tests draw.
+    const BARE: FeedCaption = FeedCaption {
+        name: String::new(),
+        detail: None,
+    };
+
+    fn caption(name: &str, detail: Option<&str>) -> FeedCaption {
+        FeedCaption {
+            name: name.to_string(),
+            detail: detail.map(String::from),
+        }
+    }
+
     fn msg(role: FeedRole, text: &str, thoughts: &str) -> FeedMessage {
         FeedMessage {
             role,
@@ -2847,7 +2915,7 @@ mod tests {
         use ratatui::backend::TestBackend;
         let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
         term.draw(|f| {
-            feed.render(f, f.area(), "Чат", "", msgs, &Palette::default(), ru());
+            feed.render(f, f.area(), "Чат", &BARE, msgs, &Palette::default(), ru());
         })
         .unwrap();
         let hit = feed.link_hits.first().copied().expect("a drawn reference");
@@ -2934,7 +3002,7 @@ mod tests {
         // The tail is what a fresh feed shows, and the address is far above it.
         let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(60, 10)).unwrap();
         term.draw(|f| {
-            feed.render(f, f.area(), "Чат", "", &msgs, &Palette::default(), ru());
+            feed.render(f, f.area(), "Чат", &BARE, &msgs, &Palette::default(), ru());
         })
         .unwrap();
         assert!(
@@ -2944,7 +3012,7 @@ mod tests {
 
         feed.scroll_up(usize::MAX);
         term.draw(|f| {
-            feed.render(f, f.area(), "Чат", "", &msgs, &Palette::default(), ru());
+            feed.render(f, f.area(), "Чат", &BARE, &msgs, &Palette::default(), ru());
         })
         .unwrap();
         let hit = feed.link_hits.first().copied().expect("scrolled into view");
@@ -3692,8 +3760,18 @@ mod tests {
     /// has to go through a real frame.
     fn visible(feed: &mut MessageFeed, messages: &[FeedMessage], w: u16, h: u16) -> Vec<String> {
         let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
-        term.draw(|f| feed.render(f, f.area(), "Чат", "", messages, &Palette::default(), ru()))
-            .unwrap();
+        term.draw(|f| {
+            feed.render(
+                f,
+                f.area(),
+                "Чат",
+                &BARE,
+                messages,
+                &Palette::default(),
+                ru(),
+            )
+        })
+        .unwrap();
         let buf = term.backend().buffer().clone();
         let area = buf.area;
         (area.top()..area.bottom())
@@ -4298,7 +4376,7 @@ mod tests {
                 f,
                 f.area(),
                 "Чат",
-                "gemma-4 · 16k ctx",
+                &caption("gemma-4", Some("16k ctx")),
                 &messages,
                 &Palette::default(),
                 ru(),
@@ -4323,7 +4401,8 @@ mod tests {
         let mut term = Terminal::new(TestBackend::new(60, 8)).unwrap();
         let long = "заголовок который не помещается в верхнюю рамку никак";
         let meta = "gemma-4 · 16k ctx";
-        term.draw(|f| feed.render(f, f.area(), long, meta, &[], &Palette::default(), ru()))
+        let cap = caption("gemma-4", Some("16k ctx"));
+        term.draw(|f| feed.render(f, f.area(), long, &cap, &[], &Palette::default(), ru()))
             .unwrap();
         let row = top(&term);
         assert!(row.contains('…'), "a cut title says so: {row}");
@@ -4331,11 +4410,108 @@ mod tests {
         assert!(row.starts_with('╭') && row.ends_with('╮'), "{row}");
         // Room for all of it — no marker, and the title is whole.
         let mut term = Terminal::new(TestBackend::new(100, 8)).unwrap();
-        term.draw(|f| feed.render(f, f.area(), long, meta, &[], &Palette::default(), ru()))
+        term.draw(|f| feed.render(f, f.area(), long, &cap, &[], &Palette::default(), ru()))
             .unwrap();
         let row = top(&term);
         assert!(row.contains(long), "{row}");
         assert!(!row.contains('…'), "{row}");
+    }
+
+    /// The header's row is shared title-first (spec §11.3): the caption is
+    /// whole while the title still gets half the row — or all of itself —
+    /// then gives up its context size, then itself. A title longer than its
+    /// share is the one cut, as it always was, where the row has room for the
+    /// caption.
+    #[test]
+    fn the_header_gives_the_title_its_share_before_the_caption() {
+        let cap = caption("gemma-4-12B-it-Q5_K_M", Some("16k ctx"));
+        let title = "Gemma 4 on a 12 GB GPU"; // 22 columns
+        let fit = |avail: usize| fit_header(title, &cap, avail);
+        let whole = Some("gemma-4-12B-it-Q5_K_M · 16k ctx".to_string());
+        let name = Some("gemma-4-12B-it-Q5_K_M".to_string());
+
+        // Room for both: the cell is the caption and a space either side.
+        assert_eq!(fit(22 + 33), (title.to_string(), whole.clone()));
+        // One column short of that: the context size goes, the title stays.
+        assert_eq!(fit(22 + 32), (title.to_string(), name.clone()));
+        assert_eq!(fit(22 + 23), (title.to_string(), name));
+        // No room for the name beside a whole title: the title alone.
+        assert_eq!(fit(22 + 22), (title.to_string(), None));
+        // Less than the title: it is cut, and says so.
+        let (cut, none) = fit(12);
+        assert!(cut.ends_with('…') && wrap::str_width(&cut) <= 12, "{cut:?}");
+        assert_eq!(none, None);
+        assert_eq!(fit(0), (String::new(), None));
+
+        // A title longer than half the row is owed half: the caption stays
+        // whole, and the title is what is cut — the wide-window rule, as before.
+        let long = "a title that goes on for much longer than any header has room for";
+        let (cut, shown) = fit_header(long, &cap, 110);
+        assert_eq!(shown, whole);
+        assert_eq!(
+            wrap::str_width(&cut),
+            65,
+            "whole: it fits what the caption left"
+        );
+        let (cut, shown) = fit_header(long, &cap, 80);
+        assert_eq!(shown, whole);
+        assert!(
+            cut.ends_with('…') && wrap::str_width(&cut) == 80 - 33,
+            "{cut:?}"
+        );
+
+        // A caption with no detail has one form. A short one stays for as
+        // long as it leaves the title half the row — the title is then the
+        // one cut — and goes when it would not.
+        let plain = caption("gpt-6-sol", None);
+        let short = Some("gpt-6-sol".to_string());
+        assert_eq!(
+            fit_header(title, &plain, 33),
+            (title.to_string(), short.clone())
+        );
+        let (cut, shown) = fit_header(title, &plain, 21);
+        assert_eq!((wrap::str_width(&cut), shown), (10, short));
+        assert_eq!(fit_header(title, &plain, 20).1, None);
+        // An empty caption has no form at all.
+        assert_eq!(fit_header(title, &BARE, 60), (title.to_string(), None));
+        assert_eq!(cap.full(), "gemma-4-12B-it-Q5_K_M · 16k ctx");
+    }
+
+    /// The symptom the rule answers, on the border itself: a 45-column header
+    /// showed five letters of the title beside a whole model caption, and a
+    /// 30-column one no title and a caption clipped from the left.
+    #[test]
+    fn a_narrow_header_keeps_the_title_and_sheds_the_caption() {
+        let cap = caption("gemma-4-12B-it-Q5_K_M", Some("16k ctx"));
+        let title = "Gemma 4 on a 12 GB GPU";
+        let top = |width: u16| -> String {
+            let mut feed = MessageFeed::new();
+            let mut term = Terminal::new(TestBackend::new(width, 5)).unwrap();
+            term.draw(|f| feed.render(f, f.area(), title, &cap, &[], &Palette::default(), ru()))
+                .unwrap();
+            crate::shared::ui::tests::buffer_rows(term.backend().buffer()).remove(0)
+        };
+        let row = top(116);
+        assert!(
+            row.contains(title) && row.contains("Q5_K_M · 16k ctx"),
+            "{row}"
+        );
+        let row = top(57);
+        assert!(
+            row.contains(title) && row.contains("Q5_K_M ") && !row.contains("ctx"),
+            "{row}"
+        );
+        for width in [45, 30] {
+            let row = top(width);
+            assert!(
+                row.contains(title) && !row.contains("Q5_K_M"),
+                "{width}: {row}"
+            );
+            assert!(
+                row.starts_with("╭ ◆ ") && row.ends_with('╮'),
+                "{width}: {row}"
+            );
+        }
     }
 
     #[test]
@@ -4351,7 +4527,7 @@ mod tests {
         let mut feed = MessageFeed::new();
         let mut term = Terminal::new(TestBackend::new(30, 8)).unwrap();
         let short = vec![msg(FeedRole::User, "привет", "")];
-        term.draw(|f| feed.render(f, f.area(), "Чат", "", &short, &Palette::default(), ru()))
+        term.draw(|f| feed.render(f, f.area(), "Чат", &BARE, &short, &Palette::default(), ru()))
             .unwrap();
         assert!(
             !right_col(&term).iter().any(|s| s == "█"),
@@ -4360,7 +4536,7 @@ mod tests {
         let many: Vec<FeedMessage> = (0..30)
             .map(|i| msg(FeedRole::User, &format!("строка {i}"), ""))
             .collect();
-        term.draw(|f| feed.render(f, f.area(), "Чат", "", &many, &Palette::default(), ru()))
+        term.draw(|f| feed.render(f, f.area(), "Чат", &BARE, &many, &Palette::default(), ru()))
             .unwrap();
         assert!(
             right_col(&term).iter().any(|s| s == "█"),

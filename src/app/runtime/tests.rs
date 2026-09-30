@@ -2428,6 +2428,16 @@ fn composed(
     settings_in_front: bool,
     help_open: bool,
 ) -> ratatui::buffer::Buffer {
+    composed_at(interface, settings_in_front, help_open, (100, 30))
+}
+
+/// [`composed`], in a window of `size` columns and rows.
+fn composed_at(
+    interface: crate::shared::config::InterfaceSettings,
+    settings_in_front: bool,
+    help_open: bool,
+    size: (u16, u16),
+) -> ratatui::buffer::Buffer {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
@@ -2457,9 +2467,11 @@ fn composed(
         help.open_for(help_context(&active));
     }
     let palette = front_palette(&active, &screen);
-    let mut term = Terminal::new(TestBackend::new(100, 30)).unwrap();
-    term.draw(|frame| compose_frame(frame, &mut screen, &mut active, &mut help, &palette))
-        .unwrap();
+    let mut term = Terminal::new(TestBackend::new(size.0, size.1)).unwrap();
+    term.draw(|frame| {
+        compose_frame(frame, &mut screen, &mut active, &mut help, &palette);
+    })
+    .unwrap();
     term.backend().buffer().clone()
 }
 
@@ -2504,6 +2516,59 @@ fn a_composed_frame_is_painted_to_its_edges_in_the_full_mode() {
             );
         }
     }
+}
+
+/// The "window too small" notice (spec §11.1.1) is a frame like any other to
+/// the two passes: in the full mode every cell of it is on the canvas — the
+/// cells around three centred lines are the ones nothing draws — and in the
+/// monochrome mode its bold title carries no attribute.
+#[test]
+fn the_too_small_notice_goes_through_the_colour_mode_passes() {
+    use crate::shared::config::{InterfaceSettings, ThemeMode};
+    use crate::shared::theme::CANVAS_DARK;
+    use ratatui::style::Modifier;
+
+    let mode = |mode: ThemeMode| {
+        let mut i = InterfaceSettings {
+            full_theme: "dark".to_string(),
+            ..Default::default()
+        };
+        i.set_mode(mode);
+        i
+    };
+    let text = |buf: &ratatui::buffer::Buffer| -> String {
+        buf.content.iter().map(|c| c.symbol()).collect()
+    };
+    // A window too small for the chat: the notice, not the screen.
+    let size = (57, 5);
+
+    let full = composed_at(mode(ThemeMode::Full), false, false, size);
+    assert!(text(&full).contains("57×5"), "{}", text(&full));
+    assert!(
+        full.content
+            .iter()
+            .all(|c| c.bg == CANVAS_DARK && c.fg != Color::Reset),
+        "every cell of the notice is painted"
+    );
+
+    let mono = composed_at(mode(ThemeMode::Mono), false, false, size);
+    assert!(text(&mono).contains("57×5"));
+    assert!(
+        mono.content.iter().all(|c| c.fg == Color::Reset
+            && c.bg == Color::Reset
+            && c.modifier == Modifier::empty()),
+        "no cell of the notice is styled"
+    );
+
+    // The control: in the system mode the title is bold and nothing is painted.
+    let system = composed_at(InterfaceSettings::default(), false, false, size);
+    assert!(
+        system
+            .content
+            .iter()
+            .any(|c| c.modifier.contains(Modifier::BOLD))
+    );
+    assert!(system.content.iter().all(|c| c.bg == Color::Reset));
 }
 
 /// In the monochrome mode no cell of a composed frame carries a colour or an

@@ -46,7 +46,7 @@ Two rules that follow from that:
 | working on the **self-model** — summary, goals, traits, reflection | architecture §9 · spec §17 · [docs/journal/self-model.md](docs/journal/self-model.md) |
 | working on **notes** and their graph | architecture §9 · spec §9.3 · [docs/journal/notes.md](docs/journal/notes.md) |
 | working on **RAG**, chat attachments or embeddings | architecture §6–§7 · spec §9.3 (§9.3.4–§9.3.5), §9.7 · [docs/journal/rag.md](docs/journal/rag.md) |
-| working on the **feed**, markdown, rendering, the terminal | architecture §10 · spec §11.3–§11.4 · [docs/journal/ui-feed.md](docs/journal/ui-feed.md) |
+| working on the **feed**, markdown, rendering, the terminal, small windows | architecture §10 · spec §11.1.1, §11.3–§11.4 · [docs/journal/ui-feed.md](docs/journal/ui-feed.md) |
 | working on the **input box**, keys, spellcheck | architecture §10 · spec §11.5 · [docs/journal/ui-input.md](docs/journal/ui-input.md) |
 | working on a **screen** — settings, chat list, search, help | architecture §10 · spec §11.6–§11.8 · [docs/journal/ui-screens.md](docs/journal/ui-screens.md) |
 | working on **localization** | [docs/journal/i18n.md](docs/journal/i18n.md) · the i18n plans in `docs/history/` |
@@ -179,7 +179,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-30, version 0.13.0)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3751 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **3772 unit tests
 green, 236 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
@@ -192,6 +192,15 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **Small windows — stage 1 of 3** (2026-09-30). A window below what the frame in
+  front needs gets a notice — the size it is, the size it needs, the keys that
+  work — instead of a frame with parts missing; under it only quit works, and
+  `Esc` where something is open over the chat. A question is a `Prompt`: as tall
+  as its text, its keys never cut (the tool confirmation's legend is 69 columns
+  in `ru`). The chat's rows are arithmetic, not the solver's. Gate: 20 states ×
+  459 sizes. Live **GO**. Next: the chat sheds its chrome, then bounded footers
+  ([docs/research/small-terminal.md](docs/research/small-terminal.md), spec
+  §11.1.1, [docs/journal/ui-feed.md](docs/journal/ui-feed.md)).
 - **OpenRouter as a provider of its own — track complete** (2026-09-29, four
   stages, one release). `openrouter` is a mode beside `external`: one key, a dialect
   on the client (`repetition_penalty`, the lowest listed effort on a muted turn), the
@@ -386,11 +395,6 @@ being recent is dropped, not shortened.
   refused `enabled: false`. Default is "on", so such models now reason. Live **GO**
   ([docs/history/gateway-thinking-switch.md](docs/history/gateway-thinking-switch.md), spec §8.1,
   [docs/journal/engine.md](docs/journal/engine.md)).
-- **`/file open 1` — a bare number is the listed `#N`** — reported from a chat:
-  `/file list` showed `#1`, and `/file open 1` was refused as "not attached". One
-  resolver now reads a bare number as `#N` unless an item is called that, for `/file`,
-  `/image remove` and `python_exec`'s `files` alike, and a miss answers with the numbers
-  there are (spec §9.7, [docs/journal/rag.md](docs/journal/rag.md)).
 - **A headless launch (no TTY) exits with code 2** and a one-line reason — the
   TUI cannot be run from an agent's shell; how it *looks* needs a real terminal
   and a person. What a console *holds* can be measured on Windows:

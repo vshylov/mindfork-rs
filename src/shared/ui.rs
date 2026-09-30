@@ -13,6 +13,7 @@ use ratatui::widgets::{
     ScrollbarState, Wrap,
 };
 
+use crate::shared::i18n::Locale;
 use crate::shared::theme::{MONO_MARK, Palette};
 
 /// Dims the whole screen (the `DIM` modifier on every buffer cell), so a popup
@@ -650,35 +651,254 @@ pub fn screen_chrome(
 /// A modal confirmation: a centred, bordered box with a question and a footer
 /// naming the keys that answer it.
 ///
-/// One renderer rather than one per screen. The chat screen has asked
+/// One shape rather than one per screen. The chat screen has asked
 /// destructive questions since the dangerous-tool track (spec §9.8) and the
 /// changes screen asks the same shape of question about a revert; `screens` are
 /// siblings, so the second one could not have reached the first's without a
 /// copy. The **keys** stay with each caller — what confirms differs (`Enter`
 /// there, `Enter` here, `Enter`/`A`/`Esc` for a tool call) and only the drawing
 /// is common.
-pub fn confirm_popup(
+///
+/// A [`Prompt`] rather than a drawing call, because a screen with the question
+/// open also has to say what window it needs ([`Prompt::min_size`]).
+pub fn confirm_prompt(palette: &Palette, title: &str, question: &str, footer: &str) -> Prompt {
+    Prompt {
+        title: title.to_string(),
+        body: vec![Line::from(Span::styled(
+            question.to_string(),
+            Style::new().fg(palette.text),
+        ))],
+        legend: footer.to_string(),
+        // Wide enough to read, never wider than the terminal; three rows of
+        // border and text, plus one for a wrapped second line.
+        max_width: 56,
+        min_rows: 5,
+        trim: true,
+    }
+}
+
+/// The narrowest window a modal question is asked in: below it the wrap is a
+/// word a row, and the placeholder says more ([`render_too_small`]).
+pub const MODAL_MIN_WIDTH: u16 = 20;
+
+/// A modal question: a centred, bordered box holding what is asked and the
+/// keys that answer it (spec §9.8, §11.1).
+///
+/// **The keys are never clipped.** They sit on the bottom border while they
+/// fit it; a box narrower than its legend carries it as the body's last lines
+/// instead, wrapped like the rest. A border title that does not fit is cut at
+/// the corner with no mark, and what fell off the tool confirmation in a
+/// 57-column window was the key that runs the call
+/// (docs/research/small-terminal.md §2.5).
+///
+/// The box is as tall as its wrapped text ([`Self::rows`]) — and a window that
+/// cannot hold it whole is not one the question is asked in: the screen
+/// reports [`Self::min_size`], and the runtime draws the placeholder rather
+/// than a question with its subject or its keys cut off.
+pub struct Prompt {
+    pub title: String,
+    pub body: Vec<Line<'static>>,
+    /// The keys, as a locale writes them for a border — padded with a space
+    /// either side, which is dropped when they move into the body.
+    pub legend: String,
+    /// The box's width where the window has room for it.
+    pub max_width: u16,
+    /// The box's height when its text needs less (borders included).
+    pub min_rows: u16,
+    /// Whether wrapped rows drop their leading whitespace. A question does;
+    /// code being approved keeps its indentation.
+    pub trim: bool,
+}
+
+impl Prompt {
+    /// The box's width in a window `window_width` columns wide.
+    fn width(&self, window_width: u16) -> u16 {
+        self.max_width.min(window_width)
+    }
+
+    /// The box as a paragraph `width` columns wide, borders included.
+    fn paragraph(&self, palette: &Palette, width: u16) -> Paragraph<'static> {
+        let mut block = palette.panel(self.title.clone(), true);
+        let mut body = self.body.clone();
+        if legend_width(&self.legend) <= width {
+            block = block.title_bottom(
+                Line::from(Span::styled(self.legend.clone(), palette.muted_style())).centered(),
+            );
+        } else {
+            body.push(Line::from(Span::styled(
+                self.legend.trim().to_string(),
+                palette.muted_style(),
+            )));
+        }
+        Paragraph::new(body)
+            .block(block)
+            .wrap(Wrap { trim: self.trim })
+    }
+
+    /// The rows the box takes at `width`, borders included. `line_count` is
+    /// ratatui's own, over ratatui's own word wrapping: counting by hand would
+    /// be a second implementation of the wrap whose only job is to agree with
+    /// the first, and every disagreement is a row of the question nobody saw.
+    fn rows(&self, palette: &Palette, width: u16) -> u16 {
+        let rows = self
+            .paragraph(palette, width)
+            .line_count(width.saturating_sub(2));
+        u16::try_from(rows).unwrap_or(u16::MAX).max(self.min_rows)
+    }
+
+    /// The smallest window the question can be shown whole in, at the width
+    /// the window `area` has (a narrower box wraps into more rows).
+    pub fn min_size(&self, palette: &Palette, area: Rect) -> MinSize {
+        let width = self.width(area.width.max(MODAL_MIN_WIDTH));
+        MinSize::new(MODAL_MIN_WIDTH, self.rows(palette, width))
+    }
+
+    /// Draws the box centred in the frame.
+    pub fn render(&self, frame: &mut Frame, palette: &Palette) {
+        let full = frame.area();
+        let width = self.width(full.width);
+        let area = centered_rect(width, self.rows(palette, width), full);
+        frame.render_widget(Clear, area);
+        frame.render_widget(self.paragraph(palette, width), area);
+    }
+}
+
+/// The columns a bordered popup needs to carry `legend` whole on its border:
+/// the text and the two corners.
+pub fn legend_width(legend: &str) -> u16 {
+    u16::try_from(str_width(legend) + 2).unwrap_or(u16::MAX)
+}
+
+/// The smallest window a layer — a screen, or a popup over it — is drawn in
+/// (spec §11.1.1, docs/research/small-terminal.md F4). Below it the runtime
+/// draws [`render_too_small`] instead of a frame with parts missing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MinSize {
+    pub width: u16,
+    pub height: u16,
+}
+
+impl MinSize {
+    pub const fn new(width: u16, height: u16) -> Self {
+        Self { width, height }
+    }
+
+    /// The size that holds both layers: a popup is drawn over its screen, so
+    /// the window has to be enough for either.
+    pub fn max(self, other: Self) -> Self {
+        Self::new(self.width.max(other.width), self.height.max(other.height))
+    }
+
+    /// Whether a window of `area` is at least this size.
+    pub fn fits(self, area: Rect) -> bool {
+        area.width >= self.width && area.height >= self.height
+    }
+}
+
+/// The minimum of a full-screen panel with a list in it — the self-model,
+/// the message search, the tasks: the border, five rows of the list, and a
+/// row of key hints; thirty columns of a row.
+pub const SCREEN_MIN_SIZE: MinSize = MinSize::new(30, 8);
+
+/// `width×height`, the way the placeholder names a size.
+fn size_label(width: u16, height: u16) -> String {
+    format!("{width}×{height}")
+}
+
+/// The keys that work under the placeholder (spec §11.1.1). Everything else
+/// is dropped: the screen a key was meant for is not the one on the terminal,
+/// so `Enter` would answer a question nobody read and a typed line would be
+/// sent unseen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WayOut {
+    /// Quit, and nothing else: the window is too small for the screen itself,
+    /// and the way back to it is the window's edge.
+    Quit,
+    /// `Esc` as well: something is open **over** the screen — a popup, the
+    /// help, a screen over the chat — and it may be all that does not fit.
+    /// `Esc` is the key that closes, declines or goes back, never the one
+    /// that confirms or sends, and without it a picker opened in a window the
+    /// chat fits and the picker does not could only be left by resizing or by
+    /// quitting.
+    EscOrQuit,
+}
+
+/// The placeholder's lines for a window `area`, top to bottom: what is wrong,
+/// the size the window has against the one it needs, and the keys that work.
+/// A line that does not fit the width is left out rather than cut — the size
+/// falls back to the needed one alone, the keys to `Esc` alone — and when the
+/// rows run short the size outlives the title, which outlives the keys.
+fn too_small_lines(
+    area: Rect,
+    need: MinSize,
+    way_out: WayOut,
+    loc: &'static Locale,
+) -> Vec<(TooSmallLine, String)> {
+    let have = size_label(area.width, area.height);
+    let want = size_label(need.width, need.height);
+    let fits = |s: &String| str_width(s) <= area.width as usize;
+    let size = vec![
+        loc.tf("ui.too_small.size", &[("have", &have), ("need", &want)]),
+        want.clone(),
+    ];
+    let (esc, quit) = (loc.t("ui.too_small.esc"), loc.t("ui.too_small.quit"));
+    let keys = match way_out {
+        WayOut::Quit => vec![quit.to_string()],
+        WayOut::EscOrQuit => vec![format!("{esc} · {quit}"), esc.to_string()],
+    };
+    // In keeping order; drawn in the order of the enum.
+    let mut lines: Vec<(TooSmallLine, String)> = [
+        (TooSmallLine::Size, size),
+        (
+            TooSmallLine::Title,
+            vec![loc.t("ui.too_small.title").to_string()],
+        ),
+        (TooSmallLine::Keys, keys),
+    ]
+    .into_iter()
+    .filter_map(|(kind, forms)| forms.into_iter().find(fits).map(|text| (kind, text)))
+    .take(area.height as usize)
+    .collect();
+    lines.sort_by_key(|(kind, _)| *kind);
+    lines
+}
+
+/// The placeholder's lines, in the order they are drawn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum TooSmallLine {
+    Title,
+    Size,
+    Keys,
+}
+
+/// Draws the "window too small" notice over the whole frame: the window is
+/// smaller than the layer in front needs (`need`), and a frame with parts
+/// missing would be drawn otherwise (spec §11.1.1). `way_out` — the keys that
+/// work while it is up, which its last line names.
+pub fn render_too_small(
     frame: &mut Frame,
     palette: &Palette,
-    title: &str,
-    question: &str,
-    footer: &str,
+    loc: &'static Locale,
+    need: MinSize,
+    way_out: WayOut,
 ) {
-    // Wide enough to read, never wider than the terminal; three rows of border
-    // and text, plus one for a wrapped second line.
-    let width = 56u16.min(frame.area().width);
-    let area = centered_rect(width, 5, frame.area());
+    let area = frame.area();
     frame.render_widget(Clear, area);
-    let block = palette.panel(title.to_string(), true).title_bottom(
-        Line::from(Span::styled(footer.to_string(), palette.muted_style())).centered(),
-    );
-    let body = Paragraph::new(Line::from(Span::styled(
-        question.to_string(),
-        Style::new().fg(palette.text),
-    )))
-    .block(block)
-    .wrap(Wrap { trim: true });
-    frame.render_widget(body, area);
+    let lines: Vec<Line> = too_small_lines(area, need, way_out, loc)
+        .into_iter()
+        .map(|(kind, text)| {
+            let style = match kind {
+                TooSmallLine::Title => Style::new().fg(palette.text).add_modifier(Modifier::BOLD),
+                TooSmallLine::Size | TooSmallLine::Keys => palette.muted_style(),
+            };
+            Line::from(Span::styled(text, style)).centered()
+        })
+        .collect();
+    let rows = u16::try_from(lines.len()).unwrap_or(u16::MAX);
+    let [middle] = Layout::vertical([Constraint::Length(rows)])
+        .flex(Flex::Center)
+        .areas(area);
+    frame.render_widget(Paragraph::new(lines), middle);
 }
 
 /// A fixed-width/height rectangle centred in `area` (clamped).
@@ -1392,5 +1612,230 @@ pub(crate) mod tests {
         s.glyph_at(FRAMES, t0 + SPINNER_STEP + ms(40));
         assert!(!s.due_at(t0 + SPINNER_STEP * 2 - ms(1)));
         assert!(s.due_at(t0 + SPINNER_STEP * 2));
+    }
+
+    // ---------- small windows (spec §11.1.1) ----------
+
+    use crate::shared::i18n::{Lang, locale};
+
+    /// A question with a legend wider than a narrow box and a body of two
+    /// lines, the second one indented like code.
+    fn question() -> Prompt {
+        Prompt {
+            title: "Tool call".into(),
+            body: vec![Line::raw("Run this call?"), Line::raw("    indented()")],
+            legend: " Enter — run · A — allow for this turn · Esc — decline ".into(),
+            max_width: 72,
+            min_rows: 0,
+            trim: false,
+        }
+    }
+
+    /// Draws `prompt` alone in a `width`×`height` window and returns the rows.
+    fn prompt_rows(prompt: &Prompt, width: u16, height: u16) -> Vec<String> {
+        let palette = Palette::default();
+        let mut term = Terminal::new(TestBackend::new(width, height)).unwrap();
+        term.draw(|f| prompt.render(f, &palette)).unwrap();
+        buffer_rows(term.backend().buffer())
+    }
+
+    /// The rows between a box's borders, joined by spaces — a wrapped
+    /// sentence reads as it was written.
+    fn inner_text(rows: &[String]) -> String {
+        rows.iter()
+            .filter(|r| r.starts_with('│'))
+            .map(|r| r.trim_matches('│').trim())
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    /// The keys that answer a question are on its border while the border
+    /// holds them, and the last lines of its body when it does not — never
+    /// cut at the corner. The width the legend needs, corners included, is
+    /// the exact threshold: one column less and it moves.
+    #[test]
+    fn a_prompts_keys_are_on_the_border_or_in_the_body_never_cut() {
+        let prompt = question();
+        let legend = prompt.legend.trim();
+        let needs = legend_width(&prompt.legend);
+        assert_eq!(needs, 57, "the text and the two corners");
+
+        let rows = prompt_rows(&prompt, needs, 12);
+        assert_eq!(rows.len(), 12);
+        let shown: Vec<&String> = rows.iter().filter(|r| !r.trim().is_empty()).collect();
+        assert_eq!(shown.len(), 4, "border, two lines, border: {shown:?}");
+        assert!(shown[3].contains(legend), "on the border: {shown:?}");
+        assert!(!inner_text(&rows).contains("Enter"), "and not in the body");
+
+        for width in (MODAL_MIN_WIDTH..needs).rev() {
+            let rows = prompt_rows(&prompt, width, 20);
+            let body = inner_text(&rows);
+            assert!(
+                body.ends_with(legend),
+                "{width} columns: the keys close the body, whole — {body:?}"
+            );
+            let bottom = rows.iter().rfind(|r| r.starts_with('╰')).unwrap();
+            assert!(!bottom.contains("Esc"), "{width}: not half on the border");
+            assert!(rows.iter().any(|r| r.contains("    indented()")), "{width}");
+        }
+    }
+
+    /// The box is as tall as its wrapped text, and that is what a screen
+    /// reports as the window the question needs: a window one row shorter
+    /// would cut the box, which is where a question stops being asked.
+    #[test]
+    fn a_prompts_minimum_is_the_rows_its_text_wraps_into() {
+        let palette = Palette::default();
+        let prompt = question();
+        let mut last = 0;
+        for width in [100, 72, 57, 40, 30, 20] {
+            let need = prompt.min_size(&palette, Rect::new(0, 0, width, 50));
+            assert_eq!(need.width, MODAL_MIN_WIDTH);
+            let rows = prompt_rows(&prompt, width, 50);
+            let drawn = rows.iter().filter(|r| !r.trim().is_empty()).count();
+            assert_eq!(usize::from(need.height), drawn, "{width}: {rows:#?}");
+            assert!(need.height >= last, "narrower is never shorter");
+            last = need.height;
+        }
+        assert!(last > 4, "the control: twenty columns do wrap it");
+        // A window narrower than any a question is asked in is measured at
+        // the narrowest one that is — the size the placeholder then names.
+        assert_eq!(
+            prompt.min_size(&palette, Rect::new(0, 0, 5, 50)),
+            prompt.min_size(&palette, Rect::new(0, 0, MODAL_MIN_WIDTH, 50)),
+        );
+    }
+
+    /// A destructive question keeps the five rows it always had when its
+    /// text needs fewer, and grows past them instead of cutting the text.
+    #[test]
+    fn a_confirmation_keeps_its_five_rows_and_grows_past_them() {
+        let palette = Palette::default();
+        let short = confirm_prompt(
+            &palette,
+            "Confirmation",
+            "Delete it?",
+            " Enter — yes · Esc — no ",
+        );
+        assert_eq!(short.min_size(&palette, Rect::new(0, 0, 80, 24)).height, 5);
+        let long = confirm_prompt(
+            &palette,
+            "Confirmation",
+            &"a question long enough to wrap ".repeat(8),
+            " Enter — yes · Esc — no ",
+        );
+        let need = long.min_size(&palette, Rect::new(0, 0, 30, 24));
+        assert!(need.height > 5, "{need:?}");
+        let rows = prompt_rows(&long, 30, need.height);
+        assert!(rows[0].starts_with('╭') && rows.last().unwrap().starts_with('╰'));
+        assert!(rows.last().unwrap().contains("Enter — yes · Esc — no"));
+    }
+
+    #[test]
+    fn a_minimum_holds_both_layers_and_fits_by_both_sides() {
+        let (screen, popup) = (MinSize::new(20, 9), MinSize::new(46, 6));
+        assert_eq!(screen.max(popup), MinSize::new(46, 9));
+        let need = MinSize::new(46, 9);
+        assert!(need.fits(Rect::new(0, 0, 46, 9)));
+        assert!(!need.fits(Rect::new(0, 0, 45, 9)), "a column short");
+        assert!(!need.fits(Rect::new(0, 0, 46, 8)), "a row short");
+    }
+
+    /// The placeholder, in every built-in language: the three lines where
+    /// there is room, the size outliving the title and the title the key as
+    /// the rows run out, and a line that does not fit left out — never cut.
+    #[test]
+    fn the_placeholder_says_what_it_can_in_the_room_it_has() {
+        let need = MinSize::new(46, 12);
+        for &lang in Lang::ALL {
+            let loc = locale(lang);
+            let lines = |w: u16, h: u16, way_out: WayOut| {
+                too_small_lines(Rect::new(0, 0, w, h), need, way_out, loc)
+            };
+            let kinds = |w: u16, h: u16| -> Vec<TooSmallLine> {
+                lines(w, h, WayOut::Quit)
+                    .into_iter()
+                    .map(|(kind, _)| kind)
+                    .collect()
+            };
+            use TooSmallLine::{Keys, Size, Title};
+            assert_eq!(kinds(45, 6), [Title, Size, Keys], "{lang:?}");
+            assert_eq!(kinds(45, 2), [Title, Size], "{lang:?}");
+            assert_eq!(kinds(45, 1), [Size], "{lang:?}");
+            assert_eq!(kinds(45, 0), [], "{lang:?}");
+            // Every line is within the width it was given, at any width.
+            for w in 0..=60u16 {
+                for way_out in [WayOut::Quit, WayOut::EscOrQuit] {
+                    for (_, text) in lines(w, 3, way_out) {
+                        assert!(str_width(&text) <= w as usize, "{lang:?} {w}: {text:?}");
+                    }
+                }
+            }
+            // Too narrow for the sentence, the size is the needed one alone…
+            let narrow = lines(8, 1, WayOut::Quit);
+            assert_eq!(narrow, [(Size, "46×12".to_string())], "{lang:?}");
+            // …and too narrow for that, there is nothing to say.
+            assert!(lines(4, 3, WayOut::Quit).is_empty());
+
+            let full = lines(45, 6, WayOut::Quit);
+            assert!(full[1].1.contains("45×6") && full[1].1.contains("46×12"));
+            // The last line names the keys that work, and only those.
+            assert!(
+                full[2].1.contains("Ctrl+Q") && !full[2].1.contains("Esc"),
+                "{full:?}"
+            );
+            let both = lines(45, 6, WayOut::EscOrQuit);
+            assert!(
+                both[2].1.contains("Esc") && both[2].1.contains("Ctrl+Q"),
+                "{both:?}"
+            );
+            // Too narrow for both keys: the one that leads back, not the one
+            // that ends the session.
+            let esc = lines(20, 6, WayOut::EscOrQuit);
+            let keys = esc.iter().find(|(kind, _)| *kind == Keys).unwrap();
+            assert_eq!(keys.1, loc.t("ui.too_small.esc"), "{lang:?}");
+        }
+    }
+
+    /// Drawn: the whole frame is the notice — what stood there is cleared —
+    /// its lines are centred, and no size is too small to draw it in.
+    #[test]
+    fn the_placeholder_takes_the_whole_frame_at_any_size() {
+        let palette = Palette::default();
+        let loc = locale(Lang::En);
+        let need = MinSize::new(46, 12);
+        let draw = |w: u16, h: u16| -> Vec<String> {
+            let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+            term.draw(|f| {
+                let area = f.area();
+                f.render_widget(Paragraph::new(vec![Line::raw("XXXXXXXXXXXX"); 40]), area);
+                render_too_small(f, &palette, loc, need, WayOut::Quit);
+            })
+            .unwrap();
+            buffer_rows(term.backend().buffer())
+        };
+        for (w, h) in [(0, 0), (1, 1), (3, 40), (200, 1), (45, 6), (120, 40)] {
+            let rows = draw(w, h);
+            assert!(rows.iter().all(|r| !r.contains('X')), "{w}×{h}: {rows:?}");
+        }
+        let rows = draw(45, 6);
+        let title = rows
+            .iter()
+            .position(|r| r.contains("Window too small"))
+            .unwrap();
+        let blank_below = rows[title + 3..]
+            .iter()
+            .filter(|r| r.trim().is_empty())
+            .count();
+        assert!(
+            title.abs_diff(blank_below) <= 1 && title + 3 + blank_below == 6,
+            "three lines, centred in six rows: {rows:#?}"
+        );
+        let line = &rows[title];
+        let (left, right) = (
+            line.len() - line.trim_start().len(),
+            line.len() - line.trim_end().len(),
+        );
+        assert!(left.abs_diff(right) <= 1, "centred: {line:?}");
     }
 }

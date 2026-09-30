@@ -17,7 +17,7 @@ use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::style::Stylize;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, List, ListItem, Paragraph, Wrap};
+use ratatui::widgets::{Clear, List, ListItem};
 use uuid::Uuid;
 
 use crate::app::events::{BackgroundKind, ChildView};
@@ -35,7 +35,7 @@ use crate::shared::i18n::{Locale, locale};
 use crate::shared::keys;
 use crate::shared::server::{ServerStatus, ServerStatuses};
 use crate::shared::theme::Palette;
-use crate::shared::ui::{ListScroll, Spinner, dim_background};
+use crate::shared::ui::{ListScroll, MinSize, Prompt, Spinner, dim_background, legend_width};
 use crate::widgets::chat_link_picker::{ChatLinkAction, ChatLinkPickerState};
 use crate::widgets::emoji_picker::{EmojiPickerAction, EmojiPickerState};
 use crate::widgets::help_dialog::{HelpContext, HelpSection};
