@@ -21,12 +21,23 @@ split by subsystem.
   is up the keys do nothing but quit, so `Enter` cannot answer a question that
   is not on the screen; `Esc` also works when what does not fit is something
   opened over the chat — a picker, the help, the settings — and closes it.
-  The chat needs 20×9, the settings 46×12.
+  The chat needs 20×3, the settings 46×12.
+- **The chat fits a small window by giving up its chrome, one piece at a
+  time.** Nothing changes in a window of eleven rows or more. Below that the
+  status bar keeps one row, then the input box loses its border, then the
+  feed, then the status row goes — so a window of five rows is four rows of
+  the conversation over the `❯` prompt, and three rows are still a chat. The
+  key hints a border carried are on `F1`; the search's counter stays on its
+  row (`3/12`).
 
 ### Fixed
 - **The input box no longer draws over the status bar.** In a window of seven
   rows or fewer the box lost its row of text and its prompt and cursor landed
   on the row below — the status bar, or outside the terminal.
+- **The status bar is no longer clipped at the edge.** In a narrow window the
+  bar was cut with no mark, and what fell off during a turn was the token
+  counter, mid-number. It now shows every indicator whole that fits and
+  leaves out the rest from the right; the chat server's is always there.
 - **A tool confirmation always shows the keys that answer it.** Its legend is
   wider than a narrow window — 69 columns in Russian — and the key that runs
   the call was cut off at the corner. The keys now move into the box when the

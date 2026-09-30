@@ -1,7 +1,7 @@
 # Research: a terminal window too small for the layout
 
-**Status:** stage 1 of three implemented, 2026-09-30 (§7); stages 2 and 3 are
-open. The §5 forks were decided by the user the same day, each at the
+**Status:** stages 1 and 2 of three implemented, 2026-09-30 (§7, §8); stage
+3 is open. The §5 forks were decided by the user the same day, each at the
 recommendation — **F1(b)** the chrome sheds, **F2(a)** only quit under the
 placeholder, **F3(b)** bounded footers, **F4(a)** a minimum per screen. One of
 them, F2, was refined by what the live run found (§7.2).
@@ -436,7 +436,7 @@ chat list, unseen.
 ### 7.3 What stage 1 leaves
 
 - **The status pill is still clipped at the edge** in a narrow window (§2.3) —
-  the status bar is stage 2's.
+  the status bar is stage 2's. *Closed by stage 2 (§8.3).*
 - **The key hints in an input box's title** — the settings' editors, the
   self-model's — are still clipped when the box is narrow. They are hints on
   editors whose keys are `Enter` and `Esc`; the seven legends that answer a
@@ -469,3 +469,119 @@ succeeds and changes nothing), so each console is *started* at its size —
   nothing, and `Esc` brings the chat back **cell for cell** — the one part no
   unit test reaches: the placeholder's coming and going is a full repaint
   decided in `draw_frame`, which needs a real terminal.
+
+## 8. Stage 2 as built
+
+The ladder of F1(b), as decided. The account of the work is in
+[docs/journal/ui-feed.md](../journal/ui-feed.md); what was decided on the way
+is here.
+
+### 8.1 The ladder, and what it is a function of
+
+`ChatChrome::at(rows)` is the table of §5 F1(b) as one function of the
+window's height — the status bar's ceiling in rows (two, one, none), whether
+the input box has its border, whether the feed has — and nothing else reads
+the height. The order is the one §5 argued: the status row outlives both
+borders. Measured against the table, a one-row draft and no banner:
+
+| window rows | status | input | feed | rows of the conversation |
+|---|---|---|---|---|
+| ≥ 11 | ≤ 2 | bordered | bordered | rows − 7 |
+| 10 | 1 | bordered | bordered | 4 |
+| 9 | 1 | bare | bordered | 5 |
+| 8 | 1 | bare | bordered | 4 |
+| 7 | 1 | bare | bare | 5 |
+| 6 | 1 | bare | bare | 4 |
+| 5 | 0 | bare | bare | 4 |
+| 4 | 0 | bare | bare | 3 |
+| 3 | 0 | bare | bare | 2 |
+
+Nothing changes from eleven rows up — the screenshot dumps and their drift
+gate are untouched — and the chat's minimum is 20×3. What the shape depends
+on is the window's rows alone (§4.3): the draft still takes its rows (at most
+a third of a bare window, half of a bordered one), the banner its one, but
+those are the user's and the turn's own actions, and the *frame* around them
+does not move with the token counter or the pill.
+
+### 8.2 What the borders carried, and where it went
+
+A border carried a title; a bare widget has no row for one. Each thing a
+title said was placed or given up, on the rule that nothing the user acts on
+may go unsaid where something else can say it:
+
+| what the border said | bare |
+|---|---|
+| the chat's title and the model caption (feed) | given up — the chat list has the title, the settings the model |
+| `input · Enter send · Shift+Enter newline` | given up — `F1` lists the keys |
+| `generating… Esc cancel` | the status bar's *generating* chip, while it has a row (6+); below that the reply is visibly streaming |
+| `read-only · commands only` | the status bar's chip, while it has a row; the refusals say it again on a key |
+| the in-feed search's `match 3 of 12 · Enter/↓ next…` | a **tag** at the right end of the row: `3/12`, `0/0` |
+| the monochrome mode's *command* word | the tag too — colour is what says it elsewhere, and there is none |
+| the impersonation preview's `⠋ impersonation · Esc cancel` | the spinner in the prompt column |
+
+The tag is the one new element. Its columns come off **every** row of the
+box, not the first alone, so the text wraps the same on each and the height
+the layer above measures (`content_rows`) is the height the widget draws —
+the same trap as the prompt column's (spec §11.5), avoided the same way: one
+function, `RenderOpts::text_width`, on both sides. A tag the row cannot hold
+beside the prompt is not drawn and takes nothing.
+
+A bare feed **ends on the last line of text**. The stream's tail is the
+separator under the last message — a blank row — and following it in a
+four-row feed showed three rows of the conversation and one of nothing; the
+bare feed follows the tail less that row. Bordered feeds are as they were,
+padding row included, because the drift gate holds them.
+
+### 8.3 The status bar within its rows, and the pill within the row
+
+The bar is laid out within the rows the ladder allows: `height` takes the
+ceiling and `render` reads it off its area, so a one-row area gets a one-row
+bar — the corner block one row deep, sheds to it, and the degenerate `F1`
+row below the pill does not exist — and never the top row of a two-row grid.
+
+The pill was §7.3's leftover: drawn unwrapped and clipped at the window's
+edge with no mark, and under 63 columns in `ru` the part that fell off a
+generating pill was the token counter, cut mid-number. It is fitted now at
+**every** height, not only in the ladder: a chip that would cross the edge
+is left out with every chip behind it, whole — a prefix, so within a turn
+(where the pill only grows) chips leave from the tail one by one and none
+jumps left — and the first chip, the chat server's, is cut with a mark
+rather than left out, so a row of any width says what the server is doing.
+The room a shed chip leaves is a corner again, which `F1` takes: hints fill
+what the pill leaves, as they always did. Truncating each chip instead was
+rejected for the reason the counter was the problem: a cut chip still reads
+as a number.
+
+### 8.4 Measured
+
+- **The gate** holds every chat frame to the ladder at its height — stated
+  in the test as the table above, not read off the code — with the cursor
+  on the input's rows; 20 states × 459 sizes × two languages, as before, and
+  the impersonation preview's spinner checked in the prompt column.
+- **Mutation:** 31 mutants behind the run-time switch — every threshold of
+  the ladder, the feed's minimum, the bare draft's share, the bar's ceiling
+  in each of its three readers, the pill's prefix rule and its cut, each bare
+  form and its scrollbar, the tag's width and its drawing, the feed's tail,
+  each title's fate. 28 killed at once; two survivors got the test they were
+  missing (a bare box's scrollbar, a bare preview's spinner) and are killed;
+  the third was `height`'s clamp to the ceiling, which `lines_within` already
+  keeps — a guard no test could fail, removed (lessons §5).
+- **Live, on the inbox console host of Windows 11 Pro 26200, the debug
+  build — 57 checks, all passed** (`tools/console_probe.py --scenario
+  small-window`): the notice at 57×2 with `20×3` and only quit; the reported
+  57×5 as four rows of the conversation over `❯`, the row above the prompt
+  text and not padding, a typed word landing on the prompt's row; each step
+  of the ladder at 57×10, ×9, ×8, ×7, ×6 — the feed's border where the table
+  has it, the input's `│❯` or `❯`, the status bar on the last row, the frame
+  used to its last row; and 45×12 with the settings and the emoji picker
+  (`46×6` now, its own minimum) as in stage 1. `full-mode`, `mono` and
+  `first-frame` re-run, all pass.
+
+### 8.5 What stage 2 leaves
+
+- §7.3's other items stand: an input box's title hints on the settings' and
+  the self-model's editors, a panel's two titles colliding, the help dialog's
+  tab strip under 78 columns, the cursor under the help dialog.
+- The bare feed shows what the bordered one shows, wrapped wider; a message
+  whose card is wider than the window is cut as before.
+- Stage 3: the footers (F3(b)).

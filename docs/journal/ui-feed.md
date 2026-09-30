@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (47)
+## Entries (48)
 
 - Post-M9: mouse-wheel feed scrolling (done)
 - Post-M9: own markdown renderer (tables + LaTeX + theme) (done)
@@ -59,6 +59,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: colour modes — the monochrome mode, and `NO_COLOR` (done)
 - Post-M9: colour modes — themes of the user's own (done)
 - Post-M9: a window too small for the frame says so (done)
+- Post-M9: the chat sheds its chrome one piece at a time (done)
 
 ### Post-M9: mouse-wheel feed scrolling (done)
 - **The mouse wheel scrolls the feed** on par with `PageUp/PageDown`. `ratatui::init()`
@@ -2932,3 +2933,82 @@ Pure UI otherwise — no engine, no storage.
 
 **Tests**: 3772 unit tests green, 236 ignored (+21). The screenshot dumps are
 unchanged: nothing moves at the sizes they are taken at.
+
+### Post-M9: the chat sheds its chrome one piece at a time (done)
+
+Stage 2 of the small-terminal track
+([docs/research/small-terminal.md](../research/small-terminal.md) §8; branch
+`feat/small-terminal-ladder`). Stage 1 put a notice under the chat below 20×9; the user's
+choice at fork F1 was (b), a chat that gives up its chrome in a fixed order and is drawn
+down to three rows. The reported 57×5 — the window that had the input's prompt standing on
+the status bar — is four rows of the conversation over `❯` now.
+
+**The ladder** is one function of the window's height, `ChatChrome::at(rows)`: the status
+bar's ceiling in rows (two from eleven rows, one from six, none below), whether the input
+box has its border (from ten), whether the feed has (from eight). Nothing else in the chat
+reads the height; `render` builds the rest from it — the input's `RenderOpts` before the
+layout, since the rows a draft wraps into depend on the frame; `input_height` with its
+border flag; `status_bar::height` with the ceiling; `chat_areas` with the feed's minimum;
+the feed's `FeedFrame`. The order is the research's argument: the status row outlives both
+borders, because its one row carries the engine's state and the turn's. What the shape
+depends on is the window's rows alone — the draft and the banner still take theirs, but
+the frame around them does not move with the token counter (§4.3 of the research; lessons
+§5, "two alternating layouts are the noise"). Measured: a one-row draft keeps four rows of
+the conversation at every step from ten rows down to five, and nothing changes from eleven
+up — the screenshot dumps and their drift gate are untouched.
+
+**Three widgets learnt to draw bare.** `InputBox` with `RenderOpts::bare`: its rows of
+text behind the prompt, no border, no scrollbar, and the title — where there is one — as a
+muted tag at the right end of the first row whose columns come off **every** row, so the
+text wraps the same on each and `content_rows` measures the height the widget draws
+(`RenderOpts::text_width` is the one function on both sides, the way `PROMPT_W` already
+was). `MessageFeed` with `FeedFrame::Bare`: rows wrapped to the full width, no title, no
+scrollbar — and the tail it follows is the last line of text rather than the separator row
+under the last message, which in a four-row feed was a row of nothing. The impersonation
+preview with `Preview::bare`: the bare box's shape, its spinner in the prompt column. What
+a border's title said was placed or given up on one rule — nothing the user acts on may go
+unsaid where something else can say it: the idle key hint and *generating… Esc cancel* are
+given up (`F1` has the keys; the status bar says *generating* while it has a row), the
+in-feed search's counter is the tag (`3/12`, `0/0` — a new key `ui.chat.search.tag`), the
+monochrome mode's *command* word is the tag too. The table is research §8.2.
+
+**The status bar within its rows, and the pill within the row.** `height` takes the
+ceiling and `render` reads it off its area, so a one-row area gets a one-row bar — the
+corner block one row deep, shedding to it, and the degenerate `F1` row below the pill does
+not exist — never the top row of a two-row grid. The pill was stage 1's leftover: clipped
+at the window's edge with no mark, and under 63 columns in `ru` the chip that fell off a
+generating pill was the token counter, cut mid-number. It is fitted now at every height
+(`fit_pill`): `state_spans` became `state_chips`, each chip carrying the join drawn before
+it, and the pill is the longest prefix that ends inside the row — a prefix, so within a
+turn chips leave from the tail one by one and none jumps left — with the chat chip alone
+cut with a mark rather than left out. The room a shed chip leaves is a corner, which `F1`
+takes. Truncating chips instead was rejected: a cut chip still reads as a number.
+
+**The gate** states the ladder as the table it is — not read off `ChatChrome` — and holds
+every chat frame to it at its height: the feed's border from eight rows, the input's `│❯`
+from ten and `❯` below, the status bar under the input within the rows allowed, the cursor
+on the input's rows. Twenty states × 459 sizes × two languages as before; the impersonation
+case now also checks the spinner in the prompt column. The reported-windows test draws
+the chat at 57×5 and the notice at 57×2 (`20×3`).
+
+**Mutation**: 31 mutants behind `crate::mutant(N)`, built once, the tree restored from the
+saved text — every threshold of the ladder, the feed's minimum, the bare draft's share,
+the bar's ceiling in each of its three readers, the pill's prefix rule and its cut, each
+bare form and its scrollbar, the tag's width and its drawing, the feed's tail, each
+title's fate. 28 killed at once. Two survivors were tests owed and now written — a bare
+box drawing a scrollbar (no border column, so the last column is text), a bare preview
+without its spinner — and both are killed. The third was `height` clamping its result to
+the ceiling `lines_within` already keeps: a guard no test could fail, removed (lessons §5).
+
+**Live run — GO.** `python tools/console_probe.py --scenario small-window` on the inbox
+console host of Windows 11 Pro 26200, the debug build: **57 checks, all passed** — the
+notice at 57×2 with `20×3` and only quit; the reported 57×5 as four rows of the
+conversation over `❯`, the row above the prompt text and not padding, a typed word landing
+on the prompt's row (the demo chat carries a draft of several rows, and at five rows the
+bare box is the one row the cursor is on); the ladder step by step at 57×10, ×9, ×8, ×7,
+×6, each console started at its size; and 45×12 with the settings and the emoji picker as
+in stage 1 — the picker's own minimum is what the notice names now (`46×6`), the chat's
+nine rows no longer standing over it. `full-mode`, `mono` and `first-frame` re-run, all
+pass. Pure UI — no engine, no storage.
+
+**Tests**: 3781 unit tests green, 236 ignored (+9).

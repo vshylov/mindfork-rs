@@ -2568,16 +2568,18 @@ Two main screens + overlays (modals):
 it, the help dialog — has a smallest window it is drawn in, and a window below
 the minimum of what is in front gets one centred notice instead of a frame with
 parts missing: *Window too small*, the size the window has and the size it
-needs (`57×5 — needs 20×9`), and the keys that work. What was drawn there
+needs (`45×6 — needs 46×12`), and the keys that work. What was drawn there
 before was nobody's design — an input box with no row of text and its prompt
 standing on the status bar, a cursor below the last row of the terminal, a
 panel that was a border around nothing
 ([docs/research/small-terminal.md](docs/research/small-terminal.md) §1). No
 size panics, 0×0 included, which is a size real hosts report.
 
-- **The minimums.** The chat — 20×9: the layout at its tallest (the feed's
-  three rows, the indexing banner, the input box's three, two rows of status
-  bar). The chat list — 24×7; the settings — 46×12, the width being the
+- **The minimums.** The chat — 20×3: a row of the conversation, the `❯` row,
+  and a row between them for the banner or a second row of either; twenty
+  columns are where wrapped text stops being a word a row. Above three rows
+  the chat is drawn with as much of its chrome as the rows allow (the ladder
+  below). The chat list — 24×7; the settings — 46×12, the width being the
   layout's own arithmetic (the menu's 24 columns, the 20 the fields are never
   laid out below, the border); the self-model, the message search and the
   tasks — 30×8; the changes — 40×8. A popup raises its screen's minimum to its
@@ -2586,11 +2588,56 @@ size panics, 0×0 included, which is a size real hosts report.
   help dialog to its legend over eight rows, a question to the rows its text
   wraps into at the window's width.
 - **A minimum depends on the window and on which layers are open, never on
-  what they hold.** The chat's nine rows are a constant, not the sum of what
+  what they hold.** The chat's three rows are a constant, not the sum of what
   this frame happens to show: a minimum that followed the banner or the status
   bar's second row would put the notice up and take it down as they came and
   went. The notice appears with a resize or with a key that opens something —
   the emoji picker in a 40-column window — and with nothing else.
+- **The chat sheds its chrome one piece at a time** (`ChatChrome::at`,
+  `screens/chat/render.rs`). Nothing changes from eleven rows up. Below that,
+  each step gives up the piece that says the least, so that **the feed keeps
+  four rows of the conversation for as long as there is chrome left to give**:
+
+  | window rows | status bar | input box | feed |
+  |---|---|---|---|
+  | 11 and up | up to two rows | bordered | bordered |
+  | 10 | one row | bordered | bordered |
+  | 8–9 | one row | a bare `❯` row | bordered |
+  | 6–7 | one row | a bare `❯` row | bare |
+  | 3–5 | none | a bare `❯` row | bare |
+
+  The status row outlives both borders because its one row carries the
+  engine's state and the turn's, where a border's two rows carry a title
+  ([docs/research/small-terminal.md](docs/research/small-terminal.md) §5,
+  F1(b)). The shape is a function of the window's rows and nothing else — not
+  of the draft, the pill or the banner — so it changes when the user drags
+  the window's edge and at no other time. The reported 57×5 is four rows of
+  the conversation over `❯` and the text being typed.
+- **A bare widget.** A bare input box is its rows of text behind the `❯`
+  prompt: no border, no title, no scrollbar, and a draft of several rows
+  takes at most a third of the window (half, with a border). What the title
+  said is given up or moves: the idle key hint and *generating… Esc cancel*
+  are given up (`F1` has the keys; the status bar says *generating* while it
+  has a row); the in-feed search's counter becomes a **tag** at the right end
+  of the row — `3/12`, `0/0` — with its columns taken off every row so the
+  text wraps the same on each; the monochrome mode's *command* word is the
+  tag too, colour being what says it elsewhere. A bare feed is rows of the
+  conversation wrapped to the window's full width, with no title, no
+  scrollbar — and it ends on the last line of text, not on the padding row
+  under it, so a four-row feed shows four rows of the conversation. A bare
+  impersonation preview is the same shape as the bare box, its spinner in the
+  prompt column.
+- **The status bar within its rows, and the pill within the row.** The bar
+  is laid out within the rows the ladder allows: within one row the corner
+  block is one row deep and sheds to it, and the `F1`-alone row below the
+  pill does not exist. The pill itself is fitted to the row's width **at
+  every height**: a chip that would cross the edge is left out with every
+  chip behind it, whole — the pill used to be clipped at the edge with no
+  mark, and the chip that fell off was the token counter, cut mid-number —
+  except the first, the chat server's, which is cut with a mark so that a row
+  of any width says what the server is doing. A prefix, so that within a turn
+  chips leave one by one from the tail and none jumps left; the room a shed
+  chip leaves is a corner again, which `F1` takes.
 - **The keys under the notice.** A key pressed at a screen that is not on the
   terminal would be an answer to something nobody read: `Enter` would run a
   tool call, a typed line would be sent. So the batch is read for what the
@@ -2622,8 +2669,9 @@ size panics, 0×0 included, which is a size real hosts report.
   not the layout solver's: the solver, handed rows that did not add up,
   shortened whichever it liked — the input box lost its row of text while the
   status bar kept two rows of hints. The input box is what is cut back, to
-  what the feed's three rows, the banner and the status bar leave; at the
-  chat's minimum that is its own three.
+  what the feed's minimum (its border, when it has one, and a row of the
+  conversation), the banner and the status bar leave; at the chat's minimum
+  that is its one row.
 - **A widget draws inside its rectangle.** An input box with no cell for text
   draws its border and nothing else — no prompt on the row under it, no cursor
   there. The cursor of a frame is inside the frame or hidden; under a popup
@@ -2633,13 +2681,14 @@ size panics, 0×0 included, which is a size real hosts report.
   without shedding ([11.1](#111-screens-and-navigation)), so between a screen's
   minimum and the height its legend wants, the panel is squeezed to three rows
   and the footer is cut from the bottom — the frame it always was. Bounding
-  them, and the chat shedding its borders down to three rows, are the track's
-  next stages ([docs/research/small-terminal.md](docs/research/small-terminal.md) §6).
+  them is the track's last stage
+  ([docs/research/small-terminal.md](docs/research/small-terminal.md) §6).
 - **The gate** (`app/runtime/small_window_tests.rs`) draws twenty states —
   every screen, every popup of the chat — at 459 window sizes from 0×0 up, in
   every built-in language, through the function the loop draws with; each
-  frame is the notice or the screen whole, with the cursor inside it or
-  hidden. On a real console: `tools/console_probe.py --scenario small-window`.
+  frame is the notice or the screen whole — for the chat, whole as the ladder
+  has it at that height — with the cursor inside it or hidden. On a real
+  console: `tools/console_probe.py --scenario small-window`.
 
 ### 11.2. The chat list (an overlay)
 
