@@ -132,19 +132,18 @@ impl Rig {
         self
     }
 
+    /// A frame the way the loop puts one on the screen ([`present`]): the
+    /// cursor read back is the terminal's, after the frame was applied.
     fn draw(&mut self, width: u16, height: u16) -> Shot {
         let palette = front_palette(&self.active, &self.screen);
         let mut term = Terminal::new(TestBackend::new(width, height)).unwrap();
-        let mut placeholder = None;
-        term.draw(|frame| {
-            placeholder = compose_frame(
-                frame,
-                &mut self.screen,
-                &mut self.active,
-                &mut self.help,
-                &palette,
-            );
-        })
+        let placeholder = present(
+            &mut term,
+            &mut self.screen,
+            &mut self.active,
+            &mut self.help,
+            &palette,
+        )
         .unwrap();
         let backend = term.backend();
         let cursor = backend.cursor_visible().then(|| {
@@ -565,7 +564,12 @@ const CASES: &[(&str, Build, Check)] = &[
     ("in-feed search", chat_search, chat_is_whole),
     ("impersonation", chat_impersonation, preview_is_streaming),
     ("help", chat_help, |s, l| {
-        legend(s, l, "ui.help.footer.tabs")
+        // No cursor: the input box under the dialog placed one, and it used
+        // to blink through the dialog ([`present`]).
+        match s.cursor {
+            Some(at) => Err(format!("a cursor at {at:?} under the help")),
+            None => legend(s, l, "ui.help.footer.tabs"),
+        }
     }),
     ("emoji picker", chat_emoji, |s, l| {
         legend(s, l, "ui.emoji.footer").and_then(|()| shows(s, &["😀", "🎯"]))
@@ -1043,4 +1047,53 @@ fn a_screen_that_does_not_fit_is_left_by_esc() {
     let (quit, _) = tick(&mut rig, &shot, &[plain(KeyCode::Esc)]);
     assert!(!quit && rig.help.open.is_none(), "`Esc` closed the help");
     assert_eq!(rig.draw(30, 12).placeholder, None);
+}
+
+// ---------- the cursor under the help dialog ----------
+
+/// The help dialog covers whatever is in front, and the box under it placed
+/// a cursor that kept blinking through the dialog — in the chat's input, the
+/// in-feed search, a settings editor or search, the chat list's rename field
+/// (docs/research/small-terminal.md §7.3). With the dialog open the frame has
+/// no cursor ([`present`]); closed, the box has it back where it was.
+#[test]
+fn no_cursor_blinks_through_the_help() {
+    let chat_list_renaming = |lang: Lang| -> Rig {
+        let mut rig = chat_list(lang);
+        let shot = rig.draw(80, 24);
+        let _ = tick(&mut rig, &shot, &[plain(KeyCode::F(2))]);
+        rig
+    };
+    let states: [(&str, Build); 5] = [
+        ("chat", chat_idle),
+        ("in-feed search", chat_search),
+        ("settings editor", settings_editor),
+        ("settings search", settings_search),
+        ("chat list, renaming", chat_list_renaming),
+    ];
+    for (name, build) in states {
+        let mut rig = build(Lang::Ru);
+        let before = rig.draw(80, 24);
+        let at = before
+            .cursor
+            .unwrap_or_else(|| panic!("{name}: the box has the cursor:\n{}", before.text()));
+
+        rig.help.open_for(help_context(&rig.active));
+        let covered = rig.draw(80, 24);
+        assert!(rig.help.open.is_some(), "{name}");
+        assert_eq!(
+            covered.cursor,
+            None,
+            "{name}: a cursor under the help:\n{}",
+            covered.text()
+        );
+
+        rig.help.close();
+        let after = rig.draw(80, 24);
+        assert_eq!(
+            after.cursor,
+            Some(at),
+            "{name}: the cursor back where it was"
+        );
+    }
 }

@@ -308,6 +308,27 @@ def type_text(text: str) -> None:
         _send(0, char, 0, 0.25)
 
 
+def read_cursor() -> tuple[int, int]:
+    """Where the console's cursor is, relative to the visible window.
+
+    Not whether it shows: `GetConsoleCursorInfo` does not see a hide sent as
+    `ESC[?25l` — measured, it reports the cursor visible under the "Window too
+    small" notice, which has none. A hidden cursor is told by its place
+    instead: ratatui moves a cursor it shows into the box that placed it, and
+    leaves one it hides at the last cell its diff wrote."""
+    handle = _open("CONOUT$")
+    try:
+        info = ScreenBufferInfo()
+        _check(
+            KERNEL32.GetConsoleScreenBufferInfo(handle, ctypes.byref(info)),
+            "GetConsoleScreenBufferInfo",
+        )
+        at = info.dwCursorPosition
+        return (at.X - info.srWindow.Left, at.Y - info.srWindow.Top)
+    finally:
+        KERNEL32.CloseHandle(handle)
+
+
 def read_screen() -> list[list[tuple[str, int]]]:
     """The visible screen: rows of `(character, attributes)`."""
     handle = _open("CONOUT$")
@@ -1139,6 +1160,35 @@ def the_titles(exe: Path, report: Report) -> None:
     report.check(code == 0, f"41x12: the app exited with code {code}")
 
 
+def no_cursor_under_the_help(exe: Path, report: Report) -> None:
+    """80x24: the box in front has the cursor; the help dialog over it
+    takes it away — over the chat's input and over the settings' search field
+    — and `Esc` gives it back where it was. Read by place ([`read_cursor`]):
+    under the dialog the cursor is no longer in the box, and on the dialog's
+    own last row, where the diff stopped writing."""
+    session = Session(exe, ["demo"], size=(80, 24))
+    try:
+        for where, opening in (("the chat", ()), ("the settings' search", (SETTINGS_KEY, "/"))):
+            for key in opening:
+                if key in KEYS:
+                    press(key, SETTLE_REPAINT)
+                else:
+                    type_text(key)
+            time.sleep(SETTLE)
+            rows = text_of(read_screen()).split("\n")
+            before = read_cursor()
+            report.check("❯" in rows[before[1]], f"80x24, {where}: the cursor is in the box {before}")
+            press("f1", SETTLE_REPAINT)
+            under = read_cursor()
+            report.check(under != before, f"80x24, {where}: the help takes the cursor out of the box {under}")
+            press("esc", SETTLE_REPAINT)
+            after = read_cursor()
+            report.check(after == before, f"80x24, {where}: the cursor is back {after}")
+    finally:
+        code = session.close()
+    report.check(code == 0, f"80x24: the app exited with code {code}")
+
+
 def scenario_small_window(exe: Path, report: Report) -> None:
     too_small_for_the_chat(exe, report)
     the_reported_window(exe, report)
@@ -1146,6 +1196,7 @@ def scenario_small_window(exe: Path, report: Report) -> None:
     a_layer_that_does_not_fit(exe, report)
     the_footers(exe, report)
     the_titles(exe, report)
+    no_cursor_under_the_help(exe, report)
 
 
 SCENARIOS = {
