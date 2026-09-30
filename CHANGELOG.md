@@ -53,7 +53,8 @@ split by subsystem.
 - **The chat's title is no longer squeezed out by the model's name.** In a
   narrow window the header gives the title its share first; the model caption
   drops its context size, then itself.
-- **No cursor blinks through a tool confirmation.**
+- **No cursor blinks through a tool confirmation**, nor through the help (`F1`)
+  — over the chat's input, a rename field or a settings editor alike.
 - **A box's title is no longer cut off at its corner.** In a narrow window an
   editor's key hints were cut mid-word, and the in-feed search's counter lost
   everything after its number. A title that does not fit now

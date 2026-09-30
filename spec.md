@@ -2700,7 +2700,10 @@ size panics, 0×0 included, which is a size real hosts report.
   draws its border and nothing else — no prompt on the row under it, no cursor
   there. The cursor of a frame is inside the frame or hidden; under a popup
   that takes the keys, the tool confirmation included, the box is not where the
-  cursor is.
+  cursor is — and under the help dialog, which the runtime draws over every
+  screen and every sub-mode, the frame has no cursor at all
+  (`app/runtime::present`): the box under it used to keep its cursor blinking
+  through the dialog.
 - **A screen's footer takes a third of the window at most**
   (`shared::ui::footer_rows`), and never a row the panel above needs: at a
   screen's minimum window it is the one row the minimum was counted with.

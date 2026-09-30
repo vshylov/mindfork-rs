@@ -3768,6 +3768,14 @@ content, so the notice cannot flicker with a token counter; and whatever raises
 a minimum is something `Esc` leaves (`ChatScreen::popup_needs` is the one list
 behind both `min_size` and `has_popup`).
 
+The composed frame is put on the screen by `present`, not by `Terminal::draw`
+directly: with the help dialog open it takes `draw`'s steps — `autoresize`,
+`get_frame`, compose, `apply_buffer` — without the cursor, because the screen
+under the dialog does not know it is covered and its focused input box placed
+one, and ratatui's `Frame` cannot take a cursor back. Invariant: **a frame with
+the help open has no cursor**, whatever screen and sub-mode is under it; the
+gate's rig draws through `present` too.
+
 Above its minimum of three rows the chat is drawn with as much chrome as the
 rows allow: `ChatChrome::at(rows)` (`screens/chat/render.rs`) is the ladder of
 spec §11.1.1 as one function of the window's height — how many rows the status

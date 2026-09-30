@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (72)
+## Entries (73)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -84,6 +84,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a setting at its default reads as unchanged in every interface language (done)
 - Post-M9: a screen's footer takes a third of the window at most (done)
 - Post-M9: titles and tabs a narrow window used to cut (done)
+- Post-M9: no cursor blinks through the help (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -3832,3 +3833,48 @@ case: the input's title by whole parts, each of the six tabs whole on the strip 
 walks it (the help opens on *Shortcuts* from the chat, which the first draft of the check
 assumed was *About*), and `…` on every strip. `full-mode`, `mono` and `first-frame` re-run,
 all pass. **Tests**: 3788 green, 236 ignored (+4).
+
+### Post-M9: no cursor blinks through the help (done)
+
+The last leftover of the small-terminal track
+([docs/research/small-terminal.md](../research/small-terminal.md) §7.3), found by stage 1's
+gate reading the cursor back (branch `fix/help-cursor`). The help dialog is the runtime's
+overlay: `compose_frame` draws the screen in front, then the dialog over it, and `F1` opens
+it from every screen and every sub-mode — a rename field, an editor, the settings search.
+The screen does not know the dialog is there, so its focused input box placed the terminal's
+cursor, and the cursor blinked through the dialog. The tool confirmation had the same
+defect in the chat's own hands, and stage 1 fixed that one by the box's `focused` flag;
+here the box belongs to a screen that cannot see the layer over it.
+
+**Where it is fixed.** An input box is the only thing that places the cursor, and ratatui's
+`Frame` can be given a cursor but not have one taken back (`cursor_position` is
+crate-private). Telling every screen it is covered would have meant a flag through four
+screens and the chat list's widget, and a box added under the dialog later would have
+needed it too. So the frame is presented by the runtime, which draws the dialog and knows
+it is up: `present` does what `Terminal::draw` does — resize, render, apply — and with the
+dialog open applies the buffer without a cursor (`apply_buffer`, which hides it). Closed,
+it is `draw` as before. The gate's rig draws through `present`, so every frame the gate
+reads is the loop's.
+
+**Tests**: the gate's help case now requires no cursor; a new test opens the help over the
+chat's input, the in-feed search, a settings editor, the settings search and the chat
+list's rename field — a cursor before, none under the dialog, the same cell after it
+closes. **Mutation**: both ways of getting `present` wrong — the dialog keeping the cursor,
+no frame having one — killed.
+
+**Live run — GO**, with a trap found on the way (lessons §6). The first check read
+`GetConsoleCursorInfo` and failed on a build that was right: the legacy API reports the
+cursor visible after ratatui's `ESC[?25l` — it said so under the "Window too small" notice
+too, a frame with no cursor. The check reads the place instead: a shown cursor is moved into
+its box, a hidden one stays at the last cell the diff wrote. On the inbox console host of
+Windows 11 Pro 26200: in the chat the cursor at (66, 20) in the input box, under the help at
+(79, 23), back at (66, 20) on `Esc`; the settings' search field the same at (15, 4). The
+control arm — `main` before the fix, built apart — left the cursor at (66, 20) under the
+help. `tools/console_probe.py --scenario small-window`, 83 checks, all passed; the app under
+test was built into its own target directory, a session of the user's own running from
+`target/debug` at the time. `full-mode` and `mono` re-run, both pass; `first-frame` could
+not run — it starts a real instance, not the demo, and the single-instance guard is
+machine-wide, held by that session (exit code 2, as designed). It exercises the first frame
+of a saved draft, which no frame with the help closed changes.
+
+**Tests**: 3789 green, 236 ignored (+1).

@@ -677,6 +677,7 @@ that narrow.
   §11.1.1): a border title keeps whole parts, `Esc`'s first
   (`ui::fit_title`); a panel's two titles are fitted like the feed's header
   (`ui::titled_panel`); the tab strip shows a window of whole tabs around the
-  active one. The cursor is still its own task.*
+  active one. The cursor followed the same day: a frame with the help open is
+  presented without one (`app/runtime::present`).*
 - The chat list's rename mode keeps its one line of `Enter`/`Esc` — it is
   already a row.

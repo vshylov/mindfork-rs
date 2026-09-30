@@ -1533,6 +1533,16 @@ path nested inside the quoted `/c` argument died at once. This is how
 still needs a person and a real terminal.
 — *a window too small for the frame says so*.
 
+**The console's cursor API does not see a VT hide — read where the cursor is, not whether
+it shows.** `GetConsoleCursorInfo` reported the cursor visible under the "Window too small"
+notice, a frame with no cursor, because ratatui hides it with `ESC[?25l` and the legacy
+API's `bVisible` does not follow that sequence. The first live check of "no cursor under the
+help" failed on a build that was right. What does tell: a cursor ratatui shows is moved into
+the box that placed it, and one it hides stays at the last cell its diff wrote — (66, 20)
+in the input box, (79, 23) under the dialog. Read the position, and keep a control arm (the
+build before the fix, where the cursor stays in the box).
+— *no cursor blinks through the help*.
+
 **Root in a container is not root: `tar` as root restores the archive's owner,
 and a pod refuses it.** A release archive records whoever packed it (the CI
 runner, uid 1001). GNU tar under uid 0 applies that owner by default — and a
