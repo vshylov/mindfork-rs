@@ -15,7 +15,7 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 
 use crate::shared::keys;
 use crate::shared::theme::Palette;
-use crate::shared::ui::render_scrollbar;
+use crate::shared::ui::{fit_title, render_scrollbar};
 use crate::shared::wrap;
 
 /// Width of the `❯ ` prompt column (in columns) before the input text.
@@ -1354,14 +1354,14 @@ impl InputBox {
         let full_inner = if opts.bare {
             self.render_tag(frame, area, &opts, palette)
         } else {
+            // The title fitted to the border by whole parts, never cut at
+            // the corner (`ui::fit_title`): two corners and a space either side.
+            let title = fit_title(opts.title, usize::from(area.width.saturating_sub(4)));
             let block = Block::default()
                 .borders(Borders::ALL)
                 .border_type(palette.glyphs().border)
                 .border_style(palette.border_style(opts.focused))
-                .title(Span::styled(
-                    format!(" {} ", opts.title),
-                    palette.muted_style(),
-                ));
+                .title(Span::styled(format!(" {title} "), palette.muted_style()));
             frame.render_widget(&block, area);
             block.inner(area)
         };
@@ -2380,6 +2380,32 @@ mod tests {
             rows[2].contains("fifteen"),
             "scrolled to the cursor: {rows:?}"
         );
+    }
+
+    /// A bordered box's title narrower than its hints keeps whole parts, the
+    /// way out first (`ui::fit_title`, spec §11.1.1) — an editor in a narrow
+    /// window read `edit · Enter ok · Esc cance`, cut at the corner.
+    #[test]
+    fn a_narrow_box_keeps_whole_parts_of_its_title() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let mut ib = InputBox::new();
+        let top = |ib: &mut InputBox, width: u16| -> String {
+            let mut term = Terminal::new(TestBackend::new(width, 3)).unwrap();
+            term.draw(|f| {
+                ib.render(
+                    f,
+                    f.area(),
+                    RenderOpts::focused("правка · Enter ок · Esc отмена"),
+                    &Palette::default(),
+                )
+            })
+            .unwrap();
+            crate::shared::ui::tests::buffer_rows(term.backend().buffer()).remove(0)
+        };
+        assert!(top(&mut ib, 40).starts_with("╭ правка · Enter ок · Esc отмена ─"));
+        assert_eq!(top(&mut ib, 30), "╭ правка · Esc отмена ───────╮");
+        assert_eq!(top(&mut ib, 16), "╭ Esc отмена ──╮");
     }
 
     /// A box with no room for a text cell draws its border and nothing else

@@ -21,7 +21,7 @@ use crate::features::tools::present::{self, ToolBlock};
 use crate::shared::i18n::Locale;
 use crate::shared::markdown;
 use crate::shared::theme::Palette;
-use crate::shared::ui::render_scrollbar;
+use crate::shared::ui::{self, render_scrollbar};
 use crate::shared::wrap;
 
 /// Gutter rail to the left of every message line: a colored vertical bar +
@@ -527,15 +527,9 @@ impl FeedCaption {
 /// 33-column model name, and a 30-column one showed no title and a caption
 /// clipped from its left (docs/research/small-terminal.md §2.3). Where the row
 /// has room for both, nothing changes — a long title is still the one cut.
+/// The rule is every border's with two titles ([`ui::fit_title_pair`]).
 fn fit_header(title: &str, caption: &FeedCaption, avail: usize) -> (String, Option<String>) {
-    let owed = wrap::str_width(title).min(avail / 2);
-    let cell_width = |form: &str| wrap::str_width(form) + 2;
-    let form = caption
-        .forms()
-        .into_iter()
-        .find(|form| cell_width(form) + owed <= avail);
-    let budget = avail - form.as_deref().map_or(0, cell_width);
-    (wrap::truncate_to_width(title, budget).0, form)
+    ui::fit_title_pair(title, &caption.forms(), avail)
 }
 
 impl MessageFeed {

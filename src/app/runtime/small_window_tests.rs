@@ -534,6 +534,22 @@ fn preview_is_streaming(shot: &Shot, loc: &'static Locale) -> Result<(), String>
     if !at_work {
         return Err(format!("nothing says the preview is at work: {row:?}"));
     }
+    // With its border, the way out is whole on it — the title fitted by
+    // whole parts, not cut at the corner (`ui::fit_title`).
+    let esc = loc
+        .t("ui.impersonation.active")
+        .split(" · ")
+        .last()
+        .unwrap_or("")
+        .trim();
+    if shot.rows.len() >= 10
+        && !shot
+            .rows
+            .iter()
+            .any(|r| r.starts_with('╭') && r.contains(esc))
+    {
+        return Err(format!("the preview's border lost {esc:?}"));
+    }
     let chip = (shot.rows.len() >= 6).then(|| loc.t("ui.status.chip.chat"));
     shows(shot, chip.as_slice())
 }

@@ -2663,6 +2663,28 @@ size panics, 0×0 included, which is a size real hosts report.
   that the key that runs the call was off the screen. A window that cannot
   hold the box is one the question is not asked in — the notice, and `Esc` to
   decline.
+- **A border title is fitted, never cut at the corner.** ratatui cuts a title
+  longer than its border with no mark, and an editor in a narrow window read
+  `edit · Enter ok · Esc cance`; the in-feed search's counter lost everything
+  after its number. A title that does not fit keeps whole parts
+  (`shared::ui::fit_title`): the part naming `Esc` first, then the parts in
+  their order while the title fits; the first part — what the box is, a
+  counter, an error — is cut with a mark rather than left out. So a settings
+  editor at 46 columns reads `edit · Esc cancel`. Every input box's border
+  (the chat's, the editors', the search fields'), the impersonation preview's
+  and the help dialog's title.
+- **A panel's two titles never overwrite each other.** The message search's
+  and the changes screen's right-hand title (a count, a summary) was drawn
+  over the left one in a narrow window. The two are fitted like the feed's
+  header ([11.3](#113-the-feed)): the left title is owed half the row, the
+  right one is shown whole, by its parts from the end (`files: 2`), or not at
+  all (`shared::ui::titled_panel`, the chat list's too).
+- **The help dialog's tab strip keeps the active tab whole.** The whole strip
+  needs the dialog's 76 columns; in a narrower window its last tabs used to be
+  cut at the edge, the active
+  one too once `Tab` reached them. Narrower, it shows a run of whole tabs with
+  the active one in it and `…` on each side that hides some — the leftmost
+  such run, so moving through the tabs on screen moves nothing.
 - **A popup is never narrower than its key legend.** The profile picker and the
   `chat://` picker were a share of the window with a floor below their
   legends: the profile picker's was cut in every window under 82 columns, the

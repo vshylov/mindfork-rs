@@ -14,7 +14,7 @@ use crate::shared::credits;
 use crate::shared::i18n::Locale;
 use crate::shared::keys;
 use crate::shared::theme::Palette;
-use crate::shared::ui::{MinSize, centered_rect, legend_width, render_scrollbar};
+use crate::shared::ui::{MinSize, centered_rect, fit_title, legend_width, render_scrollbar};
 use crate::shared::wrap;
 use crate::widgets::logo::{LOCKUP_COLS, LOCKUP_ROWS, lockup_lines};
 
@@ -408,8 +408,9 @@ pub fn help_size(cols: u16, rows: u16) -> (u16, u16) {
 
 /// The smallest window the dialog is drawn in (spec §11.1.1): the legend of its
 /// keys whole on the border, and under the tab strip and its rule four rows of
-/// the open tab. The tab strip itself is whole only from [`HELP_MIN_WIDTH`]
-/// up — below that its last tabs are cut, which `Tab` still reaches.
+/// the open tab. The tab strip is whole from [`HELP_MIN_WIDTH`] up; below
+/// that it shows the active tab and its neighbours, `…` where tabs are hidden
+/// ([`help_tab_strip`]).
 pub fn min_size(loc: &'static Locale) -> MinSize {
     MinSize::new(legend_width(loc.t("ui.help.footer.tabs")), 8)
 }
@@ -433,12 +434,17 @@ pub fn render_help(
 
     // The title carries the brand name+version (language-neutral) next to the
     // localized title; the footer covers tab/scroll/close navigation.
-    let title = format!(
-        "{}{} · {} v{}",
-        palette.glyphs().help_icon,
-        loc.t("ui.help.title"),
-        credits::APP_NAME,
-        env!("CARGO_PKG_VERSION"),
+    // Fitted to the border by whole parts (`ui::fit_title`): in a narrow
+    // window the version goes, not the end of the name.
+    let title = fit_title(
+        &format!(
+            "{}{} · {} v{}",
+            palette.glyphs().help_icon,
+            loc.t("ui.help.title"),
+            credits::APP_NAME,
+            env!("CARGO_PKG_VERSION"),
+        ),
+        usize::from(area.width.saturating_sub(4)),
     );
     let block = palette.panel(title, true).title_bottom(
         Line::from(Span::styled(
@@ -470,7 +476,7 @@ pub fn render_help(
         }));
         header.push(Line::raw(""));
     }
-    header.push(help_tab_strip(help.tab, palette, loc));
+    header.push(help_tab_strip(help.tab, palette, loc, inner_w));
     header.push(Line::styled(
         "─".repeat(inner_w),
         palette.border_style(false),
@@ -529,24 +535,73 @@ pub fn render_help(
 /// and the content are WGL4-safe. The dialog is always modal (in focus), so the
 /// active tab's highlight is always the "focused" one. In the monochrome mode
 /// the active tab is bracketed instead (`Palette::tab_label`).
-pub fn help_tab_strip(active: HelpTab, palette: &Palette, loc: &'static Locale) -> Line<'static> {
+///
+/// In `width` columns. The whole strip needs [`HELP_MIN_WIDTH`], and a window
+/// narrower than that used to cut its last tabs at the edge — `Tab` reached
+/// them, and the active one was then off the screen
+/// (docs/research/small-terminal.md §7.3). Narrower, the strip shows a run of
+/// whole tabs with the active one in it — the leftmost such run, so moving
+/// through the tabs that are on screen moves nothing — and a `…` cell on
+/// each side that has tabs hidden ([`tab_window`]).
+pub fn help_tab_strip(
+    active: HelpTab,
+    palette: &Palette,
+    loc: &'static Locale,
+    width: usize,
+) -> Line<'static> {
+    let labels: Vec<String> = HelpTab::ALL
+        .iter()
+        .map(|tab| palette.tab_label(loc.t(tab.label_key()), *tab == active))
+        .collect();
+    let widths: Vec<usize> = labels.iter().map(|l| wrap::str_width(l)).collect();
+    let (lo, hi) = tab_window(&widths, active.index(), width);
+    let sep = || Span::styled(" │", palette.border_style(false));
+    let more = || Span::styled(format!(" {HIDDEN_TABS} "), palette.muted_style());
+
     let mut spans: Vec<Span<'static>> = vec![Span::raw(" ")];
-    for (i, tab) in HelpTab::ALL.iter().enumerate() {
-        if i > 0 {
-            spans.push(Span::styled(" │", palette.border_style(false)));
+    if lo > 0 {
+        spans.extend([more(), sep()]);
+    }
+    for (i, label) in labels.iter().enumerate().take(hi + 1).skip(lo) {
+        if i > lo {
+            spans.push(sep());
         }
-        let label = loc.t(tab.label_key());
-        let style = if *tab == active {
+        let style = if i == active.index() {
             Style::new().fg(palette.text).bg(palette.keycap_bg).bold()
         } else {
             palette.muted_style()
         };
-        spans.push(Span::styled(
-            palette.tab_label(label, *tab == active),
-            style,
-        ));
+        spans.push(Span::styled(label.clone(), style));
+    }
+    if hi + 1 < labels.len() {
+        spans.extend([sep(), more()]);
     }
     Line::from(spans)
+}
+
+/// The mark on the side of the tab strip where tabs are hidden.
+const HIDDEN_TABS: char = '…';
+
+/// Which tabs, `lo..=hi`, the strip shows in `width` columns — the tabs
+/// being `widths` wide, the active one `active`: all of them when they fit,
+/// and otherwise the leftmost run that holds the active tab, with a `…` cell
+/// (and its separator) on each side that has tabs hidden, extended to the
+/// right as far as it fits. At the least the active tab alone.
+fn tab_window(widths: &[usize], active: usize, width: usize) -> (usize, usize) {
+    let last = widths.len() - 1;
+    // The lead space, each tab, the ` │` between them, the ` … ` cells.
+    let strip_w = |lo: usize, hi: usize| -> usize {
+        let mark = |hidden: bool| if hidden { 3 + 2 } else { 0 };
+        1 + widths[lo..=hi].iter().sum::<usize>() + 2 * (hi - lo) + mark(lo > 0) + mark(hi < last)
+    };
+    let Some(lo) = (0..=active).find(|&lo| strip_w(lo, active) <= width) else {
+        return (active, active);
+    };
+    let hi = (active..=last)
+        .rev()
+        .find(|&hi| strip_w(lo, hi) <= width)
+        .unwrap_or(active);
+    (lo, hi)
 }
 
 /// Left indent of the tab content (the same column as the lockup).
@@ -1301,11 +1356,16 @@ mod tests {
             |line: &Line<'_>| -> String { line.spans.iter().map(|s| s.content.as_ref()).collect() };
         let label = |tab: HelpTab| loc.t(tab.label_key());
         let mono = Palette::mono();
-        let plain = text(&help_tab_strip(HelpTab::Hotkeys, &Palette::default(), loc));
+        let plain = text(&help_tab_strip(
+            HelpTab::Hotkeys,
+            &Palette::default(),
+            loc,
+            usize::MAX,
+        ));
         assert!(!plain.contains('['), "{plain}");
 
         for active in HelpTab::ALL {
-            let strip = text(&help_tab_strip(active, &mono, loc));
+            let strip = text(&help_tab_strip(active, &mono, loc, usize::MAX));
             for tab in HelpTab::ALL {
                 let bracketed = strip.contains(&format!("[{}]", label(tab)));
                 assert_eq!(bracketed, tab == active, "{tab:?} in {strip}");
@@ -1315,6 +1375,58 @@ mod tests {
                 plain,
                 "the brackets take the columns of the tab's own padding"
             );
+        }
+    }
+
+    /// Narrower than the whole strip (spec §11.1.1), the strip shows a run of
+    /// whole tabs with the active one in it and `…` on each side that hides
+    /// some — it used to cut the last tabs at the edge, the active one
+    /// included once `Tab` reached them. The run is the leftmost that holds
+    /// the active tab, so moving through the tabs on screen moves nothing.
+    #[test]
+    fn a_narrow_tab_strip_shows_the_active_tab_whole() {
+        use crate::shared::i18n::{Lang, locale};
+        let text =
+            |line: &Line<'_>| -> String { line.spans.iter().map(|s| s.content.as_ref()).collect() };
+        for &lang in Lang::ALL {
+            let loc = locale(lang);
+            let label = |tab: HelpTab| loc.t(tab.label_key());
+            let palette = Palette::default();
+            let full_w = crate::shared::wrap::str_width(&text(&help_tab_strip(
+                HelpTab::About,
+                &palette,
+                loc,
+                usize::MAX,
+            )));
+            // From the dialog's narrowest (its legend) to the whole strip.
+            let narrowest = usize::from(min_size(loc).width) - 2;
+            for width in narrowest..=full_w + 1 {
+                for active in HelpTab::ALL {
+                    let strip = text(&help_tab_strip(active, &palette, loc, width));
+                    let at = format!("{lang:?}, {width}, {active:?}: {strip:?}");
+                    assert!(crate::shared::wrap::str_width(&strip) <= width, "{at}");
+                    assert!(strip.contains(label(active)), "the active tab whole — {at}");
+                    let shown: Vec<HelpTab> = HelpTab::ALL
+                        .into_iter()
+                        .filter(|t| strip.contains(label(*t)))
+                        .collect();
+                    // A run of whole tabs, and a mark exactly where some hide.
+                    let first = shown[0].index();
+                    let last = shown[shown.len() - 1].index();
+                    assert_eq!(shown.len(), last - first + 1, "a run — {at}");
+                    assert_eq!(strip.trim_start().starts_with('…'), first > 0, "{at}");
+                    assert_eq!(strip.ends_with("… "), last + 1 < HelpTab::ALL.len(), "{at}");
+                    if width >= full_w {
+                        assert_eq!(shown.len(), HelpTab::ALL.len(), "{at}");
+                    }
+                }
+                // The first tab's run is what every tab in it shows.
+                let run = text(&help_tab_strip(HelpTab::About, &palette, loc, width));
+                for tab in HelpTab::ALL.into_iter().filter(|t| run.contains(label(*t))) {
+                    let strip = text(&help_tab_strip(tab, &palette, loc, width));
+                    assert_eq!(strip, run, "{lang:?}, {width}: {tab:?} moved the strip");
+                }
+            }
         }
     }
 
@@ -1833,7 +1945,7 @@ mod tests {
         // smallest window the adaptive sizing ever grants.
         let palette = Palette::default();
         for lang in Lang::ALL {
-            let strip = help_tab_strip(HelpTab::About, &palette, locale(*lang));
+            let strip = help_tab_strip(HelpTab::About, &palette, locale(*lang), usize::MAX);
             let chars: Vec<char> = strip.spans.iter().flat_map(|s| s.content.chars()).collect();
             let width = crate::shared::wrap::display_width(&chars);
             assert!(

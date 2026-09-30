@@ -406,7 +406,9 @@ src/
 │  │                        docs/history/help-hotkeys-context.md). "License"/"Disclaimer"
 │  │                        show the interface language's text
 │  │                        (credits::license_text), the disclaimer through
-│  │                        shared::markdown (ADR 0003)
+│  │                        shared::markdown (ADR 0003); a tab strip narrower
+│  │                        than its tabs shows a window around the active one
+│  │                        (tab_window)
 │  ├─ status_bar.rs         model/tokens/profile/server status/mouse mode. The hint
 │  │                        block's geometry is shared::ui's; what is local is the
 │  │                        capped, shedding column choice the status pill's
@@ -864,7 +866,11 @@ src/
    │                       for the bar and the footers; footer_keep_order (F1,
    │                       Esc, then the list's order) and footer_rows (a third
    │                       of the window, no row the panel needs) bound a
-   │                       screen's footer (spec §11.1.1); and the small
+   │                       screen's footer (spec §11.1.1). Border titles
+   │                       too: fit_title (whole parts, the Esc one first),
+   │                       title_forms / fit_title_pair / titled_panel (a
+   │                       panel's two titles, never one over the other; the
+   │                       feed's header is the same rule); and the small
    │                       window's pieces (spec §11.1.1): MinSize (the smallest
    │                       window a layer is drawn in), render_too_small + WayOut
    │                       (the notice, and the keys it names), Prompt (a modal
