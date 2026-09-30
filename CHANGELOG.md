@@ -29,6 +29,12 @@ split by subsystem.
   the conversation over the `❯` prompt, and three rows are still a chat. The
   key hints a border carried are on `F1`; the search's counter stays on its
   row (`3/12`).
+- **A screen's key legend takes a third of the window at most.** In a narrow
+  window the legend under the chat list, the settings and the other screens
+  wrapped without end — 13 rows of a 14-row window for the chat list in
+  Russian, leaving one chat above it. Past a third of the window it now
+  leaves hints out, keeping `F1` (which lists them all) and `Esc` first. At
+  80×24 nothing changes.
 
 ### Fixed
 - **The input box no longer draws over the status bar.** In a window of seven

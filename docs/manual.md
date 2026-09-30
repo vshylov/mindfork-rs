@@ -591,6 +591,11 @@ four rows of the conversation over the `❯` prompt. The keys a border used to
 name are all on `F1`; the search's counter stays at the right end of its row.
 Eleven rows and up look as they always did.
 
+**A key I know is missing from the bottom line.** The key hints under a screen
+take at most a third of the window; in a small window the ones that do not fit
+are left out, `F1` and `Esc` last. Every key still works, and `F1` lists them
+all.
+
 **The engine says "not configured".** The empty chat lists the ways to connect
 one; `Ctrl+P → Model/server` is where they are. A managed server needs both a
 binary and a GGUF file — with a binary alone it deliberately starts nothing,

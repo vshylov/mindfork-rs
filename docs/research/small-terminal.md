@@ -1,7 +1,7 @@
 # Research: a terminal window too small for the layout
 
-**Status:** stages 1 and 2 of three implemented, 2026-09-30 (§7, §8); stage
-3 is open. The §5 forks were decided by the user the same day, each at the
+**Status:** the track is complete — all three stages implemented,
+2026-09-30 (§7, §8, §9). The §5 forks were decided by the user the same day, each at the
 recommendation — **F1(b)** the chrome sheds, **F2(a)** only quit under the
 placeholder, **F3(b)** bounded footers, **F4(a)** a minimum per screen. One of
 them, F2, was refined by what the live run found (§7.2).
@@ -584,4 +584,94 @@ as a number.
   tab strip under 78 columns, the cursor under the help dialog.
 - The bare feed shows what the bordered one shows, wrapped wider; a message
   whose card is wider than the window is cut as before.
-- Stage 3: the footers (F3(b)).
+- Stage 3: the footers (F3(b)). *Done, §9.*
+
+## 9. Stage 3 as built
+
+F3(b), as decided: a screen's footer takes at most a third of the window and
+sheds past that, `F1` and `Esc` first. The account of the work is in
+[docs/journal/ui-screens.md](../journal/ui-screens.md).
+
+### 9.1 The share: a third, and no row the panel needs
+
+`shared::ui::footer_rows(height, panel_min)` is the footer's share: a third of
+the window, and never a row the panel above needs — one at least. The second
+clause is decided here, not in F3(b), and it follows from F4(a): a screen's
+minimum is the window it is drawn *whole* in, and each minimum of §7.1 was
+counted as the panel over **one** row of hints. A third alone would take four
+rows of the settings' twelve, and their menu — its title and eight sections —
+would lose three; the minimum would have had to rise to 46×17 to hold it. So
+the panel's need is the minimum's height less that one row, and the footer gets
+what is left up to its third: one row at 46×12, two at 46×13, four from 46×15.
+`screen_chrome` takes the screen's minimum to know it; the chat list, which
+draws its own frame, keeps its minimum on the widget
+(`ChatListState::MIN_SIZE`) and the screen returns it.
+
+The share is a function of the window and of the screen, never of the hints —
+the same rule as every minimum (§4.3) — so the footer's height does not move
+with the selection; only what fills it does, as it already did (the footers
+name only what the selected row answers, spec §11.1).
+
+| the case §2.4 measured | before | after |
+|---|---|---|
+| chat list, `ru`, 57×14 | 13 rows of legend, one chat | 4 rows, five chats |
+| chat list, `ru`, 80×24 | 7 rows | 7 rows — inside a third, nothing changes |
+| settings, `ru`, 46×12 | 4 rows, the menu cut | 1 row (`Tab/↑↓`, `F1`, `Esc`), the menu whole |
+| message search, 30×8 | 5 rows, the query squeezed out | 1 row; the query, the chat and its hits |
+
+### 9.2 The order, and one rule for the bar and the footers
+
+`footer_keep_order` is F3(b)'s order with no per-screen table: `F1` first,
+`Esc` next, then the list's own order — the two keys every screen has pulled to
+the front, found by their key label. The walk that applies it is the chat
+bar's, moved down: `keep_hints` keeps each hint in the order while the grid
+with it still fits the rows and passes over one that does not, so a narrower
+hint behind it still gets its chance; `capped_hint_grid` is the bar's
+`corner_cols`. The bar keeps two things of its own — its order (the mouse
+toggle's pin, the stop key behind `F1`) and its rule that a block without `F1`
+is no block — and a footer needs neither: `F1` is first in its order, so it is
+missing only from a window narrower than its cell.
+
+One consequence of passing over is visible and accepted. In the message search
+at 30 columns in `ru` the `Esc` cell (its label is 20 columns there) does not
+fit beside `F1` in the one row, and `Ctrl+Q`, narrower, does: the footer names
+help and quit. Stopping at the first misfit instead would show `F1` alone — the
+same key less — and the bar has passed over since it first shed. `Esc` still
+works, and `F1` names it.
+
+A footer used to lay a cell wider than the window out in one column and let
+the terminal clip it; now a hint that does not fit is shed like any other, and
+a window narrower than every cell has an empty footer. No screen's minimum is
+that narrow.
+
+### 9.3 Measured
+
+- **The gate** holds every full-screen panel to a footer within a third of the
+  window with `F1` in it, and to what the panel is for — the chat list's
+  selected row, the settings' menu to its last section, the message search's
+  query (which the unbounded footer squeezed out at 30×8, the reason the gate
+  held that screen to less until now), the changes screen's file and diff, the
+  self-model's and the tasks' titles. Twenty states × 459 sizes × two
+  languages, all green with no case loosened.
+- **Mutation:** 12 mutants — each clause of the share (the third, the panel's
+  rows, the one row), each half of the order (`F1` first, `Esc` next), the
+  walk's pass-over and its display order, the cap on depth, a footer and the
+  chat list ignoring their rows, the panel's need off by one each way. 11
+  killed at once; the survivor was the panel counted a row taller, which only
+  shows one row past a minimum — the test now draws the settings at 46×13 and
+  expects the second row.
+- **Live, on the inbox console host of Windows 11 Pro 26200, the debug build —
+  67 checks, all passed** (`tools/console_probe.py --scenario small-window`,
+  stages 1–3): new, the chat list at 57×14 (four rows of footer with `F1` and
+  `Esc`, five chats) and the settings at 46×12 (one row with `F1`, the menu to
+  *Interface*). `full-mode`, `mono` and `first-frame` re-run, all pass.
+
+### 9.4 What the track leaves
+
+- §7.3's items that were never the track's: an input box's title hints on the
+  settings' and the self-model's editors are clipped when the box is narrow; a
+  panel's two titles collide in a narrow window (the message search, the
+  changes screen); the help dialog's tab strip is whole only from 78 columns;
+  the cursor under the help dialog blinks through it (a task of its own).
+- The chat list's rename mode keeps its one line of `Enter`/`Esc` — it is
+  already a row.

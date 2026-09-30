@@ -2535,11 +2535,13 @@ Two main screens + overlays (modals):
   right-aligned **under the columns above**, the block hugging the right edge —
   is one implementation (`shared::ui::render_hint_grid`), and the chat list, the
   settings screen, the self-model screen (`F3`), the changes screen (`F4`), the
-  tasks screen (`F7`) and the message-search screen all draw their footers with it. Only the chat bar
-  caps its depth and sheds: it shares a row with indicators that swell at every
-  turn boundary, while a full-screen panel's footer has the whole width and no
-  competitor, so **a screen's footer wraps to as many rows as it needs and never
-  hides a key for want of space** (user's decision, 2026-08-31). Before this the
+  tasks screen (`F7`) and the message-search screen all draw their footers with it. The chat bar
+  caps its depth at two rows and sheds: it shares a row with indicators that
+  swell at every turn boundary. A full-screen panel's footer has the whole
+  width and no competitor, so **a screen's footer wraps before it hides a
+  key** (user's decision, 2026-08-31) — up to **a third of the window**, and
+  past that it sheds too, keeping `F1` first and `Esc` next
+  ([11.1.1](#1111-small-windows); user's decision, 2026-09-30). Before this the
   grid existed twice and the four screens drawing it the second way were
   left-aligned and ragged at the right edge — the arrangement the bar itself had
   already rejected, for the reason it rejected it: a left-aligned block competes
@@ -2677,18 +2679,28 @@ size panics, 0×0 included, which is a size real hosts report.
   there. The cursor of a frame is inside the frame or hidden; under a popup
   that takes the keys, the tool confirmation included, the box is not where the
   cursor is.
-- **Not yet**: the footers of the screens other than the chat still wrap
-  without shedding ([11.1](#111-screens-and-navigation)), so between a screen's
-  minimum and the height its legend wants, the panel is squeezed to three rows
-  and the footer is cut from the bottom — the frame it always was. Bounding
-  them is the track's last stage
-  ([docs/research/small-terminal.md](docs/research/small-terminal.md) §6).
+- **A screen's footer takes a third of the window at most**
+  (`shared::ui::footer_rows`), and never a row the panel above needs: at a
+  screen's minimum window it is the one row the minimum was counted with.
+  Within that it wraps as before; past it, it **sheds** — `F1` is kept first,
+  because it opens the full list of every key the footer hides (the reason
+  the chat bar sheds it last), then `Esc`, the way back every screen has,
+  then the screen's own hints in the order it lists them, each kept while the
+  grid still fits (`shared::ui::footer_keep_order`, `keep_hints` — the chat
+  bar's shedding and the footers' are one function). What is kept stays in
+  the screen's order. A legend that wrapped without end took 13 rows of a
+  57×14 window in `ru` and left the chat list above it one chat; it takes
+  four now and the list shows five. At 80×24 nothing changes: seven rows are
+  inside a third. The share is a function of the window and the screen, not
+  of the hints, so it does not move with the selection — only what fills it
+  does.
 - **The gate** (`app/runtime/small_window_tests.rs`) draws twenty states —
   every screen, every popup of the chat — at 459 window sizes from 0×0 up, in
   every built-in language, through the function the loop draws with; each
   frame is the notice or the screen whole — for the chat, whole as the ladder
-  has it at that height — with the cursor inside it or hidden. On a real
-  console: `tools/console_probe.py --scenario small-window`.
+  has it at that height; for a panel, what it is for on screen and a footer
+  within a third of the window with `F1` in it — with the cursor inside it or
+  hidden. On a real console: `tools/console_probe.py --scenario small-window`.
 
 ### 11.2. The chat list (an overlay)
 
@@ -3374,7 +3386,7 @@ Design record: [docs/history/in-feed-search.md](docs/history/in-feed-search.md).
 ### 11.5. Input and editing, spellcheck
 
 - **Input/editing**: a **custom multiline widget** (`widgets/input_box.rs`, [ADR 0001](docs/decisions/0001-ui-crates-ratatui-030.md)) — for a new message and for editing existing messages in place. Off-the-shelf crates (`tui-textarea`/`ratatui-textarea`) are incompatible with ratatui 0.30 and don't support highlighting arbitrary ranges — hence a custom widget.
-- **The input box's height** follows its text, counted in wrapped rows: from one row up to **`interface.input_max_rows`** (Settings → Interface → Appearance, *Input box height*; `6` by default — the value that was hard-coded before the setting, `1–50`, an entry outside the range is clamped rather than refused, and a hand-edited `settings.json` is bounded the same way when read). Past the ceiling the text scrolls inside the box, which keeps the cursor in view and draws a scrollbar on its right border. The ceiling is a wish, not a guarantee: the box — border included — **never takes more than half the window**. Without that cap the layout would honour any ceiling at the feed's expense: a 20-row window with a ceiling of 50 was measured to leave the chat one visible line. And it takes no more than the feed's three rows, the banner and the status bar leave — the chat's rows are arithmetic, not the layout solver's ([11.1.1](#1111-small-windows)). The default is unchanged on any window of 16 rows or more; the impersonation preview (§11.8), which stands in the same row, follows the same rule, and a changed setting applies at once (`screens/chat/render.rs::input_height`).
+- **The input box's height** follows its text, counted in wrapped rows: from one row up to **`interface.input_max_rows`** (Settings → Interface → Appearance, *Input box height*; `6` by default — the value that was hard-coded before the setting, `1–50`, an entry outside the range is clamped rather than refused, and a hand-edited `settings.json` is bounded the same way when read). Past the ceiling the text scrolls inside the box, which keeps the cursor in view and draws a scrollbar on its right border. The ceiling is a wish, not a guarantee: the box — border included — **never takes more than half the window**, and a bare box, in a window too short for its border, no more than a third ([11.1.1](#1111-small-windows)). Without that cap the layout would honour any ceiling at the feed's expense: a 20-row window with a ceiling of 50 was measured to leave the chat one visible line. And it takes no more than the feed's minimum rows, the banner and the status bar leave — the chat's rows are arithmetic, not the layout solver's ([11.1.1](#1111-small-windows)). The default is unchanged on any window of 16 rows or more; the impersonation preview (§11.8), which stands in the same row, follows the same rule, and a changed setting applies at once (`screens/chat/render.rs::input_height`).
   - The `spellbook` engine (Hunspell dictionaries from the `dictionaries/` directory at the data root; in non-portable mode — with a fallback lookup in the portable layout `data/dictionaries/` next to the binary, where an installer/package puts them).
   - **The data root's `dictionaries/` is created at startup when it is missing** (`Paths::ensure_dirs`), with a `README.txt` in it written in the interface language: the `*.aff` + `*.dic` naming convention, where ready-made dictionaries are published, and that a dictionary added under a bundled one's name replaces it. Under a `system`/`path` install the bundled dictionaries sit next to the binary — a program folder the user should not write into — so without this the data root had no `dictionaries/` at all and adding one had no obvious place. The file is written **only** on creating the directory, so deleting or editing it sticks and a portable install (where the directory arrives with the dictionaries in it) is left untouched; it is not a dictionary, the loader reads `*.aff`/`*.dic` pairs and ignores everything else.
   - A word is correct if accepted by **at least one** active dictionary (support for mixed ru/en text).

@@ -179,7 +179,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-09-30, version 0.13.0)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3781 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **3784 unit tests
 green, 236 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
@@ -192,18 +192,18 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
-- **Small windows — stages 1 and 2 of 3** (2026-09-30). A window below what the
-  frame in front needs gets a notice — the size it is, the size it needs, the
-  keys that work — instead of a frame with parts missing; under it only quit
-  works, and `Esc` where something is open over the chat. A question is a
-  `Prompt`: as tall as its text, its keys never cut. Stage 2: the chat sheds its
-  chrome one piece at a time (`ChatChrome::at`, a function of the window's rows
-  alone) and keeps four rows of the conversation down to 20×3; the input box,
-  the feed and the preview draw bare; the status bar is laid out within the
-  rows it is given and its pill fitted to the row. Gate: 20 states × 459 sizes.
-  Live **GO**, 57 checks. Next: bounded footers
+- **Small windows — track complete** (2026-09-30, three stages). A window below
+  what the frame in front needs gets a notice — the size it is, the size it
+  needs, the keys that work — instead of a frame with parts missing; under it
+  only quit works, and `Esc` where something is open over the chat. A question
+  is a `Prompt`, its keys never cut. The chat sheds its chrome one piece at a
+  time (`ChatChrome::at`) and keeps four rows of the conversation down to 20×3.
+  A screen's footer takes a third of the window at most and sheds past it, `F1`
+  and `Esc` first — the chat bar's shedding, moved into `shared::ui`. Gate: 20
+  states × 459 sizes. Live **GO**, 67 checks
   ([docs/research/small-terminal.md](docs/research/small-terminal.md), spec
-  §11.1.1, [docs/journal/ui-feed.md](docs/journal/ui-feed.md)).
+  §11.1.1, [docs/journal/ui-feed.md](docs/journal/ui-feed.md),
+  [docs/journal/ui-screens.md](docs/journal/ui-screens.md)).
 - **OpenRouter as a provider of its own — track complete** (2026-09-29, four
   stages, one release). `openrouter` is a mode beside `external`: one key, a dialect
   on the client (`repetition_penalty`, the lowest listed effort on a muted turn), the
