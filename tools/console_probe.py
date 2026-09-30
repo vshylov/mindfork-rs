@@ -1108,12 +1108,44 @@ def the_footers(exe: Path, report: Report) -> None:
     report.check(code == 0, f"46x12: the app exited with code {code}")
 
 
+def the_titles(exe: Path, report: Report) -> None:
+    """41x12: a border title keeps whole parts, and the help's tab strip
+    keeps the active tab whole (spec §11.1.1) — both used to be cut at the
+    edge with no mark."""
+    session = Session(exe, ["demo"], size=(41, 12))
+    try:
+        lines = text_of(read_screen()).split("\n")
+        title = next((line for line in lines if line.startswith("╭ input")), "")
+        report.check(
+            title.startswith("╭ input · Enter send ─"),
+            f"41x12: the input box's title keeps whole parts ({title.strip()!r})",
+        )
+        press("f1", SETTLE_REPAINT)
+        tabs = []
+        for _ in range(6):
+            rows = read_screen()
+            strip = next((line for line in text_of(rows).split("\n")[1:3] if "│" in line[2:]), "")
+            tabs.append(strip)
+            press("tab", SETTLE_REPAINT)
+        report.screen("41x12, the help", rows)
+        # Six presses of `Tab` walk all six tabs, whichever the help opened on,
+        # so each one has to be whole on the strip somewhere in the walk.
+        for label in ("About", "Shortcuts", "Commands", "License", "Legal", "Components"):
+            report.check(any(label in strip for strip in tabs), f"41x12, the help: {label} is whole on the strip")
+        report.check(all("…" in strip for strip in tabs), "41x12, the help: the hidden tabs are marked")
+        press("esc", SETTLE_REPAINT)
+    finally:
+        code = session.close()
+    report.check(code == 0, f"41x12: the app exited with code {code}")
+
+
 def scenario_small_window(exe: Path, report: Report) -> None:
     too_small_for_the_chat(exe, report)
     the_reported_window(exe, report)
     the_ladder(exe, report)
     a_layer_that_does_not_fit(exe, report)
     the_footers(exe, report)
+    the_titles(exe, report)
 
 
 SCENARIOS = {

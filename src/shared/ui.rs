@@ -9,7 +9,7 @@ use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Clear, HighlightSpacing, List, ListState, Paragraph, Scrollbar, ScrollbarOrientation,
+    Block, Clear, HighlightSpacing, List, ListState, Paragraph, Scrollbar, ScrollbarOrientation,
     ScrollbarState, Wrap,
 };
 
@@ -705,12 +705,7 @@ pub fn screen_chrome(
     let status_h = (hotkeys.len() as u16).max(1);
     let [panel_area, status] =
         Layout::vertical([Constraint::Min(3), Constraint::Length(status_h)]).areas(area);
-    let mut block = palette.panel(title, true);
-    if let Some(right) = right {
-        block = block.title(
-            Line::from(Span::styled(format!(" {right} "), palette.muted_style())).right_aligned(),
-        );
-    }
+    let block = titled_panel(palette, &title, right.as_deref(), panel_area.width);
     let inner = block.inner(panel_area);
     frame.render_widget(block, panel_area);
     ScreenChrome {
@@ -718,6 +713,29 @@ pub fn screen_chrome(
         panel: panel_area,
         status,
         hotkeys,
+    }
+}
+
+/// A full-screen panel `width` columns wide with `title` on the left of its
+/// border and the muted `right` on the right, the two fitted to the border
+/// so that neither is drawn over the other ([`fit_title_pair`]; the right
+/// one gives up its parts from the end, then itself).
+pub fn titled_panel(
+    palette: &Palette,
+    title: &str,
+    right: Option<&str>,
+    width: u16,
+) -> Block<'static> {
+    // Two corners, and the left title's space on either side.
+    let avail = usize::from(width.saturating_sub(4));
+    let forms = right.map(title_forms).unwrap_or_default();
+    let (title, right) = fit_title_pair(title, &forms, avail);
+    let block = palette.panel(title, true);
+    match right {
+        Some(right) => block.title(
+            Line::from(Span::styled(format!(" {right} "), palette.muted_style())).right_aligned(),
+        ),
+        None => block,
     }
 }
 
@@ -840,6 +858,93 @@ impl Prompt {
 /// the text and the two corners.
 pub fn legend_width(legend: &str) -> u16 {
     u16::try_from(str_width(legend) + 2).unwrap_or(u16::MAX)
+}
+
+/// What a border title's parts are joined with: `edit · Enter ok · Esc cancel`.
+pub const TITLE_SEP: &str = " · ";
+
+/// A border title fitted to `avail` columns by whole parts (spec §11.1.1).
+///
+/// ratatui cuts a title longer than its border at the corner, with no mark:
+/// an editor in a narrow window read `edit · Enter ok · Esc cance`, the
+/// in-feed search's counter lost everything after its number
+/// (docs/research/small-terminal.md §7.3). A title that does not fit keeps
+/// what the footers keep ([`footer_keep_order`]): the part naming `Esc`, the
+/// way out, first; then the parts in their order, each kept while the title
+/// still fits and passed over when it does not. The first part — what the
+/// box is, a counter, an error — is not left out for want of room but cut to
+/// the room there is, with the mark a cut carries. What is kept is joined in
+/// the title's own order.
+pub fn fit_title(title: &str, avail: usize) -> String {
+    if str_width(title) <= avail {
+        return title.to_string();
+    }
+    let parts: Vec<&str> = title.split(TITLE_SEP).collect();
+    let sep_w = str_width(TITLE_SEP);
+    let joined_w = |kept: &[usize]| -> usize {
+        kept.iter().map(|&i| str_width(parts[i])).sum::<usize>()
+            + sep_w * kept.len().saturating_sub(1)
+    };
+    let esc = parts
+        .iter()
+        .rposition(|p| p.split_whitespace().any(|w| w == "Esc"));
+    let order = esc
+        .into_iter()
+        .chain((0..parts.len()).filter(|&i| Some(i) != esc));
+    let mut kept: Vec<usize> = Vec::new();
+    for i in order {
+        let mut candidate = kept.clone();
+        candidate.push(i);
+        candidate.sort_unstable();
+        if joined_w(&candidate) <= avail {
+            kept = candidate;
+        }
+    }
+    let mut shown: Vec<String> = kept.iter().map(|&i| parts[i].to_string()).collect();
+    if kept.first() != Some(&0) {
+        let used = joined_w(&kept) + if kept.is_empty() { 0 } else { sep_w };
+        let (cut, _) = crate::shared::wrap::truncate_to_width(parts[0], avail.saturating_sub(used));
+        if !cut.is_empty() {
+            shown.insert(0, cut);
+        }
+    }
+    shown.join(TITLE_SEP)
+}
+
+/// The forms a right-hand border title can take, widest first: whole, then
+/// with its parts left out from the end — `files: 2 · +24 −8`, `files: 2`.
+pub fn title_forms(title: &str) -> Vec<String> {
+    let parts: Vec<&str> = title.split(TITLE_SEP).collect();
+    (1..=parts.len())
+        .rev()
+        .map(|n| parts[..n].join(TITLE_SEP))
+        .collect()
+}
+
+/// A border's two titles in `avail` columns: `title` on the left — cut, with
+/// the "…" a cut carries, when it has to be — and the widest of `forms` on
+/// the right that leaves it its share, or none.
+///
+/// **The left title outranks the right one** (spec §11.1.1, §11.3): it is
+/// owed half the row, or all of itself when it is shorter, and the right
+/// title is shown in the widest form that leaves that much. Where the row has
+/// room for both, nothing changes — a long left title is still the one cut.
+/// Two titles that did not fit used to overwrite each other: the right one,
+/// drawn last, over the left (the message search's and the changes screen's
+/// in a narrow window). Each is drawn with a space on either side, which
+/// `avail` does not count on the left and a form's cell does on the right.
+pub fn fit_title_pair(title: &str, forms: &[String], avail: usize) -> (String, Option<String>) {
+    let owed = str_width(title).min(avail / 2);
+    let cell_width = |form: &str| str_width(form) + 2;
+    let form = forms
+        .iter()
+        .find(|form| cell_width(form) + owed <= avail)
+        .cloned();
+    let budget = avail - form.as_deref().map_or(0, cell_width);
+    (
+        crate::shared::wrap::truncate_to_width(title, budget).0,
+        form,
+    )
 }
 
 /// The smallest window a layer — a screen, or a popup over it — is drawn in
@@ -1114,6 +1219,124 @@ pub(crate) mod tests {
         // Below the panel's need (the placeholder is up then) — still one.
         assert_eq!(footer_rows(3, 11), 1);
         assert_eq!(footer_rows(0, 0), 1);
+    }
+
+    /// A border title that does not fit keeps whole parts (spec §11.1.1):
+    /// the part naming `Esc` first, then the parts in their order, each kept
+    /// while the title fits; the first part is cut with a mark rather than
+    /// left out. ratatui used to cut it at the corner: `… · Esc cance`.
+    #[test]
+    fn a_title_is_fitted_to_its_border_by_whole_parts() {
+        let editor = "правка · Enter ок · Esc отмена";
+        assert_eq!(fit_title(editor, 30), editor, "it fits: unchanged");
+        assert_eq!(fit_title(editor, 29), "правка · Esc отмена");
+        assert_eq!(fit_title(editor, 19), "правка · Esc отмена");
+        assert_eq!(
+            fit_title(editor, 18),
+            "прав… · Esc отмена",
+            "cut, not dropped"
+        );
+        assert_eq!(
+            fit_title(editor, 12),
+            "Esc отмена",
+            "the way out outlives the name"
+        );
+
+        // The counter is the first part: it stays, the keys between it and
+        // `Esc` go from the end.
+        let counter = "match 3 of 12 · Enter/↓ next · Shift+Enter/↑ previous · Esc close";
+        assert_eq!(
+            fit_title(counter, 45),
+            "match 3 of 12 · Enter/↓ next · Esc close"
+        );
+        assert_eq!(fit_title(counter, 30), "match 3 of 12 · Esc close");
+        // An error is cut, not dropped: it is the one thing the title says.
+        let error = "⚠ the value must be a whole number · Esc cancel";
+        assert_eq!(fit_title(error, 30), "⚠ the value must… · Esc cancel");
+        // No `Esc` part: the parts from the front.
+        let input = "input · Enter send · Shift+Enter newline";
+        assert_eq!(fit_title(input, 30), "input · Enter send");
+        assert_eq!(fit_title(input, 5), "input");
+        assert_eq!(fit_title(input, 4), "inp…");
+        assert_eq!(fit_title(input, 0), "");
+        // A part that does not fit is passed over, not the end of the walk:
+        // a narrower one behind it still gets its chance.
+        assert_eq!(
+            fit_title("name · a hint far too long for the row · F1 help", 20),
+            "name · F1 help"
+        );
+        // A part that names `Esc` without starting with it counts.
+        let busy = "input · generating… Esc cancel";
+        assert_eq!(fit_title(busy, 24), "generating… Esc cancel");
+        for avail in 0..60 {
+            for title in [editor, counter, error, input, busy] {
+                let fitted = fit_title(title, avail);
+                assert!(str_width(&fitted) <= avail, "{avail}: {fitted:?}");
+            }
+        }
+    }
+
+    /// A panel's two titles are fitted to its border (spec §11.1.1): the left
+    /// one owed half the row, the right one whole, by its parts from the end,
+    /// or not at all — never one drawn over the other, as the message
+    /// search's and the changes screen's were in a narrow window.
+    #[test]
+    fn a_panels_two_titles_never_overwrite_each_other() {
+        assert_eq!(
+            title_forms("files: 2 · +24 −8"),
+            vec!["files: 2 · +24 −8".to_string(), "files: 2".to_string()]
+        );
+        let top = |width: u16| -> String {
+            let mut term = Terminal::new(TestBackend::new(width, 3)).unwrap();
+            term.draw(|f| {
+                let block = titled_panel(
+                    &Palette::default(),
+                    "◆ Changes in the project",
+                    Some("files: 2 · +24 −8"),
+                    width,
+                );
+                f.render_widget(block, f.area());
+            })
+            .unwrap();
+            tests::buffer_rows(term.backend().buffer()).remove(0)
+        };
+        assert_eq!(
+            top(60),
+            format!(
+                "╭ ◆ Changes in the project {}─ files: 2 · +24 −8 ╮",
+                "─".repeat(12)
+            )
+        );
+        let narrow = top(40);
+        assert!(
+            narrow.starts_with("╭ ◆ Changes in the project ─"),
+            "{narrow}"
+        );
+        assert!(
+            narrow.ends_with(" files: 2 ╮"),
+            "the detail goes first: {narrow}"
+        );
+        // The left title is owed half the row: past that, it is the one cut.
+        let narrower = top(30);
+        assert!(narrower.starts_with("╭ ◆ Changes in th… "), "{narrower}");
+        assert!(narrower.ends_with(" files: 2 ╮"), "{narrower}");
+        let narrowest = top(20);
+        assert_eq!(
+            narrowest, "╭ ◆ Changes in th… ╮",
+            "then the right title goes"
+        );
+        for width in 4..=70u16 {
+            let row = top(width);
+            assert_eq!(row.chars().count(), usize::from(width), "{row}");
+            assert!(row.starts_with('╭') && row.ends_with('╮'), "{width}: {row}");
+            // The left title is whole or cut with the mark — never a cut
+            // without one, which is what an overwrite leaves.
+            let left = row.trim_start_matches('╭').trim_start();
+            assert!(
+                left.starts_with("◆ Changes in the project") || left.contains('…') || width < 8,
+                "{width}: {row}"
+            );
+        }
     }
 
     /// An incomplete bottom row takes the **rightmost** columns, so a wrapped

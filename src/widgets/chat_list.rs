@@ -20,7 +20,9 @@ use crate::shared::i18n::Locale;
 use crate::shared::keys;
 use crate::shared::theme::Palette;
 use crate::shared::title::sanitize_title;
-use crate::shared::ui::{ListScroll, MinSize, footer_rows, hotkey_grid, render_scrollbar};
+use crate::shared::ui::{
+    ListScroll, MinSize, footer_rows, hotkey_grid, render_scrollbar, titled_panel,
+};
 use crate::shared::wrap;
 use crate::widgets::help_dialog::{HelpContext, HelpSection};
 use crate::widgets::input_box::{InputBox, RenderOpts};
@@ -734,16 +736,8 @@ impl ChatListState {
             palette.glyphs().chats_icon,
             loc.t("ui.chatlist.title")
         );
-        let block = palette.panel(title, true).title(
-            Line::from(Span::styled(
-                format!(
-                    " {} ",
-                    loc.tf("ui.chatlist.count", &[("n", &count.to_string())])
-                ),
-                palette.muted_style(),
-            ))
-            .right_aligned(),
-        );
+        let counted = loc.tf("ui.chatlist.count", &[("n", &count.to_string())]);
+        let block = titled_panel(palette, &title, Some(&counted), main_area.width);
         let inner = block.inner(main_area);
         frame.render_widget(block, main_area);
 

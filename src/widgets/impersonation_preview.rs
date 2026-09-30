@@ -13,6 +13,7 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 
 use crate::shared::i18n::Locale;
 use crate::shared::theme::Palette;
+use crate::shared::ui::fit_title;
 use crate::shared::wrap::wrap_ranges;
 
 /// What the preview shows: `text` — the accumulated reply text, `spinner` —
@@ -93,6 +94,9 @@ pub fn render(
             &[("spinner", &preview.spinner.to_string())],
         )
     };
+    // Fitted to the border by whole parts (`ui::fit_title`); the hint carries
+    // its own spaces, so only the corners are off.
+    let hint = fit_title(&hint, usize::from(area.width.saturating_sub(2)));
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(palette.glyphs().border)
