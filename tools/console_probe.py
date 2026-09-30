@@ -79,7 +79,7 @@ Scenarios (`--scenario`):
   theme taken away: the name then answers to nothing and the canvas is the
   dark one. Takes the single-instance lock, like `first-frame`.
 
-* `small-window` — `mindfork demo` in consoles started small (spec §11.1):
+* `small-window` — `mindfork demo` in consoles started small (spec §11.1.1):
   at 57×5, the window of the report, the frame is the "window too small"
   notice and no key but quit does anything; at 57×9 it is the chat, whole;
   and at 45×12 — a window the chat fits — opening the settings (46 columns)
@@ -945,8 +945,8 @@ TOO_SMALL = "Window too small"
 QUIT_HINT = "Ctrl+Q"
 
 
-def scenario_small_window(exe: Path, report: Report) -> None:
-    # The window of the report: too small for the chat itself.
+def too_small_for_the_chat(exe: Path, report: Report) -> None:
+    """57x5, the window of the report: too small for the chat itself."""
     session = Session(exe, ["demo"], size=(57, 5))
     try:
         rows = read_screen()
@@ -966,21 +966,26 @@ def scenario_small_window(exe: Path, report: Report) -> None:
         code = session.close(esc_first=False)
     report.check(code == 0, f"57x5: Ctrl+Q alone ended the session (exit code {code})")
 
-    # The control: four rows more, and it is the chat — every part on its own rows.
+
+def row_starting(lines: list[str], prefix: str, after: int = -1) -> int | None:
+    """The first row past `after` that starts with `prefix`."""
+    return next((y for y, line in enumerate(lines) if y > after and line.startswith(prefix)), None)
+
+
+def the_chat_whole(exe: Path, report: Report) -> None:
+    """57x9, the control: four rows more, and every part is on its own rows."""
     session = Session(exe, ["demo"], size=(57, 9))
     try:
         rows = read_screen()
         lines = text_of(rows).split("\n")
         report.screen("57x9, as launched", rows)
         report.check(TOO_SMALL not in text_of(rows), "57x9: the chat, not the notice")
-        prompt = next((y for y, line in enumerate(lines) if line.startswith("│❯")), None)
+        prompt = row_starting(lines, "│❯")
         report.check(prompt is not None, "57x9: the input box has its row of text")
-        closed = next(
-            (y for y, line in enumerate(lines) if prompt is not None and y > prompt and line.startswith("╰")),
-            None,
-        )
+        closed = row_starting(lines, "╰", after=prompt if prompt is not None else len(lines))
+        under = lines[closed + 1 : closed + 2] if closed is not None else []
         report.check(
-            closed is not None and closed + 1 < len(lines) and lines[closed + 1].startswith("●"),
+            bool(under) and under[0].startswith("●"),
             "57x9: the status bar is under the input box, not over it",
         )
         type_text("hey")
@@ -989,8 +994,10 @@ def scenario_small_window(exe: Path, report: Report) -> None:
         code = session.close()
     report.check(code == 0, f"57x9: the app exited with code {code}")
 
-    # A window the chat fits: what is opened over it may not. No resize here —
-    # the notice comes and goes with the key that opens and the one that closes.
+
+def a_layer_that_does_not_fit(exe: Path, report: Report) -> None:
+    """45x12, a window the chat fits: what is opened over it may not. No resize
+    here — the notice comes with the key that opens and goes with `Esc`."""
     session = Session(exe, ["demo"], size=(45, 12))
     try:
         chat = text_of(read_screen())
@@ -1015,6 +1022,12 @@ def scenario_small_window(exe: Path, report: Report) -> None:
     finally:
         code = session.close()
     report.check(code == 0, f"45x12: the app exited with code {code}")
+
+
+def scenario_small_window(exe: Path, report: Report) -> None:
+    too_small_for_the_chat(exe, report)
+    the_chat_whole(exe, report)
+    a_layer_that_does_not_fit(exe, report)
 
 
 SCENARIOS = {

@@ -18,7 +18,7 @@ const FEED_MIN_ROWS: u16 = 3;
 // never has to cut anything (`chat_areas`).
 const _: () = assert!(CHAT_MIN_SIZE.height == FEED_MIN_ROWS + 1 + INPUT_MIN_ROWS + 2);
 
-/// The smallest window the chat is drawn in (spec §11.1). Nine rows hold the
+/// The smallest window the chat is drawn in (spec §11.1.1). Nine rows hold the
 /// layout whole at its tallest: the feed's three, the indexing banner, the
 /// input box with one row of text, and two rows of status bar. Twenty columns
 /// are where wrapped text stops being a word a row.
@@ -104,7 +104,7 @@ impl ChatScreen {
     /// The smallest window this frame is drawn in: the chat's own layout,
     /// and the popup open over it — a list's key legend whole, a question
     /// whole at the width `area` gives it. The runtime draws the placeholder
-    /// below it rather than a frame with parts missing (spec §11.1).
+    /// below it rather than a frame with parts missing (spec §11.1.1).
     pub fn min_size(&self, area: Rect) -> MinSize {
         self.popup_needs(area)
             .map_or(CHAT_MIN_SIZE, |popup| CHAT_MIN_SIZE.max(popup))

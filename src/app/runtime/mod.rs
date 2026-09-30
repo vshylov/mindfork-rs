@@ -982,7 +982,7 @@ fn draw_frame(
 }
 
 /// The window the frame in front needs, when `area` is smaller than that
-/// (spec §11.1, docs/research/small-terminal.md F4): the active screen's
+/// (spec §11.1.1, docs/research/small-terminal.md F4): the active screen's
 /// minimum — which already counts the popup open over it — and the help
 /// dialog's while it is up. `None` — the frame fits.
 ///

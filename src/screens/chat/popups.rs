@@ -256,7 +256,7 @@ impl ChatScreen {
 const SUGGEST_WIDTH: u16 = 40;
 
 /// The smallest window the suggestion popup is drawn in: its key legend whole
-/// on the border, and the border around three rows of the list (spec §11.1).
+/// on the border, and the border around three rows of the list (spec §11.1.1).
 pub(super) fn suggest_min_size(loc: &'static Locale) -> MinSize {
     MinSize::new(legend_width(loc.t("ui.suggest.footer")), 5)
 }

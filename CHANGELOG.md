@@ -14,6 +14,30 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Added
+- **A window too small says so.** Shrunk below what the screen in front can be
+  drawn in, the app shows one line — *Window too small*, the size the window
+  is and the size it needs — instead of a frame with parts missing. While it
+  is up the keys do nothing but quit, so `Enter` cannot answer a question that
+  is not on the screen; `Esc` also works when what does not fit is something
+  opened over the chat — a picker, the help, the settings — and closes it.
+  The chat needs 20×9, the settings 46×12.
+
+### Fixed
+- **The input box no longer draws over the status bar.** In a window of seven
+  rows or fewer the box lost its row of text and its prompt and cursor landed
+  on the row below — the status bar, or outside the terminal.
+- **A tool confirmation always shows the keys that answer it.** Its legend is
+  wider than a narrow window — 69 columns in Russian — and the key that runs
+  the call was cut off at the corner. The keys now move into the box when the
+  border cannot hold them, and the box is as tall as its text.
+- **The profile and `chat://` pickers show their whole key legend.** It was
+  cut at the corner in any window narrower than 82 columns.
+- **The chat's title is no longer squeezed out by the model's name.** In a
+  narrow window the header gives the title its share first; the model caption
+  drops its context size, then itself.
+- **No cursor blinks through a tool confirmation.**
+
 ## [0.13.0] — 2026-09-30
 
 **OpenRouter is a mode of its own.** One key for the assistant, impersonation,

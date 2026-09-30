@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (46)
+## Entries (47)
 
 - Post-M9: mouse-wheel feed scrolling (done)
 - Post-M9: own markdown renderer (tables + LaTeX + theme) (done)
@@ -58,6 +58,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the full colour mode, measured in a console — and a probe to measure with (done)
 - Post-M9: colour modes — the monochrome mode, and `NO_COLOR` (done)
 - Post-M9: colour modes — themes of the user's own (done)
+- Post-M9: a window too small for the frame says so (done)
 
 ### Post-M9: mouse-wheel feed scrolling (done)
 - **The mouse wheel scrolls the feed** on par with `PageUp/PageDown`. `ratatui::init()`
@@ -2834,3 +2835,100 @@ mid grey is 5.3:1, white 3.9:1). Run switched at run time behind `crate::mutant(
 once, the tree fingerprinted before and after (lessons §2). All five scenarios of the console
 probe pass on this build.
 
+### Post-M9: a window too small for the frame says so (done)
+
+Stage 1 of the small-terminal track
+([docs/research/small-terminal.md](../research/small-terminal.md); branch
+`feat/small-terminal-floor`). Reported with three screenshots of 0.13.0 in Windows Terminal:
+the chat at 57×5 with the input's prompt standing on the status bar, the settings at 45×6,
+the chat list at 45×2. The forks were decided by the user on 2026-09-30, each at the
+recommendation — the chat sheds its chrome (stage 2), only quit under the placeholder,
+bounded footers (stage 3), a minimum per screen. This stage is the floor under all of it:
+**no frame is drawn with parts missing**.
+
+**What the research measured first**, through the real `compose_frame` on a `TestBackend`:
+131 502 frames from 0×0 to 100×30 and not one panic — the defect was wrong frames, not
+crashes — and three mechanisms behind all of them. The chat's rows were left to the layout
+solver, which shortens whichever `Length` it likes when `[Min(3), Length, Length, Length]`
+does not add up; `InputBox::render` drew its prompt at `Block::inner` of a box with no inner
+row, which is a rectangle on the row **below** the box; and the other screens' footers wrap
+and never shed (13 rows of legend on a 57-column `ru` chat list). Found on the way and not
+about tiny windows at all: the tool confirmation's key legend is 69 columns in `ru`, so in
+any narrower window the key that runs the call was cut off at the border's corner.
+
+**What was built.**
+
+- **A minimum per layer, and a notice below it.** `shared::ui::MinSize`; every screen has a
+  `min_size`, and the chat's counts the popup open over it (`ChatScreen::popup_needs`).
+  `app/runtime::too_small` takes the larger of the active screen's and the help dialog's;
+  `compose_frame` draws `ui::render_too_small` instead of the frame — the size the window
+  is, the one it needs, the keys that work; a line that does not fit is left out, never cut
+  — and returns which keys it named. The numbers are in the research §7.1: the chat 20×9,
+  which is the layout at its tallest and is pinned to that sum by a `const` assert.
+- **The keys under the notice** (`route_batch`, split off the tick that reads the terminal
+  so that it has a test): a quit key quits; everything else is dropped.
+- **The input box draws inside its rectangle**: no text cell — the border and nothing else,
+  no cursor, no click map.
+- **`Prompt`** — a modal question as tall as its wrapped text (`Paragraph::line_count`,
+  ratatui's own wrap), its legend on the border while `legend_width` fits and the last
+  lines of the body when it does not. The tool confirmation, the destructive confirmation
+  and the changes screen's revert are all one; `confirm_popup` became `confirm_prompt`,
+  because a screen now also has to say what window the question needs.
+- **The pickers are never narrower than their legend**: the profile picker's was cut in
+  every window under 82 columns, the `chat://` picker's under 70 in `ru` — a width that was
+  a share of the window with a floor below the text it had to carry.
+- **The feed's header is shared title-first** (`fit_header`, `FeedCaption`): the title is
+  owed half the row or all of itself, and the caption sheds its context size, then itself.
+- **The chat's rows are arithmetic** (`chat_areas`), the input box the one cut back.
+
+**Decisions on the way.**
+
+- **`Esc` under the notice — F2 refined, by the live run.** As decided, only quit worked.
+  Then the console probe opened the settings in a 45×12 window — which fits the chat and
+  not the settings' 46 columns — and the notice went up with no resize and no key to take
+  it down: the way back was to enlarge the window or end the session. So one `Esc` a batch
+  reaches the layer in front, **while there is one** (the help, a popup, a screen over the
+  chat); it closes, declines or goes back and never confirms or sends. In a window too
+  small for the chat itself nothing but quit works, as decided: `Esc` there would cancel a
+  turn unseen. The notice's last line names whichever applies.
+- **A minimum is a constant, or a function of the window's width — never of content.** The
+  chat's 9 rows hold the banner and the status bar's second row whether or not they are
+  up; an 8-row window therefore gets the notice although an idle chat would fit it. A
+  minimum that followed them would flicker with every turn (lessons §5, the two
+  alternating layouts). Stage 2 makes the number 3 and the question moot.
+- **The other screens' minimums promise little until stage 3.** Their footers still wrap
+  without shedding, so a panel at its minimum can be squeezed to the three rows
+  `screen_chrome` guarantees. The gate holds those screens to a border with a row inside
+  it and says why; stage 3 tightens it.
+- **Seven legends, not every hint.** The `title_bottom` family — the keys that answer a
+  popup — is made whole. The hints in an input box's *title* (the settings' editors) are
+  left; what else stage 1 leaves is listed in the research §7.3, the cursor that blinks
+  through the help dialog among it.
+
+**The gate** (`app/runtime/small_window_tests.rs`): twenty states — every screen, every
+popup of the chat, the chat at its tallest — at 459 window sizes, in both languages,
+through `compose_frame`, one thread a state (1.8 s in a debug build). Each frame is the
+notice (nothing of the screen on it, no cursor) or the screen whole (what the case names is
+on it, the cursor inside the frame or hidden), and each state has to be seen both ways.
+
+**Mutation**: 39 mutants behind `crate::mutant(N)`, built once a pass, the tree restored
+from the saved text and checked clean after each of the four passes. 38 were killed at
+once. One survived and was the most useful of them: the cap on the input box's rows could
+be removed and nothing failed, because ratatui's solver happens to shorten that same
+`Length` first — today, and its documentation calls the result of constraints that cannot
+all hold "non-deterministic". A guard whose effect the library produces by itself is not
+tested by anything; the cap became `chat_areas`, where the rows are arithmetic and the
+same mutant is killed by two tests. Two guards no bundled locale can distinguish were not
+mutated — the suggestion popup and the emoji picker are already wider than their `en` and
+`ru` legends.
+
+**Live run — GO.** `python tools/console_probe.py --scenario small-window` on the inbox
+console host of Windows 11 Pro 26200, the debug build: 27 checks, all passed — the notice
+at 57×5 with no key but `Ctrl+Q` doing anything, the chat whole at 57×9, and at 45×12 the
+settings and the emoji picker putting the notice up and `Esc` bringing the chat back cell
+for cell, the full repaint no unit test reaches. The probe learnt to start a console at a
+size (`mode con` as its first command): a hidden console does not resize under the app.
+Pure UI otherwise — no engine, no storage.
+
+**Tests**: 3772 unit tests green, 236 ignored (+21). The screenshot dumps are
+unchanged: nothing moves at the sizes they are taken at.

@@ -135,7 +135,7 @@ impl EmojiPickerState {
     }
 
     /// The popup's size, which is also the smallest window it is drawn in
-    /// (spec §11.1): the whole grid — a cell cut off at the edge is one the
+    /// (spec §11.1.1): the whole grid — a cell cut off at the edge is one the
     /// selection can still walk onto, unseen — and the key legend whole on the
     /// border.
     pub fn min_size(loc: &'static crate::shared::i18n::Locale) -> MinSize {

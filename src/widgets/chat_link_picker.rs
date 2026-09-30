@@ -93,7 +93,7 @@ impl ChatLinkPickerState {
         }
     }
 
-    /// The smallest window the overlay is drawn in (spec §11.1): its key
+    /// The smallest window the overlay is drawn in (spec §11.1.1): its key
     /// legend whole on the border — the overlay is never narrower than that —
     /// around three rows of the list.
     pub fn min_size(loc: &'static Locale) -> MinSize {

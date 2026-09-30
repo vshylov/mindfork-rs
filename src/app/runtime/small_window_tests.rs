@@ -1,4 +1,4 @@
-//! The small-window gate (spec §11.1, docs/research/small-terminal.md §4.6).
+//! The small-window gate (spec §11.1.1, docs/research/small-terminal.md §4.6).
 //!
 //! Every screen, and every popup the chat opens, is drawn through the real
 //! [`compose_frame`] at window sizes from 0×0 up, in every built-in language.

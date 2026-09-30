@@ -76,7 +76,7 @@ impl ProfileListState {
         }
     }
 
-    /// The smallest window the overlay is drawn in (spec §11.1): its key
+    /// The smallest window the overlay is drawn in (spec §11.1.1): its key
     /// legend whole on the border — the overlay is never narrower than that —
     /// around three rows of the list.
     pub fn min_size(loc: &'static crate::shared::i18n::Locale) -> MinSize {
@@ -232,8 +232,8 @@ mod tests {
     }
 
     /// The overlay is never narrower than its key legend, in either
-    /// language: its width was a share of the window with a floor of 30, so
-    /// between 60 and 82 columns the legend — 41 — was cut at the corner.
+    /// language: its width was half the window with a floor of 30, so in
+    /// every window under 82 columns the legend — 41 — was cut at the corner.
     #[test]
     fn the_overlay_is_never_narrower_than_its_legend() {
         use ratatui::Terminal;

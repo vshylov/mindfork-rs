@@ -147,7 +147,7 @@ pub(super) fn chunk_batch(batch: Vec<Event>) -> Vec<Chunk> {
 }
 
 /// Whether a batch read under the "window too small" placeholder asks to
-/// quit (spec §11.1, docs/research/small-terminal.md F2).
+/// quit (spec §11.1.1, docs/research/small-terminal.md F2).
 ///
 /// The two quit keys are the ones every screen answers to (spec §11.7),
 /// matched the way the screens match them — `Ctrl+Q` by the physical key, so

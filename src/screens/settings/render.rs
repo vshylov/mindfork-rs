@@ -27,7 +27,7 @@ impl SettingsScreen {
         crate::shared::i18n::locale(self.config.interface.language)
     }
 
-    /// The smallest window the settings are drawn in (spec §11.1). The
+    /// The smallest window the settings are drawn in (spec §11.1.1). The
     /// width is the layout's own arithmetic — the section menu's 24 columns,
     /// the 20 the field pane refuses to go below, the border; under it the
     /// menu is squeezed to a few letters. The height holds the menu's nine

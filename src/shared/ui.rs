@@ -770,7 +770,7 @@ pub fn legend_width(legend: &str) -> u16 {
 }
 
 /// The smallest window a layer — a screen, or a popup over it — is drawn in
-/// (spec §11.1, docs/research/small-terminal.md F4). Below it the runtime
+/// (spec §11.1.1, docs/research/small-terminal.md F4). Below it the runtime
 /// draws [`render_too_small`] instead of a frame with parts missing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MinSize {
@@ -805,7 +805,7 @@ fn size_label(width: u16, height: u16) -> String {
     format!("{width}×{height}")
 }
 
-/// The keys that work under the placeholder (spec §11.1). Everything else
+/// The keys that work under the placeholder (spec §11.1.1). Everything else
 /// is dropped: the screen a key was meant for is not the one on the terminal,
 /// so `Enter` would answer a question nobody read and a typed line would be
 /// sent unseen.
@@ -873,7 +873,7 @@ enum TooSmallLine {
 
 /// Draws the "window too small" notice over the whole frame: the window is
 /// smaller than the layer in front needs (`need`), and a frame with parts
-/// missing would be drawn otherwise (spec §11.1). `way_out` — the keys that
+/// missing would be drawn otherwise (spec §11.1.1). `way_out` — the keys that
 /// work while it is up, which its last line names.
 pub fn render_too_small(
     frame: &mut Frame,
@@ -1614,7 +1614,7 @@ pub(crate) mod tests {
         assert!(s.due_at(t0 + SPINNER_STEP * 2));
     }
 
-    // ---------- small windows (spec §11.1) ----------
+    // ---------- small windows (spec §11.1.1) ----------
 
     use crate::shared::i18n::{Lang, locale};
 

@@ -537,7 +537,7 @@ impl SelfModelScreen {
         hk
     }
 
-    /// The smallest window the screen is drawn in (spec §11.1).
+    /// The smallest window the screen is drawn in (spec §11.1.1).
     pub fn min_size(&self) -> MinSize {
         SCREEN_MIN_SIZE
     }

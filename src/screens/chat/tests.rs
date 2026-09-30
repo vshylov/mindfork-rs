@@ -900,7 +900,7 @@ fn ctrl_q_breaks_through_confirm_popup_to_quit() {
     assert_eq!(s.confirm, None);
 }
 
-/// The chat's rows are arithmetic (spec §11.1): whatever the banner, the
+/// The chat's rows are arithmetic (spec §11.1.1): whatever the banner, the
 /// draft and the status bar ask for, the four areas tile the window top to
 /// bottom with no row in two of them — and from the chat's minimum window up
 /// each part has the rows it needs, the input box being the one cut back.
@@ -941,7 +941,7 @@ fn the_chats_areas_tile_the_window_and_the_input_gives_way() {
     }
 }
 
-/// A popup raises the window the chat needs (spec §11.1): a list to its key
+/// A popup raises the window the chat needs (spec §11.1.1): a list to its key
 /// legend, a question to the rows it wraps into at the window's width.
 #[test]
 fn an_open_popup_raises_the_chats_minimum_window() {

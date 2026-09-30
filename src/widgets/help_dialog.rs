@@ -406,7 +406,7 @@ pub fn help_size(cols: u16, rows: u16) -> (u16, u16) {
     )
 }
 
-/// The smallest window the dialog is drawn in (spec §11.1): the legend of its
+/// The smallest window the dialog is drawn in (spec §11.1.1): the legend of its
 /// keys whole on the border, and under the tab strip and its rule four rows of
 /// the open tab. The tab strip itself is whole only from [`HELP_MIN_WIDTH`]
 /// up — below that its last tabs are cut, which `Tab` still reaches.

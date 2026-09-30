@@ -276,7 +276,7 @@ impl ChangesScreen {
         ))
     }
 
-    /// The smallest window the screen is drawn in (spec §11.1): the two
+    /// The smallest window the screen is drawn in (spec §11.1.1): the two
     /// panes side by side — a file's name and counts, the rule, a diff line
     /// one can read — and, while a revert is being confirmed, the question
     /// whole at the width `area` gives it.
@@ -726,7 +726,7 @@ mod tests {
 
     /// The revert question raises the window the screen needs to the rows
     /// the question wraps into: a path long enough to wrap past the screen's
-    /// own eight rows is asked whole or not at all (spec §11.1).
+    /// own eight rows is asked whole or not at all (spec §11.1.1).
     #[test]
     fn a_revert_question_raises_the_minimum_to_its_own_rows() {
         let area = Rect::new(0, 0, 40, 8);

@@ -1,7 +1,10 @@
 # Research: a terminal window too small for the layout
 
-**Status:** research, 2026-09-30. Measurements done; the §5 forks are **open** —
-nothing here is implemented, and nothing is to be until they are answered.
+**Status:** stage 1 of three implemented, 2026-09-30 (§7); stages 2 and 3 are
+open. The §5 forks were decided by the user the same day, each at the
+recommendation — **F1(b)** the chrome sheds, **F2(a)** only quit under the
+placeholder, **F3(b)** bounded footers, **F4(a)** a minimum per screen. One of
+them, F2, was refined by what the live run found (§7.2).
 
 Reported by the user with three screenshots of 0.13.0 in Windows Terminal (`ru`
 locale): the chat at 57×5, the settings at 45×6, the chat list at 45×2 — "not
@@ -301,6 +304,8 @@ result is non-deterministic when this occurs"
   vim and nano go. Against it: below three rows nothing is usable, and a line
   that says so is more honest than a lone prompt.
 
+**User's decision (2026-09-30): (b).**
+
 The order inside (b) is a judgement: the status row outlives both borders here
 because one row carries the engine's state and the turn's, where a border's two
 rows carry a title. The other defensible order gives up the feed's border
@@ -314,6 +319,9 @@ before the input's.
   out, and it is one drag.
 - **(b) Every key works.** btop's choice — but there the keys toggle boxes, not
   consents.
+
+**User's decision (2026-09-30): (a)** — refined in §7.2: `Esc` works as well
+while something is open over the chat.
 
 ### F3. The footers of the other screens
 
@@ -332,6 +340,8 @@ before the input's.
 
 This reopens a recorded decision, for windows it was not made about.
 
+**User's decision (2026-09-30): (b).**
+
 ### F4. A screen other than the chat, below what it needs
 
 - **(a) Each screen declares its minimum; below it, the placeholder
@@ -342,6 +352,8 @@ This reopens a recorded decision, for windows it was not made about.
   small window before it gives up (Crush does the same).
 - **(b) A compact form of every screen** — the settings one pane at a time, and
   so on. A track of its own, for screens one visits for a minute; not proposed.
+
+**User's decision (2026-09-30): (a).**
 
 ## 6. Plan, for the recommended answers
 
@@ -362,3 +374,98 @@ Documents per stage: spec §11.1 (a new "Small windows" subsection; §11.5 for
 the input, §11.7 for the footers), architecture §10, the journal
 (`ui-feed.md`, `ui-screens.md`), CHANGELOG, and the roadmap's "terminal too
 small" item, which stage 1 closes.
+
+## 7. Stage 1 as built
+
+What was decided on the way, under the forks above. The account of the work is
+in [docs/journal/ui-feed.md](../journal/ui-feed.md). Beyond the plan's list
+(§6.1) the stage took the first half of §4.2: the chat's rows are arithmetic
+already (`chat_areas`), because a guard on top of the solver turned out to be
+one no test could fail.
+
+### 7.1 The minimums
+
+A constant per layer, or a function of the window's width and of which layers
+are open — never of what they hold at the moment (§4.3). The frame's minimum
+is the larger of the screen's and of whatever is open over it.
+
+| layer | minimum | what it holds |
+|---|---|---|
+| chat | 20×9 | the layout at its tallest: the feed's three rows, the indexing banner, the input box's three, two rows of status bar |
+| chat list | 24×7 | the search line (also the rename field), a row of the list, the border, a row of hints |
+| settings | 46×12 | the menu's 24 columns and the fields' 20 inside the border; the nine sections under their title |
+| self-model, message search, tasks | 30×8 | the border, five rows, a row of hints |
+| changes | 40×8 | the two panes side by side |
+| help dialog | its key legend (41 `en` / 49 `ru`) × 8 | the tab strip, its rule and four rows of the tab |
+| emoji picker | 46×6 | the whole grid: a cell cut off at the edge can still be selected, unseen |
+| `chat://` picker, profile picker, spelling suggestions | the key legend × 5 | the legend whole on the border, three rows of the list |
+| a question — tool, destructive, revert | 20 × its rows | the box as tall as its text wraps at the window's width |
+
+The chat's nine rows are the stage-1 number: stage 2 takes it to three.
+
+**What a minimum does not yet promise for the other screens.** Their footers
+still wrap without shedding (stage 3), so between a screen's minimum and the
+height its legend wants, the panel is squeezed to the three rows
+`screen_chrome` guarantees and the footer is clipped from the bottom — today's
+frame, not a new one. The gate holds those screens to a border with a row
+inside it, and says why.
+
+### 7.2 F2, refined: `Esc` leaves what is open over the chat
+
+The live run found a trap in F2(a) as written. A window of 45×12 fits the
+chat; `Ctrl+P` in it opens the settings, which need 46 columns — the
+placeholder goes up **without a resize**, and with every key but quit dropped
+the only ways back were to enlarge the window or to end the session. The same
+for the emoji picker (46 columns), the help dialog, and a tool confirmation
+too tall for a narrow window. In a tmux pane or on a phone the window cannot
+be enlarged at all.
+
+So `Esc` is let through as well — **to the layer in front, and only while
+there is one** (the help, a popup of the chat, a screen over the chat). It is
+the key that closes, declines or goes back; it never confirms and never sends.
+For a tool confirmation it is the refusal, which is the safe answer to a
+question that could not be read. One `Esc` a batch: the second would act on
+whatever the first uncovered, before a frame of it was drawn. The placeholder
+names the keys that work — `Esc — back · Ctrl+Q — quit`, or the quit key
+alone.
+
+In a window too small for the chat itself there is no layer to leave, and F2(a)
+stands as decided: `Esc` there would cancel a running turn or walk off to the
+chat list, unseen.
+
+### 7.3 What stage 1 leaves
+
+- **The status pill is still clipped at the edge** in a narrow window (§2.3) —
+  the status bar is stage 2's.
+- **The key hints in an input box's title** — the settings' editors, the
+  self-model's — are still clipped when the box is narrow. They are hints on
+  editors whose keys are `Enter` and `Esc`; the seven legends that answer a
+  popup or a question are the ones made whole here.
+- **A panel's two titles collide** in a narrow window — the message search's
+  and the changes screen's left title is overwritten by the right one.
+- **The help dialog's tab strip** is whole only from 78 columns; below that its
+  last tabs are cut, and `Tab` still reaches them.
+- **The cursor of the box under the help dialog keeps blinking through it**:
+  the dialog is the runtime's overlay and the screen under it does not know.
+  Found by the gate's cursor read-back, which it passes — the cursor is inside
+  the frame. The tool confirmation had the same defect, in the chat's own
+  hands, and that one is fixed.
+
+### 7.4 The live run
+
+`python tools/console_probe.py --scenario small-window`, the inbox console
+host of Windows 11 Pro 26200, the debug build: **27 checks, all passed**. A
+console cannot be resized under the app from outside (`SetConsoleWindowInfo`
+succeeds and changes nothing), so each console is *started* at its size —
+`mode con` runs in it first.
+
+- **57×5**, the window of the report: the notice with `57×5`, `20×9` and
+  `Ctrl+Q`, none of the chat's glyphs, `Esc` not named; `Enter`, a letter and
+  `Esc` change nothing; `Ctrl+Q` alone ends the session with code 0.
+- **57×9**, the control: the chat — a row of text in the input box, the status
+  bar under its border — and a typed word lands in the box.
+- **45×12**: the chat fits; the settings and then the emoji picker put the
+  notice up with no resize (`46×12`, `46×9`, `Esc` named), `Enter` does
+  nothing, and `Esc` brings the chat back **cell for cell** — the one part no
+  unit test reaches: the placeholder's coming and going is a full repaint
+  decided in `draw_frame`, which needs a real terminal.
