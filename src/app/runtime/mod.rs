@@ -13,7 +13,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::Duration;
 
 use anyhow::{Result, bail};
-use ratatui::DefaultTerminal;
+use ratatui::backend::Backend;
 use ratatui::crossterm::event::{
     self, DisableBracketedPaste, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent,
     KeyEventKind, KeyModifiers,
@@ -29,6 +29,7 @@ use ratatui::crossterm::terminal::supports_keyboard_enhancement;
 use ratatui::crossterm::terminal::{BeginSynchronizedUpdate, EndSynchronizedUpdate};
 use ratatui::layout::Rect;
 use ratatui::style::Color;
+use ratatui::{DefaultTerminal, Terminal};
 use tokio::sync::mpsc::error::TryRecvError;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use uuid::Uuid;
@@ -970,15 +971,50 @@ fn draw_frame(
     // What the frame turned out to be is read back from the render itself:
     // the keys of the next tick are judged by what was on screen, and the
     // size asked about above can be a resize behind the one `draw` sees.
-    let mut placeholder = None;
-    let drawn = terminal.draw(|frame| {
-        placeholder = compose_frame(frame, screen, active, help, &palette);
-    });
-    last.placeholder = placeholder;
+    let drawn = present(terminal, screen, active, help, &palette);
+    if let Ok(placeholder) = drawn {
+        last.placeholder = placeholder;
+    }
     let _ = execute!(stdout(), EndSynchronizedUpdate);
     erased?;
     drawn?;
     Ok(())
+}
+
+/// Composes one frame into `terminal` ([`compose_frame`]) and puts it on the
+/// screen, returning which keys the placeholder named, if the frame was the
+/// placeholder.
+///
+/// **The cursor is the frame's only while nothing covers the screen that
+/// placed it.** An input box places the terminal's cursor when it has the
+/// focus, and the screen under the help dialog does not know the dialog is
+/// there: the runtime draws it over whatever is in front (spec §11.7), from
+/// every screen and every sub-mode — a rename field, an editor. So the cursor
+/// of the box under the dialog kept blinking through it
+/// (docs/research/small-terminal.md §7.3). ratatui's `Frame` can be given a
+/// cursor and not have it taken back, so with the dialog open the frame is
+/// presented the way `Terminal::draw` presents one — resize, render, apply —
+/// with the cursor left out (`apply_buffer` hides it). The dialog has no
+/// input of its own, so nothing is lost. One place for every screen: a box
+/// added under the dialog later is covered without knowing it.
+fn present<B: Backend>(
+    terminal: &mut Terminal<B>,
+    screen: &mut ChatScreen,
+    active: &mut ActiveScreen,
+    help: &mut HelpOverlay,
+    palette: &Palette,
+) -> Result<Option<WayOut>, B::Error> {
+    if help.open.is_none() {
+        let mut placeholder = None;
+        terminal.draw(|frame| {
+            placeholder = compose_frame(frame, screen, active, help, palette);
+        })?;
+        return Ok(placeholder);
+    }
+    terminal.autoresize()?;
+    let placeholder = compose_frame(&mut terminal.get_frame(), screen, active, help, palette);
+    terminal.apply_buffer()?;
+    Ok(placeholder)
 }
 
 /// The window the frame in front needs, when `area` is smaller than that
