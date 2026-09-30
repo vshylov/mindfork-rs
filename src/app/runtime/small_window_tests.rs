@@ -780,4 +780,13 @@ fn a_screen_that_does_not_fit_is_left_by_esc() {
     assert!(!quit);
     assert!(rig.active.is_chat(), "`Esc` closed the settings");
     assert_eq!(rig.draw(45, 12).placeholder, None, "and the chat fits");
+
+    // The help dialog is the same kind of layer: `F1` in a window narrower
+    // than its key legend, and `Esc` takes the notice down with the dialog.
+    let mut rig = chat_help(Lang::En);
+    let shot = rig.draw(30, 12);
+    assert_eq!(shot.placeholder, Some(WayOut::EscOrQuit), "{}", shot.text());
+    let (quit, _) = tick(&mut rig, &shot, &[plain(KeyCode::Esc)]);
+    assert!(!quit && rig.help.open.is_none(), "`Esc` closed the help");
+    assert_eq!(rig.draw(30, 12).placeholder, None);
 }

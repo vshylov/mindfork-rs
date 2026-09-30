@@ -23,7 +23,11 @@ What it can and cannot see:
   dark canvas as black — neither can be told from its surroundings this way.
 * It measures the **inbox console host of the machine it runs on**. Windows
   Terminal and other hosts are not console buffers the API can read.
-* A hidden console does not resize, so a resize cannot be exercised here.
+* A hidden console does not resize — `SetConsoleWindowInfo` succeeds and
+  changes nothing — so a resize cannot be exercised here. A console can be
+  **started** at a size, though: `mode con` runs in it first
+  (`Session(size=...)`), which is how the `small-window` scenario gets a
+  57×5 one.
 * Attributes other than colour come back as the console keeps them: reverse
   video is a flag of the cell (`COMMON_LVB_REVERSE_VIDEO`), underline another;
   bold reads as the bright half of the colour, dim and italic are not kept.
@@ -75,6 +79,13 @@ Scenarios (`--scenario`):
   theme taken away: the name then answers to nothing and the canvas is the
   dark one. Takes the single-instance lock, like `first-frame`.
 
+* `small-window` — `mindfork demo` in consoles started small (spec §11.1):
+  at 57×5, the window of the report, the frame is the "window too small"
+  notice and no key but quit does anything; at 57×9 it is the chat, whole;
+  and at 45×12 — a window the chat fits — opening the settings (46 columns)
+  or the emoji picker puts the notice up with no resize, `Esc` takes it
+  down, and the chat comes back cell for cell.
+
 It is a **spike tool**, not part of the app and not run in CI: run it by hand
 after `cargo build`, and paste its output into the journal entry.
 
@@ -86,6 +97,7 @@ Usage:
     python tools/console_probe.py --scenario no-color
     python tools/console_probe.py --scenario user-theme
     python tools/console_probe.py --scenario gateway
+    python tools/console_probe.py --scenario small-window
     python tools/console_probe.py --exe target/release/mindfork.exe
 
 Exit code: 0 — every check passed, 1 — a check failed, 2 — cannot run here.
@@ -334,7 +346,19 @@ class Session:
         args: list[str],
         cwd: Path | None = None,
         no_color: str | None = None,
+        size: tuple[int, int] | None = None,
     ):
+        """`size` — columns and rows the console is started at. The console
+        cannot be resized once the app runs in it (see the module's notes), so
+        `mode con` shrinks it first and the app is its second command; the
+        exit code is then the app's, handed on by `cmd`."""
+        command = [str(exe), *args]
+        if size is not None:
+            cols, rows = size
+            # An argument list, like the plain launch: `cmd /c` runs the rest of
+            # its line, and `&&` is one of the words on it.
+            resize = ["mode", "con:", f"cols={int(cols)}", f"lines={int(rows)}"]
+            command = ["cmd.exe", "/d", "/c", *resize, "&&", *command]
         startup = subprocess.STARTUPINFO()
         startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         startup.wShowWindow = 0  # SW_HIDE
@@ -344,7 +368,7 @@ class Session:
         if no_color is not None:
             env["NO_COLOR"] = no_color
         self.process = subprocess.Popen(
-            [str(exe), *args],
+            command,
             cwd=cwd,
             env=env,
             creationflags=subprocess.CREATE_NEW_CONSOLE,
@@ -359,9 +383,13 @@ class Session:
         KERNEL32.FreeConsole()
         _check(KERNEL32.AttachConsole(self.process.pid), "AttachConsole")
 
-    def close(self) -> int | None:
+    def close(self, esc_first: bool = True) -> int | None:
+        """Quits the app and returns its exit code. `Esc` goes first to close
+        whatever a scenario left open — unless the scenario is about `Ctrl+Q`
+        ending the session on its own."""
         try:
-            press("esc")
+            if esc_first:
+                press("esc")
             press("ctrl+q", 1.2)
         except OSError:
             pass
@@ -913,7 +941,84 @@ def scenario_gateway(exe: Path, report: Report) -> None:
         report.check(key not in saved, "nor in the settings")
 
 
+TOO_SMALL = "Window too small"
+QUIT_HINT = "Ctrl+Q"
+
+
+def scenario_small_window(exe: Path, report: Report) -> None:
+    # The window of the report: too small for the chat itself.
+    session = Session(exe, ["demo"], size=(57, 5))
+    try:
+        rows = read_screen()
+        shown = text_of(rows)
+        report.screen("57x5, as launched", rows)
+        report.says("57x5", rows, (TOO_SMALL, "57×5", "20×9", QUIT_HINT))
+        report.check(
+            not any(glyph in shown for glyph in "╭│❯●"),
+            "57x5: nothing of the chat is on the screen",
+        )
+        report.check("Esc" not in shown, "57x5: only the quit key is named")
+        press("enter")
+        type_text("h")
+        press("esc")
+        report.check(text_of(read_screen()) == shown, "57x5: Enter, a letter and Esc change nothing")
+    finally:
+        code = session.close(esc_first=False)
+    report.check(code == 0, f"57x5: Ctrl+Q alone ended the session (exit code {code})")
+
+    # The control: four rows more, and it is the chat — every part on its own rows.
+    session = Session(exe, ["demo"], size=(57, 9))
+    try:
+        rows = read_screen()
+        lines = text_of(rows).split("\n")
+        report.screen("57x9, as launched", rows)
+        report.check(TOO_SMALL not in text_of(rows), "57x9: the chat, not the notice")
+        prompt = next((y for y, line in enumerate(lines) if line.startswith("│❯")), None)
+        report.check(prompt is not None, "57x9: the input box has its row of text")
+        closed = next(
+            (y for y, line in enumerate(lines) if prompt is not None and y > prompt and line.startswith("╰")),
+            None,
+        )
+        report.check(
+            closed is not None and closed + 1 < len(lines) and lines[closed + 1].startswith("●"),
+            "57x9: the status bar is under the input box, not over it",
+        )
+        type_text("hey")
+        report.check("hey" in text_of(read_screen()), "57x9: a typed word reaches the input box")
+    finally:
+        code = session.close()
+    report.check(code == 0, f"57x9: the app exited with code {code}")
+
+    # A window the chat fits: what is opened over it may not. No resize here —
+    # the notice comes and goes with the key that opens and the one that closes.
+    session = Session(exe, ["demo"], size=(45, 12))
+    try:
+        chat = text_of(read_screen())
+        report.check(TOO_SMALL not in chat and "│❯" in chat, "45x12: the chat fits")
+        for title, key, need in (
+            ("the settings", SETTINGS_KEY, "46×12"),
+            ("the emoji picker", "ctrl+b", "46×9"),
+        ):
+            press(key, SETTLE_REPAINT)
+            rows = read_screen()
+            report.says(f"45x12, {title}", rows, (TOO_SMALL, "45×12", need, "Esc"))
+            press("enter")
+            report.check(
+                text_of(read_screen()) == text_of(rows),
+                f"45x12, {title}: Enter does nothing under the notice",
+            )
+            press("esc", SETTLE_REPAINT)
+            report.check(
+                text_of(read_screen()) == chat,
+                f"45x12, {title}: Esc brings the chat back, cell for cell",
+            )
+    finally:
+        code = session.close()
+    report.check(code == 0, f"45x12: the app exited with code {code}")
+
+
 SCENARIOS = {
+    "small-window": scenario_small_window,
     "full-mode": scenario_full_mode,
     "gateway": scenario_gateway,
     "first-frame": scenario_first_frame,
