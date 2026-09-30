@@ -320,6 +320,7 @@ impl SearchScreen {
             format!("{} {}", palette.glyphs().search, loc.t("ui.search.title")),
             Some(loc.tf("ui.search.matches", &[("n", &self.total.to_string())])),
             &self.hints(),
+            SCREEN_MIN_SIZE,
         );
         let (inner, panel_area, status_area, hotkeys) =
             (chrome.inner, chrome.panel, chrome.status, chrome.hotkeys);

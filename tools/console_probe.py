@@ -1065,11 +1065,55 @@ def a_layer_that_does_not_fit(exe: Path, report: Report) -> None:
     report.check(code == 0, f"45x12: the app exited with code {code}")
 
 
+def under_the_panel(lines: list[str]) -> list[str]:
+    """The rows below a full-screen panel's bottom border: its footer."""
+    bottom = max((y for y, line in enumerate(lines) if line.startswith("╰")), default=len(lines))
+    return lines[bottom + 1 :]
+
+
+def the_footers(exe: Path, report: Report) -> None:
+    """A screen's footer takes a third of the window at most, and `F1`
+    stays in it (spec §11.1.1): the chat list at 57x14, where the legend used
+    to wrap to seven rows in `en` and thirteen in `ru`, and the settings at
+    their minimum, 46x12, where the footer is the one row the minimum holds."""
+    session = Session(exe, ["demo"], size=(57, 14))
+    try:
+        press("esc", SETTLE_REPAINT)
+        rows = read_screen()
+        lines = text_of(rows).split("\n")
+        report.screen("57x14, the chat list", rows)
+        footer = under_the_panel(lines)
+        report.check(0 < len(footer) <= 4, f"57x14, the chat list: {len(footer)} rows of footer, 4 allowed")
+        report.check(any("F1" in row for row in footer), "57x14, the chat list: F1 is in the footer")
+        report.check(any("Esc" in row for row in footer), "57x14, the chat list: Esc is in the footer")
+        chats = sum(" ● " in line for line in lines)
+        report.check(chats >= 5, f"57x14, the chat list: {chats} chats on screen")
+    finally:
+        code = session.close()
+    report.check(code == 0, f"57x14: the app exited with code {code}")
+
+    session = Session(exe, ["demo"], size=(46, 12))
+    try:
+        press(SETTINGS_KEY, SETTLE_REPAINT)
+        rows = read_screen()
+        shown = text_of(rows)
+        report.screen("46x12, the settings", rows)
+        report.check(TOO_SMALL not in shown, "46x12: the settings, not the notice")
+        footer = under_the_panel(shown.split("\n"))
+        report.check(len(footer) == 1, f"46x12, the settings: {len(footer)} rows of footer, 1 allowed")
+        report.check(bool(footer) and "F1" in footer[0], "46x12, the settings: F1 is in the footer")
+        report.check("Interface" in shown, "46x12, the settings: the menu to its last section")
+    finally:
+        code = session.close()
+    report.check(code == 0, f"46x12: the app exited with code {code}")
+
+
 def scenario_small_window(exe: Path, report: Report) -> None:
     too_small_for_the_chat(exe, report)
     the_reported_window(exe, report)
     the_ladder(exe, report)
     a_layer_that_does_not_fit(exe, report)
+    the_footers(exe, report)
 
 
 SCENARIOS = {

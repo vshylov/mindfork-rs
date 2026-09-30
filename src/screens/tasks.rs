@@ -357,6 +357,7 @@ impl TasksScreen {
             ),
             self.summary(),
             &hk,
+            SCREEN_MIN_SIZE,
         );
         let (inner, status_area, hotkeys) = (chrome.inner, chrome.status, chrome.hotkeys);
         frame.render_widget(Paragraph::new(hotkeys), status_area);

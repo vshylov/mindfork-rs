@@ -30,8 +30,10 @@ impl SettingsScreen {
     /// The smallest window the settings are drawn in (spec §11.1.1). The
     /// width is the layout's own arithmetic — the section menu's 24 columns,
     /// the 20 the field pane refuses to go below, the border; under it the
-    /// menu is squeezed to a few letters. The height holds the menu's nine
-    /// sections under its title, inside the border, over a row of key hints.
+    /// menu is squeezed to a few letters. The height holds the menu — its
+    /// title and its eight sections — inside the border, over a row of key
+    /// hints; the footer takes more rows only where the window has them to
+    /// spare (`shared::ui::footer_rows`).
     pub fn min_size(&self) -> MinSize {
         MinSize::new(MENU_WIDTH + FIELDS_MIN_WIDTH + 2, 12)
     }
@@ -59,6 +61,7 @@ impl SettingsScreen {
             ),
             None,
             &hints,
+            self.min_size(),
         );
         let (inner, status_area, hotkeys) = (chrome.inner, chrome.status, chrome.hotkeys);
         let area = frame.area();

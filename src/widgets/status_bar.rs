@@ -260,7 +260,7 @@ fn lines_within(
         // dropped with it (it never is while anything is kept: scroll mode
         // pins the toggle at the top of `keep_order`).
         let accent = accent_idx.and_then(|a| kept.iter().position(|&i| i == a));
-        let cols = corner_cols(&sub_w, avail, max_rows).unwrap_or(1);
+        let cols = ui::capped_hint_grid(&sub_w, avail, max_rows).unwrap_or(1);
         return ui::render_hint_grid(
             &ui::HintGrid {
                 items: &sub,
@@ -285,6 +285,7 @@ fn lines_within(
             palette,
             &hotkeys[HELP_IDX..=HELP_IDX],
             width,
+            1,
         ));
     }
     out
@@ -346,31 +347,12 @@ fn keep_order(mouse_pinned: bool, with_stop: bool) -> Vec<usize> {
 /// Within a turn the pill only grows (the token counter), so hints shed
 /// monotonically — no flicker — and return when the turn's chips leave.
 fn trim_to_fit(cell_w: &[usize], avail: usize, mouse_pinned: bool, max_rows: usize) -> Vec<usize> {
-    let mut kept: Vec<usize> = Vec::new();
-    for idx in keep_order(mouse_pinned, cell_w.len() > STOP_IDX) {
-        let mut candidate = kept.clone();
-        candidate.push(idx);
-        candidate.sort_unstable();
-        let w: Vec<usize> = candidate.iter().map(|&i| cell_w[i]).collect();
-        if corner_cols(&w, avail, max_rows).is_some() {
-            kept = candidate;
-        }
-    }
+    let order = keep_order(mouse_pinned, cell_w.len() > STOP_IDX);
+    let kept = ui::keep_hints(cell_w, avail, max_rows, order);
     if !kept.contains(&HELP_IDX) {
         return Vec::new();
     }
     kept
-}
-
-/// The most columns whose grid fits `avail` within `max_rows` rows (→ the
-/// fewest rows); `None` when no allowed column count fits. Unlike
-/// [`ui::widest_hint_grid`], which every screen's footer uses, it refuses to go
-/// deeper instead of narrower — the chat bar sheds hints at that point
-/// ([`trim_to_fit`]).
-fn corner_cols(cell_w: &[usize], avail: usize, max_rows: usize) -> Option<usize> {
-    (cell_w.len().div_ceil(max_rows.max(1))..=cell_w.len())
-        .rev()
-        .find(|&c| ui::hint_grid_layout(cell_w, c).2 <= avail)
 }
 
 /// The "state" cluster on the left of the top row, chip by chip: the server
@@ -1056,11 +1038,11 @@ mod tests {
         let cells = [24, 12, 10, 14, 18, 14];
         // Room for one row — everything stays, as one row of six.
         assert_eq!(trim_to_fit(&cells, 107, false, 2), vec![0, 1, 2, 3, 4, 5]);
-        assert_eq!(corner_cols(&cells, 107, 2), Some(6));
+        assert_eq!(ui::capped_hint_grid(&cells, 107, 2), Some(6));
         // The quiet pill's remainder at 120 columns — everything stays, as the
         // reference 3×2 grid.
         assert_eq!(trim_to_fit(&cells, 71, false, 2), vec![0, 1, 2, 3, 4, 5]);
-        assert_eq!(corner_cols(&cells, 71, 2), Some(3));
+        assert_eq!(ui::capped_hint_grid(&cells, 71, 2), Some(3));
         // The generating pill's remainder — settings and new-chat shed.
         assert_eq!(trim_to_fit(&cells, 54, false, 2), vec![0, 1, 2, 5]);
         // Tighter still — the wide mouse toggle sheds too, and new-chat comes

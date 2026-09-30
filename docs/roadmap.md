@@ -466,17 +466,14 @@ colour modes with user themes, and the OpenRouter mode — have all closed
 - **docs.rs shows no documentation** — **deferred**. The crate has no library
   target; the `documentation` field points at the manual, which is what the
   crates.io page links.
-- **Small windows, stage 3** — **next**. Stages 1 and 2 are done: a window
-  below what the frame in front needs gets a notice instead of a frame with
-  parts missing, a question is asked whole or not at all, and the chat sheds
-  its chrome in a fixed order down to three rows (spec §11.1.1; this also
-  closes the audit's "terminal too small" message, and `NO_COLOR` was done in
-  the colour-modes track). Left, with the fork already decided
-  ([small-terminal.md](research/small-terminal.md) §5–§6, F3(b)): a footer
-  takes at most a third of the window and sheds past that, `F1` and `Esc`
-  first — in `shared::ui::hotkey_grid`/`screen_chrome`, one place for every
-  screen; the gate then holds those screens to more than a border with a row
-  inside it.
+- **Small windows** — **done** (2026-09-30, three stages): a window below
+  what the frame in front needs gets a notice instead of a frame with parts
+  missing, a question is asked whole or not at all, the chat sheds its chrome
+  in a fixed order down to three rows, and a screen's footer takes a third of
+  the window at most (spec §11.1.1,
+  [small-terminal.md](research/small-terminal.md); this also closed the
+  audit's "terminal too small" message). What the track leaves is listed in
+  the research's §9.4.
 - **Small things from the public-release audit** — **on demand**
   ([public-release-readiness.md §2.4](research/public-release-readiness.md),
   "nice to have"): a port-in-use

@@ -856,10 +856,15 @@ src/
    │                       vertically, an incomplete bottom row under the columns
    │                       above; the chat bar passes its status pill as `lead`
    │                       and the mouse-mode light as `accent`, and keeps only
-   │                       its capped/shedding column choice locally. Every
+   │                       its keep order and its F1 rule locally. Every
    │                       footer and the bar come out of here, so they cannot
    │                       drift (spec §11.1,
-   │                       docs/history/status-hints-unified.md); and the small
+   │                       docs/history/status-hints-unified.md). Shedding is
+   │                       here too — capped_hint_grid / keep_hints, one rule
+   │                       for the bar and the footers; footer_keep_order (F1,
+   │                       Esc, then the list's order) and footer_rows (a third
+   │                       of the window, no row the panel needs) bound a
+   │                       screen's footer (spec §11.1.1); and the small
    │                       window's pieces (spec §11.1.1): MinSize (the smallest
    │                       window a layer is drawn in), render_too_small + WayOut
    │                       (the notice, and the keys it names), Prompt (a modal
@@ -3778,6 +3783,17 @@ itself out within the rows it is given (`render` reads the ceiling off its
 area, so a one-row area never gets the top row of a two-row grid) and fits its
 pill to the row at every height (`fit_pill`: a prefix of `state_chips`, the
 chat chip alone cut with a mark).
+
+The other screens' footers are bounded in one place: `ui::screen_chrome` takes
+the screen's minimum window and asks `ui::footer_rows` for the footer's share —
+a third of the window, never a row the panel needs (the minimum's height less
+the one row of hints it was counted with) — and `ui::hotkey_grid` sheds past it
+through `keep_hints` in `footer_keep_order`. The chat list draws its own frame
+(`ChatListState::render`) and does the same with `ChatListState::MIN_SIZE`, which
+the screen's `min_size` returns. `keep_hints` and `capped_hint_grid` are the chat
+bar's shedding moved down: the bar keeps its own order and its rule that a block
+without `F1` is none at all; a footer has no such rule, because `F1` is first in
+its order and only a window narrower than its cell goes without it.
 
 The **monochrome** mode is the same shape with the roles swapped: the palette
 (`Palette::mono`) carries a flag instead of a canvas, and the pass

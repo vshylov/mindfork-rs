@@ -58,6 +58,11 @@ const PAGE_STEP: usize = 10;
 /// the split is deliberately lopsided.
 const FILE_PANE_WIDTH: u16 = 34;
 
+/// The smallest window the screen is drawn in (spec §11.1.1): the two panes
+/// side by side — a file's name and counts, the rule, a diff line one can
+/// read — inside the border, over a row of key hints.
+const CHANGES_MIN_SIZE: MinSize = MinSize::new(40, 8);
+
 /// Which pane the arrow keys drive.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Focus {
@@ -276,15 +281,13 @@ impl ChangesScreen {
         ))
     }
 
-    /// The smallest window the screen is drawn in (spec §11.1.1): the two
-    /// panes side by side — a file's name and counts, the rule, a diff line
-    /// one can read — and, while a revert is being confirmed, the question
-    /// whole at the width `area` gives it.
+    /// The smallest window the screen is drawn in (spec §11.1.1): the
+    /// screen's own ([`CHANGES_MIN_SIZE`]) and, while a revert is being
+    /// confirmed, the question whole at the width `area` gives it.
     pub fn min_size(&self, area: Rect) -> MinSize {
-        let base = MinSize::new(40, 8);
         match self.revert_prompt() {
-            Some(prompt) => base.max(prompt.min_size(&self.palette, area)),
-            None => base,
+            Some(prompt) => CHANGES_MIN_SIZE.max(prompt.min_size(&self.palette, area)),
+            None => CHANGES_MIN_SIZE,
         }
     }
 
@@ -303,6 +306,7 @@ impl ChangesScreen {
             ),
             Some(self.summary()),
             &hk,
+            CHANGES_MIN_SIZE,
         );
         let (inner, status_area, hotkeys) = (chrome.inner, chrome.status, chrome.hotkeys);
 

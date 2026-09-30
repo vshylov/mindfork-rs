@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (70)
+## Entries (71)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -82,6 +82,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a chat asked for from another screen arrives in one frame (done)
 - Post-M9: help keycaps are no longer looked up as locale keys (done)
 - Post-M9: a setting at its default reads as unchanged in every interface language (done)
+- Post-M9: a screen's footer takes a third of the window at most (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -3721,3 +3722,54 @@ colour mode and the theme each go back, and the interface language does not move
 mutations — the assignment removed (against either test), the language row not put back — each
 killed. The screenshots of the Tools section were regenerated: the three false markers are
 gone, nothing else moved. Unit: 3493 green, 202 ignored. **No live run**: pure UI.
+
+### Post-M9: a screen's footer takes a third of the window at most (done)
+
+Stage 3, the last, of the small-terminal track
+([docs/research/small-terminal.md](../research/small-terminal.md) §9; branch
+`feat/small-terminal-footers`). The footers of the full-screen screens were the one place
+the 2026-08-31 decision — a footer wraps and never hides a key — met windows it was not made
+about: the research measured the `ru` chat list at 57 columns spending 13 rows of a 14-row
+window on its legend and showing one chat, and the message search at 30×8 losing its query
+under five rows of hints. The user's answer at fork F3 was (b): a third of the window at
+most, and past that the footer sheds, `F1` and `Esc` first.
+
+**The share** is `shared::ui::footer_rows(height, panel_min)`: a third of the window, never a
+row the panel needs, one at least. The second clause is this stage's: each screen's minimum
+(stage 1) was counted as its panel whole over one row of hints, and a third alone would have
+cut the settings' menu at their 46×12 minimum — three of its eight sections gone under a
+four-row footer, or a minimum raised to 46×17. So `screen_chrome` takes the screen's minimum
+and the footer gets what the panel spares up to its third: one row at 46×12, two at 46×13.
+The chat list draws its own frame and does the same with `ChatListState::MIN_SIZE`, which
+its screen now returns instead of a literal. Like every minimum, the share depends on the
+window and the screen, not on the hints — the footer's height does not move with the
+selection.
+
+**The order and the walk.** `footer_keep_order` pulls `F1` and `Esc` to the front of the
+screen's own list — no per-screen table — and `keep_hints` walks it, keeping each hint while
+the grid still fits and passing over one that does not; what is kept is shown in the list's
+order. The walk is the chat bar's `trim_to_fit` loop, and `capped_hint_grid` its
+`corner_cols`, moved down into `shared::ui`: the bar keeps only its own order and its rule
+that a block without `F1` is none. Passing over has a visible consequence, accepted in the
+research §9.2: at 30 columns the message search's `Esc` cell does not fit beside `F1` and
+the narrower `Ctrl+Q` does.
+
+**The gate** holds every full-screen panel, at every size it is drawn, to a footer within a
+third of the window with `F1` in it and to what the panel is for: the list's selected row,
+the settings' menu to its last section, the search's query — the needle stage 1 had to drop
+for that screen, back without loosening anything. A new test draws the research's case: the
+`ru` chat list at 57×14 (four rows of footer, five chats) and at 80×24 (seven rows, as
+before), the settings at 46×12 and 46×13.
+
+**Mutation**: 12 mutants behind `crate::mutant(N)`. 11 killed at once; the survivor counted
+the panel a row taller than it is — conservative, and invisible at a screen's minimum, where
+both answers are one row. The test now draws the settings one row past it and expects the
+footer's second row; killed.
+
+**Live run — GO.** `python tools/console_probe.py --scenario small-window` on the inbox
+console host of Windows 11 Pro 26200, the debug build: **67 checks, all passed**; new, the
+chat list at 57×14 and the settings at 46×12, each console started at its size. `full-mode`,
+`mono` and `first-frame` re-run, all pass. Pure UI — no engine, no storage.
+
+**Tests**: 3784 unit tests green, 236 ignored (+3). The screenshot dumps are unchanged:
+nothing moves at the sizes they are taken at.
