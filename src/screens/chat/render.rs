@@ -346,21 +346,19 @@ const INPUT_MIN_ROWS: u16 = 3;
 /// text row while the status bar kept two rows of key hints
 /// (docs/research/small-terminal.md §1). Here what gives way is written down:
 /// **the input box is cut back first**, to what the feed's three rows, the
-/// banner and the status bar leave — never below its own three — and the
-/// feed takes every row that is left. In a window of [`CHAT_MIN_SIZE`] that
-/// is three or more, whatever the banner, the draft and the status bar are
+/// banner and the status bar leave, and the feed takes every row that is
+/// left. In a window of [`CHAT_MIN_SIZE`] the box is left its own three and
+/// the feed its three, whatever the banner, the draft and the status bar are
 /// doing.
 ///
 /// Below that size the chat is not drawn at all ([`ChatScreen::min_size`]);
 /// the function is total anyway — the parts are fitted from the bottom up,
 /// each taking what is left — so no size makes two of them overlap.
 pub(super) fn chat_areas(area: Rect, banner_h: u16, input_h: u16, status_h: u16) -> [Rect; 4] {
-    let input_h = input_h
-        .min(
-            area.height
-                .saturating_sub(FEED_MIN_ROWS + banner_h + status_h),
-        )
-        .max(INPUT_MIN_ROWS);
+    let input_h = input_h.min(
+        area.height
+            .saturating_sub(FEED_MIN_ROWS + banner_h + status_h),
+    );
     let mut bottom = area.bottom();
     let mut above = |rows: u16| {
         let rows = rows.min(bottom - area.y);
