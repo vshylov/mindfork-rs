@@ -1096,6 +1096,21 @@ the canvas rather than their colour, and the design document says where that
 departs from the decision as worded.
 — *colour modes — themes of the user's own*.
 
+**A dependency's feature is a name, and a major version can change what it
+means — for crates that never asked.** `zip`'s `deflate` meant
+`flate2/rust_backend` in 2.4.2 and means `flate2/zlib-rs` since 3.0. Features
+unify per package, so a bump of the crate behind backups would have moved the
+decoder under fetched pages, PDFs and downloaded archives from one written in
+safe Rust to one that is not — with the build green and every test passing,
+because both decoders are correct. Nothing in the diff shows it: the manifest
+line is unchanged, and the lock file had listed `zlib-rs` under `flate2` all
+along (a weak `zlib-rs?/std` feature is enough for Cargo to record a dependency
+nothing turns on). What shows it is
+`cargo tree -f '{p} [{f}]' -i <shared-crate>` on both sides of the bump. Run it
+for every crate the bumped one shares with the rest of the graph, and when a
+feature set grew, ask for the narrow feature by name instead of the umbrella.
+— *`zip` 2.4.2 → 8.6.0 — what a green build does not say about a bump*.
+
 ## 4. The recurring defect class: a message must close the door
 
 **Never let a message describe a situation without saying what is and is not possible
