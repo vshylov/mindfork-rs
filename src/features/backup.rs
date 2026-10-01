@@ -2175,4 +2175,94 @@ mod tests {
         };
         assert!(refused, "corrupted ciphertext was accepted");
     }
+
+    /// An encrypted backup written through `zip` 2.4.2 — the version behind
+    /// every archive made up to 0.13.0 — by [`create_backup`] itself, at level 6
+    /// with [`PINNED_PW`]: `settings.json`, `chats/a.json`, an empty
+    /// `files/c1/empty.txt` and the plain manifest. Base64 of the 778-byte file.
+    const ARCHIVE_FROM_ZIP_2_4_2: &str = "\
+        UEsDBDMAAQBjAAAAIQAAAAAAJgAAAAgAAAANAAsAc2V0dGluZ3MuanNvbgGZBwACAEFFAwgAWCTv\
+        CSTnd4tOkxtLq7kOmWB0IJMQl8CJHSwZBizxgKd9KHG9nNFQSwMEMwABAGMAAAAhAMk5nhlOAAAA\
+        NwAAAAwACwBjaGF0cy9hLmpzb24BmQcAAQBBRQMIAPr0x0CYPYyDViCp89HL0xJkZI6/nNyOTySp\
+        IJuyzaGmldGVnNgjaIsQ/3tuxHLjOgwGQtfmI35aa2jmScvXMyodxWRhJFSOuBTuCSLmZ1BLAwQz\
+        AAEAYwAAACEAAAAAAB4AAAAAAAAAEgALAGZpbGVzL2MxL2VtcHR5LnR4dAGZBwACAEFFAwgA+mpk\
+        0JTWBOt2VfKORuc5WkaMMdDr66l5qLOFrLUSUEsDBBQAAAAIAAAAIQAUX3ufgAAAAKkAAAANAAAA\
+        bWFuaWZlc3QuanNvbk3MQQ6CMBAF0D2nILMVmpmiWHsO96SWUZooNG3jhnB3W3Thbub9n79WdQ3G\
+        ++HNIbplBl0DCuoEQlOiaCd+mZh5zW8BTsnNjyLH5ks+LHf35EL0IzuZ9NcYbyXL97aP2sAm8Tjs\
+        HZAo+5awRbpK1NhrOgtF6nSRCvGAnUaEavsAUEsBAjMDMwABAGMAAAAhAAAAAAAmAAAACAAAAA0A\
+        CwAAAAAAAAAAAKSBAAAAAHNldHRpbmdzLmpzb24BmQcAAgBBRQMIAFBLAQIzAzMAAQBjAAAAIQDJ\
+        OZ4ZTgAAADcAAAAMAAsAAAAAAAAAAACkgVwAAABjaGF0cy9hLmpzb24BmQcAAQBBRQMIAFBLAQIz\
+        AzMAAQBjAAAAIQAAAAAAHgAAAAAAAAASAAsAAAAAAAAAAACkgd8AAABmaWxlcy9jMS9lbXB0eS50\
+        eHQBmQcAAgBBRQMIAFBLAQIUAxQAAAAIAAAAIQAUX3ufgAAAAKkAAAANAAAAAAAAAAAAAACkgTgB\
+        AABtYW5pZmVzdC5qc29uUEsFBgAAAAAEAAQAEQEAAOMBAAAAAA==";
+    const PINNED_PW: &str = "pinned pass-phrase";
+
+    /// Gate: a backup the user already has still opens after the `zip` crate
+    /// moves.
+    ///
+    /// Every other test here writes its archive and reads it back inside one
+    /// run, through one version of the crate — so a reader that stopped
+    /// understanding what an older writer produced would pass all of them and
+    /// fail only on the archive a user kept for the day they need it. This one
+    /// reads bytes that no longer change: pinned on 2.4.2, read unchanged
+    /// across the move to 8.6.0.
+    #[test]
+    fn a_backup_written_by_an_older_zip_still_restores() {
+        use base64::Engine as _;
+
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("pinned.zip");
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(ARCHIVE_FROM_ZIP_2_4_2)
+            .expect("the pinned archive is base64");
+        fs::write(&archive, bytes).unwrap();
+
+        use ArchivePassword::*;
+        for (password, expected) in [
+            (Some(PINNED_PW), Ok),
+            (None, Required),
+            (Some("wrong"), Wrong),
+        ] {
+            assert_eq!(
+                check_password(&archive, password).unwrap(),
+                expected,
+                "password={password:?}"
+            );
+        }
+        let manifest = read_manifest(&archive).unwrap().expect("a manifest");
+        assert_eq!(manifest.app_version, "0.13.0");
+
+        // Read where it lies — the `stats` road...
+        let mut reader = ArchiveReader::open(&archive, Some(PINNED_PW), ru()).unwrap();
+        let mut names: Vec<String> = reader.entries().into_iter().map(|e| e.name).collect();
+        names.sort();
+        assert_eq!(
+            names,
+            [
+                "chats/a.json",
+                "files/c1/empty.txt",
+                "manifest.json",
+                "settings.json"
+            ]
+        );
+
+        // ...and restored.
+        let dst = tempfile::tempdir().unwrap();
+        let paths = Paths::with_root(dst.path());
+        let outcome =
+            restore_backup(&paths, &archive, None, Some(PINNED_PW), ru(), |_| {}).unwrap();
+        assert!(matches!(outcome, RestoreOutcome::Restored { .. }));
+        assert_eq!(
+            fs::read(dst.path().join("settings.json")).unwrap(),
+            b"{\"v\":42}"
+        );
+        assert_eq!(
+            fs::read(dst.path().join("chats").join("a.json")).unwrap(),
+            b"{\"title\":\"pinned\",\"messages\":[\"one\",\"one\",\"one\",\"one\"]}"
+        );
+        assert_eq!(
+            fs::read(dst.path().join("files").join("c1").join("empty.txt")).unwrap(),
+            b""
+        );
+    }
 }

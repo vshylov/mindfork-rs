@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (17)
+## Entries (18)
 
 - Post-M9: persisting the input-box draft in the chat file (done)
 - Post-M9: persisting deleted exchanges in the chat file (`Ctrl+E`/`Ctrl+R`) (done)
@@ -29,6 +29,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: `mindfork stats` — which copy of the data is the newest (done)
 - Post-M9: `mindfork stats --compare` — what each copy holds that the other lacks (done)
 - Post-M9: a settings file the typed parse refuses (done)
+- Post-M9: `zip` 2.4.2 → 8.6.0 — what a green build does not say about a bump (done)
 
 ### Post-M9: persisting the input-box draft in the chat file (done)
 - **Unsaved input-box text is stored on the chat and restored on
@@ -1015,3 +1016,66 @@ discards is recoverable from `backups/`.
   and column, *Press Enter to close this window* under it, exit 1 after `Enter`, the file
   untouched.
 - 3592 unit tests (+14), 202 `#[ignore]`.
+
+### Post-M9: `zip` 2.4.2 → 8.6.0 — what a green build does not say about a bump (done)
+- **What arrived.** Dependabot's bump of `zip` across six majors, red on a single test:
+  `component_versions_match_cargo_lock`, the About dialog still naming 2.4.2. The crate
+  compiled against 8.6.0 unchanged and every other test passed — which is why this is an
+  entry and not a one-line fix. Neither fact says anything about the two things such a
+  jump can move, and it moved one of them.
+- **The feature had changed its meaning.** `Cargo.toml` asked for `deflate`. In 2.4.2 that
+  umbrella is zopfli plus `flate2/rust_backend`; since zip 3 it is zopfli plus
+  `flate2/zlib-rs`. Features unify per package, so the line about backups would have
+  moved **every** flate2 user in the binary off miniz_oxide onto zlib-rs — measured, not
+  read off the manifest:
+  `cargo tree -f '{p} [{f}]' -i flate2` prints
+  `[any_impl,default,miniz_oxide,runtime_detection,rust_backend]` before and gains
+  `any_zlib` and `zlib-rs` with the bump as proposed. Those users are
+  `shared/http_text.rs` inflating the bodies of fetched pages, `lopdf` under PDF
+  extraction, `png`, `syntect`'s packed grammars and the tar.gz archives `setup` unpacks:
+  most of them input this program did not write. miniz_oxide is `#![forbid(unsafe_code)]`;
+  zlib-rs is not.
+- **Decision: `deflate-flate2`.** It turns on zip's flate2 code and names no backend, so
+  the backend is the one this crate's own `flate2` line selects, and the tree reads as
+  before. The umbrella's other half goes too: zopfli serves compression levels above 9
+  and `write_zip` clamps to 0..9, so the lock loses a package nothing could reach. That
+  the backend did not move shows in the output — the probe's data root packs to
+  712 014 bytes at level 6 under both versions, and to 712 444 under zlib-rs.
+- **Rejected: taking zlib-rs because it came.** It is pure Rust and by its authors'
+  account the faster backend, and it may well be the right call — as a decision made on
+  the `flate2` line, with release-build timings and a look at what it decodes. Not as a
+  side effect nobody chose. Its speed was **not** measured here (the builds were debug).
+- **Do archives cross the versions?** Every backup test writes its archive and reads it
+  back in one run, through one version of the crate; none of them can say whether a
+  backup a user already has still opens. Measured with a scratch probe on **one tree
+  built both ways** (the bump's parent commit and the bump), through the app's own
+  `create_backup` / `check_password` / `ArchiveReader` / `restore_backup`: five archives
+  — AES-256 at levels 6, 0 and 9, plain at 6 and 0 — of ten entries: an empty file, an
+  8-byte one, 200 KB that compresses, 700 001 bytes that do not, a non-ASCII name with a
+  space. For each: the password matrix, the manifest, names and sizes, every entry
+  streamed where it lies, and a restore compared byte for byte. **Written by 2.4.2, read
+  by 8.6.0: all five. Written by 8.6.0, read by 2.4.2: all five** (and the five written
+  under zlib-rs as well). 7-Zip tests the new ones clean.
+- **Then on real data, read-only.** `mindfork stats <archive> --json` on three backups
+  this machine already had — 354 to 533 AES entries, the largest 142 MB unpacked — is
+  identical between the two builds apart from `taken_at`, fingerprint included; so is
+  that of a backup of the dev root written by 8.6.0 (539 encrypted entries) and read by
+  both. The scratch archive and the snapshots were deleted: they hold real chats.
+- **One difference in what is written.** On Windows an entry's "made by" system is now
+  MS-DOS (0) where 2.4.2 always wrote Unix (3) — zip 7.2 records the local platform.
+  Nothing here reads that field for a backup (`unix_mode()` is asked only of the
+  llama.cpp archives `setup` unpacks, which other tools wrote).
+- **The gate that stays.** `a_backup_written_by_an_older_zip_still_restores` pins a
+  778-byte encrypted archive written by 2.4.2 through `create_backup` and reads it by
+  every road. It is base64 in the test, not a file under `tests/fixtures/`: ciphertext
+  read as text contains "Cyrillic", and `tools/cyrillic_scan.py` said so. Widening the
+  scanner's skip list for one fixture was the worse trade.
+- **The pull requests meet in the lock file.** The group bump rewrites `thiserror
+  2.0.20` → `2.0.21` inside zip's own entry, on the line where zip 8 drops thiserror and
+  gains `typed-path`; and Dependabot does not rebase a branch carrying someone else's
+  commit. So the group bump is merged into this branch and the conflict resolved here,
+  once, rather than on `main` by whoever merges second.
+- **Live run — GO** (no engine involved; the two builds above, on Windows 11). Not run: a
+  restore of a real backup into a scratch root — the read-only `stats` road decrypts and
+  parses every entry, and the restore road is the probe's.
+- 3835 unit tests (+1), 249 `#[ignore]`.

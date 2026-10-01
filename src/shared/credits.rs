@@ -220,7 +220,7 @@ pub const COMPONENTS: &[(&str, &str, &str)] = &[
     ("unicode-width", "0.2.2", "MIT OR Apache-2.0"),
     ("uuid", "1.26.1", "Apache-2.0 OR MIT"),
     ("windows-sys", "0.61.2", "MIT OR Apache-2.0"),
-    ("zip", "2.4.2", "MIT"),
+    ("zip", "8.6.0", "MIT"),
 ];
 
 /// One vendored syntax grammar, for the "Components" tab: `(language,
