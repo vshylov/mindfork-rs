@@ -18,7 +18,8 @@ use crate::shared::api::contract::{
     ChatChunk, ChatRequest, ChatStream, EngineBackend, FinishReason, TokenUsage, ToolCallDelta,
     VisionSupport,
 };
-use crate::shared::api::error::{self, SUBJECT_GEMINI};
+use crate::shared::api::effort::{self, EffortMemo, EffortWire};
+use crate::shared::api::error::{self, EngineError, SUBJECT_GEMINI};
 use crate::shared::api::http;
 
 /// A client to the native Gemini API.
@@ -30,6 +31,11 @@ pub struct GeminiClient {
     base_url: String,
     api_key: String,
     model: String,
+    /// The thinking levels this model has refused, and what it took in each
+    /// one's place. Learned from the refusal, like the Responses client's
+    /// memo: a muted turn asks 3.x for `minimal`, and which models have that
+    /// level is not something a name tells (docs/research/effort-tiers.md §3).
+    efforts: EffortMemo,
 }
 
 impl GeminiClient {
@@ -50,7 +56,59 @@ impl GeminiClient {
             base_url,
             api_key: api_key.into(),
             model,
+            efforts: EffortMemo::default(),
         }
+    }
+
+    /// What this model has been found to take in place of the level `wish` —
+    /// unset while it has not refused it. For the tests and smokes, which must
+    /// tell a turn that survived a refusal from one that never met it.
+    #[cfg(test)]
+    pub(super) fn learned(&self, wish: &str) -> Option<Option<&'static str>> {
+        self.efforts.instead_of(wish)
+    }
+}
+
+impl EffortWire for GeminiClient {
+    type Body = wire::GenRequest;
+
+    fn model(&self) -> &str {
+        &self.model
+    }
+
+    fn efforts(&self) -> &EffortMemo {
+        &self.efforts
+    }
+
+    async fn send(
+        &self,
+        body: &wire::GenRequest,
+        cancel: &CancellationToken,
+    ) -> Result<Option<reqwest::Response>, EngineError> {
+        let url = format!(
+            "{}/models/{}:streamGenerateContent?alt=sse",
+            self.base_url, self.model
+        );
+        let request = self
+            .http
+            .post(&url)
+            .header("x-goog-api-key", &self.api_key)
+            .json(body);
+        let Some(response) = http::send_cancellable(request, cancel).await? else {
+            return Ok(None);
+        };
+        error::check_status(SUBJECT_GEMINI, response)
+            .await
+            .map(Some)
+    }
+
+    /// A refused level becomes the one above it — `minimal`, which a muted turn
+    /// asks for, becomes `low`.
+    fn answer(&self, wish: &'static str, refused: &EngineError) -> Option<Option<&'static str>> {
+        if !wire::refuses_thinking_level(refused) {
+            return None;
+        }
+        wire::level_above(wish).map(Some)
     }
 }
 
@@ -97,21 +155,12 @@ fn block_note(reason: &str) -> String {
 #[async_trait::async_trait]
 impl EngineBackend for GeminiClient {
     async fn chat_stream(&self, req: ChatRequest, cancel: CancellationToken) -> Result<ChatStream> {
-        let body = wire::build_request(&req, &self.model);
-        let url = format!(
-            "{}/models/{}:streamGenerateContent?alt=sse",
-            self.base_url, self.model
-        );
-
-        let request = self
-            .http
-            .post(&url)
-            .header("x-goog-api-key", &self.api_key)
-            .json(&body);
-        let Some(response) = http::send_cancellable(request, &cancel).await? else {
+        // A level the model does not have is asked again as the one above it —
+        // the muted turns' `minimal` on a 3.x Flash that starts at `low`.
+        let mut body = wire::build_request(&req, &self.model);
+        let Some(response) = effort::send_asking_again(self, &mut body, &cancel).await? else {
             return Ok(http::cancelled_stream());
         };
-        let response = error::check_status(SUBJECT_GEMINI, response).await?;
 
         let mut events = response.bytes_stream().eventsource();
 
@@ -375,6 +424,102 @@ mod tests {
             chunks.last(),
             Some(&ChatChunk::Finished(FinishReason::Stop))
         );
+    }
+
+    /// A whole reply: one word, and the reason it stopped.
+    const REPLY: sse_stub::Canned = (
+        "200 OK",
+        "text/event-stream",
+        "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Indexes\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}
+
+",
+    );
+
+    /// The `thinkingLevel` of each request the stub was sent, in order.
+    fn levels_sent(bodies: &[String]) -> Vec<serde_json::Value> {
+        bodies
+            .iter()
+            .map(|b| {
+                let body: serde_json::Value =
+                    serde_json::from_str(b).unwrap_or_else(|e| panic!("{e}: {b:?}"));
+                body["generationConfig"]["thinkingConfig"]["thinkingLevel"].clone()
+            })
+            .collect()
+    }
+
+    /// The defect: `gemini-3.8-flash` answers a muted turn's `minimal` with a
+    /// `400`, and nothing in its name says so — so the title, the roll and
+    /// impersonation failed there while ordinary chat worked. The turn completes
+    /// on the second request, at the level above, and the next muted turn asks
+    /// for that at once.
+    #[tokio::test]
+    async fn a_refused_minimal_level_is_asked_again_as_low() {
+        let (url, stub) = sse_stub::serve_in_turn(&[
+            (sse_stub::BAD_REQUEST, sse_stub::JSON, wire::LEVEL_REFUSED),
+            REPLY,
+            REPLY,
+        ]);
+        let client = GeminiClient::new(url, "k", "gemini-3.8-flash");
+        for _ in 0..2 {
+            let chunks = collect(
+                client
+                    .chat_stream(sse_stub::muted(), CancellationToken::new())
+                    .await
+                    .expect("the muted turn survives the refusal"),
+            )
+            .await;
+            assert!(
+                chunks.contains(&ChatChunk::Text("Indexes".into())),
+                "{chunks:?}"
+            );
+        }
+        assert_eq!(
+            levels_sent(&stub.join().unwrap()),
+            ["minimal", "low", "low"]
+        );
+        assert_eq!(client.learned("minimal"), Some(Some("low")));
+    }
+
+    /// Any other `400` is reported as it came, after one request: the stub has
+    /// a single answer, so a second request would meet a closed port and the
+    /// error would be a transport one.
+    #[tokio::test]
+    async fn another_refusal_of_a_muted_turn_is_reported_as_it_came() {
+        let (url, stub) = sse_stub::serve_in_turn(&[(
+            sse_stub::BAD_REQUEST,
+            sse_stub::JSON,
+            r#"{"error":{"code":400,"message":"The input token count exceeds the maximum number of tokens allowed.","status":"INVALID_ARGUMENT"}}"#,
+        )]);
+        let client = GeminiClient::new(url, "k", "gemini-3.8-flash");
+        let err = client
+            .chat_stream(sse_stub::muted(), CancellationToken::new())
+            .await
+            .err()
+            .expect("a 400 about the input is an error");
+        assert!(err.to_string().contains("input token count"), "{err}");
+        assert_eq!(stub.join().unwrap().len(), 1);
+        assert_eq!(client.learned("minimal"), None);
+    }
+
+    /// A refused level with none above it has nothing to become.
+    #[tokio::test]
+    async fn a_refused_top_level_is_reported_as_it_came() {
+        let (url, stub) = sse_stub::serve_in_turn(&[(
+            sse_stub::BAD_REQUEST,
+            sse_stub::JSON,
+            wire::LEVEL_REFUSED,
+        )]);
+        let client = GeminiClient::new(url, "k", "gemini-3.8-flash");
+        let mut req = sse_stub::hello();
+        req.sampling.reasoning_effort = Some(crate::entities::sampling::ReasoningEffort::High);
+        let err = client
+            .chat_stream(req, CancellationToken::new())
+            .await
+            .err()
+            .expect("the refusal is the answer");
+        assert!(err.to_string().contains("Thinking level"), "{err}");
+        assert_eq!(stub.join().unwrap().len(), 1);
+        assert_eq!(client.learned("high"), None);
     }
 }
 

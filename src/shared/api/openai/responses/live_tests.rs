@@ -1,14 +1,16 @@
-//! Live smokes of the Responses client's muted turns against the real OpenAI
-//! API. `#[ignore]` — not in CI; silently skipped without their variables.
+//! Live smokes of the Responses client against the real OpenAI API: an effort
+//! value the model does not have — a muted turn's `"none"`, a depth from the
+//! settings. `#[ignore]` — not in CI; silently skipped without their variables.
 //!
 //! A file of its own, named as a test file: the coverage report leaves such
 //! files out, and smokes that never run in CI would otherwise count as
 //! production code nothing covers (docs/journal/quality.md).
 //!
-//! Run both arms:
+//! Run every arm:
 //! `MINDFORK_OPENAI_KEY=… MINDFORK_LIVE_NO_EFFORT_NONE_MODEL=gpt-6.1-sol
-//! MINDFORK_LIVE_EFFORT_NONE_MODEL=gpt-6-sol cargo test muted_turn --
-//! --ignored --nocapture --test-threads=1`.
+//! MINDFORK_LIVE_EFFORT_NONE_MODEL=gpt-6-sol
+//! MINDFORK_LIVE_NO_EFFORT_MINIMAL_MODEL=gpt-6.1-sol cargo test
+//! responses::live_tests -- --ignored --nocapture --test-threads=1`.
 
 use futures_util::StreamExt;
 
@@ -52,14 +54,29 @@ fn title_turn() -> ChatRequest {
     }
 }
 
-/// One muted turn: the reply, the reasoning tokens the API reported, and how
-/// the stream ended. A refused request fails the smoke here, with the
-/// provider's words.
-async fn muted_turn(client: &ResponsesClient) -> (String, u32, Option<FinishReason>) {
+/// An ordinary turn at a depth chosen in the settings, thinking untouched.
+fn turn_at(effort: ReasoningEffort) -> ChatRequest {
+    ChatRequest {
+        continue_final: false,
+        system: None,
+        messages: vec![ApiMessage::user("Reply with exactly: pong")],
+        sampling: SamplingConfig {
+            max_tokens: Some(2048),
+            reasoning_effort: Some(effort),
+            ..Default::default()
+        },
+        tools: vec![],
+    }
+}
+
+/// One turn: the reply, the reasoning tokens the API reported, and how the
+/// stream ended. A refused request fails the smoke here, with the provider's
+/// words.
+async fn turn(client: &ResponsesClient, req: ChatRequest) -> (String, u32, Option<FinishReason>) {
     let mut stream = client
-        .chat_stream(title_turn(), Default::default())
+        .chat_stream(req, Default::default())
         .await
-        .expect("a muted turn must not be refused");
+        .expect("the turn must not be refused");
     let (mut text, mut reasoning, mut finish) = (String::new(), 0, None);
     while let Some(chunk) = stream.next().await {
         match chunk {
@@ -92,17 +109,15 @@ async fn a_muted_turn_survives_a_model_that_refuses_effort_none() {
     };
     // Twice through one client: the first turn meets the refusal, the second
     // must ask in the learned words at once.
-    for turn in 1..=2 {
-        let (text, reasoning, finish) = muted_turn(&client).await;
-        println!(
-            "{model} turn {turn}: finish={finish:?} reasoning_tokens={reasoning} title={text}"
-        );
+    for nth in 1..=2 {
+        let (text, reasoning, finish) = turn(&client, title_turn()).await;
+        println!("{model} turn {nth}: finish={finish:?} reasoning_tokens={reasoning} title={text}");
         assert!(
             finish == Some(FinishReason::Stop) && !text.trim().is_empty(),
             "{model}: the muted turn must complete: finish={finish:?} text={text:?}"
         );
     }
-    let learned = client.learned_muted_effort();
+    let learned = client.learned("none");
     println!("{model}: asked instead of \"none\": {learned:?}");
     assert!(
         learned.is_some(),
@@ -119,7 +134,7 @@ async fn a_muted_turn_on_a_model_that_takes_none_is_sent_as_before() {
     let Some((model, client)) = client_for("MINDFORK_LIVE_EFFORT_NONE_MODEL") else {
         return;
     };
-    let (text, reasoning, finish) = muted_turn(&client).await;
+    let (text, reasoning, finish) = turn(&client, title_turn()).await;
     println!("{model}: finish={finish:?} reasoning_tokens={reasoning} title={text}");
     assert!(
         finish == Some(FinishReason::Stop) && !text.trim().is_empty(),
@@ -127,8 +142,38 @@ async fn a_muted_turn_on_a_model_that_takes_none_is_sent_as_before() {
     );
     assert_eq!(reasoning, 0, "{model} was told not to reason");
     assert_eq!(
-        client.learned_muted_effort(),
+        client.learned("none"),
         None,
         "{model} was declared to take \"none\": nothing should have been learned"
+    );
+}
+
+/// A depth from the settings that the model does not have —
+/// `MINDFORK_LIVE_NO_EFFORT_MINIMAL_MODEL` declares one that refuses `minimal`
+/// (nine OpenAI models of the ten measured on 2026-10-01; `gpt-6.1-sol` among
+/// them). One setting serves every model, so before the recovery a value
+/// chosen for one model was a `400` on every turn of the next.
+///
+/// Declared rather than guessed, so the smoke **fails** rather than passes on a
+/// model that takes the value.
+#[tokio::test]
+#[ignore = "requires MINDFORK_OPENAI_KEY + MINDFORK_LIVE_NO_EFFORT_MINIMAL_MODEL (an OpenAI model that refuses reasoning.effort \"minimal\")"]
+async fn a_chosen_depth_the_model_lacks_becomes_the_nearest_it_has() {
+    let Some((model, client)) = client_for("MINDFORK_LIVE_NO_EFFORT_MINIMAL_MODEL") else {
+        return;
+    };
+    for nth in 1..=2 {
+        let (text, reasoning, finish) = turn(&client, turn_at(ReasoningEffort::Minimal)).await;
+        println!("{model} turn {nth}: finish={finish:?} reasoning_tokens={reasoning} reply={text}");
+        assert!(
+            finish == Some(FinishReason::Stop) && !text.trim().is_empty(),
+            "{model}: the turn must complete: finish={finish:?} text={text:?}"
+        );
+    }
+    let learned = client.learned("minimal");
+    println!("{model}: asked instead of \"minimal\": {learned:?}");
+    assert!(
+        matches!(learned, Some(Some(_))),
+        "{model} was declared to refuse \"minimal\" and to list what it takes: {learned:?}"
     );
 }

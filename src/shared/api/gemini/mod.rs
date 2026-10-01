@@ -10,6 +10,8 @@
 //! see the supervisor.
 
 mod client;
+#[cfg(test)]
+mod live_tests;
 mod wire;
 
 pub use client::GeminiClient;
