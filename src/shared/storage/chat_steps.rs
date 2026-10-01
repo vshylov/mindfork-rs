@@ -1,5 +1,8 @@
 //! Chat-file migration steps (ADR 0006; the registry is [`super::schema`]).
 //!
+//! **4 → 5** (`chat_to_v5`): no shape change — the stamp of the first schema
+//! in which a reasoning effort may read `max`.
+//!
 //! **3 → 4** (`chat_to_v4`): a run title the old 100-character title cap cut
 //! gets its tail back, re-derived from the instruction the run still holds.
 //!
@@ -31,6 +34,34 @@ const CALL_SUBAGENT: &str = "call_subagent";
 /// removed (spec §11.2). A literal, not a constant imported from there: the
 /// constant is gone, and a step describes the past.
 const OLD_TITLE_CAP: usize = 100;
+
+/// `chats/<id>.json` 4 → 5: no shape change, like [`chat_to_v3`]. 5 is the
+/// first schema in which a reasoning effort may read `max` (spec §8.1), and a
+/// chat file holds the effort in three places: its own `sampling_override`, a
+/// sub-agent run's, and the `metadata.sampling` of every reply — the record of
+/// what the reply was generated with, so one answer under `max` is enough.
+///
+/// What the stamp replaces is worse than a refusal. A chat file an older
+/// binary cannot parse is **skipped** — the rule that keeps one damaged file
+/// from blocking the start (release-engineering.md F11) — so 0.13.0, measured
+/// on such a file, started and showed the chat list without that chat, with
+/// one line in the log. Stamped, the file is refused by its version before it
+/// is parsed, and the start says the data is a newer version's.
+///
+/// Every file is stamped, whether or not it holds the value: a file stamped
+/// only once it does would be read by an older binary until the day the effort
+/// was chosen.
+///
+/// The settings take the same stamp (`schema::settings_to_v5`), and for a root
+/// downgraded in place that one answers first — the argument the `openrouter`
+/// mode's value rode on, with no chat step, in schema 4. This step is for the
+/// chat file that arrives **without** its settings, a `chats/` folder copied
+/// by hand into an older version's root: there the settings say nothing, and
+/// what the file would meet is the skip above.
+pub(super) fn chat_to_v5(mut v: Value) -> Result<Value> {
+    v["v"] = json!(5);
+    Ok(v)
+}
 
 /// `chats/<id>.json` 3 → 4: a run title the old cap cut gets its tail back.
 ///
@@ -304,6 +335,59 @@ mod tests {
         "Read the changelog of every dependency we bumped this quarter and list ",
         "the ones whose breaking changes we have not yet handled anywhere in the tree"
     );
+
+    /// A chat file as 0.13.0 wrote it: `v = 4`, with a reasoning effort in each
+    /// of the three places a chat file holds one — the chat's override
+    /// (`xhigh`, the top of the scale that version knew), a sub-agent run's,
+    /// and the replies' `metadata.sampling`. The 0.13.0 binary lists it (the
+    /// journal has the run).
+    const V4_CHAT: &str = include_str!("fixtures/chat_v4_effort_xhigh.json");
+
+    /// See `the_v4_settings_fixture_holds_nothing_the_config_drops`: a key the
+    /// reader ignores would make the fixture pin nothing about its field.
+    #[test]
+    fn the_v4_fixture_holds_nothing_a_chat_drops() {
+        let fixture: Value = serde_json::from_str(V4_CHAT).unwrap();
+        let chat: Chat = serde_json::from_value(fixture.clone()).unwrap();
+        assert_eq!(chat.v, 4);
+        let read_back = serde_json::to_value(&chat).unwrap();
+        assert_eq!(
+            super::super::schema::dropped_paths(&fixture, &read_back),
+            Vec::<String>::new()
+        );
+    }
+
+    /// 4 → 5 is the version and nothing else, and a second pass finds nothing
+    /// to do (a step lands on a restored backup exactly as on live data).
+    #[test]
+    fn the_effort_stamp_is_v5_and_touches_nothing_else() {
+        let before: Value = serde_json::from_str(V4_CHAT).unwrap();
+        let after = chat_to_v5(before.clone()).unwrap();
+        assert_eq!(after["v"], json!(5));
+        let mut restamped = after.clone();
+        restamped["v"] = json!(4);
+        assert_eq!(restamped, before, "every other value is where it was");
+        assert_eq!(chat_to_v5(after.clone()).unwrap(), after);
+
+        // Nobody is moved to the new value: the efforts stay what was chosen.
+        let chat: Chat = serde_json::from_value(after).unwrap();
+        let effort =
+            |s: &crate::entities::sampling::SamplingConfig| s.reasoning_effort.map(|e| e.as_wire());
+        assert_eq!(
+            chat.sampling_override.as_ref().and_then(effort),
+            Some("xhigh")
+        );
+        let reply = chat.messages[1]
+            .metadata
+            .as_ref()
+            .expect("a reply's record");
+        assert_eq!(effort(&reply.sampling), Some("xhigh"));
+        let run = chat.messages[1].tool_calls[0]
+            .subagent
+            .as_deref()
+            .expect("the run");
+        assert_eq!(run.sampling_override.as_ref().and_then(effort), Some("low"));
+    }
 
     fn v4() -> Value {
         chat_to_v4(serde_json::from_str(V3_CHAT).unwrap()).unwrap()

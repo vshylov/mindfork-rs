@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (19)
+## Entries (20)
 
 - Post-M9: persisting the input-box draft in the chat file (done)
 - Post-M9: persisting deleted exchanges in the chat file (`Ctrl+E`/`Ctrl+R`) (done)
@@ -31,6 +31,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a settings file the typed parse refuses (done)
 - Post-M9: `zip` 2.4.2 → 8.6.0 — what a green build does not say about a bump (done)
 - Post-M9: `chacha20poly1305` 0.10.1 → 0.11.0 — the nonce API, and a wipe that became optional (done)
+- Post-M9: the `max` effort is a stored value — `SETTINGS_SCHEMA` and `CHAT_SCHEMA` 4→5 (done)
 
 ### Post-M9: persisting the input-box draft in the chat file (done)
 - **Unsaved input-box text is stored on the chat and restored on
@@ -1127,3 +1128,83 @@ discards is recoverable from `backups/`.
 - **Live run** — no engine involved; the cross-version measurement above, on Windows 11,
   and all three bumps together on `main`: `fmt`, `clippy -D warnings`, the unit tests.
 - 3836 unit tests (+1), 249 `#[ignore]`.
+
+### Post-M9: the `max` effort is a stored value — `SETTINGS_SCHEMA` and `CHAT_SCHEMA` 4→5 (done)
+- **What was found, and when.** Preparing the release after 0.13.0: `[Unreleased]` held a
+  new value of the reasoning effort, `max` (the effort-tiers track, stage 2), and no
+  `Data` rubric. The effort is not only a setting. `SamplingConfig` is written into
+  `settings.json` (the assistant's and impersonation's), into a profile's
+  `default_sampling`, and into a chat file three times over — the chat's
+  `sampling_override`, a sub-agent run's, and the `metadata.sampling` of **every reply**,
+  the record of what it was generated with. `ReasoningEffort` is a strict enum, so by this
+  module's own bump policy the variant was a breaking change of all three files, and it had
+  been merged with every test green and no step.
+- **Measured on the 0.13.0 binary, not read off the code.** Built from the tag into a
+  target directory of its own, and started — `stats` without a terminal, the interface in a
+  hidden console (`tools/console_probe.py` taken as a module) — on five roots that differ in
+  the one place holding `max`. Nothing holding it: starts, three chats of three.
+  `settings.json`: refuses, *unknown variant `max`, expected one of `none`, `minimal`,
+  `low`, `medium`, `high`, `xhigh`*, exit 1, nothing changed. `profiles.json`: the same
+  refusal, naming that file. A chat's `sampling_override`: **the application starts and
+  the chat is not in the list** — two of three — with `skipped a corrupted chat file` in the
+  log and nothing on the screen. A reply's metadata: the same. `stats` counted three chats
+  in every arm, so the one tool that compares copies did not show it either. The file stays
+  on disk; what is lost is the user's knowledge that the chat exists.
+- **Why the two failures differ.** The settings and the profiles go through the typed gate
+  (`a settings file the typed parse refuses`), which refuses. A chat file goes through
+  F11 — a damaged chat must not block the start — which skips. Both rules are right for
+  what they were written for; a newer version's value is neither a typo nor damage, and
+  only the version stamp tells it apart from them.
+- **The fix is two steps that change nothing but the version** (the owner's decision,
+  2026-10-01, of three offered): `settings_to_v5` and `chat_to_v5`, the shape of
+  `settings_to_v4` and `chat_to_v3`. Every file is stamped whether or not it holds the
+  value — a file stamped only once it does would be readable by 0.13.0 until the day the
+  effort was chosen.
+- **`profiles.json` takes no step.** Offered and declined. The start reads `settings.json`
+  first, so with that file at 5 the refusal is made before a profile is parsed; a step
+  would have been the first change of the file's shape, since a bare array has nowhere to
+  carry a version, and every reader of it would have had to learn the envelope — for a
+  refusal already made. Pinned as the order of the reads:
+  `a_reader_before_the_max_effort_refuses_at_the_settings_not_at_a_profile`.
+- **The chat stamp departs from the `openrouter` precedent, knowingly.** Schema 4 let the
+  chats' `metadata.mode` ride on the settings' stamp — an older binary never gets past
+  `settings.json` — and that argument holds here for a root downgraded in place. The chat
+  stamp is for the file that arrives without its settings: a `chats/` folder copied by
+  hand into an older version's root, the move the missing-`data.db` notice exists for.
+  There the settings say nothing, and without the stamp the outcome is the silent skip.
+- **What would have caught it is now in the build.** The rule was already written three
+  times — in `schema.rs`, in architecture §7 and in lessons §8 — and was not looked up,
+  because the variant was added in `entities/sampling.rs`, a file that says nothing about
+  storage. So the question is asked where the variant is added: the enum's doc says it is
+  a stored value, and `schema.rs`'s tests carry `effort_arrived_in`, a `match` with **no
+  wildcard arm** naming the schema each value arrived in. A new variant does not compile
+  until someone writes its number there; the test around it then checks that every reader
+  older than that number is handed a newer version, for the settings and for a chat.
+  It guards this one enum. The other strict enums a file holds — the modes, `RunKind`,
+  `MessageFinish` — have the rule and no such check; on the roadmap, on demand.
+- **Golden fixtures, and what makes one golden.** `fixtures/settings_v4.json` and
+  `fixtures/chat_v4_effort_xhigh.json`, written by hand in the trimmed style of
+  `settings_v3.json`. A hand-written fixture can name a key the reader does not have, and
+  `#[serde(default)]` ignores it — the fixture then pins nothing about the field it meant.
+  That happened on the first draft: the video section sat under `tools`. A test per
+  fixture now parses it into its typed structure, serializes it back and requires every
+  path of the fixture to survive (`schema::dropped_paths`); and the 0.13.0 binary itself
+  starts on both and lists the chat, which is the other half of "as 0.13.0 wrote it".
+- **Live run — GO, 34 checks, the control arm red.** No engine involved; the two binaries
+  on Windows 11, in hidden consoles. *Golden*: 0.13.0 starts on the fixtures and lists the
+  chat. *Upgrade*: the branch's build starts on the same root — `settings.json` at 5, the
+  chat at 5, the efforts and the mode where they were, one `pre-migrate-*.zip` holding
+  both files at 4, the log naming the step twice; a second start migrates nothing. `max`
+  then chosen in all three files (`setup --set` for the settings): the new build starts
+  and lists the chat. *Back*: 0.13.0 on that root — *"Data (settings.json) was created by
+  a newer version of mindfork (schema 5, supported 4)"*, exit 1, not a word about a
+  variant, nothing changed; its `stats` adds that the data is a newer version's. *Alone*:
+  the v5 chat copied into a root 0.13.0 wrote — refused, naming the chat file. *Control*:
+  the same chat restamped 4, which is what a build without the step writes — 0.13.0
+  starts, lists the chat it can read, and the one holding `max` is missing.
+- **The console probe wrote its settings at 4** in three scenarios, which this build
+  would have migrated at the start, leaving a backup no scenario asked for. One constant
+  now, at the app's schema; `first-frame` and `user-theme` pass on the branch's build.
+- **Not measured**: a version older than 0.13.0 on the stamped data. Each has the downgrade
+  guard since schema versioning shipped, and reads `settings.json` first.
+- 3856 unit tests (+7), 253 `#[ignore]`.

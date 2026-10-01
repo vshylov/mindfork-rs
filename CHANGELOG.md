@@ -116,6 +116,18 @@ split by subsystem.
   tabs were cut at the edge, and the one you were on could be off the screen;
   now the tabs around it are shown, `…` where others are hidden.
 
+### Data
+- **`settings.json` 4 → 5, and the chat files 4 → 5**: `max` becomes a value
+  of the reasoning effort, which is kept in the settings, in a profile's
+  defaults and in every chat — in its own sampling and beside each reply made
+  under it. Nothing is rewritten — both steps stamp the version, because a
+  version that does not know the value cannot read the file that holds it:
+  0.13.0 would refuse such settings, and would leave a chat that holds the
+  value out of its list without saying so. As with every schema change, the
+  data is backed up before it is migrated; an older version refuses data this
+  one has written, saying a newer version made it, and that backup is the way
+  back. `profiles.json` stays at version 1.
+
 ## [0.13.0] — 2026-09-30
 
 **OpenRouter is a mode of its own.** One key for the assistant, impersonation,

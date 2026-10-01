@@ -1,0 +1,119 @@
+{
+  "v": 4,
+  "id": "7e1d4a90-3b52-4c68-9f0e-2a6b8c4d1e35",
+  "profile_id": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+  "title": "Effort at the top",
+  "created_at": "2026-09-30T09:00:00Z",
+  "modified_at": "2026-09-30T09:06:00Z",
+  "system_message": "You are an assistant.",
+  "character_names": {
+    "user": "You",
+    "assistant": "Assistant",
+    "system": "System"
+  },
+  "messages": [
+    {
+      "id": "b0000000-0000-0000-0000-000000000001",
+      "role": "user",
+      "text": "Think it through.",
+      "timestamp": "2026-09-30T09:00:00Z"
+    },
+    {
+      "id": "b0000000-0000-0000-0000-000000000002",
+      "role": "assistant",
+      "text": "Delegating one part.",
+      "thoughts": "The second half can be checked on its own.",
+      "tool_calls": [
+        {
+          "id": "call_1",
+          "name": "call_subagent",
+          "arguments": {
+            "system_message": "You are a careful reviewer.",
+            "message": "Check the second half."
+          },
+          "result": "It holds.",
+          "subagent": {
+            "id": "d0000000-0000-0000-0000-000000000001",
+            "kind": "subagent",
+            "title": "Check the second half.",
+            "created_at": "2026-09-30T09:01:00Z",
+            "finished_at": "2026-09-30T09:02:00Z",
+            "system_message": "You are a careful reviewer.",
+            "sampling_override": {
+              "reasoning_effort": "low"
+            },
+            "messages": [
+              {
+                "id": "d0000000-0000-0000-0000-00000000000a",
+                "role": "user",
+                "text": "Check the second half.",
+                "timestamp": "2026-09-30T09:01:00Z"
+              },
+              {
+                "id": "d0000000-0000-0000-0000-00000000000b",
+                "role": "assistant",
+                "text": "It holds.",
+                "timestamp": "2026-09-30T09:02:00Z",
+                "metadata": {
+                  "sampling": {
+                    "max_tokens": 16384,
+                    "reasoning_effort": "low"
+                  },
+                  "mode": "openrouter",
+                  "model": "anthropic/claude-opus-4.8",
+                  "provider": "Anthropic",
+                  "cost_nanos": 4210000,
+                  "finish": "stop"
+                }
+              }
+            ],
+            "outcome": "completed"
+          }
+        }
+      ],
+      "timestamp": "2026-09-30T09:01:00Z",
+      "metadata": {
+        "sampling": {
+          "max_tokens": 16384,
+          "reasoning_effort": "xhigh",
+          "thinking": true
+        },
+        "mode": "openrouter",
+        "model": "anthropic/claude-opus-4.8",
+        "provider": "Anthropic",
+        "cost_nanos": 18400000,
+        "finish": "stop"
+      }
+    },
+    {
+      "id": "b0000000-0000-0000-0000-000000000003",
+      "role": "tool",
+      "text": "It holds.",
+      "timestamp": "2026-09-30T09:02:00Z"
+    },
+    {
+      "id": "b0000000-0000-0000-0000-000000000004",
+      "role": "assistant",
+      "text": "Both halves hold.",
+      "timestamp": "2026-09-30T09:06:00Z",
+      "metadata": {
+        "sampling": {
+          "max_tokens": 16384,
+          "reasoning_effort": "xhigh",
+          "thinking": true
+        },
+        "mode": "openrouter",
+        "model": "anthropic/claude-opus-4.8",
+        "provider": "Anthropic",
+        "cost_nanos": 9100000,
+        "finish": "stop"
+      }
+    }
+  ],
+  "sampling_override": {
+    "max_tokens": 16384,
+    "reasoning_effort": "xhigh",
+    "thinking": true
+  },
+  "draft": ""
+}

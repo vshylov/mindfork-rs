@@ -1918,6 +1918,23 @@ version of this mistake; the colour mode is a field of its own, parsed by
 `lenient_theme_mode`, for that reason.
 — *colour modes — the full mode*, *a settings file the typed parse refuses*.
 
+**A rule kept where the data is stored is not read where the value is added.**
+"A new value of an existing enum is a breaking change" stood in the schema
+module, in the architecture and in this section, and the reasoning effort's
+`max` was still merged without a step: the variant was added in
+`entities/sampling.rs`, by a change about provider wires, in a file that says
+nothing of storage. Every test was green — today's reader reads today's value.
+What 0.13.0 did with it had to be measured on 0.13.0: the settings refused, and
+a chat holding the value was **skipped**, so the chat was missing from the list
+with one line in the log. Two things follow. Put the question at the point of
+change: a `match` with no wildcard arm over the enum, in the storage module's
+tests, naming the schema each variant arrived in — a new variant then does not
+compile until that is answered. And before a release, for each new value of a
+stored type, run the **previous** version's binary on a file that holds it;
+the file kinds fail differently, and the one that fails silently is the one a
+test of the current build cannot see.
+— *the `max` effort is a stored value*.
+
 **A fallback to the defaults on a read is a write in waiting.**
 `load_config().unwrap_or_default()` reads as "be forgiving", and what it does is
 hold the defaults in memory under the name of the user's data until something

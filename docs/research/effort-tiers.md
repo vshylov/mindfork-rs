@@ -277,6 +277,16 @@ Stage 1's five smokes, run again on this branch: unchanged.
   two configured answers for it were not read from there — `grok-4.3` lists
   `none` and was never sent it. **Measured and fixed** in its own task the same
   day, and larger than it looked: §9.
+- **`max` is a stored value, and this stage added it without a schema step.**
+  The effort is written into `settings.json`, a profile's defaults and every
+  chat file — beside each reply made under it — and a strict enum's new value
+  is a breaking change of the files that hold it (spec §12.2). Nothing in this
+  document asked what a version without the value does with such a file.
+  **Found while preparing the release, measured on the 0.13.0 binary and
+  fixed** before any release carried the value: 0.13.0 refuses the settings
+  and leaves a chat holding `max` out of its list in silence; `settings.json`
+  and the chat files are now stamped 4 → 5
+  ([docs/journal/storage.md](../journal/storage.md)).
 
 ## 9. xAI: the list is read, not configured
 

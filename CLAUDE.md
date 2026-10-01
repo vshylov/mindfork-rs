@@ -29,7 +29,7 @@ Two rules that follow from that:
   and from the code. Loading either whole spends context on twelve chapters to
   use one.
 - **The engineering journal is per area.** What was done, why, what was measured
-  and what was rejected lives in `docs/journal/<area>.md` — 556 entries, split by
+  and what was rejected lives in `docs/journal/<area>.md` — 570 entries, split by
   subsystem. Read the file for the area you are touching; grep across them when
   hunting a specific past decision.
 
@@ -179,7 +179,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-10-01, version 0.13.0)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3849 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **3856 unit tests
 green, 253 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
@@ -192,6 +192,11 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **The `max` effort is a stored value** — added with no schema step: 0.13.0,
+  measured, refuses settings that hold it and leaves a chat that holds it out of
+  its list in silence. `settings.json` and the chat files are stamped 4 → 5, and
+  a new effort does not compile until its schema is named. Live **GO**, control
+  red (spec §12.2, [docs/journal/storage.md](docs/journal/storage.md)).
 - **Grok's efforts are read from xAI's list** — `OpenAiClient::for_xai` asks
   `GET /models/{name}` (an alias resolved): a muted turn is `none` on `grok-4.3`
   and `low` on 4.5–4.7, where it was the default `high`; `max` is `xhigh`; a
@@ -383,12 +388,6 @@ being recent is dropped, not shortened.
   item closed with 0.10.1 — `cargo install mindfork`
   ([docs/research/public-release-readiness.md](docs/research/public-release-readiness.md) §5,
   [docs/journal/release.md](docs/journal/release.md)).
-- **A chart's line said "shown" to a model that takes no images** — `python_exec`
-  wrote the claim before the loop knew, and the loop's no-vision note contradicted it in
-  the same result. The loop, which alone has the vision answer and the prepared pixels,
-  now ends the image's line (`ToolImage.entry`) with its fate; the shown text is
-  byte-identical. Live **GO** on OpenRouter, both arms (spec §9.10,
-  [docs/journal/tools.md](docs/journal/tools.md)).
 - **A chat's history images, on an engine that takes none** — replayed every turn,
   they got each turn refused (`500` from llama.cpp without a projector, `404` from a
   gateway). On the engine's "no" the request carries a marker per image instead —

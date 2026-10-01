@@ -1,0 +1,88 @@
+{
+  "schema_version": 4,
+  "default_sampling": {
+    "temperature": 0.5,
+    "max_tokens": 16384,
+    "reasoning_effort": "xhigh",
+    "thinking": true
+  },
+  "impersonation_sampling": {
+    "max_tokens": 1024,
+    "reasoning_effort": "minimal",
+    "thinking": false
+  },
+  "engine": {
+    "mode": "openrouter",
+    "managed": {
+      "model_path": "D:/models/gemma-4-31b-it.gguf",
+      "gpu_layers": 99,
+      "context_size": 16384,
+      "port": 8000,
+      "sessions": 1,
+      "concurrent_calls": 1
+    },
+    "external": {
+      "url": "http://127.0.0.1:8000/v1",
+      "model_name": null,
+      "sessions": 1,
+      "concurrent_calls": 1,
+      "api_key_env": null
+    },
+    "claude": {
+      "model_name": "claude-opus-4-8",
+      "api_key_env": null,
+      "url": null,
+      "sessions": 1,
+      "concurrent_calls": 4
+    },
+    "openrouter": {
+      "model_name": "anthropic/claude-opus-4.8",
+      "api_key_env": "OPENROUTER_API_KEY",
+      "url": null,
+      "sessions": 2,
+      "concurrent_calls": 4
+    }
+  },
+  "impersonation_engine": {
+    "mode": "shared"
+  },
+  "embed": {
+    "mode": "openrouter",
+    "managed": {
+      "model_path": "D:/models/bge-m3-Q8_0.gguf",
+      "gpu_layers": 99,
+      "port": 8001
+    },
+    "openrouter": {
+      "model_name": "baai/bge-m3",
+      "api_key_env": null,
+      "url": null,
+      "sessions": 1,
+      "concurrent_calls": 4
+    },
+    "convention": "none"
+  },
+  "openrouter": {
+    "attribution": false
+  },
+  "max_tool_rounds": 32,
+  "tools": {
+    "web_enabled": true
+  },
+  "tts": {
+    "mode": "openrouter",
+    "speed": 1.0
+  },
+  "video": {
+    "provider": "openrouter",
+    "openrouter": {
+      "model_name": "google/gemini-3.5-flash",
+      "url": null,
+      "api_key_env": null
+    }
+  },
+  "interface": {
+    "input_max_rows": 6,
+    "theme_mode": "full"
+  }
+}

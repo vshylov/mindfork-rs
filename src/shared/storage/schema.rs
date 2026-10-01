@@ -15,7 +15,8 @@
 //! entry (the "Data" rubric). **A new value of an existing enum is breaking**,
 //! though nothing in the file moves: an older binary fails the parse of the
 //! whole file on a value it does not know (docs/lessons.md §8), so the bump is
-//! what makes its refusal say "a newer version" — see [`settings_to_v4`].
+//! what makes its refusal say "a newer version" — see [`settings_to_v4`] and
+//! [`settings_to_v5`].
 
 use std::cmp::Ordering;
 
@@ -25,11 +26,11 @@ use serde_json::Value;
 /// Schema version of `settings.json`. Matches [`crate::shared::config::SCHEMA_VERSION`]
 /// (the default of the `AppConfig.schema_version` field) — the invariant is checked by
 /// a test.
-pub const SETTINGS_SCHEMA: u32 = 4;
+pub const SETTINGS_SCHEMA: u32 = 5;
 /// Schema version of `profiles.json`.
 pub const PROFILES_SCHEMA: u32 = 1;
 /// Schema version of a chat file `chats/<id>.json`.
-pub const CHAT_SCHEMA: u32 = 4;
+pub const CHAT_SCHEMA: u32 = 5;
 /// SQLite schema version (`PRAGMA user_version`). The DB migration runner is in
 /// [`crate::shared::storage::db`] (baseline 0→1 + steps in transactions).
 pub const DB_SCHEMA: u32 = 1;
@@ -207,6 +208,28 @@ fn settings_to_v4(mut v: Value) -> Result<Value> {
     Ok(v)
 }
 
+/// `settings.json` 4→5: **nothing in the file changes** — the version is what
+/// changes, as in [`settings_to_v4`]. 5 is the first schema in which a
+/// `reasoning_effort` may read `"max"` (spec §8.1), and the effort scale is a
+/// strict enum: 0.13.0 fails the parse of the whole file on that value and
+/// refuses to start naming an unknown variant.
+///
+/// The stamp answers for `profiles.json` too, which has no step of its own. A
+/// profile's `default_sampling` may hold the value, and 0.13.0 refuses that
+/// file the same way — but `settings.json` is the file a start reads first
+/// ([`crate::features::data_migration`]), so with the version raised the
+/// refusal is made there, for every root this version has started on, before
+/// `profiles.json` is opened. A step for the profiles would have been the
+/// first change of that file's shape (a bare array has nowhere to carry a
+/// version), bought for a refusal that is already made.
+///
+/// The chat files take the same stamp for a reason of their own — see
+/// [`super::chat_steps::chat_to_v5`].
+fn settings_to_v5(mut v: Value) -> Result<Value> {
+    v["schema_version"] = Value::from(5);
+    Ok(v)
+}
+
 const SETTINGS_STEPS: &[Step] = &[
     Step {
         to: 2,
@@ -223,10 +246,15 @@ const SETTINGS_STEPS: &[Step] = &[
         summary: "a slot's mode may name the OpenRouter gateway",
         apply: settings_to_v4,
     },
+    Step {
+        to: 5,
+        summary: "a reasoning effort may read max",
+        apply: settings_to_v5,
+    },
 ];
 
-/// The registry of artifacts. `settings.json` is at 4 (three steps), the chat files
-/// at 4; `profiles.json` is still at 1 with no steps.
+/// The registry of artifacts. `settings.json` is at 5 (four steps), the chat files
+/// at 5 (four); `profiles.json` is still at 1 with no steps.
 pub fn settings_artifact() -> JsonArtifact {
     JsonArtifact {
         name: "settings.json",
@@ -261,6 +289,11 @@ const CHAT_STEPS: &[Step] = &[
         summary: "a run title the old 100-character cap cut gets its tail back",
         apply: super::chat_steps::chat_to_v4,
     },
+    Step {
+        to: 5,
+        summary: "a reasoning effort may read max",
+        apply: super::chat_steps::chat_to_v5,
+    },
 ];
 
 pub fn chat_artifact() -> JsonArtifact {
@@ -272,9 +305,40 @@ pub fn chat_artifact() -> JsonArtifact {
     }
 }
 
+/// The paths of `fixture` that `read_back` — the fixture parsed into its typed
+/// structure and serialized again — does not hold with the same value: keys the
+/// reader ignored, and values it changed. For the golden fixtures' own tests.
+#[cfg(test)]
+pub(super) fn dropped_paths(fixture: &Value, read_back: &Value) -> Vec<String> {
+    fn walk(at: &str, fixture: &Value, read_back: &Value, out: &mut Vec<String>) {
+        match (fixture, read_back) {
+            (Value::Object(want), Value::Object(got)) => {
+                for (key, value) in want {
+                    let path = format!("{at}/{key}");
+                    match got.get(key) {
+                        Some(kept) => walk(&path, value, kept, out),
+                        None => out.push(path),
+                    }
+                }
+            }
+            (Value::Array(want), Value::Array(got)) if want.len() == got.len() => {
+                for (i, (value, kept)) in want.iter().zip(got).enumerate() {
+                    walk(&format!("{at}/{i}"), value, kept, out);
+                }
+            }
+            (want, got) if want == got => {}
+            _ => out.push(at.to_string()),
+        }
+    }
+    let mut out = Vec::new();
+    walk("", fixture, read_back, &mut out);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::entities::sampling::ReasoningEffort;
     use serde_json::json;
 
     #[test]
@@ -365,23 +429,20 @@ mod tests {
 
     #[test]
     fn real_registry_versions_and_steps() {
-        // Settings took three real steps (the sub-agent's timeout, the reply
-        // budget that has to cover reasoning, then the version that lets a mode
-        // name the OpenRouter gateway); chats took three (the dialogue-run
-        // stamp, spec §9.13, then the cut run titles, spec §11.2); profiles
-        // are still dormant.
+        // Settings took four real steps (the sub-agent's timeout, the reply
+        // budget that has to cover reasoning, the version that lets a mode
+        // name the OpenRouter gateway, then the one that lets an effort read
+        // `max`); chats took four (the sub-agent transcripts, the dialogue-run
+        // stamp, spec §9.13, the cut run titles, spec §11.2, then the same
+        // `max` stamp); profiles are still dormant.
         let settings = settings_artifact();
-        assert_eq!(settings.current, 4);
-        assert_eq!(settings.steps.len(), 3);
-        assert_eq!(settings.steps[0].to, 2);
-        assert_eq!(settings.steps[1].to, 3);
-        assert_eq!(settings.steps[2].to, 4);
+        assert_eq!(settings.current, 5);
+        let reached: Vec<u32> = settings.steps.iter().map(|s| s.to).collect();
+        assert_eq!(reached, [2, 3, 4, 5]);
         let chats = chat_artifact();
-        assert_eq!(chats.current, 4);
-        assert_eq!(chats.steps.len(), 3);
-        assert_eq!(chats.steps[0].to, 2);
-        assert_eq!(chats.steps[1].to, 3);
-        assert_eq!(chats.steps[2].to, 4);
+        assert_eq!(chats.current, 5);
+        let reached: Vec<u32> = chats.steps.iter().map(|s| s.to).collect();
+        assert_eq!(reached, [2, 3, 4, 5]);
         let profiles = profiles_artifact();
         assert_eq!(profiles.current, 1);
         assert!(profiles.steps.is_empty());
@@ -507,7 +568,7 @@ mod tests {
     #[test]
     fn settings_step_to_v4_stamps_the_version_and_touches_nothing_else() {
         let before: Value = serde_json::from_str(V3_SETTINGS).unwrap();
-        let after = settings_artifact().apply_steps(before.clone(), 3).unwrap();
+        let after = settings_to_v4(before.clone()).unwrap();
         assert_eq!(after["schema_version"], json!(4));
         let mut restamped = after.clone();
         restamped["schema_version"] = json!(3);
@@ -537,7 +598,7 @@ mod tests {
         let written = serde_json::to_value(&cfg).unwrap();
         assert_eq!(written["engine"]["mode"], json!("openrouter"));
         assert_eq!(written["impersonation_engine"]["mode"], json!("openrouter"));
-        assert_eq!(written["schema_version"], json!(4));
+        assert_eq!(written["schema_version"], json!(SETTINGS_SCHEMA));
 
         // The reader 0.12.0 ships: the same artifact, one step shorter.
         let previous = JsonArtifact {
@@ -548,12 +609,138 @@ mod tests {
         };
         assert_eq!(
             previous.assess(&written),
-            Assessment::Downgrade { from: 4 },
+            Assessment::Downgrade {
+                from: SETTINGS_SCHEMA
+            },
             "refused as newer, not parsed into an unknown variant"
         );
         // Today's reader takes it as it is.
         assert_eq!(settings_artifact().assess(&written), Assessment::UpToDate);
         let back: crate::shared::config::AppConfig = serde_json::from_value(written).unwrap();
         assert_eq!(back, cfg);
+    }
+
+    /// `settings.json` as 0.13.0 wrote it: the golden v4 shape — the slots on
+    /// the gateway, and the effort at `xhigh`, the top of the scale that
+    /// version knew. The 0.13.0 binary starts on it (the journal has the run).
+    const V4_SETTINGS: &str = include_str!("fixtures/settings_v4.json");
+
+    /// A golden file proves something only while every key in it is one the
+    /// reader takes: a misspelt key is ignored, not refused, and the fixture
+    /// would then pin nothing about the field it meant.
+    #[test]
+    fn the_v4_settings_fixture_holds_nothing_the_config_drops() {
+        let fixture: Value = serde_json::from_str(V4_SETTINGS).unwrap();
+        let cfg: crate::shared::config::AppConfig =
+            serde_json::from_value(fixture.clone()).unwrap();
+        let read_back = serde_json::to_value(&cfg).unwrap();
+        assert_eq!(dropped_paths(&fixture, &read_back), Vec::<String>::new());
+    }
+
+    /// 4→5 moves nothing, like 3→4: what changes is what 0.13.0 says about
+    /// the file.
+    #[test]
+    fn settings_step_to_v5_stamps_the_version_and_touches_nothing_else() {
+        let before: Value = serde_json::from_str(V4_SETTINGS).unwrap();
+        let after = settings_artifact().apply_steps(before.clone(), 4).unwrap();
+        assert_eq!(after["schema_version"], json!(5));
+        let mut restamped = after.clone();
+        restamped["schema_version"] = json!(4);
+        assert_eq!(restamped, before, "every other value is where it was");
+
+        // Nobody is moved to the new value: the effort stays what was chosen.
+        let cfg: crate::shared::config::AppConfig = serde_json::from_value(after).unwrap();
+        assert_eq!(
+            cfg.default_sampling.reasoning_effort,
+            Some(ReasoningEffort::XHigh)
+        );
+        assert_eq!(
+            cfg.impersonation_sampling.reasoning_effort,
+            Some(ReasoningEffort::Minimal)
+        );
+    }
+
+    /// The schema of `settings.json` and of a chat file — one number so far —
+    /// in which a value of the effort scale became one a file may hold.
+    ///
+    /// **No wildcard arm, on purpose.** The effort is a strict enum stored in
+    /// three kinds of file, so a new variant is a breaking change of all of
+    /// them (the module's bump policy), and nothing else in the build says so:
+    /// `max` was added with every test green and no step, and 0.13.0 dropped
+    /// the chats that held it from its list. A variant added to
+    /// [`ReasoningEffort`] stops this function compiling until its author
+    /// names the schema it arrives in — and writes that schema's steps.
+    fn effort_arrived_in(effort: ReasoningEffort) -> u32 {
+        match effort {
+            ReasoningEffort::None
+            | ReasoningEffort::Minimal
+            | ReasoningEffort::Low
+            | ReasoningEffort::Medium
+            | ReasoningEffort::High
+            | ReasoningEffort::XHigh => 1,
+            ReasoningEffort::Max => 5,
+        }
+    }
+
+    /// The reader a version at schema `current` ships: today's artifact, as
+    /// many steps shorter as it is older.
+    fn reader_at(art: JsonArtifact, current: u32) -> JsonArtifact {
+        let known = art.steps.iter().filter(|s| s.to <= current).count();
+        JsonArtifact {
+            current,
+            steps: &art.steps[..known],
+            ..art
+        }
+    }
+
+    /// The reason for both stamps, from the other side: a file holding a value
+    /// of the scale is, to every reader older than the value, a **newer
+    /// version** — refused before it is parsed, where the parse would have
+    /// refused the settings as an unknown variant and skipped the chat.
+    #[test]
+    fn a_file_holding_an_effort_is_a_newer_version_to_a_reader_older_than_it() {
+        for effort in [
+            ReasoningEffort::None,
+            ReasoningEffort::Minimal,
+            ReasoningEffort::Low,
+            ReasoningEffort::Medium,
+            ReasoningEffort::High,
+            ReasoningEffort::XHigh,
+            ReasoningEffort::Max,
+        ] {
+            let since = effort_arrived_in(effort);
+            assert!(
+                since <= SETTINGS_SCHEMA && since <= CHAT_SCHEMA,
+                "{effort:?}"
+            );
+
+            let mut cfg = crate::shared::config::AppConfig::default();
+            cfg.default_sampling.reasoning_effort = Some(effort);
+            let settings = serde_json::to_value(&cfg).unwrap();
+            let profile = crate::entities::profile::Profile::new("A", "s");
+            let mut chat = crate::entities::chat::Chat::from_profile(&profile, "t");
+            chat.sampling_override = Some(crate::entities::sampling::SamplingConfig {
+                reasoning_effort: Some(effort),
+                ..Default::default()
+            });
+            let chat = serde_json::to_value(&chat).unwrap();
+            assert_eq!(settings_artifact().assess(&settings), Assessment::UpToDate);
+            assert_eq!(chat_artifact().assess(&chat), Assessment::UpToDate);
+
+            for older in 1..since {
+                assert_eq!(
+                    reader_at(settings_artifact(), older).assess(&settings),
+                    Assessment::Downgrade {
+                        from: SETTINGS_SCHEMA
+                    },
+                    "{effort:?}: settings.json read at schema {older}"
+                );
+                assert_eq!(
+                    reader_at(chat_artifact(), older).assess(&chat),
+                    Assessment::Downgrade { from: CHAT_SCHEMA },
+                    "{effort:?}: a chat file read at schema {older}"
+                );
+            }
+        }
     }
 }
