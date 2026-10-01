@@ -1669,6 +1669,11 @@ runs on Responses (`ResponsesClient`): the system message → top-level
 `instructions`, history → an `input` array of elements,
 `max_tokens`→`max_output_tokens`, `store:false`, a flat function-tool with
 `strict:false`; reasoning summary/`effort`/`verbosity` (see "Thoughts (CoT)").
+A muted turn's `effort: "none"` is a value a model may not have: `ResponsesClient::open`
+answers the `400` that refuses it (`wire::refuses_effort_none`) by asking once more
+with the lowest effort the refusal lists (`wire::lowest_listed_effort`,
+`RespRequest::respell_effort_none`), and keeps what was accepted in
+`muted_effort` for the client's lifetime (spec §8.1).
 The **Gemini** cloud runs on native `generateContent` (`GeminiClient`): system →
 top-level `systemInstruction`, `user`/`model` roles (a tool result →
 `functionResponse` in user), a call → `functionCall` (an args object, no

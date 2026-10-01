@@ -37,6 +37,12 @@ split by subsystem.
   80×24 nothing changes.
 
 ### Fixed
+- **Chats get their titles again on an OpenAI model that cannot switch its
+  reasoning off.** `gpt-6.1-sol` refuses the request the app makes for a
+  title — and for the history summary, a message written on your behalf, a
+  page's retelling and a directed dialogue's checkpoints — because those ask
+  the model not to reason, and it has no such setting; `gpt-6-sol` has. On
+  such a model they are now asked with the lowest reasoning effort it offers.
 - **The input box no longer draws over the status bar.** In a window of seven
   rows or fewer the box lost its row of text and its prompt and cursor landed
   on the row below — the status bar, or outside the terminal.

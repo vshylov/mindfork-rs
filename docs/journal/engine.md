@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (80)
+## Entries (81)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -92,6 +92,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: embeddings through the gateway — stage 2 of the OpenRouter mode (done)
 - Post-M9: speech through the gateway — stage 3 of the OpenRouter mode (done)
 - Post-M9: a video through the gateway — stage 4 of the OpenRouter mode, track complete (done)
+- Post-M9: a muted turn on an OpenAI model that has no "none" (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -5519,3 +5520,96 @@ for the tool's part.
 **Gates**: fmt / clippy / test green — **3751 unit tests, 236 `#[ignore]`**
 (+27 unit tests, +8 live smokes). The screenshots of the settings were redrawn: the
 tools' section counts a row more.
+
+### Post-M9: a muted turn on an OpenAI model that has no "none" (done)
+
+**What.** The user's report: after moving the OpenAI cloud from `gpt-6-sol` to
+`gpt-6.1-sol`, chats stopped getting titles. The log had the answer twice that day,
+word for word:
+
+```
+status=400 Bad Request — "Unsupported value: 'none' is not supported with the
+'gpt-6.1-sol' model. Supported values are: 'low', 'medium', 'high', 'xhigh', and
+'max'." param: reasoning.effort, code: unsupported_value
+```
+
+The title mutes reasoning with `reasoning_budget: Some(0)`, and the Responses wire
+turned that into `reasoning.effort: "none"` for every model. An automatic title's
+failure is a log line by design (spec §6.8), so the chat simply stayed untitled. The
+same body is every muted turn's — the compaction roll, impersonation, a page summary
+of `fetch`, a director's checkpoint, the muted re-ask of an empty background turn —
+so all of them failed on that model while ordinary chat worked: the defect class
+lessons §3 already names for xAI and for a gateway, in the one client that had been
+left out of both fixes.
+
+**Measured (2026-10-01, the real API, the title's own body, non-streaming so the
+usage is in the answer).**
+
+| `reasoning.effort` | `gpt-6-sol` | `gpt-6.1-sol` |
+|---|---|---|
+| `none` | 200, 0 reasoning tokens | **400** `unsupported_value` |
+| `minimal` | 400 (lists `none`, `low`…`max`) | 400 (lists `low`…`max`) |
+| `low` | 200, 17 | 200, **0** (5 of 5) |
+| omitted | 200, echoes `medium`, 29 | 200, echoes `medium`, 29 / 31 / 42 / 42 / 96 |
+
+So the value is a property of the model, not of the provider; nothing publishes it
+(OpenAI's model list has no capability field — the model picker track measured
+that); and the refusal names what the model does take. The lowest of those is the
+closest thing to "off": on `gpt-6.1-sol` it reasons nothing for a title, where the
+field left out reasons at `medium` and spends up to 96 tokens of a reply cap that
+includes them.
+
+**Decisions.**
+- **Answer the refusal, do not predict it.** No list of models that lack `none`: it
+  would be wrong the week after it is written (the vision-allowlist argument on
+  `ResponsesClient::vision`). `ResponsesClient::open` sends the request as built; a
+  `400` that names `reasoning.effort` or quotes `'none'`
+  (`wire::refuses_effort_none`), to a body that carried `"none"`, is asked once more.
+- **The lowest listed effort, read off the refusal** (`wire::lowest_listed_effort`,
+  against the ladder the gateway mode already uses, `GATEWAY_EFFORTS`; quoted words
+  only, so "too low" in a sentence is not a value). A refusal that lists nothing gets
+  the request with no effort — and then no `reasoning` object and no `include`
+  either, the rule `build_request` follows. Omitting the field outright was the
+  other option and the table rejects it: it is the model's default depth, billed.
+- **Remembered only once accepted** (`muted_effort: OnceLock`, per client — a
+  changed model gets a new client). The Chat Completions memo is set before its
+  second attempt; here a refusal read wrongly would otherwise leave every later muted
+  turn reasoning at the default on a model that takes `"none"`. Now it costs one
+  round trip, the same error surfaces, and the next turn starts from `"none"` again.
+- **A user's own effort is not substituted.** `minimal` is refused by both models,
+  and was before this change; the refusal reaches the feed with the values the model
+  takes. The recovery is for the value nobody typed. The settings still offer
+  `none`/`minimal` on this provider and do not know `max` — a separate task.
+- **`build_request` is untouched**, and so is every test that calls it: the client
+  respells the built body (`RespRequest::respell_effort_none`), which also keeps a
+  summary request standing when the settings' `none` rides beside `thinking: true`.
+
+**Tests.** Wire: the lowest listed effort from the logged refusal, from a list in
+another quoting, from a message that quotes only the refused value and the model's
+name, from prose; the refusal's detection across status and subject; the respelling
+with an effort, with none, beside a summary, and on a body that never asked. Client,
+over a real socket (`sse_stub::serve_in_turn` — canned answers in order, handing
+back each request's body): `none → low → low` across two turns with the memo set;
+a refusal that lists nothing answered with no `reasoning` object; another `400`
+reported after one request; a refused effort the user chose reported after one
+request; a substitute refused too is not remembered — `none → low → none`.
+
+**Smoke — GO** (2026-10-01; the OpenAI API with the user's key; Windows 11).
+`responses::live_tests`, the title's shape, both arms declared rather than guessed
+so neither can pass having proved nothing:
+- `a_muted_turn_survives_a_model_that_refuses_effort_none` on `gpt-6.1-sol` — two
+  turns through one client, both `Stop`, both *"How Database Indexes Work"*, 0
+  reasoning tokens; the client learned `Some("low")`. Before the change this request
+  is the `400` in the log above.
+- `a_muted_turn_on_a_model_that_takes_none_is_sent_as_before` on `gpt-6-sol` —
+  `Stop`, 0 reasoning tokens, nothing learned.
+- The client's older smokes on `gpt-6.1-sol`: generation, the image, the reasoning
+  summary and the tool round trip pass. `several_reasoning_items_round_trip…` does
+  not — it needs a reply with two reasoning items, which `gpt-6.1-sol` did not give
+  in eight attempts (0–1 each); on `gpt-5.6`, the model it was written on, it passes
+  at the first. A precondition of that smoke, not this change.
+
+**Docs.** spec §8.1; architecture §6; CHANGELOG (Fixed); lessons §3.
+
+**Gates**: fmt / clippy / test green — **3800 unit tests, 238 `#[ignore]`**
+(+11 unit tests, +2 live smokes).
