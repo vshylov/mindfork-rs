@@ -1489,7 +1489,7 @@
     "(для reasoning-моделей). Показываются отдельным сворачиваемым",
     "блоком (Ctrl+T)."
   ],
-  "ui.settings.sampling.desc.reasoning": "Усилие рассуждения для reasoning-моделей: none/minimal/low/medium/high/xhigh. Выше — глубже размышляет перед ответом, но медленнее. minimal/xhigh — расширенные ступени OpenAI. Значение, которого у модели нет, заменяется ближайшим из тех, что у неё есть.",
+  "ui.settings.sampling.desc.reasoning": "Усилие рассуждения для reasoning-моделей: none/minimal/low/medium/high/xhigh/max. Выше — глубже размышляет перед ответом, но медленнее и дороже. Всех ступеней нет ни у одной модели: значение, которого у модели нет, заменяется ближайшим из тех, что у неё есть.",
   "ui.settings.sampling.desc.verbosity": [
     "Многословность ответа (OpenAI Responses): low/medium/high. Регулирует",
     "длину ответа отдельно от температуры. Только для облака OpenAI."

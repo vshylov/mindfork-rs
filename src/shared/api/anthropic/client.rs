@@ -16,7 +16,8 @@ use crate::shared::api::contract::{
     ChatChunk, ChatRequest, ChatStream, EngineBackend, FinishReason, ThinkingRef, TokenUsage,
     ToolCallDelta, VisionSupport,
 };
-use crate::shared::api::error::{self, SUBJECT_ANTHROPIC};
+use crate::shared::api::effort::{self, EffortMemo, EffortWire};
+use crate::shared::api::error::{self, EngineError, SUBJECT_ANTHROPIC};
 use crate::shared::api::http;
 
 /// The Anthropic API version (the mandatory `anthropic-version` header). Shared
@@ -32,6 +33,11 @@ pub struct AnthropicClient {
     base_url: String,
     api_key: String,
     model: String,
+    /// The effort levels this model has refused, and what it took in each
+    /// one's place. The API's vocabulary has `xhigh` and `max`; which of them a
+    /// model has is its own — the 4.6 generation has no `xhigh` — and its
+    /// refusal is the only thing that says (docs/research/effort-tiers.md §2).
+    efforts: EffortMemo,
 }
 
 impl AnthropicClient {
@@ -46,7 +52,57 @@ impl AnthropicClient {
             base_url,
             api_key: api_key.into(),
             model: model.into(),
+            efforts: EffortMemo::default(),
         }
+    }
+
+    /// What this model has been found to take in place of the effort `wish` —
+    /// unset while it has not refused it. For the tests and smokes, which must
+    /// tell a turn that survived a refusal from one that never met it.
+    #[cfg(test)]
+    pub(super) fn learned(&self, wish: &str) -> Option<Option<&'static str>> {
+        self.efforts.instead_of(wish)
+    }
+}
+
+impl EffortWire for AnthropicClient {
+    type Body = wire::AntRequest;
+
+    fn model(&self) -> &str {
+        &self.model
+    }
+
+    fn efforts(&self) -> &EffortMemo {
+        &self.efforts
+    }
+
+    async fn send(
+        &self,
+        body: &wire::AntRequest,
+        cancel: &CancellationToken,
+    ) -> Result<Option<reqwest::Response>, EngineError> {
+        let url = format!("{}/v1/messages", self.base_url);
+        let request = self
+            .http
+            .post(&url)
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", ANTHROPIC_VERSION)
+            .json(body);
+        let Some(response) = http::send_cancellable(request, cancel).await? else {
+            return Ok(None);
+        };
+        error::check_status(SUBJECT_ANTHROPIC, response)
+            .await
+            .map(Some)
+    }
+
+    /// The nearest level the refusal itself lists; with nothing listed the
+    /// refusal is the answer.
+    fn answer(&self, wish: &'static str, refused: &EngineError) -> Option<Option<&'static str>> {
+        if !wire::refuses_effort(refused) {
+            return None;
+        }
+        effort::nearest(wish, &effort::listed(&refused.message)).map(Some)
     }
 }
 
@@ -65,19 +121,12 @@ fn map_stop_reason(s: &str) -> FinishReason {
 #[async_trait::async_trait]
 impl EngineBackend for AnthropicClient {
     async fn chat_stream(&self, req: ChatRequest, cancel: CancellationToken) -> Result<ChatStream> {
-        let body = wire::build_request(&req, &self.model, true);
-        let url = format!("{}/v1/messages", self.base_url);
-
-        let request = self
-            .http
-            .post(&url)
-            .header("x-api-key", &self.api_key)
-            .header("anthropic-version", ANTHROPIC_VERSION)
-            .json(&body);
-        let Some(response) = http::send_cancellable(request, &cancel).await? else {
+        // An effort level the model does not have — `xhigh` on the 4.6
+        // generation — is asked again as the nearest its refusal lists.
+        let mut body = wire::build_request(&req, &self.model, true);
+        let Some(response) = effort::send_asking_again(self, &mut body, &cancel).await? else {
             return Ok(http::cancelled_stream());
         };
-        let response = error::check_status(SUBJECT_ANTHROPIC, response).await?;
 
         let mut events = response.bytes_stream().eventsource();
 
@@ -304,6 +353,79 @@ mod tests {
             chunks.last(),
             Some(&ChatChunk::Finished(FinishReason::Filtered))
         );
+    }
+
+    /// A whole reply: one word, and the reason it stopped.
+    const REPLY: sse_stub::Canned = (
+        "200 OK",
+        "text/event-stream",
+        "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"pong\"}}\n\n\
+         data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":2}}\n\n",
+    );
+
+    /// A thinking turn at the settings' `xhigh`.
+    fn thinking_at_xhigh() -> ChatRequest {
+        let mut req = sse_stub::hello();
+        req.sampling.thinking = Some(true);
+        req.sampling.reasoning_effort = Some(crate::entities::sampling::ReasoningEffort::XHigh);
+        req
+    }
+
+    /// The 4.6 generation has `max` and no `xhigh`, and says so: the turn is
+    /// asked again at the nearest level the refusal lists — `high`, the lower of
+    /// the two it stands between — and the next turn asks for that at once.
+    #[tokio::test]
+    async fn a_refused_level_is_asked_again_as_the_nearest_listed() {
+        let (url, stub) = sse_stub::serve_in_turn(&[
+            (sse_stub::BAD_REQUEST, sse_stub::JSON, wire::EFFORT_REFUSED),
+            REPLY,
+            REPLY,
+        ]);
+        let client = AnthropicClient::new(url, "k", "claude-sonnet-4-6");
+        for _ in 0..2 {
+            let chunks = collect(
+                client
+                    .chat_stream(thinking_at_xhigh(), CancellationToken::new())
+                    .await
+                    .expect("the turn survives the refusal"),
+            )
+            .await;
+            assert!(
+                chunks.contains(&ChatChunk::Text("pong".into())),
+                "{chunks:?}"
+            );
+        }
+        let efforts: Vec<serde_json::Value> = stub
+            .join()
+            .unwrap()
+            .iter()
+            .map(|b| {
+                let body: serde_json::Value = serde_json::from_str(b).unwrap();
+                body["output_config"]["effort"].clone()
+            })
+            .collect();
+        assert_eq!(efforts, ["xhigh", "high", "high"]);
+        assert_eq!(client.learned("xhigh"), Some(Some("high")));
+    }
+
+    /// The other `400` a thinking turn can meet is not about the level, and is
+    /// reported as it came, after one request.
+    #[tokio::test]
+    async fn another_refusal_of_a_thinking_turn_is_reported_as_it_came() {
+        let (url, stub) = sse_stub::serve_in_turn(&[(
+            sse_stub::BAD_REQUEST,
+            sse_stub::JSON,
+            r#"{"type":"error","error":{"type":"invalid_request_error","message":"adaptive thinking is not supported on this model"}}"#,
+        )]);
+        let client = AnthropicClient::new(url, "k", "claude-haiku-4-5");
+        let err = client
+            .chat_stream(thinking_at_xhigh(), CancellationToken::new())
+            .await
+            .err()
+            .expect("the refusal is the answer");
+        assert!(err.to_string().contains("adaptive thinking"), "{err}");
+        assert_eq!(stub.join().unwrap().len(), 1);
+        assert_eq!(client.learned("xhigh"), None);
     }
 
     #[test]

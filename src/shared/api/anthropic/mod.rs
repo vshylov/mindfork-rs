@@ -3,6 +3,8 @@
 //! via [`AnthropicClient`]. See ADR 0004, Phase 2.
 
 pub mod client;
+#[cfg(test)]
+mod live_tests;
 mod wire;
 
 pub(crate) use client::ANTHROPIC_VERSION;

@@ -1477,8 +1477,8 @@ Details:
   `signature_delta`→`ChatChunk::ThoughtsSignature`. **OpenAI Responses:**
   `reasoning.summary` (we send `"detailed"` — more reliable than `"auto"`) →
   `response.reasoning_summary_text.delta` (and `response.reasoning_text.delta`) →
-  `Thoughts`; depth is set via `reasoning.effort` (`ReasoningEffort` includes
-  `minimal`/`xhigh`). **Summaries are only delivered to verified OpenAI
+  `Thoughts`; depth is set via `reasoning.effort` (`ReasoningEffort`: `none`, then
+  `minimal`…`max`; which of them a model has is its own — §6, "A refused effort"). **Summaries are only delivered to verified OpenAI
   organizations** — otherwise the "thoughts" stream is empty (raw CoT is never
   delivered). `supported_sampling_fields(OpenAi)` =
   `max_tokens`+`thinking`+`reasoning_effort`+`verbosity`.
@@ -1661,7 +1661,7 @@ between mode and backend/protocol:
 | **gemini** | **`GeminiClient`** | **native `generateContent`** | `temperature`/`top_p`/`top_k`/penalties/`seed`/`max_tokens`+`thinking`/`reasoning_effort` |
 | **openai** | **`ResponsesClient`** | **Responses (`/v1/responses`)** | `max_tokens`+`thinking`+`reasoning_effort`+`verbosity` |
 | claude | `AnthropicClient` | Messages (`/v1/messages`) | `max_tokens`+`thinking`+`reasoning_effort` |
-| grok | `OpenAiClient` (`with_effort_none_omitted`) | Chat Completions | `temperature`/`top_p`/`max_tokens`/`seed`+`thinking`/`reasoning_effort` |
+| grok | `OpenAiClient` (`with_effort_none_omitted`, `with_effort_capped_at`) | Chat Completions | `temperature`/`top_p`/`max_tokens`/`seed`+`thinking`/`reasoning_effort` |
 | **openrouter** | **`OpenAiClient` (`for_openrouter`)** | **Chat Completions, the gateway's dialect** | `temperature`/`top_k`/`top_p`/`min_p`/`max_tokens`/`seed`/penalties/`repeat_penalty`+`thinking`/`reasoning_effort` — the ceiling, narrowed per model by the catalogue |
 
 **Chat Completions sampling** (`OpenAiClient`): for llama.cpp and xAI there is
@@ -1679,9 +1679,9 @@ Anthropic's bare one), `nearest`, the per-client `EffortMemo`, and
 its one attempt `send`, and `answer` — what a refusal offers in the value's
 place). It applies what the client has learned, sends, asks once more on an
 answered refusal, and records the pair only once the second request is accepted.
-`ResponsesClient` answers with the nearest listed value (`wire::refuses_effort`);
-`GeminiClient` with the level above the refused one (`wire::refuses_thinking_level`,
-`level_above`) — spec §8.1.
+`ResponsesClient` and `AnthropicClient` answer with the nearest listed value (each
+wire's `refuses_effort`); `GeminiClient` with the level above the refused one
+(`wire::refuses_thinking_level`, `level_above`) — spec §8.1.
 The **Gemini** cloud runs on native `generateContent` (`GeminiClient`): system →
 top-level `systemInstruction`, `user`/`model` roles (a tool result →
 `functionResponse` in user), a call → `functionCall` (an args object, no
@@ -1694,7 +1694,8 @@ endpoint already streams reasoning in `delta.reasoning_content` — the field
 `OpenAiClient` parses for llama.cpp — and takes a tool result back with no
 thinking signature at all, so `cloud_chat_setup` hands it a plain `OpenAiClient`
 (key + model + `with_effort_none_omitted`, since xAI rejects the *value*
-`reasoning_effort:"none"` the auxiliary turns ask for). `supported_sampling_fields(Grok)`
+`reasoning_effort:"none"` the auxiliary turns ask for, + `with_effort_capped_at(XHigh)`,
+since it rejects `"max"` as well and names nothing in its place). `supported_sampling_fields(Grok)`
 = `temperature`/`top_p`/`max_tokens`/`seed` + reasoning: the penalties are a hard
 `400` there and `top_k`/`min_p` are dropped silently. See
 docs/research/grok-xai-provider.md.

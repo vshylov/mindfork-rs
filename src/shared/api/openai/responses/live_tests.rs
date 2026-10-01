@@ -9,7 +9,8 @@
 //! Run every arm:
 //! `MINDFORK_OPENAI_KEY=… MINDFORK_LIVE_NO_EFFORT_NONE_MODEL=gpt-6.1-sol
 //! MINDFORK_LIVE_EFFORT_NONE_MODEL=gpt-6-sol
-//! MINDFORK_LIVE_NO_EFFORT_MINIMAL_MODEL=gpt-6.1-sol cargo test
+//! MINDFORK_LIVE_NO_EFFORT_MINIMAL_MODEL=gpt-6.1-sol
+//! MINDFORK_LIVE_NO_EFFORT_MAX_MODEL=gpt-5.5 cargo test
 //! responses::live_tests -- --ignored --nocapture --test-threads=1`.
 
 use futures_util::StreamExt;
@@ -175,5 +176,29 @@ async fn a_chosen_depth_the_model_lacks_becomes_the_nearest_it_has() {
     assert!(
         matches!(learned, Some(Some(_))),
         "{model} was declared to refuse \"minimal\" and to list what it takes: {learned:?}"
+    );
+}
+
+/// The scale's top tier on a model that stops below it —
+/// `MINDFORK_LIVE_NO_EFFORT_MAX_MODEL` declares one (`gpt-5.2`, `gpt-5.4`,
+/// `gpt-5.5` end at `xhigh`; measured 2026-10-01). The nearest it lists is
+/// below, never above: there is nothing above.
+#[tokio::test]
+#[ignore = "requires MINDFORK_OPENAI_KEY + MINDFORK_LIVE_NO_EFFORT_MAX_MODEL (an OpenAI model that refuses reasoning.effort \"max\")"]
+async fn the_top_tier_on_a_model_without_it_becomes_the_one_below() {
+    let Some((model, client)) = client_for("MINDFORK_LIVE_NO_EFFORT_MAX_MODEL") else {
+        return;
+    };
+    let (text, reasoning, finish) = turn(&client, turn_at(ReasoningEffort::Max)).await;
+    println!("{model}: finish={finish:?} reasoning_tokens={reasoning} reply={text}");
+    assert!(
+        finish == Some(FinishReason::Stop) && !text.trim().is_empty(),
+        "{model}: the turn must complete: finish={finish:?} text={text:?}"
+    );
+    let learned = client.learned("max");
+    println!("{model}: asked instead of \"max\": {learned:?}");
+    assert!(
+        matches!(learned, Some(Some(_))),
+        "{model} was declared to refuse \"max\" and to list what it takes: {learned:?}"
     );
 }

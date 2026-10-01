@@ -749,3 +749,38 @@ async fn a_key_is_accepted_refused_or_not_judged_at_all() {
         "no answer is not a refusal"
     );
 }
+
+/// xAI refuses `max` and names nothing in its place, so a client built for it
+/// sends `xhigh` for anything above — and leaves a depth under the ceiling, and
+/// a client with no ceiling, exactly as they were
+/// (docs/research/effort-tiers.md §2).
+#[tokio::test]
+async fn an_effort_above_the_ceiling_goes_out_as_the_ceiling() {
+    const ROUTES: &[Route] = &[("/v1/chat/completions", "200 OK", SSE, ONE_CHUNK)];
+    let at = |effort| {
+        turn(SamplingConfig {
+            reasoning_effort: Some(effort),
+            ..Default::default()
+        })
+    };
+    for (capped, asked, sent) in [
+        (true, ReasoningEffort::Max, "xhigh"),
+        (true, ReasoningEffort::XHigh, "xhigh"),
+        (true, ReasoningEffort::Low, "low"),
+        (false, ReasoningEffort::Max, "max"),
+    ] {
+        let (url, server) = stub(1, ROUTES);
+        let client = OpenAiClient::new(url)
+            .with_api_key(Some("k".into()))
+            .with_model(Some("grok-x".into()))
+            .with_effort_none_omitted(true);
+        let client = if capped {
+            client.with_effort_capped_at(ReasoningEffort::XHigh)
+        } else {
+            client
+        };
+        run(&client, at(asked)).await;
+        let body = chat_body(&server.join().unwrap());
+        assert_eq!(body["reasoning_effort"], sent, "capped={capped} {asked:?}");
+    }
+}

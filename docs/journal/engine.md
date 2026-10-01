@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (82)
+## Entries (83)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -94,6 +94,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a video through the gateway — stage 4 of the OpenRouter mode, track complete (done)
 - Post-M9: a muted turn on an OpenAI model that has no "none" (done)
 - Post-M9: an effort value a model does not have becomes the nearest it has — stage 1 (done)
+- Post-M9: the `max` effort, and Claude's own top tiers — stage 2, track complete (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -5718,3 +5719,67 @@ research, §4–§8.
 
 **Gates**: fmt / clippy / test green — **3815 unit tests, 241 `#[ignore]`**
 (+15 unit tests, +3 live smokes).
+
+### Post-M9: the `max` effort, and Claude's own top tiers — stage 2, track complete (done)
+
+**What.** The other half of the report the track began with: `gpt-6.1-sol` takes
+`max`, and the settings could not say it. `ReasoningEffort::Max` is the scale's
+seventh depth, and with it each wire's top is revisited
+([docs/research/effort-tiers.md](../research/effort-tiers.md) §8).
+
+**Per wire.**
+- **llama.cpp, Responses, the gateway** — the word as it is. A model below `max`
+  on Responses answers under stage 1's rule: `gpt-5.5` lists up to `xhigh` and
+  gets that.
+- **Anthropic** (fork E3: the API's own tiers). `output_config.effort` has had
+  `xhigh` and `max` since the mapping `XHigh → "high"` was written, so a chat set
+  to `xhigh` ran at `high`. Both go out as they are now. Which a **model** has is
+  its own, measured on nine: the 4.5 generation has no adaptive thinking at all;
+  `claude-opus-4-6` and `claude-sonnet-4-6` have `max` and no `xhigh`, and say so
+  with a list (*"Supported levels: high, low, max, medium."*); `claude-opus-4-7`
+  and everything newer take all five. `AnthropicClient` is the third `EffortWire`:
+  a refused level becomes the nearest listed — for `xhigh` between `high` and
+  `max`, the lower. `minimal` stays `low`: the API's schema has no such word.
+- **xAI** — `max` is `400 "Invalid reasoning effort."` on `grok-4.3`…`4.7`, with
+  nothing named. `OpenAiClient::with_effort_capped_at(XHigh)`, set where the Grok
+  client is built, beside `with_effort_none_omitted`. Configured rather than
+  learned (sub-fork, at the recommendation): the refusal has nothing to learn
+  from, and that client's request path already carries one learned recovery.
+  What keeps a configured answer honest is a control smoke — the same turn
+  without the ceiling must be refused; the day it is not, the ceiling goes.
+- **Gemini** — `max` rides as `high`, beside `xhigh`: both are schema errors
+  there.
+
+**Also.** The enum derives `Ord` — the variants' order is the scale's, which the
+ceiling compares with. The settings' cycle and menu have eight rows; the
+description in both locales lists the seven depths and says no model has them
+all. `set_sampling`'s enum has the tier, pinned to the type by a test that parses
+every value it offers.
+
+**Tests.** The scale: the wire word, the stored spelling both ways, the order.
+Anthropic, wire: the five levels across the scale, the respelling and removal,
+which `400` counts (the level's, not *"adaptive thinking is not supported"*);
+client, over a socket: `xhigh → high → high` with the memo set, the other `400`
+reported after one request. The ceiling, over a socket: `max` and `xhigh` capped,
+`low` untouched, `max` uncapped. Gemini: the two tiers above `high` as the level
+and as the budget. The settings: the cycle reaches `max` and wraps, and the menu
+is the same eight rows. `set_sampling`: every offered effort parses.
+
+**Smoke — GO** (2026-10-01; the Anthropic, OpenAI, xAI and Gemini APIs with the
+user's keys; Windows 11).
+- `anthropic::live_tests::a_level_the_model_lacks_becomes_the_nearest_it_lists`
+  on `claude-sonnet-4-6` — two thinking turns `Stop`, `xhigh → high` learned.
+- `…the_top_levels_are_sent_as_they_are` on `claude-sonnet-5-5` — `xhigh` and
+  `max` each `Stop`, nothing learned.
+- `responses::live_tests::the_top_tier_on_a_model_without_it_becomes_the_one_below`
+  on `gpt-5.5` — `Stop`, `max → xhigh` learned.
+- `xai_live_tests::the_top_tier_completes_under_the_ceiling` on `grok-4.7` —
+  `Stop`; `…the_top_tier_is_refused_without_the_ceiling` — the `400`, the control.
+- Stage 1's five smokes again, unchanged; the older Anthropic smokes 4 of 4 and
+  Grok's 4 of 4, for the reworked request path.
+
+**Docs.** spec §8.1; architecture §6; CHANGELOG (Added, Changed); the research
+§8, where the track is closed.
+
+**Gates**: fmt / clippy / test green — **3824 unit tests, 246 `#[ignore]`**
+(+9 unit tests, +5 live smokes).
