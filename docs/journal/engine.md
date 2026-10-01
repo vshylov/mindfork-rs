@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (84)
+## Entries (85)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -96,6 +96,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: an effort value a model does not have becomes the nearest it has — stage 1 (done)
 - Post-M9: the `max` effort, and Claude's own top tiers — stage 2, track complete (done)
 - Post-M9: thinking on the Claude 4.5 generation, which has no adaptive mode (done)
+- Post-M9: the efforts xAI lists, read instead of configured (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -5879,3 +5880,109 @@ the research §4, §8.
 
 **Gates**: fmt / clippy / test green — **3834 unit tests, 249 `#[ignore]`**
 (+5 unit tests, +1 live smoke).
+
+### Post-M9: the efforts xAI lists, read instead of configured (done)
+
+**What.** The item the effort-tiers track left open
+([docs/research/effort-tiers.md](../research/effort-tiers.md) §8, now §9): the
+Grok client's two answers about reasoning effort — `none` left out, `max` sent
+as `xhigh` — were configured for every model, while xAI publishes what each model
+takes. It was filed as "`grok-4.3` lists `none` and is never sent it". Measuring
+it found three more things in the same place.
+
+**Measured (2026-10-01, the real API).** `capabilities` rides on a model's
+entry in `GET /v1/models`, `/v1/models/{name}` and both `language-models` routes.
+
+| model | lists | default | the field left out | `none` | `minimal` | `max` |
+|---|---|---|---|---|---|---|
+| `grok-4.3` | `none`, `low`…`xhigh` | `low` | reasons | **0 reasoning tokens** | 200 | 400 |
+| `grok-4.5`, `4.6`, `4.7` | `low`…`xhigh` | `high` | reasons | 400 | 200 | 400 |
+| `grok-4.20-0309-reasoning`, `-non-reasoning`, `grok-build-0.1` | nothing | — | 200 | 400 | 400 | 400 |
+
+- The three without a list refuse the **parameter**, whatever the value: *"Model
+  grok-build-0.1 does not support parameter reasoningEffort."* So with any effort
+  chosen in the settings — one setting for every model — each ordinary turn on
+  them was that `400`.
+- A muted turn, four runs a cell: on `grok-4.3` the field left out reasons
+  300–437 tokens in 2.9–4.4 s, `none` 0 tokens in 0.7–0.8 s; on `grok-4.5` the
+  default is 119–154 tokens against `low`'s 37–55; on `grok-4.6` 486 against 203
+  (one run); on `grok-4.7` the two are alike on this prompt.
+- `minimal` is taken by all four and listed by none; it reasons as `low` does.
+- `/v1/models/{name}` resolves an alias, listed (`grok-4.5-latest`) or not
+  (`grok-4` → `grok-4.3`), as the chat endpoint does. The list holds canonical
+  ids, so the client's scan of it found no row for an alias — no context window.
+
+**Decisions** (the research §9.3; none a new fork — each is E1 on a provider
+whose list is published).
+- **Asked ahead, where every other wire reads the refusal.** The refusal lists
+  nothing; a muted turn meets no refusal — the field left out is an answer, the
+  wrong one; and the client already fetches the model's entry once, for the
+  window. The route changes from the list to `GET /models/{name}`, which resolves
+  an alias and is a tenth of the bytes: the same one request per client.
+- **`none` not listed → the lowest listed depth**, not the field left out. The
+  comment on the August fix said what leaving it out meant — "Grok simply reasons
+  at its default depth instead" — and nobody had measured the default. It is
+  `high`.
+- **`minimal` → `low`**, the list followed where it and the API's leniency
+  differ.
+- **No list is silence.** Such a model is sent the effort as chosen and its
+  refusal is read — asked once more without the field, remembered once accepted
+  (`EffortWire`, the fourth wire on it). Dropping the field ahead would make a
+  chosen effort vanish in silence on the first model whose entry lags its
+  release.
+- **No entry at all** (a failed fetch, an unknown name): the two answers that
+  hold on every model with a list — what the client did before, for every model.
+- **The thinking switch** set to off with no effort chosen is a wish of `none`
+  like the muted turns' (`wire::effort_wish`, on `asks_reasoning_off`). It did
+  nothing on xAI, where `thinking` is not in the schema.
+
+**Code.** `OpenAiClient::for_xai()` replaces `with_effort_none_omitted` and
+`with_effort_capped_at` (fields `xai`, `efforts`). `wire::ModelEntry` reads
+`capabilities` (`listed_efforts`); `wire::xai_effort`, `effort_wish`,
+`refuses_effort_parameter`; `ChatCompletionRequest: CarriesEffort`;
+`OpenAiClient: EffortWire`, so `send_chat` ends in `send_asking_again`.
+`fetch_gateway_entry` became `fetch_single_entry`, one helper for OpenRouter's
+`GET /model/{slug}` and xAI's route. `EffortMemo::learn` says whether it
+recorded, which is how a replacement the list decides is logged once per value.
+
+**A side effect, said rather than found later.** A tool's images are re-homed
+into a user message on an endpoint whose catalogue answered for the model
+(`shaped_for_endpoint`). For xAI that was every canonical id and no alias; an
+alias now has an entry and is treated as the id it names.
+
+**Tests.** `wire`: a table of every answer `xai_effort` gives (listed, not
+listed, `none` both ways, no list); `listed_efforts` over the measured entries
+and the shapes that are silence; `effort_wish`; the parameter's refusal against
+a penalty's, a refused value and a non-`400`; the body carrying its effort.
+`xai_tests.rs`, over a socket: the entry asked once by name and each wish as the
+list has it; the three ways of saying "do not reason"; no entry; an entry
+unavailable asked again; an alias's window; a client not told it is xAI; the
+parameter refused → asked without it → the next turn starts there; refused twice
+→ the error and no lesson; a refused value reported after one request.
+
+**Smoke — GO** (2026-10-01; the xAI API with the user's key; Windows 11).
+`xai_live_tests`, six, each arm declared by a variable.
+- **Before the change**, on the unchanged client: a muted turn on `grok-4.3`
+  reasoned 108 tokens; a turn at `high` on `grok-build-0.1` was the `400`; the
+  alias `grok-4.5-latest` had no window. Red, all three.
+- After: `grok-4.3` (also named `grok-4.3-latest` and `grok-4`) — two muted
+  turns, 0 reasoning tokens each. `grok-4.7`, `4.5`, `4.6` — a muted turn `Stop`
+  with `none → low`, a turn at `max` `Stop` with `max → xhigh`. `grok-build-0.1`
+  and both `grok-4.20-0309` models — two turns at `high` and a muted one, all
+  `Stop`, `high →` no effort. Three aliases answered with a window. The control —
+  `max` sent as it is — still `400 "Invalid reasoning effort."`.
+- The client's older smokes (`grok_smoke`, the continuation probe) on `grok-4.5`
+  and `grok-4.3`: 5 of 5 on each. The thoughts smoke came back with no thoughts
+  once in three on `grok-4.5` — at `low`, on a request this change leaves
+  byte-identical.
+- Not run: a chat inside the running app (the TUI needs a real terminal).
+
+**Found beside it.** xAI's `language-models` entry publishes `input_modalities`;
+`vision()` does not read it and answers `Unknown` there. Every language model
+listed takes images today (the research §9.4).
+
+**Docs.** spec §8.1; architecture §3, §6; CHANGELOG (Fixed); lessons §3; the
+research §8, §9; grok-xai-provider.md §7b.
+
+**Gates**: fmt / clippy / test green — **3849 unit tests, 253 `#[ignore]`**
+(+13 unit tests, +4 live smokes).

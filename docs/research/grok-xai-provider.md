@@ -361,6 +361,12 @@ Left as documented user error, per §8: a non-reasoning model
 (`grok-4.20-0309-non-reasoning`) rejects `reasoning_effort` outright, and the
 model name is not a reliable way to detect that.
 
+**Superseded 2026-10-01** ([effort-tiers.md](effort-tiers.md) §9). xAI publishes
+the efforts each model takes, and the client reads them: `none` is sent where a
+model lists it, the lowest listed depth where it does not, and a model that
+refuses the parameter is asked once more without it.
+`with_effort_none_omitted` is gone into `OpenAiClient::for_xai`.
+
 ## 8. Open questions
 
 - **Does `top_k`/`min_p` ever apply?** No — they are not in xAI's request

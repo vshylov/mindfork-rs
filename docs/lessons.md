@@ -865,6 +865,21 @@ a provider does not say something, fetch the object where it would say it: the m
 the catalogue, the `/props`.
 — *thinking on the Claude 4.5 generation*.
 
+**A field left out is a value too — the provider's default — and has to be
+measured like one.** xAI refuses `reasoning_effort: "none"`, so in August the
+Grok client was made to leave the field out, and its comment said what that
+meant: "Grok simply reasons at its default depth instead". Nobody measured the
+default. On `grok-4.5`–`4.7` it is `high` — published, as it turned out, on the
+same model entry as the list of efforts — so the title, the summary and
+impersonation were asked for nearly the most reasoning those models have, in the
+one place the app asks for none; and on `grok-4.3`, which *can* be switched off,
+each reasoned three hundred tokens for nothing. Nothing failed, so nothing
+showed: a `400` is fixed the day it is met, a default that costs three seconds a
+title is not. When a request cannot be made as written, list what it could be
+made as — "without the field" among them — and measure each: the omission is one
+of the candidates, not the absence of a choice.
+— *the efforts xAI lists, read instead of configured*.
+
 **Record sub-decisions before implementing, then re-read them.** Writing them down is
 what caught a hole in one: the argument for a single wording held for the chat-level
 gate but not for a profile that can switch the tools off — precisely the failure the

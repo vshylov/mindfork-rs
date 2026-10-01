@@ -47,6 +47,21 @@ split by subsystem.
   have no such tier, keep getting `high`.
 
 ### Fixed
+- **Grok no longer reasons where it was asked not to.** A chat's title, the
+  history summary, a message written on your behalf and a page's retelling ask
+  the model not to reason. On Grok that request was dropped, so each of them
+  reasoned at the model's default depth — `high` on Grok 4.5, 4.6 and 4.7. The
+  app now reads what xAI says each model takes: Grok 4.3 is switched off for
+  those requests, which answer in under a second instead of three or four, and
+  the newer models are asked for `low`.
+- **The thinking switch works on Grok.** Set to off with no reasoning effort
+  chosen, it now asks for the same; it did nothing there before.
+- **A reasoning effort no longer breaks the Grok models that take none.**
+  `grok-build-0.1` (`grok-code-fast-1`) and the two `grok-4.20` models refuse
+  the setting itself, so with any effort chosen every message to them was an
+  error. They are now asked again without it.
+- **A Grok model named by an alias has its context size.** With a name like
+  `grok-4.5-latest` the app found no entry for the model in xAI's list.
 - **Claude Haiku 4.5, Sonnet 4.5 and Opus 4.5 answer again with thinking on.**
   Thinking is on by default, and those three have no "adaptive" thinking — the
   only form the app asked for — so every message to them was an error. They are

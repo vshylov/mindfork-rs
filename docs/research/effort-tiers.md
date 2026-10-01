@@ -1,7 +1,8 @@
 # Research: reasoning-effort tiers a model does not have
 
 **Status:** forks decided by the user on 2026-10-01 — all four at the
-recommendation; both stages implemented (§8).
+recommendation; both stages implemented (§8). The item §8 left open —
+xAI's published list — is closed in §9.
 
 **Related:** spec §8.1 (the mapping onto each provider's API), architecture §6,
 [openrouter-mode.md](openrouter-mode.md) §4.1 (the gateway's muted turn),
@@ -272,7 +273,131 @@ Stage 1's five smokes, run again on this branch: unchanged.
   there. **Reproduced and fixed** in its own task the same day: the request is
   asked once more with a thinking budget
   ([docs/journal/engine.md](../journal/engine.md)).
-- **Left open:** xAI publishes `capabilities.reasoning_effort` per model, and
-  the client's two configured answers for it are not read from there —
-  `grok-4.3` lists `none` and is never sent it, so its muted turns reason at
-  the model's default.
+- xAI publishes `capabilities.reasoning_effort` per model, and the client's
+  two configured answers for it were not read from there — `grok-4.3` lists
+  `none` and was never sent it. **Measured and fixed** in its own task the same
+  day, and larger than it looked: §9.
+
+## 9. xAI: the list is read, not configured
+
+**Status:** implemented 2026-10-01 (`fix/xai-published-efforts`). No new fork
+went to the user: every decision below is E1 applied to a provider whose list is
+published, and the sub-forks are recorded with what decided them.
+
+### 9.1 Measured (2026-10-01, the real API)
+
+**What is published, and where.** `capabilities` rides on a model's entry in all
+of `GET /v1/models`, `/v1/models/{name}`, `/v1/language-models` and
+`/v1/language-models/{name}`:
+
+| model | `capabilities.reasoning_effort` | `default_reasoning_effort` |
+|---|---|---|
+| `grok-4.3` | `none`, `low`, `medium`, `high`, `xhigh` | `low` |
+| `grok-4.5`, `grok-4.6`, `grok-4.7` | `low`, `medium`, `high`, `xhigh` | `high` |
+| `grok-4.20-0309-reasoning`, `grok-4.20-0309-non-reasoning`, `grok-build-0.1` | no `capabilities` key at all | — |
+
+**What each model does with each value** (one request per cell):
+
+| model | the field left out | `none` | `minimal` | `low`–`xhigh` | `max` |
+|---|---|---|---|---|---|
+| `grok-4.3` | reasons, at its default | 200, **no reasoning tokens** | 200 | 200 | 400 |
+| `grok-4.5`, `4.6`, `4.7` | reasons, at its default | 400 | 200 | 200 | 400 |
+| the three with no list | 200 | 400 | 400 | 400 | 400 |
+
+The three with no list refuse the **parameter**, in the same words for every
+value: *"Model grok-build-0.1 does not support parameter reasoningEffort."* The
+fourth entry without one, `grok-4.20-multi-agent-0309`, refuses Chat Completions
+altogether, with or without the field.
+
+**What a muted turn costs** — the title's kind of prompt, four runs a cell;
+reasoning tokens and seconds:
+
+| model | the field left out (before) | what the list says to send (after) |
+|---|---|---|
+| `grok-4.3` | 300–437 tokens, 2.9–4.4 s | `none`: 0 tokens, 0.7–0.8 s |
+| `grok-4.5` | 119–154 tokens, 2.7–3.2 s | `low`: 37–55 tokens, 1.2–1.5 s |
+| `grok-4.6` (one run) | 486 tokens, 8.5 s | `low`: 203 tokens, 4.4 s |
+| `grok-4.7` | 85–151 tokens, 1.9–2.7 s | `low`: 84–102 tokens, 1.8–2.1 s |
+
+**`minimal` is taken and not listed**, by all four. On `grok-4.5` it reasons
+exactly as `low` does (37 tokens, four runs of four), on `grok-4.3` in `low`'s
+range. The list is what the provider names, not every word it parses.
+
+**Names.** `/v1/models/{name}` resolves an alias as the chat endpoint does — one
+the entry lists (`grok-4.5-latest` → `grok-4.5`) and one no entry lists (`grok-4`
+→ `grok-4.3`); a name it does not know is a `404`. The list of models holds
+canonical ids, so the client's scan of it found no row for an alias. One entry
+is 0.5–0.9 KB; the list is 6.2 KB.
+
+### 9.2 What was broken
+
+1. **A muted turn reasoned at the model's default.** The field was left out for
+   every model. On `grok-4.3`, which can be switched off, the title, the roll,
+   impersonation and a page's summary each reasoned some three hundred tokens
+   for nothing; on `grok-4.5`–`4.7` the default they got is `high`.
+2. **The thinking switch did nothing on xAI.** `thinking` is not in xAI's
+   schema, and the settings offer the switch in that mode.
+3. **A chosen effort made every turn a `400`** on the three models with no list
+   — recorded in August as documented user error
+   ([grok-xai-provider.md](grok-xai-provider.md), F4), which E1 has since decided
+   the other way.
+4. **A model named by an alias had no context window** from the catalogue.
+
+### 9.3 Decisions
+
+- **Asked ahead, unlike the other wires.** §4 kept the refusal as the source
+  because it is free and asking costs a request. Neither holds here: xAI's
+  refusal lists nothing; a muted turn meets no refusal at all — the field left
+  out is an answer, the wrong one; and the client already fetches the model's
+  entry once, for the window, so the list arrives in a request it was making.
+- **The model's own route** (`GET /models/{name}`) in place of a scan of the
+  list: it resolves an alias, and is a tenth of the bytes.
+- **`none` where it is not listed is the lowest listed depth** — E1's rule for a
+  refused `none`, in place of the field left out.
+- **`minimal` goes out as `low`.** The list is followed where it and the API's
+  leniency differ: the two reason alike, so nothing is lost, and a word the
+  provider does not name may stop being parsed.
+- **No list is silence, not "takes none".** A model without `capabilities` is
+  sent the effort as chosen and its refusal is read: asked once more without the
+  field, remembered once accepted (`EffortWire`). Dropping the field ahead, on
+  silence, would make a chosen effort vanish without a word on the first model
+  whose entry lags its release. Three of three such models refuse today, and the
+  refusal is free.
+- **With no entry at all** — a fetch that failed, a name xAI does not know — the
+  two answers that hold on every model with a list stand in: `none` left out,
+  anything above `xhigh` sent as `xhigh`. What the client did for every model
+  before.
+- **Named in the log, once per value** (E2); nothing in the chat.
+
+### 9.4 What was implemented
+
+- `OpenAiClient::for_xai()`, in place of `with_effort_none_omitted` and
+  `with_effort_capped_at`: the entry by name, the effort as the list has it.
+- `wire`: `ModelEntry::listed_efforts` (`capabilities.reasoning_effort`, in the
+  scale's order), `effort_wish` (a request's wish: `none` for each of the three
+  ways it says "do not reason"), `xai_effort`, `refuses_effort_parameter`.
+- `ChatCompletionRequest: CarriesEffort` and `OpenAiClient: EffortWire` — the
+  fourth wire on `send_asking_again`, answering one refusal: the parameter
+  itself.
+- `fetch_single_entry` — one helper for OpenRouter's `GET /model/{slug}` and
+  xAI's `GET /models/{name}`.
+
+**Live — GO** (the real API, Windows 11):
+
+| smoke | models | before | after |
+|---|---|---|---|
+| a muted turn, twice | `grok-4.3` — also named `grok-4.3-latest` and `grok-4` | 108 reasoning tokens — red | 0, both turns |
+| a muted turn | `grok-4.7`, `grok-4.5`, `grok-4.6` | no effort sent: the default | `Stop`; `none → low` |
+| a turn at `max` | `grok-4.7`, `grok-4.5`, `grok-4.6` | `xhigh`, configured | `Stop`; `max → xhigh`, from the list |
+| a turn at `high`, twice, then a muted one | `grok-build-0.1`, `grok-4.20-0309-reasoning`, `grok-4.20-0309-non-reasoning` | the `400` — red | `Stop` each; `high →` no effort |
+| the window of a model named by an alias | `grok-4.5-latest`, `grok-4`, `grok-code-fast-1` | none — red | answered |
+| `max` sent as it is — the control | `grok-4.7`, `grok-4.5`, `grok-4.6` | | still `400 "Invalid reasoning effort."` |
+| the client's older smokes, five | `grok-4.5`, `grok-4.3` | | 5 of 5 on each; the thoughts smoke was empty-handed once in three on `grok-4.5`, on a request this change leaves byte-identical |
+
+Not run: a chat inside the running app (the TUI needs a real terminal).
+
+**Found beside it, not in this task.** xAI's `/language-models/{name}` also
+publishes `input_modalities`, and this client's `vision()` reads only llama.cpp's
+`/props` and OpenRouter's `architecture`, so on xAI it answers `Unknown`. Every
+language model listed today takes images, so nothing is refused or withheld
+wrongly; the day xAI lists a text-only one, an attached image will be its `400`.
