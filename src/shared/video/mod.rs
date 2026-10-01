@@ -22,6 +22,8 @@
 
 pub mod gateway;
 pub mod gemini;
+#[cfg(test)]
+mod gemini_live_tests;
 
 #[cfg(test)]
 pub(crate) mod gateway_live_tests;
@@ -177,10 +179,9 @@ fn env_key(var: Option<&str>) -> Option<String> {
 }
 
 /// Doesn't swallow the provider's error body (ADR 0004) — mirrors
-/// `shared::tts::error_body`.
-pub(crate) async fn error_body(what: &str, resp: reqwest::Response) -> anyhow::Error {
-    let status = resp.status();
-    let body = resp.text().await.unwrap_or_default();
+/// `shared::tts::error_body`, from a body already read: the Gemini client has
+/// to look at a refusal before reporting it.
+pub(crate) fn error_from(what: &str, status: reqwest::StatusCode, body: &str) -> anyhow::Error {
     let detail: String = body.trim().chars().take(500).collect();
     tracing::warn!(%status, body = %detail, "{what} returned an error status");
     if detail.is_empty() {

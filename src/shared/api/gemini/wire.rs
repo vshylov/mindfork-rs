@@ -85,13 +85,18 @@ pub fn level_above(level: &str) -> Option<&'static str> {
 }
 
 /// Whether a failed request was refused for the thinking level it carried. A
-/// `400` only, and two substrings rather than the sentence, because providers
-/// reword; a false positive costs one extra round trip.
+/// `400` only: anything else is not a statement about the request as written.
 pub fn refuses_thinking_level(err: &EngineError) -> bool {
-    if err.status != Some(400) {
-        return false;
-    }
-    let message = err.message.to_lowercase();
+    err.status == Some(400) && says_level_refused(&err.message)
+}
+
+/// Whether an error's text says a thinking level was refused. Two substrings
+/// rather than the sentence, because providers reword; a false positive costs
+/// one extra round trip. The text half of [`refuses_thinking_level`], on its
+/// own for the video client (`shared::video::gemini`), whose errors are not
+/// [`EngineError`]s and whose requests meet the same refusal.
+pub fn says_level_refused(message: &str) -> bool {
+    let message = message.to_lowercase();
     message.contains("thinking level") && message.contains("not supported")
 }
 
@@ -525,7 +530,7 @@ pub struct UsageMetadata {
 /// Gemini's answer to a muted turn on `gemini-3.8-flash`, as it came on
 /// 2026-10-01 — the fixture of this module's tests and the client's.
 #[cfg(test)]
-pub(super) const LEVEL_REFUSED: &str = r#"{
+pub(crate) const LEVEL_REFUSED: &str = r#"{
   "error": {
     "code": 400,
     "message": "Thinking level MINIMAL is not supported for this model. Please retry with other thinking level.",

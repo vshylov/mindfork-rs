@@ -252,10 +252,11 @@ Stage 1's five smokes, run again on this branch: unchanged.
 
 **Found beside it, not in this track:**
 
-- The video client (`shared/video/gemini.rs`) mutes thinking with the same name
-  heuristic, on its own request path — `watch_video` with `gemini-3.7-flash` or
-  `gemini-3.8-flash` as the video model should meet the same `400` **[code; not
-  measured]**.
+- The video client (`shared/video/gemini.rs`) muted thinking with the same name
+  heuristic, on its own request path. **Measured and fixed** in its own task
+  the same day: `youtube_watch` with `gemini-3.7-flash` or `gemini-3.8-flash`
+  as the video model was the same `400`, and the client now asks once more at
+  the level above ([docs/journal/tools.md](../journal/tools.md)).
 - `claude-haiku-4-5` answers every request that carries `thinking: {type:
   "adaptive"}` with *"adaptive thinking is not supported on this model"*
   **[measured on the API; not reproduced through the app]** — the thinking

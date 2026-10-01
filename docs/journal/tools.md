@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (85)
+## Entries (86)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -97,6 +97,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: safe defaults 2b — the sandbox's network is public-only, and model-driven children lose the keys (done)
 - Post-M9: a streamed MP3, and a decoder that trusted its first frame (done)
 - Post-M9: `youtube_watch` with a provider that reads the whole video (done)
+- Post-M9: `youtube_watch` on a Gemini model without the `minimal` thinking level (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -5644,3 +5645,62 @@ said where it does nothing since 2026-08-01. What the default model does read is
 frame rate (`video_metadata.fps`): 66 tokens a frame and 25 a second for the sound, so
 half the frames is a third less. The gateway carries no frame rate either — three places
 tried. A frame rate as a setting is in the roadmap, on demand (research §15).
+
+### Post-M9: `youtube_watch` on a Gemini model without the `minimal` thinking level (done)
+
+**What.** The item the effort-tiers track left beside itself
+([docs/research/effort-tiers.md](../research/effort-tiers.md) §8): the Gemini video
+client (`shared/video/gemini.rs`) mutes thinking with the chat client's name
+heuristic — `minimal`, or `low` when the name contains `pro` — on a request path
+of its own. Read from the code then; measured now.
+
+**Measured (2026-10-01, the real API, the body `GeminiVideo::body` builds — ten
+seconds of a video at low media resolution, 922 prompt tokens).**
+
+| model | `thinkingLevel: "minimal"` | `"low"` |
+|---|---|---|
+| `gemini-3.8-flash` | **400** *"Thinking level MINIMAL is not supported for this model"* | 200 |
+| `gemini-3.7-flash` | **400**, the same words | 200 |
+| `gemini-3.5-flash` (the default) | 200 | 200 |
+
+So the default slot was never affected, and with either of the two newest Flash
+models chosen as the video model every `youtube_watch` was that `400` —
+reproduced through the client before the fix (`video::gemini_live_tests`, red on
+`gemini-3.8-flash`).
+
+**Decisions.**
+- **The chat client's answer, on this path.** A refused level is asked once more
+  at the level above, and that level is kept for the client only once it was
+  accepted (`muted_level: OnceLock`); `muted_thinking` builds the next body with
+  it. The name stays as what is known ahead of the refusal.
+- **Shared, not copied — and not forced through `EffortWire`.** `level_above` and
+  the refusal's text test come from `shared::api::gemini`
+  (`refuses_thinking_level` split into its status half and `says_level_refused`).
+  The asking again is written out here in a dozen lines rather than through
+  `send_asking_again`: that helper is typed on `EngineError` and a response
+  stream, and this client speaks `anyhow` and reads one JSON body.
+- **One request function.** `post` returns the status and the body text, both read
+  under the cancellation token, so a refusal can be looked at before it is
+  reported; `error_body`, whose only caller this was, became `error_from` over a
+  body already read. The error a user sees is byte for byte what it was.
+
+**Tests.** Over a socket (`sse_stub::serve_in_turn`): `minimal → low → low` with
+the level learned; a level refused twice reported in the provider's words and not
+kept (`minimal → low → minimal`); another `400` after one request; a 2.5 body,
+which carries a budget and no level, never asked again; and a learned level in
+the next body.
+
+**Smoke — GO** (2026-10-01; the Gemini API with the user's key; Windows 11).
+- `video::gemini_live_tests::a_video_is_described_by_a_model_without_the_minimal_level`
+  on `gemini-3.8-flash` — **red before the change**, then two requests described
+  (*"Rick Astley sings and dances to his song…"*) and `low` learned.
+- `…a_video_on_a_model_with_the_minimal_level_is_asked_as_before` on
+  `gemini-3.5-flash` — described, nothing learned.
+- `youtube::tests::watches_a_real_video_live` (the tool, the default model) and
+  the chat client's two `gemini::live_tests` — unchanged.
+
+**Docs.** architecture §6; CHANGELOG (Fixed); the research §8, where the item is
+closed.
+
+**Gates**: fmt / clippy / test green — **3829 unit tests, 248 `#[ignore]`**
+(+5 unit tests, +2 live smokes).
