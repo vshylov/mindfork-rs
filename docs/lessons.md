@@ -828,6 +828,17 @@ as "the app is flaky" rather than "the provider disagrees". When adding a provid
 enumerate what the code sends without being asked, not just what the settings expose.
 — *Grok (xAI) as a cloud provider*.
 
+**A fix for one client is a question for its siblings — and "this model takes it" is
+not "this provider takes it".** The refusal of `"none"` was met three times and fixed
+three times, each where it was found: xAI by configuration, a gateway by a recovery,
+the gateway mode by its catalogue. The Responses client kept sending the value
+unconditionally, because every OpenAI model of the day took it — until `gpt-6.1-sol`
+did not, and the same three turns failed in the same silence a fourth time. When a
+provider-shaped defect is fixed in one `EngineBackend`, grep the others for the same
+value before closing the task; and a capability measured on a model is that model's,
+so the code that depends on it needs the refusal's path even while nothing refuses.
+— *a muted turn on an OpenAI model that has no "none"*.
+
 **Record sub-decisions before implementing, then re-read them.** Writing them down is
 what caught a hole in one: the argument for a single wording held for the chat-level
 gate but not for a profile that can switch the tools off — precisely the failure the

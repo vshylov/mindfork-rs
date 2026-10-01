@@ -18,7 +18,7 @@ use crate::shared::api::contract::{
     ChatChunk, ChatRequest, ChatStream, EngineBackend, FinishReason, ThinkingRef, TokenUsage,
     ToolCallDelta, VisionSupport,
 };
-use crate::shared::api::error::{self, SUBJECT_RESPONSES};
+use crate::shared::api::error::{self, EngineError, SUBJECT_RESPONSES};
 use crate::shared::api::http;
 
 /// A client to the OpenAI Responses API.
@@ -29,6 +29,18 @@ pub struct ResponsesClient {
     base_url: String,
     api_key: String,
     model: String,
+    /// What a turn that asks for reasoning **off** says instead of
+    /// `reasoning.effort: "none"`, once this model has refused that value and
+    /// taken the other: `Some(effort)` — the lowest the refusal listed; `None`
+    /// inside — no effort at all. Unset until then, and `"none"` goes out as built.
+    ///
+    /// Learned rather than configured, like
+    /// [`OpenAiClient`](super::super::OpenAiClient)'s memo of the same refusal:
+    /// `gpt-6-sol` takes `"none"` and `gpt-6.1-sol` answers it `400`, and nothing
+    /// short of the request says which a model is. Never cleared — the client
+    /// is one model's, and a changed model gets a new client
+    /// (`supervisor::cloud_chat_setup`).
+    muted_effort: std::sync::OnceLock<Option<&'static str>>,
 }
 
 impl ResponsesClient {
@@ -43,21 +55,80 @@ impl ResponsesClient {
             base_url,
             api_key: api_key.into(),
             model: model.into(),
+            muted_effort: std::sync::OnceLock::new(),
         }
+    }
+
+    /// What this model has been found to take in place of `effort: "none"` —
+    /// unset while it has refused nothing. For the smokes, which must tell a
+    /// turn that survived the refusal from one that never met it.
+    #[cfg(test)]
+    pub(super) fn learned_muted_effort(&self) -> Option<Option<&'static str>> {
+        self.muted_effort.get().copied()
+    }
+
+    /// One attempt at the request. `Ok(None)` — the cancellation token fired
+    /// before a response arrived.
+    async fn send(
+        &self,
+        body: &wire::RespRequest,
+        cancel: &CancellationToken,
+    ) -> Result<Option<reqwest::Response>, EngineError> {
+        let url = format!("{}/responses", self.base_url);
+        let request = self.http.post(&url).bearer_auth(&self.api_key).json(body);
+        let Some(response) = http::send_cancellable(request, cancel).await? else {
+            return Ok(None);
+        };
+        error::check_status(SUBJECT_RESPONSES, response)
+            .await
+            .map(Some)
+    }
+
+    /// Sends the request and answers the one refusal worth answering rather
+    /// than reporting: the model does not take `reasoning.effort: "none"`.
+    ///
+    /// The silent turns — the title, the compaction roll, impersonation, a page
+    /// summary, a director's checkpoint — are the only ones that ask for it
+    /// unprompted, so on such a model they were the only ones failing while
+    /// ordinary chat worked (measured on `gpt-6.1-sol`, 2026-10-01: no chat got
+    /// its title). The request is made once more in the words the refusal
+    /// itself offers ([`wire::RespRequest::respell_effort_none`]), and what was
+    /// sent is remembered **only once it has been accepted** — so a refusal
+    /// read wrongly costs one round trip and teaches the client nothing.
+    async fn open(
+        &self,
+        req: &ChatRequest,
+        cancel: &CancellationToken,
+    ) -> Result<Option<reqwest::Response>, EngineError> {
+        let mut body = wire::build_request(req, &self.model, true);
+        if let Some(instead) = self.muted_effort.get() {
+            body.respell_effort_none(*instead);
+        }
+        let refused = match self.send(&body, cancel).await {
+            Err(err) if body.asks_effort_none() && wire::refuses_effort_none(&err) => err,
+            answered => return answered,
+        };
+        let instead = wire::lowest_listed_effort(&refused.message);
+        tracing::info!(
+            model = %self.model,
+            ?instead,
+            "the model refuses reasoning.effort \"none\"; asking again with what it lists"
+        );
+        body.respell_effort_none(instead);
+        let answered = self.send(&body, cancel).await;
+        if matches!(answered, Ok(Some(_))) {
+            let _ = self.muted_effort.set(instead);
+        }
+        answered
     }
 }
 
 #[async_trait::async_trait]
 impl EngineBackend for ResponsesClient {
     async fn chat_stream(&self, req: ChatRequest, cancel: CancellationToken) -> Result<ChatStream> {
-        let body = wire::build_request(&req, &self.model, true);
-        let url = format!("{}/responses", self.base_url);
-
-        let request = self.http.post(&url).bearer_auth(&self.api_key).json(&body);
-        let Some(response) = http::send_cancellable(request, &cancel).await? else {
+        let Some(response) = self.open(&req, &cancel).await? else {
             return Ok(http::cancelled_stream());
         };
-        let response = error::check_status(SUBJECT_RESPONSES, response).await?;
 
         let mut events = response.bytes_stream().eventsource();
 
@@ -285,6 +356,178 @@ mod tests {
                 "{events:?}"
             );
         }
+    }
+
+    const JSON: &str = "application/json";
+    const SSE: &str = "text/event-stream";
+    const BAD_REQUEST: &str = "400 Bad Request";
+
+    /// A whole reply: one word of text, then the completion with its usage.
+    const REPLY: sse_stub::Canned = (
+        "200 OK",
+        SSE,
+        "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Indexes\"}\n\n\
+         data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":5,\"output_tokens\":2}}}\n\n",
+    );
+
+    /// A turn that asks for reasoning to be off, the way `title.rs` does.
+    fn muted() -> ChatRequest {
+        let mut req = sse_stub::hello();
+        req.sampling.thinking = Some(false);
+        req.sampling.reasoning_effort = Some(crate::entities::sampling::ReasoningEffort::None);
+        req.sampling.reasoning_budget = Some(0);
+        req
+    }
+
+    /// The `reasoning` object of each request the stub was sent, in order.
+    fn reasoning_sent(bodies: &[String]) -> Vec<serde_json::Value> {
+        bodies
+            .iter()
+            .map(|b| {
+                let body: serde_json::Value =
+                    serde_json::from_str(b).unwrap_or_else(|e| panic!("{e}: {b:?}"));
+                body["reasoning"].clone()
+            })
+            .collect()
+    }
+
+    /// The defect: `gpt-6.1-sol` answers `effort: "none"` with a `400`, so the
+    /// title, the roll and impersonation failed while ordinary chat worked. The
+    /// turn completes on the second request, which asks for the lowest effort
+    /// the refusal listed — and the next muted turn asks for it at once.
+    #[tokio::test]
+    async fn a_refused_none_is_asked_again_in_the_lowest_effort_on_offer() {
+        let (url, stub) =
+            sse_stub::serve_in_turn(&[(BAD_REQUEST, JSON, wire::NONE_REFUSED), REPLY, REPLY]);
+        let client = ResponsesClient::new(url, "k", "gpt-6.1-sol");
+        for _ in 0..2 {
+            let chunks = collect(
+                client
+                    .chat_stream(muted(), CancellationToken::new())
+                    .await
+                    .expect("the muted turn survives the refusal"),
+            )
+            .await;
+            assert!(
+                chunks.contains(&ChatChunk::Text("Indexes".into())),
+                "{chunks:?}"
+            );
+            assert_eq!(
+                chunks.last(),
+                Some(&ChatChunk::Finished(FinishReason::Stop))
+            );
+        }
+        let sent = reasoning_sent(&stub.join().unwrap());
+        let efforts: Vec<_> = sent.iter().map(|r| r["effort"].clone()).collect();
+        assert_eq!(efforts, ["none", "low", "low"], "{sent:?}");
+        assert_eq!(client.learned_muted_effort(), Some(Some("low")));
+    }
+
+    /// A refusal that lists nothing leaves nothing lower to ask for: the field
+    /// goes, and the model reasons at its own depth.
+    #[tokio::test]
+    async fn a_refusal_that_lists_no_efforts_is_answered_without_the_field() {
+        let (url, stub) = sse_stub::serve_in_turn(&[
+            (
+                BAD_REQUEST,
+                JSON,
+                r#"{"error":{"message":"Unsupported value: 'none'.","param":"reasoning.effort"}}"#,
+            ),
+            REPLY,
+        ]);
+        let client = ResponsesClient::new(url, "k", "gpt-x");
+        let chunks = collect(
+            client
+                .chat_stream(muted(), CancellationToken::new())
+                .await
+                .expect("the muted turn survives the refusal"),
+        )
+        .await;
+        assert!(
+            chunks.contains(&ChatChunk::Text("Indexes".into())),
+            "{chunks:?}"
+        );
+        let sent = reasoning_sent(&stub.join().unwrap());
+        assert_eq!(sent[0]["effort"], "none");
+        assert!(sent[1].is_null(), "no reasoning object at all: {sent:?}");
+        assert_eq!(client.learned_muted_effort(), Some(None));
+    }
+
+    /// Any other `400` is reported as it came, after one request: the stub has
+    /// a single answer, so a second request would meet a closed port and the
+    /// error would be a transport one.
+    #[tokio::test]
+    async fn another_refusal_of_a_muted_turn_is_reported_as_it_came() {
+        let (url, stub) = sse_stub::serve_in_turn(&[(
+            BAD_REQUEST,
+            JSON,
+            r#"{"error":{"message":"Your input exceeds the context window of this model.","param":"input"}}"#,
+        )]);
+        let client = ResponsesClient::new(url, "k", "gpt-x");
+        let err = client
+            .chat_stream(muted(), CancellationToken::new())
+            .await
+            .err()
+            .expect("a 400 about the input is an error");
+        assert!(err.to_string().contains("context window"), "{err}");
+        assert_eq!(stub.join().unwrap().len(), 1);
+        assert_eq!(client.learned_muted_effort(), None);
+    }
+
+    /// A turn that never asked for `"none"` is not asked again, whatever the
+    /// refusal says about the effort: the value was the user's own choice.
+    #[tokio::test]
+    async fn a_refused_effort_the_user_chose_is_reported_as_it_came() {
+        let (url, stub) = sse_stub::serve_in_turn(&[(
+            BAD_REQUEST,
+            JSON,
+            r#"{"error":{"message":"Unsupported value: 'minimal' is not supported with the 'gpt-x' model. Supported values are: 'none', 'low' and 'high'.","param":"reasoning.effort"}}"#,
+        )]);
+        let client = ResponsesClient::new(url, "k", "gpt-x");
+        let mut req = sse_stub::hello();
+        req.sampling.reasoning_effort = Some(crate::entities::sampling::ReasoningEffort::Minimal);
+        let err = client
+            .chat_stream(req, CancellationToken::new())
+            .await
+            .err()
+            .expect("the refusal is the answer");
+        assert!(err.to_string().contains("'minimal'"), "{err}");
+        assert_eq!(stub.join().unwrap().len(), 1);
+        assert_eq!(client.learned_muted_effort(), None);
+    }
+
+    /// What was sent instead is remembered only once it was accepted: a second
+    /// refusal is the turn's error, and the next muted turn starts from
+    /// `"none"` again rather than from a guess that did not work.
+    #[tokio::test]
+    async fn a_substitute_that_was_refused_too_is_not_remembered() {
+        let (url, stub) = sse_stub::serve_in_turn(&[
+            (BAD_REQUEST, JSON, wire::NONE_REFUSED),
+            (BAD_REQUEST, JSON, wire::NONE_REFUSED),
+            REPLY,
+        ]);
+        let client = ResponsesClient::new(url, "k", "gpt-x");
+        let err = client
+            .chat_stream(muted(), CancellationToken::new())
+            .await
+            .err()
+            .expect("both attempts were refused");
+        assert!(err.to_string().contains("400"), "{err}");
+        assert_eq!(client.learned_muted_effort(), None);
+        let chunks = collect(
+            client
+                .chat_stream(muted(), CancellationToken::new())
+                .await
+                .expect("the stub takes the third request"),
+        )
+        .await;
+        assert!(
+            chunks.contains(&ChatChunk::Text("Indexes".into())),
+            "{chunks:?}"
+        );
+        let sent = reasoning_sent(&stub.join().unwrap());
+        let efforts: Vec<_> = sent.iter().map(|r| r["effort"].clone()).collect();
+        assert_eq!(efforts, ["none", "low", "none"], "{sent:?}");
     }
 }
 

@@ -177,10 +177,10 @@ Backend selection: `MINDFORK_ENGINE_URL` (external, any OpenAI server) OR
 rented instead of hosted — `python tools/e2e_hf.py run`, see
 `docs/history/remote-e2e-hf.md`.
 
-## Status (2026-09-30, version 0.13.0)
+## Status (2026-10-01, version 0.13.0)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3789 unit tests
-green, 236 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **3800 unit tests
+green, 238 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -192,6 +192,11 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **A muted turn on an OpenAI model that has no `none`** — `gpt-6.1-sol` answers
+  `reasoning.effort: "none"` with a `400`, so no chat got its title (nor the roll,
+  impersonation, a page summary). The Responses client asks once more with the
+  lowest effort the refusal lists and remembers what was accepted. Live **GO**,
+  both models (spec §8.1, [docs/journal/engine.md](docs/journal/engine.md)).
 - **Small windows — track complete** (2026-09-30, three stages). A window below
   what the frame in front needs gets a notice — the size it is, the size it
   needs, the keys that work — instead of a frame with parts missing; under it
@@ -390,14 +395,6 @@ being recent is dropped, not shortened.
   `stop` so the chat format holds
   ([docs/research/content-filter-finish.md](docs/research/content-filter-finish.md),
   spec §6.4, [docs/journal/engine.md](docs/journal/engine.md)).
-- **The thinking switch reaches a gateway** — a gateway never reads `thinking` (a
-  wrong type in it is a `200`), so "on" left Haiku 4.5 at 0 reasoning tokens and
-  "off" left Qwen 3.6 reasoning. Where the catalogue lists `reasoning`, a request
-  with no effort also carries `reasoning: {enabled}`; "off" only on a stated
-  `mandatory: false`, a zero budget reads as off, and the F2 recovery covers a
-  refused `enabled: false`. Default is "on", so such models now reason. Live **GO**
-  ([docs/history/gateway-thinking-switch.md](docs/history/gateway-thinking-switch.md), spec §8.1,
-  [docs/journal/engine.md](docs/journal/engine.md)).
 - **A headless launch (no TTY) exits with code 2** and a one-line reason — the
   TUI cannot be run from an agent's shell; how it *looks* needs a real terminal
   and a person. What a console *holds* can be measured on Windows:
