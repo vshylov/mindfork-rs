@@ -1362,7 +1362,7 @@ pub(super) fn reasoning_label(r: Option<ReasoningEffort>) -> String {
 }
 
 /// The order of `reasoning_effort` options in the cycle/menu (matches [`REASONING_ORDER`]).
-pub(super) const REASONING_ORDER: [Option<ReasoningEffort>; 7] = [
+pub(super) const REASONING_ORDER: [Option<ReasoningEffort>; 8] = [
     None,
     Some(ReasoningEffort::None),
     Some(ReasoningEffort::Minimal),
@@ -1370,6 +1370,7 @@ pub(super) const REASONING_ORDER: [Option<ReasoningEffort>; 7] = [
     Some(ReasoningEffort::Medium),
     Some(ReasoningEffort::High),
     Some(ReasoningEffort::XHigh),
+    Some(ReasoningEffort::Max),
 ];
 
 pub(super) fn cycle_reasoning(r: Option<ReasoningEffort>) -> Option<ReasoningEffort> {

@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (80)
+## Entries (84)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -92,6 +92,10 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: embeddings through the gateway — stage 2 of the OpenRouter mode (done)
 - Post-M9: speech through the gateway — stage 3 of the OpenRouter mode (done)
 - Post-M9: a video through the gateway — stage 4 of the OpenRouter mode, track complete (done)
+- Post-M9: a muted turn on an OpenAI model that has no "none" (done)
+- Post-M9: an effort value a model does not have becomes the nearest it has — stage 1 (done)
+- Post-M9: the `max` effort, and Claude's own top tiers — stage 2, track complete (done)
+- Post-M9: thinking on the Claude 4.5 generation, which has no adaptive mode (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -5519,3 +5523,359 @@ for the tool's part.
 **Gates**: fmt / clippy / test green — **3751 unit tests, 236 `#[ignore]`**
 (+27 unit tests, +8 live smokes). The screenshots of the settings were redrawn: the
 tools' section counts a row more.
+
+### Post-M9: a muted turn on an OpenAI model that has no "none" (done)
+
+**What.** The user's report: after moving the OpenAI cloud from `gpt-6-sol` to
+`gpt-6.1-sol`, chats stopped getting titles. The log had the answer twice that day,
+word for word:
+
+```
+status=400 Bad Request — "Unsupported value: 'none' is not supported with the
+'gpt-6.1-sol' model. Supported values are: 'low', 'medium', 'high', 'xhigh', and
+'max'." param: reasoning.effort, code: unsupported_value
+```
+
+The title mutes reasoning with `reasoning_budget: Some(0)`, and the Responses wire
+turned that into `reasoning.effort: "none"` for every model. An automatic title's
+failure is a log line by design (spec §6.8), so the chat simply stayed untitled. The
+same body is every muted turn's — the compaction roll, impersonation, a page summary
+of `fetch`, a director's checkpoint, the muted re-ask of an empty background turn —
+so all of them failed on that model while ordinary chat worked: the defect class
+lessons §3 already names for xAI and for a gateway, in the one client that had been
+left out of both fixes.
+
+**Measured (2026-10-01, the real API, the title's own body, non-streaming so the
+usage is in the answer).**
+
+| `reasoning.effort` | `gpt-6-sol` | `gpt-6.1-sol` |
+|---|---|---|
+| `none` | 200, 0 reasoning tokens | **400** `unsupported_value` |
+| `minimal` | 400 (lists `none`, `low`…`max`) | 400 (lists `low`…`max`) |
+| `low` | 200, 17 | 200, **0** (5 of 5) |
+| omitted | 200, echoes `medium`, 29 | 200, echoes `medium`, 29 / 31 / 42 / 42 / 96 |
+
+So the value is a property of the model, not of the provider; nothing publishes it
+(OpenAI's model list has no capability field — the model picker track measured
+that); and the refusal names what the model does take. The lowest of those is the
+closest thing to "off": on `gpt-6.1-sol` it reasons nothing for a title, where the
+field left out reasons at `medium` and spends up to 96 tokens of a reply cap that
+includes them.
+
+**Decisions.**
+- **Answer the refusal, do not predict it.** No list of models that lack `none`: it
+  would be wrong the week after it is written (the vision-allowlist argument on
+  `ResponsesClient::vision`). `ResponsesClient::open` sends the request as built; a
+  `400` that names `reasoning.effort` or quotes `'none'`
+  (`wire::refuses_effort_none`), to a body that carried `"none"`, is asked once more.
+- **The lowest listed effort, read off the refusal** (`wire::lowest_listed_effort`,
+  against the ladder the gateway mode already uses, `GATEWAY_EFFORTS`; quoted words
+  only, so "too low" in a sentence is not a value). A refusal that lists nothing gets
+  the request with no effort — and then no `reasoning` object and no `include`
+  either, the rule `build_request` follows. Omitting the field outright was the
+  other option and the table rejects it: it is the model's default depth, billed.
+- **Remembered only once accepted** (`muted_effort: OnceLock`, per client — a
+  changed model gets a new client). The Chat Completions memo is set before its
+  second attempt; here a refusal read wrongly would otherwise leave every later muted
+  turn reasoning at the default on a model that takes `"none"`. Now it costs one
+  round trip, the same error surfaces, and the next turn starts from `"none"` again.
+- **A user's own effort is not substituted.** `minimal` is refused by both models,
+  and was before this change; the refusal reaches the feed with the values the model
+  takes. The recovery is for the value nobody typed. The settings still offer
+  `none`/`minimal` on this provider and do not know `max` — a separate task.
+- **`build_request` is untouched**, and so is every test that calls it: the client
+  respells the built body (`RespRequest::respell_effort_none`), which also keeps a
+  summary request standing when the settings' `none` rides beside `thinking: true`.
+
+**Tests.** Wire: the lowest listed effort from the logged refusal, from a list in
+another quoting, from a message that quotes only the refused value and the model's
+name, from prose; the refusal's detection across status and subject; the respelling
+with an effort, with none, beside a summary, and on a body that never asked. Client,
+over a real socket (`sse_stub::serve_in_turn` — canned answers in order, handing
+back each request's body): `none → low → low` across two turns with the memo set;
+a refusal that lists nothing answered with no `reasoning` object; another `400`
+reported after one request; a refused effort the user chose reported after one
+request; a substitute refused too is not remembered — `none → low → none`.
+
+**Smoke — GO** (2026-10-01; the OpenAI API with the user's key; Windows 11).
+`responses::live_tests`, the title's shape, both arms declared rather than guessed
+so neither can pass having proved nothing:
+- `a_muted_turn_survives_a_model_that_refuses_effort_none` on `gpt-6.1-sol` — two
+  turns through one client, both `Stop`, both *"How Database Indexes Work"*, 0
+  reasoning tokens; the client learned `Some("low")`. Before the change this request
+  is the `400` in the log above.
+- `a_muted_turn_on_a_model_that_takes_none_is_sent_as_before` on `gpt-6-sol` —
+  `Stop`, 0 reasoning tokens, nothing learned.
+- The client's older smokes on `gpt-6.1-sol`: generation, the image, the reasoning
+  summary and the tool round trip pass. `several_reasoning_items_round_trip…` does
+  not — it needs a reply with two reasoning items, which `gpt-6.1-sol` did not give
+  in eight attempts (0–1 each); on `gpt-5.6`, the model it was written on, it passes
+  at the first. A precondition of that smoke, not this change.
+
+**Docs.** spec §8.1; architecture §6; CHANGELOG (Fixed); lessons §3.
+
+**Gates**: fmt / clippy / test green — **3800 unit tests, 238 `#[ignore]`**
+(+11 unit tests, +2 live smokes).
+
+### Post-M9: an effort value a model does not have becomes the nearest it has — stage 1 (done)
+
+**What.** The follow-up the previous entry left: the settings offer `none` and
+`minimal`, which `gpt-6.1-sol` refuses, and not `max`, which it takes. Measuring
+it turned one model's quirk into a property of the scale
+([docs/research/effort-tiers.md](../research/effort-tiers.md)), and found the
+defect of the previous entry live on a second provider.
+
+**Measured (2026-10-01, the real APIs, a tiny request per cell).**
+- **OpenAI Responses**: ten models, **five** different sets. `none` — refused by
+  `gpt-5`, `gpt-6-astra`, `gpt-6.1-sol`, `o4-mini`; `minimal` — by nine of the
+  ten; `xhigh` — by `gpt-5` and `o4-mini`; `max` — taken by five. Every refusal
+  names the model's set.
+- **Gemini 3.x**: `minimal` is refused by `gemini-3.1-pro-preview`,
+  **`gemini-3.7-flash`** and **`gemini-3.8-flash`** — *"Thinking level MINIMAL is
+  not supported for this model"*, with nothing named in its place; five other 3.x
+  models take it.
+- **Anthropic**: the API has `xhigh` and `max`, and `claude-sonnet-4-6` refuses
+  `xhigh` with its own list; the app sends neither (stage 2).
+- **xAI**: every depth the scale has is taken; `max` is refused with no list
+  (stage 2).
+- **OpenRouter**: a depth the model does not list is a `200` — the gateway maps
+  it itself.
+
+**The defect found on the way.** A muted turn asks Gemini 3.x for `minimal`, and
+the only models spared were those whose name contains `pro`. So on the two newest
+Flash models no chat got a title, and the roll, impersonation, a page summary and
+a director's checkpoint failed with it — reproduced through the app's own client
+before the fix (`gemini::live_tests`, red on `gemini-3.8-flash`). The comment on
+`ResponsesClient::vision` describes exactly this: a list keyed on names is wrong
+the week after it is written.
+
+**Decisions** (forks E1, E2, E4 of the research, each at the recommendation; the
+user, 2026-10-01).
+- **E1 — the nearest the model has.** The scale's own comment already promised
+  it ("the extreme tiers map onto them during translation"), the Anthropic and
+  Gemini wires did it statically, and the gateway does it itself; only Responses
+  answered a chosen depth with the provider's `400`. So the previous entry's
+  sentence — *an effort the user chose is reported as it came* — is withdrawn a
+  day after it was written: it was a rule drawn from one model.
+  "Nearest": among the depths the refusal lists, the closest on
+  `minimal < low < medium < high < xhigh < max`, the lower on a tie. `none` is a
+  switch: refused, it becomes the lowest depth listed, and a depth never becomes
+  `none` (`minimal` on a model that lists `none` and `low` becomes `low`).
+- **E2 — said in the settings, named in the log.** One sentence in the field's
+  description, both locales; one `info` line per replacement learned. No notice
+  in the chat.
+- **E4 — Gemini in this stage.** A refused level is asked again as the level
+  above it, the measured answer where the refusal lists nothing; `is_gemini_3_pro`
+  stays as what is known ahead of the refusal and spares a Pro the round trip.
+- **One place.** `shared/api/effort.rs`: `LADDER`, `listed`, `nearest`,
+  `EffortMemo`, and `send_asking_again` behind the trait `EffortWire` — a
+  client's body type, its one attempt, and what a refusal offers. The rule
+  "remembered only once accepted" is written once, for three wires (Anthropic
+  joins in stage 2). An `AsyncFn` closure was the first shape and does not
+  compile under `async_trait` ("implementation of `Send` is not general
+  enough"); a trait with a `-> impl Future + Send` method does.
+- **The list is read from one sentence.** The previous entry's
+  `lowest_listed_effort` scanned the whole message for quoted values — sound
+  while the refused value could only be `none`, which is not a depth. With a
+  depth refused, the message quotes the refused value itself (*"'minimal' is not
+  supported…"*), and the scan would have offered it back. `listed` reads only
+  what follows the last "supported values/levels", up to the full stop, in
+  OpenAI's quoted spelling and Anthropic's bare one.
+
+**Not in it.** `ReasoningEffort::Max`, Anthropic's `xhigh`/`max` and xAI's
+`max` — stage 2. The video client's copy of the Gemini heuristic
+(`shared/video/gemini.rs`) — another entry point, recorded in the research §8.
+
+**Tests.** `effort`: the list in both spellings and in the scale's order, the
+refused value not read as listed, the JSON envelope adding nothing, a refusal
+that lists nothing; nearest for a depth below, above and between, for `none`,
+for an empty list; the memo. Responses, over a socket: `minimal → low → low`
+with `none` still unknown; a refused depth with nothing listed reported after
+one request; the previous entry's five, on the new names. Gemini, wire: the
+level a body carries (3.x, Pro, 2.5, none), the respelling in place and its
+removal, the level above, which `400` counts; client, over a socket:
+`minimal → low → low`, another `400` after one request, a refused top level
+after one request.
+
+**Smoke — GO** (2026-10-01; the OpenAI and Gemini APIs with the user's keys;
+Windows 11).
+- `gemini::live_tests::a_muted_turn_survives_a_model_without_the_minimal_level`
+  on `gemini-3.8-flash` — **red before the change** (the `400` above), then two
+  turns `Stop` with a title and `minimal → low` learned.
+- `…a_muted_turn_on_a_model_with_the_minimal_level_is_sent_as_before` on
+  `gemini-3.5-flash` — `Stop`, nothing learned.
+- `responses::live_tests::a_chosen_depth_the_model_lacks_becomes_the_nearest_it_has`
+  on `gpt-6.1-sol` — two turns `Stop`, `minimal → low` learned.
+- The previous entry's two, unchanged: `gpt-6.1-sol` learns `none → low`,
+  `gpt-6-sol` learns nothing.
+- The clients' older smokes, for the reworked request path: Responses on
+  `gpt-6.1-sol` 4 of 4 (the multi-item one left out, see the previous entry);
+  Gemini on `gemini-2.5-flash` 5 of 6 in the run — `tool_result_image…` failed
+  on the model's description of the picture and passed twice alone — and on
+  `gemini-3.8-flash` 5 of 6, the sixth being that same smoke, whose hand-built
+  history carries no `thought_signature`, which 3.x requires.
+
+**Docs.** spec §8.1; architecture §3, §6; CHANGELOG (Fixed); lessons §3; the
+research, §4–§8.
+
+**Gates**: fmt / clippy / test green — **3815 unit tests, 241 `#[ignore]`**
+(+15 unit tests, +3 live smokes).
+
+### Post-M9: the `max` effort, and Claude's own top tiers — stage 2, track complete (done)
+
+**What.** The other half of the report the track began with: `gpt-6.1-sol` takes
+`max`, and the settings could not say it. `ReasoningEffort::Max` is the scale's
+seventh depth, and with it each wire's top is revisited
+([docs/research/effort-tiers.md](../research/effort-tiers.md) §8).
+
+**Per wire.**
+- **llama.cpp, Responses, the gateway** — the word as it is. A model below `max`
+  on Responses answers under stage 1's rule: `gpt-5.5` lists up to `xhigh` and
+  gets that.
+- **Anthropic** (fork E3: the API's own tiers). `output_config.effort` has had
+  `xhigh` and `max` since the mapping `XHigh → "high"` was written, so a chat set
+  to `xhigh` ran at `high`. Both go out as they are now. Which a **model** has is
+  its own, measured on nine: the 4.5 generation has no adaptive thinking at all;
+  `claude-opus-4-6` and `claude-sonnet-4-6` have `max` and no `xhigh`, and say so
+  with a list (*"Supported levels: high, low, max, medium."*); `claude-opus-4-7`
+  and everything newer take all five. `AnthropicClient` is the third `EffortWire`:
+  a refused level becomes the nearest listed — for `xhigh` between `high` and
+  `max`, the lower. `minimal` stays `low`: the API's schema has no such word.
+- **xAI** — `max` is `400 "Invalid reasoning effort."` on `grok-4.3`…`4.7`, with
+  nothing named. `OpenAiClient::with_effort_capped_at(XHigh)`, set where the Grok
+  client is built, beside `with_effort_none_omitted`. Configured rather than
+  learned (sub-fork, at the recommendation): the refusal has nothing to learn
+  from, and that client's request path already carries one learned recovery.
+  What keeps a configured answer honest is a control smoke — the same turn
+  without the ceiling must be refused; the day it is not, the ceiling goes.
+- **Gemini** — `max` rides as `high`, beside `xhigh`: both are schema errors
+  there.
+
+**Also.** The enum derives `Ord` — the variants' order is the scale's, which the
+ceiling compares with. The settings' cycle and menu have eight rows; the
+description in both locales lists the seven depths and says no model has them
+all. `set_sampling`'s enum has the tier, pinned to the type by a test that parses
+every value it offers.
+
+**Tests.** The scale: the wire word, the stored spelling both ways, the order.
+Anthropic, wire: the five levels across the scale, the respelling and removal,
+which `400` counts (the level's, not *"adaptive thinking is not supported"*);
+client, over a socket: `xhigh → high → high` with the memo set, the other `400`
+reported after one request. The ceiling, over a socket: `max` and `xhigh` capped,
+`low` untouched, `max` uncapped. Gemini: the two tiers above `high` as the level
+and as the budget. The settings: the cycle reaches `max` and wraps, and the menu
+is the same eight rows. `set_sampling`: every offered effort parses.
+
+**Smoke — GO** (2026-10-01; the Anthropic, OpenAI, xAI and Gemini APIs with the
+user's keys; Windows 11).
+- `anthropic::live_tests::a_level_the_model_lacks_becomes_the_nearest_it_lists`
+  on `claude-sonnet-4-6` — two thinking turns `Stop`, `xhigh → high` learned.
+- `…the_top_levels_are_sent_as_they_are` on `claude-sonnet-5-5` — `xhigh` and
+  `max` each `Stop`, nothing learned.
+- `responses::live_tests::the_top_tier_on_a_model_without_it_becomes_the_one_below`
+  on `gpt-5.5` — `Stop`, `max → xhigh` learned.
+- `xai_live_tests::the_top_tier_completes_under_the_ceiling` on `grok-4.7` —
+  `Stop`; `…the_top_tier_is_refused_without_the_ceiling` — the `400`, the control.
+- Stage 1's five smokes again, unchanged; the older Anthropic smokes 4 of 4 and
+  Grok's 4 of 4, for the reworked request path.
+
+**Docs.** spec §8.1; architecture §6; CHANGELOG (Added, Changed); the research
+§8, where the track is closed.
+
+**Gates**: fmt / clippy / test green — **3824 unit tests, 246 `#[ignore]`**
+(+9 unit tests, +5 live smokes).
+
+### Post-M9: thinking on the Claude 4.5 generation, which has no adaptive mode (done)
+
+**What.** The last item the effort-tiers track left beside itself
+([docs/research/effort-tiers.md](../research/effort-tiers.md) §8), and a larger
+one than it looked: a thinking turn goes out as `thinking: {type: "adaptive"}`,
+the 4.5 generation answers that with `400 "adaptive thinking is not supported on
+this model"`, and the thinking switch is **on by default**
+(`default_sampling.thinking`). So with `claude-haiku-4-5` — a current model — or
+Sonnet 4.5 or Opus 4.5 chosen, every ordinary turn was that `400`; only the muted
+turns worked. Reproduced through the client before the fix
+(`extended_thinking_streams_thoughts_and_signature`, red on `claude-haiku-4-5`).
+
+**Measured (2026-10-01, the real API).**
+
+| request | `haiku-4-5` | `sonnet-4-5` | `opus-4-5` |
+|---|---|---|---|
+| `thinking: {type: "adaptive"}` | 400 | 400 | 400 |
+| `{type: "enabled", budget_tokens: 1024}` | 200, a `thinking` block | 200 | 200 |
+| … with `display: "summarized"` | 200 | 200 | 200 |
+| … with `output_config.effort` | 400 *"does not support the effort parameter"* | 400 | 200 |
+| a budget not below `max_tokens` | 400 | 400 | 400 |
+| a budget under 1024 | 400 | 400 | 400 |
+
+The other way round, from Opus 4.7 on `enabled` is the `400`; the 4.6 generation
+takes both.
+
+**A claim of the previous entries, corrected.** The effort-tiers research said
+no provider publishes what a model takes, "anywhere but in the refusal". For
+OpenAI that holds (`GET /v1/models/{id}` is four fields). For two others it does
+not: their model lists had been fetched for the ids alone, and what each object
+carries was not read:
+
+- **Anthropic** — `GET /v1/models/{id}` carries `capabilities`:
+  `thinking.types.{adaptive,enabled}.supported` and
+  `effort.{low,medium,high,xhigh,max}.supported`, per model. `claude-sonnet-4-6`
+  says `xhigh: false` there — the fact the track learned from a `400`.
+- **xAI** — `GET /v1/language-models/{id}` carries
+  `capabilities.reasoning_effort`: `grok-4.7` lists `low`…`xhigh`, `grok-4.3`
+  also `none`. So both of xAI's configured answers (`none` left out, `max`
+  capped) are published, and the first is wrong for `grok-4.3`, which could be
+  muted and is not.
+- **Gemini** — `thinking: true`, and nothing about levels.
+
+**Decisions.**
+- **Read off the refusal anyway.** The published capabilities do not change the
+  mechanism, and the reason is cost: a refused request is free, and only a model
+  that needs the other shape meets it, once per client; asking ahead would cost
+  *every* session a request and still need the refusal's path under it for the
+  day that request fails. `AnthropicClient::open` asks once more with a budget on
+  the adaptive refusal (`wire::refuses_adaptive_thinking`,
+  `AntRequest::think_within_a_budget`) and keeps the shape (`budget_thinking`)
+  only once it was accepted — the track's rule. The effort recovery runs inside
+  each attempt, unchanged. xAI reading its own capabilities is a task of its own.
+- **The effort becomes the budget; the effort parameter goes.** `low` 1024,
+  `medium` 8192, `high` and above 24576 — the table the Gemini 2.5 wire already
+  maps this scale onto; a turn that names no depth thinks at `medium`'s. One rule
+  for the three models rather than Opus 4.5's `low`…`high` beside two models that
+  refuse the parameter outright.
+- **Half the reply's cap at most.** `max_tokens` covers the thoughts and the
+  answer, and the API refuses a budget that is not below it; half leaves the
+  answer at least as much as the thinking. At the app's default cap of 16384 that
+  is 8192 for `medium` and `high` alike.
+- **No room, no thinking.** Under the API's floor (a cap below 2048) the turn goes
+  out without thinking rather than not at all.
+- **`display: "summarized"` stays** — taken beside a budget on all three, and the
+  thoughts arrive (`thinking_delta`, a signature) exactly as in the adaptive shape,
+  so the tool loop's replay of the thinking block needed nothing.
+
+**Tests.** Wire: the budget for every depth, for none, under the default cap and
+at the least room there is; no thinking under the floor; a turn without adaptive
+thinking left alone, and the adaptive shape's bytes unchanged; each of the two
+refusals read by its own predicate and not the other's. Client, over a socket:
+`adaptive + effort → budget, no effort → budget` across two turns with the shape
+kept; a budget refused too is the error and is not kept
+(`adaptive → enabled → adaptive`); a `400` about neither reported after one
+request.
+
+**Smoke — GO** (2026-10-01; the Anthropic API with the user's key; Windows 11).
+- `anthropic::live_tests::a_thinking_turn_survives_a_model_without_adaptive_thinking`
+  on `claude-haiku-4-5`, `claude-sonnet-4-5`, `claude-opus-4-5` — each two turns
+  `Stop` with `391` in the reply, 214–253 characters of thoughts, the budget shape
+  kept.
+- The client's older smokes on `claude-haiku-4-5`: 4 of 4 —
+  `extended_thinking_streams_thoughts_and_signature`, **red before the change**,
+  and `thinking_with_tool_use_round_trips_signature` among them.
+- The effort track's two Anthropic smokes, unchanged: `claude-sonnet-4-6` learns
+  `xhigh → high`; `claude-sonnet-5-5` is sent `xhigh` and `max` as they are, and
+  never the budget shape.
+
+**Docs.** spec §8.1, §8.2; architecture §5, §6; CHANGELOG (Fixed); lessons §3;
+the research §4, §8.
+
+**Gates**: fmt / clippy / test green — **3834 unit tests, 249 `#[ignore]`**
+(+5 unit tests, +1 live smoke).

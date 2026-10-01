@@ -7234,3 +7234,34 @@ fn a_video_answer_is_kept_for_what_it_was_asked_under() {
         "the provider"
     );
 }
+
+/// The effort row's cycle walks the whole scale, `max` last, and comes back to
+/// "not set" — and the menu lists the same eight rows in the same order, since
+/// picking from it steps through the cycle.
+#[test]
+fn the_effort_cycle_reaches_max_and_wraps() {
+    let mut effort = None;
+    let mut seen = vec![reasoning_label(effort)];
+    for _ in 0..REASONING_ORDER.len() - 1 {
+        effort = cycle_reasoning(effort);
+        seen.push(reasoning_label(effort));
+    }
+    assert_eq!(
+        seen,
+        [
+            "—", "none", "minimal", "low", "medium", "high", "xhigh", "max"
+        ]
+    );
+    assert_eq!(cycle_reasoning(effort), None, "after `max`, not set again");
+    let en = crate::shared::i18n::locale(crate::shared::i18n::Lang::En);
+    let (menu, at) = sampling_choice_menu(
+        &SamplingConfig {
+            reasoning_effort: Some(ReasoningEffort::Max),
+            ..Default::default()
+        },
+        SamplingParam::Reasoning,
+        en,
+    );
+    assert_eq!(menu, seen);
+    assert_eq!(at, 7);
+}

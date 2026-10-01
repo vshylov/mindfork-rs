@@ -828,6 +828,43 @@ as "the app is flaky" rather than "the provider disagrees". When adding a provid
 enumerate what the code sends without being asked, not just what the settings expose.
 — *Grok (xAI) as a cloud provider*.
 
+**A fix for one client is a question for its siblings — and "this model takes it" is
+not "this provider takes it".** The refusal of `"none"` was met three times and fixed
+three times, each where it was found: xAI by configuration, a gateway by a recovery,
+the gateway mode by its catalogue. The Responses client kept sending the value
+unconditionally, because every OpenAI model of the day took it — until `gpt-6.1-sol`
+did not, and the same three turns failed in the same silence a fourth time. When a
+provider-shaped defect is fixed in one `EngineBackend`, grep the others for the same
+value before closing the task; and a capability measured on a model is that model's,
+so the code that depends on it needs the refusal's path even while nothing refuses.
+— *a muted turn on an OpenAI model that has no "none"*.
+
+**A rule drawn from one model is a guess about the provider — measure the row before
+writing the sentence.** The fix above shipped with a rule in the spec, *an effort the
+user chose is reported as it came*, argued from `gpt-6.1-sol` alone. One table a day
+later — ten OpenAI models, seven values — showed five different sets, nine models
+refusing `minimal`, and a gateway that maps such values itself; the sentence was
+withdrawn, and the code that implemented its other half (reading a refusal's list by
+scanning the whole message) would have offered the refused value back once that
+value could be a depth. The same table, run on the neighbours, found the same defect
+live on Gemini's two newest Flash models, behind a name heuristic. Seventy requests
+of a few tokens each: when a fix turns on what "the provider" accepts, the table is
+cheaper than the second pull request.
+— *an effort value a model does not have, stage 1*.
+
+**"Nothing publishes it" is a claim about an endpoint — ask the endpoint.** The same
+track wrote, in its research and in two doc comments, that a model's supported
+efforts are published "nowhere but in the refusal". It had probed seventy chat
+requests, and listed each provider's models only to read their ids. Anthropic's
+model object lists
+`capabilities.effort` and `capabilities.thinking.types` per model; xAI's lists
+`capabilities.reasoning_effort` — which shows one of that client's two configured
+answers to be wrong for an older model. The design survived on other grounds, but a
+fork had been closed to the user as "not available" when it was. Before writing that
+a provider does not say something, fetch the object where it would say it: the model,
+the catalogue, the `/props`.
+— *thinking on the Claude 4.5 generation*.
+
 **Record sub-decisions before implementing, then re-read them.** Writing them down is
 what caught a hole in one: the argument for a single wording held for the chat-level
 gate but not for a profile that can switch the tools off — precisely the failure the

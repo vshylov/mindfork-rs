@@ -5,6 +5,8 @@
 //! Anthropic has no embeddings — [`Embedder`](super::super::contract::Embedder) isn't
 //! implemented here (RAG uses a separate embedder, ADR 0002).
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use anyhow::Result;
 use async_stream::stream;
 use eventsource_stream::Eventsource;
@@ -16,7 +18,8 @@ use crate::shared::api::contract::{
     ChatChunk, ChatRequest, ChatStream, EngineBackend, FinishReason, ThinkingRef, TokenUsage,
     ToolCallDelta, VisionSupport,
 };
-use crate::shared::api::error::{self, SUBJECT_ANTHROPIC};
+use crate::shared::api::effort::{self, EffortMemo, EffortWire};
+use crate::shared::api::error::{self, EngineError, SUBJECT_ANTHROPIC};
 use crate::shared::api::http;
 
 /// The Anthropic API version (the mandatory `anthropic-version` header). Shared
@@ -32,6 +35,16 @@ pub struct AnthropicClient {
     base_url: String,
     api_key: String,
     model: String,
+    /// The effort levels this model has refused, and what it took in each
+    /// one's place. The API's vocabulary has `xhigh` and `max`; which of them a
+    /// model has is its own — the 4.6 generation has no `xhigh` — and its
+    /// refusal says so. (The Models API publishes it too; why the refusal is
+    /// read instead is on [`Self::open`].)
+    efforts: EffortMemo,
+    /// This model has refused adaptive thinking and taken a thinking budget —
+    /// the 4.5 generation. From then on a thinking turn goes out in that shape
+    /// at once. Set only once the budgeted request was accepted.
+    budget_thinking: AtomicBool,
 }
 
 impl AnthropicClient {
@@ -46,7 +59,113 @@ impl AnthropicClient {
             base_url,
             api_key: api_key.into(),
             model: model.into(),
+            efforts: EffortMemo::default(),
+            budget_thinking: AtomicBool::new(false),
         }
+    }
+
+    /// Whether this model has been found to think within a budget rather than
+    /// adaptively — unset while it has not refused the adaptive shape. For the
+    /// tests and smokes, which must tell a turn that survived the refusal from
+    /// one that never met it.
+    #[cfg(test)]
+    pub(super) fn thinks_within_a_budget(&self) -> bool {
+        self.budget_thinking.load(Ordering::Relaxed)
+    }
+
+    /// Sends the request, and answers the two refusals a thinking turn can meet
+    /// that are about the request's **shape** rather than its content.
+    ///
+    /// - An **effort level** the model does not have (`xhigh` on the 4.6
+    ///   generation) — [`effort::send_asking_again`], the nearest listed.
+    /// - **Adaptive thinking** on a model that has no such mode — the 4.5
+    ///   generation, `claude-haiku-4-5` among it. The thinking switch is on by
+    ///   default, so on such a model *every ordinary turn* was this `400`. The
+    ///   request is made once more with a thinking budget
+    ///   ([`wire::AntRequest::think_within_a_budget`]) and the shape is kept
+    ///   for the client only once it was accepted.
+    ///
+    /// Both facts are published — `GET /v1/models/{id}` lists
+    /// `capabilities.thinking.types` and `capabilities.effort` per model
+    /// (measured 2026-10-01). They are read off the refusal anyway: a refused
+    /// request is free and only a model that needs the other shape meets it,
+    /// once per client, while asking ahead would cost every session a request
+    /// and still need this path under it for the day that request fails.
+    async fn open(
+        &self,
+        req: &ChatRequest,
+        cancel: &CancellationToken,
+    ) -> Result<Option<reqwest::Response>, EngineError> {
+        let mut body = wire::build_request(req, &self.model, true);
+        if self.budget_thinking.load(Ordering::Relaxed) {
+            body.think_within_a_budget();
+        }
+        let first = effort::send_asking_again(self, &mut body, cancel).await;
+        let Err(refused) = &first else {
+            return first;
+        };
+        if !(body.thinks_adaptively() && wire::refuses_adaptive_thinking(refused)) {
+            return first;
+        }
+        tracing::info!(
+            model = %self.model,
+            "the model does not take adaptive thinking; asking again with a thinking budget"
+        );
+        body.think_within_a_budget();
+        let second = effort::send_asking_again(self, &mut body, cancel).await;
+        if matches!(second, Ok(Some(_))) {
+            self.budget_thinking.store(true, Ordering::Relaxed);
+        }
+        second
+    }
+
+    /// What this model has been found to take in place of the effort `wish` —
+    /// unset while it has not refused it. For the tests and smokes, which must
+    /// tell a turn that survived a refusal from one that never met it.
+    #[cfg(test)]
+    pub(super) fn learned(&self, wish: &str) -> Option<Option<&'static str>> {
+        self.efforts.instead_of(wish)
+    }
+}
+
+impl EffortWire for AnthropicClient {
+    type Body = wire::AntRequest;
+
+    fn model(&self) -> &str {
+        &self.model
+    }
+
+    fn efforts(&self) -> &EffortMemo {
+        &self.efforts
+    }
+
+    async fn send(
+        &self,
+        body: &wire::AntRequest,
+        cancel: &CancellationToken,
+    ) -> Result<Option<reqwest::Response>, EngineError> {
+        let url = format!("{}/v1/messages", self.base_url);
+        let request = self
+            .http
+            .post(&url)
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", ANTHROPIC_VERSION)
+            .json(body);
+        let Some(response) = http::send_cancellable(request, cancel).await? else {
+            return Ok(None);
+        };
+        error::check_status(SUBJECT_ANTHROPIC, response)
+            .await
+            .map(Some)
+    }
+
+    /// The nearest level the refusal itself lists; with nothing listed the
+    /// refusal is the answer.
+    fn answer(&self, wish: &'static str, refused: &EngineError) -> Option<Option<&'static str>> {
+        if !wire::refuses_effort(refused) {
+            return None;
+        }
+        effort::nearest(wish, &effort::listed(&refused.message)).map(Some)
     }
 }
 
@@ -65,19 +184,9 @@ fn map_stop_reason(s: &str) -> FinishReason {
 #[async_trait::async_trait]
 impl EngineBackend for AnthropicClient {
     async fn chat_stream(&self, req: ChatRequest, cancel: CancellationToken) -> Result<ChatStream> {
-        let body = wire::build_request(&req, &self.model, true);
-        let url = format!("{}/v1/messages", self.base_url);
-
-        let request = self
-            .http
-            .post(&url)
-            .header("x-api-key", &self.api_key)
-            .header("anthropic-version", ANTHROPIC_VERSION)
-            .json(&body);
-        let Some(response) = http::send_cancellable(request, &cancel).await? else {
+        let Some(response) = self.open(&req, &cancel).await? else {
             return Ok(http::cancelled_stream());
         };
-        let response = error::check_status(SUBJECT_ANTHROPIC, response).await?;
 
         let mut events = response.bytes_stream().eventsource();
 
@@ -304,6 +413,180 @@ mod tests {
             chunks.last(),
             Some(&ChatChunk::Finished(FinishReason::Filtered))
         );
+    }
+
+    /// A whole reply: one word, and the reason it stopped.
+    const REPLY: sse_stub::Canned = (
+        "200 OK",
+        "text/event-stream",
+        "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"pong\"}}\n\n\
+         data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":2}}\n\n",
+    );
+
+    /// A thinking turn at the settings' `xhigh`.
+    fn thinking_at_xhigh() -> ChatRequest {
+        let mut req = sse_stub::hello();
+        req.sampling.thinking = Some(true);
+        req.sampling.reasoning_effort = Some(crate::entities::sampling::ReasoningEffort::XHigh);
+        req
+    }
+
+    /// The 4.6 generation has `max` and no `xhigh`, and says so: the turn is
+    /// asked again at the nearest level the refusal lists — `high`, the lower of
+    /// the two it stands between — and the next turn asks for that at once.
+    #[tokio::test]
+    async fn a_refused_level_is_asked_again_as_the_nearest_listed() {
+        let (url, stub) = sse_stub::serve_in_turn(&[
+            (sse_stub::BAD_REQUEST, sse_stub::JSON, wire::EFFORT_REFUSED),
+            REPLY,
+            REPLY,
+        ]);
+        let client = AnthropicClient::new(url, "k", "claude-sonnet-4-6");
+        for _ in 0..2 {
+            let chunks = collect(
+                client
+                    .chat_stream(thinking_at_xhigh(), CancellationToken::new())
+                    .await
+                    .expect("the turn survives the refusal"),
+            )
+            .await;
+            assert!(
+                chunks.contains(&ChatChunk::Text("pong".into())),
+                "{chunks:?}"
+            );
+        }
+        let efforts: Vec<serde_json::Value> = stub
+            .join()
+            .unwrap()
+            .iter()
+            .map(|b| {
+                let body: serde_json::Value = serde_json::from_str(b).unwrap();
+                body["output_config"]["effort"].clone()
+            })
+            .collect();
+        assert_eq!(efforts, ["xhigh", "high", "high"]);
+        assert_eq!(client.learned("xhigh"), Some(Some("high")));
+    }
+
+    /// A `400` that is about neither the level nor the thinking shape is
+    /// reported as it came, after one request.
+    #[tokio::test]
+    async fn another_refusal_of_a_thinking_turn_is_reported_as_it_came() {
+        let (url, stub) = sse_stub::serve_in_turn(&[(
+            sse_stub::BAD_REQUEST,
+            sse_stub::JSON,
+            r#"{"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 250000 tokens > 200000 maximum"}}"#,
+        )]);
+        let client = AnthropicClient::new(url, "k", "claude-haiku-4-5");
+        let err = client
+            .chat_stream(thinking_at_xhigh(), CancellationToken::new())
+            .await
+            .err()
+            .expect("the refusal is the answer");
+        assert!(err.to_string().contains("prompt is too long"), "{err}");
+        assert_eq!(stub.join().unwrap().len(), 1);
+        assert_eq!(client.learned("xhigh"), None);
+        assert!(!client.thinks_within_a_budget());
+    }
+
+    /// The `thinking` object and the `output_config` of each request the stub
+    /// was sent, in order.
+    fn shapes_sent(bodies: &[String]) -> Vec<(serde_json::Value, serde_json::Value)> {
+        bodies
+            .iter()
+            .map(|b| {
+                let body: serde_json::Value =
+                    serde_json::from_str(b).unwrap_or_else(|e| panic!("{e}: {b:?}"));
+                (body["thinking"].clone(), body["output_config"].clone())
+            })
+            .collect()
+    }
+
+    /// The defect: the 4.5 generation has no adaptive thinking, the thinking
+    /// switch is on by default, and so every ordinary turn on `claude-haiku-4-5`
+    /// was a `400`. The turn completes on the second request, which thinks
+    /// within a budget and carries no effort — and the next turn goes out in
+    /// that shape at once.
+    #[tokio::test]
+    async fn refused_adaptive_thinking_is_asked_again_with_a_budget() {
+        let (url, stub) = sse_stub::serve_in_turn(&[
+            (
+                sse_stub::BAD_REQUEST,
+                sse_stub::JSON,
+                wire::ADAPTIVE_REFUSED,
+            ),
+            REPLY,
+            REPLY,
+        ]);
+        let client = AnthropicClient::new(url, "k", "claude-haiku-4-5");
+        for _ in 0..2 {
+            let mut req = thinking_at_xhigh();
+            req.sampling.max_tokens = Some(16384);
+            let chunks = collect(
+                client
+                    .chat_stream(req, CancellationToken::new())
+                    .await
+                    .expect("the turn survives the refusal"),
+            )
+            .await;
+            assert!(
+                chunks.contains(&ChatChunk::Text("pong".into())),
+                "{chunks:?}"
+            );
+        }
+        let budget =
+            serde_json::json!({"type": "enabled", "budget_tokens": 8192, "display": "summarized"});
+        assert_eq!(
+            shapes_sent(&stub.join().unwrap()),
+            [
+                (
+                    serde_json::json!({"type": "adaptive", "display": "summarized"}),
+                    serde_json::json!({"effort": "xhigh"})
+                ),
+                (budget.clone(), serde_json::Value::Null),
+                (budget, serde_json::Value::Null),
+            ]
+        );
+        assert!(client.thinks_within_a_budget());
+    }
+
+    /// A budget refused too is the turn's error, and teaches the client
+    /// nothing: the next turn starts from the adaptive shape again.
+    #[tokio::test]
+    async fn a_budget_that_was_refused_too_is_not_remembered() {
+        let (url, stub) = sse_stub::serve_in_turn(&[
+            (
+                sse_stub::BAD_REQUEST,
+                sse_stub::JSON,
+                wire::ADAPTIVE_REFUSED,
+            ),
+            (
+                sse_stub::BAD_REQUEST,
+                sse_stub::JSON,
+                r#"{"type":"error","error":{"type":"invalid_request_error","message":"thinking: Extra inputs are not permitted"}}"#,
+            ),
+            REPLY,
+        ]);
+        let client = AnthropicClient::new(url, "k", "claude-x");
+        let err = client
+            .chat_stream(thinking_at_xhigh(), CancellationToken::new())
+            .await
+            .err()
+            .expect("both shapes were refused");
+        assert!(err.to_string().contains("Extra inputs"), "{err}");
+        assert!(!client.thinks_within_a_budget());
+        collect(
+            client
+                .chat_stream(thinking_at_xhigh(), CancellationToken::new())
+                .await
+                .expect("the stub takes the third request"),
+        )
+        .await;
+        let kinds: Vec<_> = shapes_sent(&stub.join().unwrap())
+            .into_iter()
+            .map(|(thinking, _)| thinking["type"].clone())
+            .collect();
+        assert_eq!(kinds, ["adaptive", "enabled", "adaptive"]);
     }
 
     #[test]

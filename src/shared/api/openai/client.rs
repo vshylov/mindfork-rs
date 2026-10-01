@@ -43,6 +43,9 @@ pub struct OpenAiClient {
     /// instead of sending the literal `"none"`. See
     /// [`Self::with_effort_none_omitted`].
     omit_effort_none: bool,
+    /// The highest effort this server takes: a request that asks for more goes
+    /// out with this instead. See [`Self::with_effort_capped_at`].
+    effort_ceiling: Option<ReasoningEffort>,
     /// The same thing, learned at runtime: this server has **refused** a request
     /// to disable reasoning, so stop asking — whether it asked as
     /// `reasoning_effort: "none"` or as a gateway's `reasoning: {enabled: false}`
@@ -124,6 +127,7 @@ impl OpenAiClient {
             api_key: None,
             model: None,
             omit_effort_none: false,
+            effort_ceiling: None,
             reasoning_off_refused: std::sync::atomic::AtomicBool::new(false),
             catalogue: tokio::sync::OnceCell::new(),
             gateway: None,
@@ -178,6 +182,22 @@ impl OpenAiClient {
     /// See docs/research/grok-xai-provider.md §2.3.
     pub fn with_effort_none_omitted(mut self, omit: bool) -> Self {
         self.omit_effort_none = omit;
+        self
+    }
+
+    /// Sends `ceiling` in place of any effort above it. Builder-style.
+    ///
+    /// xAI answers `reasoning_effort: "max"` with `400 "Invalid reasoning
+    /// effort."` — on `grok-4.3`, `4.5`, `4.6` and `4.7`, naming nothing in its
+    /// place — and takes `xhigh` on all four (measured 2026-10-01,
+    /// docs/research/effort-tiers.md §2). Configured rather than learned, like
+    /// [`Self::with_effort_none_omitted`] beside it: the refusal lists nothing
+    /// to learn from. (xAI's model object does —
+    /// `capabilities.reasoning_effort` — and reading it is an open item of that
+    /// research, §8.) A llama.cpp takes any string, and a gateway maps the
+    /// value itself, so neither is capped.
+    pub fn with_effort_capped_at(mut self, ceiling: ReasoningEffort) -> Self {
+        self.effort_ceiling = Some(ceiling);
         self
     }
 
@@ -488,6 +508,11 @@ impl OpenAiClient {
     ) -> Result<Option<reqwest::Response>, error::EngineError> {
         let mut body = wire::build_chat_request(req, true, self.model.as_deref(), omit_effort_none);
         body.reasoning = reasoning;
+        if let Some(ceiling) = self.effort_ceiling
+            && req.sampling.reasoning_effort > Some(ceiling)
+        {
+            body.reasoning_effort = Some(ceiling.as_wire());
+        }
         if self.gateway.is_some() {
             body = body.for_gateway();
             // A muted turn on a model that must reason: the lowest effort it

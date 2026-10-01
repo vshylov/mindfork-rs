@@ -8,6 +8,7 @@
 pub mod anthropic;
 pub mod catalogue;
 pub mod contract;
+pub mod effort;
 pub mod embed_policy;
 pub mod error;
 pub mod gemini;

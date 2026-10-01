@@ -20,6 +20,8 @@ use serde_json::{Map, Value, json};
 
 use crate::entities::sampling::{ReasoningEffort, SamplingConfig};
 use crate::shared::api::contract::{ApiImage, ApiMessage, ApiRole, ChatRequest};
+use crate::shared::api::effort::CarriesEffort;
+use crate::shared::api::error::EngineError;
 
 // ---------- request ----------
 
@@ -34,6 +36,68 @@ pub struct GenRequest {
     pub tools: Option<Vec<Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub generation_config: Option<Value>,
+}
+
+/// Gemini 3.x's thinking levels, lowest first.
+const LEVELS: [&str; 4] = ["minimal", "low", "medium", "high"];
+
+/// Where a 3.x body carries its level.
+const LEVEL_AT: &str = "/thinkingConfig/thinkingLevel";
+
+impl CarriesEffort for GenRequest {
+    /// The `thinkingLevel` the body carries — a 3.x body that asks for one.
+    fn effort(&self) -> Option<&'static str> {
+        let level = self.generation_config.as_ref()?.pointer(LEVEL_AT)?;
+        LEVELS.into_iter().find(|l| level.as_str() == Some(l))
+    }
+
+    /// Asks for `instead` in place of that level; with `None` the level goes
+    /// and the model reasons at its own.
+    fn respell_effort(&mut self, instead: Option<&'static str>) {
+        let Some(config) = self.generation_config.as_mut() else {
+            return;
+        };
+        match (instead, config.pointer_mut(LEVEL_AT)) {
+            (Some(level), Some(slot)) => *slot = json!(level),
+            (None, Some(_)) => {
+                if let Some(thinking) = config
+                    .get_mut("thinkingConfig")
+                    .and_then(Value::as_object_mut)
+                {
+                    thinking.remove("thinkingLevel");
+                }
+            }
+            (_, None) => {}
+        }
+    }
+}
+
+/// The level above `level` — what to ask a model that does not have it.
+///
+/// Gemini's refusal lists nothing (*"Thinking level MINIMAL is not supported
+/// for this model. Please retry with other thinking level."*), so the answer is
+/// the measured one: every model that refuses `minimal` takes `low`
+/// (docs/research/effort-tiers.md §2). Up, never down: the level refused so
+/// far is always the lowest, and below it there is nothing.
+pub fn level_above(level: &str) -> Option<&'static str> {
+    let at = LEVELS.iter().position(|l| *l == level)?;
+    LEVELS.get(at + 1).copied()
+}
+
+/// Whether a failed request was refused for the thinking level it carried. A
+/// `400` only: anything else is not a statement about the request as written.
+pub fn refuses_thinking_level(err: &EngineError) -> bool {
+    err.status == Some(400) && says_level_refused(&err.message)
+}
+
+/// Whether an error's text says a thinking level was refused. Two substrings
+/// rather than the sentence, because providers reword; a false positive costs
+/// one extra round trip. The text half of [`refuses_thinking_level`], on its
+/// own for the video client (`shared::video::gemini`), whose errors are not
+/// [`EngineError`]s and whose requests meet the same refusal.
+pub fn says_level_refused(message: &str) -> bool {
+    let message = message.to_lowercase();
+    message.contains("thinking level") && message.contains("not supported")
 }
 
 /// Builds the `generateContent` request body from the domain [`ChatRequest`]. `model` is only
@@ -185,6 +249,11 @@ fn is_gemini_25_pro(model: &str) -> bool {
 
 /// Gemini 3.x **Pro** — doesn't support `thinkingLevel:"minimal"` (minimum `low`).
 /// E.g. `gemini-3-pro-preview`, `gemini-3.1-pro-preview`.
+///
+/// What is known **ahead** of a refusal, and no more than that: the name says
+/// nothing about `gemini-3.7-flash` and `gemini-3.8-flash`, which refuse
+/// `minimal` too (measured 2026-10-01). The client answers the refusal itself
+/// ([`refuses_thinking_level`], [`level_above`]); this spares a Pro the round trip.
 pub(crate) fn is_gemini_3_pro(model: &str) -> bool {
     is_gemini_3(model) && model.contains("pro")
 }
@@ -196,8 +265,9 @@ fn effort_to_level(e: ReasoningEffort) -> Option<&'static str> {
         ReasoningEffort::Minimal => Some("minimal"),
         ReasoningEffort::Low => Some("low"),
         ReasoningEffort::Medium => Some("medium"),
-        // Gemini has no xhigh — map it to the nearest one (high).
-        ReasoningEffort::High | ReasoningEffort::XHigh => Some("high"),
+        // Gemini's top level is high — xhigh and max map onto it (both are schema
+        // errors there, measured 2026-10-01).
+        ReasoningEffort::High | ReasoningEffort::XHigh | ReasoningEffort::Max => Some("high"),
     }
 }
 
@@ -208,7 +278,7 @@ fn effort_to_budget(e: ReasoningEffort) -> i64 {
         ReasoningEffort::None => 0,
         ReasoningEffort::Minimal | ReasoningEffort::Low => 1024,
         ReasoningEffort::Medium => 8192,
-        ReasoningEffort::High | ReasoningEffort::XHigh => 24576,
+        ReasoningEffort::High | ReasoningEffort::XHigh | ReasoningEffort::Max => 24576,
     }
 }
 
@@ -457,6 +527,17 @@ pub struct UsageMetadata {
     pub thoughts_token_count: u32,
 }
 
+/// Gemini's answer to a muted turn on `gemini-3.8-flash`, as it came on
+/// 2026-10-01 — the fixture of this module's tests and the client's.
+#[cfg(test)]
+pub(crate) const LEVEL_REFUSED: &str = r#"{
+  "error": {
+    "code": 400,
+    "message": "Thinking level MINIMAL is not supported for this model. Please retry with other thinking level.",
+    "status": "INVALID_ARGUMENT"
+  }
+}"#;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -697,6 +778,96 @@ mod tests {
         let tc3pro = &j3pro["generationConfig"]["thinkingConfig"];
         assert_eq!(tc3pro["thinkingLevel"], "low");
         assert_eq!(tc3pro["includeThoughts"], false);
+    }
+
+    /// A muted turn's body for `model`.
+    fn muted_body(model: &str) -> GenRequest {
+        let mut r = base_req(vec![ApiMessage::user("hi")]);
+        r.sampling.reasoning_budget = Some(0);
+        build_request(&r, model)
+    }
+
+    /// Gemini's refusal of a level, as it answered on 2026-10-01.
+    fn level_refused(status: u16) -> EngineError {
+        EngineError::status(
+            crate::shared::api::error::SUBJECT_GEMINI,
+            reqwest::StatusCode::from_u16(status).unwrap(),
+            &reqwest::header::HeaderMap::new(),
+            LEVEL_REFUSED,
+        )
+    }
+
+    #[test]
+    fn the_level_a_body_carries_is_a_3x_bodys() {
+        assert_eq!(muted_body("gemini-3.8-flash").effort(), Some("minimal"));
+        assert_eq!(muted_body("gemini-3.1-pro-preview").effort(), Some("low"));
+        // 2.5 mutes with a budget, and a turn that asks for nothing has no config.
+        assert_eq!(muted_body("gemini-2.5-flash").effort(), None);
+        let plain = build_request(&base_req(vec![ApiMessage::user("hi")]), "gemini-3.8-flash");
+        assert_eq!(plain.effort(), None);
+    }
+
+    #[test]
+    fn a_refused_level_is_respelt_in_place() {
+        let mut body = muted_body("gemini-3.8-flash");
+        body.respell_effort(Some("low"));
+        assert_eq!(body.effort(), Some("low"));
+        let tc = &serde_json::to_value(&body).unwrap()["generationConfig"]["thinkingConfig"];
+        assert_eq!(tc["thinkingLevel"], "low");
+        assert_eq!(tc["includeThoughts"], false, "the rest of the config stays");
+        // With nothing to ask for the level goes, and only the level.
+        body.respell_effort(None);
+        assert_eq!(body.effort(), None);
+        let tc = &serde_json::to_value(&body).unwrap()["generationConfig"]["thinkingConfig"];
+        assert!(tc.get("thinkingLevel").is_none(), "{tc}");
+        assert_eq!(tc["includeThoughts"], false);
+        // A body with no level has none to respell.
+        let mut budget = muted_body("gemini-2.5-flash");
+        budget.respell_effort(Some("low"));
+        let tc = &serde_json::to_value(&budget).unwrap()["generationConfig"]["thinkingConfig"];
+        assert!(tc.get("thinkingLevel").is_none(), "{tc}");
+        assert_eq!(tc["thinkingBudget"], 0);
+    }
+
+    /// Gemini's top is `high`: the scale's two tiers above it ride there, as a
+    /// level on 3.x and as the top budget on 2.5.
+    #[test]
+    fn the_tiers_above_high_ride_as_high() {
+        for effort in [ReasoningEffort::XHigh, ReasoningEffort::Max] {
+            let mut r = base_req(vec![ApiMessage::user("hi")]);
+            r.sampling.reasoning_effort = Some(effort);
+            assert_eq!(
+                build_request(&r, "gemini-3.5-flash").effort(),
+                Some("high"),
+                "{effort:?}"
+            );
+            let j25 = serde_json::to_value(build_request(&r, "gemini-2.5-flash")).unwrap();
+            assert_eq!(
+                j25["generationConfig"]["thinkingConfig"]["thinkingBudget"], 24576,
+                "{effort:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_level_above_is_the_next_one_and_the_top_has_none() {
+        assert_eq!(level_above("minimal"), Some("low"));
+        assert_eq!(level_above("low"), Some("medium"));
+        assert_eq!(level_above("high"), None);
+        assert_eq!(level_above("xhigh"), None);
+    }
+
+    #[test]
+    fn only_a_400_about_the_level_is_a_refusal_of_it() {
+        assert!(refuses_thinking_level(&level_refused(400)));
+        assert!(!refuses_thinking_level(&level_refused(429)));
+        let other = EngineError::status(
+            crate::shared::api::error::SUBJECT_GEMINI,
+            reqwest::StatusCode::BAD_REQUEST,
+            &reqwest::header::HeaderMap::new(),
+            r#"{"error":{"code":400,"message":"The input token count exceeds the maximum number of tokens allowed.","status":"INVALID_ARGUMENT"}}"#,
+        );
+        assert!(!refuses_thinking_level(&other));
     }
 
     #[test]

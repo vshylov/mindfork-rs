@@ -8,6 +8,8 @@
 //! [`EngineBackend`](crate::shared::api::contract::EngineBackend) implementation.
 
 mod client;
+#[cfg(test)]
+mod live_tests;
 mod wire;
 
 pub use client::ResponsesClient;

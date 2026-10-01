@@ -1436,7 +1436,7 @@
   "ui.settings.sampling.desc.seed": "RNG seed per request: -1 — random. llama.cpp extension.",
   "ui.settings.sampling.desc.max_tokens": "Maximum tokens in the reply. Empty — no explicit limit (until EOS or end of context).",
   "ui.settings.sampling.desc.thinking": "«Thoughts» (chain-of-thought): enables the model's reasoning before the answer (for reasoning models). Shown as a separate collapsible block (Ctrl+T).",
-  "ui.settings.sampling.desc.reasoning": "Reasoning effort for reasoning models: none/minimal/low/medium/high/xhigh. Higher — deeper thinking before answering, but slower. minimal/xhigh — extended OpenAI tiers (gpt-5.x).",
+  "ui.settings.sampling.desc.reasoning": "Reasoning effort for reasoning models: none/minimal/low/medium/high/xhigh/max. Higher — deeper thinking before answering, but slower and costlier. No model has every tier: a value the model does not have becomes the nearest it has.",
   "ui.settings.sampling.desc.verbosity": "Reply verbosity (OpenAI Responses): low/medium/high. Controls reply length separately from temperature. OpenAI cloud only.",
   "ui.settings.desc.mode": "managed — local llama-server (the app launches the process); external — your own OpenAI-compatible server by URL; openai/gemini/claude/grok — cloud (model name and API key needed); openrouter — the OpenRouter gateway: one key in front of every vendor's models, the model picked from its catalogue.",
   "ui.settings.desc.imp_mode": "shared — the same engine as the assistant (with impersonation sampling); managed — a separate llama-server; external — a separate remote server; openai/gemini/claude/grok — cloud (model name + API key); openrouter — the OpenRouter gateway, on the key its other slots use.",

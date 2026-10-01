@@ -662,6 +662,9 @@ src/
    │  │                     list is narrowed by, not what a row shows, so
    │  │                     ModelFacts::is_empty ignores it; that list opens with the
    │  │                     Gemini family, which orders it and never narrows it
+   │  ├─ effort.rs          the reasoning-effort scale across providers: the ladder, a
+   │  │                      refusal's own list, "nearest", and the ask-again every client
+   │  │                      whose model may refuse a value goes through (EffortWire)
    │  ├─ embed_policy.rs    two Embedder decorators the supervisor stacks over a client:
    │  │                     BatchedEmbedder (a request carries at most MAX_INPUTS = 64
    │  │                     texts; a longer input goes in parts, answered as one list
@@ -1469,13 +1472,17 @@ Details:
   tags across chunk boundaries. **Anthropic (Claude):** `wire::build_request`
   sends `thinking:{type:"adaptive", display:"summarized"}` when
   `sampling.thinking==Some(true)` (+ `output_config.effort` from
-  `reasoning_effort`); we **don't** send `budget_tokens`/`reasoning_budget` — the
-  4.x models reject them (`400`). `thinking_delta`→`Thoughts`,
+  `reasoning_effort`); the sampling's `reasoning_budget` is never sent. A model
+  with no adaptive mode — the 4.5 generation — refuses that shape, and
+  `AnthropicClient::open` asks once more as `{type:"enabled", budget_tokens}`
+  (`AntRequest::think_within_a_budget`: the effort as the budget, half of
+  `max_tokens` at most), kept in `budget_thinking` once accepted (spec §8.1).
+  `thinking_delta`→`Thoughts`,
   `signature_delta`→`ChatChunk::ThoughtsSignature`. **OpenAI Responses:**
   `reasoning.summary` (we send `"detailed"` — more reliable than `"auto"`) →
   `response.reasoning_summary_text.delta` (and `response.reasoning_text.delta`) →
-  `Thoughts`; depth is set via `reasoning.effort` (`ReasoningEffort` includes
-  `minimal`/`xhigh`). **Summaries are only delivered to verified OpenAI
+  `Thoughts`; depth is set via `reasoning.effort` (`ReasoningEffort`: `none`, then
+  `minimal`…`max`; which of them a model has is its own — §6, "A refused effort"). **Summaries are only delivered to verified OpenAI
   organizations** — otherwise the "thoughts" stream is empty (raw CoT is never
   delivered). `supported_sampling_fields(OpenAi)` =
   `max_tokens`+`thinking`+`reasoning_effort`+`verbosity`.
@@ -1658,7 +1665,7 @@ between mode and backend/protocol:
 | **gemini** | **`GeminiClient`** | **native `generateContent`** | `temperature`/`top_p`/`top_k`/penalties/`seed`/`max_tokens`+`thinking`/`reasoning_effort` |
 | **openai** | **`ResponsesClient`** | **Responses (`/v1/responses`)** | `max_tokens`+`thinking`+`reasoning_effort`+`verbosity` |
 | claude | `AnthropicClient` | Messages (`/v1/messages`) | `max_tokens`+`thinking`+`reasoning_effort` |
-| grok | `OpenAiClient` (`with_effort_none_omitted`) | Chat Completions | `temperature`/`top_p`/`max_tokens`/`seed`+`thinking`/`reasoning_effort` |
+| grok | `OpenAiClient` (`with_effort_none_omitted`, `with_effort_capped_at`) | Chat Completions | `temperature`/`top_p`/`max_tokens`/`seed`+`thinking`/`reasoning_effort` |
 | **openrouter** | **`OpenAiClient` (`for_openrouter`)** | **Chat Completions, the gateway's dialect** | `temperature`/`top_k`/`top_p`/`min_p`/`max_tokens`/`seed`/penalties/`repeat_penalty`+`thinking`/`reasoning_effort` — the ceiling, narrowed per model by the catalogue |
 
 **Chat Completions sampling** (`OpenAiClient`): for llama.cpp and xAI there is
@@ -1669,19 +1676,31 @@ runs on Responses (`ResponsesClient`): the system message → top-level
 `instructions`, history → an `input` array of elements,
 `max_tokens`→`max_output_tokens`, `store:false`, a flat function-tool with
 `strict:false`; reasoning summary/`effort`/`verbosity` (see "Thoughts (CoT)").
+**A refused effort** is answered in one place, `shared/api/effort.rs`: the ladder
+of depths, `listed` (what a refusal says the model takes — OpenAI's quoted list,
+Anthropic's bare one), `nearest`, the per-client `EffortMemo`, and
+`send_asking_again`, which a client reaches through `EffortWire` (its body type,
+its one attempt `send`, and `answer` — what a refusal offers in the value's
+place). It applies what the client has learned, sends, asks once more on an
+answered refusal, and records the pair only once the second request is accepted.
+`ResponsesClient` and `AnthropicClient` answer with the nearest listed value (each
+wire's `refuses_effort`); `GeminiClient` with the level above the refused one
+(`wire::refuses_thinking_level`, `level_above`) — spec §8.1.
 The **Gemini** cloud runs on native `generateContent` (`GeminiClient`): system →
 top-level `systemInstruction`, `user`/`model` roles (a tool result →
 `functionResponse` in user), a call → `functionCall` (an args object, no
 `call_id`), `thinkingConfig`; the `thoughtSignature` thought signature is
 per-tool-call (persisted). `AnthropicClient` sends only `max_tokens` from
-sampling + extended thinking (`thinking`/`reasoning_effort` → adaptive; Claude
-4.x rejects temperature/top_p/top_k and `budget_tokens`). The **Grok** cloud
+sampling + extended thinking (`thinking`/`reasoning_effort` → adaptive, or a
+budget on the 4.5 generation; Claude 4.x rejects temperature/top_p/top_k, and
+from Opus 4.7 on `budget_tokens` too). The **Grok** cloud
 (xAI) is the exception that needs no client of its own: its Chat Completions
 endpoint already streams reasoning in `delta.reasoning_content` — the field
 `OpenAiClient` parses for llama.cpp — and takes a tool result back with no
 thinking signature at all, so `cloud_chat_setup` hands it a plain `OpenAiClient`
 (key + model + `with_effort_none_omitted`, since xAI rejects the *value*
-`reasoning_effort:"none"` the auxiliary turns ask for). `supported_sampling_fields(Grok)`
+`reasoning_effort:"none"` the auxiliary turns ask for, + `with_effort_capped_at(XHigh)`,
+since it rejects `"max"` as well and names nothing in its place). `supported_sampling_fields(Grok)`
 = `temperature`/`top_p`/`max_tokens`/`seed` + reasoning: the penalties are a hard
 `400` there and `top_k`/`min_p` are dropped silently. See
 docs/research/grok-xai-provider.md.
@@ -1764,7 +1783,10 @@ docs/research/openrouter-mode.md §13).
 no mode: `VideoSettings.provider` (`VideoProvider`: `Gemini`, the default, or
 `OpenRouter`) names who watches, and `shared::video::client(cfg)` builds
 `GeminiVideo` or `shared/video/gateway.rs`'s `GatewayVideo` behind the one
-contract, `VideoUnderstanding`. `VideoConfig` carries the `provider` and the
+contract, `VideoUnderstanding`. `GeminiVideo` mutes thinking the way the chat
+client does — the level by the model's name — and answers a refused level the
+same way too: once more at the level above (`gemini::level_above`,
+`says_level_refused`), kept in `muted_level` once accepted. `VideoConfig` carries the `provider` and the
 `attribution` the client is built with — the second `false` for Gemini whatever
 the switch says (`resolve_config`). What `GatewayVideo` borrows from
 `shared::api::openai` is the model's entry (`ModelEnvelope`,
