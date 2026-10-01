@@ -839,6 +839,19 @@ value before closing the task; and a capability measured on a model is that mode
 so the code that depends on it needs the refusal's path even while nothing refuses.
 — *a muted turn on an OpenAI model that has no "none"*.
 
+**A rule drawn from one model is a guess about the provider — measure the row before
+writing the sentence.** The fix above shipped with a rule in the spec, *an effort the
+user chose is reported as it came*, argued from `gpt-6.1-sol` alone. One table a day
+later — ten OpenAI models, seven values — showed five different sets, nine models
+refusing `minimal`, and a gateway that maps such values itself; the sentence was
+withdrawn, and the code that implemented its other half (reading a refusal's list by
+scanning the whole message) would have offered the refused value back once that
+value could be a depth. The same table, run on the neighbours, found the same defect
+live on Gemini's two newest Flash models, behind a name heuristic. Seventy requests
+of a few tokens each: when a fix turns on what "the provider" accepts, the table is
+cheaper than the second pull request.
+— *an effort value a model does not have, stage 1*.
+
 **Record sub-decisions before implementing, then re-read them.** Writing them down is
 what caught a hole in one: the argument for a single wording held for the chat-level
 gate but not for a profile that can switch the tools off — precisely the failure the
