@@ -154,6 +154,10 @@ BRIGHT_WHITE = 15
 SETTINGS_KEY = "ctrl+p"
 EMOJI_KEY = "ctrl+b"
 SETTINGS_FILE = "settings.json"
+# The schema the scenarios write their settings at: the app's own
+# `SETTINGS_SCHEMA`. A file below it is migrated at the start — with a
+# pre-migration backup no scenario asked for — and one above it is refused.
+SETTINGS_SCHEMA = 5
 
 # How long the app gets to draw after a key (the loop ticks every 50 ms; a
 # screen switch or a mode change repaints everything).
@@ -601,7 +605,7 @@ def scenario_first_frame(exe: Path, report: Report) -> None:
         shutil.copy(exe, copy)
         (root / "data").mkdir()
         settings = {
-            "schema_version": 4,
+            "schema_version": SETTINGS_SCHEMA,
             "interface": {"language": "en", "theme_mode": "full", "full_theme": "light"},
         }
         (root / "data" / SETTINGS_FILE).write_text(json.dumps(settings), encoding="utf-8")
@@ -712,7 +716,7 @@ def scenario_user_theme(exe: Path, report: Report) -> None:
         theme_file.write_text(json.dumps({"canvas": "#f4ecd8"}), encoding="utf-8")
         (themes / "broken.json").write_text("{", encoding="utf-8")
         settings = {
-            "schema_version": 4,
+            "schema_version": SETTINGS_SCHEMA,
             "interface": {"language": "en", "theme_mode": "full", "full_theme": theme},
         }
         (root / "data" / SETTINGS_FILE).write_text(json.dumps(settings), encoding="utf-8")
@@ -805,7 +809,7 @@ def scenario_gateway(exe: Path, report: Report) -> None:
         shutil.copy(exe, copy)
         (root / "data").mkdir()
         settings = {
-            "schema_version": 4,
+            "schema_version": SETTINGS_SCHEMA,
             "interface": {"language": "en"},
             "engine": {
                 "mode": "openrouter",

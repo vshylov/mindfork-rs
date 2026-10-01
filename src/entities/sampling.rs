@@ -18,6 +18,15 @@ use crate::shared::config::CloudProvider;
 /// (`shared::api::effort`, docs/research/effort-tiers.md). Variant order = the UI
 /// cycle order **and** the scale's own: the derived `Ord` is what a ceiling
 /// compares with.
+///
+/// **A new variant is a new stored value.** The effort is written into
+/// `settings.json`, a profile's defaults and every chat file (the override and
+/// each reply's `metadata.sampling`), and it is a strict enum: an older binary
+/// fails the parse of the whole file on a value it does not know — for a chat
+/// file that means the chat is missing from its list. So a variant arrives
+/// with a schema step (`shared::storage::schema`, where a test names the
+/// schema each variant arrived in and does not compile for one it has not been
+/// told about); `Max` arrived in 5.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ReasoningEffort {

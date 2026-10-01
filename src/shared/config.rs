@@ -9,7 +9,7 @@ use crate::shared::gguf::display_name;
 use crate::shared::secrets::{ExternalSlot, SecretKey};
 
 /// Current config schema version.
-pub const SCHEMA_VERSION: u32 = 4;
+pub const SCHEMA_VERSION: u32 = 5;
 
 /// Inference-engine connection mode. Local (`Managed`/`External`) and cloud
 /// providers (`OpenAi`/`Gemini`) are equal-footing variants of a single selector

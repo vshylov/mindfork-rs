@@ -338,6 +338,22 @@ mod tests {
         serde_json::to_string(&Chat::from_profile(&p, "t")).unwrap()
     }
 
+    /// How many pre-migration backups the root holds.
+    fn pre_migrate_backups(paths: &Paths) -> usize {
+        fs::read_dir(paths.backups_dir())
+            .map(|d| {
+                d.filter(|e| {
+                    e.as_ref()
+                        .unwrap()
+                        .file_name()
+                        .to_string_lossy()
+                        .contains("pre-migrate")
+                })
+                .count()
+            })
+            .unwrap_or(0)
+    }
+
     #[test]
     fn run_is_noop_when_all_current() {
         let dir = tempfile::tempdir().unwrap();
@@ -391,20 +407,7 @@ mod tests {
             .as_deref()
             .expect("a synthesized run");
         assert_eq!(run_.final_reply(), Some("Идея X слаба: …"));
-        let backups = || {
-            fs::read_dir(paths.backups_dir())
-                .map(|d| {
-                    d.filter(|e| {
-                        e.as_ref()
-                            .unwrap()
-                            .file_name()
-                            .to_string_lossy()
-                            .contains("pre-migrate")
-                    })
-                    .count()
-                })
-                .unwrap_or(0)
-        };
+        let backups = || pre_migrate_backups(&paths);
         assert_eq!(backups(), 1, "one pre-migrate backup");
 
         // The next start finds the file current: no step, no second backup.
@@ -428,6 +431,89 @@ mod tests {
             schema::chat_artifact().assess(&v),
             schema::Assessment::UpToDate
         );
+    }
+
+    /// A root as 0.13.0 left it, through the real registry: the golden v4
+    /// settings and a v4 chat are backed up once and stamped 5 — the first
+    /// schema in which an effort may read `max` — a profile is left as it is,
+    /// and the next start finds nothing to do.
+    #[test]
+    fn run_stamps_a_root_of_the_version_before_the_max_effort() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::with_root(dir.path());
+        write(
+            &paths.settings_file(),
+            include_str!("../shared/storage/fixtures/settings_v4.json"),
+        );
+        let profiles = serde_json::to_string(&vec![Profile::new("A", "s")]).unwrap();
+        write(&paths.profiles_file(), &profiles);
+        let id = "7e1d4a90-3b52-4c68-9f0e-2a6b8c4d1e35";
+        let chat_before = include_str!("../shared/storage/fixtures/chat_v4_effort_xhigh.json");
+        write(&paths.chat_file(id), chat_before);
+
+        run(&paths, ru()).unwrap();
+
+        let read = |path: PathBuf| -> Value {
+            serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap()
+        };
+        let settings = read(paths.settings_file());
+        assert_eq!(settings["schema_version"], json!(5));
+        assert_eq!(
+            settings["default_sampling"]["reasoning_effort"],
+            json!("xhigh")
+        );
+        let mut chat = read(paths.chat_file(id));
+        assert_eq!(chat["v"], json!(5));
+        chat["v"] = json!(4);
+        let before: Value = serde_json::from_str(chat_before).unwrap();
+        assert_eq!(chat, before, "the chat holds what it held");
+        assert_eq!(fs::read_to_string(paths.profiles_file()).unwrap(), profiles);
+        assert_eq!(pre_migrate_backups(&paths), 1, "one pre-migrate backup");
+
+        run(&paths, ru()).unwrap();
+        assert_eq!(pre_migrate_backups(&paths), 1);
+    }
+
+    /// `profiles.json` has no step for the `max` effort (`schema::settings_to_v5`
+    /// says why): a version that does not know the value reads `settings.json`
+    /// first and refuses there, as a newer version's data. Pinned here as the
+    /// order of the reads — the refusal names the settings and their version,
+    /// and is made although the profiles hold what that version cannot parse.
+    #[test]
+    fn a_reader_before_the_max_effort_refuses_at_the_settings_not_at_a_profile() {
+        let mut profile = Profile::new("A", "s");
+        profile.default_sampling = Some(crate::entities::sampling::SamplingConfig {
+            reasoning_effort: Some(crate::entities::sampling::ReasoningEffort::Max),
+            ..Default::default()
+        });
+        let profiles = serde_json::to_string(&vec![profile]).unwrap();
+        assert!(
+            profiles.contains(r#""reasoning_effort":"max""#),
+            "{profiles}"
+        );
+        let (_dir, paths) = root_with(&valid_settings_json(), &profiles);
+
+        // The settings reader 0.13.0 ships.
+        let before = JsonArtifact {
+            name: "settings.json",
+            current: 4,
+            detect: schema::settings_artifact().detect,
+            steps: &[],
+        };
+        let err = run_with(
+            &paths,
+            en(),
+            &before,
+            &schema::profiles_artifact(),
+            &schema::chat_artifact(),
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(err.contains("settings.json"), "{err}");
+        assert!(err.contains("newer version"), "{err}");
+        assert!(!err.contains("max"), "{err}");
+        assert!(nothing_was_written(&paths, &paths.profiles_file()));
     }
 
     #[test]
