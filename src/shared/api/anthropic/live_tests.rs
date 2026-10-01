@@ -1,11 +1,12 @@
-//! Live smokes of the Anthropic client's effort levels against the real API.
+//! Live smokes of the Anthropic client against the real API: an effort level
+//! or a thinking shape the model does not have.
 //! `#[ignore]` — not in CI; silently skipped without their variables.
 //!
 //! A file of its own, named as a test file: the coverage report leaves such
 //! files out, and smokes that never run in CI would otherwise count as
 //! production code nothing covers (docs/journal/quality.md).
 //!
-//! Run both arms:
+//! Run every arm (add `MINDFORK_LIVE_NO_ADAPTIVE_THINKING_MODEL=claude-haiku-4-5`):
 //! `MINDFORK_ANTHROPIC_KEY=… MINDFORK_LIVE_NO_EFFORT_XHIGH_MODEL=claude-sonnet-4-6
 //! MINDFORK_LIVE_EFFORT_XHIGH_MODEL=claude-sonnet-5-5 cargo test
 //! anthropic::live_tests -- --ignored --nocapture --test-threads=1`.
@@ -122,4 +123,75 @@ async fn the_top_levels_are_sent_as_they_are() {
             "{model} was declared to take {effort:?}: nothing should have been learned"
         );
     }
+    assert!(
+        !client.thinks_within_a_budget(),
+        "{model} thinks adaptively: the budget shape must not have been used"
+    );
+}
+
+/// The defect, live: a model with no adaptive thinking —
+/// `MINDFORK_LIVE_NO_ADAPTIVE_THINKING_MODEL` declares one (`claude-haiku-4-5`,
+/// and the rest of the 4.5 generation; measured 2026-10-01). The thinking switch
+/// is on by default, so before the recovery every ordinary turn on such a model
+/// was the `400` itself.
+///
+/// Declared rather than guessed, so the smoke **fails** rather than passes on a
+/// model that thinks adaptively. The thoughts are asserted too: a turn that
+/// merely dropped its thinking would complete just as well.
+#[tokio::test]
+#[ignore = "requires MINDFORK_ANTHROPIC_KEY + MINDFORK_LIVE_NO_ADAPTIVE_THINKING_MODEL (a Claude model without adaptive thinking)"]
+async fn a_thinking_turn_survives_a_model_without_adaptive_thinking() {
+    let Some((model, client)) = client_for("MINDFORK_LIVE_NO_ADAPTIVE_THINKING_MODEL") else {
+        return;
+    };
+    for nth in 1..=2 {
+        let req = ChatRequest {
+            continue_final: false,
+            system: None,
+            messages: vec![ApiMessage::user(
+                "What is 17 * 23? Think it through, then answer with the number.",
+            )],
+            sampling: SamplingConfig {
+                max_tokens: Some(16384),
+                thinking: Some(true),
+                reasoning_effort: Some(ReasoningEffort::High),
+                ..Default::default()
+            },
+            tools: vec![],
+        };
+        let mut stream = client
+            .chat_stream(req, Default::default())
+            .await
+            .expect("a thinking turn must not be refused");
+        let (mut text, mut thoughts, mut finish) = (String::new(), String::new(), None);
+        while let Some(chunk) = stream.next().await {
+            match chunk {
+                ChatChunk::Text(t) => text.push_str(&t),
+                ChatChunk::Thoughts(t) => thoughts.push_str(&t),
+                ChatChunk::Error { message, .. } => eprintln!("engine error: {message}"),
+                ChatChunk::Finished(r) => {
+                    finish = Some(r);
+                    break;
+                }
+                _ => {}
+            }
+        }
+        println!(
+            "{model} turn {nth}: finish={finish:?} thoughts={} chars reply={}",
+            thoughts.len(),
+            text.trim()
+        );
+        assert!(
+            finish == Some(FinishReason::Stop) && text.contains("391"),
+            "{model}: the turn must complete with the answer: finish={finish:?} text={text:?}"
+        );
+        assert!(
+            !thoughts.is_empty(),
+            "{model}: the turn was asked to think and showed no thoughts"
+        );
+    }
+    assert!(
+        client.thinks_within_a_budget(),
+        "{model} was declared to refuse adaptive thinking, yet nothing was refused — the recovery did not run"
+    );
 }

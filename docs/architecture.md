@@ -1472,8 +1472,12 @@ Details:
   tags across chunk boundaries. **Anthropic (Claude):** `wire::build_request`
   sends `thinking:{type:"adaptive", display:"summarized"}` when
   `sampling.thinking==Some(true)` (+ `output_config.effort` from
-  `reasoning_effort`); we **don't** send `budget_tokens`/`reasoning_budget` — the
-  4.x models reject them (`400`). `thinking_delta`→`Thoughts`,
+  `reasoning_effort`); the sampling's `reasoning_budget` is never sent. A model
+  with no adaptive mode — the 4.5 generation — refuses that shape, and
+  `AnthropicClient::open` asks once more as `{type:"enabled", budget_tokens}`
+  (`AntRequest::think_within_a_budget`: the effort as the budget, half of
+  `max_tokens` at most), kept in `budget_thinking` once accepted (spec §8.1).
+  `thinking_delta`→`Thoughts`,
   `signature_delta`→`ChatChunk::ThoughtsSignature`. **OpenAI Responses:**
   `reasoning.summary` (we send `"detailed"` — more reliable than `"auto"`) →
   `response.reasoning_summary_text.delta` (and `response.reasoning_text.delta`) →
@@ -1687,8 +1691,9 @@ top-level `systemInstruction`, `user`/`model` roles (a tool result →
 `functionResponse` in user), a call → `functionCall` (an args object, no
 `call_id`), `thinkingConfig`; the `thoughtSignature` thought signature is
 per-tool-call (persisted). `AnthropicClient` sends only `max_tokens` from
-sampling + extended thinking (`thinking`/`reasoning_effort` → adaptive; Claude
-4.x rejects temperature/top_p/top_k and `budget_tokens`). The **Grok** cloud
+sampling + extended thinking (`thinking`/`reasoning_effort` → adaptive, or a
+budget on the 4.5 generation; Claude 4.x rejects temperature/top_p/top_k, and
+from Opus 4.7 on `budget_tokens` too). The **Grok** cloud
 (xAI) is the exception that needs no client of its own: its Chat Completions
 endpoint already streams reasoning in `delta.reasoning_content` — the field
 `OpenAiClient` parses for llama.cpp — and takes a tool result back with no

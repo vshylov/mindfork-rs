@@ -3,10 +3,13 @@
 //!
 //! One scale is chosen in the settings and translated per wire (spec §8.1), and
 //! no two models take the same part of it — measured on 2026-10-01, ten OpenAI
-//! models take five different sets (docs/research/effort-tiers.md §2). Nothing
-//! publishes a model's set ahead of the request; the refusal does, in its own
-//! words. So a client asks as chosen, and a value the model refuses becomes the
-//! nearest it has ([`nearest`]), remembered for that client ([`EffortMemo`]).
+//! models take five different sets (docs/research/effort-tiers.md §2). OpenAI
+//! publishes a model's set nowhere but in its refusal; Anthropic and xAI list it
+//! on the model object, and are read off the refusal all the same — it is free,
+//! and only a model that needs it meets it, where asking ahead would cost every
+//! session a request. So a client asks as chosen, and a value the model refuses
+//! becomes the nearest it has ([`nearest`]), remembered for that client
+//! ([`EffortMemo`]).
 
 use std::sync::{Mutex, PoisonError};
 

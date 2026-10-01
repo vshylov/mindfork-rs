@@ -118,6 +118,14 @@ unchecked, and templates exist that read `max`.
   OpenAI nor Anthropic publishes the set anywhere but in the refusal, so the
   list could narrow only after a failed turn, and a stored value outside it
   would still need (a) or (b).
+  **Corrected the same day** (the Claude 4.5 task, §8): true of OpenAI, false of
+  Anthropic and of xAI — both publish it per model
+  (`capabilities.effort` and `capabilities.thinking.types`;
+  `capabilities.reasoning_effort`). Their model lists had been fetched for the ids
+  alone. The decision stands on other grounds — a refused request is free
+  and only the models that need it meet it, while asking ahead costs every
+  session a request — and a narrowed list in the settings, for those two
+  providers, is possible after all.
 
 ### E2. Saying that a depth was replaced — **(a), decided**
 
@@ -257,7 +265,14 @@ Stage 1's five smokes, run again on this branch: unchanged.
   the same day: `youtube_watch` with `gemini-3.7-flash` or `gemini-3.8-flash`
   as the video model was the same `400`, and the client now asks once more at
   the level above ([docs/journal/tools.md](../journal/tools.md)).
-- `claude-haiku-4-5` answers every request that carries `thinking: {type:
-  "adaptive"}` with *"adaptive thinking is not supported on this model"*
-  **[measured on the API; not reproduced through the app]** — the thinking
-  switch on that model, whatever the effort.
+- The 4.5 generation (`claude-haiku-4-5`, `claude-sonnet-4-5`,
+  `claude-opus-4-5`) answers every request that carries `thinking: {type:
+  "adaptive"}` with *"adaptive thinking is not supported on this model"* —
+  and the thinking switch is on by default, so every ordinary turn failed
+  there. **Reproduced and fixed** in its own task the same day: the request is
+  asked once more with a thinking budget
+  ([docs/journal/engine.md](../journal/engine.md)).
+- **Left open:** xAI publishes `capabilities.reasoning_effort` per model, and
+  the client's two configured answers for it are not read from there —
+  `grok-4.3` lists `none` and is never sent it, so its muted turns reason at
+  the model's default.

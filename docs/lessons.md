@@ -852,6 +852,19 @@ of a few tokens each: when a fix turns on what "the provider" accepts, the table
 cheaper than the second pull request.
 — *an effort value a model does not have, stage 1*.
 
+**"Nothing publishes it" is a claim about an endpoint — ask the endpoint.** The same
+track wrote, in its research and in two doc comments, that a model's supported
+efforts are published "nowhere but in the refusal". It had probed seventy chat
+requests, and listed each provider's models only to read their ids. Anthropic's
+model object lists
+`capabilities.effort` and `capabilities.thinking.types` per model; xAI's lists
+`capabilities.reasoning_effort` — which shows one of that client's two configured
+answers to be wrong for an older model. The design survived on other grounds, but a
+fork had been closed to the user as "not available" when it was. Before writing that
+a provider does not say something, fetch the object where it would say it: the model,
+the catalogue, the `/props`.
+— *thinking on the Claude 4.5 generation*.
+
 **Record sub-decisions before implementing, then re-read them.** Writing them down is
 what caught a hole in one: the argument for a single wording held for the chat-level
 gate but not for a profile that can switch the tools off — precisely the failure the
