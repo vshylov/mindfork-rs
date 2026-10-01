@@ -28,17 +28,17 @@ evidence. Adding or closing an item is part of every task's documentation step
 
 ## Most valuable next
 
-**No track is open.** The last one — a mode of its own for OpenRouter, in all
-five slots — closed with its fourth stage on 2026-09-29 ([Closed](#closed)); what
-it left on demand is under *Engine and providers* below. **Every stage ships in
-one release, 0.13.0** (the user's decision). The site's home page and articles
-and the one-sentence description of the application were merged with the track,
-a release ahead of the mode they describe
-([the release journal](journal/release.md)).
+**No track is open.** The last two — small windows, and the reasoning effort
+a model does not have — closed on 2026-09-30 and 2026-10-01 and ship together
+in 0.14.0 ([Closed](#closed)); what the first left is listed in its research's
+§9.4, and the second left nothing open. Before them, the OpenRouter mode
+shipped whole in 0.13.0; what it left on demand is under *Engine and
+providers* below.
 
 The tracks this section carried before — the first public release, images,
 retry/backoff, the prompt-caching measurement, the attachment birth turn,
-colour modes with user themes, and the OpenRouter mode — have all closed
+colour modes with user themes, the OpenRouter mode, small windows and the
+effort tiers — have all closed
 ([Closed](#closed)); the lists below are an idea bank of equal weight.
 
 ## Open
@@ -466,7 +466,7 @@ colour modes with user themes, and the OpenRouter mode — have all closed
 - **docs.rs shows no documentation** — **deferred**. The crate has no library
   target; the `documentation` field points at the manual, which is what the
   crates.io page links.
-- **Small windows** — **done** (2026-09-30, three stages): a window below
+- **Small windows** — **done** (2026-09-30, three stages; 0.14.0): a window below
   what the frame in front needs gets a notice instead of a frame with parts
   missing, a question is asked whole or not at all, the chat sheds its chrome
   in a fixed order down to three rows, and a screen's footer takes a third of
@@ -613,6 +613,18 @@ An index, newest first — one line per track, with the release that shipped it
 and where its story is told. What a track left open is a bullet above, under
 its area.
 
+- **A reasoning effort a model does not have** — 0.14.0 (2026-10-02), two
+  stages and four fixes beside them: a refused effort is asked once more as
+  the nearest the model lists, and remembered; `max` is the scale's top, real
+  on OpenAI and Claude, `xhigh` on Grok, `high` on Gemini; Grok's efforts are
+  read from xAI's own list; the Claude 4.5 generation thinks within a budget.
+  `max` is a stored value, so `settings.json` and the chat files went 4 → 5.
+  [effort-tiers.md](research/effort-tiers.md), spec §8.1, §12.2.
+- **Small windows** — 0.14.0 (2026-10-02), three stages: a notice below what
+  the frame in front needs, the chat shedding its chrome down to 20×3, a
+  screen's footer held to a third of the window — and the titles, tabs and
+  the cursor a narrow window used to get wrong.
+  [small-terminal.md](research/small-terminal.md), spec §11.1.1.
 - **OpenRouter as a provider of its own** — 0.13.0 (2026-09-30), four stages: `openrouter`
   is a mode beside `external` in chat and impersonation — one key, the
   gateway's dialect, the key checked before the first message, a model list
