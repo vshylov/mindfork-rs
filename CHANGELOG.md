@@ -14,6 +14,22 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Fixed
+- **A local server that stops says why.** When `llama-server` dies while starting,
+  the status now carries the error it logged — not *corrupt GGUF or out of
+  memory?* — and for a llama.cpp build made for a newer CUDA than the GPU driver
+  (seen on a B200 with the `cuda-13` build) it names the way out: the `cuda-12`
+  build, or a newer driver.
+- **A port another program holds is no longer mistaken for the server.** The app
+  does not start a local server there: it says the port is taken and where to
+  change it. On RunPod, whose own nginx holds 8001, the embedding server used to
+  show as ready while it was restarted over and over.
+- **A server that keeps crashing gets its three restarts**, not two cut short
+  each time by a second launch, and a server that could not be started at all is
+  not restarted until its settings change.
+- **A long server status is cut, not hidden**, in the settings' Model/server
+  section — the one place the embedding server's reason is shown.
+
 ## [0.14.0] — 2026-10-02
 
 **A window of any size, and one reasoning effort for every model.** A window

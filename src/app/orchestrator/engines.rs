@@ -164,6 +164,11 @@ pub(super) struct EngineManager {
     embed_probe_cancel: Option<CancellationToken>,
     /// Relaunch budgets for the managed servers (chat/embed/impersonation).
     restarts: [RestartBudget; 3],
+    /// Which slots' last apply was refused before anything started — a port a
+    /// stranger holds, a model file that is not there: no process to revive, and
+    /// a retry refuses the same way until the settings change, which applies the
+    /// slot afresh. Cleared by a monitor's report, which only a started server has.
+    refused: [bool; 3],
     /// The embeddings source for RAG (a dedicated server — ADR 0002).
     pub(super) embedder: Arc<dyn Embedder>,
 }
@@ -198,6 +203,7 @@ impl EngineManager {
             imp_probe_cancel: None,
             embed_probe_cancel: None,
             restarts: Default::default(),
+            refused: [false; 3],
             embedder: Arc::new(crate::shared::api::UnavailableEmbedder),
         }
     }
@@ -233,6 +239,7 @@ impl EngineManager {
         );
         self.backend = setup.backend;
         self.chat_handle = setup.handle;
+        self.refused[Server::Chat as usize] = matches!(setup.status, ServerStatus::Disconnected(_));
         self.server_status = setup.status;
         self.applied_chat = Some((
             settings.clone(),
@@ -279,6 +286,8 @@ impl EngineManager {
         );
         self.embedder = dress(setup.embedder);
         self.embed_handle = setup.handle;
+        self.refused[Server::Embed as usize] =
+            matches!(setup.status, ServerStatus::Disconnected(_));
         self.embed_status = setup.status;
         self.applied_embed = Some((
             settings.clone(),
@@ -305,6 +314,7 @@ impl EngineManager {
         match settings.mode {
             ImpersonationMode::Shared => {
                 self.imp_backend = None;
+                self.refused[Server::Impersonation as usize] = false;
                 self.imp_status = ServerStatus::NotConfigured;
             }
             _ => {
@@ -320,6 +330,8 @@ impl EngineManager {
                 );
                 self.imp_backend = setup.backend;
                 self.imp_handle = setup.handle;
+                self.refused[Server::Impersonation as usize] =
+                    matches!(setup.status, ServerStatus::Disconnected(_));
                 self.imp_status = setup.status;
             }
         }
@@ -397,8 +409,10 @@ impl EngineManager {
     }
 
     /// A server that reached `Ready` gets a clean relaunch budget: the budget exists
-    /// to stop a crash *loop*, not to count a machine's lifetime outages.
+    /// to stop a crash *loop*, not to count a machine's lifetime outages. Any report
+    /// at all comes from a monitor, and only a started server has one.
     fn note_recovery(&mut self, server: Server, status: &ServerStatus) {
+        self.refused[server as usize] = false;
         if matches!(status, ServerStatus::Ready) {
             self.restarts[server as usize].reset();
             if matches!(server, Server::Chat) {
@@ -414,6 +428,12 @@ impl EngineManager {
     /// §3.3).
     pub(super) fn claim_prefill_note(&mut self) -> bool {
         !std::mem::replace(&mut self.prefill_noted, true)
+    }
+
+    /// Whether `server`'s last apply was refused before anything started (see
+    /// [`Self::refused`]) — nothing for a relaunch to revive.
+    pub(super) fn launch_refused(&self, server: Server) -> bool {
+        self.refused[server as usize]
     }
 
     /// Whether a dead managed `server` may be relaunched right now (crash-loop guard).

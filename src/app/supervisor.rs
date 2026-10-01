@@ -15,7 +15,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::shared::api::embed_policy::{BatchedEmbedder, RetryEmbedder};
 use crate::shared::api::llama_args::ManagedRole;
-use crate::shared::api::managed::ChildExit;
+use crate::shared::api::managed::{ChildExit, PortLedger};
 use crate::shared::api::{
     AnthropicClient, Embedder, EngineBackend, GeminiClient, KeyVerdict, ManagedConfig,
     OpenAiClient, ResponsesClient, ServerHandle, UnavailableEmbedder, retry, wait_until_ready,
@@ -174,6 +174,9 @@ pub struct LlamaSupervisor {
     /// The gateway's provider-wide settings as last told
     /// ([`ServerSupervisor::set_gateway`]); the defaults until then.
     gateway: std::sync::RwLock<OpenRouterSettings>,
+    /// Every managed launch goes through it: a port a stranger holds is refused,
+    /// one our own replaced server is still letting go of is not.
+    ports: PortLedger,
 }
 
 impl LlamaSupervisor {
@@ -183,6 +186,7 @@ impl LlamaSupervisor {
         Self {
             lookup: BinaryLookup::from_paths(paths),
             gateway: Default::default(),
+            ports: PortLedger::default(),
         }
     }
 
@@ -221,7 +225,7 @@ impl ServerSupervisor for LlamaSupervisor {
             ),
             ServerMode::Managed => {
                 let cfg = managed_config(&settings.managed, ManagedRole::Assistant, &self.lookup);
-                managed_chat_setup(cfg, cancel, status_tx, loc)
+                managed_chat_setup(&self.ports, cfg, cancel, status_tx, loc)
             }
             ServerMode::OpenAi
             | ServerMode::Gemini
@@ -271,7 +275,7 @@ impl ServerSupervisor for LlamaSupervisor {
             ImpersonationMode::Managed => {
                 let cfg =
                     managed_config(&settings.managed, ManagedRole::Impersonation, &self.lookup);
-                managed_chat_setup(cfg, cancel, status_tx, loc)
+                managed_chat_setup(&self.ports, cfg, cancel, status_tx, loc)
             }
             ImpersonationMode::OpenAi
             | ImpersonationMode::Gemini
@@ -353,7 +357,7 @@ impl ServerSupervisor for LlamaSupervisor {
                     if !cfg.is_runnable() {
                         return unavailable_embed();
                     }
-                    match ServerHandle::launch(&cfg, loc) {
+                    match self.ports.launch(&cfg, loc) {
                         Ok(handle) => {
                             let client = Arc::new(OpenAiClient::new(handle.base_url()));
                             // A large GGUF loads for seconds; the probe accounts for an
@@ -490,8 +494,10 @@ fn external_chat_setup(
 /// Managed chat setup: launch a child `llama-server`, a background probe (accounting
 /// for an early process exit). An empty binary **or an unset model** →
 /// `NotConfigured` ([`ManagedConfig::is_runnable`], which carries the measurement
-/// behind the model half).
+/// behind the model half); a port a stranger holds → `Disconnected` saying so
+/// ([`PortLedger`]).
 fn managed_chat_setup(
+    ports: &PortLedger,
     cfg: ManagedConfig,
     cancel: CancellationToken,
     status_tx: UnboundedSender<ServerStatus>,
@@ -500,7 +506,7 @@ fn managed_chat_setup(
     if !cfg.is_runnable() {
         return not_configured();
     }
-    match ServerHandle::launch(&cfg, loc) {
+    match ports.launch(&cfg, loc) {
         Ok(handle) => {
             let client = Arc::new(OpenAiClient::new(handle.base_url()));
             spawn_probe(
@@ -902,9 +908,19 @@ fn spawn_probe(
         if cancel.is_cancelled() {
             return;
         }
+        // A child that died before the first verdict has just been reported dead
+        // by that verdict. Phase 2's first act would be to report the same exit
+        // again, and the orchestrator — which relaunches on the first report —
+        // took the second for the *new* server's death: it killed the process it
+        // had started a moment before and spent a second slot of the relaunch
+        // budget on it (the pod log of 2026-10-01: two launches 40 ms apart for
+        // every crash). A verdict of `Ready` goes on, so an exit right after it
+        // is still reported.
+        let died = !matches!(status, ServerStatus::Ready)
+            && exited.as_ref().is_some_and(ChildExit::is_exited);
         let mut health = Health::new(matches!(status, ServerStatus::Ready));
-        if status_tx.send(status).is_err() {
-            return; // the orchestrator is gone
+        if status_tx.send(status).is_err() || died {
+            return; // the orchestrator is gone, or there is nothing left to watch
         }
 
         // Phase 2 — keep watching. Without this the status would describe the moment
@@ -1126,6 +1142,9 @@ pub struct MockSupervisor {
     /// Report `UnavailableEmbedder` instead of the `MockEmbedder` fallback — the
     /// only way to express "no embedder at all" (see `with_backend_no_embedder`).
     embed_unavailable: bool,
+    /// Refuse every chat launch with this reason, synchronously — the way a
+    /// managed launch refuses a missing model or a port a stranger holds.
+    chat_refusal: Option<String>,
 }
 
 #[cfg(test)]
@@ -1141,6 +1160,7 @@ impl MockSupervisor {
             embed_dim: 16,
             embedder: None,
             embed_unavailable: false,
+            chat_refusal: None,
         }
     }
 
@@ -1157,6 +1177,7 @@ impl MockSupervisor {
             embed_dim: 16,
             embedder,
             embed_unavailable: false,
+            chat_refusal: None,
         }
     }
 
@@ -1170,6 +1191,14 @@ impl MockSupervisor {
         Self {
             embed_unavailable: true,
             ..Self::with_backend_and_embedder(backend, None)
+        }
+    }
+
+    /// A supervisor whose every chat launch is refused before anything starts.
+    pub fn refusing_chat(reason: &str) -> Self {
+        Self {
+            chat_refusal: Some(reason.to_string()),
+            ..Self::with_backend(None)
         }
     }
 
@@ -1200,6 +1229,13 @@ impl ServerSupervisor for MockSupervisor {
             .lock()
             .unwrap()
             .push(stored_key.map(str::to_string));
+        if let Some(reason) = &self.chat_refusal {
+            return ChatSetup {
+                backend: None,
+                handle: None,
+                status: ServerStatus::Disconnected(reason.clone()),
+            };
+        }
         let backend = self.backend.clone();
         // The mock engine is ready instantly: we hand back `Ready` as the immediate
         // status (rather than `Connecting` + an async probe), otherwise the
@@ -1311,6 +1347,7 @@ mod tests {
                 exe_dir: None,
             },
             gateway: Default::default(),
+            ..Default::default()
         };
         eprintln!(
             "resolved: {:?}",
@@ -1405,6 +1442,7 @@ mod tests {
                 exe_dir: None,
             },
             gateway: Default::default(),
+            ..Default::default()
         }
         .apply_embed(&settings, None, CancellationToken::new(), tx, ru());
         assert_ne!(
@@ -1467,6 +1505,7 @@ mod tests {
                 exe_dir: None,
             },
             gateway: Default::default(),
+            ..Default::default()
         }
         .apply_embed(&settings, None, CancellationToken::new(), tx, ru());
         assert!(setup.handle.is_none(), "no process is started");
@@ -2514,6 +2553,130 @@ mod tests {
         }
     }
 
+    /// A managed server whose port a stranger holds is not started: the probe
+    /// would take the stranger's answers for ours (RunPod's nginx on 8001, the
+    /// pod log of 2026-10-01). Both call sites — the embedder's and the chat
+    /// servers' — and no probe behind the refusal, so nothing relaunches it.
+    #[tokio::test]
+    async fn a_managed_server_on_a_taken_port_is_not_started() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let model = dir.path().join("model.gguf");
+        std::fs::write(&model, b"gguf").expect("write a model");
+        let held = std::net::TcpListener::bind("127.0.0.1:0").expect("bind a stranger");
+        let port = held.local_addr().unwrap().port();
+        let binary = Some(dir.path().join("llama-server").display().to_string());
+        let model = Some(model.display().to_string());
+        let supervisor = LlamaSupervisor::default();
+        let said_busy = |status: &ServerStatus| match status {
+            ServerStatus::Disconnected(msg) => {
+                msg.contains(&format!("порт {port} занят другой программой"))
+                    && msg.contains("Порт")
+            }
+            _ => false,
+        };
+
+        let (tx, mut rx) = unbounded_channel();
+        let embed = EmbedSettings {
+            mode: ServerMode::Managed,
+            managed: ManagedEmbedSettings {
+                binary: binary.clone(),
+                model_path: model.clone(),
+                port,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let setup = supervisor.apply_embed(&embed, None, CancellationToken::new(), tx, ru());
+        assert!(said_busy(&setup.status), "{:?}", setup.status);
+        assert!(setup.handle.is_none());
+        assert!(
+            tokio::time::timeout(Duration::from_secs(5), rx.recv())
+                .await
+                .expect("the sender is dropped, not held by a probe")
+                .is_none(),
+            "a refused launch has no probe"
+        );
+
+        let (tx, _rx) = unbounded_channel();
+        let chat = EngineSettings {
+            mode: ServerMode::Managed,
+            managed: ManagedSettings {
+                binary,
+                model_path: model,
+                port,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let setup = supervisor.apply_chat(&chat, None, CancellationToken::new(), tx, ru());
+        assert!(said_busy(&setup.status), "{:?}", setup.status);
+        assert!(setup.handle.is_none() && setup.backend.is_none());
+        drop(held);
+    }
+
+    /// A child that died before the probe's first verdict is reported dead
+    /// **once**. A second report reached the orchestrator after it had already
+    /// relaunched, read as the new server's death, and killed it — two launches
+    /// 40 ms apart for every crash in the pod log of 2026-10-01.
+    #[tokio::test]
+    async fn a_child_dead_before_its_first_verdict_is_reported_once() {
+        let (url, _switch) = spawn_stub_server(false).await;
+        let (tx, mut rx) = unbounded_channel();
+        spawn_probe(
+            Arc::new(OpenAiClient::new(&url)),
+            MANAGED_READY_TIMEOUT,
+            Some(ChildExit::exited_saying(None)),
+            CancellationToken::new(),
+            tx,
+            ru(),
+        );
+        let wait = Duration::from_secs(5);
+        match tokio::time::timeout(wait, rx.recv())
+            .await
+            .expect("a verdict")
+        {
+            Some(ServerStatus::Disconnected(_)) => {}
+            other => panic!("expected Disconnected, got {other:?}"),
+        }
+        assert_eq!(
+            tokio::time::timeout(wait, rx.recv())
+                .await
+                .expect("the probe must end, not wait"),
+            None,
+            "the exit was reported twice"
+        );
+    }
+
+    /// The other side of the same guard: an exit right after a `Ready` verdict
+    /// is still reported — the probe stops only when its verdict was the death.
+    #[tokio::test]
+    async fn an_exit_after_a_ready_verdict_is_still_reported() {
+        let (url, _switch) = spawn_stub_server(true).await;
+        let (tx, mut rx) = unbounded_channel();
+        spawn_probe(
+            Arc::new(OpenAiClient::new(&url)),
+            MANAGED_READY_TIMEOUT,
+            Some(ChildExit::exited_saying(None)),
+            CancellationToken::new(),
+            tx,
+            ru(),
+        );
+        let mut seen = Vec::new();
+        while let Some(status) = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("the probe must end, not wait")
+        {
+            seen.push(status);
+        }
+        assert!(
+            matches!(
+                seen.as_slice(),
+                [ServerStatus::Ready, ServerStatus::Disconnected(_)]
+            ),
+            "{seen:?}"
+        );
+    }
+
     /// The cloud has nothing to load and no `/health` — it stays `Ready` right away,
     /// with no probe (as for the chat server).
     #[tokio::test(start_paused = true)]
@@ -2747,6 +2910,254 @@ mod tests {
             noticed < Duration::from_secs(10),
             "should come from the exit signal, not a probe — took {noticed:?}"
         );
+    }
+
+    /// A local stand-in for RunPod's nginx on 8001: answers every request with a
+    /// `404`, which the readiness probe reads as "alive and not loading".
+    async fn spawn_stranger() -> (u16, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let task = tokio::spawn(async move {
+            while let Ok((mut sock, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                    let mut buf = [0u8; 1024];
+                    let _ = sock.read(&mut buf).await;
+                    let _ = sock
+                        .write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                        .await;
+                    let _ = sock.shutdown().await;
+                });
+            }
+        });
+        (port, task)
+    }
+
+    /// The next status a live server's probe sends, waited for two minutes at most.
+    async fn next_status(
+        rx: &mut tokio::sync::mpsc::UnboundedReceiver<ServerStatus>,
+    ) -> Option<ServerStatus> {
+        tokio::time::timeout(Duration::from_secs(120), rx.recv())
+            .await
+            .expect("bounded")
+    }
+
+    /// The embedder settings the pod ran with, on `port`.
+    fn managed_embed_on(bin: &str, model: &str, port: u16) -> EmbedSettings {
+        EmbedSettings {
+            mode: ServerMode::Managed,
+            managed: ManagedEmbedSettings {
+                binary: Some(bin.to_string()),
+                model_path: Some(model.to_string()),
+                port,
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    /// The pod's busy port, against a real `llama-server` and a stranger that
+    /// answers like nginx. The control arm is the launch as it was: the real
+    /// child started anyway, the probe reads the stranger's `404` as a ready
+    /// server while the child dies on its bind — the start of the 17-relaunch
+    /// loop. Through the supervisor the launch is refused, nothing is spawned,
+    /// and the same settings on a free port come up.
+    ///
+    ///     MINDFORK_LLAMA_BIN=.../llama-server.exe MINDFORK_EMBED_MODEL=.../bge-m3.gguf \
+    ///       cargo test a_stranger_on_the_port_is_refused_live -- --ignored --nocapture
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore = "requires a local llama-server binary + model (MINDFORK_LLAMA_BIN, MINDFORK_EMBED_MODEL)"]
+    async fn a_stranger_on_the_port_is_refused_live() {
+        let (Ok(bin), Ok(model)) = (
+            std::env::var("MINDFORK_LLAMA_BIN"),
+            std::env::var("MINDFORK_EMBED_MODEL"),
+        ) else {
+            eprintln!("skip: MINDFORK_LLAMA_BIN / MINDFORK_EMBED_MODEL not set");
+            return;
+        };
+        let (port, _stranger) = spawn_stranger().await;
+        let settings = managed_embed_on(&bin, &model, port);
+
+        // Control: the launch without the ledger.
+        let cfg = managed_embed_config(&settings.managed, bin.clone().into());
+        let handle = ServerHandle::launch(&cfg, ru()).expect("the old launch spawns");
+        let client = OpenAiClient::new(handle.base_url());
+        let probe = tokio::time::timeout(
+            Duration::from_secs(60),
+            wait_until_ready(&client, MANAGED_READY_TIMEOUT, Some(handle.exited()), ru()),
+        )
+        .await
+        .expect("bounded");
+        println!("control: the probe said {probe:?} with a stranger on the port");
+        assert!(
+            probe.is_ok(),
+            "control: the stranger passes for a ready server"
+        );
+        tokio::time::timeout(Duration::from_secs(60), handle.exited().wait())
+            .await
+            .expect("control: our child dies on the bind");
+        let died = handle
+            .exited()
+            .message(crate::shared::i18n::locale(crate::shared::i18n::Lang::En));
+        println!("control: the child said {died}");
+        drop(handle);
+
+        // Through the supervisor: refused, nothing spawned.
+        let supervisor = LlamaSupervisor::default();
+        let (tx, mut rx) = unbounded_channel();
+        let setup = supervisor.apply_embed(&settings, None, CancellationToken::new(), tx, ru());
+        println!("refused: {:?}", setup.status);
+        assert!(setup.handle.is_none(), "nothing is spawned");
+        match &setup.status {
+            ServerStatus::Disconnected(msg) => {
+                assert!(
+                    msg.contains(&format!("порт {port} занят другой программой")),
+                    "{msg}"
+                )
+            }
+            other => panic!("expected the busy-port refusal, got {other:?}"),
+        }
+        assert!(rx.recv().await.is_none(), "no probe behind a refusal");
+
+        // The same settings on a free port come up.
+        let free = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let (tx, mut rx) = unbounded_channel();
+        let setup = supervisor.apply_embed(
+            &managed_embed_on(&bin, &model, free),
+            None,
+            CancellationToken::new(),
+            tx,
+            ru(),
+        );
+        let _handle = setup.handle.expect("a free port is launched onto");
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(120), rx.recv())
+                .await
+                .expect("bounded"),
+            Some(ServerStatus::Ready)
+        );
+    }
+
+    /// A restart, as the orchestrator makes it: the old handle is dropped and the
+    /// new server launched at once, onto the port the old process still holds —
+    /// on a current-thread runtime the monitor task cannot even have run the
+    /// kill yet. The ledger lets its own server through; the control — a ledger
+    /// that never launched it — calls the port a stranger's.
+    ///
+    ///     MINDFORK_LLAMA_BIN=.../llama-server.exe MINDFORK_EMBED_MODEL=.../bge-m3.gguf \
+    ///       cargo test a_restart_onto_our_own_port_goes_through_live -- --ignored --nocapture
+    #[tokio::test]
+    #[ignore = "requires a local llama-server binary + model (MINDFORK_LLAMA_BIN, MINDFORK_EMBED_MODEL)"]
+    async fn a_restart_onto_our_own_port_goes_through_live() {
+        let (Ok(bin), Ok(model)) = (
+            std::env::var("MINDFORK_LLAMA_BIN"),
+            std::env::var("MINDFORK_EMBED_MODEL"),
+        ) else {
+            eprintln!("skip: MINDFORK_LLAMA_BIN / MINDFORK_EMBED_MODEL not set");
+            return;
+        };
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let settings = managed_embed_on(&bin, &model, port);
+        let supervisor = LlamaSupervisor::default();
+
+        let (tx, mut rx) = unbounded_channel();
+        let first = supervisor.apply_embed(&settings, None, CancellationToken::new(), tx, ru());
+        assert_eq!(
+            next_status(&mut rx).await,
+            Some(ServerStatus::Ready),
+            "first launch"
+        );
+
+        drop(first.handle); // the kill is asked for, not yet done
+        let cfg = managed_embed_config(&settings.managed, bin.clone().into());
+        let control = PortLedger::default().launch(&cfg, ru());
+        println!(
+            "control: {:?}",
+            control.as_ref().err().map(ToString::to_string)
+        );
+        assert!(
+            control.is_err(),
+            "control: the old process still holds the port"
+        );
+
+        let (tx, mut rx) = unbounded_channel();
+        let second = supervisor.apply_embed(&settings, None, CancellationToken::new(), tx, ru());
+        assert_eq!(
+            second.status,
+            ServerStatus::Connecting,
+            "{:?}",
+            second.status
+        );
+        assert_eq!(
+            next_status(&mut rx).await,
+            Some(ServerStatus::Ready),
+            "the restart"
+        );
+    }
+
+    /// A server that dies while loading — a file that is not a GGUF (M10 of
+    /// docs/research/managed-extra-args.md) — is reported once, in the words it
+    /// logged as it died, not the generic guess.
+    ///
+    ///     MINDFORK_LLAMA_BIN=.../llama-server.exe \
+    ///       cargo test a_load_failure_is_reported_once_with_its_cause_live -- --ignored --nocapture
+    #[tokio::test]
+    #[ignore = "requires a local llama-server binary (MINDFORK_LLAMA_BIN)"]
+    async fn a_load_failure_is_reported_once_with_its_cause_live() {
+        let Ok(bin) = std::env::var("MINDFORK_LLAMA_BIN") else {
+            eprintln!("skip: MINDFORK_LLAMA_BIN not set");
+            return;
+        };
+        let dir = tempfile::tempdir().expect("tempdir");
+        let fake = dir.path().join("fake.gguf");
+        std::fs::write(&fake, b"this is not a gguf file").expect("write");
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let settings = EngineSettings {
+            mode: ServerMode::Managed,
+            managed: ManagedSettings {
+                binary: Some(bin),
+                model_path: Some(fake.display().to_string()),
+                port,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let (tx, mut rx) = unbounded_channel();
+        let setup = LlamaSupervisor::default().apply_chat(
+            &settings,
+            None,
+            CancellationToken::new(),
+            tx,
+            crate::shared::i18n::locale(crate::shared::i18n::Lang::En),
+        );
+        let _handle = setup.handle.expect("spawned");
+        let mut seen = Vec::new();
+        while let Some(status) = tokio::time::timeout(Duration::from_secs(60), rx.recv())
+            .await
+            .expect("the probe must end")
+        {
+            seen.push(status);
+        }
+        println!("reported: {seen:?}");
+        match seen.as_slice() {
+            [ServerStatus::Disconnected(msg)] => assert!(
+                msg.starts_with("llama-server stopped with an error: "),
+                "the logged cause, not the generic guess: {msg}"
+            ),
+            other => panic!("expected exactly one Disconnected, got {other:?}"),
+        }
     }
 
     /// Against a **real** server over a **real** network. The unit tests use a stub

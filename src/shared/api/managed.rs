@@ -4,8 +4,8 @@
 
 use std::path::PathBuf;
 use std::process::Stdio;
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -342,21 +342,95 @@ pub struct ServerHandle {
     base_url: String,
 }
 
-/// What the readiness probe watches of a managed child: that it exited, and the
-/// line llama.cpp refused the launch with, if it printed one (spec §3.4,
-/// docs/research/managed-extra-args.md F6).
+/// What the readiness probe watches of a managed child: that it exited, and what
+/// it said on the way out (spec §3.4).
 ///
-/// The line is what makes a typo in the extra arguments say what it is. Measured
-/// (M1–M3 there): an unknown flag, a bad value and the `--flag=value` form all end
-/// the process at once with `error: invalid argument: …` or `error while handling
-/// argument "…": …` on its output — which used to reach only the log, while the
-/// status blamed a corrupt GGUF or the memory. Nothing else is read out of the
-/// log: a loading failure prints timestamped records, not this line, and keeps
-/// the generic message.
+/// Two kinds of line are kept, and the first is preferred:
+///
+/// - the line llama.cpp's **argument parser** refuses a launch with
+///   (docs/research/managed-extra-args.md F6). Measured there (M1–M3): an unknown
+///   flag, a bad value and the `--flag=value` form all end the process at once
+///   with `error: invalid argument: …` or `error while handling argument "…": …`;
+/// - else the first **error-level log record** of the burst the child died in —
+///   `E CUDA error: the provided PTX was compiled with an unsupported toolchain.`,
+///   `E srv start: couldn't bind HTTP server socket, …`, a file that is not a
+///   GGUF (M10 there). Before these were read, each of them reached only the log,
+///   while the status blamed a corrupt GGUF or the memory — on a RunPod pod
+///   (2026-10-01) a CUDA build newer than the driver, and a port `nginx` held.
+///
+/// A burst is records less than [`BURST_GAP`] apart: its first is the cause and
+/// the rest the aftermath (`current device: 0, …`, `exiting due to HTTP server
+/// error`). A burst further than [`CAUSE_WINDOW`] before the exit is not the
+/// cause at all — a server that has served for an hour has logged request
+/// errors at the same level, and a crash that prints nothing must not be
+/// blamed on the last of them.
 #[derive(Debug, Clone, Default)]
 pub struct ChildExit {
+    /// Armed once the child exited on its own and its output was read.
     exited: CancellationToken,
-    said: Arc<Mutex<Option<String>>>,
+    /// Armed once the process is gone for **any** reason — its exit, or the
+    /// kill its handle's drop asked for. What [`PortLedger`] waits on before it
+    /// stops treating the port as one its own server is letting go of.
+    reaped: CancellationToken,
+    said: Arc<Mutex<Said>>,
+}
+
+/// Records less than this apart are one burst — one failure and its aftermath.
+const BURST_GAP: Duration = Duration::from_secs(2);
+/// A burst that ended further than this before the exit did not cause it. The
+/// aborts measured on the pod (2026-10-01) were reaped 0.5–0.9 s after their
+/// first record, a 180 GB card's teardown included.
+const CAUSE_WINDOW: Duration = Duration::from_secs(10);
+
+/// What a child printed that may explain its exit (see [`ChildExit`]).
+#[derive(Debug, Default)]
+struct Said {
+    /// The argument parser's refusal — the first: an argument error ends the
+    /// parse at once, and what follows it is the option's usage.
+    refusal: Option<String>,
+    /// The latest burst of error-level records.
+    burst: Option<Burst>,
+    /// When the process was reaped.
+    ended: Option<Instant>,
+}
+
+#[derive(Debug)]
+struct Burst {
+    /// The burst's first record, its message alone.
+    first: String,
+    /// When its latest record was read.
+    last: Instant,
+}
+
+impl Said {
+    /// Takes one line of the child's output, read at `at`.
+    fn record(&mut self, line: &str, at: Instant) {
+        if let Some(refusal) = refusal_line(line) {
+            self.refusal.get_or_insert(refusal);
+        } else if let Some(record) = error_record(line) {
+            match &mut self.burst {
+                Some(burst) if at.saturating_duration_since(burst.last) < BURST_GAP => {
+                    burst.last = at;
+                }
+                _ => {
+                    self.burst = Some(Burst {
+                        first: record,
+                        last: at,
+                    })
+                }
+            }
+        }
+    }
+
+    /// The logged record that explains the exit, if one does. The last lines
+    /// can be read after the reaping (the drain), hence `saturating`.
+    fn logged_cause(&self) -> Option<&str> {
+        let burst = self.burst.as_ref()?;
+        match self.ended {
+            Some(end) if end.saturating_duration_since(burst.last) > CAUSE_WINDOW => None,
+            _ => Some(&burst.first),
+        }
+    }
 }
 
 impl ChildExit {
@@ -372,10 +446,18 @@ impl ChildExit {
     }
 
     /// Why the child is gone, in the interface language: llama.cpp's own
-    /// refusal when it printed one, the generic guess otherwise.
+    /// refusal, else the error it logged as it died — with the way out where
+    /// the error is one we know — else the generic guess.
     pub fn message(&self, loc: &Locale) -> String {
-        match self.said.lock().ok().and_then(|said| said.clone()) {
-            Some(said) => loc.tf("ui.err.managed.early_exit_said", &[("said", &said)]),
+        let said = self.said.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(refusal) = &said.refusal {
+            return loc.tf("ui.err.managed.early_exit_said", &[("said", refusal)]);
+        }
+        match said.logged_cause() {
+            Some(cause) if ptx_newer_than_driver(cause) => {
+                loc.tf("ui.err.managed.cuda_too_new", &[("said", cause)])
+            }
+            Some(cause) => loc.tf("ui.err.managed.exit_logged", &[("said", cause)]),
             None => loc.t("ui.err.managed.early_exit").to_string(),
         }
     }
@@ -384,10 +466,27 @@ impl ChildExit {
     #[cfg(test)]
     pub(crate) fn exited_saying(said: Option<&str>) -> Self {
         let exit = Self::default();
-        *exit.said.lock().unwrap() = said.map(str::to_string);
+        exit.said.lock().unwrap().refusal = said.map(str::to_string);
         exit.exited.cancel();
+        exit.reaped.cancel();
         exit
     }
+}
+
+/// Whether a logged error is CUDA's `cudaErrorUnsupportedPtxVersion`: the build
+/// carries no kernels compiled for this GPU, only PTX for the driver to compile,
+/// and the PTX came from a newer CUDA than the driver knows. Measured on a RunPod
+/// B200 (compute capability 10.0, a driver for CUDA 13.2) running the
+/// `cuda-13.4` build: both servers aborted at their warm-up. The runtime itself
+/// starts — minor-version compatibility — so `--list-devices` passes and the
+/// failure waits for the first kernel.
+///
+/// The words are NVIDIA's (`cudaGetErrorString`), so this is a classifier
+/// anchored on someone else's prose (docs/lessons.md §4): if they change, the
+/// hint goes and the record itself is still shown — the message degrades to
+/// llama.cpp's words, never to the generic guess.
+fn ptx_newer_than_driver(record: &str) -> bool {
+    record.contains("PTX") && record.contains("unsupported toolchain")
 }
 
 impl Drop for ServerHandle {
@@ -413,6 +512,14 @@ impl ServerHandle {
     /// the interface language for the error text (the supervisor shows it in the status chip as
     /// `ServerStatus::Disconnected`; for the embedding server the error only goes to the log).
     pub fn launch(cfg: &ManagedConfig, loc: &'static Locale) -> Result<Self> {
+        Self::preflight(cfg, loc)?;
+        Self::spawn(cfg, loc)
+    }
+
+    /// The checks before a process is started: the extra arguments, and the files
+    /// the line names. [`PortLedger::launch`] puts its port check between these
+    /// and [`Self::spawn`], so a missing model is said first, whatever the port.
+    fn preflight(cfg: &ManagedConfig, loc: &'static Locale) -> Result<()> {
         // The user's raw arguments, before anything touches the disk: the one
         // check every writer of the setting passes through — the settings editor
         // asks the same question, but `settings.json`, `mindfork setup --set` and
@@ -453,7 +560,11 @@ impl ServerHandle {
                 loc.tf("ui.err.managed.mmproj_not_found", &[("path", mmproj)])
             );
         }
+        Ok(())
+    }
 
+    /// Starts the process the line describes, its preflight already passed.
+    fn spawn(cfg: &ManagedConfig, loc: &'static Locale) -> Result<Self> {
         // Asked only when the setting is on (see `no_mmap_spelling`), so every
         // other launch spawns exactly the one process it always did.
         let no_mmap = if cfg.no_mmap {
@@ -479,6 +590,90 @@ impl ServerHandle {
     }
 }
 
+/// Whether something already listens where `cfg`'s server would be reached
+/// (`127.0.0.1:<port>`, [`ManagedConfig::base_url`]).
+///
+/// The address the probe uses, not `--host`: a stranger is a hazard because the
+/// readiness probe would take its answer for ours, and on the platforms we run a
+/// wildcard listener (`0.0.0.0:<port>`, nginx's `listen 8001`) refuses this bind
+/// as well. One implementation for `mindfork setup --verify` and the app.
+pub fn port_taken(cfg: &ManagedConfig) -> bool {
+    std::net::TcpListener::bind(("127.0.0.1", cfg.port)).is_err()
+}
+
+/// The managed servers this application launched, so that a launch can tell a
+/// port held by a stranger from one its own previous server is letting go of
+/// (spec §3.4).
+///
+/// A launch onto a port something already answers on is refused: the readiness
+/// probe cannot tell our server from whatever listens there, and the child only
+/// dies on the bind. Measured on a RunPod pod (2026-10-01), whose own `nginx`
+/// holds 8001: the probe took nginx's answer for a ready embedder, `Ready` reset
+/// the relaunch budget, and the dying child was relaunched 17 times in ten
+/// seconds — stopped by a race, not by the budget. `mindfork setup --verify`
+/// already refused that port; the app did not.
+///
+/// The one holder that is no stranger is the server a launch replaces: a
+/// restart or a relaunch drops the old handle and launches at once, while the
+/// kill completes on the monitor task a moment later. A port held by a child of
+/// ours whose handle is dropped and which is not reaped yet is launched onto as
+/// it always was — the new process binds long after the old one is gone.
+#[derive(Default)]
+pub struct PortLedger {
+    claims: Mutex<Vec<Claim>>,
+}
+
+/// One launched server: its port, its handle's kill token (cancelled once the
+/// handle is dropped) and its exit (whose `reaped` says the process is gone).
+struct Claim {
+    port: u16,
+    released: CancellationToken,
+    exit: ChildExit,
+}
+
+impl PortLedger {
+    /// [`ServerHandle::launch`], refused when `cfg`'s port is taken by anything
+    /// but a server of ours on its way out. The refusal names the setting that
+    /// moves the port; it comes after the preflight, so a file the line names
+    /// that is not there is said first.
+    pub fn launch(&self, cfg: &ManagedConfig, loc: &'static Locale) -> Result<ServerHandle> {
+        ServerHandle::preflight(cfg, loc)?;
+        let mut claims = self.claims.lock().unwrap_or_else(PoisonError::into_inner);
+        claims.retain(|c| !c.exit.reaped.is_cancelled());
+        let ours_leaving = claims
+            .iter()
+            .any(|c| c.port == cfg.port && c.released.is_cancelled());
+        if !ours_leaving && port_taken(cfg) {
+            bail!("{}", port_busy_message(cfg, loc));
+        }
+        let handle = ServerHandle::spawn(cfg, loc)?;
+        claims.push(Claim {
+            port: cfg.port,
+            released: handle.kill.clone(),
+            exit: handle.exited.clone(),
+        });
+        Ok(handle)
+    }
+}
+
+/// The busy-port refusal, with the settings field that moves this server's port.
+fn port_busy_message(cfg: &ManagedConfig, loc: &Locale) -> String {
+    let tab = match cfg.role {
+        ManagedRole::Assistant => "ui.settings.tab.assistant",
+        ManagedRole::Impersonation => "ui.settings.tab.impersonation",
+        ManagedRole::Embedder => "ui.settings.tab.embeddings",
+    };
+    loc.tf(
+        "ui.err.managed.port_busy",
+        &[
+            ("port", &cfg.port.to_string()),
+            ("section", loc.t("ui.settings.section.model")),
+            ("tab", loc.t(tab)),
+            ("field", loc.t("ui.settings.field.port")),
+        ],
+    )
+}
+
 /// The child's command: the line, piped output, killed with its handle — and
 /// an environment without the side door to the flags [`llama_args::check`]
 /// refuses. The child inherits the app's environment, and llama.cpp reads
@@ -498,8 +693,8 @@ fn server_command(cfg: &ManagedConfig, args: &[String]) -> Command {
 }
 
 /// Takes charge of a spawned child: its output is read — so the pipe never
-/// fills, loading progress reaches the log, and the line llama.cpp refuses a
-/// launch with is kept — and a monitor task owns it, waiting either for it to
+/// fills, loading progress reaches the log, and the lines that may explain an
+/// exit are kept ([`ChildExit`]) — and a monitor task owns it, waiting either for it to
 /// exit or for the returned kill token (`drop` of the handle). An early exit
 /// arms the returned [`ChildExit`]: the readiness probe sees it and doesn't hang
 /// until the timeout on a dead process.
@@ -594,6 +789,12 @@ fn spawn_monitor(
     tokio::spawn(async move {
         tokio::select! {
             status = child.wait() => {
+                exited
+                    .said
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .ended = Some(Instant::now());
+                exited.reaped.cancel();
                 match status {
                     Ok(s) => tracing::warn!(status = ?s, "managed llama-server exited on its own"),
                     Err(e) => tracing::warn!(error = %e, "error waiting for the child llama-server"),
@@ -609,6 +810,7 @@ fn spawn_monitor(
             _ = kill.cancelled() => {
                 let _ = child.start_kill();
                 let _ = child.wait().await;
+                exited.reaped.cancel();
             }
         }
     });
@@ -663,19 +865,15 @@ pub async fn wait_until_ready(
     }
 }
 
-async fn forward_lines<R>(reader: R, is_err: bool, said: Arc<Mutex<Option<String>>>)
+async fn forward_lines<R>(reader: R, is_err: bool, said: Arc<Mutex<Said>>)
 where
     R: tokio::io::AsyncRead + Unpin,
 {
     let mut lines = BufReader::new(reader).lines();
     while let Ok(Some(line)) = lines.next_line().await {
-        if let Some(refusal) = refusal_line(&line)
-            && let Ok(mut said) = said.lock()
-        {
-            // The first one: an argument error ends the parse at once, and what
-            // follows it is the option's usage, not another cause.
-            said.get_or_insert(refusal);
-        }
+        said.lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .record(&line, Instant::now());
         if is_err {
             tracing::warn!(target: "llama-server", "{line}");
         } else {
@@ -692,6 +890,32 @@ fn refusal_line(line: &str) -> Option<String> {
     let clean = strip_ansi(line);
     let clean = clean.trim();
     clean.starts_with("error").then(|| clean.to_string())
+}
+
+/// The message of an **error-level** record of llama.cpp's log, or `None` for
+/// any other line. A record is `[timestamp] <level> <message>` — the timestamp
+/// digits and dots, and absent when timestamps are off; the level one letter,
+/// `E` for an error:
+///
+/// ```text
+/// 0.43.034.880 E CUDA error: the provided PTX was compiled with an unsupported toolchain.
+/// 0.01.423.595 E srv         start: couldn't bind HTTP server socket, hostname: 127.0.0.1, port: 8001
+/// ```
+///
+/// The padding llama.cpp aligns its tags with collapses to one space, since
+/// the message is shown in a status line, not a column.
+fn error_record(line: &str) -> Option<String> {
+    let clean = strip_ansi(line);
+    let mut rest = clean.trim();
+    if let Some((stamp, after)) = rest.split_once(' ')
+        && stamp.bytes().all(|b| b.is_ascii_digit() || b == b'.')
+        && stamp.bytes().any(|b| b.is_ascii_digit())
+    {
+        rest = after.trim_start();
+    }
+    let message = rest.strip_prefix("E ")?;
+    let message = message.split_whitespace().collect::<Vec<_>>().join(" ");
+    (!message.is_empty()).then_some(message)
 }
 
 /// `line` without its ANSI escape sequences (`ESC [ … final-byte`): llama.cpp
@@ -1628,7 +1852,7 @@ mod tests {
         let said = exited.said.clone();
         let reader = tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(300)).await;
-            *said.lock().unwrap() = Some("error: late".into());
+            said.lock().unwrap().refusal = Some("error: late".into());
         });
         spawn_monitor(
             exiting_child(),
@@ -1689,11 +1913,11 @@ mod tests {
     /// option's usage, and a later `error` line would not be the cause.
     #[tokio::test]
     async fn the_reader_keeps_the_first_refusal() {
-        let said = Arc::new(Mutex::new(None));
+        let said = Arc::new(Mutex::new(Said::default()));
         let output = b"0.00.000.8 I srv  init\nerror: invalid argument: --a\nusage:\nerror: b\n";
         forward_lines(&output[..], true, said.clone()).await;
         assert_eq!(
-            said.lock().unwrap().as_deref(),
+            said.lock().unwrap().refusal.as_deref(),
             Some("error: invalid argument: --a")
         );
     }
@@ -1706,5 +1930,349 @@ mod tests {
             ChildExit::exited_saying(None).message(en),
             en.t("ui.err.managed.early_exit")
         );
+    }
+
+    // ---- The error the child logged as it died ----
+
+    /// The two aborts of the pod log (2026-10-01), as llama.cpp printed them.
+    const CUDA_ABORT: &[&str] = &[
+        "0.43.034.880 E CUDA error: the provided PTX was compiled with an unsupported toolchain.",
+        "0.43.034.891 E   current device: 0, in function ggml_cuda_kernel_can_use_pdl at /__w/llama.cpp/llama.cpp/ggml/src/ggml-cuda/common.cuh:1670",
+        "0.43.034.892 E   cudaFuncGetAttributes(&attr, kernel)",
+        "/workspace/mindfork/data/llama/cuda-13.4-b11327/libggml-base.so.0(ggml_abort+0x15b)[0x7324f5147b3b]",
+    ];
+    const BIND_FAILURE: &[&str] = &[
+        "0.01.423.360 W srv  llama_server: security: no API key is set and CORS allows all origins",
+        "0.01.423.595 E srv         start: couldn't bind HTTP server socket, hostname: 127.0.0.1, port: 8001",
+        "0.01.423.602 I srv    operator(): operator(): cleaning up before exit...",
+        "0.01.424.063 E srv  llama_server: exiting due to HTTP server error",
+    ];
+
+    /// A `Said` that read `lines` at `start`, a millisecond apart, and was
+    /// reaped `reaped_after` the last of them.
+    fn said_after(lines: &[&str], start: Instant, reaped_after: Duration) -> Said {
+        let mut said = Said::default();
+        let mut at = start;
+        for line in lines {
+            said.record(line, at);
+            at += Duration::from_millis(1);
+        }
+        said.ended = Some(at + reaped_after);
+        said
+    }
+
+    /// A `ChildExit` holding `said`, already exited.
+    fn exit_with(said: Said) -> ChildExit {
+        let exit = ChildExit::default();
+        *exit.said.lock().unwrap() = said;
+        exit.exited.cancel();
+        exit
+    }
+
+    /// An error-level record is its message, padding collapsed; a record of
+    /// another level, a backtrace line and the parser's refusal are not.
+    #[test]
+    fn an_error_record_is_its_message() {
+        assert_eq!(
+            error_record(CUDA_ABORT[0]).as_deref(),
+            Some("CUDA error: the provided PTX was compiled with an unsupported toolchain.")
+        );
+        assert_eq!(
+            error_record(BIND_FAILURE[1]).as_deref(),
+            Some("srv start: couldn't bind HTTP server socket, hostname: 127.0.0.1, port: 8001")
+        );
+        // Coloured, and with timestamps off.
+        assert_eq!(
+            error_record("\u{1b}[34m0.00.047.856\u{1b}[0m E srv  load_model: failed\r").as_deref(),
+            Some("srv load_model: failed")
+        );
+        assert_eq!(
+            error_record("E llama_model_load: error").as_deref(),
+            Some("llama_model_load: error")
+        );
+        for line in [
+            BIND_FAILURE[0],
+            BIND_FAILURE[2],
+            CUDA_ABORT[3],
+            "/__w/llama.cpp/llama.cpp/ggml/src/ggml-cuda/ggml-cuda.cu:109: CUDA error",
+            "error: invalid argument: --bogus",
+            "0.00.000.001 E ",
+            "Every line that starts with an E word",
+            "",
+        ] {
+            assert_eq!(error_record(line), None, "{line}");
+        }
+    }
+
+    /// The burst's first record is the cause: the CUDA error, not the device
+    /// line after it; the failed bind, not the "exiting" that follows it.
+    #[test]
+    fn the_cause_is_the_first_record_of_the_burst() {
+        let t = Instant::now();
+        let cuda = said_after(CUDA_ABORT, t, Duration::from_millis(900));
+        assert_eq!(
+            cuda.logged_cause(),
+            Some("CUDA error: the provided PTX was compiled with an unsupported toolchain.")
+        );
+        let bind = said_after(BIND_FAILURE, t, Duration::from_millis(80));
+        assert_eq!(
+            bind.logged_cause(),
+            Some("srv start: couldn't bind HTTP server socket, hostname: 127.0.0.1, port: 8001")
+        );
+    }
+
+    /// A request error an hour into serving is a burst of its own: the crash
+    /// that follows has its own first record, and a crash that prints nothing
+    /// is not blamed on it.
+    #[test]
+    fn an_old_burst_does_not_explain_a_later_exit() {
+        let t = Instant::now();
+        let request = "1.00.000.000 E srv  send_error: task id = 5, error: the request exceeds the available context size";
+        let mut said = Said::default();
+        said.record(request, t);
+        let crash = t + Duration::from_secs(3600);
+        said.record(CUDA_ABORT[0], crash);
+        said.record(CUDA_ABORT[1], crash + Duration::from_millis(1));
+        said.ended = Some(crash + Duration::from_secs(1));
+        assert_eq!(
+            said.logged_cause(),
+            Some("CUDA error: the provided PTX was compiled with an unsupported toolchain.")
+        );
+
+        let mut silent = Said::default();
+        silent.record(request, t);
+        silent.ended = Some(t + CAUSE_WINDOW + Duration::from_secs(1));
+        assert_eq!(
+            silent.logged_cause(),
+            None,
+            "a silent crash keeps the generic message"
+        );
+        // The control: the same record just before the exit is the cause.
+        silent.ended = Some(t + CAUSE_WINDOW - Duration::from_secs(1));
+        assert!(silent.logged_cause().is_some());
+    }
+
+    /// Records apart by more than the gap start a new burst; closer, they extend it.
+    #[test]
+    fn the_burst_gap_splits_bursts() {
+        let t = Instant::now();
+        let mut said = Said::default();
+        said.record("0.1 E first", t);
+        said.record("0.2 E second", t + BURST_GAP - Duration::from_millis(1));
+        assert_eq!(said.logged_cause(), Some("first"));
+        said.record("0.3 E third", t + BURST_GAP * 3);
+        assert_eq!(said.logged_cause(), Some("third"));
+    }
+
+    /// The message: the parser's refusal first, then the logged cause — with
+    /// the way out for the CUDA case — then the generic guess.
+    #[test]
+    fn the_exit_message_names_the_logged_cause() {
+        let en = locale(Lang::En);
+        let t = Instant::now();
+
+        let msg = exit_with(said_after(CUDA_ABORT, t, Duration::from_millis(900))).message(en);
+        assert!(
+            msg.starts_with("llama-server stopped with an error: CUDA error: the provided PTX"),
+            "{msg}"
+        );
+        assert!(
+            msg.contains("mindfork llama setup --backend cuda-12") && msg.contains("nvidia-smi"),
+            "the CUDA case names the way out: {msg}"
+        );
+        let ru_msg = exit_with(said_after(CUDA_ABORT, t, Duration::ZERO)).message(ru());
+        assert!(ru_msg.contains("драйвер"), "{ru_msg}");
+
+        let msg = exit_with(said_after(BIND_FAILURE, t, Duration::ZERO)).message(en);
+        assert_eq!(
+            msg,
+            "llama-server stopped with an error: srv start: couldn't bind HTTP server socket, hostname: 127.0.0.1, port: 8001"
+        );
+
+        let mut both = said_after(BIND_FAILURE, t, Duration::ZERO);
+        both.record("error: invalid argument: --x", t);
+        assert_eq!(
+            exit_with(both).message(en),
+            "llama-server refused to start: error: invalid argument: --x",
+            "the parser's refusal comes first"
+        );
+    }
+
+    /// End to end with a real process: the record it printed as it died is in
+    /// the message the probe gives.
+    #[tokio::test]
+    async fn an_exit_is_announced_with_the_record_it_logged() {
+        let child = shell(
+            "echo 0.43.034.880 E CUDA error: the provided PTX was compiled with an unsupported toolchain. 1>&2 & exit 1",
+            "echo '0.43.034.880 E CUDA error: the provided PTX was compiled with an unsupported toolchain.' >&2; exit 1",
+        )
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .expect("spawn of a short-lived process");
+        let (_kill, exited) = supervise(child);
+        tokio::time::timeout(Duration::from_secs(10), exited.wait())
+            .await
+            .expect("the monitor must arm exited on process exit");
+        let msg = exited.message(locale(Lang::En));
+        assert!(
+            msg.starts_with("llama-server stopped with an error: CUDA error: the provided PTX"),
+            "{msg}"
+        );
+    }
+
+    // ---- The port a launch would take ----
+
+    /// A config on a port some listener holds, and that listener.
+    fn on_a_taken_port(dir: &std::path::Path) -> (ManagedConfig, std::net::TcpListener) {
+        let held = std::net::TcpListener::bind("127.0.0.1:0").expect("bind a stranger");
+        let cfg = ManagedConfig {
+            binary: dir.join("no-such-llama-server"),
+            port: held.local_addr().unwrap().port(),
+            role: ManagedRole::Embedder,
+            ..base_cfg()
+        };
+        (cfg, held)
+    }
+
+    #[test]
+    fn a_port_someone_listens_on_is_taken() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (cfg, held) = on_a_taken_port(dir.path());
+        assert!(port_taken(&cfg));
+        drop(held);
+        assert!(!port_taken(&cfg), "the control: a free port is not taken");
+    }
+
+    /// A stranger on the port: the launch is refused before anything is
+    /// spawned, naming the port and where to move it. The control — the same
+    /// launch on the freed port — gets as far as `spawn`.
+    #[test]
+    fn the_ledger_refuses_a_port_a_stranger_holds() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (cfg, held) = on_a_taken_port(dir.path());
+        let ledger = PortLedger::default();
+        let err = match ledger.launch(&cfg, ru()) {
+            Err(e) => e.to_string(),
+            Ok(_) => panic!("a taken port must be refused"),
+        };
+        assert_eq!(err, port_busy_message(&cfg, ru()));
+        assert!(
+            err.contains(&cfg.port.to_string())
+                && err.contains("Эмбеддинги")
+                && err.contains("Порт"),
+            "{err}"
+        );
+
+        drop(held);
+        let err = match ledger.launch(&cfg, ru()) {
+            Err(e) => e.to_string(),
+            Ok(_) => panic!("the binary does not exist"),
+        };
+        assert_eq!(err, expect_spawn(dir.path()));
+    }
+
+    /// The preflight is said before the port: a model that is not there is the
+    /// thing to fix whatever listens where the server would.
+    #[test]
+    fn the_ledger_names_a_missing_model_before_a_taken_port() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (taken, _held) = on_a_taken_port(dir.path());
+        let cfg = ManagedConfig {
+            model_path: Some(dir.path().join("absent.gguf").display().to_string()),
+            ..taken
+        };
+        let err = match PortLedger::default().launch(&cfg, ru()) {
+            Err(e) => e.to_string(),
+            Ok(_) => panic!("the model is absent"),
+        };
+        assert_eq!(
+            err,
+            expect_about(dir.path(), "ui.err.managed.model_not_found", "absent.gguf")
+        );
+    }
+
+    /// The port our own replaced server still holds is launched onto — and only
+    /// while it is on its way out: once reaped, or while its handle is still
+    /// held (another server of ours on the same port), the port is a stranger's.
+    #[test]
+    fn the_ledger_launches_onto_its_own_leaving_server() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (cfg, _held) = on_a_taken_port(dir.path());
+        let claim = |released: bool, reaped: bool| {
+            let exit = ChildExit::default();
+            let token = CancellationToken::new();
+            if released {
+                token.cancel();
+            }
+            if reaped {
+                exit.reaped.cancel();
+            }
+            Claim {
+                port: cfg.port,
+                released: token,
+                exit,
+            }
+        };
+        let launched = |claim: Claim| {
+            let ledger = PortLedger::default();
+            ledger.claims.lock().unwrap().push(claim);
+            match ledger.launch(&cfg, ru()) {
+                Err(e) => e.to_string(),
+                Ok(_) => panic!("the binary does not exist"),
+            }
+        };
+        assert_eq!(
+            launched(claim(true, false)),
+            expect_spawn(dir.path()),
+            "leaving: ours"
+        );
+        let busy = port_busy_message(&cfg, ru());
+        assert_eq!(
+            launched(claim(true, true)),
+            busy,
+            "reaped: the holder is someone else"
+        );
+        assert_eq!(
+            launched(claim(false, false)),
+            busy,
+            "a live server of ours is no exemption"
+        );
+    }
+
+    /// `reaped` is armed whichever way the process goes: on its own, and by
+    /// the kill a dropped handle asks for.
+    #[tokio::test]
+    async fn reaped_is_armed_on_exit_and_on_kill() {
+        let exited = ChildExit::default();
+        spawn_monitor(
+            exiting_child(),
+            CancellationToken::new(),
+            exited.clone(),
+            vec![],
+        );
+        tokio::time::timeout(Duration::from_secs(5), exited.reaped.cancelled())
+            .await
+            .expect("an exit arms reaped");
+        assert!(
+            exited.said.lock().unwrap().ended.is_some(),
+            "an exit is stamped, or every old record would read as its cause"
+        );
+
+        let long = shell("ping -n 30 127.0.0.1 >NUL", "sleep 30")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .expect("spawn of a long-lived process");
+        let (kill, exited) = (CancellationToken::new(), ChildExit::default());
+        spawn_monitor(long, kill.clone(), exited.clone(), vec![]);
+        assert!(!exited.reaped.is_cancelled());
+        kill.cancel();
+        tokio::time::timeout(Duration::from_secs(5), exited.reaped.cancelled())
+            .await
+            .expect("a kill arms reaped");
+        assert!(!exited.is_exited(), "a kill is not an exit on its own");
     }
 }

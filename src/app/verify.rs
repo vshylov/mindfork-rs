@@ -187,7 +187,7 @@ fn start(cfg: &ManagedConfig, loc: &'static Locale) -> Result<ServerHandle, Refu
     if !cfg.is_runnable() {
         return Err(Refusal::NotConfigured);
     }
-    if std::net::TcpListener::bind(("127.0.0.1", cfg.port)).is_err() {
+    if crate::shared::api::managed::port_taken(cfg) {
         return Err(Refusal::PortBusy);
     }
     // The whole chain: `launch` wraps the OS's reason ("program not found") in

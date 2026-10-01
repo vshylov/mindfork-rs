@@ -610,6 +610,42 @@ async fn dead_managed_server_is_relaunched_until_the_budget_runs_out() {
     );
 }
 
+/// A launch refused before anything started — a port a stranger holds, a model
+/// file that is not there — is not retried on another server's report: it would
+/// refuse the same way until the settings change. In the pod scenario every chat
+/// status brought the refused embedder back here, three times, each logged as
+/// "down — relaunching". The control: a death a monitor reports is relaunched.
+#[tokio::test]
+async fn a_refused_launch_is_not_relaunched() {
+    let (_d, mut orch) = bare_orch();
+    let supervisor = Arc::new(MockSupervisor::refusing_chat("port 8000 is taken"));
+    orch.engines = EngineManager::new(
+        supervisor.clone(),
+        unbounded_channel().0,
+        unbounded_channel().0,
+        unbounded_channel().0,
+    );
+    orch.config.engine.mode = ServerMode::Managed;
+    orch.apply_chat_settings();
+    assert_eq!(supervisor.chat_call_count(), 1);
+    assert!(matches!(
+        orch.engines.status_of(Server::Chat),
+        ServerStatus::Disconnected(_)
+    ));
+
+    for _ in 0..RESTART_BUDGET + 1 {
+        orch.relaunch_dead_managed_servers(); // another server reported
+    }
+    assert_eq!(supervisor.chat_call_count(), 1, "a refusal was retried");
+
+    orch.handle_chat_status(ServerStatus::Disconnected("process gone".into()));
+    assert_eq!(
+        supervisor.chat_call_count(),
+        2,
+        "the control: a monitor's report of a death is relaunched"
+    );
+}
+
 /// We don't own an external process, so there's nothing to relaunch — its monitor
 /// keeps polling and picks the recovery up by itself.
 #[tokio::test]

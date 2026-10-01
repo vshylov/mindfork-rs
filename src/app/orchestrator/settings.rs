@@ -385,9 +385,11 @@ impl Orchestrator {
     ///
     /// Called after every status update, so a relaunch that fails simply produces the
     /// next `Disconnected` and the next attempt, until [`RestartBudget`] stops it. A
-    /// launch that fails *synchronously* (a missing model file — the preflight check)
-    /// posts no status at all and therefore never reaches this path: retrying it would
-    /// be pointless until the settings change. See docs/server-health-monitoring.md, F4.
+    /// launch that fails *synchronously* (a missing model file — the preflight check;
+    /// a port a stranger holds) is skipped: retrying it would be pointless until the
+    /// settings change. It posts no status of its own, but another server's report
+    /// used to bring it here all the same — a refused launch was "relaunched" and
+    /// refused again until the budget ran out. See docs/server-health-monitoring.md, F4.
     ///
     /// [`RestartBudget`]: super::engines::RestartBudget
     pub(super) fn relaunch_dead_managed_servers(&mut self) {
@@ -442,7 +444,8 @@ impl Orchestrator {
         if !matches!(
             self.engines.status_of(server),
             ServerStatus::Disconnected(_)
-        ) {
+        ) || self.engines.launch_refused(server)
+        {
             return false;
         }
         if self.engines.allow_relaunch(server, now) {

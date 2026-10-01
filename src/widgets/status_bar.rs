@@ -472,8 +472,9 @@ fn fit_pill(chips: Vec<Vec<Span<'static>>>, width: usize) -> Vec<Span<'static>> 
 }
 
 /// `chip` cut to `width` columns — its glyph kept, its label truncated with
-/// the mark [`wrap::truncate_to_width`] puts on a cut.
-fn cut_chip(chip: Vec<Span<'static>>, width: usize) -> Vec<Span<'static>> {
+/// the mark [`wrap::truncate_to_width`] puts on a cut. Also the settings
+/// screen's, for its server chip: one way to cut a chip.
+pub fn cut_chip(chip: Vec<Span<'static>>, width: usize) -> Vec<Span<'static>> {
     let mut left = width;
     chip.into_iter()
         .filter_map(|span| {
