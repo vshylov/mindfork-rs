@@ -1794,6 +1794,16 @@ that CI runs both — so neither runner reproduces the other's total either.
 
 ---
 
+**The single-instance lock is the machine's, not the data root's.** A check
+that starts the interface or a writer in a scratch root of its own still exits
+with 2 while any mindfork is open anywhere — the owner's own window included —
+and from a script that looks like 25 unrelated failures: the 0.14.0 draft's
+schema check came back 9 of 34 for that reason alone. Read the process list
+before the first such check, and ask for the window to be closed rather than
+going round the lock; `mindfork demo` and anything in a container are not held
+by it.
+— *release 0.14.0, the draft*.
+
 ## 7. i18n, gates and localization
 
 **Never build a bundle key with `format!`.** A key assembled from a prefix is

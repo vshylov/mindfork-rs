@@ -3163,3 +3163,72 @@ every reversible check first. Full record —
 - **Owed to the draft** (§6 step 5): this release moves a schema, so the
   released binary is run on files of the version before — the two golden
   fixtures the fix added, `settings_v4.json` and `chat_v4_effort_xhigh.json`.
+- **The draft, checked before anyone else could see it** (§6 step 5). `v0.14.0` sat on
+  the merge commit `e67d31b3`, which was `origin/main`; `release.yml` was green in all
+  six jobs (15 min 28 s) and left a draft that was not a prerelease, with eight assets
+  under the names 0.13.0's had. Its notes were the CHANGELOG's `[0.14.0]` section (123
+  lines) plus the standard footer. All seven lines of `sha256sums.txt` equalled GitHub's
+  own digest per asset, and the eight files downloaded hashed to the same. `install.sh`
+  was byte for byte the tag's and 0.13.0's (`d0c4a156…`), and carries five attestations
+  by now; the job's install step said `passed=27 failed=0` and `installed: mindfork
+  0.14.0 (expected: mindfork 0.14.0)` — in the *Publish the release* job, read through
+  the API with `--allow-escape-sequences`, without which the log comes back empty.
+  `gh attestation verify` passed for both archives, the installer and the script — eight
+  subjects, `release.yml`, `refs/tags/v0.14.0` — and a scratch file the release never
+  made exits 1.
+- **The Windows binary, without a terminal** — 18 checks: `mindfork 0.14.0`; a launch
+  with no console refuses with exit 2; no name of a C runtime library in the executable;
+  `stats` on the archive's own root says there is no data, and the 43 files of the
+  unpacked archive are the same 43 after; pointed at the dev data root it prints the 20
+  lines the dev build prints, and the root's names, sizes and times are untouched.
+- **The schema step, on the released binary** — the check this release owed. The same 34
+  checks the fix ran on its branch's build, with the archive's `mindfork.exe` in its
+  place and the 0.13.0 binary built from its tag beside it. The released binary starts
+  on the two golden files of the version before: `settings.json` at 5, the chat at 5,
+  the efforts and the mode where they were, one `pre-migrate-*.zip` holding both at 4,
+  the log naming the step; a second start migrates nothing. With `max` then chosen in
+  all three files, 0.13.0 on that root: *"Data (settings.json) was created by a newer
+  version of mindfork (schema 5, supported 4)"*, exit 1, nothing changed. The v5 chat
+  alone in a root 0.13.0 wrote: refused, naming the chat file. And the control — the same
+  chat restamped 4 — is still missing from 0.13.0's list.
+- **The same step on Linux**, which the earlier releases' checks had no road to: the
+  released Linux binary in the image that has `libasound`, the fixtures mounted
+  read-only. `stats` leaves the files at 4; `setup --set` — a writer — stamps both at 5,
+  keeps every effort and the mode, makes one backup, names the step twice in the log;
+  a second write makes no second backup.
+- **The released interface**: `console_probe.py --exe` on the archive's binary —
+  `small-window` (83 checks: the notice, the ladder, the footers, the titles, no cursor
+  under the help), `first-frame` (8) and `gateway`, through the real OpenRouter (41,
+  about a cent).
+- **The Linux archive, installed by the draft's own script, offline** (`--from`): in a
+  bare `ubuntu:24.04` as root — `sha256 ok`, unpacked, exit 3 for the missing
+  `libasound`, which is the pass there; the same without `CAP_CHOWN` — no complaint
+  about ownership; and in the image that has the library, as an unprivileged user —
+  installed, `mindfork 0.14.0`, exit 2 for a launch with no terminal and for a bare
+  `setup`, `stats` 0.
+- **What stopped the check for a while was the owner's own window.** The first run of
+  the 34 came back 9 of 34: every start exited with 2, and the screen the probe read said
+  *mindfork is already running on this computer*. The dev build was open in a terminal
+  (it had been started while the release workflow built, and had migrated the dev data
+  root on the way — its own `pre-migrate` backup is the trace). The single-instance lock
+  is the machine's, so every check that starts the interface or a writer waits for that
+  window to close; `mindfork demo` scenarios and everything in a container do not. A
+  process list read before the first such check would have asked the question sooner.
+- **Not run**: the Windows installer and the three Linux packages, of which the digests
+  and the installer's attestation were compared; a version older than 0.13.0 on the
+  stamped data; `cargo install mindfork`; the interface on real data, which is the
+  owner's.
+- **Published, and the numbers of it.** The owner published at 21:27:06Z on 2026-10-01
+  (immutable) — 00:27 on the 2nd where the CHANGELOG's date is written; `crates-io.yml`
+  21:27:08Z → 21:30:02Z, `mindfork 0.14.0` on the registry at 21:29:55Z (4 374 542
+  bytes, the default version); `Site` started by itself two seconds after `crates.io`
+  completed and deployed at 21:30:38Z — **3 min 32 s after the publication** (0.13.0:
+  3 min 53 s). The hold on the merge had shown as before: "Is this version out?" green,
+  the build and the deploy skipped, and for the 26 minutes between the merge and the
+  publication the post answered 404 under a home page that said 0.13.0. From outside:
+  the post answers 200 and is whole, the home page's structured data says
+  `"softwareVersion": "0.14.0"`, the blog's index opens with the post, `/llms.txt`, the
+  feed and the sitemap list it, the install page names no other version, and
+  `releases/latest` resolves to `v0.14.0`. The README's install line, run as written in
+  a container as an unprivileged user without `CAP_CHOWN`: `mindfork v0.14.0`, `sha256
+  ok`, unpacked, `mindfork 0.14.0`.
