@@ -481,7 +481,9 @@ impl ChatCompletionRequest {
 
 /// The efforts a gateway's catalogue may list, lowest first. `none` is not among
 /// them: it is the request to turn reasoning off, which is a different question.
-const GATEWAY_EFFORTS: [&str; 6] = ["minimal", "low", "medium", "high", "xhigh", "max"];
+/// The Responses client reads a refusal's own list against the same ladder
+/// (`responses::wire::lowest_listed_effort`).
+pub(crate) const GATEWAY_EFFORTS: [&str; 6] = ["minimal", "low", "medium", "high", "xhigh", "max"];
 
 /// Whether the request asks for reasoning to be **off**: an effort of `none`, a
 /// zero budget, or the thinking switch set to off with no effort chosen — the
