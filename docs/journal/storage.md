@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (18)
+## Entries (19)
 
 - Post-M9: persisting the input-box draft in the chat file (done)
 - Post-M9: persisting deleted exchanges in the chat file (`Ctrl+E`/`Ctrl+R`) (done)
@@ -30,6 +30,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: `mindfork stats --compare` — what each copy holds that the other lacks (done)
 - Post-M9: a settings file the typed parse refuses (done)
 - Post-M9: `zip` 2.4.2 → 8.6.0 — what a green build does not say about a bump (done)
+- Post-M9: `chacha20poly1305` 0.10.1 → 0.11.0 — the nonce API, and a wipe that became optional (done)
 
 ### Post-M9: persisting the input-box draft in the chat file (done)
 - **Unsaved input-box text is stored on the chat and restored on
@@ -1079,3 +1080,50 @@ discards is recoverable from `backups/`.
   restore of a real backup into a scratch root — the read-only `stats` road decrypts and
   parses every entry, and the restore road is the probe's.
 - 3835 unit tests (+1), 249 `#[ignore]`.
+
+### Post-M9: `chacha20poly1305` 0.10.1 → 0.11.0 — the nonce API, and a wipe that became optional (done)
+- **What arrived.** Dependabot's bump, red on lints, tests and the package build alike:
+  `shared/secrets.rs` did not compile. 0.11 is the `aead` 0.6 generation —
+  `aead::OsRng` is gone, `AeadCore::generate_nonce` is gone, and a `&[u8]` no longer
+  becomes a nonce by `into()`, because `hybrid-array` replaced `generic-array` and its
+  conversion from a slice is the fallible one.
+- **The port** is two functions. `encrypt_with_key` takes its nonce from
+  `Nonce::try_generate()` (the `Generate` trait, behind the crate's default `getrandom`
+  feature); `decrypt_with_key` reads the stored one with `try_into()`. The source is the
+  operating system's generator, as it was. What changed is the failure: a generator that
+  fails is `None` → `SecretError::Encrypt`, where `generate_nonce(&mut OsRng)` panicked.
+- **What the compiler did not report.** Through 0.10 the cipher wiped its copy of the key
+  when dropped whatever the features — `zeroize` was a plain dependency and the `Drop`
+  unconditional. In 0.11 the same `Drop` is behind a `zeroize` feature that is **not** a
+  default, so the bump as proposed, once it compiled, would have stopped wiping the
+  machine key inside the cipher, the Poly1305 one-time key and the ChaCha state, with
+  nothing red anywhere. The trace was a `- "zeroize",` line under the crate's entry in
+  the lock diff; the confirmation, the two versions' sources side by side. `Cargo.toml`
+  asks for the feature by name now, and the tree shows it on both crates:
+  `chacha20poly1305 [alloc,default,getrandom,zeroize]`, `chacha20 [...,zeroize]`.
+  This **keeps** what the library did; it adds nothing. The `[u8; 32]` this module
+  derives and hands in is still not wiped, which is the decision api-key-storage.md
+  already records.
+- **Does a stored key cross the versions?** The cipher seals what outlives the process —
+  every API key stored on a Linux machine — and every test around it seals and opens in
+  one run. Measured both ways on one tree built against each version, under the key the
+  HKDF vector already pins: a blob sealed by 0.10.1 opens under 0.11.0, and one sealed
+  by 0.11.0 opens under 0.10.1 (the parent commit's test binary, kept for the purpose).
+  The first is pinned as `a_blob_sealed_by_an_older_cipher_still_opens`, layout
+  included: 12-byte nonce, ciphertext, 16-byte tag.
+- **Where this code runs.** On Windows the stored keys are DPAPI's and none of this is on
+  the road; both functions are compiled and tested there, and that is all. The Linux
+  scheme end to end — `entry_round_trip_on_local_scheme` against a real machine-id — is
+  the pull request's ubuntu job, not a run of mine.
+- **The lock file, twice.** The bump leaves one line of `chacha20` where there were two
+  (ours was 0.9.1 beside the 0.10.2 `rand` brings; both are 0.10.2 now) and drops
+  `opaque-debug`. And it conflicts with the `zip` bump in half a dozen places — both
+  bring `cipher` 0.5.2 and `inout` 0.2.2 and rename the edges of what stays behind — so
+  the zip branch is merged into this one and the lock **regenerated**, not hand-merged:
+  that branch's file plus `cargo update -p chacha20poly1305 --precise 0.11.0`. Compared
+  package by package against it, the difference is this bump and nothing else. The three
+  pull requests therefore merge in the order group → zip → this one without a conflict,
+  and each later one brings the earlier along if it goes first.
+- **Live run** — no engine involved; the cross-version measurement above, on Windows 11,
+  and all three bumps together on `main`: `fmt`, `clippy -D warnings`, the unit tests.
+- 3836 unit tests (+1), 249 `#[ignore]`.

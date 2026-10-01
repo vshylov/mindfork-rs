@@ -70,8 +70,10 @@ bytemuck = "1.25.0"
 # AEAD encryption of stored API keys on Linux (the `machine-key-v1` scheme: the key
 # is derived from /etc/machine-id via HKDF). RustCrypto, pure Rust. On Windows
 # the same task is solved by the system's DPAPI (windows-sys below). See shared/secrets.rs,
-# docs/research/api-key-storage.md.
-chacha20poly1305 = "0.10.1"
+# docs/research/api-key-storage.md. `zeroize` is asked for by name: through 0.10 the
+# cipher wiped its copy of the key when dropped whatever the features, and 0.11 does
+# so only behind this one, which is not a default.
+chacha20poly1305 = { version = "0.11.0", features = ["zeroize"] }
 # Guessing the encoding of a fetched page that declares none usable (`fetch_url`,
 # `web_search`'s result pages): the detector Firefox runs on unlabelled pages, by the
 # encoding_rs author. Pure Rust. See shared/http_text.rs, docs/research/page-charset.md.

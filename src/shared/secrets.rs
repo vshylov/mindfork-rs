@@ -355,11 +355,12 @@ fn derive_key(ikm: &[u8], user: &str) -> [u8; 32] {
 
 /// Encrypts `plaintext`: the result = `nonce || ciphertext+tag`. A pure function.
 fn encrypt_with_key(key: &[u8; 32], plaintext: &[u8]) -> Option<Vec<u8>> {
-    use chacha20poly1305::aead::{Aead, OsRng};
-    use chacha20poly1305::{AeadCore, ChaCha20Poly1305, KeyInit};
+    use chacha20poly1305::aead::{Aead, Generate};
+    use chacha20poly1305::{ChaCha20Poly1305, KeyInit, Nonce};
 
     let cipher = ChaCha20Poly1305::new(key.into());
-    let nonce = ChaCha20Poly1305::generate_nonce(&mut OsRng);
+    // The OS generator, as before; one that fails is a refusal, not a panic.
+    let nonce = Nonce::try_generate().ok()?;
     let mut out = nonce.to_vec();
     out.extend_from_slice(&cipher.encrypt(&nonce, plaintext).ok()?);
     Some(out)
@@ -369,15 +370,14 @@ fn encrypt_with_key(key: &[u8; 32], plaintext: &[u8]) -> Option<Vec<u8>> {
 /// authenticate), corruption, or too-short input. A pure function.
 fn decrypt_with_key(key: &[u8; 32], data: &[u8]) -> Option<Vec<u8>> {
     use chacha20poly1305::aead::Aead;
-    use chacha20poly1305::{ChaCha20Poly1305, KeyInit};
+    use chacha20poly1305::{ChaCha20Poly1305, KeyInit, Nonce};
 
     if data.len() <= NONCE_LEN {
         return None;
     }
     let (nonce, ct) = data.split_at(NONCE_LEN);
-    ChaCha20Poly1305::new(key.into())
-        .decrypt(nonce.into(), ct)
-        .ok()
+    let nonce: &Nonce = nonce.try_into().ok()?;
+    ChaCha20Poly1305::new(key.into()).decrypt(nonce, ct).ok()
 }
 
 /// This machine's key for the `machine-key-v1` scheme (`None` — no machine-id).
@@ -629,6 +629,25 @@ mod tests {
             hex_encode(&derive_key(b"machine-id-abc", "user1")),
             "f2b76bdb73f60eed5e07d306d47e73cff8643c35720f89146167ea37e855f1e4"
         );
+    }
+
+    /// The other half of the same promise: a key sealed before the cipher crate
+    /// moved still opens. ChaCha20-Poly1305 is a specification too (RFC 8439),
+    /// and every round-trip test above seals and opens through one version of
+    /// the crate in one process — a version that read only its own output would
+    /// pass them all and answer "no key" for every key already stored. So the
+    /// blob is pinned, layout included (nonce, ciphertext, 16-byte tag): sealed
+    /// by `chacha20poly1305` 0.10.1 under the key pinned above, opened unchanged
+    /// by 0.11.0.
+    #[test]
+    fn a_blob_sealed_by_an_older_cipher_still_opens() {
+        let key = derive_key(b"machine-id-abc", "user1");
+        let sealed = hex_decode(
+            "ae0c87e53694a96c88f4ac0366fa5a2a97a95c168fb63e8bc2cda4ae9fd8dff8b1fd6884f78120a442d7ac",
+        )
+        .unwrap();
+        assert_eq!(sealed.len(), NONCE_LEN + b"sk-secret-value".len() + 16);
+        assert_eq!(decrypt_with_key(&key, &sealed).unwrap(), b"sk-secret-value");
     }
 
     /// Full round trip over a config entry — on this machine's platform scheme

@@ -2015,6 +2015,25 @@ that ran against the stale index. Where a verdict is produced lazily, ask for it
 **after** the step that may produce it, or have that step return it.
 — *embeddings through the gateway — stage 2 of the OpenRouter mode*.
 
+**A round-trip test cannot fail on a version change — pin something the old
+version wrote.** Every test around the stored API keys seals and opens in one
+process; every backup test writes and reads through one version of `zip`. A
+bump that moved the format, the derivation or the reader would pass all of them
+and fail on the first real file: a key that no longer opens, a backup that no
+longer restores, found on the day it is needed. For anything that outlives the
+process, produce the artifact with the **old** version first — check out the
+bump's parent commit, and keep that test binary to read back what the new
+version writes — then commit it as a constant and read it in a test
+(`derive_key_matches_a_pinned_vector`,
+`a_blob_sealed_by_an_older_cipher_still_opens`,
+`a_backup_written_by_an_older_zip_still_restores`). And read the lock diff for
+the edges that **disappear**, not only the versions that change:
+`chacha20poly1305` 0.11 turned its `zeroize` dependency into a feature that is
+off by default, and the one trace of a cipher that had stopped wiping its key
+was a `- "zeroize",` line under its entry.
+— *`chacha20poly1305` 0.10.1 → 0.11.0 — the nonce API, and a wipe that became
+optional*, *`zip` 2.4.2 → 8.6.0 — what a green build does not say about a bump*.
+
 ## 9. Live runs and model behaviour
 
 **A second turn that repeats the first turn's question tests the model's memory, not
