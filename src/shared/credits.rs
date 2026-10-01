@@ -172,7 +172,7 @@ pub const COMPONENTS: &[(&str, &str, &str)] = &[
     ("async-trait", "0.1.92", "MIT OR Apache-2.0"),
     ("base64", "0.23.1", "MIT OR Apache-2.0"),
     ("bytemuck", "1.25.2", "Zlib OR Apache-2.0 OR MIT"),
-    ("chacha20poly1305", "0.10.1", "Apache-2.0 OR MIT"),
+    ("chacha20poly1305", "0.11.0", "Apache-2.0 OR MIT"),
     ("chardetng", "1.0.0", "Apache-2.0 OR MIT"),
     ("chrono", "0.4.45", "MIT OR Apache-2.0"),
     ("crossterm", "0.29.0", "MIT"),
