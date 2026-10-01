@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (53)
+## Entries (54)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -65,6 +65,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Release 0.11.2 (prepared)
 - Release 0.12.0 (prepared)
 - Release 0.13.0 (prepared)
+- Release 0.14.0 (prepared)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -3103,3 +3104,62 @@ every reversible check first. Full record —
   23:05:19Z; the release that has the mode, from 23:52:37Z. For **47 minutes** the
   site described a mode nobody could download, and for 51 its structured data said
   0.12.0 beside it.
+
+### Release 0.14.0 (prepared)
+
+- **A release PR** per the checklist in [AGENTS.md §6](../../AGENTS.md), branch
+  `chore/release-0.14.0`: bumped `Cargo.toml` `0.13.0 → 0.14.0` (+ `Cargo.lock`,
+  one line), `site/zola.toml` `app_version`, `CHANGELOG.md` — `[Unreleased]` →
+  `[0.14.0] — 2026-10-02` under a lead paragraph, a fresh empty `[Unreleased]`
+  opened, comparison links updated; the closed-tracks index of `docs/roadmap.md`
+  gains the two tracks the release ships. The `v0.14.0` tag is applied by the
+  user after the merge. Gates green, on Windows: **3856 passed, 253
+  `#[ignore]`**, `clippy -D warnings`, `fmt`, every Python gate of the Lints job
+  by exit code, and `release_guard.py --tag v0.14.0` accepting the tag — its
+  notes the `[0.14.0]` section, 123 lines (the `notes.md` it writes into the
+  working tree is untracked and was removed, not committed).
+- **Asked for as 0.13.1, released as 0.14.0.** The request was a PATCH. Since
+  `v0.13.0`: the small-windows track (PRs 654–656, its leftovers 657–658), the
+  effort tiers (663–665) with the fixes found beside them (666–668), three
+  dependency bumps (660–662) and a README badge (659). `[Unreleased]` held four
+  items under *Added*, which is a MINOR by the letter of §6 — said before the
+  PR was written, with 0.11.2 named as the precedent for a track under a PATCH
+  — and the owner chose 0.14.0 once it was clear the release would also move
+  two schema constants.
+- **The `Data` rubric was empty, and that was the finding.** Filling it means
+  asking of every item what it wrote to disk, and `max` — a new value of the
+  reasoning effort — is written into `settings.json`, a profile's defaults and
+  every chat file, beside each reply made under it. It had been merged with no
+  schema step. What 0.13.0 does with such files was **measured on the 0.13.0
+  binary**, built from the tag for the purpose: the settings and the profiles
+  are each a refusal naming an unknown variant, and a chat holding the value is
+  skipped — the application starts and the chat is not in its list. The owner
+  was given three ways out and chose the steps: `SETTINGS_SCHEMA` and
+  `CHAT_SCHEMA` 4 → 5, in a pull request of its own that this one is stacked on
+  ([the storage journal](storage.md), PR 669). This branch was cut from that
+  one's head, so the release reaches `main` only with the stamps.
+- **What the release's own step should be from now on.** The check that found
+  it was not in the checklist: for each new value of a stored type in
+  `[Unreleased]`, the **previous** release's binary run on a file that holds
+  it. A test of the current build cannot see this — today's reader reads
+  today's value — and the three kinds of file fail differently, one of them in
+  silence ([lessons.md](../lessons.md) §8). Building the previous tag into a
+  target directory of its own took 1 min 45 s.
+- **Opened as a draft**, stacked on the fix: against `main` its diff is the fix
+  and the release until 669 is merged, and a pull request that must wait is a
+  draft ([lessons.md](../lessons.md) §1, learned on 0.13.0). The fix branch
+  holds all of `main`, so after 669's merge the two have one merge base and the
+  diff is the release alone.
+- **The release post** has the two subjects in the order a user meets them: the
+  window — what was drawn at 57×5, the ladder, the notice with its two sizes,
+  then the list of what a narrow window used to cut — and the effort: five sets
+  across ten OpenAI models, the nearest value, `max`, Grok's own list with the
+  measured 0.7–0.8 s against three or four; then the models that answer again,
+  and the data. Every figure in it is the CHANGELOG's, the spec's or a research
+  document's. `llms.txt` regenerated from its front matter; the site checked and
+  built with the pinned Zola 0.23.6 after `site_sync_assets.py` — 27 pages and
+  two sections, the post at `blog/mindfork-0-14-0/`, the home page's structured data says
+  `0.14.0`. `site.yml` holds the deploy until the release is public.
+- **Owed to the draft** (§6 step 5): this release moves a schema, so the
+  released binary is run on files of the version before — the two golden
+  fixtures the fix added, `settings_v4.json` and `chat_v4_effort_xhigh.json`.

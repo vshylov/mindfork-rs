@@ -14,6 +14,18 @@ split by subsystem.
 
 ## [Unreleased]
 
+## [0.14.0] — 2026-10-02
+
+**A window of any size, and one reasoning effort for every model.** A window
+too small for the screen in front says so instead of drawing a frame with parts
+missing, and the chat gives up its chrome one piece at a time and is still a
+chat at three rows. The reasoning effort is one setting for every model: a
+value a model does not have becomes the nearest it has, with a new top tier,
+`max`. With it, the models a setting of the app's own had stopped answer
+again — Claude Haiku 4.5, Sonnet 4.5 and Opus 4.5, three of Grok's, and titles
+on `gpt-6.1-sol` and Gemini 3.7 and 3.8 Flash. `settings.json` and the chat
+files move to version 5.
+
 ### Added
 - **A `max` reasoning effort.** The top tier OpenAI and Claude models now have
   is in the settings and in `set_sampling`, after `xhigh`. On a model or a
@@ -2999,7 +3011,8 @@ history is in the [docs/journal/](docs/journal/) log).
   (notes/RAG/self-model, sqlite-vec, per-profile isolation). Schema format is
   v1; schema versioning and migrations are formalized in later releases.
 
-[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/vshylov/mindfork-rs/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/vshylov/mindfork-rs/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/vshylov/mindfork-rs/compare/v0.11.2...v0.12.0
 [0.11.2]: https://github.com/vshylov/mindfork-rs/compare/v0.11.1...v0.11.2

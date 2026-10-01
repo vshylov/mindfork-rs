@@ -29,7 +29,7 @@ Two rules that follow from that:
   and from the code. Loading either whole spends context on twelve chapters to
   use one.
 - **The engineering journal is per area.** What was done, why, what was measured
-  and what was rejected lives in `docs/journal/<area>.md` — 570 entries, split by
+  and what was rejected lives in `docs/journal/<area>.md` — 571 entries, split by
   subsystem. Read the file for the area you are touching; grep across them when
   hunting a specific past decision.
 
@@ -177,7 +177,7 @@ Backend selection: `MINDFORK_ENGINE_URL` (external, any OpenAI server) OR
 rented instead of hosted — `python tools/e2e_hf.py run`, see
 `docs/history/remote-e2e-hf.md`.
 
-## Status (2026-10-01, version 0.13.0)
+## Status (2026-10-02, version 0.14.0)
 
 The **M0–M9** plan is done, plus extensive post-M9 work — **3856 unit tests
 green, 253 `#[ignore]`** (live smokes + a real-clipboard round trip + the
