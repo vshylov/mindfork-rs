@@ -4,12 +4,17 @@
 //! One scale is chosen in the settings and translated per wire (spec §8.1), and
 //! no two models take the same part of it — measured on 2026-10-01, ten OpenAI
 //! models take five different sets (docs/research/effort-tiers.md §2). OpenAI
-//! publishes a model's set nowhere but in its refusal; Anthropic and xAI list it
-//! on the model object, and are read off the refusal all the same — it is free,
-//! and only a model that needs it meets it, where asking ahead would cost every
-//! session a request. So a client asks as chosen, and a value the model refuses
-//! becomes the nearest it has ([`nearest`]), remembered for that client
+//! publishes a model's set nowhere but in its refusal. Anthropic lists it on the
+//! model object and is read off the refusal all the same — it is free, and only
+//! a model that needs it meets it, where asking ahead would cost every session a
+//! request. So a client asks as chosen, and a value the model refuses becomes
+//! the nearest it has ([`nearest`]), remembered for that client
 //! ([`EffortMemo`]).
+//!
+//! xAI is the one wire read **ahead**: its refusal lists nothing, a muted turn
+//! there meets no refusal to learn from — the field left out is the model's
+//! default depth — and the entry that carries the list is the one its client
+//! fetches for the window anyway (§9 of that research).
 
 use std::sync::{Mutex, PoisonError};
 
@@ -87,8 +92,10 @@ pub(crate) fn nearest(wish: &str, listed: &[&'static str]) -> Option<&'static st
 /// accepted in its place — `None` in the pair for "no effort at all".
 ///
 /// Per client, and never cleared: a client is one model's, and a changed model
-/// gets a new client. Written only once the substitute was **accepted**, so a
-/// refusal read wrongly costs one round trip and teaches the client nothing.
+/// gets a new client. A refusal's answer is written only once the substitute
+/// was **accepted**, so a refusal read wrongly costs one round trip and teaches
+/// the client nothing; what a provider's own list says (xAI) is written as it
+/// is read.
 #[derive(Debug, Default)]
 pub(crate) struct EffortMemo(Mutex<Vec<(&'static str, Option<&'static str>)>>);
 
@@ -104,13 +111,16 @@ impl EffortMemo {
             .map(|(_, instead)| *instead)
     }
 
-    /// Records that `wish` was refused and `instead` accepted. The first answer
-    /// for a value stands.
-    pub(crate) fn learn(&self, wish: &'static str, instead: Option<&'static str>) {
+    /// Records that the model does not take `wish` and `instead` goes in its
+    /// place. The first answer for a value stands; `true` — this call is the
+    /// one that recorded it.
+    pub(crate) fn learn(&self, wish: &'static str, instead: Option<&'static str>) -> bool {
         let mut known = self.0.lock().unwrap_or_else(PoisonError::into_inner);
-        if !known.iter().any(|(refused, _)| *refused == wish) {
+        let new = !known.iter().any(|(refused, _)| *refused == wish);
+        if new {
             known.push((wish, instead));
         }
+        new
     }
 }
 
@@ -159,9 +169,9 @@ pub(crate) trait EffortWire: Sync {
 /// error surfaces as it came, and the next turn starts from the value as chosen
 /// again.
 ///
-/// One place for that rule because three wires need it — Responses, Gemini and
-/// Anthropic each refuse values of their own
-/// (docs/research/effort-tiers.md §2).
+/// One place for that rule because four wires need it — Responses, Gemini and
+/// Anthropic each refuse values of their own, and an xAI model with no list
+/// refuses the parameter whole (docs/research/effort-tiers.md §2, §9).
 pub(crate) async fn send_asking_again<W: EffortWire>(
     wire: &W,
     body: &mut W::Body,
@@ -277,9 +287,12 @@ mod tests {
     fn the_memo_keeps_the_first_answer_per_value() {
         let memo = EffortMemo::default();
         assert_eq!(memo.instead_of("minimal"), None);
-        memo.learn("minimal", Some("low"));
-        memo.learn(NONE, None);
-        memo.learn("minimal", Some("high"));
+        assert!(memo.learn("minimal", Some("low")));
+        assert!(memo.learn(NONE, None));
+        assert!(
+            !memo.learn("minimal", Some("high")),
+            "a second answer is not recorded, and says so"
+        );
         assert_eq!(memo.instead_of("minimal"), Some(Some("low")));
         assert_eq!(memo.instead_of(NONE), Some(None));
         assert_eq!(memo.instead_of("max"), None);

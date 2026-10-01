@@ -715,8 +715,7 @@ fn cloud_chat_setup(
             OpenAiClient::new(base)
                 .with_api_key(Some(key))
                 .with_model(Some(model.to_string()))
-                .with_effort_none_omitted(true)
-                .with_effort_capped_at(crate::entities::sampling::ReasoningEffort::XHigh),
+                .for_xai(),
         ),
         CloudProvider::OpenRouter => {
             let client = Arc::new(

@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::entities::sampling::{ReasoningEffort, SamplingConfig};
 use crate::shared::api::contract::{ApiMessage, ApiRole, ChatRequest};
+use crate::shared::api::effort;
+use crate::shared::api::error::EngineError;
 
 // This client's first consumer is the local/external llama.cpp `llama-server`
 // (managed/external): everything set is sent, since llama.cpp ignores what it
@@ -317,8 +319,9 @@ pub struct WireFunctionCall {
 /// the `model` field (for an external proxy if desired; for llama-server `None` works —
 /// the server takes the loaded model). Everything set in sampling is sent (llama.cpp
 /// ignores what it doesn't know). `omit_effort_none` — drop a `reasoning_effort` of
-/// `"none"` rather than send it (xAI rejects the value; see
-/// [`OpenAiClient::with_effort_none_omitted`](super::OpenAiClient::with_effort_none_omitted)).
+/// `"none"` rather than send it: the server has refused to switch reasoning off,
+/// or it is xAI, where the client decides the field from the model's list
+/// ([`OpenAiClient::for_xai`](super::OpenAiClient::for_xai)).
 pub fn build_chat_request(
     req: &ChatRequest,
     stream: bool,
@@ -479,6 +482,16 @@ impl ChatCompletionRequest {
     }
 }
 
+impl effort::CarriesEffort for ChatCompletionRequest {
+    fn effort(&self) -> Option<&'static str> {
+        self.reasoning_effort
+    }
+
+    fn respell_effort(&mut self, instead: Option<&'static str>) {
+        self.reasoning_effort = instead;
+    }
+}
+
 /// Whether the request asks for reasoning to be **off**: an effort of `none`, a
 /// zero budget, or the thinking switch set to off with no effort chosen — the
 /// three ways the orchestrator and the settings say it.
@@ -487,6 +500,63 @@ pub fn asks_reasoning_off(sampling: &SamplingConfig) -> bool {
         Some(effort) => effort == ReasoningEffort::None,
         None => sampling.reasoning_budget == Some(0) || sampling.thinking == Some(false),
     }
+}
+
+/// The value of the effort scale a request asks for: [`effort::NONE`] when it
+/// asks for reasoning to be off, in any of the ways [`asks_reasoning_off`]
+/// reads, and the chosen depth otherwise. `None` — it asks for no effort.
+pub fn effort_wish(sampling: &SamplingConfig) -> Option<&'static str> {
+    if asks_reasoning_off(sampling) {
+        return Some(effort::NONE);
+    }
+    sampling.reasoning_effort.map(ReasoningEffort::as_wire)
+}
+
+/// What an **xAI** model is asked for in place of `wish`, given the efforts its
+/// entry lists ([`ModelEntry::listed_efforts`]); `None` — no effort at all.
+///
+/// Measured on 2026-10-01 (docs/research/effort-tiers.md §9). `grok-4.3` lists
+/// `none`, `low`, `medium`, `high`, `xhigh`; `grok-4.5`, `4.6` and `4.7` the
+/// same without `none`:
+///
+/// - a listed value goes as it is — `none` on `grok-4.3` is a reply with no
+///   reasoning tokens, where the field left out is that model's default, some
+///   three hundred;
+/// - anything else becomes the nearest listed ([`effort::nearest`]): `max` is
+///   `xhigh`, `minimal` is `low` (xAI takes the word and reasons as at `low`),
+///   and a `none` the model does not list is its lowest depth rather than its
+///   default, which is `high` where `none` is missing.
+///
+/// With **no list** — the entry was not fetched, or the model publishes none —
+/// the two answers that hold on every model that does publish one stand in:
+/// `none` is left out (three models of four refuse it) and anything above
+/// `xhigh` is `xhigh` (all four refuse `max`, naming nothing in its place).
+pub fn xai_effort(wish: &'static str, listed: Option<&[&'static str]>) -> Option<&'static str> {
+    match listed {
+        Some(listed) if listed.contains(&wish) => Some(wish),
+        Some(listed) => effort::nearest(wish, listed),
+        None if wish == effort::NONE => None,
+        None if wish == ReasoningEffort::Max.as_wire() => Some(ReasoningEffort::XHigh.as_wire()),
+        None => Some(wish),
+    }
+}
+
+/// Whether a failed request was refused for carrying `reasoning_effort` **at
+/// all**, whatever its value.
+///
+/// xAI's words, measured on the three chat models that publish no list
+/// (`grok-4.20-0309-reasoning`, `grok-4.20-0309-non-reasoning`,
+/// `grok-build-0.1`): `400 "Model grok-build-0.1 does not support parameter
+/// reasoningEffort."` — for every value of the scale alike. A `400` only, and
+/// both halves of the sentence: the same server refuses a penalty in the same
+/// words about another parameter.
+pub fn refuses_effort_parameter(err: &EngineError) -> bool {
+    if err.status != Some(400) {
+        return false;
+    }
+    let message = err.message.to_lowercase();
+    message.contains("does not support parameter")
+        && (message.contains("reasoningeffort") || message.contains("reasoning_effort"))
 }
 
 /// The effort a **muted** turn asks for on a model that cannot be muted, or
@@ -770,6 +840,12 @@ pub struct ModelEnvelope {
     pub data: ModelEntry,
 }
 
+impl From<ModelEnvelope> for ModelEntry {
+    fn from(envelope: ModelEnvelope) -> Self {
+        envelope.data
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct ModelEntry {
     #[serde(default)]
@@ -794,6 +870,12 @@ pub struct ModelEntry {
     /// Raw JSON for the same reason as `reasoning`, read by [`Self::takes_images`].
     #[serde(default)]
     pub architecture: Option<serde_json::Value>,
+    /// What the model can be asked for, in xAI's spelling: `{"reasoning_effort":
+    /// ["low", "medium", "high", "xhigh"], "default_reasoning_effort": "high"}`.
+    /// Raw JSON for the same reason as `reasoning`, read by
+    /// [`Self::listed_efforts`].
+    #[serde(default)]
+    pub capabilities: Option<serde_json::Value>,
 }
 
 impl ModelEntry {
@@ -840,9 +922,28 @@ impl ModelEntry {
             .as_ref()?
             .get("supported_efforts")?
             .as_array()?;
-        crate::shared::api::effort::LADDER
+        effort::LADDER
             .into_iter()
             .find(|effort| listed.iter().any(|l| l.as_str() == Some(effort)))
+    }
+
+    /// The efforts `capabilities.reasoning_effort` lists, in the scale's order,
+    /// [`effort::NONE`] first when it is among them. `None` — the entry does
+    /// not say: no key, anything but a list, or a list that names nothing of
+    /// the scale. Silence is not "takes none": three xAI models publish no list
+    /// and refuse the parameter, and the refusal is what says so
+    /// ([`refuses_effort_parameter`]).
+    pub fn listed_efforts(&self) -> Option<Vec<&'static str>> {
+        let listed = self
+            .capabilities
+            .as_ref()?
+            .get("reasoning_effort")?
+            .as_array()?;
+        let known: Vec<&'static str> = std::iter::once(effort::NONE)
+            .chain(effort::LADDER)
+            .filter(|value| listed.iter().any(|l| l.as_str() == Some(value)))
+            .collect();
+        (!known.is_empty()).then_some(known)
     }
 }
 
@@ -1974,5 +2075,174 @@ mod gateway_reasoning_tests {
         assert!(wrong.is_empty(), "{wrong:#?}");
         let silent: ModelEntry = serde_json::from_str(r#"{"id":"m"}"#).unwrap();
         assert_eq!(silent.lowest_effort(), None, "no reasoning key at all");
+    }
+}
+
+#[cfg(test)]
+mod xai_effort_tests {
+    use super::*;
+
+    /// xAI's entries by the name the tables use, measured 2026-10-01 and cut to
+    /// the key read here (docs/research/effort-tiers.md §9).
+    fn listed(kind: &str) -> Option<Vec<&'static str>> {
+        let capabilities = match kind {
+            "4.3" => {
+                r#"{"reasoning_effort":["none","low","medium","high","xhigh"],"default_reasoning_effort":"low"}"#
+            }
+            "4.7" => {
+                r#"{"reasoning_effort":["low","medium","high","xhigh"],"default_reasoning_effort":"high"}"#
+            }
+            _ => return None,
+        };
+        let entry: ModelEntry =
+            serde_json::from_str(&format!(r#"{{"id":"m","capabilities":{capabilities}}}"#))
+                .unwrap();
+        entry.listed_efforts()
+    }
+
+    /// One row per answer [`xai_effort`] gives, so dropping any arm of it turns
+    /// a row red. Columns: the list, the wish, what is asked (`-` — no effort
+    /// at all), why.
+    const ASKED: &str = "
+        4.3   none     none    | listed: a muted turn does not reason at all
+        4.3   low      low     | listed, as it is
+        4.3   xhigh    xhigh   | the top of the list
+        4.3   minimal  low     | not listed: the nearest depth, never the switch beside it
+        4.3   max      xhigh   | above the list
+        4.7   none     low     | a model that cannot stop: its lowest depth, not its default
+        4.7   minimal  low     | not listed
+        4.7   medium   medium  | listed
+        4.7   max      xhigh   | above the list
+        -     none     -       | no list: three models of four refuse the value
+        -     max      xhigh   | no list: all four refuse it
+        -     minimal  minimal | no list: every other depth goes as chosen
+        -     xhigh    xhigh   | ...the highest xAI has among them
+    ";
+
+    #[test]
+    fn an_effort_is_asked_as_the_models_list_has_it() {
+        let mut wrong = Vec::new();
+        for row in ASKED.lines().filter(|l| !l.trim().is_empty()) {
+            let (columns, why) = row.split_once('|').unwrap();
+            let c: Vec<&str> = columns.split_whitespace().collect();
+            let wish = std::iter::once(effort::NONE)
+                .chain(effort::LADDER)
+                .find(|value| *value == c[1])
+                .unwrap();
+            let got = xai_effort(wish, listed(c[0]).as_deref());
+            if got != Some(c[2]).filter(|asked| *asked != "-") {
+                wrong.push(format!("{}: {got:?}", why.trim()));
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    /// The list is read in the scale's order whatever order it came in, and
+    /// anything that is not a list of the scale's words is silence — which is
+    /// not "takes no effort": that is the refusal's to say. Columns: the
+    /// entry's `capabilities`, the efforts read, why.
+    const LISTED: &str = r#"
+        {"reasoning_effort":["none","low","medium","high","xhigh"]} => none low medium high xhigh | grok-4.3
+        {"reasoning_effort":["xhigh","low","high","medium"]}        => low medium high xhigh      | the scale's order, not the list's
+        {"reasoning_effort":["low","turbo",7,null]}                 => low                        | what is not a word of the scale is passed over
+        {"reasoning_effort":["turbo"]}                              => -                          | words with no place on the scale
+        {"reasoning_effort":[]}                                     => -                          | an empty list
+        {"reasoning_effort":"low"}                                  => -                          | not a list
+        {"default_reasoning_effort":"high"}                         => -                          | no list
+        null                                                        => -                          | no capabilities
+    "#;
+
+    #[test]
+    fn the_models_efforts_are_read_from_its_capabilities() {
+        let mut wrong = Vec::new();
+        for row in LISTED.lines().filter(|l| !l.trim().is_empty()) {
+            let (columns, why) = row.split_once('|').unwrap();
+            let (capabilities, efforts) = columns.split_once("=>").unwrap();
+            let entry: ModelEntry =
+                serde_json::from_str(&format!(r#"{{"id":"m","capabilities":{capabilities}}}"#))
+                    .unwrap();
+            let expected: Vec<&str> = efforts.split_whitespace().filter(|e| *e != "-").collect();
+            let got = entry.listed_efforts().unwrap_or_default();
+            if got != expected {
+                wrong.push(format!("{}: {got:?}", why.trim()));
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+        // The entries of the three models that publish no list carry no key at all.
+        let silent: ModelEntry =
+            serde_json::from_str(r#"{"id":"grok-build-0.1","context_length":256000}"#).unwrap();
+        assert_eq!(silent.listed_efforts(), None);
+    }
+
+    /// A wish is `none` for each of the three ways a request says "do not
+    /// reason", the chosen depth otherwise, and nothing where nothing is asked.
+    #[test]
+    fn a_requests_wish_is_none_a_depth_or_nothing() {
+        let wish = |thinking, effort, budget| {
+            effort_wish(&SamplingConfig {
+                thinking,
+                reasoning_effort: effort,
+                reasoning_budget: budget,
+                ..Default::default()
+            })
+        };
+        assert_eq!(wish(None, Some(ReasoningEffort::None), None), Some("none"));
+        assert_eq!(wish(Some(false), None, None), Some("none"));
+        assert_eq!(wish(None, None, Some(0)), Some("none"));
+        assert_eq!(wish(None, Some(ReasoningEffort::Max), None), Some("max"));
+        // An effort somebody chose outranks the switch and the budget beside it.
+        assert_eq!(
+            wish(Some(false), Some(ReasoningEffort::High), Some(0)),
+            Some("high")
+        );
+        assert_eq!(wish(Some(true), None, None), None);
+        assert_eq!(wish(None, None, None), None);
+    }
+
+    /// xAI's refusals as it wrote them on 2026-10-01. Only the one about the
+    /// parameter itself is answered by asking again without it: the same server
+    /// refuses a penalty in the same words, and a refused *value* names nothing
+    /// to send in its place.
+    #[test]
+    fn only_the_refusal_of_the_parameter_itself_is_read_as_one() {
+        let refusal = |status: u16, body: &str| {
+            EngineError::status(
+                crate::shared::api::error::SUBJECT_ENGINE,
+                reqwest::StatusCode::from_u16(status).unwrap(),
+                &reqwest::header::HeaderMap::new(),
+                body,
+            )
+        };
+        const PARAMETER: &str = r#"{"code":"invalid-argument","error":"Model grok-build-0.1 does not support parameter reasoningEffort."}"#;
+        assert!(refuses_effort_parameter(&refusal(400, PARAMETER)));
+        assert!(!refuses_effort_parameter(&refusal(503, PARAMETER)));
+        for other in [
+            r#"{"code":"invalid-argument","error":"Model grok-4.5 does not support parameter presencePenalty."}"#,
+            r#"{"code":"invalid-argument","error":"This model does not support `reasoning_effort` value `none`."}"#,
+            r#"{"code":"invalid-argument","error":"Invalid reasoning effort."}"#,
+        ] {
+            assert!(!refuses_effort_parameter(&refusal(400, other)), "{other}");
+        }
+    }
+
+    #[test]
+    fn a_chat_body_carries_its_effort() {
+        use effort::CarriesEffort;
+        let req = ChatRequest {
+            continue_final: false,
+            system: None,
+            messages: vec![ApiMessage::user("hi")],
+            sampling: SamplingConfig {
+                reasoning_effort: Some(ReasoningEffort::High),
+                ..Default::default()
+            },
+            tools: vec![],
+        };
+        let mut body = build_chat_request(&req, true, Some("m"), false);
+        assert_eq!(body.effort(), Some("high"));
+        body.respell_effort(None);
+        assert_eq!(body.effort(), None);
+        let json = serde_json::to_value(&body).unwrap();
+        assert!(json.get("reasoning_effort").is_none(), "{json}");
     }
 }

@@ -683,7 +683,7 @@ async fn grok_trailing_assistant_behaviour_is_recorded() {
     let client = OpenAiClient::new(crate::shared::config::CloudProvider::Grok.chat_base_url())
         .with_api_key(Some(key))
         .with_model(Some(model.clone()))
-        .with_effort_none_omitted(true);
+        .for_xai();
     let req = ChatRequest {
         continue_final: false,
         system: None,

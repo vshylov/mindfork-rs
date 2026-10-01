@@ -18,6 +18,7 @@ use crate::shared::api::contract::{
     ChatChunk, ChatRequest, ChatStream, EmbedRole, Embedder, EngineBackend, FinishReason,
     ModelCapabilities, Served, TokenUsage, ToolCallDelta, VisionSupport,
 };
+use crate::shared::api::effort::{self, EffortMemo, EffortWire};
 use crate::shared::api::error::{self, SUBJECT_EMBEDDER, SUBJECT_ENGINE};
 use crate::shared::api::http;
 use crate::shared::api::thoughts::{Piece, ThoughtsParser};
@@ -38,16 +39,15 @@ pub struct OpenAiClient {
     /// a multi-model proxy require it, `llama-server` ignores it). The domain
     /// [`ChatRequest`] doesn't carry a model — it's a property of the backend.
     model: Option<String>,
-    /// Send **no** `reasoning_effort` when the request asks for
-    /// [`ReasoningEffort::None`](crate::entities::sampling::ReasoningEffort::None),
-    /// instead of sending the literal `"none"`. See
-    /// [`Self::with_effort_none_omitted`].
-    omit_effort_none: bool,
-    /// The highest effort this server takes: a request that asks for more goes
-    /// out with this instead. See [`Self::with_effort_capped_at`].
-    effort_ceiling: Option<ReasoningEffort>,
-    /// The same thing, learned at runtime: this server has **refused** a request
-    /// to disable reasoning, so stop asking — whether it asked as
+    /// The server is **xAI's API**, known rather than inferred
+    /// ([`Self::for_xai`]).
+    xai: bool,
+    /// What this client has learned about the efforts its model takes: a value
+    /// xAI's list does not name and what goes in its place, and a parameter a
+    /// server refused whole ([`EffortWire`]).
+    efforts: EffortMemo,
+    /// Learned at runtime: this server has **refused** a request to disable
+    /// reasoning, so stop asking — whether it asked as
     /// `reasoning_effort: "none"` or as a gateway's `reasoning: {enabled: false}`
     /// (docs/history/gateway-thinking-switch.md, fork T2); one memo silences both.
     ///
@@ -126,8 +126,8 @@ impl OpenAiClient {
             base_url,
             api_key: None,
             model: None,
-            omit_effort_none: false,
-            effort_ceiling: None,
+            xai: false,
+            efforts: EffortMemo::default(),
             reasoning_off_refused: std::sync::atomic::AtomicBool::new(false),
             catalogue: tokio::sync::OnceCell::new(),
             gateway: None,
@@ -168,37 +168,38 @@ impl OpenAiClient {
         self
     }
 
-    /// Omit `reasoning_effort` instead of sending `"none"`. Builder-style.
+    /// The server is xAI's API. Builder-style.
     ///
-    /// `llama-server` reads `"none"` as "don't think", and the orchestrator relies
-    /// on that for its auxiliary turns — title generation, compaction and
-    /// impersonation all set [`ReasoningEffort::None`](crate::entities::sampling::ReasoningEffort::None)
-    /// deliberately. xAI rejects the *value* outright ("This model does not support
-    /// `reasoning_effort` value `none`"), so on a Grok backend those three
-    /// background turns would fail with a `400` while ordinary chat kept working —
-    /// a confusing failure to diagnose. Omitting the field is the same thing the
-    /// Anthropic and Gemini wires already do (`ant_effort`/`gem_effort` map
-    /// `None => None`); Grok simply reasons at its default depth instead.
-    /// See docs/research/grok-xai-provider.md §2.3.
-    pub fn with_effort_none_omitted(mut self, omit: bool) -> Self {
-        self.omit_effort_none = omit;
+    /// xAI takes this client's body as it is. What differs is the reasoning
+    /// effort a model may be asked for, which xAI publishes per model and this
+    /// client reads (docs/research/effort-tiers.md §9):
+    ///
+    /// - the model's facts come from `GET /models/{name}`, which resolves an
+    ///   alias — the list carries canonical ids alone — and holds the window and
+    ///   `capabilities.reasoning_effort` in one answer;
+    /// - an effort the model does not list goes out as the nearest it lists
+    ///   ([`wire::xai_effort`]): `max` as `xhigh`, since no model has it;
+    /// - a turn that asks for reasoning to be off is sent `"none"` where the
+    ///   model lists it and its lowest depth where it does not. `llama-server`
+    ///   reads `"none"` as "don't think", and the orchestrator relies on that
+    ///   for its auxiliary turns — the title, the compaction roll and
+    ///   impersonation all ask for it — while three xAI models of four reject the
+    ///   *value* ("This model does not support `reasoning_effort` value
+    ///   `none`"): sent as it came, those turns would fail with a `400` while
+    ///   ordinary chat kept working (docs/research/grok-xai-provider.md §2.3);
+    /// - a model that publishes no list refuses the parameter itself, and is
+    ///   asked once more without it ([`wire::refuses_effort_parameter`]).
+    pub fn for_xai(mut self) -> Self {
+        self.xai = true;
         self
     }
 
-    /// Sends `ceiling` in place of any effort above it. Builder-style.
-    ///
-    /// xAI answers `reasoning_effort: "max"` with `400 "Invalid reasoning
-    /// effort."` — on `grok-4.3`, `4.5`, `4.6` and `4.7`, naming nothing in its
-    /// place — and takes `xhigh` on all four (measured 2026-10-01,
-    /// docs/research/effort-tiers.md §2). Configured rather than learned, like
-    /// [`Self::with_effort_none_omitted`] beside it: the refusal lists nothing
-    /// to learn from. (xAI's model object does —
-    /// `capabilities.reasoning_effort` — and reading it is an open item of that
-    /// research, §8.) A llama.cpp takes any string, and a gateway maps the
-    /// value itself, so neither is capped.
-    pub fn with_effort_capped_at(mut self, ceiling: ReasoningEffort) -> Self {
-        self.effort_ceiling = Some(ceiling);
-        self
+    /// What this client sends in place of `wish`, when it has learned that its
+    /// model does not take it. For the tests and smokes, which must tell a
+    /// value that went as it came from one that was replaced.
+    #[cfg(test)]
+    pub(super) fn learned(&self, wish: &str) -> Option<Option<&'static str>> {
+        self.efforts.instead_of(wish)
     }
 
     /// Adds a Bearer header if a key is set — and, on a gateway that was told
@@ -323,7 +324,15 @@ impl OpenAiClient {
             return Ok(None);
         };
         if self.gateway.is_some() {
-            return self.fetch_gateway_entry(wanted).await;
+            // The entry under `data`, a `:variant` and an alias resolved.
+            let url = format!("{}/model/{wanted}", self.base_url);
+            return self.fetch_single_entry::<wire::ModelEnvelope>(url).await;
+        }
+        if self.xai {
+            // The entry itself. The list below carries canonical ids alone, so a
+            // name like `grok-4.5-latest` has no row there; this route resolves it.
+            let url = format!("{}/models/{wanted}", self.base_url);
+            return self.fetch_single_entry::<wire::ModelEntry>(url).await;
         }
         let url = format!("{}/models", self.base_url);
         let resp = match self.auth(self.http.get(&url)).send().await {
@@ -354,34 +363,37 @@ impl OpenAiClient {
         Ok(list.data.into_iter().find(|m| m.id == wanted))
     }
 
-    /// The gateway's entry for one model (`GET /model/{slug}`), under the same
-    /// rule [`Self::fetch_catalogue_entry`] follows for what is remembered and
-    /// what is asked again. A `404` is the gateway's answer — no such model —
-    /// and is kept.
-    async fn fetch_gateway_entry(&self, slug: &str) -> Result<Option<wire::ModelEntry>, ()> {
-        let url = format!("{}/model/{}", self.base_url, slug);
+    /// One model's entry from a route that answers about a **single** model —
+    /// OpenRouter's `GET /model/{slug}`, xAI's `GET /models/{name}` — under the
+    /// same rule [`Self::fetch_catalogue_entry`] follows for what is remembered
+    /// and what is asked again. A `404` is the endpoint's answer — no such
+    /// model — and is kept.
+    async fn fetch_single_entry<T>(&self, url: String) -> Result<Option<wire::ModelEntry>, ()>
+    where
+        T: serde::de::DeserializeOwned + Into<wire::ModelEntry>,
+    {
         let resp = match self.auth(self.http.get(&url)).send().await {
             Ok(r) if r.status().is_success() => r,
             Ok(r)
                 if r.status().is_server_error()
                     || r.status() == reqwest::StatusCode::TOO_MANY_REQUESTS =>
             {
-                tracing::debug!(%url, status = %r.status(), "the gateway's catalogue is unavailable for now");
+                tracing::debug!(%url, status = %r.status(), "the model's entry is unavailable for now");
                 return Err(());
             }
             Ok(r) => {
-                tracing::debug!(%url, status = %r.status(), "the gateway does not know this model");
+                tracing::debug!(%url, status = %r.status(), "the endpoint does not know this model");
                 return Ok(None);
             }
             Err(err) => {
-                tracing::debug!(%url, error = %err, "no answer from the gateway's catalogue");
+                tracing::debug!(%url, error = %err, "no answer about the model's entry");
                 return Err(());
             }
         };
-        match resp.json::<wire::ModelEnvelope>().await {
-            Ok(envelope) => Ok(Some(envelope.data)),
+        match resp.json::<T>().await {
+            Ok(entry) => Ok(Some(entry.into())),
             Err(err) => {
-                tracing::debug!(%url, error = %err, "the gateway's entry did not parse");
+                tracing::debug!(%url, error = %err, "the model's entry did not parse");
                 Ok(None)
             }
         }
@@ -461,11 +473,12 @@ impl OpenAiClient {
 }
 
 impl OpenAiClient {
-    /// Whether a `reasoning_effort` of `"none"` is dropped rather than sent:
-    /// because the backend was built that way (xAI, [`Self::with_effort_none_omitted`])
-    /// **or** because this server has already refused such a request.
+    /// Whether a `reasoning_effort` of `"none"` is dropped rather than sent as
+    /// it came: because the server is xAI, where what a muted turn asks for is
+    /// decided by the model's list ([`Self::xai_effort`]), **or** because this
+    /// server has already refused such a request.
     fn omit_effort_none(&self) -> bool {
-        self.omit_effort_none
+        self.xai
             || self
                 .reasoning_off_refused
                 .load(std::sync::atomic::Ordering::Relaxed)
@@ -496,9 +509,11 @@ impl OpenAiClient {
         wire::gateway_muted_effort(&req.sampling, entry.as_ref(), self.omit_effort_none())
     }
 
-    /// One attempt at the chat request. `Ok(None)` — the cancellation token
-    /// fired before a response arrived (the caller answers with a cancelled
-    /// stream, never an error).
+    /// The chat request as this endpoint reads it, sent — and asked once more
+    /// without `reasoning_effort` where the server refuses that parameter
+    /// ([`EffortWire::answer`]). `Ok(None)` — the cancellation token fired
+    /// before a response arrived (the caller answers with a cancelled stream,
+    /// never an error).
     async fn send_chat(
         &self,
         req: &ChatRequest,
@@ -508,10 +523,8 @@ impl OpenAiClient {
     ) -> Result<Option<reqwest::Response>, error::EngineError> {
         let mut body = wire::build_chat_request(req, true, self.model.as_deref(), omit_effort_none);
         body.reasoning = reasoning;
-        if let Some(ceiling) = self.effort_ceiling
-            && req.sampling.reasoning_effort > Some(ceiling)
-        {
-            body.reasoning_effort = Some(ceiling.as_wire());
+        if self.xai {
+            body.reasoning_effort = self.xai_effort(req).await;
         }
         if self.gateway.is_some() {
             body = body.for_gateway();
@@ -522,20 +535,30 @@ impl OpenAiClient {
                 body.reasoning = None;
             }
         }
-        let url = format!("{}/chat/completions", self.base_url);
-        // Cancellable: until this moved inside the token's reach, `Esc` could not
-        // interrupt a request that had not yet produced a stream.
-        let Some(response) =
-            http::send_cancellable(self.auth(self.http.post(&url)).json(&body), cancel).await?
-        else {
-            return Ok(None);
-        };
-        // The error body is not swallowed (llama.cpp/OpenAI servers put the reason
-        // in JSON); status, `Retry-After` and the text all come back typed — which
-        // is also what lets the refusal below be recognised at all.
-        error::check_status(SUBJECT_ENGINE, response)
+        effort::send_asking_again(self, &mut body, cancel).await
+    }
+
+    /// The effort an xAI model is asked for on this request, from the list its
+    /// entry publishes ([`wire::xai_effort`]). The entry is the one the window
+    /// is read from, fetched once per client, and only a request that asks for
+    /// an effort looks at it. A replacement the list decides is named in the log
+    /// once per value (docs/research/effort-tiers.md, fork E2).
+    async fn xai_effort(&self, req: &ChatRequest) -> Option<&'static str> {
+        let wish = wire::effort_wish(&req.sampling)?;
+        let listed = self
+            .catalogue_entry()
             .await
-            .map(Some)
+            .and_then(|entry| entry.listed_efforts());
+        let instead = wire::xai_effort(wish, listed.as_deref());
+        if listed.is_some() && instead != Some(wish) && self.efforts.learn(wish, instead) {
+            tracing::info!(
+                model = EffortWire::model(self),
+                asked = wish,
+                ?instead,
+                "the model does not list this reasoning effort; asking for the nearest it lists"
+            );
+        }
+        instead
     }
 
     /// Does this failure mean "this endpoint cannot turn reasoning off", for a
@@ -547,7 +570,7 @@ impl OpenAiClient {
     /// cannot be disabled."}}`. The silent turns — the title, the compaction roll
     /// and impersonation — are the only ones that ask, so on such a model they
     /// were the only ones failing, while ordinary chat worked: the same shape xAI
-    /// produces by rejecting the *value* ([`Self::with_effort_none_omitted`]).
+    /// produces by rejecting the *value* ([`Self::for_xai`]).
     ///
     /// Three conditions, and each rules out a way of being wrong:
     ///
@@ -576,6 +599,51 @@ impl OpenAiClient {
         let message = err.message.to_lowercase();
         message.contains("reasoning")
             && (message.contains("disable") || message.contains("mandatory"))
+    }
+}
+
+impl EffortWire for OpenAiClient {
+    type Body = wire::ChatCompletionRequest;
+
+    fn model(&self) -> &str {
+        self.model.as_deref().unwrap_or_default()
+    }
+
+    fn efforts(&self) -> &EffortMemo {
+        &self.efforts
+    }
+
+    async fn send(
+        &self,
+        body: &wire::ChatCompletionRequest,
+        cancel: &CancellationToken,
+    ) -> Result<Option<reqwest::Response>, error::EngineError> {
+        let url = format!("{}/chat/completions", self.base_url);
+        // Cancellable: until this moved inside the token's reach, `Esc` could not
+        // interrupt a request that had not yet produced a stream.
+        let Some(response) =
+            http::send_cancellable(self.auth(self.http.post(&url)).json(body), cancel).await?
+        else {
+            return Ok(None);
+        };
+        // The error body is not swallowed (llama.cpp/OpenAI servers put the reason
+        // in JSON); status, `Retry-After` and the text all come back typed — which
+        // is also what lets a refusal be recognised at all.
+        error::check_status(SUBJECT_ENGINE, response)
+            .await
+            .map(Some)
+    }
+
+    /// The one refusal this wire answers by itself: the server does not take
+    /// the parameter at all, whatever its value, so the request is made once
+    /// more without it. A refused *value* names nothing to put in its place
+    /// here — xAI's "Invalid reasoning effort." — and stays the turn's error.
+    fn answer(
+        &self,
+        _wish: &'static str,
+        refused: &error::EngineError,
+    ) -> Option<Option<&'static str>> {
+        wire::refuses_effort_parameter(refused).then_some(None)
     }
 }
 
@@ -3492,8 +3560,8 @@ mod ignored_smoke {
 /// protocol-specific one, so these pin the three claims that decision rests on
 /// (docs/research/grok-xai-provider.md): reasoning arrives as `reasoning_content`,
 /// a tool result can be replayed with no thinking signature, and
-/// [`OpenAiClient::with_effort_none_omitted`] keeps the orchestrator's auxiliary
-/// turns off the `400` path.
+/// [`OpenAiClient::for_xai`] keeps the orchestrator's auxiliary turns off the
+/// `400` path.
 ///
 /// Run: `MINDFORK_GROK_KEY=… cargo test grok -- --ignored --nocapture`.
 #[cfg(test)]
@@ -3510,7 +3578,7 @@ mod grok_smoke {
             OpenAiClient::new(crate::shared::config::CloudProvider::Grok.chat_base_url())
                 .with_api_key(Some(key))
                 .with_model(Some(model))
-                .with_effort_none_omitted(true),
+                .for_xai(),
         )
     }
 
@@ -3678,8 +3746,8 @@ mod grok_smoke {
     }
 
     /// The orchestrator asks for `reasoning_effort: none` on its auxiliary turns
-    /// (title, compaction, impersonation). xAI rejects that *value*, so without
-    /// [`OpenAiClient::with_effort_none_omitted`] those three would 400 while ordinary
+    /// (title, compaction, impersonation). xAI rejects that *value* on most models,
+    /// so without [`OpenAiClient::for_xai`] those three would 400 while ordinary
     /// chat kept working — the kind of partial breakage that is miserable to diagnose.
     #[tokio::test]
     #[ignore = "requires MINDFORK_GROK_KEY (live xAI API)"]
@@ -3706,7 +3774,7 @@ mod grok_smoke {
         println!("finish={finish:?} text={text}");
         assert!(
             matches!(finish, Some(FinishReason::Stop | FinishReason::Length)),
-            "effort=none must be omitted, not sent: finish={finish:?} text={text}"
+            "effort=none must not be sent to a model that does not list it: finish={finish:?} text={text}"
         );
         assert!(!text.is_empty());
     }
