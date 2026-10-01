@@ -1778,7 +1778,10 @@ docs/research/openrouter-mode.md §13).
 no mode: `VideoSettings.provider` (`VideoProvider`: `Gemini`, the default, or
 `OpenRouter`) names who watches, and `shared::video::client(cfg)` builds
 `GeminiVideo` or `shared/video/gateway.rs`'s `GatewayVideo` behind the one
-contract, `VideoUnderstanding`. `VideoConfig` carries the `provider` and the
+contract, `VideoUnderstanding`. `GeminiVideo` mutes thinking the way the chat
+client does — the level by the model's name — and answers a refused level the
+same way too: once more at the level above (`gemini::level_above`,
+`says_level_refused`), kept in `muted_level` once accepted. `VideoConfig` carries the `provider` and the
 `attribution` the client is built with — the second `false` for Gemini whatever
 the switch says (`resolve_config`). What `GatewayVideo` borrows from
 `shared::api::openai` is the model's entry (`ModelEnvelope`,

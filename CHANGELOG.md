@@ -57,6 +57,9 @@ split by subsystem.
   thinking level the app asks a title for, so on them titles, the history
   summary and the other background requests failed. They are now asked for
   the next level up.
+- **`youtube_watch` with Gemini 3.7 Flash or 3.8 Flash as the video model.**
+  The same refusal met every video request on those two; the default video
+  model was not affected. The request is made again at the next level up.
 - **A reasoning effort the model does not have no longer fails the turn.** The
   effort is one setting for every model, and OpenAI's models each take a
   different part of the scale — `minimal` is refused by most of them, `xhigh`
