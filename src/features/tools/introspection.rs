@@ -262,7 +262,7 @@ fn field_schemas() -> Vec<(&'static str, serde_json::Value)> {
         ("thinking", json!({"type": "boolean"})),
         (
             "reasoning_effort",
-            json!({"type": "string", "enum": ["none", "minimal", "low", "medium", "high", "xhigh"]}),
+            json!({"type": "string", "enum": ["none", "minimal", "low", "medium", "high", "xhigh", "max"]}),
         ),
         (
             "verbosity",
@@ -581,6 +581,25 @@ mod tests {
         assert!(claude_props.contains_key("thinking"));
         assert!(claude_props.contains_key("reasoning_effort"));
         assert!(!claude_props.contains_key("top_k"));
+    }
+
+    /// The schema's enum and the type that reads it name the same tiers: a tier
+    /// in one and not the other is either unreachable or a parse error.
+    #[test]
+    fn every_effort_the_schema_offers_is_one_the_scale_has() {
+        let (_, schema) = field_schemas()
+            .into_iter()
+            .find(|(name, _)| *name == "reasoning_effort")
+            .expect("the field is settable");
+        let offered: Vec<ReasoningEffort> = schema["enum"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| serde_json::from_value(v.clone()).unwrap_or_else(|e| panic!("{v}: {e}")))
+            .collect();
+        assert_eq!(offered.len(), 7, "{offered:?}");
+        assert_eq!(offered.first(), Some(&ReasoningEffort::None));
+        assert_eq!(offered.last(), Some(&ReasoningEffort::Max));
     }
 
     #[test]

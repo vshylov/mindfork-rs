@@ -15,6 +15,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::shared::api::contract::{ApiImage, ApiMessage, ApiRole, ChatRequest, FinishReason};
+use crate::shared::api::effort;
+use crate::shared::api::error::EngineError;
 
 // ---------- request ----------
 
@@ -84,11 +86,13 @@ pub struct RespTool {
 pub fn build_request(req: &ChatRequest, model: &str, stream: bool) -> RespRequest {
     let s = &req.sampling;
     // reasoning_budget==0 forces "thoughts" off (impersonation/auto-title),
-    // like llama.cpp's reasoning_budget=0: effort=none, no summary.
+    // like llama.cpp's reasoning_budget=0: effort=none, no summary. A model
+    // that refuses the value is asked in other words by the client — see
+    // `RespRequest::respell_effort`.
     let force_off = s.reasoning_budget == Some(0);
     let want_summary = !force_off && s.thinking == Some(true);
     let effort = if force_off {
-        Some("none")
+        Some(effort::NONE)
     } else {
         s.reasoning_effort.map(|e| e.as_wire())
     };
@@ -141,6 +145,51 @@ pub fn build_request(req: &ChatRequest, model: &str, stream: bool) -> RespReques
         tools,
         tool_choice,
     }
+}
+
+impl effort::CarriesEffort for RespRequest {
+    /// The value of `reasoning.effort` the body carries, when it carries one —
+    /// a depth, or [`effort::NONE`], whoever chose it: a silent turn's zero
+    /// budget or the settings.
+    fn effort(&self) -> Option<&'static str> {
+        self.reasoning.as_ref().and_then(|r| r.effort)
+    }
+
+    /// Asks for `instead` in place of the effort the body carries — or, with
+    /// nothing to offer, for no effort at all, which leaves the model at its
+    /// own default depth. A body that carries no effort is left as it is.
+    ///
+    /// What `instead` is comes from the model's own refusal
+    /// ([`effort::nearest`]); the measurements behind the rule are in
+    /// docs/research/effort-tiers.md §2.
+    fn respell_effort(&mut self, instead: Option<&'static str>) {
+        let Some(reasoning) = self.reasoning.as_mut().filter(|r| r.effort.is_some()) else {
+            return;
+        };
+        reasoning.effort = instead;
+        // An object with neither key says nothing, and the encrypted reasoning
+        // is asked for only beside one — the rule `build_request` follows.
+        if reasoning.effort.is_none() && reasoning.summary.is_none() {
+            self.reasoning = None;
+            self.include.clear();
+        }
+    }
+}
+
+/// Whether a failed request was refused for the **value** of `reasoning.effort`
+/// it carried, `sent`.
+///
+/// A `400` only: anything else is not a statement about the request as written.
+/// Two substrings rather than the sentence — the JSON's `"param":
+/// "reasoning.effort"`, or the value quoted in the prose — because providers
+/// reword; a false positive costs one extra round trip, whose answer is the same
+/// refusal, reported as it came.
+pub fn refuses_effort(err: &EngineError, sent: &str) -> bool {
+    if err.status != Some(400) {
+        return false;
+    }
+    let message = err.message.to_lowercase();
+    message.contains("reasoning.effort") || message.contains(&format!("'{sent}'"))
 }
 
 /// Translates history into Responses' `input` array. The reasoning items (each
@@ -420,11 +469,24 @@ pub struct RespOutputTokensDetails {
     pub reasoning_tokens: u32,
 }
 
+/// `gpt-6.1-sol`'s answer to the title's request, as logged on 2026-10-01 — the
+/// fixture of this module's tests and the client's.
+#[cfg(test)]
+pub(super) const NONE_REFUSED: &str = r#"{
+  "error": {
+    "message": "Unsupported value: 'none' is not supported with the 'gpt-6.1-sol' model. Supported values are: 'low', 'medium', 'high', 'xhigh', and 'max'.",
+    "type": "invalid_request_error",
+    "param": "reasoning.effort",
+    "code": "unsupported_value"
+  }
+}"#;
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::entities::sampling::{ReasoningEffort, SamplingConfig, Verbosity};
     use crate::shared::api::contract::{ApiMessage, ApiToolCall, ThinkingBlock, ToolSchema};
+    use crate::shared::api::effort::CarriesEffort;
 
     fn base_req(messages: Vec<ApiMessage>) -> ChatRequest {
         ChatRequest {
@@ -629,6 +691,109 @@ mod tests {
         assert!(json["reasoning"].get("summary").is_none());
         // effort is set (reasoning exists) → include is present.
         assert_eq!(json["include"][0], "reasoning.encrypted_content");
+    }
+
+    fn refusal(status: u16, body: &str) -> EngineError {
+        EngineError::status(
+            crate::shared::api::error::SUBJECT_RESPONSES,
+            reqwest::StatusCode::from_u16(status).unwrap(),
+            &reqwest::header::HeaderMap::new(),
+            body,
+        )
+    }
+
+    /// A muted turn's body, the way the title, the roll and impersonation send it.
+    fn muted_body() -> RespRequest {
+        let mut r = base_req(vec![ApiMessage::user("hi")]);
+        r.sampling.thinking = Some(false);
+        r.sampling.reasoning_effort = Some(ReasoningEffort::None);
+        r.sampling.reasoning_budget = Some(0);
+        build_request(&r, "gpt-x", true)
+    }
+
+    #[test]
+    fn only_a_400_about_the_effort_is_a_refusal_of_the_value_sent() {
+        assert!(refuses_effort(&refusal(400, NONE_REFUSED), effort::NONE));
+        // The prose alone, with no `param` beside it.
+        assert!(refuses_effort(
+            &refusal(
+                400,
+                r#"{"error":{"message":"Unsupported value: 'minimal'."}}"#
+            ),
+            "minimal"
+        ));
+        // The same words under a status that is not about the request as written.
+        assert!(!refuses_effort(&refusal(429, NONE_REFUSED), effort::NONE));
+        // A 400 about something else.
+        assert!(!refuses_effort(
+            &refusal(
+                400,
+                r#"{"error":{"message":"Your input exceeds the context window of this model.","param":"input","code":"context_length_exceeded"}}"#
+            ),
+            "high"
+        ));
+    }
+
+    #[test]
+    fn a_refused_none_is_respelt_as_the_effort_on_offer() {
+        let mut body = muted_body();
+        assert_eq!(body.effort(), Some(effort::NONE));
+        body.respell_effort(Some("low"));
+        assert_eq!(body.effort(), Some("low"));
+        let json = serde_json::to_value(&body).unwrap();
+        assert_eq!(json["reasoning"]["effort"], "low");
+        assert!(json["reasoning"].get("summary").is_none());
+        assert_eq!(json["include"][0], "reasoning.encrypted_content");
+    }
+
+    /// With nothing on offer the field goes, and with it the object that would
+    /// say nothing and the `include` that is sent only beside one.
+    #[test]
+    fn a_refused_none_with_nothing_on_offer_drops_the_field() {
+        let mut body = muted_body();
+        body.respell_effort(None);
+        assert_eq!(body.effort(), None);
+        let json = serde_json::to_value(&body).unwrap();
+        assert!(json.get("reasoning").is_none(), "{json}");
+        assert!(json.get("include").is_none(), "{json}");
+    }
+
+    /// The settings' `none` beside the thinking switch: the summary request
+    /// stays, whatever the effort becomes.
+    #[test]
+    fn a_respelt_none_keeps_the_summary_request() {
+        let mut r = base_req(vec![ApiMessage::user("hi")]);
+        r.sampling.thinking = Some(true);
+        r.sampling.reasoning_effort = Some(ReasoningEffort::None);
+        let mut body = build_request(&r, "gpt-x", true);
+        body.respell_effort(None);
+        let json = serde_json::to_value(&body).unwrap();
+        assert!(json["reasoning"].get("effort").is_none(), "{json}");
+        assert_eq!(json["reasoning"]["summary"], "detailed");
+        assert_eq!(json["include"][0], "reasoning.encrypted_content");
+    }
+
+    /// A depth the user chose is respelt the same way, and a body with no
+    /// effort has nothing to respell.
+    #[test]
+    fn a_depth_is_respelt_and_a_body_without_an_effort_is_left_alone() {
+        let mut r = base_req(vec![ApiMessage::user("hi")]);
+        r.sampling.reasoning_effort = Some(ReasoningEffort::Minimal);
+        let mut body = build_request(&r, "gpt-x", true);
+        assert_eq!(body.effort(), Some("minimal"));
+        body.respell_effort(Some("low"));
+        let json = serde_json::to_value(&body).unwrap();
+        assert_eq!(json["reasoning"]["effort"], "low");
+        // …and one with no reasoning object at all.
+        let mut plain = build_request(&base_req(vec![ApiMessage::user("hi")]), "gpt-x", true);
+        assert_eq!(plain.effort(), None);
+        plain.respell_effort(Some("low"));
+        assert!(
+            serde_json::to_value(&plain)
+                .unwrap()
+                .get("reasoning")
+                .is_none()
+        );
     }
 
     #[test]

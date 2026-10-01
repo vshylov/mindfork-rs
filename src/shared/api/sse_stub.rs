@@ -1,4 +1,5 @@
-//! A one-shot SSE server for the engine clients' stream tests.
+//! Canned HTTP servers for the engine clients' stream tests: a one-shot SSE
+//! answer ([`serve`]) and a sequence of answers ([`serve_in_turn`]).
 //!
 //! A real socket and a real SSE body, so the whole client is exercised —
 //! `eventsource` framing, the wire enum, the chunks that come out — rather than
@@ -39,6 +40,78 @@ pub(crate) fn serve(events: &'static [&'static str]) -> String {
     format!("http://127.0.0.1:{port}")
 }
 
+/// One canned answer of [`serve_in_turn`]: `(status line, content type, body)`.
+pub(crate) type Canned = (&'static str, &'static str, &'static str);
+
+/// Serves `answers` in order, one per connection, and hands back the body of
+/// every request it was sent — for a client that asks **again** after a refusal,
+/// where what the second request says is the whole test.
+///
+/// The thread ends by itself at a deadline: a client that makes fewer requests
+/// than the test expects must leave the test failing on what was seen, not
+/// hanging on a `join` (docs/lessons.md §2).
+pub(crate) fn serve_in_turn(
+    answers: &'static [Canned],
+) -> (String, std::thread::JoinHandle<Vec<String>>) {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    listener.set_nonblocking(true).unwrap();
+    let handle = std::thread::spawn(move || {
+        use std::io::Write;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let mut bodies = Vec::new();
+        for (status, kind, answer) in answers {
+            let mut sock = loop {
+                match listener.accept() {
+                    Ok((sock, _)) => break sock,
+                    Err(_) if std::time::Instant::now() >= deadline => return bodies,
+                    Err(_) => std::thread::sleep(std::time::Duration::from_millis(5)),
+                }
+            };
+            sock.set_nonblocking(false).unwrap();
+            bodies.push(request_body(&mut sock));
+            // `Connection: close`, or the client pools the socket and sends its
+            // next request down one this stub has already dropped.
+            let _ = sock.write_all(
+                format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{answer}",
+                    answer.len()
+                )
+                .as_bytes(),
+            );
+            let _ = sock.flush();
+        }
+        bodies
+    });
+    (format!("http://127.0.0.1:{port}"), handle)
+}
+
+/// Reads one request off the socket and returns its body — whole, by its
+/// `Content-Length`, since a body can arrive in a later segment than its head.
+fn request_body(sock: &mut std::net::TcpStream) -> String {
+    use std::io::Read;
+    let mut raw = Vec::new();
+    let mut chunk = [0u8; 8192];
+    loop {
+        let text = String::from_utf8_lossy(&raw).to_string();
+        if let Some((head, body)) = text.split_once("\r\n\r\n") {
+            let want = head
+                .lines()
+                .filter_map(|l| l.split_once(':'))
+                .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+                .and_then(|(_, len)| len.trim().parse::<usize>().ok())
+                .unwrap_or(0);
+            if body.len() >= want {
+                return body.to_string();
+            }
+        }
+        match sock.read(&mut chunk) {
+            Ok(n) if n > 0 => raw.extend_from_slice(&chunk[..n]),
+            _ => return String::new(),
+        }
+    }
+}
+
 /// Every chunk of a stream, up to and including its `Finished`.
 pub(crate) async fn collect(stream: ChatStream) -> Vec<ChatChunk> {
     let mut out = Vec::new();
@@ -51,6 +124,21 @@ pub(crate) async fn collect(stream: ChatStream) -> Vec<ChatChunk> {
         }
     }
     out
+}
+
+/// The content type of a canned JSON answer.
+pub(crate) const JSON: &str = "application/json";
+/// The status line of a canned refusal.
+pub(crate) const BAD_REQUEST: &str = "400 Bad Request";
+
+/// A turn that asks for reasoning to be off, the way `title.rs` does: the
+/// thinking switch, the effort and the budget all say so.
+pub(crate) fn muted() -> ChatRequest {
+    let mut req = hello();
+    req.sampling.thinking = Some(false);
+    req.sampling.reasoning_effort = Some(crate::entities::sampling::ReasoningEffort::None);
+    req.sampling.reasoning_budget = Some(0);
+    req
 }
 
 /// The smallest request a client will send: one user message, no tools.

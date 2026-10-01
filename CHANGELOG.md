@@ -15,6 +15,10 @@ split by subsystem.
 ## [Unreleased]
 
 ### Added
+- **A `max` reasoning effort.** The top tier OpenAI and Claude models now have
+  is in the settings and in `set_sampling`, after `xhigh`. On a model or a
+  provider without it the nearest tier is used — `xhigh` on Grok and on the
+  older GPT models, `high` on Gemini.
 - **A window too small says so.** Shrunk below what the screen in front can be
   drawn in, the app shows one line — *Window too small*, the size the window
   is and the size it needs — instead of a frame with parts missing. While it
@@ -36,7 +40,37 @@ split by subsystem.
   leaves hints out, keeping `F1` (which lists them all) and `Esc` first. At
   80×24 nothing changes.
 
+### Changed
+- **`xhigh` on Claude is `xhigh`.** It was sent as `high`, from before the
+  API had the tier. A chat set to `xhigh` on Opus 4.7 or newer now reasons
+  deeper than it did, at that tier's price; Sonnet 4.6 and Opus 4.6, which
+  have no such tier, keep getting `high`.
+
 ### Fixed
+- **Claude Haiku 4.5, Sonnet 4.5 and Opus 4.5 answer again with thinking on.**
+  Thinking is on by default, and those three have no "adaptive" thinking — the
+  only form the app asked for — so every message to them was an error. They are
+  now asked to think within a token budget taken from the reasoning effort:
+  1024 for `low`, 8192 for `medium` or none, 24576 for `high` and above, and
+  never more than half the reply limit.
+- **Chats get their titles again on an OpenAI model that cannot switch its
+  reasoning off.** `gpt-6.1-sol` refuses the request the app makes for a
+  title — and for the history summary, a message written on your behalf, a
+  page's retelling and a directed dialogue's checkpoints — because those ask
+  the model not to reason, and it has no such setting; `gpt-6-sol` has. On
+  such a model they are now asked with the lowest reasoning effort it offers.
+- **The same on Gemini 3.7 Flash and 3.8 Flash.** Those two refuse the lowest
+  thinking level the app asks a title for, so on them titles, the history
+  summary and the other background requests failed. They are now asked for
+  the next level up.
+- **`youtube_watch` with Gemini 3.7 Flash or 3.8 Flash as the video model.**
+  The same refusal met every video request on those two; the default video
+  model was not affected. The request is made again at the next level up.
+- **A reasoning effort the model does not have no longer fails the turn.** The
+  effort is one setting for every model, and OpenAI's models each take a
+  different part of the scale — `minimal` is refused by most of them, `xhigh`
+  by some — so a value chosen for one model made every message to another an
+  error. The nearest value the model does take is used instead.
 - **The input box no longer draws over the status bar.** In a window of seven
   rows or fewer the box lost its row of text and its prompt and cursor landed
   on the row below — the status bar, or outside the terminal.

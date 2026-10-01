@@ -11,10 +11,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::shared::config::CloudProvider;
 
-/// The reasoning-effort level. `Minimal`/`XHigh` — extended OpenAI tiers (gpt-5.x
-/// Responses API); local models/Anthropic understand `low`/`medium`/`high` (the
-/// extreme tiers map onto them during translation). Variant order = the UI cycle order.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// The reasoning-effort level: one scale for every provider, translated per wire
+/// (spec §8.1). `None` is a switch — do not reason; the rest are depths, lowest
+/// first. No model takes the whole scale — ten OpenAI models take five different
+/// parts of it — so a value a model does not have becomes the nearest it has
+/// (`shared::api::effort`, docs/research/effort-tiers.md). Variant order = the UI
+/// cycle order **and** the scale's own: the derived `Ord` is what a ceiling
+/// compares with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ReasoningEffort {
     None,
@@ -23,6 +27,7 @@ pub enum ReasoningEffort {
     Medium,
     High,
     XHigh,
+    Max,
 }
 
 impl ReasoningEffort {
@@ -35,6 +40,7 @@ impl ReasoningEffort {
             ReasoningEffort::Medium => "medium",
             ReasoningEffort::High => "high",
             ReasoningEffort::XHigh => "xhigh",
+            ReasoningEffort::Max => "max",
         }
     }
 }
@@ -469,6 +475,19 @@ mod tests {
     fn reasoning_effort_wire_strings() {
         assert_eq!(ReasoningEffort::Medium.as_wire(), "medium");
         assert_eq!(ReasoningEffort::None.as_wire(), "none");
+        assert_eq!(ReasoningEffort::Max.as_wire(), "max");
+        // The stored spelling is the wire's, and an older config reads as before.
+        assert_eq!(
+            serde_json::from_str::<ReasoningEffort>("\"max\"").unwrap(),
+            ReasoningEffort::Max
+        );
+        assert_eq!(
+            serde_json::to_string(&ReasoningEffort::XHigh).unwrap(),
+            "\"xhigh\""
+        );
+        // The variants' order is the scale's: what a ceiling compares with.
+        assert!(ReasoningEffort::Max > ReasoningEffort::XHigh);
+        assert!(ReasoningEffort::Minimal > ReasoningEffort::None);
     }
 
     #[test]

@@ -10,9 +10,14 @@
 //! see the supervisor.
 
 mod client;
+#[cfg(test)]
+mod live_tests;
 mod wire;
 
 pub use client::GeminiClient;
 // Model-generation inference, shared with the video client (`shared::video::gemini`):
-// which thinking knob this model takes. One copy, not two.
-pub(crate) use wire::{is_gemini_3, is_gemini_3_pro};
+// which thinking knob this model takes, and what a refusal of a level is answered
+// with. One copy, not two.
+#[cfg(test)]
+pub(crate) use wire::LEVEL_REFUSED;
+pub(crate) use wire::{is_gemini_3, is_gemini_3_pro, level_above, says_level_refused};
