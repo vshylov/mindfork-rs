@@ -15,6 +15,10 @@ split by subsystem.
 ## [Unreleased]
 
 ### Added
+- **A `max` reasoning effort.** The top tier OpenAI and Claude models now have
+  is in the settings and in `set_sampling`, after `xhigh`. On a model or a
+  provider without it the nearest tier is used — `xhigh` on Grok and on the
+  older GPT models, `high` on Gemini.
 - **A window too small says so.** Shrunk below what the screen in front can be
   drawn in, the app shows one line — *Window too small*, the size the window
   is and the size it needs — instead of a frame with parts missing. While it
@@ -35,6 +39,12 @@ split by subsystem.
   Russian, leaving one chat above it. Past a third of the window it now
   leaves hints out, keeping `F1` (which lists them all) and `Esc` first. At
   80×24 nothing changes.
+
+### Changed
+- **`xhigh` on Claude is `xhigh`.** It was sent as `high`, from before the
+  API had the tier. A chat set to `xhigh` on Opus 4.7 or newer now reasons
+  deeper than it did, at that tier's price; Sonnet 4.6 and Opus 4.6, which
+  have no such tier, keep getting `high`.
 
 ### Fixed
 - **Chats get their titles again on an OpenAI model that cannot switch its

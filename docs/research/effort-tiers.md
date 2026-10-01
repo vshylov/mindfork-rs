@@ -1,8 +1,7 @@
 # Research: reasoning-effort tiers a model does not have
 
 **Status:** forks decided by the user on 2026-10-01 — all four at the
-recommendation; stage 1 implemented (§8), stage 2 (`max`, Anthropic's top tiers)
-not yet.
+recommendation; both stages implemented (§8).
 
 **Related:** spec §8.1 (the mapping onto each provider's API), architecture §6,
 [openrouter-mode.md](openrouter-mode.md) §4.1 (the gateway's muted turn),
@@ -220,6 +219,36 @@ Each arm declared rather than guessed, as in `responses::live_tests`:
 | a muted turn | `gpt-6.1-sol` | two turns, 0 reasoning tokens; learned `none → low` |
 | a muted turn | `gpt-6-sol` | sent once, as `none`; nothing learned |
 | a turn at `minimal` | `gpt-6.1-sol` | two turns `Stop`; learned `minimal → low` |
+
+**Stage 2** (`feat/effort-max`, 2026-10-01).
+
+- `ReasoningEffort::Max` — the settings' cycle and menu, `set_sampling`'s enum,
+  the field's description in both locales. The enum derives `Ord`: the variants'
+  order is the scale's. A stored config needs no migration.
+- Anthropic (E3) — `xhigh` and `max` are sent as they are; `AntRequest` carries
+  its effort, and `AnthropicClient` answers a refused level with the nearest its
+  refusal lists. Measured after the decision, on the rest of the models: the 4.5
+  generation has no adaptive thinking at all; `claude-opus-4-6` and
+  `claude-sonnet-4-6` have `max` and no `xhigh`; `claude-opus-4-7` and everything
+  newer take all five.
+- xAI — `OpenAiClient::with_effort_capped_at(XHigh)`, set where the Grok client
+  is built. **Sub-fork, decided at the recommendation:** configured rather than
+  learned. The refusal lists nothing, all four models measured agree, and the
+  client's request path already carries one learned recovery; the control smoke
+  below is what says when the ceiling can go.
+- Gemini — `max` rides as `high`, beside `xhigh`.
+
+**Live — GO** (the real APIs, Windows 11):
+
+| smoke | model | outcome |
+|---|---|---|
+| a thinking turn at `xhigh` | `claude-sonnet-4-6` | two turns `Stop`; learned `xhigh → high` |
+| thinking turns at `xhigh` and `max` | `claude-sonnet-5-5` | each sent once, as it is |
+| a turn at `max` | `gpt-5.5` | `Stop`; learned `max → xhigh` |
+| a turn at `max`, under the ceiling | `grok-4.7` | `Stop` |
+| the same turn, no ceiling | `grok-4.7` | `400 "Invalid reasoning effort."` — the control |
+
+Stage 1's five smokes, run again on this branch: unchanged.
 
 **Found beside it, not in this track:**
 
