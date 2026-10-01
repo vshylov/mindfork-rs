@@ -47,6 +47,12 @@ split by subsystem.
   have no such tier, keep getting `high`.
 
 ### Fixed
+- **Claude Haiku 4.5, Sonnet 4.5 and Opus 4.5 answer again with thinking on.**
+  Thinking is on by default, and those three have no "adaptive" thinking — the
+  only form the app asked for — so every message to them was an error. They are
+  now asked to think within a token budget taken from the reasoning effort:
+  1024 for `low`, 8192 for `medium` or none, 24576 for `high` and above, and
+  never more than half the reply limit.
 - **Chats get their titles again on an OpenAI model that cannot switch its
   reasoning off.** `gpt-6.1-sol` refuses the request the app makes for a
   title — and for the history summary, a message written on your behalf, a

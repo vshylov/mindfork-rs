@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (83)
+## Entries (84)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -95,6 +95,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a muted turn on an OpenAI model that has no "none" (done)
 - Post-M9: an effort value a model does not have becomes the nearest it has — stage 1 (done)
 - Post-M9: the `max` effort, and Claude's own top tiers — stage 2, track complete (done)
+- Post-M9: thinking on the Claude 4.5 generation, which has no adaptive mode (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -5783,3 +5784,98 @@ user's keys; Windows 11).
 
 **Gates**: fmt / clippy / test green — **3824 unit tests, 246 `#[ignore]`**
 (+9 unit tests, +5 live smokes).
+
+### Post-M9: thinking on the Claude 4.5 generation, which has no adaptive mode (done)
+
+**What.** The last item the effort-tiers track left beside itself
+([docs/research/effort-tiers.md](../research/effort-tiers.md) §8), and a larger
+one than it looked: a thinking turn goes out as `thinking: {type: "adaptive"}`,
+the 4.5 generation answers that with `400 "adaptive thinking is not supported on
+this model"`, and the thinking switch is **on by default**
+(`default_sampling.thinking`). So with `claude-haiku-4-5` — a current model — or
+Sonnet 4.5 or Opus 4.5 chosen, every ordinary turn was that `400`; only the muted
+turns worked. Reproduced through the client before the fix
+(`extended_thinking_streams_thoughts_and_signature`, red on `claude-haiku-4-5`).
+
+**Measured (2026-10-01, the real API).**
+
+| request | `haiku-4-5` | `sonnet-4-5` | `opus-4-5` |
+|---|---|---|---|
+| `thinking: {type: "adaptive"}` | 400 | 400 | 400 |
+| `{type: "enabled", budget_tokens: 1024}` | 200, a `thinking` block | 200 | 200 |
+| … with `display: "summarized"` | 200 | 200 | 200 |
+| … with `output_config.effort` | 400 *"does not support the effort parameter"* | 400 | 200 |
+| a budget not below `max_tokens` | 400 | 400 | 400 |
+| a budget under 1024 | 400 | 400 | 400 |
+
+The other way round, from Opus 4.7 on `enabled` is the `400`; the 4.6 generation
+takes both.
+
+**A claim of the previous entries, corrected.** The effort-tiers research said
+no provider publishes what a model takes, "anywhere but in the refusal". For
+OpenAI that holds (`GET /v1/models/{id}` is four fields). For two others it does
+not: their model lists had been fetched for the ids alone, and what each object
+carries was not read:
+
+- **Anthropic** — `GET /v1/models/{id}` carries `capabilities`:
+  `thinking.types.{adaptive,enabled}.supported` and
+  `effort.{low,medium,high,xhigh,max}.supported`, per model. `claude-sonnet-4-6`
+  says `xhigh: false` there — the fact the track learned from a `400`.
+- **xAI** — `GET /v1/language-models/{id}` carries
+  `capabilities.reasoning_effort`: `grok-4.7` lists `low`…`xhigh`, `grok-4.3`
+  also `none`. So both of xAI's configured answers (`none` left out, `max`
+  capped) are published, and the first is wrong for `grok-4.3`, which could be
+  muted and is not.
+- **Gemini** — `thinking: true`, and nothing about levels.
+
+**Decisions.**
+- **Read off the refusal anyway.** The published capabilities do not change the
+  mechanism, and the reason is cost: a refused request is free, and only a model
+  that needs the other shape meets it, once per client; asking ahead would cost
+  *every* session a request and still need the refusal's path under it for the
+  day that request fails. `AnthropicClient::open` asks once more with a budget on
+  the adaptive refusal (`wire::refuses_adaptive_thinking`,
+  `AntRequest::think_within_a_budget`) and keeps the shape (`budget_thinking`)
+  only once it was accepted — the track's rule. The effort recovery runs inside
+  each attempt, unchanged. xAI reading its own capabilities is a task of its own.
+- **The effort becomes the budget; the effort parameter goes.** `low` 1024,
+  `medium` 8192, `high` and above 24576 — the table the Gemini 2.5 wire already
+  maps this scale onto; a turn that names no depth thinks at `medium`'s. One rule
+  for the three models rather than Opus 4.5's `low`…`high` beside two models that
+  refuse the parameter outright.
+- **Half the reply's cap at most.** `max_tokens` covers the thoughts and the
+  answer, and the API refuses a budget that is not below it; half leaves the
+  answer at least as much as the thinking. At the app's default cap of 16384 that
+  is 8192 for `medium` and `high` alike.
+- **No room, no thinking.** Under the API's floor (a cap below 2048) the turn goes
+  out without thinking rather than not at all.
+- **`display: "summarized"` stays** — taken beside a budget on all three, and the
+  thoughts arrive (`thinking_delta`, a signature) exactly as in the adaptive shape,
+  so the tool loop's replay of the thinking block needed nothing.
+
+**Tests.** Wire: the budget for every depth, for none, under the default cap and
+at the least room there is; no thinking under the floor; a turn without adaptive
+thinking left alone, and the adaptive shape's bytes unchanged; each of the two
+refusals read by its own predicate and not the other's. Client, over a socket:
+`adaptive + effort → budget, no effort → budget` across two turns with the shape
+kept; a budget refused too is the error and is not kept
+(`adaptive → enabled → adaptive`); a `400` about neither reported after one
+request.
+
+**Smoke — GO** (2026-10-01; the Anthropic API with the user's key; Windows 11).
+- `anthropic::live_tests::a_thinking_turn_survives_a_model_without_adaptive_thinking`
+  on `claude-haiku-4-5`, `claude-sonnet-4-5`, `claude-opus-4-5` — each two turns
+  `Stop` with `391` in the reply, 214–253 characters of thoughts, the budget shape
+  kept.
+- The client's older smokes on `claude-haiku-4-5`: 4 of 4 —
+  `extended_thinking_streams_thoughts_and_signature`, **red before the change**,
+  and `thinking_with_tool_use_round_trips_signature` among them.
+- The effort track's two Anthropic smokes, unchanged: `claude-sonnet-4-6` learns
+  `xhigh → high`; `claude-sonnet-5-5` is sent `xhigh` and `max` as they are, and
+  never the budget shape.
+
+**Docs.** spec §8.1, §8.2; architecture §5, §6; CHANGELOG (Fixed); lessons §3;
+the research §4, §8.
+
+**Gates**: fmt / clippy / test green — **3834 unit tests, 249 `#[ignore]`**
+(+5 unit tests, +1 live smoke).

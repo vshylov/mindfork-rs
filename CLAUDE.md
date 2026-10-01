@@ -179,8 +179,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-10-01, version 0.13.0)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3829 unit tests
-green, 248 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **3834 unit tests
+green, 249 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -192,6 +192,11 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **Thinking on the Claude 4.5 generation** — it has no adaptive mode and thinking
+  is on by default, so every turn on `claude-haiku-4-5` was a `400`. The refusal is
+  asked once more as `{type:"enabled", budget_tokens}`: the effort as the budget,
+  half the reply's cap at most. Live **GO**, three models (spec §8.1,
+  [docs/journal/engine.md](docs/journal/engine.md)).
 - **Reasoning effort: the nearest tier a model has, and `max` — track complete**
   (2026-10-01, two stages). Ten OpenAI models take five different sets, and
   `gemini-3.7/3.8-flash` refuse the `minimal` a muted turn asks for — titles
@@ -392,13 +397,6 @@ being recent is dropped, not shortened.
   image is stage 2
   ([docs/research/gateway-vision-catalogue.md](docs/research/gateway-vision-catalogue.md),
   spec §9.10, [docs/journal/engine.md](docs/journal/engine.md)).
-- **A reply the content filter stopped says so** — every provider reports it and
-  every client's fallback arm read it as a finished answer; Responses read it as a
-  length cut and offered `/continue` into the filter, and Gemini wrote an English
-  note into the reply. One `FinishReason::Filtered` now, a localised note, stored as
-  `stop` so the chat format holds
-  ([docs/research/content-filter-finish.md](docs/research/content-filter-finish.md),
-  spec §6.4, [docs/journal/engine.md](docs/journal/engine.md)).
 - **A headless launch (no TTY) exits with code 2** and a one-line reason — the
   TUI cannot be run from an agent's shell; how it *looks* needs a real terminal
   and a person. What a console *holds* can be measured on Windows:
