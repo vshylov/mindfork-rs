@@ -45,12 +45,16 @@ pub struct AntRequest {
     pub output_config: Option<AntOutputConfig>,
 }
 
-/// Anthropic's extended-thinking config. `type` is always `adaptive` (the only
-/// "on" mode for 4.6+ models); `display` — `summarized` for a visible CoT.
+/// Anthropic's extended-thinking config. `type` is `adaptive` — the only "on"
+/// mode from Opus 4.7 on — or, for the 4.5 generation, which has no adaptive
+/// mode, `enabled` with a `budget_tokens` ([`AntRequest::think_within_a_budget`]);
+/// `display` — `summarized` for a visible CoT, taken by both.
 #[derive(Debug, Serialize)]
 pub struct AntThinking {
     #[serde(rename = "type")]
     pub kind: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub budget_tokens: Option<u64>,
     pub display: &'static str,
 }
 
@@ -151,15 +155,19 @@ pub fn build_request(req: &ChatRequest, model: &str, stream: bool) -> AntRequest
                 .collect(),
         )
     };
-    // Extended thinking is enabled by the sampling `thinking` flag. The budget/`reasoning_budget`
-    // isn't used — 4.x models reject `budget_tokens`; depth is set by `effort`.
+    // Extended thinking is enabled by the sampling `thinking` flag, in the adaptive
+    // shape: from Opus 4.7 on `budget_tokens` is a `400`, and depth is set by `effort`.
+    // The sampling's `reasoning_budget` is never sent. A model that has no adaptive
+    // mode — the 4.5 generation — refuses this shape, and the client asks again in
+    // the other one (`AntRequest::think_within_a_budget`).
     // A continuation request (`/continue`, spec §6.4) goes out without it:
     // Anthropic rejects a prefill combined with extended thinking, and resuming
     // a visible reply must not re-open reasoning — the same choice the
     // OpenAI-compatible wire makes with `enable_thinking: false`.
     let thinking =
         (req.sampling.thinking == Some(true) && !req.continue_final).then_some(AntThinking {
-            kind: "adaptive",
+            kind: ADAPTIVE,
+            budget_tokens: None,
             display: "summarized",
         });
     let output_config = thinking.as_ref().and_then(|_| {
@@ -228,6 +236,77 @@ impl CarriesEffort for AntRequest {
             self.output_config = instead.map(|effort| AntOutputConfig { effort });
         }
     }
+}
+
+/// `thinking.type` for the mode where the model decides how much to think.
+const ADAPTIVE: &str = "adaptive";
+
+/// The least a thinking budget may be — the API's own floor (*"budget_tokens:
+/// Input should be greater than or equal to 1024"*).
+const MIN_THINKING_BUDGET: u64 = 1024;
+
+impl AntRequest {
+    /// Whether the body asks for adaptive thinking — the shape a model of the
+    /// 4.5 generation refuses.
+    pub fn thinks_adaptively(&self) -> bool {
+        self.thinking.as_ref().is_some_and(|t| t.kind == ADAPTIVE)
+    }
+
+    /// Rewrites adaptive thinking in the shape the 4.5 generation takes:
+    /// `{type: "enabled", budget_tokens}`. A body that does not think adaptively
+    /// is left as it is.
+    ///
+    /// Measured 2026-10-01 on `claude-haiku-4-5`, `claude-sonnet-4-5` and
+    /// `claude-opus-4-5` (docs/journal/engine.md): adaptive is a `400` on all
+    /// three, `enabled` with a budget a `200` with a `thinking` block, and
+    /// `display: "summarized"` is taken beside it.
+    ///
+    /// - **The effort becomes the budget** ([`thinking_budget`]) and
+    ///   `output_config` goes: Sonnet 4.5 and Haiku 4.5 answer any effort with
+    ///   *"This model does not support the effort parameter"*, and one rule
+    ///   for the three is worth more than Opus 4.5's `low`…`high`.
+    /// - **Half the reply's cap at most.** `max_tokens` covers the thinking and
+    ///   the answer, and the API refuses a budget that is not below it; half
+    ///   leaves the answer at least as much as the thoughts.
+    /// - **No room, no thinking.** Under the API's floor of 1024 the turn goes
+    ///   out without thinking rather than not at all.
+    pub fn think_within_a_budget(&mut self) {
+        if !self.thinks_adaptively() {
+            return;
+        }
+        let wished = thinking_budget(self.output_config.as_ref().map(|c| c.effort));
+        self.output_config = None;
+        let room = self.max_tokens / 2;
+        self.thinking = (room >= MIN_THINKING_BUDGET).then(|| AntThinking {
+            kind: "enabled",
+            budget_tokens: Some(wished.min(room)),
+            display: "summarized",
+        });
+    }
+}
+
+/// The thinking budget an effort level stands for, in tokens — the table the
+/// Gemini 2.5 wire already maps the same scale onto (`gemini::wire`): `low`
+/// 1024, `medium` 8192, `high` and above 24576. A turn that names no depth
+/// thinks at `medium`'s.
+fn thinking_budget(effort: Option<&str>) -> u64 {
+    match effort {
+        Some("low") => MIN_THINKING_BUDGET,
+        Some("high" | "xhigh" | "max") => 24576,
+        _ => 8192,
+    }
+}
+
+/// Whether a failed request was refused for asking to think adaptively —
+/// *"adaptive thinking is not supported on this model"*. A `400` only, and two
+/// substrings rather than the sentence, because providers reword; a false
+/// positive costs one extra round trip.
+pub fn refuses_adaptive_thinking(err: &EngineError) -> bool {
+    if err.status != Some(400) {
+        return false;
+    }
+    let message = err.message.to_lowercase();
+    message.contains("adaptive thinking") && message.contains("not supported")
 }
 
 /// Whether a failed request was refused for the effort level it carried —
@@ -465,6 +544,10 @@ pub struct AntUsage {
     #[serde(default)]
     pub output_tokens: u32,
 }
+
+/// `claude-haiku-4-5`'s answer to a thinking turn, as it came on 2026-10-01.
+#[cfg(test)]
+pub(super) const ADAPTIVE_REFUSED: &str = r#"{"type":"error","error":{"type":"invalid_request_error","message":"adaptive thinking is not supported on this model"},"request_id":"req_x"}"#;
 
 /// `claude-sonnet-4-6`'s answer to `effort: "xhigh"`, as it came on 2026-10-01 —
 /// the fixture of this module's tests and the client's.
@@ -882,11 +965,91 @@ mod tests {
         };
         assert!(refuses_effort(&refusal(400, EFFORT_REFUSED)));
         assert!(!refuses_effort(&refusal(529, EFFORT_REFUSED)));
-        // The other `400` a thinking turn can meet, measured on the 4.5 generation.
-        assert!(!refuses_effort(&refusal(
-            400,
-            r#"{"type":"error","error":{"type":"invalid_request_error","message":"adaptive thinking is not supported on this model"}}"#
-        )));
+        // The other `400` a thinking turn can meet, measured on the 4.5 generation —
+        // each predicate reads its own refusal and not the other's.
+        assert!(!refuses_effort(&refusal(400, ADAPTIVE_REFUSED)));
+        assert!(refuses_adaptive_thinking(&refusal(400, ADAPTIVE_REFUSED)));
+        assert!(!refuses_adaptive_thinking(&refusal(529, ADAPTIVE_REFUSED)));
+        assert!(!refuses_adaptive_thinking(&refusal(400, EFFORT_REFUSED)));
+    }
+
+    /// A thinking turn at `effort` (or at none) under a reply cap of `max_tokens`,
+    /// rewritten for a model without adaptive thinking.
+    fn budgeted(effort: Option<ReasoningEffort>, max_tokens: usize) -> serde_json::Value {
+        let mut r = req(vec![ApiMessage::user("hi")]);
+        r.sampling.thinking = Some(true);
+        r.sampling.reasoning_effort = effort;
+        r.sampling.max_tokens = Some(max_tokens);
+        let mut body = build_request(&r, "claude-x", true);
+        assert!(body.thinks_adaptively());
+        body.think_within_a_budget();
+        assert!(!body.thinks_adaptively());
+        serde_json::to_value(&body).unwrap()
+    }
+
+    /// The effort becomes the budget, capped at half the reply's cap, and the
+    /// effort parameter itself goes — Sonnet 4.5 and Haiku 4.5 have none.
+    #[test]
+    fn adaptive_thinking_is_rewritten_as_a_budget() {
+        for (effort, max_tokens, budget) in [
+            // Room for every wish.
+            (Some(ReasoningEffort::Minimal), 64000, 1024),
+            (Some(ReasoningEffort::Low), 64000, 1024),
+            (Some(ReasoningEffort::Medium), 64000, 8192),
+            (Some(ReasoningEffort::High), 64000, 24576),
+            (Some(ReasoningEffort::XHigh), 64000, 24576),
+            (Some(ReasoningEffort::Max), 64000, 24576),
+            // No depth named, or the switch beside thinking on: `medium`'s.
+            (None, 64000, 8192),
+            (Some(ReasoningEffort::None), 64000, 8192),
+            // The app's default cap: half of it is the ceiling.
+            (Some(ReasoningEffort::High), 16384, 8192),
+            (None, 16384, 8192),
+            // The least room there is.
+            (Some(ReasoningEffort::High), 2048, 1024),
+        ] {
+            let json = budgeted(effort, max_tokens);
+            assert_eq!(
+                json["thinking"],
+                serde_json::json!({"type": "enabled", "budget_tokens": budget, "display": "summarized"}),
+                "{effort:?} under {max_tokens}"
+            );
+            assert!(json.get("output_config").is_none(), "{effort:?}: {json}");
+            assert!(
+                json["thinking"]["budget_tokens"].as_u64().unwrap()
+                    < json["max_tokens"].as_u64().unwrap(),
+                "the API refuses a budget that is not below the cap"
+            );
+        }
+    }
+
+    /// Under the API's floor there is no budget to give: the turn goes out
+    /// without thinking, and without the effort that rode beside it.
+    #[test]
+    fn no_room_for_a_budget_means_no_thinking() {
+        let json = budgeted(Some(ReasoningEffort::High), 2047);
+        assert!(json.get("thinking").is_none(), "{json}");
+        assert!(json.get("output_config").is_none(), "{json}");
+    }
+
+    /// A turn that does not think has nothing to rewrite, and the adaptive
+    /// shape itself is unchanged on the wire.
+    #[test]
+    fn a_turn_without_adaptive_thinking_is_left_alone() {
+        let mut plain = build_request(&req(vec![ApiMessage::user("hi")]), "claude-x", true);
+        assert!(!plain.thinks_adaptively());
+        plain.think_within_a_budget();
+        assert!(
+            serde_json::to_value(&plain)
+                .unwrap()
+                .get("thinking")
+                .is_none()
+        );
+        let adaptive = serde_json::to_value(thinking_at(ReasoningEffort::High)).unwrap();
+        assert_eq!(
+            adaptive["thinking"],
+            serde_json::json!({"type": "adaptive", "display": "summarized"})
+        );
     }
 
     #[test]

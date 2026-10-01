@@ -192,7 +192,9 @@ impl OpenAiClient {
     /// place — and takes `xhigh` on all four (measured 2026-10-01,
     /// docs/research/effort-tiers.md §2). Configured rather than learned, like
     /// [`Self::with_effort_none_omitted`] beside it: the refusal lists nothing
-    /// to learn from. A llama.cpp takes any string, and a gateway maps the
+    /// to learn from. (xAI's model object does —
+    /// `capabilities.reasoning_effort` — and reading it is an open item of that
+    /// research, §8.) A llama.cpp takes any string, and a gateway maps the
     /// value itself, so neither is capped.
     pub fn with_effort_capped_at(mut self, ceiling: ReasoningEffort) -> Self {
         self.effort_ceiling = Some(ceiling);
