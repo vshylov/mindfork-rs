@@ -222,6 +222,16 @@ data format change adds an item to `CHANGELOG.md` → `[Unreleased]` (§4).
    mindfork.io belongs in this PR too: merging it does **not** put it on the
    site — `site.yml` holds its deploy while `Cargo.toml` names a version that is
    not a published release yet (step 8).
+   **Before the rename, the `Data` rubric is filled by measurement**: ask of every
+   item in `[Unreleased]` what it writes to disk, and for each **new value of a
+   stored type** — a variant of an enum kept in `settings.json`, `profiles.json`
+   or a chat file — run the **previous release's binary** on a file that holds
+   it (built from its tag into a target directory of its own; a couple of
+   minutes). A test of the current build cannot see this: today's reader reads
+   today's value, and the file kinds fail differently — the settings refuse, a
+   chat is skipped in silence. A value with no schema step is fixed in a pull
+   request of its own, and the release PR is stacked on it as a draft
+   (docs/lessons.md §8, docs/journal/release.md "Release 0.14.0").
 2. **Merge** the release PR (up to the user).
 3. **Tag**: the user sets `git tag vX.Y.Z <merge-commit>` and pushes
    (`git push origin vX.Y.Z`). The agent doesn't push tags/`main` itself (§5).
@@ -249,7 +259,10 @@ data format change adds an item to `CHANGELOG.md` → `[Unreleased]` (§4).
    release; Windows: `.iss` compilation).
 5. **Artifact smoke test — on the draft, before anyone else can see it**:
    download the archive, `mindfork --version` (matches the tag), run the TUI on a
-   copy of the data; optionally — install the package/installer in a VM.
+   copy of the data; optionally — install the package/installer in a VM. A
+   release that moves a schema constant is also run, as released, on files of
+   the version before (the golden fixtures of its step), and the previous
+   release's binary on what it wrote — it must refuse as a newer version's data.
 6. **Publish** the draft from the releases page (the user; the agent publishes
    nothing, §5).
 7. **crates.io.** Publishing the release also starts
