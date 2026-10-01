@@ -2406,7 +2406,7 @@ Storage invariants:
 ### Schema versioning and migrations ([ADR 0006](decisions/0006-data-schema-versioning.md))
 
 Each artifact has its own schema version (per-artifact — they change at
-different rates; `settings.json` and the chat files are each at **4**,
+different rates; `settings.json` and the chat files are each at **5**,
 `profiles.json` at 1 — the steps are listed in spec §12.2). Ownership map:
 
 - **`shared/storage/schema.rs`** — a pure Value-level scaffold (no I/O):
@@ -2415,7 +2415,7 @@ different rates; `settings.json` and the chat files are each at **4**,
   `detect` + a `steps` chain), the `Assessment` verdict (`UpToDate`/`Migrate`/
   `Downgrade`), a registry.
 - **`shared/storage/chat_steps.rs`** — the chat-file steps themselves
-  (`chat_to_v2`), kept out of the registry file because a step is a page of
+  (`chat_to_v2` … `chat_to_v5`), kept out of the registry file because a step is a page of
   logic with a golden fixture (`storage/fixtures/`), not a line in a table.
 - **`features/data_migration.rs`** — orchestration: file I/O, gates,
   pre-migration backup, control-parse. `run(paths, loc)` is called from
@@ -2485,7 +2485,27 @@ Invariants:
   where absent and ignored by a build that does not know them, so they owe no
   step in any release. That a file written before the selector reads as it
   always did is pinned by
-  `the_video_slot_chooses_its_provider_and_keeps_both_models`.
+  `the_video_slot_chooses_its_provider_and_keeps_both_models`;
+- **`settings_to_v5` and `chat_to_v5` are the same case again**, for the
+  reasoning effort's `max` (spec §8.1): two steps that change nothing but the
+  version. `ReasoningEffort` is a strict enum stored in `settings.json`, in a
+  profile's `default_sampling` and in a chat file — the override, a run's, and
+  every reply's `metadata.sampling` — and the variant was added without a
+  step. Measured on the 0.13.0 binary: the settings and the profiles holding
+  it are each a refusal naming an unknown variant, and a chat file holding it
+  is **skipped** (F11), so the chat is missing from the list with nothing on
+  the screen saying so. The settings' stamp answers for a root downgraded in
+  place and for `profiles.json`, which has no step — the start reads the
+  settings first, and a step would have been that file's first change of
+  shape; the chats' stamp answers for a chat file that arrives without its
+  settings, where the `openrouter` value had been left to ride. Pinned by the
+  golden `fixtures/settings_v4.json` and `fixtures/chat_v4_effort_xhigh.json`
+  (each also checked to hold no key its reader drops — a misspelt key in a
+  fixture is ignored, and pins nothing), by the end-to-end
+  `run_stamps_a_root_of_the_version_before_the_max_effort`, and by
+  `a_file_holding_an_effort_is_a_newer_version_to_a_reader_older_than_it`,
+  whose `effort_arrived_in` is a `match` **with no wildcard arm**: a variant
+  added to the scale does not compile until its schema is named there.
 
 The SQLite branch (`db/mod.rs::migrate`, version-aware): `baseline_ddl`
 (`CREATE … IF NOT EXISTS`) runs **every time** — an additive mechanism for

@@ -1058,9 +1058,10 @@ because there the `external` section does **not** keep working with that
 address: an external speech server is asked for WAV, and OpenRouter answers in
 PCM or MP3 and refuses anything else — speech through it needs the mode.
 
-**Older versions and `settings.json`.** This version writes `settings.json` at
-schema 4. A mindfork older than it refuses to start on that file, saying the data
-was created by a newer version; the copy made before the upgrade,
+**Older versions and `settings.json`.** This version writes `settings.json` and
+the chat files at schema 5 (4 was the gateway's mode; 5 is the reasoning
+effort's `max`). A mindfork older than it refuses to start on those files,
+saying the data was created by a newer version; the copy made before the upgrade,
 `backups/pre-migrate-<date>.zip`, is the way back. The video tool's provider
 (§4.4) added fields to the file and no step to the schema: a file written
 before them reads as it always did, with Gemini watching.

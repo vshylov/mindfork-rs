@@ -514,6 +514,14 @@ colour modes with user themes, and the OpenRouter mode — have all closed
   stayed Russian through the whole English-source migration; they are fixed,
   the scanner's blind spot is not. An attribute on a single item should not
   mean "the rest of the file is tests".
+- **A stored enum's new value is caught for one enum only** — **on demand**.
+  `ReasoningEffort` has a test that does not compile for a variant whose
+  schema is not named (`schema.rs`, `effort_arrived_in`), added after `max`
+  shipped to `main` without a step ([the storage journal](journal/storage.md)).
+  The other strict enums a file holds — the modes, `RunKind`,
+  `MessageFinish`, `Verbosity` — have the rule (spec §12.2) and no such
+  check. The general form is the release's own step: the previous version's
+  binary run on a file that holds each new value.
 - **SonarQube Cloud — leftovers** — **deferred**. The gate is blocking
   (2026-08-05) and runs the custom "Sonar way without new-code coverage"
   (2026-08-06); the badge landed on 2026-09-19, once the project was public.
