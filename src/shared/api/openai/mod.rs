@@ -22,6 +22,8 @@ pub mod responses;
 mod wire;
 #[cfg(test)]
 mod xai_live_tests;
+#[cfg(test)]
+mod xai_tests;
 
 pub(crate) use client::attributed;
 pub use client::{KeyVerdict, OpenAiClient};

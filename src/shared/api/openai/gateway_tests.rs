@@ -4,7 +4,9 @@
 //!
 //! A file of its own rather than more of `client.rs`' test module: the stub here
 //! answers by **path** and hands back the whole request — headers included —
-//! which is what these tests are about and none of the others needed.
+//! which is what these tests are about and none of the others needed. The
+//! xAI client's tests (`xai_tests.rs`) borrow it: they too are about which
+//! path was asked.
 
 use futures_util::StreamExt;
 use tokio_util::sync::CancellationToken;
@@ -18,7 +20,7 @@ use crate::shared::api::contract::{
 
 /// One request as the stub received it.
 #[derive(Debug, Clone)]
-struct Seen {
+pub(super) struct Seen {
     /// `GET /v1/model/x/y`.
     line: String,
     /// The header block as sent, one `name: value` per line.
@@ -27,7 +29,7 @@ struct Seen {
 }
 
 impl Seen {
-    fn path(&self) -> &str {
+    pub(super) fn path(&self) -> &str {
         self.line.split_whitespace().nth(1).unwrap_or_default()
     }
 
@@ -38,16 +40,16 @@ impl Seen {
         })
     }
 
-    fn json(&self) -> serde_json::Value {
+    pub(super) fn json(&self) -> serde_json::Value {
         serde_json::from_str(&self.body).unwrap_or_else(|e| panic!("{e}: {:?}", self.body))
     }
 }
 
 /// `(path, status line, content type, body)`.
-type Route = (&'static str, &'static str, &'static str, &'static str);
+pub(super) type Route = (&'static str, &'static str, &'static str, &'static str);
 
-const JSON: &str = "application/json";
-const SSE: &str = "text/event-stream";
+pub(super) const JSON: &str = "application/json";
+pub(super) const SSE: &str = "text/event-stream";
 
 /// Serves `connections` requests, each answered by the route whose path it
 /// asked for (`404` otherwise), and hands back what was asked, in order.
@@ -55,7 +57,7 @@ const SSE: &str = "text/event-stream";
 /// The deadline lives in the thread: a client that never makes the request a
 /// test expects must leave a stub that ends by itself, so the test fails on
 /// what it saw instead of hanging (docs/lessons.md §2).
-fn stub(
+pub(super) fn stub(
     connections: usize,
     routes: &'static [Route],
 ) -> (String, std::thread::JoinHandle<Vec<Seen>>) {
@@ -137,7 +139,7 @@ fn stub(
 }
 
 /// A reply of one chunk, then the terminator.
-const ONE_CHUNK: &str = "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n";
+pub(super) const ONE_CHUNK: &str = "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n";
 
 /// The entries below are the gateway's own, measured 2026-09-29 and cut to the
 /// keys this client reads.
@@ -161,7 +163,7 @@ fn gateway(url: String, model: &str) -> OpenAiClient {
         .for_openrouter(true)
 }
 
-fn turn(sampling: SamplingConfig) -> ChatRequest {
+pub(super) fn turn(sampling: SamplingConfig) -> ChatRequest {
     ChatRequest {
         continue_final: false,
         system: None,
@@ -173,7 +175,7 @@ fn turn(sampling: SamplingConfig) -> ChatRequest {
 
 /// A turn that asks for reasoning to be off, the way the title, the compaction
 /// roll and impersonation do.
-fn muted() -> ChatRequest {
+pub(super) fn muted() -> ChatRequest {
     turn(SamplingConfig {
         reasoning_effort: Some(ReasoningEffort::None),
         reasoning_budget: Some(0),
@@ -182,7 +184,7 @@ fn muted() -> ChatRequest {
     })
 }
 
-async fn run(client: &OpenAiClient, req: ChatRequest) -> Vec<ChatChunk> {
+pub(super) async fn run(client: &OpenAiClient, req: ChatRequest) -> Vec<ChatChunk> {
     let mut stream = client
         .chat_stream(req, CancellationToken::new())
         .await
@@ -748,39 +750,4 @@ async fn a_key_is_accepted_refused_or_not_judged_at_all() {
         ),
         "no answer is not a refusal"
     );
-}
-
-/// xAI refuses `max` and names nothing in its place, so a client built for it
-/// sends `xhigh` for anything above — and leaves a depth under the ceiling, and
-/// a client with no ceiling, exactly as they were
-/// (docs/research/effort-tiers.md §2).
-#[tokio::test]
-async fn an_effort_above_the_ceiling_goes_out_as_the_ceiling() {
-    const ROUTES: &[Route] = &[("/v1/chat/completions", "200 OK", SSE, ONE_CHUNK)];
-    let at = |effort| {
-        turn(SamplingConfig {
-            reasoning_effort: Some(effort),
-            ..Default::default()
-        })
-    };
-    for (capped, asked, sent) in [
-        (true, ReasoningEffort::Max, "xhigh"),
-        (true, ReasoningEffort::XHigh, "xhigh"),
-        (true, ReasoningEffort::Low, "low"),
-        (false, ReasoningEffort::Max, "max"),
-    ] {
-        let (url, server) = stub(1, ROUTES);
-        let client = OpenAiClient::new(url)
-            .with_api_key(Some("k".into()))
-            .with_model(Some("grok-x".into()))
-            .with_effort_none_omitted(true);
-        let client = if capped {
-            client.with_effort_capped_at(ReasoningEffort::XHigh)
-        } else {
-            client
-        };
-        run(&client, at(asked)).await;
-        let body = chat_body(&server.join().unwrap());
-        assert_eq!(body["reasoning_effort"], sent, "capped={capped} {asked:?}");
-    }
 }

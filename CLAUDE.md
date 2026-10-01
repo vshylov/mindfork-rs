@@ -179,8 +179,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-10-01, version 0.13.0)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3836 unit tests
-green, 249 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **3849 unit tests
+green, 253 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -192,6 +192,13 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **Grok's efforts are read from xAI's list** — `OpenAiClient::for_xai` asks
+  `GET /models/{name}` (an alias resolved): a muted turn is `none` on `grok-4.3`
+  and `low` on 4.5–4.7, where it was the default `high`; `max` is `xhigh`; a
+  model with no list refuses the parameter and is asked again without it. Live
+  **GO**, seven models
+  ([docs/research/effort-tiers.md](docs/research/effort-tiers.md) §9, spec §8.1,
+  [docs/journal/engine.md](docs/journal/engine.md)).
 - **Thinking on the Claude 4.5 generation** — it has no adaptive mode and thinking
   is on by default, so every turn on `claude-haiku-4-5` was a `400`. The refusal is
   asked once more as `{type:"enabled", budget_tokens}`: the effort as the budget,
@@ -203,7 +210,7 @@ being recent is dropped, not shortened.
   failed there and on `gpt-6.1-sol`. A refused value is asked once more as the
   nearest the refusal lists (Gemini: the level above), remembered once accepted
   (`shared/api/effort.rs`). `ReasoningEffort::Max`; Claude gets real
-  `xhigh`/`max`; xAI is capped at `xhigh`. Live **GO**, controls red
+  `xhigh`/`max`; xAI's top is `xhigh`. Live **GO**, controls red
   ([docs/research/effort-tiers.md](docs/research/effort-tiers.md), spec §8.1,
   [docs/journal/engine.md](docs/journal/engine.md)).
 - **Small windows — track complete** (2026-09-30, three stages). A window below
@@ -388,14 +395,6 @@ being recent is dropped, not shortened.
   a silent drop made models deny what was there, 10/10; the marker, 10/10 "I cannot
   see it" — and the chat is told once. Live **GO**, control red
   ([docs/research/history-images-no-vision.md](docs/research/history-images-no-vision.md),
-  spec §9.10, [docs/journal/engine.md](docs/journal/engine.md)).
-- **A gateway's catalogue says whether the model takes images** — a text-only
-  model's image was a `404` from the gateway itself (24/24), and every later turn
-  of that chat too, since images replay as history. `vision()` reads
-  `architecture.input_modalities` after `/props`, both ways, so attach refuses and
-  a tool's picture is withheld and said; live **GO**, and a chat already holding an
-  image is stage 2
-  ([docs/research/gateway-vision-catalogue.md](docs/research/gateway-vision-catalogue.md),
   spec §9.10, [docs/journal/engine.md](docs/journal/engine.md)).
 - **A headless launch (no TTY) exits with code 2** and a one-line reason — the
   TUI cannot be run from an agent's shell; how it *looks* needs a real terminal

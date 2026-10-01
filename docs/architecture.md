@@ -635,9 +635,10 @@ src/
    ├─ api/                  inference engine layer (contract + per-family implementations, ADR 0004)
    │  ├─ contract.rs        EngineBackend, Embedder, ChatRequest/Chunk, ThinkingRef, ToolCallAccumulator (agnostic)
    │  ├─ openai/            OpenAI family:
-   │  │  ├─ client.rs+wire.rs   Chat Completions: OpenAiClient (reqwest+SSE, /health probe, embed; local/external/proxy and xAI — sampling sent as-is;
+   │  │  ├─ client.rs+wire.rs   Chat Completions: OpenAiClient (reqwest+SSE, /health probe, embed; local/external/proxy — sampling sent as-is; xAI — `for_xai`: GET /models/{name}, the efforts the model lists;
    │  │  │                      the OpenRouter gateway — `for_openrouter`: the gateway's dialect, GET /model/{slug}, GET /key, attribution headers)
    │  │  ├─ gateway_tests.rs    #[cfg(test)]: the gateway client against a local stub — dialect, muted effort, headers, key verdicts
+   │  │  ├─ xai_tests.rs        #[cfg(test)]: the xAI client against the same stub — the entry by name, an effort as the model's list has it, a refused parameter
    │  │  └─ responses/          Responses API: ResponsesClient + wire (OpenAI cloud, /v1/responses — reasoning summaries, effort, verbosity)
    │  ├─ gemini/            native Gemini: client.rs + wire.rs (generateContent, x-goog-api-key — thought summaries, thinkingLevel/Budget, per-tool-call thoughtSignature)
    │  ├─ anthropic/         Anthropic Messages API: client.rs + wire.rs (Claude, /v1/messages)
@@ -1665,7 +1666,7 @@ between mode and backend/protocol:
 | **gemini** | **`GeminiClient`** | **native `generateContent`** | `temperature`/`top_p`/`top_k`/penalties/`seed`/`max_tokens`+`thinking`/`reasoning_effort` |
 | **openai** | **`ResponsesClient`** | **Responses (`/v1/responses`)** | `max_tokens`+`thinking`+`reasoning_effort`+`verbosity` |
 | claude | `AnthropicClient` | Messages (`/v1/messages`) | `max_tokens`+`thinking`+`reasoning_effort` |
-| grok | `OpenAiClient` (`with_effort_none_omitted`, `with_effort_capped_at`) | Chat Completions | `temperature`/`top_p`/`max_tokens`/`seed`+`thinking`/`reasoning_effort` |
+| grok | `OpenAiClient` (`for_xai`) | Chat Completions | `temperature`/`top_p`/`max_tokens`/`seed`+`thinking`/`reasoning_effort` |
 | **openrouter** | **`OpenAiClient` (`for_openrouter`)** | **Chat Completions, the gateway's dialect** | `temperature`/`top_k`/`top_p`/`min_p`/`max_tokens`/`seed`/penalties/`repeat_penalty`+`thinking`/`reasoning_effort` — the ceiling, narrowed per model by the catalogue |
 
 **Chat Completions sampling** (`OpenAiClient`): for llama.cpp and xAI there is
@@ -1685,7 +1686,12 @@ place). It applies what the client has learned, sends, asks once more on an
 answered refusal, and records the pair only once the second request is accepted.
 `ResponsesClient` and `AnthropicClient` answer with the nearest listed value (each
 wire's `refuses_effort`); `GeminiClient` with the level above the refused one
-(`wire::refuses_thinking_level`, `level_above`) — spec §8.1.
+(`wire::refuses_thinking_level`, `level_above`); `OpenAiClient` answers one
+refusal, of the parameter itself (`wire::refuses_effort_parameter`), with no
+effort at all — spec §8.1. **xAI's efforts are the one set read ahead of a
+refusal**: `wire::xai_effort` over `ModelEntry::listed_efforts`, from the entry
+`for_xai` fetches by name, with the request's wish read by `wire::effort_wish`
+(`none` for each of the three ways a request says "do not reason").
 The **Gemini** cloud runs on native `generateContent` (`GeminiClient`): system →
 top-level `systemInstruction`, `user`/`model` roles (a tool result →
 `functionResponse` in user), a call → `functionCall` (an args object, no
@@ -1698,9 +1704,12 @@ from Opus 4.7 on `budget_tokens` too). The **Grok** cloud
 endpoint already streams reasoning in `delta.reasoning_content` — the field
 `OpenAiClient` parses for llama.cpp — and takes a tool result back with no
 thinking signature at all, so `cloud_chat_setup` hands it a plain `OpenAiClient`
-(key + model + `with_effort_none_omitted`, since xAI rejects the *value*
-`reasoning_effort:"none"` the auxiliary turns ask for, + `with_effort_capped_at(XHigh)`,
-since it rejects `"max"` as well and names nothing in its place). `supported_sampling_fields(Grok)`
+(key + model + `for_xai`: the model's entry comes from `GET /models/{name}` —
+an alias resolved, the window and `capabilities.reasoning_effort` in one answer —
+and an effort goes out as that list has it: the `"none"` the auxiliary turns ask
+for where it is listed and the lowest depth where it is not, `"max"` as
+`"xhigh"`; a model that lists nothing refuses the parameter and is asked again
+without it). `supported_sampling_fields(Grok)`
 = `temperature`/`top_p`/`max_tokens`/`seed` + reasoning: the penalties are a hard
 `400` there and `top_k`/`min_p` are dropped silently. See
 docs/research/grok-xai-provider.md.
