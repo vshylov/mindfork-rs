@@ -179,8 +179,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-10-01, version 0.13.0)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3800 unit tests
-green, 238 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **3815 unit tests
+green, 241 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -192,11 +192,15 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
-- **A muted turn on an OpenAI model that has no `none`** — `gpt-6.1-sol` answers
-  `reasoning.effort: "none"` with a `400`, so no chat got its title (nor the roll,
-  impersonation, a page summary). The Responses client asks once more with the
-  lowest effort the refusal lists and remembers what was accepted. Live **GO**,
-  both models (spec §8.1, [docs/journal/engine.md](docs/journal/engine.md)).
+- **An effort value a model does not have becomes the nearest it has** (stage 1
+  of 2). Ten OpenAI models take five different sets of `reasoning.effort`, and
+  `gemini-3.7/3.8-flash` refuse the `minimal` a muted turn asks for — so titles
+  failed on `gpt-6.1-sol` and on those two, and a chosen depth failed every turn.
+  A refusal is asked once more with the nearest value it lists (Gemini: the level
+  above), remembered once accepted — `shared/api/effort.rs`. Live **GO**, control
+  red. Stage 2: `max`, Anthropic's `xhigh`/`max`
+  ([docs/research/effort-tiers.md](docs/research/effort-tiers.md), spec §8.1,
+  [docs/journal/engine.md](docs/journal/engine.md)).
 - **Small windows — track complete** (2026-09-30, three stages). A window below
   what the frame in front needs gets a notice — the size it is, the size it
   needs, the keys that work — instead of a frame with parts missing; under it

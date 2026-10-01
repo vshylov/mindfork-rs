@@ -126,6 +126,21 @@ pub(crate) async fn collect(stream: ChatStream) -> Vec<ChatChunk> {
     out
 }
 
+/// The content type of a canned JSON answer.
+pub(crate) const JSON: &str = "application/json";
+/// The status line of a canned refusal.
+pub(crate) const BAD_REQUEST: &str = "400 Bad Request";
+
+/// A turn that asks for reasoning to be off, the way `title.rs` does: the
+/// thinking switch, the effort and the budget all say so.
+pub(crate) fn muted() -> ChatRequest {
+    let mut req = hello();
+    req.sampling.thinking = Some(false);
+    req.sampling.reasoning_effort = Some(crate::entities::sampling::ReasoningEffort::None);
+    req.sampling.reasoning_budget = Some(0);
+    req
+}
+
 /// The smallest request a client will send: one user message, no tools.
 pub(crate) fn hello() -> ChatRequest {
     ChatRequest {

@@ -662,6 +662,9 @@ src/
    │  │                     list is narrowed by, not what a row shows, so
    │  │                     ModelFacts::is_empty ignores it; that list opens with the
    │  │                     Gemini family, which orders it and never narrows it
+   │  ├─ effort.rs          the reasoning-effort scale across providers: the ladder, a
+   │  │                      refusal's own list, "nearest", and the ask-again every client
+   │  │                      whose model may refuse a value goes through (EffortWire)
    │  ├─ embed_policy.rs    two Embedder decorators the supervisor stacks over a client:
    │  │                     BatchedEmbedder (a request carries at most MAX_INPUTS = 64
    │  │                     texts; a longer input goes in parts, answered as one list
@@ -1669,11 +1672,16 @@ runs on Responses (`ResponsesClient`): the system message → top-level
 `instructions`, history → an `input` array of elements,
 `max_tokens`→`max_output_tokens`, `store:false`, a flat function-tool with
 `strict:false`; reasoning summary/`effort`/`verbosity` (see "Thoughts (CoT)").
-A muted turn's `effort: "none"` is a value a model may not have: `ResponsesClient::open`
-answers the `400` that refuses it (`wire::refuses_effort_none`) by asking once more
-with the lowest effort the refusal lists (`wire::lowest_listed_effort`,
-`RespRequest::respell_effort_none`), and keeps what was accepted in
-`muted_effort` for the client's lifetime (spec §8.1).
+**A refused effort** is answered in one place, `shared/api/effort.rs`: the ladder
+of depths, `listed` (what a refusal says the model takes — OpenAI's quoted list,
+Anthropic's bare one), `nearest`, the per-client `EffortMemo`, and
+`send_asking_again`, which a client reaches through `EffortWire` (its body type,
+its one attempt `send`, and `answer` — what a refusal offers in the value's
+place). It applies what the client has learned, sends, asks once more on an
+answered refusal, and records the pair only once the second request is accepted.
+`ResponsesClient` answers with the nearest listed value (`wire::refuses_effort`);
+`GeminiClient` with the level above the refused one (`wire::refuses_thinking_level`,
+`level_above`) — spec §8.1.
 The **Gemini** cloud runs on native `generateContent` (`GeminiClient`): system →
 top-level `systemInstruction`, `user`/`model` roles (a tool result →
 `functionResponse` in user), a call → `functionCall` (an args object, no

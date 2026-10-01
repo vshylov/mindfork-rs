@@ -43,6 +43,15 @@ split by subsystem.
   page's retelling and a directed dialogue's checkpoints — because those ask
   the model not to reason, and it has no such setting; `gpt-6-sol` has. On
   such a model they are now asked with the lowest reasoning effort it offers.
+- **The same on Gemini 3.7 Flash and 3.8 Flash.** Those two refuse the lowest
+  thinking level the app asks a title for, so on them titles, the history
+  summary and the other background requests failed. They are now asked for
+  the next level up.
+- **A reasoning effort the model does not have no longer fails the turn.** The
+  effort is one setting for every model, and OpenAI's models each take a
+  different part of the scale — `minimal` is refused by most of them, `xhigh`
+  by some — so a value chosen for one model made every message to another an
+  error. The nearest value the model does take is used instead.
 - **The input box no longer draws over the status bar.** In a window of seven
   rows or fewer the box lost its row of text and its prompt and cursor landed
   on the row below — the status bar, or outside the terminal.

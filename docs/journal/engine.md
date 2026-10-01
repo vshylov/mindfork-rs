@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (81)
+## Entries (82)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -93,6 +93,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: speech through the gateway — stage 3 of the OpenRouter mode (done)
 - Post-M9: a video through the gateway — stage 4 of the OpenRouter mode, track complete (done)
 - Post-M9: a muted turn on an OpenAI model that has no "none" (done)
+- Post-M9: an effort value a model does not have becomes the nearest it has — stage 1 (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -5613,3 +5614,107 @@ so neither can pass having proved nothing:
 
 **Gates**: fmt / clippy / test green — **3800 unit tests, 238 `#[ignore]`**
 (+11 unit tests, +2 live smokes).
+
+### Post-M9: an effort value a model does not have becomes the nearest it has — stage 1 (done)
+
+**What.** The follow-up the previous entry left: the settings offer `none` and
+`minimal`, which `gpt-6.1-sol` refuses, and not `max`, which it takes. Measuring
+it turned one model's quirk into a property of the scale
+([docs/research/effort-tiers.md](../research/effort-tiers.md)), and found the
+defect of the previous entry live on a second provider.
+
+**Measured (2026-10-01, the real APIs, a tiny request per cell).**
+- **OpenAI Responses**: ten models, **five** different sets. `none` — refused by
+  `gpt-5`, `gpt-6-astra`, `gpt-6.1-sol`, `o4-mini`; `minimal` — by nine of the
+  ten; `xhigh` — by `gpt-5` and `o4-mini`; `max` — taken by five. Every refusal
+  names the model's set.
+- **Gemini 3.x**: `minimal` is refused by `gemini-3.1-pro-preview`,
+  **`gemini-3.7-flash`** and **`gemini-3.8-flash`** — *"Thinking level MINIMAL is
+  not supported for this model"*, with nothing named in its place; five other 3.x
+  models take it.
+- **Anthropic**: the API has `xhigh` and `max`, and `claude-sonnet-4-6` refuses
+  `xhigh` with its own list; the app sends neither (stage 2).
+- **xAI**: every depth the scale has is taken; `max` is refused with no list
+  (stage 2).
+- **OpenRouter**: a depth the model does not list is a `200` — the gateway maps
+  it itself.
+
+**The defect found on the way.** A muted turn asks Gemini 3.x for `minimal`, and
+the only models spared were those whose name contains `pro`. So on the two newest
+Flash models no chat got a title, and the roll, impersonation, a page summary and
+a director's checkpoint failed with it — reproduced through the app's own client
+before the fix (`gemini::live_tests`, red on `gemini-3.8-flash`). The comment on
+`ResponsesClient::vision` describes exactly this: a list keyed on names is wrong
+the week after it is written.
+
+**Decisions** (forks E1, E2, E4 of the research, each at the recommendation; the
+user, 2026-10-01).
+- **E1 — the nearest the model has.** The scale's own comment already promised
+  it ("the extreme tiers map onto them during translation"), the Anthropic and
+  Gemini wires did it statically, and the gateway does it itself; only Responses
+  answered a chosen depth with the provider's `400`. So the previous entry's
+  sentence — *an effort the user chose is reported as it came* — is withdrawn a
+  day after it was written: it was a rule drawn from one model.
+  "Nearest": among the depths the refusal lists, the closest on
+  `minimal < low < medium < high < xhigh < max`, the lower on a tie. `none` is a
+  switch: refused, it becomes the lowest depth listed, and a depth never becomes
+  `none` (`minimal` on a model that lists `none` and `low` becomes `low`).
+- **E2 — said in the settings, named in the log.** One sentence in the field's
+  description, both locales; one `info` line per replacement learned. No notice
+  in the chat.
+- **E4 — Gemini in this stage.** A refused level is asked again as the level
+  above it, the measured answer where the refusal lists nothing; `is_gemini_3_pro`
+  stays as what is known ahead of the refusal and spares a Pro the round trip.
+- **One place.** `shared/api/effort.rs`: `LADDER`, `listed`, `nearest`,
+  `EffortMemo`, and `send_asking_again` behind the trait `EffortWire` — a
+  client's body type, its one attempt, and what a refusal offers. The rule
+  "remembered only once accepted" is written once, for three wires (Anthropic
+  joins in stage 2). An `AsyncFn` closure was the first shape and does not
+  compile under `async_trait` ("implementation of `Send` is not general
+  enough"); a trait with a `-> impl Future + Send` method does.
+- **The list is read from one sentence.** The previous entry's
+  `lowest_listed_effort` scanned the whole message for quoted values — sound
+  while the refused value could only be `none`, which is not a depth. With a
+  depth refused, the message quotes the refused value itself (*"'minimal' is not
+  supported…"*), and the scan would have offered it back. `listed` reads only
+  what follows the last "supported values/levels", up to the full stop, in
+  OpenAI's quoted spelling and Anthropic's bare one.
+
+**Not in it.** `ReasoningEffort::Max`, Anthropic's `xhigh`/`max` and xAI's
+`max` — stage 2. The video client's copy of the Gemini heuristic
+(`shared/video/gemini.rs`) — another entry point, recorded in the research §8.
+
+**Tests.** `effort`: the list in both spellings and in the scale's order, the
+refused value not read as listed, the JSON envelope adding nothing, a refusal
+that lists nothing; nearest for a depth below, above and between, for `none`,
+for an empty list; the memo. Responses, over a socket: `minimal → low → low`
+with `none` still unknown; a refused depth with nothing listed reported after
+one request; the previous entry's five, on the new names. Gemini, wire: the
+level a body carries (3.x, Pro, 2.5, none), the respelling in place and its
+removal, the level above, which `400` counts; client, over a socket:
+`minimal → low → low`, another `400` after one request, a refused top level
+after one request.
+
+**Smoke — GO** (2026-10-01; the OpenAI and Gemini APIs with the user's keys;
+Windows 11).
+- `gemini::live_tests::a_muted_turn_survives_a_model_without_the_minimal_level`
+  on `gemini-3.8-flash` — **red before the change** (the `400` above), then two
+  turns `Stop` with a title and `minimal → low` learned.
+- `…a_muted_turn_on_a_model_with_the_minimal_level_is_sent_as_before` on
+  `gemini-3.5-flash` — `Stop`, nothing learned.
+- `responses::live_tests::a_chosen_depth_the_model_lacks_becomes_the_nearest_it_has`
+  on `gpt-6.1-sol` — two turns `Stop`, `minimal → low` learned.
+- The previous entry's two, unchanged: `gpt-6.1-sol` learns `none → low`,
+  `gpt-6-sol` learns nothing.
+- The clients' older smokes, for the reworked request path: Responses on
+  `gpt-6.1-sol` 4 of 4 (the multi-item one left out, see the previous entry);
+  Gemini on `gemini-2.5-flash` 5 of 6 in the run — `tool_result_image…` failed
+  on the model's description of the picture and passed twice alone — and on
+  `gemini-3.8-flash` 5 of 6, the sixth being that same smoke, whose hand-built
+  history carries no `thought_signature`, which 3.x requires.
+
+**Docs.** spec §8.1; architecture §3, §6; CHANGELOG (Fixed); lessons §3; the
+research, §4–§8.
+
+**Gates**: fmt / clippy / test green — **3815 unit tests, 241 `#[ignore]`**
+(+15 unit tests, +3 live smokes).
