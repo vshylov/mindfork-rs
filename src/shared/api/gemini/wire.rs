@@ -260,8 +260,9 @@ fn effort_to_level(e: ReasoningEffort) -> Option<&'static str> {
         ReasoningEffort::Minimal => Some("minimal"),
         ReasoningEffort::Low => Some("low"),
         ReasoningEffort::Medium => Some("medium"),
-        // Gemini has no xhigh — map it to the nearest one (high).
-        ReasoningEffort::High | ReasoningEffort::XHigh => Some("high"),
+        // Gemini's top level is high — xhigh and max map onto it (both are schema
+        // errors there, measured 2026-10-01).
+        ReasoningEffort::High | ReasoningEffort::XHigh | ReasoningEffort::Max => Some("high"),
     }
 }
 
@@ -272,7 +273,7 @@ fn effort_to_budget(e: ReasoningEffort) -> i64 {
         ReasoningEffort::None => 0,
         ReasoningEffort::Minimal | ReasoningEffort::Low => 1024,
         ReasoningEffort::Medium => 8192,
-        ReasoningEffort::High | ReasoningEffort::XHigh => 24576,
+        ReasoningEffort::High | ReasoningEffort::XHigh | ReasoningEffort::Max => 24576,
     }
 }
 
@@ -821,6 +822,26 @@ mod tests {
         let tc = &serde_json::to_value(&budget).unwrap()["generationConfig"]["thinkingConfig"];
         assert!(tc.get("thinkingLevel").is_none(), "{tc}");
         assert_eq!(tc["thinkingBudget"], 0);
+    }
+
+    /// Gemini's top is `high`: the scale's two tiers above it ride there, as a
+    /// level on 3.x and as the top budget on 2.5.
+    #[test]
+    fn the_tiers_above_high_ride_as_high() {
+        for effort in [ReasoningEffort::XHigh, ReasoningEffort::Max] {
+            let mut r = base_req(vec![ApiMessage::user("hi")]);
+            r.sampling.reasoning_effort = Some(effort);
+            assert_eq!(
+                build_request(&r, "gemini-3.5-flash").effort(),
+                Some("high"),
+                "{effort:?}"
+            );
+            let j25 = serde_json::to_value(build_request(&r, "gemini-2.5-flash")).unwrap();
+            assert_eq!(
+                j25["generationConfig"]["thinkingConfig"]["thinkingBudget"], 24576,
+                "{effort:?}"
+            );
+        }
     }
 
     #[test]

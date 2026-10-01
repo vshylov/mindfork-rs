@@ -15,6 +15,8 @@ use serde_json::Value;
 
 use crate::entities::sampling::ReasoningEffort;
 use crate::shared::api::contract::{ApiImage, ApiMessage, ApiRole, ChatRequest};
+use crate::shared::api::effort::CarriesEffort;
+use crate::shared::api::error::EngineError;
 
 /// The default `max_tokens` if unset in sampling (Anthropic requires the field).
 pub const DEFAULT_MAX_TOKENS: u64 = 4096;
@@ -52,7 +54,7 @@ pub struct AntThinking {
     pub display: &'static str,
 }
 
-/// Anthropic's `output_config`: effort level (`low`/`medium`/`high`).
+/// Anthropic's `output_config`: effort level (`low`/`medium`/`high`/`xhigh`/`max`).
 #[derive(Debug, Serialize)]
 pub struct AntOutputConfig {
     pub effort: &'static str,
@@ -193,17 +195,48 @@ pub fn build_request(req: &ChatRequest, model: &str, stream: bool) -> AntRequest
     }
 }
 
-/// The effort level → Anthropic's `output_config.effort` value (`low`/`medium`/`high`).
-/// `None` (including `ReasoningEffort::None`) — the field isn't sent.
+/// The effort level → Anthropic's `output_config.effort` value. `None`
+/// (including `ReasoningEffort::None`) — the field isn't sent.
+///
+/// The API's vocabulary is `low`/`medium`/`high`/`xhigh`/`max` (measured
+/// 2026-10-01, docs/research/effort-tiers.md §2): `minimal` is a schema error
+/// there, so it rides as `low`; the top two are sent as they are. Which of them
+/// a **model** has is its own — the 4.6 generation has `max` and no `xhigh` —
+/// and its refusal names what it takes, which the client answers
+/// ([`refuses_effort`]).
 fn ant_effort(e: ReasoningEffort) -> Option<&'static str> {
     match e {
         ReasoningEffort::None => None,
-        // Anthropic only understands low/medium/high — OpenAI's extreme steps (minimal/
-        // xhigh) are mapped to the nearest supported one.
         ReasoningEffort::Minimal | ReasoningEffort::Low => Some("low"),
         ReasoningEffort::Medium => Some("medium"),
-        ReasoningEffort::High | ReasoningEffort::XHigh => Some("high"),
+        ReasoningEffort::High => Some("high"),
+        ReasoningEffort::XHigh => Some("xhigh"),
+        ReasoningEffort::Max => Some("max"),
     }
+}
+
+impl CarriesEffort for AntRequest {
+    /// The `output_config.effort` the body carries — sent only with thinking on.
+    fn effort(&self) -> Option<&'static str> {
+        self.output_config.as_ref().map(|c| c.effort)
+    }
+
+    /// Asks for `instead` in place of that effort; with `None` the config goes
+    /// and the model reasons at its own depth.
+    fn respell_effort(&mut self, instead: Option<&'static str>) {
+        if self.output_config.is_some() {
+            self.output_config = instead.map(|effort| AntOutputConfig { effort });
+        }
+    }
+}
+
+/// Whether a failed request was refused for the effort level it carried —
+/// *"This model does not support effort level 'xhigh'. Supported levels: high,
+/// low, max, medium."* A `400` only, and the two words rather than the
+/// sentence, because providers reword; a false positive costs one extra round
+/// trip.
+pub fn refuses_effort(err: &EngineError) -> bool {
+    err.status == Some(400) && err.message.to_lowercase().contains("effort level")
 }
 
 /// Translates history into Anthropic messages, merging adjacent ones of the same role.
@@ -432,6 +465,11 @@ pub struct AntUsage {
     #[serde(default)]
     pub output_tokens: u32,
 }
+
+/// `claude-sonnet-4-6`'s answer to `effort: "xhigh"`, as it came on 2026-10-01 —
+/// the fixture of this module's tests and the client's.
+#[cfg(test)]
+pub(super) const EFFORT_REFUSED: &str = r#"{"type":"error","error":{"type":"invalid_request_error","message":"This model does not support effort level 'xhigh'. Supported levels: high, low, max, medium."},"request_id":"req_x"}"#;
 
 #[cfg(test)]
 mod tests {
@@ -787,6 +825,68 @@ mod tests {
         let json = serde_json::to_value(build_request(&r, "claude-x", true)).unwrap();
         assert_eq!(json["thinking"]["type"], "adaptive");
         assert!(json.get("output_config").is_none());
+    }
+
+    /// A thinking turn at `effort`.
+    fn thinking_at(effort: ReasoningEffort) -> AntRequest {
+        let mut r = req(vec![ApiMessage::user("hi")]);
+        r.sampling.thinking = Some(true);
+        r.sampling.reasoning_effort = Some(effort);
+        build_request(&r, "claude-x", true)
+    }
+
+    /// The API's own five levels: the top two go out as they are — `xhigh` rode
+    /// as `high` until the API had the value — and `minimal`, which it has not,
+    /// as `low`.
+    #[test]
+    fn the_scale_maps_onto_the_apis_five_levels() {
+        for (effort, sent) in [
+            (ReasoningEffort::Minimal, "low"),
+            (ReasoningEffort::Low, "low"),
+            (ReasoningEffort::Medium, "medium"),
+            (ReasoningEffort::High, "high"),
+            (ReasoningEffort::XHigh, "xhigh"),
+            (ReasoningEffort::Max, "max"),
+        ] {
+            assert_eq!(thinking_at(effort).effort(), Some(sent), "{effort:?}");
+        }
+        // The switch is not a level: thinking on with `none` sends no config.
+        assert_eq!(thinking_at(ReasoningEffort::None).effort(), None);
+    }
+
+    #[test]
+    fn a_refused_level_is_respelt_or_removed() {
+        let mut body = thinking_at(ReasoningEffort::XHigh);
+        body.respell_effort(Some("high"));
+        let json = serde_json::to_value(&body).unwrap();
+        assert_eq!(json["output_config"]["effort"], "high");
+        assert_eq!(json["thinking"]["type"], "adaptive", "thinking stays on");
+        body.respell_effort(None);
+        let json = serde_json::to_value(&body).unwrap();
+        assert!(json.get("output_config").is_none(), "{json}");
+        // A body that carries no effort gains none.
+        let mut plain = build_request(&req(vec![ApiMessage::user("hi")]), "claude-x", true);
+        plain.respell_effort(Some("high"));
+        assert_eq!(plain.effort(), None);
+    }
+
+    #[test]
+    fn only_a_400_about_the_effort_level_is_a_refusal_of_it() {
+        let refusal = |status: u16, body: &str| {
+            EngineError::status(
+                crate::shared::api::error::SUBJECT_ANTHROPIC,
+                reqwest::StatusCode::from_u16(status).unwrap(),
+                &reqwest::header::HeaderMap::new(),
+                body,
+            )
+        };
+        assert!(refuses_effort(&refusal(400, EFFORT_REFUSED)));
+        assert!(!refuses_effort(&refusal(529, EFFORT_REFUSED)));
+        // The other `400` a thinking turn can meet, measured on the 4.5 generation.
+        assert!(!refuses_effort(&refusal(
+            400,
+            r#"{"type":"error","error":{"type":"invalid_request_error","message":"adaptive thinking is not supported on this model"}}"#
+        )));
     }
 
     #[test]
