@@ -1225,9 +1225,11 @@ without `--mmproj` reports; the projector is a second file, §3.
   `cuda-13.4` build installed, listed the GPU, and both servers stopped at their
   warm-up with `CUDA error: the provided PTX was compiled with an unsupported
   toolchain` — which the app shows, with the way out
-  (`mindfork llama setup --backend cuda-12 --set-binary`). That compile happens
-  on every start of such a card and is not measured yet for `cuda-12`; keeping
-  its cache on the volume pays it once:
+  (`mindfork llama setup --backend cuda-12 --set-binary`). `cuda-12` runs there:
+  measured 2026-10-02 on a B200 with a CUDA 13.0 driver (580.105.08), the chat
+  server was `ready in 93 s` the first time, about 60 s of it that compile. Its
+  cache (134 MB) goes to the container disk, which a stop clears; kept on the
+  volume, the compile is paid once and a start takes 35 s:
   `export CUDA_CACHE_PATH=/workspace/.nv/ComputeCache` before `setup` and the app.
 - **A pod *reset* clears the container disk but keeps the volume**, so after one
   the line finds the app and the sandbox's downloads in place, repacks the

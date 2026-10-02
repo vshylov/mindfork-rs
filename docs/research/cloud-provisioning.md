@@ -398,7 +398,9 @@ makes a restart need no typing at all.
    with the JIT cache on the disk that is cleared. `CUDA_CACHE_PATH` on the
    volume is the likely answer; §7 measures. A JIT also needs a driver as new
    as the build's CUDA: on a B200 with a 13.2 driver `cuda-13.4` aborts at the
-   first kernel (§7, the fourth run).
+   first kernel (§7, the fourth run). With `cuda-12.8` the same card compiles
+   for about 60 s a start, and starts in 35 s instead of 93–98 s once the 134 MB
+   cache is kept (§7, the fifth run) — well inside the timeout.
 4. **GitHub's 60 requests an hour, per address, in a datacenter.** `llama
    setup` costs one. If the probe shows it biting, the R6-compatible escape is
    an option that *names* the variable (`--token-env <NAME>`), never an
@@ -548,9 +550,31 @@ behind RunPod's nginx (the TUI had no port check, `--verify` did), was
 relaunched 17 times in ten seconds — nginx's `404` passed for a ready server and
 reset the budget — while every chat crash cost two launches 40 ms apart. Fixed
 in the app ([journal/engine.md](../journal/engine.md), "a pod's failures say
-what they are"); the recipe stays `cuda-12` (install.md §3.4). Still not
-measured: `cuda-12`'s PTX compile on such a card against the 600 s ready
-timeout.
+what they are"); the recipe stays `cuda-12` (install.md §3.4).
+
+**A fifth run, the owner's (2026-10-02), measured the compile `cuda-12` costs
+on such a card.** A fresh B200 pod, its driver 580.105.08 (the CUDA 13.0 branch
+— older than the fourth run's 13.2, so `cuda-13.4` would have failed here too);
+the README's line with `--llama cuda-12` and `--set embed.managed.port=8011`,
+`CUDA_CACHE_PATH=/workspace/.nv/ComputeCache` exported before it. `cuda-12`
+resolved to `cuda-12.8` of `b11330`, listed `CUDA0: NVIDIA B200 (182631 MiB)`,
+and `--verify` was run three times on the same models:
+
+| start | chat server ready in |
+|---|---|
+| first — the kernels compiled, the models just downloaded | 93 s |
+| again — the kernels from the cache | 35 s |
+| again with `CUDA_CACHE_DISABLE=1` | 98 s |
+
+The compile is **about 60 s a start** on this card and the rest 35 s; the cache
+it leaves is 134 MB. Well inside the 600 s timeout, so the cache on the volume is
+a saving, not a necessity: without `CUDA_CACHE_PATH` it lives on the container
+disk and is paid again after every stop. The first run was no slower than the
+third, so the models were already in the page cache after `hf download`. The
+embedding server reported the chat server's figure each time because `--verify`
+waits for the servers in turn — it was up earlier, and its figure is an upper
+bound. Left for `pod_probe.sh`: the same on an 8.0/9.0 card (the mechanism is
+this one), a network volume, `machine-id` across a stop.
 
 **Unit.** The `b11070` names as a fixture next to `B10883`: Linux CUDA pairing,
 the tagged `.tar.gz` runtime, a partial release, family resolution and its
