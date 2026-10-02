@@ -400,7 +400,8 @@ makes a restart need no typing at all.
    as the build's CUDA: on a B200 with a 13.2 driver `cuda-13.4` aborts at the
    first kernel (§7, the fourth run). With `cuda-12.8` the same card compiles
    for about 60 s a start, and starts in 35 s instead of 93–98 s once the 134 MB
-   cache is kept (§7, the fifth run) — well inside the timeout.
+   cache is kept (§7, the fifth run) — well inside the timeout. The app keeps
+   that cache in its data root on its own since.
 4. **GitHub's 60 requests an hour, per address, in a datacenter.** `llama
    setup` costs one. If the probe shows it biting, the R6-compatible escape is
    an option that *names* the variable (`--token-env <NAME>`), never an
@@ -575,6 +576,14 @@ embedding server reported the chat server's figure each time because `--verify`
 waits for the servers in turn — it was up earlier, and its figure is an upper
 bound. Left for `pod_probe.sh`: the same on an 8.0/9.0 card (the mechanism is
 this one), a network volume, `machine-id` across a stop.
+
+**Since then the app keeps that cache itself** — `data/cuda-cache/`, given to its
+servers as `CUDA_CACHE_PATH` unless the environment names one — so the volume
+holds it with nothing to export. Imitated in Docker with a fresh container per
+start and the 4090 forced to compile (`CUDA_FORCE_PTX_JIT=1`): 39 s every start
+on 0.14.0, 39 s and then 2 s with the change
+([journal/engine.md](../journal/engine.md), "the CUDA kernel cache lives with the
+data").
 
 **Unit.** The `b11070` names as a fixture next to `B10883`: Linux CUDA pairing,
 the tagged `.tar.gz` runtime, a partial release, family resolution and its

@@ -843,7 +843,11 @@ it.
 The downloads are not small (see the table), and `data/` is next to the binary in
 portable mode — in a development checkout that means `target/debug/data/`, which
 `cargo clean` removes. Nothing under `data/llama/` is included in a backup or
-touched by a restore: it is re-downloadable, not user data.
+touched by a restore: it is re-downloadable, not user data. Beside it,
+`data/cuda-cache/` holds the GPU kernels the NVIDIA driver compiled for these
+servers — the app points the driver there unless `CUDA_CACHE_PATH` names
+another place — and it is derived data too: delete it and the next start
+compiles again (§3.4).
 
 **Deleting one.** Builds are not small and several add up, so
 `mindfork llama remove <id>` takes them back off disk — `<id>` being the name
@@ -1227,10 +1231,11 @@ without `--mmproj` reports; the projector is a second file, §3.
   toolchain` — which the app shows, with the way out
   (`mindfork llama setup --backend cuda-12 --set-binary`). `cuda-12` runs there:
   measured 2026-10-02 on a B200 with a CUDA 13.0 driver (580.105.08), the chat
-  server was `ready in 93 s` the first time, about 60 s of it that compile. Its
-  cache (134 MB) goes to the container disk, which a stop clears; kept on the
-  volume, the compile is paid once and a start takes 35 s:
-  `export CUDA_CACHE_PATH=/workspace/.nv/ComputeCache` before `setup` and the app.
+  server was `ready in 93 s` the first time, about 60 s of it that compile, and
+  `35 s` once the kernels were cached. The app keeps that cache in its data
+  directory (`DIR/data/cuda-cache/`, 134 MB here), which is on the volume — so
+  the compile is paid once per card, not after every stop, with nothing to set.
+  A `CUDA_CACHE_PATH` of your own still wins.
 - **A pod *reset* clears the container disk but keeps the volume**, so after one
   the line finds the app and the sandbox's downloads in place, repacks the
   sandbox image (that lives on the container disk) and **downloads llama.cpp

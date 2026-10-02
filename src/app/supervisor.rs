@@ -144,14 +144,20 @@ pub struct BinaryLookup {
     pub llama_dir: Option<PathBuf>,
     /// `Paths::exe_dir()` — beside the application binary.
     pub exe_dir: Option<PathBuf>,
+    /// `Paths::cuda_cache_dir()` — not where a binary is looked for, but the
+    /// other thing an installation gives its managed servers, carried here so
+    /// that the app and `mindfork setup --verify`, which both build their
+    /// launches from a lookup, give the same one.
+    pub kernel_cache: Option<PathBuf>,
 }
 
 impl BinaryLookup {
-    /// The two directories a real installation has.
+    /// The directories a real installation has.
     pub fn from_paths(paths: &Paths) -> Self {
         Self {
             llama_dir: Some(paths.llama_dir()),
             exe_dir: paths.exe_dir().map(Path::to_path_buf),
+            kernel_cache: Some(paths.cuda_cache_dir()),
         }
     }
 
@@ -348,7 +354,7 @@ impl ServerSupervisor for LlamaSupervisor {
             // downloaded build serves both.
             ServerMode::Managed => match self.lookup.resolve(settings.managed.binary.as_deref()) {
                 Some(bin) => {
-                    let cfg = managed_embed_config(&settings.managed, bin);
+                    let cfg = managed_embed_config(&settings.managed, bin, &self.lookup);
                     // The same refusal the chat server makes: without a model file
                     // `llama-server` starts a *router* that answers `/health` and
                     // refuses every embedding request (§2.1 of
@@ -532,12 +538,17 @@ fn managed_chat_setup(
 }
 
 /// The embedding server's launch config: the same `llama-server` with
-/// `--embeddings`, its binary already resolved by the caller.
+/// `--embeddings`, its binary already resolved by the caller from `lookup`,
+/// which also gives it the kernel cache.
 ///
 /// A function rather than a literal inside `embed_setup` so that `mindfork setup
 /// --verify` starts **exactly** what the app will (`app::verify`) — a second
 /// copy of these fields would drift the first time one of them changed.
-pub(crate) fn managed_embed_config(m: &ManagedEmbedSettings, binary: PathBuf) -> ManagedConfig {
+pub(crate) fn managed_embed_config(
+    m: &ManagedEmbedSettings,
+    binary: PathBuf,
+    lookup: &BinaryLookup,
+) -> ManagedConfig {
     ManagedConfig {
         binary,
         model_path: m.model_path.clone(),
@@ -567,6 +578,7 @@ pub(crate) fn managed_embed_config(m: &ManagedEmbedSettings, binary: PathBuf) ->
         port: m.port,
         role: ManagedRole::Embedder,
         extra_args: m.extra_args.clone(),
+        kernel_cache: lookup.kernel_cache.clone(),
     }
 }
 
@@ -607,6 +619,7 @@ pub(crate) fn managed_config(
         port: s.port,
         role,
         extra_args: s.extra_args.clone(),
+        kernel_cache: lookup.kernel_cache.clone(),
     }
 }
 
@@ -1348,6 +1361,7 @@ mod tests {
             lookup: BinaryLookup {
                 llama_dir: Some(llama_dir.clone().into()),
                 exe_dir: None,
+                kernel_cache: None,
             },
             gateway: Default::default(),
             ..Default::default()
@@ -1388,6 +1402,7 @@ mod tests {
         let lookup = BinaryLookup {
             llama_dir: Some(data.path().to_path_buf()),
             exe_dir: None,
+            kernel_cache: None,
         };
 
         let cfg = managed_config(&ManagedSettings::default(), ManagedRole::Assistant, &lookup);
@@ -1402,6 +1417,23 @@ mod tests {
             bare.binary.as_os_str().is_empty(),
             "no lookup, no path — `managed_chat_setup` reads that as NotConfigured"
         );
+    }
+
+    /// The app and `mindfork setup --verify` give their servers the same
+    /// kernel cache — the data root's, carried by the lookup both build from.
+    #[test]
+    fn both_builders_give_the_installations_kernel_cache() {
+        let paths = Paths::with_root("data-root");
+        let lookup = BinaryLookup::from_paths(&paths);
+        assert_eq!(lookup.kernel_cache, Some(paths.cuda_cache_dir()));
+        let chat = managed_config(&ManagedSettings::default(), ManagedRole::Assistant, &lookup);
+        let embed = managed_embed_config(
+            &ManagedEmbedSettings::default(),
+            "llama-server".into(),
+            &lookup,
+        );
+        assert_eq!(chat.kernel_cache, lookup.kernel_cache);
+        assert_eq!(embed.kernel_cache, lookup.kernel_cache);
     }
 
     /// The embedder is the same binary with `--embeddings`, so one downloaded
@@ -1443,6 +1475,7 @@ mod tests {
             lookup: BinaryLookup {
                 llama_dir: Some(data.path().to_path_buf()),
                 exe_dir: None,
+                kernel_cache: None,
             },
             gateway: Default::default(),
             ..Default::default()
@@ -1506,6 +1539,7 @@ mod tests {
             lookup: BinaryLookup {
                 llama_dir: Some(data.path().to_path_buf()),
                 exe_dir: None,
+                kernel_cache: None,
             },
             gateway: Default::default(),
             ..Default::default()
@@ -2000,7 +2034,7 @@ mod tests {
             extra_args: vec!["-c".into(), "4096".into()],
             ..Default::default()
         };
-        let cfg = managed_embed_config(&embed, "llama-server".into());
+        let cfg = managed_embed_config(&embed, "llama-server".into(), &BinaryLookup::default());
         assert_eq!(
             (cfg.role, cfg.extra_args),
             (ManagedRole::Embedder, embed.extra_args)

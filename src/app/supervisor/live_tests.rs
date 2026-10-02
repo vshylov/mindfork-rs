@@ -98,7 +98,7 @@ async fn a_stranger_on_the_port_is_refused_live() {
     let settings = managed_embed_on(&bin, &model, port);
 
     // Control: the launch without the ledger.
-    let cfg = managed_embed_config(&settings.managed, bin.clone().into());
+    let cfg = managed_embed_config(&settings.managed, bin.clone().into(), &Default::default());
     let handle = ServerHandle::launch(&cfg, ru()).expect("the old launch spawns");
     let client = OpenAiClient::new(handle.base_url());
     let probe = tokio::time::timeout(
@@ -196,7 +196,7 @@ async fn a_restart_onto_our_own_port_goes_through_live() {
     );
 
     drop(first.handle); // the kill is asked for, not yet done
-    let cfg = managed_embed_config(&settings.managed, bin.clone().into());
+    let cfg = managed_embed_config(&settings.managed, bin.clone().into(), &Default::default());
     let control = PortLedger::default().launch(&cfg, ru());
     println!(
         "control: {:?}",

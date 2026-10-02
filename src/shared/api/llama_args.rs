@@ -548,6 +548,7 @@ mod tests {
             port: 8000,
             role: ManagedRole::Assistant,
             extra_args: vec![],
+            kernel_cache: None,
         };
         let open = ["-ub", "--kv-unified", "--reasoning-format", "--embeddings"];
         for spelling in [NoMmapSpelling::LoadMode, NoMmapSpelling::NoMmap] {

@@ -2,7 +2,8 @@
 //! waiting for readiness (with detection of an early process exit), stopping on
 //! `drop` of the handle (a monitor task + `kill_on_drop`). See spec §3.4.
 
-use std::path::PathBuf;
+use std::ffi::OsStr;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
@@ -74,6 +75,10 @@ pub struct ManagedConfig {
     /// section already writes, or one of the kinds docs/research/managed-extra-args.md
     /// §4 refuses, stops the launch with a message naming it.
     pub extra_args: Vec<String>,
+    /// The CUDA kernel cache the child is given (`Paths::cuda_cache_dir`), as
+    /// `CUDA_CACHE_PATH` — unless the app's own environment names one, which
+    /// the child inherits instead. `None` — nothing is set (the tests).
+    pub kernel_cache: Option<PathBuf>,
 }
 
 impl ManagedConfig {
@@ -689,7 +694,37 @@ fn server_command(cfg: &ManagedConfig, args: &[String]) -> Command {
     for var in llama_args::scrubbed_env(cfg.role) {
         cmd.env_remove(var);
     }
+    let inherited = std::env::var_os(CUDA_CACHE_PATH);
+    if let Some(dir) = kernel_cache_for(cfg.kernel_cache.as_deref(), inherited.as_deref()) {
+        // The driver writes into it; an existing directory spares it the
+        // question of whether it may create one. A failure leaves the launch
+        // as it was without the cache.
+        if let Err(err) = std::fs::create_dir_all(dir) {
+            tracing::warn!(dir = %dir.display(), %err, "no CUDA kernel cache directory");
+        }
+        cmd.env(CUDA_CACHE_PATH, dir);
+    }
     cmd
+}
+
+/// The variable the CUDA driver reads its kernel cache's location from.
+const CUDA_CACHE_PATH: &str = "CUDA_CACHE_PATH";
+
+/// The kernel cache to give the child: `ours`, unless `inherited` — the app's
+/// own `CUDA_CACHE_PATH` — names one, which the child then inherits as the
+/// user set it. An empty value names nothing.
+///
+/// Why the app sets it at all (spec §3.4): a card the build has no kernels of
+/// its own for — a B200 with llama.cpp's `cuda-12.8` — compiles them from PTX
+/// at every start, about 60 s of a 93 s start (measured on a RunPod pod,
+/// 2026-10-02: 35 s once cached). The driver's default cache is on a
+/// container's disk, which a pod clears at every stop; the data root is on the
+/// volume, so the compile is paid once per card, not once per stop.
+fn kernel_cache_for<'a>(ours: Option<&'a Path>, inherited: Option<&OsStr>) -> Option<&'a Path> {
+    match inherited {
+        Some(value) if !value.is_empty() => None,
+        _ => ours,
+    }
 }
 
 /// Takes charge of a spawned child: its output is read — so the pipe never
@@ -976,6 +1011,7 @@ mod tests {
             port: 8000,
             role: ManagedRole::Assistant,
             extra_args: vec![],
+            kernel_cache: None,
         }
     }
 
@@ -2274,5 +2310,51 @@ mod tests {
             .await
             .expect("a kill arms reaped");
         assert!(!exited.is_exited(), "a kill is not an exit on its own");
+    }
+
+    // ---- The CUDA kernel cache ----
+
+    /// The child gets the app's kernel cache unless the app's own environment
+    /// names one — the user's choice wins — and an empty value names nothing.
+    #[test]
+    fn the_kernel_cache_yields_to_one_the_user_named() {
+        let ours = Path::new("data/cuda-cache");
+        assert_eq!(kernel_cache_for(Some(ours), None), Some(ours));
+        assert_eq!(
+            kernel_cache_for(Some(ours), Some(OsStr::new(""))),
+            Some(ours)
+        );
+        assert_eq!(
+            kernel_cache_for(Some(ours), Some(OsStr::new("/elsewhere"))),
+            None
+        );
+        assert_eq!(kernel_cache_for(None, None), None);
+    }
+
+    /// The command carries `CUDA_CACHE_PATH`, and the directory is there
+    /// before the driver wants it; with no cache configured nothing is set.
+    #[test]
+    fn the_command_carries_the_kernel_cache() {
+        let given = |cmd: &Command| {
+            cmd.as_std()
+                .get_envs()
+                .find(|(k, _)| *k == CUDA_CACHE_PATH)
+                .and_then(|(_, v)| v.map(PathBuf::from))
+        };
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cache = dir.path().join("data").join("cuda-cache");
+        let cfg = ManagedConfig {
+            kernel_cache: Some(cache.clone()),
+            ..base_cfg()
+        };
+        let cmd = server_command(&cfg, &[]);
+        if std::env::var_os(CUDA_CACHE_PATH).is_some_and(|v| !v.is_empty()) {
+            // This machine names a cache of its own: the child inherits it.
+            assert_eq!(given(&cmd), None);
+            return;
+        }
+        assert_eq!(given(&cmd), Some(cache.clone()));
+        assert!(cache.is_dir(), "created for the driver");
+        assert_eq!(given(&server_command(&base_cfg(), &[])), None);
     }
 }

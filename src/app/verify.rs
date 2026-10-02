@@ -58,7 +58,7 @@ pub async fn run(
         let binary = lookup
             .resolve(config.embed.managed.binary.as_deref())
             .unwrap_or_default();
-        managed_embed_config(&config.embed.managed, binary)
+        managed_embed_config(&config.embed.managed, binary, lookup)
     });
 
     // The third column is the settings key that moves each server's port — the
@@ -428,6 +428,7 @@ mod tests {
         let lookup = BinaryLookup {
             llama_dir: Some(llama_dir.into()),
             exe_dir: None,
+            kernel_cache: None,
         };
         let (ok, lines) = lines_of(&config, &lookup);
         for l in &lines {
