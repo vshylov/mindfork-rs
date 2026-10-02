@@ -6075,6 +6075,10 @@ reported. Orchestrator: a refused launch not retried, a monitor's death report
 still relaunched. Settings: a long reason cut, a short one whole. Mutation: 15
 mutants on the new lines plus 3 on the follow-ups, all killed; sources restored
 byte-identical (diff fingerprint).
+The three live smokes sit in `app/supervisor/live_tests.rs`, a file named as
+tests: inline in `supervisor.rs` they counted as uncovered production code, and
+the first push read 70.8 % on new code against Sonar's 80 % floor. Rehearsed with
+`cargo llvm-cov` after the move: 96.8 %.
 
 **Smoke — GO** (2026-10-02; llama.cpp b11191 CUDA, RTX 4090, Windows 11).
 - `a_stranger_on_the_port_is_refused_live`, bge-m3 and a stub answering `404`
