@@ -6189,8 +6189,8 @@ record, so even after #673 the status says *corrupt GGUF or out of memory?*.
 Left for a follow-up.
 
 **Docs.** spec §3.4; architecture §6 (`server_command`); install.md §3.1,
-§3.4; PRIVACY.md §2 (+ the site's page); cloud-provisioning §5, §7; CHANGELOG
-(Changed).
+§3.4; PRIVACY.md §2 and its Russian text (+ the site's page and the installer's
+RTFs, `wizard_rtf.py`); cloud-provisioning §5, §7; CHANGELOG (Changed).
 
 **Gates**: fmt / clippy / test green — **3875 unit tests, 256 `#[ignore]`**
 (+3 unit tests).
