@@ -3286,3 +3286,63 @@ every reversible check first. Full record —
   there. The draft's own archive and script on a bare `ubuntu:24.04` is the
   check the job cannot make. The Docker stand that measured PR 676 was deleted
   on 2026-10-02 and rebuilds in about six minutes.
+- **The draft, checked before anyone else could see it** (§6 step 5). `v0.14.1`
+  sat on the merge commit `a3eed89d`, which was `origin/main`; `release.yml` was
+  green in all six jobs (16 min 12 s) and left a draft that was not a prerelease,
+  with eight assets under the names 0.14.0's had. Its notes were the CHANGELOG's
+  `[0.14.1]` section (40 lines) plus the standard footer. All seven lines of
+  `sha256sums.txt` equalled GitHub's own digest per asset, and the eight files
+  downloaded hashed to the same. `install.sh` was the tag's blob (`5d5bea88`)
+  and its digest is new, `b7da088b…`. `gh attestation verify` passed for both
+  archives, the installer, the script and the `.deb` — one attestation each,
+  `refs/tags/v0.14.1` — and a scratch file the release never made exits 1.
+- **The job's install step said `passed=38 failed=0`**, not the 37 this entry
+  predicted: the OpenMP block is ten scenarios and **eleven** checks, and all
+  eleven passed on the runner under `sudo`, where the system's own `libgomp1`
+  is present. The CAP_CHOWN arm ran, its control firing, and `installed:
+  mindfork 0.14.1 (expected: mindfork 0.14.1)`.
+- **The Windows binary, without a terminal**: `mindfork 0.14.1`; a launch with
+  no console refuses with exit 2; no name of a C runtime library in the
+  executable; `stats` on the archive's own root says there is no data, and the
+  43 files of the unpacked archive are the same 43 after. No process named
+  `mindfork` was running when the checks started
+  ([lessons.md](../lessons.md) §6).
+- **The check the job cannot make: the draft's archive and script on a bare
+  `ubuntu:24.04`**, offline for the app (`--from`), the image with `curl` and CA
+  certificates added and no `libgomp1` (`ldconfig -p` counted 0).
+  - Root without `CAP_CHOWN`, handing over `llama setup --backend cpu`: `sha256
+    ok`, unpacked, `libasound.so.2 is missing … installed`, **`libgomp.so.1 is
+    missing (llama.cpp needs it, a bare image does not carry it) — installing` /
+    `installed`**, linked, then llama.cpp `b11335` installed with `version: 0.5.0-dev
+    (build 11335, …)`, exit 0; the binary owned `0:0`, the marker `v0.14.1`.
+  - The control, `--no-deps` on an image that has ALSA: the script printed `sudo
+    apt-get install -y libgomp1` and went on; `llama setup` refused with
+    *llama-server cannot start: this system has no libgomp.so.1 … The download
+    is kept*, exit 1, `.tmp-cpu-b11335` left in place. After `apt-get install
+    libgomp1` the same command said *…is already downloaded* and installed the
+    build.
+- **Not run**: the TUI on real data, which is the owner's; the Windows installer
+  and the `.rpm` and Arch packages, of which the digests were compared; a
+  managed server with a model on a GPU — the Docker stand with the 4090 was
+  deleted before this release, and the three live runs that cover it are the
+  pull requests' own.
+- **Published, and the numbers of it.** The owner published at 03:30:37Z on
+  2026-10-02 (immutable); `crates-io.yml` 03:30:39Z → 03:33:20Z, `mindfork
+  0.14.1` on the registry at 03:33:14Z (4 393 308 bytes, the default version);
+  `Site` started by itself two seconds after `crates.io` completed and deployed
+  at 03:33:57Z — **3 min 20 s after the publication** (0.14.0: 3 min 32 s). The
+  hold on the merge had shown as before: "Is this version out?" green, the
+  build and the deploy skipped, for the 27 minutes between the merge and the
+  publication. From outside: the post answers 200 with its table and four
+  sections, the home page's and the install page's structured data say
+  `"softwareVersion": "0.14.1"`, the blog's index, `/llms.txt`, the feed and the
+  sitemap list the post, and `releases/latest` resolves to `v0.14.1`, its
+  `install.sh` hashing to the draft's `b7da088b…`.
+- **The README's install line, as published, on a bare image.** Root without
+  `CAP_CHOWN` in `ubuntu:24.04` with `curl` added, `curl … | sh -s -- --dir
+  /workspace/mindfork -- llama setup --backend cpu`: `mindfork v0.14.1`,
+  downloaded, `sha256 ok`, unpacked, ALSA and OpenMP each *missing … installed*,
+  linked, `mindfork 0.14.1`, llama.cpp `b11335` installed with its version, exit
+  0; the same line again said `already installed`. On 0.14.0 such an image got a
+  build that could not start, the loader's error printed as its version (the
+  control arm of PR 676).
