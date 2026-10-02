@@ -10,8 +10,19 @@
 //! `MINDFORK_LLAMA_BIN=…/llama-server MINDFORK_EMBED_MODEL=…/bge-m3.gguf cargo test
 //! supervisor::live_tests -- --ignored --nocapture --test-threads=1`.
 
-use super::*;
+use std::time::Duration;
+
 use tokio::sync::mpsc::unbounded_channel;
+use tokio_util::sync::CancellationToken;
+
+use super::{LlamaSupervisor, MANAGED_READY_TIMEOUT, ServerSupervisor, managed_embed_config};
+use crate::shared::api::managed::PortLedger;
+use crate::shared::api::{OpenAiClient, ServerHandle, wait_until_ready};
+use crate::shared::config::{
+    EmbedSettings, EngineSettings, ManagedEmbedSettings, ManagedSettings, ServerMode,
+};
+use crate::shared::i18n::Locale;
+use crate::shared::server::ServerStatus;
 
 /// The reference (Russian) locale, as the supervisor's unit tests pin it.
 fn ru() -> &'static Locale {
