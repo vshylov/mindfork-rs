@@ -2017,7 +2017,11 @@ its own — or named by `api_key_env`, resolved through the same
   **`ChildExit`**: the token, a second token `reaped` (armed once the process is
   gone for any reason, its own exit or the kill a dropped handle asked for), and
   what the output readers kept in a `Said` — the first line llama.cpp's argument
-  parser refuses a launch with (`error: …`), else the first **error-level
+  parser refuses a launch with (`error: …`), else the library the dynamic loader
+  could not find (`missing_library`, out of `…: error while loading shared
+  libraries: <lib>: …`; the message is `missing_library_message`, OpenMP's named
+  with its packages, and `llama_setup::version_of` shows the same when a build's
+  `--version` exits non-zero), else the first **error-level
   record** (`error_record`: `[timestamp] E <message>`, ANSI-stripped, padding
   collapsed) of the latest burst (records under `BURST_GAP` = 2 s apart), kept
   only when the burst ended within `CAUSE_WINDOW` = 10 s of the reaping, which
@@ -4317,7 +4321,10 @@ Principles:
   the target and *moved* in (an upgrade under a running app is a rename, not
   "Text file busy"), and then **the binary is run** — a bare image lacks
   `libasound.so.2`, which the script installs through the distribution's manager
-  or names with exit code 3. Being an asset, it is in `sha256sums.txt` and
+  or names with exit code 3. When the hand-over installs llama.cpp
+  (`wants_llama`: `--llama`, or `llama setup`), `ensure_openmp` asks `ldconfig -p`
+  for `libgomp.so.1` — the binary that needs it is not there yet — and installs
+  it the same way, or names it and goes on. Being an asset, it is in `sha256sums.txt` and
   attested: no new root of trust. The release job runs
   `packaging/linux/install_test.sh` against the release's binary and then
   installs the release's own archive `--from dist`; `packaging.yml` runs the

@@ -29,6 +29,7 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 
+use crate::shared::api::managed::{missing_library, missing_library_message};
 use crate::shared::config::{AppConfig, ServerMode};
 use crate::shared::i18n::Locale;
 
@@ -753,7 +754,11 @@ pub async fn setup(
     // R5, and the only thing that proves the ~50-file library set is complete:
     // run it before it is moved into place, so a broken unpack never becomes an
     // install that `llama installed` would list.
-    let version = version_line(&run_probe(&staged_binary, &["--version"], loc).await?);
+    let version = version_of(&staged_binary, loc).await.map_err(|err| {
+        // The archives stay in the staging directory, which is what makes a
+        // second run after the fix — `apt-get install libgomp1` — a local one.
+        anyhow::anyhow!("{err} {}", loc.t("llamacpp.setup.download_kept"))
+    })?;
     match (
         tag_build_number(&release.tag_name),
         version_build_number(&version),
@@ -824,8 +829,10 @@ async fn probe(
     }
     // `--version` prints two lines (the version, then the compiler it was built
     // with); only the first is the answer.
-    let version = version_line(&run_probe(&binary, &["--version"], loc).await?);
-    let devices = parse_devices(&run_probe(&binary, &["--list-devices"], loc).await?);
+    let version = version_of(&binary, loc).await?;
+    // Lenient: what `--list-devices` exits with is not measured, and an empty
+    // list is already said below.
+    let devices = parse_devices(&run_probe(&binary, &["--list-devices"], loc).await?.0);
     progress(&loc.tf("llamacpp.setup.version", &[("version", &version)]));
     if devices.is_empty() {
         if backend != "cpu" {
@@ -871,10 +878,48 @@ fn version_line(text: &str) -> String {
         .to_string()
 }
 
-/// Runs the binary with `args` and returns its output. `--version` writes to
-/// **stderr** and `--list-devices` to stdout (measured), so both streams are
-/// taken and the non-empty one is the answer.
-async fn run_probe(binary: &Path, args: &[&str], loc: &Locale) -> Result<String> {
+/// The binary's `--version` line — and the proof that it runs at all (R5).
+///
+/// A binary the dynamic loader refuses exits `127` having printed only the
+/// loader's line, and that line used to pass for the version (measured
+/// 2026-10-02 on a bare `ubuntu:24.04`): the `cuda-12.8` build was installed
+/// and reported with `version: …error while loading shared libraries:
+/// libgomp.so.1…`, and its server failed at every launch with the generic
+/// guess. A non-zero exit is a refusal now — naming the missing library, and
+/// its package where we know it ([`missing_library_message`]).
+async fn version_of(binary: &Path, loc: &Locale) -> Result<String> {
+    let (text, status) = run_probe(binary, &["--version"], loc).await?;
+    if status.success() {
+        return Ok(version_line(&text));
+    }
+    if let Some(lib) = text.lines().find_map(missing_library) {
+        bail!("{}", missing_library_message(&lib, loc));
+    }
+    let said = text.lines().map(str::trim).rfind(|l| !l.is_empty());
+    let why = match said {
+        Some(line) => line.to_string(),
+        None => loc.tf(
+            "llamacpp.setup.exit_status",
+            &[("status", &status.to_string())],
+        ),
+    };
+    bail!(
+        "{}",
+        loc.tf(
+            "llamacpp.setup.does_not_start",
+            &[("path", &binary.display().to_string()), ("why", &why)],
+        )
+    )
+}
+
+/// Runs the binary with `args` and returns its output and how it exited.
+/// `--version` writes to **stderr** and `--list-devices` to stdout (measured),
+/// so both streams are taken and the non-empty one is the answer.
+async fn run_probe(
+    binary: &Path,
+    args: &[&str],
+    loc: &Locale,
+) -> Result<(String, std::process::ExitStatus)> {
     let run = tokio::process::Command::new(binary)
         .args(args)
         .current_dir(binary.parent().unwrap_or(Path::new(".")))
@@ -898,11 +943,12 @@ async fn run_probe(binary: &Path, args: &[&str], loc: &Locale) -> Result<String>
         })?;
     let stdout = String::from_utf8_lossy(&out.stdout).to_string();
     let stderr = String::from_utf8_lossy(&out.stderr).to_string();
-    if stdout.trim().is_empty() {
-        Ok(stderr)
+    let text = if stdout.trim().is_empty() {
+        stderr
     } else {
-        Ok(stdout)
-    }
+        stdout
+    };
+    Ok((text, out.status))
 }
 
 /// `mindfork llama installed`: the builds already on disk, newest name first.
@@ -1984,6 +2030,98 @@ mod tests {
         // No such line: the first one, so the user is still shown what it said.
         assert_eq!(version_line("\n  something else\nmore\n"), "something else");
         assert_eq!(version_line(""), "");
+    }
+
+    /// A stand-in for an installed server: prints `said` to stderr and exits
+    /// with `code`. A `.cmd` on Windows, a shell script elsewhere.
+    fn fake_server(dir: &Path, said: &str, code: i32) -> PathBuf {
+        if cfg!(windows) {
+            let path = dir.join("llama-server.cmd");
+            let echo = if said.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "echo {said} 1>&2
+"
+                )
+            };
+            std::fs::write(
+                &path,
+                format!(
+                    "@echo off
+{echo}exit /b {code}
+"
+                ),
+            )
+            .expect("write the stand-in");
+            path
+        } else {
+            let path = dir.join("llama-server");
+            let echo = if said.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "echo '{said}' >&2
+"
+                )
+            };
+            std::fs::write(
+                &path,
+                format!(
+                    "#!/bin/sh
+{echo}exit {code}
+"
+                ),
+            )
+            .expect("write the stand-in");
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+                    .expect("make it executable");
+            }
+            path
+        }
+    }
+
+    /// A binary that does not run is refused, not installed with the loader's
+    /// line for a version (a bare `ubuntu:24.04`, 2026-10-02): the missing
+    /// library named with its package, any other failure in its own last
+    /// words or its exit status. The control: one that answers is read.
+    #[tokio::test]
+    async fn a_binary_that_does_not_run_is_refused() {
+        let en = locale(Lang::En);
+        let dir = tempfile::tempdir().expect("tempdir");
+        let err = |said: &str, code: i32| {
+            let bin = fake_server(dir.path(), said, code);
+            async move { version_of(&bin, en).await.expect_err("refused").to_string() }
+        };
+        let missing = err(
+            "./llama-server: error while loading shared libraries: libgomp.so.1: cannot open shared object file: No such file or directory",
+            127,
+        )
+        .await;
+        assert_eq!(
+            missing,
+            crate::shared::api::managed::missing_library_message("libgomp.so.1", en)
+        );
+        let other = err("something broke", 1).await;
+        assert!(
+            other.contains("does not start") && other.contains("something broke"),
+            "{other}"
+        );
+        let silent = err("", 3).await;
+        assert!(silent.contains("said nothing"), "{silent}");
+
+        let bin = fake_server(
+            dir.path(),
+            "version: 0.5.0-dev (build 11330, commit c061df198)",
+            0,
+        );
+        assert_eq!(
+            version_of(&bin, en).await.expect("it runs"),
+            "version: 0.5.0-dev (build 11330, commit c061df198)"
+        );
     }
 
     /// `cuda-12` is the one `cuda-12.*` a build carries: the minor moved from

@@ -20,7 +20,8 @@
 #   --version vX.Y.Z which release                         (default: the latest)
 #   --from DIR       install from files already on disk — the archive and
 #                    sha256sums.txt — instead of downloading them
-#   --no-deps        do not install the one system library the app needs
+#   --no-deps        do not install the system libraries the app needs (ALSA),
+#                    and llama.cpp when the hand-over installs it (OpenMP)
 #   --no-link        do not link the binary into /usr/local/bin
 #   -h, --help
 #   -- ARGS…         run `mindfork ARGS…` when the install is done
@@ -52,7 +53,8 @@ mindfork install script (Linux x86_64)
   --version vX.Y.Z  which release                    (default: the latest)
   --from DIR        install from files already on disk (the archive and
                     sha256sums.txt) instead of downloading them
-  --no-deps         do not install the one system library the app needs
+  --no-deps         do not install the system libraries the app needs (ALSA),
+                    and llama.cpp when the hand-over installs it (OpenMP)
   --no-link         do not link the binary into /usr/local/bin
   -h, --help        this text
   -- ARGS…          run `mindfork ARGS…` when the install is done, e.g.
@@ -266,6 +268,82 @@ ensure_starts() { # install dir, no_deps
     exit 3
 }
 
+# llama.cpp's Linux builds are built with OpenMP, so its server needs
+# `libgomp.so.1` — and a bare image lacks that too (measured 2026-10-02 on
+# `ubuntu:24.04`: `error while loading shared libraries: libgomp.so.1`; RunPod's
+# images carry it). The binary that needs it is not here yet: `setup --llama`
+# downloads it after this script hands over. So the linker's cache is asked
+# instead of a binary, and only when the hand-over is going to install llama.cpp.
+wants_llama() { # the hand-over's arguments
+    [ "${1:-}" = llama ] && [ "${2:-}" = setup ] && return 0
+    for a in "$@"; do
+        case "$a" in
+        --llama | --llama=*) return 0 ;;
+        esac
+    done
+    return 1
+}
+
+# `ldconfig` is in /sbin, which a non-root PATH does not name.
+has_openmp() {
+    for ldc in ldconfig /sbin/ldconfig /usr/sbin/ldconfig; do
+        if command -v "$ldc" >/dev/null 2>&1; then
+            "$ldc" -p 2>/dev/null | grep -q 'libgomp\.so\.1 '
+            return
+        fi
+    done
+    return 1
+}
+
+install_openmp() {
+    if have apt-get; then
+        as_root apt-get update -qq &&
+            as_root apt-get install -y -qq --no-install-recommends libgomp1
+    elif have dnf; then
+        as_root dnf install -y -q libgomp
+    elif have pacman; then
+        as_root pacman -Sy --noconfirm --needed gcc-libs
+    elif have zypper; then
+        as_root zypper --non-interactive install libgomp1
+    else
+        return 1
+    fi
+}
+
+openmp_hint() {
+    if have apt-get; then
+        say "    sudo apt-get install -y libgomp1"
+    elif have dnf; then
+        say "    sudo dnf install -y libgomp"
+    elif have pacman; then
+        say "    sudo pacman -S gcc-libs"
+    else
+        say "    install OpenMP's runtime library (libgomp.so.1) with your package manager"
+    fi
+}
+
+# Unlike ALSA's, a missing OpenMP does not stop the hand-over: the app runs
+# without it, and `llama setup` refuses the build it cannot start, saying the
+# same thing.
+ensure_openmp() { # no_deps, the hand-over's arguments...
+    no_deps_openmp="$1"
+    shift
+    wants_llama "$@" || return 0
+    has_openmp && return 0
+    if [ "$no_deps_openmp" = 1 ]; then
+        warn "llama.cpp will not start: libgomp.so.1 is missing, and --no-deps was given. Install it with:"
+        openmp_hint >&2
+        return 0
+    fi
+    say "== libgomp.so.1 is missing (llama.cpp needs it, a bare image does not carry it) — installing"
+    if install_openmp >/dev/null 2>&1 && has_openmp; then
+        say "  installed"
+        return 0
+    fi
+    warn "could not install it (not root, no sudo, or no network). llama.cpp will not start until you run:"
+    openmp_hint >&2
+}
+
 link_binary() { # install dir
     bin="/usr/local/bin/mindfork"
     if [ -d /usr/local/bin ] && as_root ln -sf "$1/mindfork" "$bin" 2>/dev/null; then
@@ -336,6 +414,7 @@ main() {
     fi
 
     ensure_starts "$dir" "$no_deps"
+    ensure_openmp "$no_deps" "$@"
     [ "$no_link" = 1 ] || link_binary "$dir"
     say "  $("$dir/mindfork" --version)"
 

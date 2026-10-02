@@ -22,6 +22,13 @@ split by subsystem.
   each start on a B200. A `CUDA_CACHE_PATH` you set yourself still wins.
 
 ### Fixed
+- **llama.cpp on a bare Linux image.** Its Linux builds need OpenMP's runtime
+  (`libgomp1`), which a minimal image such as `ubuntu:24.04` does not have.
+  `install.sh` now installs it when the line installs llama.cpp;
+  `mindfork llama setup` no longer installs a build that cannot start (it was
+  shown with the loader's error as its version), and names the missing library
+  and its package instead; and a local server that cannot load a library says
+  which, instead of *corrupt GGUF or out of memory?*.
 - **A local server that stops says why.** When `llama-server` dies while starting,
   the status now carries the error it logged — not *corrupt GGUF or out of
   memory?* — and for a llama.cpp build made for a newer CUDA than the GPU driver
