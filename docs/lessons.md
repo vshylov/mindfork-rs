@@ -1138,6 +1138,17 @@ deaths, the second landing after the relaunch and killing it. When two paths
 can announce one event, decide which one owns it, or the consumer counts both.
 — *a pod's failures say what they are*.
 
+**A probe's output is not its verdict — read how it exited.** `llama setup` runs
+a fresh build's `--version` to prove the build is complete, and on a bare image
+the dynamic loader answered for it: `…: error while loading shared libraries:
+libgomp.so.1: …`, exit 127. The probe took whatever text came back, so that line
+was printed as the version, the build-number check fell into its "said nothing
+comparable" arm, and a binary that could not start was installed — then failed
+at every launch with a guess about the model. A check that exists to prove a
+program runs has to ask the exit status first and treat the text as what the
+program said, not as proof it spoke.
+— *llama.cpp on a bare image*.
+
 ## 4. The recurring defect class: a message must close the door
 
 **Never let a message describe a situation without saying what is and is not possible

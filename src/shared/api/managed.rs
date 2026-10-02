@@ -393,6 +393,9 @@ struct Said {
     /// The argument parser's refusal — the first: an argument error ends the
     /// parse at once, and what follows it is the option's usage.
     refusal: Option<String>,
+    /// The library the dynamic loader could not find ([`missing_library`]):
+    /// the process never ran, so nothing else it printed explains anything.
+    missing: Option<String>,
     /// The latest burst of error-level records.
     burst: Option<Burst>,
     /// When the process was reaped.
@@ -412,6 +415,8 @@ impl Said {
     fn record(&mut self, line: &str, at: Instant) {
         if let Some(refusal) = refusal_line(line) {
             self.refusal.get_or_insert(refusal);
+        } else if let Some(lib) = missing_library(line) {
+            self.missing.get_or_insert(lib);
         } else if let Some(record) = error_record(line) {
             match &mut self.burst {
                 Some(burst) if at.saturating_duration_since(burst.last) < BURST_GAP => {
@@ -451,12 +456,16 @@ impl ChildExit {
     }
 
     /// Why the child is gone, in the interface language: llama.cpp's own
-    /// refusal, else the error it logged as it died — with the way out where
-    /// the error is one we know — else the generic guess.
+    /// refusal, else the library the loader could not find, else the error it
+    /// logged as it died — with the way out where the error is one we know —
+    /// else the generic guess.
     pub fn message(&self, loc: &Locale) -> String {
         let said = self.said.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(refusal) = &said.refusal {
             return loc.tf("ui.err.managed.early_exit_said", &[("said", refusal)]);
+        }
+        if let Some(lib) = &said.missing {
+            return missing_library_message(lib, loc);
         }
         match said.logged_cause() {
             Some(cause) if ptx_newer_than_driver(cause) => {
@@ -492,6 +501,39 @@ impl ChildExit {
 /// llama.cpp's words, never to the generic guess.
 fn ptx_newer_than_driver(record: &str) -> bool {
     record.contains("PTX") && record.contains("unsupported toolchain")
+}
+
+/// The library the dynamic loader could not find, out of its refusal — the line
+/// glibc's `ld.so` prints, on stderr, before the program has run at all:
+///
+/// ```text
+/// /…/llama-server: error while loading shared libraries: libgomp.so.1: cannot open shared object file: No such file or directory
+/// ```
+///
+/// It starts with the binary's path, so neither the parser's `error…` line nor
+/// a log record takes it. `None` for every other line.
+pub fn missing_library(line: &str) -> Option<String> {
+    let clean = strip_ansi(line);
+    let (_, rest) = clean.split_once(": error while loading shared libraries: ")?;
+    let lib = rest.split(": ").next()?.trim();
+    (!lib.is_empty()).then(|| lib.to_string())
+}
+
+/// What a missing library means and what to do, in the interface language.
+/// Shared by the launch's exit and by `mindfork llama setup`, which runs the
+/// binary before it calls a build installed.
+///
+/// One library is named with its package: `libgomp.so.1`, OpenMP's runtime.
+/// llama.cpp's Linux builds are built with OpenMP, and a bare image does not
+/// carry it (measured 2026-10-02: `ubuntu:24.04`, every build). Its package has
+/// a different name on every distribution, so the message names each.
+pub fn missing_library_message(lib: &str, loc: &Locale) -> String {
+    let key = if lib.starts_with("libgomp.so") {
+        "ui.err.managed.missing_openmp"
+    } else {
+        "ui.err.managed.missing_library"
+    };
+    loc.tf(key, &[("lib", lib)])
 }
 
 impl Drop for ServerHandle {
@@ -2310,6 +2352,86 @@ mod tests {
             .await
             .expect("a kill arms reaped");
         assert!(!exited.is_exited(), "a kill is not an exit on its own");
+    }
+
+    // ---- A library the loader could not find ----
+
+    /// The loader's line on a bare `ubuntu:24.04`, as measured (2026-10-02).
+    const NO_LIBGOMP: &str = "/workspace/mindfork/data/llama/cuda-12.8-b11332//llama-server: error while loading shared libraries: libgomp.so.1: cannot open shared object file: No such file or directory";
+
+    /// The library is the loader's line's third field; no other line names one.
+    #[test]
+    fn the_loader_line_names_the_missing_library() {
+        assert_eq!(missing_library(NO_LIBGOMP).as_deref(), Some("libgomp.so.1"));
+        assert_eq!(
+            missing_library("./x: error while loading shared libraries: libcudart.so.12: cannot open shared object file: No such file or directory").as_deref(),
+            Some("libcudart.so.12")
+        );
+        for line in [
+            "error: invalid argument: --x",
+            CUDA_ABORT[0],
+            "0.00.000.001 I srv  load_model: loading model",
+            "error while loading shared libraries",
+            "",
+        ] {
+            assert_eq!(missing_library(line), None, "{line}");
+        }
+    }
+
+    /// OpenMP is named with its package on each distribution; any other
+    /// library by its name alone.
+    #[test]
+    fn a_missing_library_is_said_with_the_way_out() {
+        let en = locale(Lang::En);
+        let omp = missing_library_message("libgomp.so.1", en);
+        assert!(
+            omp.contains("libgomp.so.1") && omp.contains("apt-get install libgomp1"),
+            "{omp}"
+        );
+        let other = missing_library_message("libfoo.so.3", en);
+        assert!(
+            other.contains("libfoo.so.3") && !other.contains("libgomp1"),
+            "{other}"
+        );
+        assert!(missing_library_message("libgomp.so.1", ru()).contains("libgomp1"));
+    }
+
+    /// The loader's line comes before a logged record — the process never
+    /// ran — and after the parser's refusal, which is not printed by a process
+    /// that never ran anyway.
+    #[test]
+    fn the_exit_message_names_the_missing_library() {
+        let en = locale(Lang::En);
+        let t = Instant::now();
+        let mut said = said_after(BIND_FAILURE, t, Duration::ZERO);
+        said.record(NO_LIBGOMP, t);
+        assert_eq!(
+            exit_with(said).message(en),
+            missing_library_message("libgomp.so.1", en)
+        );
+    }
+
+    /// End to end with a real process exiting as the loader does.
+    #[tokio::test]
+    async fn an_exit_is_announced_with_the_library_the_loader_missed() {
+        let child = shell(
+            "echo ./llama-server: error while loading shared libraries: libgomp.so.1: cannot open shared object file: No such file or directory 1>&2 & exit 127",
+            "echo './llama-server: error while loading shared libraries: libgomp.so.1: cannot open shared object file: No such file or directory' >&2; exit 127",
+        )
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .expect("spawn of a short-lived process");
+        let (_kill, exited) = supervise(child);
+        tokio::time::timeout(Duration::from_secs(10), exited.wait())
+            .await
+            .expect("the monitor must arm exited on process exit");
+        let en = locale(Lang::En);
+        assert_eq!(
+            exited.message(en),
+            missing_library_message("libgomp.so.1", en)
+        );
     }
 
     // ---- The CUDA kernel cache ----

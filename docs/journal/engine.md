@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (87)
+## Entries (88)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -99,6 +99,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the efforts xAI lists, read instead of configured (done)
 - Post-M9: a pod's failures say what they are — the logged cause, a taken port, one report per death (done)
 - Post-M9: the CUDA kernel cache lives with the data (done)
+- Post-M9: llama.cpp on a bare image — OpenMP installed, a build that cannot start refused (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -6194,3 +6195,96 @@ RTFs, `wizard_rtf.py`); cloud-provisioning §5, §7; CHANGELOG (Changed).
 
 **Gates**: fmt / clippy / test green — **3875 unit tests, 256 `#[ignore]`**
 (+3 unit tests).
+
+### Post-M9: llama.cpp on a bare image — OpenMP installed, a build that cannot start refused (done)
+
+**Found** while measuring the kernel cache in Docker (the entry before this
+one). On a bare `ubuntu:24.04`, llama.cpp's Linux CUDA build does not start:
+`error while loading shared libraries: libgomp.so.1`, exit 127. The build uses
+OpenMP; RunPod's images carry the library, but a minimal image does not. The CPU
+build (`b11333`) needs it too. Three things went wrong with it, and all three
+were seen on the released 0.14.0 (the control arm below):
+
+1. **`install.sh`** installs only ALSA, the one library the app itself needs.
+2. **`llama setup` installed the broken build.** Its `--version` probe took
+   whatever text came back without looking at the exit status. The loader's line
+   was printed as the version, the build-number check fell into its "said nothing
+   comparable" arm, and the build was moved into place. `--list-devices` then
+   failed the same way, so setup reported *no compute device found … the server
+   will run on the CPU* — a wrong diagnosis on top.
+3. **The launch said *corrupt GGUF or out of memory?*.** #673 taught it llama.cpp's
+   `error…` lines and `E` records, but the loader's line starts with the binary's
+   path.
+
+**What.**
+- `install.sh`: `ensure_openmp` runs after `ensure_starts`, when the hand-over
+  installs llama.cpp (`wants_llama`: `--llama`, `--llama=…`, or `llama setup`).
+  The binary that needs the library is not on disk yet (`setup --llama`
+  downloads it after the `exec`), so the check reads `ldconfig -p` (with
+  `/sbin` and `/usr/sbin` tried, since a non-root `PATH` lacks them) rather than
+  running a binary. It installs `libgomp1` / `libgomp` / `gcc-libs` / `libgomp1`
+  through apt, dnf, pacman or zypper, as root or with password-less `sudo`.
+  Unlike ALSA, a failure does not stop the hand-over: the app runs without the
+  library, and `llama setup` says it again. With `--no-deps` it only prints the
+  line to run.
+- `llama_setup::version_of`: a non-zero `--version` is a refusal. A missing
+  library is named (`missing_library_message`); any other failure is reported
+  with its last line, or its exit status if it printed nothing. On a fresh
+  install the refusal adds that the download is kept: the staging directory
+  stays, and `fetch_verified` finds the complete archives on the next run.
+  `--list-devices` stays lenient, since its exit codes were never measured.
+- `managed`: `missing_library` reads the loader's line and `Said.missing` keeps
+  it. `message` puts it after the parser's refusal and before any log record —
+  a process the loader refused never ran. `missing_library_message` names
+  OpenMP's package on each distribution (Ubuntu/Debian, Fedora, Arch); any other
+  library is named alone.
+
+**Decisions** (taken in the building; the task named both halves). The script
+checks the library cache, because it cannot ask a binary that does not exist
+yet. It does so only when the hand-over installs llama.cpp, so it never adds a
+package nobody asked for. The package table covers OpenMP alone, the one library
+measured missing; a guessed soname-to-package map would be someone else's
+naming, and it would age.
+
+**Tests.** Rust: +5 unit tests. `missing_library` against the measured line and
+lines that are not it; the message per library; the loader line outranks a log
+record; a real child process exiting as the loader does; and `version_of`
+against a stand-in server (`.cmd` on Windows, `sh` elsewhere): a missing
+library, another failure, a silent exit, and the control that runs. Shell: +10
+scenarios in `install_test.sh`, with `ldconfig`, `apt-get` and `sudo` stubbed
+so each arm runs the same as root or not and needs no network: missing →
+installed and the hand-over goes on; no llama.cpp in the hand-over → nothing
+asked (control); the `llama setup` form; present → nothing; `--no-deps`; a
+failed install. 36/36 pass as root and 33/33 as uid 1000 (the `CAP_CHOWN` arm
+skips) in `ubuntu:24.04`, and `shellcheck --severity=warning` is clean.
+Mutation: 5 Rust and 4 shell mutants, all killed; sources restored
+byte-identical.
+
+**Smoke — GO** (2026-10-02; Docker Desktop on WSL2, an RTX 4090, `ubuntu:24.04`
+with curl, CA certificates and ALSA, no `libgomp1`, a fresh container per arm).
+The `cuda-12.8` build `b11332` was seeded into each data directory and pinned
+with `--llama-build`; the branch's binary was built in `rust:1.96.0-bookworm`
+and installed with the branch's `install.sh --from`.
+- **Control — red**: the released `install.sh` and 0.14.0, the README's line.
+  It printed the loader's line as the version, then *no compute device found …
+  the server will run on the CPU*; both servers *FAILED — … corrupt GGUF or out
+  of memory?*.
+- The branch, same line: *libgomp.so.1 is missing … installing … installed*,
+  `version: 0.5.0-dev (build 11332…)`, `devices: CUDA0: NVIDIA GeForce RTX
+  4090`, both servers `ready in 5 s`.
+- The branch with `--no-deps`: the script printed `sudo apt-get install -y
+  libgomp1` and went on. The llama.cpp step and both servers failed with *cannot
+  start: this system has no libgomp.so.1 — OpenMP's runtime … apt-get install
+  libgomp1 (Ubuntu, Debian), dnf install libgomp (Fedora), pacman -S gcc-libs
+  (Arch)*.
+- The branch, a fresh `llama setup --backend cpu` (`b11333`, 16 MB): refused
+  with *The download is kept…*, exit 1, `.tmp-cpu-b11333` left in place. After
+  `apt-get install libgomp1` the same command printed *…is already downloaded*
+  and installed the build with its version.
+
+**Docs.** install.md §1 (`--no-deps`, OpenMP) and §3.1; spec §3.4 (obtaining the
+binary, the early exit); architecture §6 (`ChildExit`) and §12 (`install.sh`);
+CHANGELOG (Fixed); lessons §3 (a probe's output is not its verdict).
+
+**Gates**: fmt / clippy / test green — **3880 unit tests, 256 `#[ignore]`**
+(+5 unit tests); `install_test.sh` 36 scenarios (+10).

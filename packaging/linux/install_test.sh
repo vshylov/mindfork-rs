@@ -139,6 +139,81 @@ check "upgrade" 0 $?
 if [ "$(cat "$WORK/opt/.mindfork-version")" = "v9.9.10" ] && grep -q mine "$WORK/opt/data/settings.json"; then ok=0; else ok=1; fi
 check "the marker moved, the data did not" 0 $ok
 
+# OpenMP's runtime, which llama.cpp's Linux builds need and a bare image lacks
+# (`ubuntu:24.04`, measured 2026-10-02). The system is stubbed — `ldconfig`
+# answers from a state file, `apt-get` records what it was asked and "installs"
+# by writing that file, `sudo` runs what it is given — so every arm runs the
+# same as root or not, on any image, with no network.
+echo "== OpenMP for llama.cpp"
+STUBS="$WORK/stubs"
+STATE="$WORK/state"
+mkdir -p "$STUBS" "$STATE"
+cat >"$STUBS/ldconfig" <<EOF
+#!/bin/sh
+[ -e "$STATE/gomp" ] && printf '\tlibgomp.so.1 (libc6,x86-64) => /usr/lib/libgomp.so.1\n'
+printf '\tlibc.so.6 (libc6,x86-64) => /usr/lib/libc.so.6\n'
+EOF
+cat >"$STUBS/apt-get" <<EOF
+#!/bin/sh
+echo "\$*" >>"$STATE/apt.log"
+[ -e "$STATE/apt-fails" ] && exit 100
+case "\$*" in *libgomp1*) : >"$STATE/gomp" ;; esac
+exit 0
+EOF
+cat >"$STUBS/sudo" <<'EOF'
+#!/bin/sh
+[ "$1" = -n ] && shift
+[ "$1" = true ] && exit 0
+exec "$@"
+EOF
+chmod 0755 "$STUBS/ldconfig" "$STUBS/apt-get" "$STUBS/sudo"
+fresh() { rm -f "$STATE/gomp" "$STATE/apt.log" "$STATE/apt-fails"; }
+asked() { [ -e "$STATE/apt.log" ] && grep -q "install.*libgomp1" "$STATE/apt.log"; }
+omp() { PATH="$STUBS:$PATH" sh "$S" --from "$WORK/rel" --dir "$WORK/opt-omp" --no-link "$@" 2>&1; }
+
+fresh
+out="$(omp -- setup --llama cuda-12)"
+code=$?
+echo "$out" | sed 's/^/     | /'
+check "missing, and the hand-over installs llama.cpp" 0 $code
+asked
+check "…libgomp1 is installed" 0 $?
+echo "$out" | grep -q "^ARGC:3$"
+check "…and the hand-over goes on" 0 $?
+
+fresh
+omp -- setup --ctx 8192 >/dev/null
+asked
+check "control arm: a hand-over that installs no llama.cpp asks for nothing" 1 $?
+
+fresh
+omp -- llama setup --backend cpu >/dev/null
+asked
+check "\`llama setup\` installs llama.cpp too" 0 $?
+
+fresh
+: >"$STATE/gomp"
+omp -- setup --llama=cuda-12 >/dev/null
+[ -e "$STATE/apt.log" ]
+check "present: nothing is installed" 1 $?
+
+fresh
+out="$(omp --no-deps -- setup --llama cuda-12)"
+code=$?
+check "--no-deps: no install, and the hand-over goes on" 0 $code
+asked
+check "…apt-get is not asked" 1 $?
+echo "$out" | grep -q "apt-get install -y libgomp1"
+check "…and the line to run is printed" 0 $?
+
+fresh
+: >"$STATE/apt-fails"
+out="$(omp -- setup --llama cuda-12)"
+code=$?
+check "an install that fails does not stop the hand-over" 0 $code
+echo "$out" | grep -q "could not install it" && echo "$out" | grep -q "apt-get install -y libgomp1"
+check "…it says so and names the line to run" 0 $?
+
 echo "== refusals"
 mkdir -p "$WORK/bad" && cp "$WORK/rel"/* "$WORK/bad/"
 printf 'x' >>"$WORK/bad/mindfork-rs-v9.9.9-x86_64-linux.tar.gz"

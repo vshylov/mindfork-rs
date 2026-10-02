@@ -44,7 +44,7 @@ POSIX script.
 | `--dir DIR` | where to install; default `~/mindfork`. The app's data lives in `DIR/data` (portable mode, §2) |
 | `--version vX.Y.Z` | a particular release; default — the latest |
 | `--from DIR` | install from files already on disk (the archive and `sha256sums.txt`) — no network at all |
-| `--no-deps` | do not install the system library (below); the script then only says what is missing |
+| `--no-deps` | do not install the system libraries (below); the script then only says what is missing |
 | `--no-link` | do not link the binary into `/usr/local/bin` |
 | `-- ARGS…` | when the install is done, run `mindfork ARGS…` — typically `-- setup …` (§3.3) |
 
@@ -58,7 +58,15 @@ starts. On a bare image it does not — the app needs ALSA's runtime library
 the script installs that one package with the system's package manager
 (`apt-get`, `dnf`, `pacman` or `zypper`; as root, or through `sudo` when it needs
 no password), and if it cannot, stops with exit code 3 and the exact command to
-run. Finally it links `/usr/local/bin/mindfork` and prints the version.
+run. When the command after `--` installs llama.cpp (`setup --llama …`,
+`llama setup …`), it also makes sure of **OpenMP's runtime** (`libgomp.so.1`):
+llama.cpp's Linux builds need it, and a bare image lacks it too (measured on
+`ubuntu:24.04`; RunPod's images carry it). The binary that needs it is not on
+disk yet, so the system's library cache is asked instead, and the package —
+`libgomp1`, `libgomp` on Fedora, `gcc-libs` on Arch — is installed the same way;
+if it cannot be, the script says so and goes on, since the app itself runs
+without it and `llama setup` names it again. Finally it links
+`/usr/local/bin/mindfork` and prints the version.
 
 **Running it again is safe and cheap**: a version that is already in place is
 recognised and not downloaded, your data in `DIR/data` is never touched (the
@@ -793,8 +801,10 @@ and note that the CUDA runtime DLLs are downloaded with it (that is where most o
 the size goes). On **Linux** the CUDA
 builds exist since September 2026 (`cuda-12.8`, `cuda-13.3` at the time of
 writing); upstream builds them on Ubuntu 24.04, so expect them to want a system
-at least that new — the command runs the binary after unpacking and says so if
-it cannot start. `rocm-*` is AMD's own
+at least that new — the command runs the binary after unpacking and refuses a
+build that cannot start, naming a missing library and its package (on a bare
+image that is OpenMP's `libgomp.so.1`; the download is kept, so the same command
+after installing it fetches nothing). `rocm-*` is AMD's own
 stack, `sycl`/`openvino` are Intel's. The list is derived from the release, so a
 backend upstream adds or renames shows up without an app update.
 
