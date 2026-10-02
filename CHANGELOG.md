@@ -14,6 +14,19 @@ split by subsystem.
 
 ## [Unreleased]
 
+## [0.14.1] — 2026-10-02
+
+**A rented GPU box that starts, or says why not.** On a RunPod B200 the
+README's line ended with neither server working and a status that blamed the
+model: the `cuda-13` build of llama.cpp was newer than the pod's driver and
+died while warming up, the embedding server was taken for the pod's own nginx
+on port 8001, and both were relaunched over and over. A server that dies now
+shows the error it logged — naming the `cuda-12` build where the driver is too
+old — a port another program holds is refused, and a crash gets its three
+restarts. On a bare Linux image `install.sh` installs the OpenMP runtime
+llama.cpp needs, and the GPU kernels a server compiles are kept with the data,
+which saves about a minute of every start on a B200. Nothing stored changes.
+
 ### Changed
 - **The GPU kernels a local server compiles are kept with the app's data**
   (`cuda-cache/`). On a card the llama.cpp build has no kernels of its own for
@@ -3041,7 +3054,8 @@ history is in the [docs/journal/](docs/journal/) log).
   (notes/RAG/self-model, sqlite-vec, per-profile isolation). Schema format is
   v1; schema versioning and migrations are formalized in later releases.
 
-[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.14.1...HEAD
+[0.14.1]: https://github.com/vshylov/mindfork-rs/compare/v0.14.0...v0.14.1
 [0.14.0]: https://github.com/vshylov/mindfork-rs/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/vshylov/mindfork-rs/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/vshylov/mindfork-rs/compare/v0.11.2...v0.12.0
