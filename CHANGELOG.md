@@ -14,6 +14,13 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Changed
+- **The GPU kernels a local server compiles are kept with the app's data**
+  (`cuda-cache/`). On a card the llama.cpp build has no kernels of its own for
+  — a B200, an H100 — every start used to compile them again on a rented pod,
+  since the driver's own cache sits on the disk a stop clears: about a minute of
+  each start on a B200. A `CUDA_CACHE_PATH` you set yourself still wins.
+
 ### Fixed
 - **A local server that stops says why.** When `llama-server` dies while starting,
   the status now carries the error it logged — not *corrupt GGUF or out of

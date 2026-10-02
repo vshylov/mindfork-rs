@@ -66,6 +66,7 @@ machine. On Windows the profile's own permissions do that.
 | Diagnostics | `logs/` | no — see §6 |
 | The Python sandbox runtime | `sandbox/` | no |
 | llama.cpp builds downloaded by `mindfork llama setup` | `llama/` | no |
+| GPU kernels the NVIDIA driver compiled for the local llama.cpp server — unless your own `CUDA_CACHE_PATH` names another place | `cuda-cache/` | no |
 | Spellcheck dictionaries, locales, colour themes, the words you added yourself | `dictionaries/`, `locales/`, `themes/`, `personal_dictionary.txt` | the personal dictionary holds words you added |
 
 None of this is uploaded anywhere by the app. Copying the folder to another

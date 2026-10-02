@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (86)
+## Entries (87)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -98,6 +98,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: thinking on the Claude 4.5 generation, which has no adaptive mode (done)
 - Post-M9: the efforts xAI lists, read instead of configured (done)
 - Post-M9: a pod's failures say what they are — the logged cause, a taken port, one report per death (done)
+- Post-M9: the CUDA kernel cache lives with the data (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -6118,3 +6119,78 @@ run); server-health-monitoring F4; roadmap; CHANGELOG (Fixed); lessons §3.
 
 **Gates**: fmt / clippy / test green — **3872 unit tests, 256 `#[ignore]`**
 (+16 unit tests, +3 live smokes).
+
+### Post-M9: the CUDA kernel cache lives with the data (done)
+
+**Why.** A card the llama.cpp build has no kernels of its own for compiles them
+from PTX at every start. On a RunPod B200 with `cuda-12.8` that was about 60 s of
+a 93 s start, and 35 s once cached (measured 2026-10-02, cloud-provisioning §7).
+The driver keeps that cache in `~/.nv/ComputeCache`, which on a pod is the
+container disk a stop clears, so every pod restart paid the minute again. The
+owner asked whether `install.sh` should set it.
+
+**Not in `install.sh`** (the user's decision, 2026-10-02, on the proposal). A
+variable the script exports reaches only the `setup` it runs; the app the user
+starts later in `tmux` would not see it unless the script wrote a shell profile.
+The app sets it instead, for its own children, on every platform.
+
+**What.** `server_command` gives the managed `llama-server` `CUDA_CACHE_PATH` =
+`ManagedConfig.kernel_cache` — `Paths::cuda_cache_dir()`, `data/cuda-cache/`,
+created before the spawn — unless the app's own environment names one, which the
+child then inherits (`kernel_cache_for`; an empty value names nothing).
+`CUDA_CACHE_DISABLE` is the driver's and still applies. The path rides on
+`BinaryLookup::kernel_cache` (set by `from_paths`, `None` in tests), the struct
+`managed_config` and `managed_embed_config` already read, so the app and
+`setup --verify` give their servers one cache. Not `llama/cuda-cache`: a
+directory under `llama/` reads as an install named `cuda`, tag `cache`. The
+backup's allow-list leaves it out and a restore leaves it alone.
+
+**Platforms.** On Windows and a desktop Linux the driver's default cache already
+persists, so there the change moves ~50–130 MB into the data root and saves
+nothing. One behaviour everywhere was preferred to a branch for the one place
+it pays (the proposal's recommendation).
+
+**Not set:** `CUDA_CACHE_MAXSIZE`. The measured caches (134 MB on the B200 with
+two servers, 56 MB here) fit the driver's default, which was not looked up; a
+bigger set of models may evict and pay part of the compile again.
+
+**Tests** (+3 unit). `kernel_cache_for`: ours by default, the user's variable
+wins, an empty one names nothing. `server_command` carries the variable and makes
+the directory, and sets nothing without a configured cache. `from_paths` gives the
+data root's cache and both builders pass it on. Mutation: 6 mutants on the new
+lines, all killed; sources restored byte-identical.
+
+**Smoke — GO** (2026-10-02; Docker Desktop on WSL2, an RTX 4090 through
+`--gpus all`, driver 617.14). A pod, imitated: a named volume as `/workspace`, a
+fresh container per start (a pod's stop clears its container disk the same way),
+`ubuntu:24.04` with `curl`, `ca-certificates`, `libasound2t64` and `libgomp1`. The
+README's line installed 0.14.0 and `cuda-12.8` of `b11332`; gemma-4-E2B Q8_0 and
+bge-m3 on the volume. `CUDA_FORCE_PTX_JIT=1` makes the 4090 compile from PTX, as
+a B200 must.
+
+| start, each in a new container | ready in | the cache |
+|---|---|---|
+| 0.14.0 — **control** | 39 s | `/root/.nv`, 56 MB, gone with the container |
+| 0.14.0 again — **control** | 39 s | the same, again |
+| the branch, first | 39 s | `data/cuda-cache/`, 56 MB |
+| the branch, again | **2 s** | read from `data/cuda-cache/` |
+| the branch, `CUDA_CACHE_PATH=/workspace/own-cache` | 39 s | there; `data/cuda-cache` untouched |
+| the branch, `CUDA_CACHE_DISABLE=1` | 42 s | none |
+
+The Linux binary was built in `rust:1.96.0-bookworm` from the branch. Not run:
+the native Windows path, where the local build carries no PTX to force; its
+command is the same function, covered by the unit tests.
+
+**Found beside it.** A bare `ubuntu:24.04` has no `libgomp1`, and llama.cpp's
+CUDA build does not start without it (`error while loading shared libraries:
+libgomp.so.1`). RunPod's images carry it; `install.sh` installs only ALSA. The
+loader's line also starts with the binary's path, not `error`, and is not an `E`
+record, so even after #673 the status says *corrupt GGUF or out of memory?*.
+Left for a follow-up.
+
+**Docs.** spec §3.4; architecture §6 (`server_command`); install.md §3.1,
+§3.4; PRIVACY.md §2 (+ the site's page); cloud-provisioning §5, §7; CHANGELOG
+(Changed).
+
+**Gates**: fmt / clippy / test green — **3875 unit tests, 256 `#[ignore]`**
+(+3 unit tests).

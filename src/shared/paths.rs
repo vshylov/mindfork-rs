@@ -425,6 +425,21 @@ impl Paths {
         self.root.join("logs")
     }
 
+    /// Where the CUDA driver keeps the kernels it compiles for the managed
+    /// `llama-server`s (`cuda-cache/`) — given to them as `CUDA_CACHE_PATH`
+    /// unless the environment names one (spec §3.4).
+    ///
+    /// Derived data: deleting it costs one compile on the next start. A card
+    /// the llama.cpp build has no kernels of its own for compiles them from
+    /// PTX at every start without a cache — about 60 s on a B200, measured —
+    /// and the driver's default cache (`~/.nv/ComputeCache`) is on a
+    /// container's disk, which a rented pod clears at every stop; the data
+    /// root is on its volume. Like `llama/`, it is outside `features::backup`'s
+    /// allow-list: neither packed nor removed by a restore.
+    pub fn cuda_cache_dir(&self) -> PathBuf {
+        self.root.join("cuda-cache")
+    }
+
     /// Backups directory (`backups/`).
     pub fn backups_dir(&self) -> PathBuf {
         self.root.join("backups")
@@ -466,6 +481,7 @@ mod tests {
         assert!(p.chats_dir().ends_with("chats"));
         assert!(p.dictionaries_dir().ends_with("dictionaries"));
         assert!(p.log_dir().ends_with("logs"));
+        assert!(p.cuda_cache_dir().ends_with("cuda-cache"));
     }
 
     #[test]

@@ -2043,7 +2043,13 @@ its own — or named by `api_key_env`, resolved through the same
   `Enter` (`screens/settings/helpers.rs::extra_args_error`). `server_command`
   builds the `Command` and `env_remove`s `llama_args::scrubbed_env(role)` —
   the `LLAMA_*` names of the flags refused outright, so none arrives through the
-  inherited environment. The table's spellings are llama.cpp's
+  inherited environment. It also gives the child `CUDA_CACHE_PATH` =
+  `ManagedConfig.kernel_cache` (`Paths::cuda_cache_dir`, `data/cuda-cache/`,
+  created before the spawn) unless the app's own environment names one —
+  `kernel_cache_for` decides; the lookup both `managed_config` and
+  `managed_embed_config` read (`BinaryLookup::kernel_cache`, set by
+  `from_paths`, `None` in tests) is what keeps the app and `setup --verify` on
+  one cache. The table's spellings are llama.cpp's
   (build 11191); `llama_args::the_table_matches_the_binary_live` checks them against
   a real `--help`, and `every_flag_the_app_writes_is_judged` against `build_args`.
   Spec §3.4, docs/research/managed-extra-args.md.
