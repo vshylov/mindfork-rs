@@ -673,7 +673,7 @@ src/
    │  │                     it had texts is an error) and RetryEmbedder (a transient
    │  │                     failure asked again under retry.rs's RetryPolicy — the
    │  │                     clouds only). See spec §6.8, §9.3
-   │  ├─ managed.rs         ServerHandle (managed llama-server process), ManagedConfig, wait_until_ready, ChildExit
+   │  ├─ managed.rs         ServerHandle (managed llama-server process), ManagedConfig, wait_until_ready, ChildExit, PortLedger
    │  ├─ llama_args.rs      the user's raw server arguments: which are refused per ManagedRole
    │  │                     (a field's flag, the connection, an agent, a fetch) and which LLAMA_*
    │  │                     variables the child loses — a table read from llama.cpp's --help
@@ -2014,13 +2014,28 @@ its own — or named by `api_key_env`, resolved through the same
   `wait_until_ready(..., exited)` stops polling right away with a clear error —
   instead of waiting out the timeout (which would otherwise hang in
   "connecting…" until `MANAGED_READY_TIMEOUT=600s`). `exited` is a
-  **`ChildExit`**: the token plus the first line the child's output readers
-  saw that llama.cpp's argument parser refuses a launch with (`error: …`,
-  ANSI-stripped), which becomes the message instead of the corrupt-GGUF guess.
-  `supervise` wires a spawned child: two `forward_lines` readers and
-  `spawn_monitor`, which after the process's exit awaits the readers for at most
-  `OUTPUT_DRAIN` (1 s) before arming the token — the exit and the last line race,
-  and a grandchild holding the pipe must not hold the probe.
+  **`ChildExit`**: the token, a second token `reaped` (armed once the process is
+  gone for any reason, its own exit or the kill a dropped handle asked for), and
+  what the output readers kept in a `Said` — the first line llama.cpp's argument
+  parser refuses a launch with (`error: …`), else the first **error-level
+  record** (`error_record`: `[timestamp] E <message>`, ANSI-stripped, padding
+  collapsed) of the latest burst (records under `BURST_GAP` = 2 s apart), kept
+  only when the burst ended within `CAUSE_WINDOW` = 10 s of the reaping, which
+  the monitor stamps. `message` turns that into *refused to start: …*, *stopped
+  with an error: …* — with the way out for CUDA's unsupported-PTX error
+  (`ptx_newer_than_driver`) — or the corrupt-GGUF guess. `supervise` wires a
+  spawned child: two `forward_lines` readers and `spawn_monitor`, which after the
+  process's exit awaits the readers for at most `OUTPUT_DRAIN` (1 s) before
+  arming the token — the exit and the last line race, and a grandchild holding
+  the pipe must not hold the probe.
+  **Ports:** `launch` is `preflight` + `spawn`; **`PortLedger::launch`** — every
+  launch `LlamaSupervisor` makes — puts `port_taken` (a bind of
+  `127.0.0.1:<port>`, the address the probe uses; `--verify`'s check too) between
+  them and refuses a taken port with `ui.err.managed.port_busy`, which names the
+  settings field. The ledger keeps a `Claim` per server it launched (port, the
+  handle's `kill` token, its `ChildExit`): a taken port whose holder is a claim
+  with its handle dropped and `reaped` not yet armed is our own server a restart
+  is replacing, and is launched onto as before; reaped claims are pruned.
   **Raw arguments** (`ManagedConfig.extra_args`, appended last by `build_args`;
   `ManagedConfig.role` says which section wrote the line): `launch` asks
   `llama_args::check(extra_args, role)` before any preflight and bails with
@@ -2185,7 +2200,17 @@ describes the present rather than the moment the server was configured
   process, so `Orchestrator::relaunch_dead_managed_servers` re-`apply`s it under a
   crash-loop budget (`RestartBudget`: ≤3 per 5 min, reset on reaching `Ready`),
   mirroring `McpManager`. External/cloud servers are never relaunched — we don't
-  own the process, and their monitor recovers them by itself.
+  own the process, and their monitor recovers them by itself. Two things keep the
+  count honest. A child that died before the first verdict is reported by that
+  verdict alone — `spawn_probe` stops there instead of entering the watch, whose
+  `exited` arm would report the same death again and, arriving after the
+  relaunch, kill the new server and spend a second slot. And a slot whose apply
+  came back `Disconnected` synchronously — a refused launch, no process — is
+  marked in `EngineManager::refused` and skipped by `needs_relaunch` until the
+  next apply or a monitor's report; another server's status used to bring it
+  back and refuse it again. The budget's reset is only as good as `Ready`: a
+  stranger answering on the port passed for one, which is what the port check
+  above removes.
 
 The embeddings probe **doesn't** make RAG eager (ADR 0002): it's a `/health`
 GET, and the embedder itself is still first touched on a real call. Without it

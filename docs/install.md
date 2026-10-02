@@ -787,8 +787,10 @@ Build b10883 (2026-09-09), windows/x86_64:
 **Which backend.** `cpu` works anywhere and is the smallest. `vulkan` is the
 easy GPU choice — it runs on NVIDIA *and* AMD through the driver you already
 have, and costs 30 MB against CUDA's 600. `cuda-*` is the fastest on NVIDIA;
-pick the version your driver supports, and note that the CUDA runtime DLLs are
-downloaded with it (that is where most of the size goes). On **Linux** the CUDA
+pick the version your driver supports — the *CUDA Version* `nvidia-smi` prints;
+a newer build can still list the GPU and then stop at the first kernel (§3.4) —
+and note that the CUDA runtime DLLs are downloaded with it (that is where most of
+the size goes). On **Linux** the CUDA
 builds exist since September 2026 (`cuda-12.8`, `cuda-13.3` at the time of
 writing); upstream builds them on Ubuntu 24.04, so expect them to want a system
 at least that new — the command runs the binary after unpacking and says so if
@@ -1215,6 +1217,18 @@ without `--mmproj` reports; the projector is a second file, §3.
   binary does not start. `cuda-12` is a *family* (§3.1): it keeps working when
   llama.cpp moves to the next CUDA minor — across three pod runs it went
   `b11081` → `b11101` → `b11102` and the line did not change.
+- **`cuda-12`, not `cuda-13`, unless the driver is at least as new as the build.**
+  On a card the build has no kernels of its own for — A100, H100/H200, B200 —
+  the driver compiles the build's PTX when the server starts, and a driver can
+  only compile PTX from a CUDA no newer than itself (`nvidia-smi` prints its
+  *CUDA Version*). Measured 2026-10-01 on a B200 whose driver is 13.2: the
+  `cuda-13.4` build installed, listed the GPU, and both servers stopped at their
+  warm-up with `CUDA error: the provided PTX was compiled with an unsupported
+  toolchain` — which the app shows, with the way out
+  (`mindfork llama setup --backend cuda-12 --set-binary`). That compile happens
+  on every start of such a card and is not measured yet for `cuda-12`; keeping
+  its cache on the volume pays it once:
+  `export CUDA_CACHE_PATH=/workspace/.nv/ComputeCache` before `setup` and the app.
 - **A pod *reset* clears the container disk but keeps the volume**, so after one
   the line finds the app and the sandbox's downloads in place, repacks the
   sandbox image (that lives on the container disk) and **downloads llama.cpp
@@ -1228,7 +1242,9 @@ without `--mmproj` reports; the projector is a second file, §3.
   (`F1` → *Commands* lists the command behind every key).
 - **Port 8001 is taken on every RunPod pod** — by the image's own `nginx`
   (`ss -ltnp` shows it), and 8001 is the embedding server's default. `--verify`
-  says so and names the way out; add it to the line once:
+  says so and names the way out, and so does the app, which does not start a
+  server on a port another program holds (*Settings → Model/server → Embeddings*
+  carries the reason); add it to the line once:
   `--set embed.managed.port=8011`. The chat server's 8000 is free there.
 - **A model on a network volume may load slowly through mmap**; if `--verify`
   shows minutes where you expected seconds, add `--set engine.managed.no_mmap=true`.

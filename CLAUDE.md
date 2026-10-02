@@ -179,8 +179,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-10-02, version 0.14.0)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3856 unit tests
-green, 253 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **3872 unit tests
+green, 256 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump regenerator).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -192,6 +192,10 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **A pod's failures say what they are** — a managed server that dies shows the
+  error it logged (a CUDA build newer than the driver names `cuda-12`), a port
+  another program holds is refused, one death is one relaunch. Live **GO**
+  ([docs/journal/engine.md](docs/journal/engine.md), spec §3.4).
 - **The `max` effort is a stored value** — added with no schema step: 0.13.0,
   measured, refuses settings that hold it and leaves a chat that holds it out of
   its list in silence. `settings.json` and the chat files are stamped 4 → 5, and

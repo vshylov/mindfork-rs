@@ -15,7 +15,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::shared::api::embed_policy::{BatchedEmbedder, RetryEmbedder};
 use crate::shared::api::llama_args::ManagedRole;
-use crate::shared::api::managed::ChildExit;
+use crate::shared::api::managed::{ChildExit, PortLedger};
 use crate::shared::api::{
     AnthropicClient, Embedder, EngineBackend, GeminiClient, KeyVerdict, ManagedConfig,
     OpenAiClient, ResponsesClient, ServerHandle, UnavailableEmbedder, retry, wait_until_ready,
@@ -174,6 +174,9 @@ pub struct LlamaSupervisor {
     /// The gateway's provider-wide settings as last told
     /// ([`ServerSupervisor::set_gateway`]); the defaults until then.
     gateway: std::sync::RwLock<OpenRouterSettings>,
+    /// Every managed launch goes through it: a port a stranger holds is refused,
+    /// one our own replaced server is still letting go of is not.
+    ports: PortLedger,
 }
 
 impl LlamaSupervisor {
@@ -183,6 +186,7 @@ impl LlamaSupervisor {
         Self {
             lookup: BinaryLookup::from_paths(paths),
             gateway: Default::default(),
+            ports: PortLedger::default(),
         }
     }
 
@@ -221,7 +225,7 @@ impl ServerSupervisor for LlamaSupervisor {
             ),
             ServerMode::Managed => {
                 let cfg = managed_config(&settings.managed, ManagedRole::Assistant, &self.lookup);
-                managed_chat_setup(cfg, cancel, status_tx, loc)
+                managed_chat_setup(&self.ports, cfg, cancel, status_tx, loc)
             }
             ServerMode::OpenAi
             | ServerMode::Gemini
@@ -271,7 +275,7 @@ impl ServerSupervisor for LlamaSupervisor {
             ImpersonationMode::Managed => {
                 let cfg =
                     managed_config(&settings.managed, ManagedRole::Impersonation, &self.lookup);
-                managed_chat_setup(cfg, cancel, status_tx, loc)
+                managed_chat_setup(&self.ports, cfg, cancel, status_tx, loc)
             }
             ImpersonationMode::OpenAi
             | ImpersonationMode::Gemini
@@ -353,7 +357,7 @@ impl ServerSupervisor for LlamaSupervisor {
                     if !cfg.is_runnable() {
                         return unavailable_embed();
                     }
-                    match ServerHandle::launch(&cfg, loc) {
+                    match self.ports.launch(&cfg, loc) {
                         Ok(handle) => {
                             let client = Arc::new(OpenAiClient::new(handle.base_url()));
                             // A large GGUF loads for seconds; the probe accounts for an
@@ -490,8 +494,10 @@ fn external_chat_setup(
 /// Managed chat setup: launch a child `llama-server`, a background probe (accounting
 /// for an early process exit). An empty binary **or an unset model** →
 /// `NotConfigured` ([`ManagedConfig::is_runnable`], which carries the measurement
-/// behind the model half).
+/// behind the model half); a port a stranger holds → `Disconnected` saying so
+/// ([`PortLedger`]).
 fn managed_chat_setup(
+    ports: &PortLedger,
     cfg: ManagedConfig,
     cancel: CancellationToken,
     status_tx: UnboundedSender<ServerStatus>,
@@ -500,7 +506,7 @@ fn managed_chat_setup(
     if !cfg.is_runnable() {
         return not_configured();
     }
-    match ServerHandle::launch(&cfg, loc) {
+    match ports.launch(&cfg, loc) {
         Ok(handle) => {
             let client = Arc::new(OpenAiClient::new(handle.base_url()));
             spawn_probe(
@@ -902,9 +908,19 @@ fn spawn_probe(
         if cancel.is_cancelled() {
             return;
         }
+        // A child that died before the first verdict has just been reported dead
+        // by that verdict. Phase 2's first act would be to report the same exit
+        // again, and the orchestrator — which relaunches on the first report —
+        // took the second for the *new* server's death: it killed the process it
+        // had started a moment before and spent a second slot of the relaunch
+        // budget on it (the pod log of 2026-10-01: two launches 40 ms apart for
+        // every crash). A verdict of `Ready` goes on, so an exit right after it
+        // is still reported.
+        let died = !matches!(status, ServerStatus::Ready)
+            && exited.as_ref().is_some_and(ChildExit::is_exited);
         let mut health = Health::new(matches!(status, ServerStatus::Ready));
-        if status_tx.send(status).is_err() {
-            return; // the orchestrator is gone
+        if status_tx.send(status).is_err() || died {
+            return; // the orchestrator is gone, or there is nothing left to watch
         }
 
         // Phase 2 — keep watching. Without this the status would describe the moment
@@ -1126,6 +1142,9 @@ pub struct MockSupervisor {
     /// Report `UnavailableEmbedder` instead of the `MockEmbedder` fallback — the
     /// only way to express "no embedder at all" (see `with_backend_no_embedder`).
     embed_unavailable: bool,
+    /// Refuse every chat launch with this reason, synchronously — the way a
+    /// managed launch refuses a missing model or a port a stranger holds.
+    chat_refusal: Option<String>,
 }
 
 #[cfg(test)]
@@ -1141,6 +1160,7 @@ impl MockSupervisor {
             embed_dim: 16,
             embedder: None,
             embed_unavailable: false,
+            chat_refusal: None,
         }
     }
 
@@ -1157,6 +1177,7 @@ impl MockSupervisor {
             embed_dim: 16,
             embedder,
             embed_unavailable: false,
+            chat_refusal: None,
         }
     }
 
@@ -1170,6 +1191,14 @@ impl MockSupervisor {
         Self {
             embed_unavailable: true,
             ..Self::with_backend_and_embedder(backend, None)
+        }
+    }
+
+    /// A supervisor whose every chat launch is refused before anything starts.
+    pub fn refusing_chat(reason: &str) -> Self {
+        Self {
+            chat_refusal: Some(reason.to_string()),
+            ..Self::with_backend(None)
         }
     }
 
@@ -1200,6 +1229,13 @@ impl ServerSupervisor for MockSupervisor {
             .lock()
             .unwrap()
             .push(stored_key.map(str::to_string));
+        if let Some(reason) = &self.chat_refusal {
+            return ChatSetup {
+                backend: None,
+                handle: None,
+                status: ServerStatus::Disconnected(reason.clone()),
+            };
+        }
         let backend = self.backend.clone();
         // The mock engine is ready instantly: we hand back `Ready` as the immediate
         // status (rather than `Connecting` + an async probe), otherwise the
@@ -1268,6 +1304,9 @@ impl ServerSupervisor for MockSupervisor {
 mod gateway_tests;
 
 #[cfg(test)]
+mod live_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::shared::api::EmbedRole;
@@ -1311,6 +1350,7 @@ mod tests {
                 exe_dir: None,
             },
             gateway: Default::default(),
+            ..Default::default()
         };
         eprintln!(
             "resolved: {:?}",
@@ -1405,6 +1445,7 @@ mod tests {
                 exe_dir: None,
             },
             gateway: Default::default(),
+            ..Default::default()
         }
         .apply_embed(&settings, None, CancellationToken::new(), tx, ru());
         assert_ne!(
@@ -1467,6 +1508,7 @@ mod tests {
                 exe_dir: None,
             },
             gateway: Default::default(),
+            ..Default::default()
         }
         .apply_embed(&settings, None, CancellationToken::new(), tx, ru());
         assert!(setup.handle.is_none(), "no process is started");
@@ -2512,6 +2554,130 @@ mod tests {
             ServerStatus::Disconnected(msg) => assert!(msg.contains("файл модели"), "{msg}"),
             other => panic!("expected Disconnected, got {other:?}"),
         }
+    }
+
+    /// A managed server whose port a stranger holds is not started: the probe
+    /// would take the stranger's answers for ours (RunPod's nginx on 8001, the
+    /// pod log of 2026-10-01). Both call sites — the embedder's and the chat
+    /// servers' — and no probe behind the refusal, so nothing relaunches it.
+    #[tokio::test]
+    async fn a_managed_server_on_a_taken_port_is_not_started() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let model = dir.path().join("model.gguf");
+        std::fs::write(&model, b"gguf").expect("write a model");
+        let held = std::net::TcpListener::bind("127.0.0.1:0").expect("bind a stranger");
+        let port = held.local_addr().unwrap().port();
+        let binary = Some(dir.path().join("llama-server").display().to_string());
+        let model = Some(model.display().to_string());
+        let supervisor = LlamaSupervisor::default();
+        let said_busy = |status: &ServerStatus| match status {
+            ServerStatus::Disconnected(msg) => {
+                msg.contains(&format!("порт {port} занят другой программой"))
+                    && msg.contains("Порт")
+            }
+            _ => false,
+        };
+
+        let (tx, mut rx) = unbounded_channel();
+        let embed = EmbedSettings {
+            mode: ServerMode::Managed,
+            managed: ManagedEmbedSettings {
+                binary: binary.clone(),
+                model_path: model.clone(),
+                port,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let setup = supervisor.apply_embed(&embed, None, CancellationToken::new(), tx, ru());
+        assert!(said_busy(&setup.status), "{:?}", setup.status);
+        assert!(setup.handle.is_none());
+        assert!(
+            tokio::time::timeout(Duration::from_secs(5), rx.recv())
+                .await
+                .expect("the sender is dropped, not held by a probe")
+                .is_none(),
+            "a refused launch has no probe"
+        );
+
+        let (tx, _rx) = unbounded_channel();
+        let chat = EngineSettings {
+            mode: ServerMode::Managed,
+            managed: ManagedSettings {
+                binary,
+                model_path: model,
+                port,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let setup = supervisor.apply_chat(&chat, None, CancellationToken::new(), tx, ru());
+        assert!(said_busy(&setup.status), "{:?}", setup.status);
+        assert!(setup.handle.is_none() && setup.backend.is_none());
+        drop(held);
+    }
+
+    /// A child that died before the probe's first verdict is reported dead
+    /// **once**. A second report reached the orchestrator after it had already
+    /// relaunched, read as the new server's death, and killed it — two launches
+    /// 40 ms apart for every crash in the pod log of 2026-10-01.
+    #[tokio::test]
+    async fn a_child_dead_before_its_first_verdict_is_reported_once() {
+        let (url, _switch) = spawn_stub_server(false).await;
+        let (tx, mut rx) = unbounded_channel();
+        spawn_probe(
+            Arc::new(OpenAiClient::new(&url)),
+            MANAGED_READY_TIMEOUT,
+            Some(ChildExit::exited_saying(None)),
+            CancellationToken::new(),
+            tx,
+            ru(),
+        );
+        let wait = Duration::from_secs(5);
+        match tokio::time::timeout(wait, rx.recv())
+            .await
+            .expect("a verdict")
+        {
+            Some(ServerStatus::Disconnected(_)) => {}
+            other => panic!("expected Disconnected, got {other:?}"),
+        }
+        assert_eq!(
+            tokio::time::timeout(wait, rx.recv())
+                .await
+                .expect("the probe must end, not wait"),
+            None,
+            "the exit was reported twice"
+        );
+    }
+
+    /// The other side of the same guard: an exit right after a `Ready` verdict
+    /// is still reported — the probe stops only when its verdict was the death.
+    #[tokio::test]
+    async fn an_exit_after_a_ready_verdict_is_still_reported() {
+        let (url, _switch) = spawn_stub_server(true).await;
+        let (tx, mut rx) = unbounded_channel();
+        spawn_probe(
+            Arc::new(OpenAiClient::new(&url)),
+            MANAGED_READY_TIMEOUT,
+            Some(ChildExit::exited_saying(None)),
+            CancellationToken::new(),
+            tx,
+            ru(),
+        );
+        let mut seen = Vec::new();
+        while let Some(status) = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("the probe must end, not wait")
+        {
+            seen.push(status);
+        }
+        assert!(
+            matches!(
+                seen.as_slice(),
+                [ServerStatus::Ready, ServerStatus::Disconnected(_)]
+            ),
+            "{seen:?}"
+        );
     }
 
     /// The cloud has nothing to load and no `/health` — it stays `Ready` right away,

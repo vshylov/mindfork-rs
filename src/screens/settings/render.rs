@@ -755,9 +755,16 @@ impl SettingsScreen {
             let used_left: usize = title_spans.iter().map(|s| span_width(s)).sum();
             let used_right: usize = chip.iter().map(|s| span_width(s)).sum();
             let head_w = head_area.width as usize;
-            if head_w > used_left + used_right + 1 {
-                title_spans.push(Span::raw(" ".repeat(head_w - used_left - used_right - 1)));
+            // The room right of the title, the row's last column kept free.
+            let room = head_w.saturating_sub(used_left + 1);
+            if used_right < room {
+                title_spans.push(Span::raw(" ".repeat(room - used_right)));
                 title_spans.extend(chip);
+            } else {
+                // Cut, not dropped: the longest chip is a refused launch's reason —
+                // a port another program holds, a model file that is not there —
+                // and this is the one place an embedder's reason is shown.
+                title_spans.extend(crate::widgets::status_bar::cut_chip(chip, room));
             }
         }
         let mut head_lines = vec![Line::from(title_spans)];

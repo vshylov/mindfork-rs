@@ -154,6 +154,15 @@ port nobody is listening on until the timeout.
 *If you'd rather keep this PR narrow, (b) is a clean subset and the relaunch can
 follow separately.*
 
+*Later (2026-10-02).* Two holes in (a), found on a RunPod pod: a child that died
+before the first verdict was reported twice — by the verdict and by the watch
+that followed it — and the second report, arriving after the relaunch, killed
+the new server and spent a second slot; and the budget's reset on `Ready` could
+be bought by a stranger on the port, whose `404` the probe reads as ready. The
+probe now stops after a death verdict, a port another program holds is refused
+before the spawn, and a launch refused that way is not relaunched until the
+settings change ([journal/engine.md](journal/engine.md)).
+
 ### F5 — Where does the timer live?
 
 - **(a) Turn `spawn_probe` into a looping monitor task per server** (one task,

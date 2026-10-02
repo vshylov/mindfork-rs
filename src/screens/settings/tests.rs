@@ -574,6 +574,48 @@ fn model_section_shows_active_subsection_server_chip() {
     assert!(!t.contains("готов") && !t.contains("подключение"));
 }
 
+/// A reason longer than the header is cut with the mark a cut carries, not
+/// dropped: it is the one place an embedder's reason is shown, and the longest
+/// reasons are the ones that say what to do — a port another program holds
+/// (the pod log of 2026-10-01). The control: a short chip is drawn whole.
+#[test]
+fn a_long_server_reason_is_cut_not_dropped() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    let head = |s: &mut SettingsScreen| -> String {
+        let mut term = Terminal::new(TestBackend::new(94, 12)).unwrap();
+        term.draw(|f| s.render(f)).unwrap();
+        let buf = term.backend().buffer();
+        (0..buf.area.width)
+            .map(|x| buf[(x, 1)].symbol().to_string())
+            .collect()
+    };
+    let mut s = screen();
+    s.model_sub = ModelTab::Embeddings;
+    let why = "порт 8001 занят другой программой — выберите другой: Настройки → Модель/сервер → Эмбеддинги → Порт (сервер не запущен: иначе её ответы сошли бы за его)";
+    s.set_server_statuses(ServerStatuses {
+        chat: ServerStatus::Ready,
+        embed: ServerStatus::Disconnected(why.into()),
+        impersonation: ServerStatus::NotConfigured,
+    });
+    let row = head(&mut s);
+    assert!(
+        row.contains("эмбеддинги: нет связи: порт 8001 занят") && row.contains('…'),
+        "{row}"
+    );
+
+    s.set_server_statuses(ServerStatuses {
+        chat: ServerStatus::Ready,
+        embed: ServerStatus::Disconnected("порт 8001 занят".into()),
+        impersonation: ServerStatus::NotConfigured,
+    });
+    let row = head(&mut s);
+    assert!(
+        row.contains("порт 8001 занят") && !row.contains('…'),
+        "{row}"
+    );
+}
+
 #[test]
 fn embeddings_tab_has_the_input_convention_field() {
     // The one control for per-model input prefixes. It lives in the Embeddings

@@ -396,7 +396,9 @@ makes a restart need no typing at all.
    message; it should name the image family.
 3. **First-launch JIT on A100/H100** against `MANAGED_READY_TIMEOUT` (600 s),
    with the JIT cache on the disk that is cleared. `CUDA_CACHE_PATH` on the
-   volume is the likely answer; §7 measures.
+   volume is the likely answer; §7 measures. A JIT also needs a driver as new
+   as the build's CUDA: on a B200 with a 13.2 driver `cuda-13.4` aborts at the
+   first kernel (§7, the fourth run).
 4. **GitHub's 60 requests an hour, per address, in a datacenter.** `llama
    setup` costs one. If the probe shows it biting, the R6-compatible escape is
    an option that *names* the variable (`--token-env <NAME>`), never an
@@ -530,6 +532,25 @@ to 8011 with one `--set`, both servers came up together. The refusal now names
 that `--set`. **The probe's go/no-go is
 GO**; what `pod_probe.sh` would still add is the JIT on an 8.0/9.0 card, a
 network volume's read speed, and `machine-id` across a stop.
+
+**A fourth run, the owner's (2026-10-01, a B200, compute capability 10.0, a
+driver for CUDA 13.2; `--llama cuda-13`, a Qwen3.8-Flash-Next Q8_0 in six parts
+at `--ctx 131072`, bge-m3 as the embedder), found the other half of §3.1's
+inference.** `cuda-13` resolved to `cuda-13.4` of `b11327`; the build installed
+and listed the GPU, and both servers aborted at their warm-up (exit 134) with
+`E CUDA error: the provided PTX was compiled with an unsupported toolchain`, in
+`ggml_cuda_kernel_can_use_pdl`. 10.0 is not in upstream's native list, so the
+kernels are PTX for the driver to compile — and a driver compiles PTX only from
+a CUDA no newer than itself. The runtime starts regardless (minor-version
+compatibility), which is why `--list-devices` passed. The app said none of it:
+the status read *corrupt GGUF or out of memory?*, and the embedder, on 8001
+behind RunPod's nginx (the TUI had no port check, `--verify` did), was
+relaunched 17 times in ten seconds — nginx's `404` passed for a ready server and
+reset the budget — while every chat crash cost two launches 40 ms apart. Fixed
+in the app ([journal/engine.md](../journal/engine.md), "a pod's failures say
+what they are"); the recipe stays `cuda-12` (install.md §3.4). Still not
+measured: `cuda-12`'s PTX compile on such a card against the 600 s ready
+timeout.
 
 **Unit.** The `b11070` names as a fixture next to `B10883`: Linux CUDA pairing,
 the tagged `.tar.gz` runtime, a partial release, family resolution and its

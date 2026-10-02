@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (85)
+## Entries (86)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -97,6 +97,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the `max` effort, and Claude's own top tiers — stage 2, track complete (done)
 - Post-M9: thinking on the Claude 4.5 generation, which has no adaptive mode (done)
 - Post-M9: the efforts xAI lists, read instead of configured (done)
+- Post-M9: a pod's failures say what they are — the logged cause, a taken port, one report per death (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -5986,3 +5987,134 @@ research §8, §9; grok-xai-provider.md §7b.
 
 **Gates**: fmt / clippy / test green — **3849 unit tests, 253 `#[ignore]`**
 (+13 unit tests, +4 live smokes).
+
+### Post-M9: a pod's failures say what they are — the logged cause, a taken port, one report per death (done)
+
+**The report.** The owner ran the README's line on a RunPod pod (2026-10-01) with
+`--llama cuda-13`, a Qwen3.8-Flash-Next Q8_0 in six parts at `--ctx 131072` and
+bge-m3, and pasted the log. Neither server came up, and the app said why for
+neither. Three defects, one diagnosis.
+
+**The diagnosis.** `cuda-13` resolved to `cuda-13.4` of `b11327`. The card was a
+**B200** (compute capability 10.0, `nvidia-smi`: driver 595.91.07, *CUDA Version
+13.2*). 10.0 is not in upstream's native architecture list, so the kernels are PTX
+the driver compiles at start, and a driver compiles PTX only from a CUDA no newer
+than itself: both servers aborted at their warm-up (exit 134) with
+`E CUDA error: the provided PTX was compiled with an unsupported toolchain`. The
+runtime itself starts — minor-version compatibility — so `--list-devices` passed.
+The way out is `cuda-12`, which the README's line already uses.
+
+**Defect 1 — the reason never reached the user.** The chip said *corrupt GGUF or
+out of memory? — see logs*: `ChildExit` kept only the argument parser's
+`error: …` line (managed-extra-args F6), and everything else llama.cpp says as it
+dies is an error-level *record*, `[timestamp] E <message>`. Now `Said` keeps the
+first record of the **latest burst** (records under 2 s apart; the first is the
+cause, the rest the aftermath — `current device: 0`, `exiting due to HTTP server
+error`), and only if the burst ended within 10 s of the reaping, which the monitor
+now stamps: a request error an hour into serving must not take the blame for a
+crash that prints nothing. The message is *llama-server stopped with an error: …*,
+and for CUDA's unsupported-PTX error it adds the way out
+(`mindfork llama setup --backend cuda-12 --set-binary`, or a newer driver). The
+classifier matches NVIDIA's words; if they change, the hint goes and the record is
+still shown (lessons §4).
+
+**Defect 2 — a stranger on the port passed for our server.** Port 8001 is RunPod's
+own nginx (measured 2026-09-22; `--verify` has refused it since). The **app** had
+no such check: it started the embedder anyway, the probe read nginx's `404` as
+"alive and not loading" → `Ready`, `Ready` reset the relaunch budget, the child
+died on its bind, and the cycle ran **17 times in ten seconds**, ended by a race,
+not by the budget. Now every managed launch goes through `PortLedger::launch`:
+preflight, then `port_taken` (the same bind `--verify` uses, now shared), then the
+spawn. A taken port is refused with the settings field that moves it. The one
+holder that is no stranger is our own server a restart is replacing — the handle
+is dropped and the kill lands on the monitor task a moment after the new launch,
+so a plain bind check would refuse every settings-edit restart. The ledger keeps a
+claim per launched server (port, the handle's kill token, a new `reaped` token
+armed when the process is gone by exit *or* kill) and lets a launch onto a port
+whose holder is ours and leaving.
+
+**Defect 3 — every crash cost two launches.** In the log each chat crash was
+followed by two launches 40 ms apart. A child that dies before the probe's first
+verdict was reported by that verdict and again by the watch that follows it — its
+`exited` arm fires at once. The orchestrator relaunched on the first, took the
+second for the *new* server's death, killed it and spent a second budget slot. The
+probe now stops after a death verdict (a `Ready` one still goes on, so an exit
+right after it is reported).
+
+**Found while measuring, fixed with it.**
+- *A refused launch was retried.* `relaunch_dead_managed_servers` said a
+  synchronous refusal "never reaches this path"; another server's report brought
+  it there, so the refused embedder was "relaunched" three times, refused each
+  time. `EngineManager::refused` marks a slot whose apply came back `Disconnected`
+  synchronously; `needs_relaunch` skips it until the next apply or a monitor's
+  report.
+- *The settings header dropped a chip that did not fit* — the one place an
+  embedder's reason is shown, so a long reason (this one, or a missing model with
+  a long path) was shown nowhere. It is cut now with the status bar's own
+  `cut_chip`, made public for it rather than copied. The busy-port text was
+  reordered to say what to do before why, so the cut falls after the route.
+
+**Decisions** (the user's "all three points", 2026-10-02; point 2's mechanism
+was left open in the proposal). A check before the spawn rather than a stricter
+probe: a `200`-only rule for managed servers would still pass another
+`llama-server` the user started on that port. The exemption is by the handle's
+state, not by time. The check comes after the preflight, so a missing model is
+said first — and the existing missing-model test stays independent of whatever
+listens on 8001 on the machine running it.
+
+**Tests** (+16 unit, +3 live). `managed.rs`: `error_record` on the pod log's own
+lines and the ones that are not records; the burst's first record; the cause
+window and its control; the burst gap; the message order (refusal, record, CUDA
+hint, generic); a real process printing the CUDA record; `port_taken` with its
+control; the ledger refusing a stranger (control: the freed port reaches `spawn`),
+naming a missing model first, launching onto its own leaving server but not a
+reaped one or a live one; `reaped` armed on exit and on kill, and the exit
+stamped. `supervisor.rs`: both call sites refuse a taken port with no probe
+behind; one report for a death before the verdict; `Ready` then the death still
+reported. Orchestrator: a refused launch not retried, a monitor's death report
+still relaunched. Settings: a long reason cut, a short one whole. Mutation: 15
+mutants on the new lines plus 3 on the follow-ups, all killed; sources restored
+byte-identical (diff fingerprint).
+The three live smokes sit in `app/supervisor/live_tests.rs`, a file named as
+tests: inline in `supervisor.rs` they counted as uncovered production code, and
+the first push read 70.8 % on new code against Sonar's 80 % floor. Rehearsed with
+`cargo llvm-cov` after the move: 96.8 % (the server agreed). The file's
+`use super::*` then became the one new issue: Sonar's `rust:S2208` exempts a
+module named `tests`, not one named `live_tests`, so it imports by name — and
+`sonar-project.properties`, which said any name containing `test` was exempt,
+now says which.
+
+**Smoke — GO** (2026-10-02; llama.cpp b11191 CUDA, RTX 4090, Windows 11).
+- `a_stranger_on_the_port_is_refused_live`, bge-m3 and a stub answering `404`
+  like nginx. **Control red:** the launch without the ledger — the probe said
+  `Ok(())` with the stranger on the port, and the child died with *stopped with an
+  error: srv start: couldn't bind HTTP server socket, …*. Through the supervisor:
+  refused, nothing spawned, no probe; the same settings on a free port `Ready`.
+- `a_restart_onto_our_own_port_goes_through_live`: the handle dropped, the old
+  process still on the port. **Control:** a ledger that never launched it calls
+  the port taken. The supervisor's restart: `Connecting`, then `Ready`.
+- `a_load_failure_is_reported_once_with_its_cause_live`, a text file as the GGUF:
+  exactly one `Disconnected` — *stopped with an error: gguf_init_from_reader:
+  invalid magic characters: 'this', expected 'GGUF'*.
+- Every other managed live test (14 in all, `MINDFORK_LLAMA_DIR` through a
+  junction to the local build): green.
+- **The app, headless** (`console_probe`'s `Session`, a fresh data root, a chat
+  model that is not a GGUF, the embedder on a port a `404` server holds), against
+  `main` built from `0efe166d` and this branch. `main`: chat launches at :35.321,
+  :37.351, **:37.355**, :39.400 — the 4 ms pair is defect 3; the embedder launched
+  onto the stranger's port and the bar read **`● emb`**; the chip *exited before
+  becoming ready (corrupt GGUF or out of memory? — see logs)*. Branch: four chat
+  launches ~2 s apart, none onto the stranger, the chip *stopped with an error:
+  gguf_init_from_reader: invalid magic characters…*, the bar `✕ emb`, and
+  *Settings → Model/server → Embeddings* headed *✕ embeddings: no connection: port
+  7096 is taken by another program — choose …*.
+- Not reproducible here: the CUDA error itself (this card has native kernels and
+  a newer driver); its record is the pod log's, as a fixture.
+
+**Docs.** spec §3.4 and the health paragraph; architecture §6 (`ServerHandle`,
+ports, relaunch); install.md §3.1 and §3.4 (`cuda-12` vs `cuda-13`,
+`CUDA_CACHE_PATH`, port 8001 in the app); cloud-provisioning §5, §7 (the fourth
+run); server-health-monitoring F4; roadmap; CHANGELOG (Fixed); lessons §3.
+
+**Gates**: fmt / clippy / test green — **3872 unit tests, 256 `#[ignore]`**
+(+16 unit tests, +3 live smokes).

@@ -1126,6 +1126,18 @@ for every crate the bumped one shares with the rest of the graph, and when a
 feature set grew, ask for the narrow feature by name instead of the umbrella.
 — *`zip` 2.4.2 → 8.6.0 — what a green build does not say about a bump*.
 
+**A crash-loop guard is only as good as the success that resets it.** The
+relaunch budget — three per five minutes, cleared on `Ready` — was right, and a
+RunPod pod still relaunched the embedder 17 times in ten seconds: `Ready` came
+from a probe that takes any answer but `503` as alive, nginx held the port, and
+every cycle bought a fresh budget before the child died on its bind. A guard
+that resets on a signal inherits every way that signal can lie; ask what else
+can produce it. The same log held a quieter twin: one death reported twice — by
+the probe's verdict and by the watch after it — reached the orchestrator as two
+deaths, the second landing after the relaunch and killing it. When two paths
+can announce one event, decide which one owns it, or the consumer counts both.
+— *a pod's failures say what they are*.
+
 ## 4. The recurring defect class: a message must close the door
 
 **Never let a message describe a situation without saying what is and is not possible
