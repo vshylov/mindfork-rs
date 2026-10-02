@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (54)
+## Entries (55)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -66,6 +66,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Release 0.12.0 (prepared)
 - Release 0.13.0 (prepared)
 - Release 0.14.0 (prepared)
+- Release 0.14.1 (prepared)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -3232,3 +3233,56 @@ every reversible check first. Full record —
   `releases/latest` resolves to `v0.14.0`. The README's install line, run as written in
   a container as an unprivileged user without `CAP_CHOWN`: `mindfork v0.14.0`, `sha256
   ok`, unpacked, `mindfork 0.14.0`.
+
+### Release 0.14.1 (prepared)
+
+- **A release PR** per the checklist in [AGENTS.md §6](../../AGENTS.md), branch
+  `chore/release-0.14.1`: bumped `Cargo.toml` `0.14.0 → 0.14.1` (+ `Cargo.lock`,
+  one line), `site/zola.toml` `app_version`, `CHANGELOG.md` — `[Unreleased]` →
+  `[0.14.1] — 2026-10-02` under a lead paragraph, a fresh empty `[Unreleased]`
+  opened, comparison links updated — and the version in CLAUDE.md's status
+  heading. The `v0.14.1` tag is applied by the user after the merge. Gates green,
+  on Windows: **3880 passed, 256 `#[ignore]`**, `clippy -D warnings`, `fmt`, every Python gate of the
+  Lints job by exit code, and `release_guard.py --tag v0.14.1` accepting the tag —
+  its notes the `[0.14.1]` section, 40 lines (the `notes.md` it writes into the
+  working tree is untracked and was removed, not committed).
+- **A PATCH by the letter of §6.** Since `v0.14.0`: a managed server's failures
+  said for what they are (PR 673), what `cuda-12` costs on a B200 (674, docs),
+  the CUDA kernel cache kept with the data (675) and OpenMP on a bare image
+  (676), plus the release checklist's previous-binary step (671–672, docs).
+  `[Unreleased]` held one item under *Changed* and five under *Fixed*, none
+  under *Added*. Every one of them came out of the owner's two B200 pods
+  ([cloud-provisioning.md](../research/cloud-provisioning.md) §7, the fourth
+  and fifth runs) or the Docker imitation of one.
+- **Why a release now**: the README's line is the road to a pod, and on a B200
+  it ended with neither server working and a status that blamed the model. The
+  OpenMP step reaches `releases/latest/download/install.sh` only with a
+  published release — the reason 0.11.1 was cut.
+- **No `Data` rubric, by measurement of what each item writes.** No schema
+  constant and no stored type moved: `git diff v0.14.0 -- src/shared/storage
+  src/shared/config.rs src/entities src/features/data_migration.rs
+  src/features/backup.rs` is empty, so there is no new value for the previous
+  binary to be run on. The one new thing on disk is `data/cuda-cache/`, which
+  the NVIDIA driver writes: it is outside the backup's allow-list (`TOP_DIRS`),
+  so a backup does not pack it and a restore does not clear it, as with
+  `data/llama/`; and `v0.14.0`'s source never names it, so a downgrade leaves
+  it unread.
+- **The release post** follows the order the owner met it on the pod. First
+  what the B200 said and what it meant — the PTX a driver can compile only from
+  a CUDA no newer than itself, in one paragraph — and the four fixes. Then the
+  minute back, with the fifth run's table (93 / 35 / 98 s, 134 MB), the bare
+  image, and the data. Every figure is the CHANGELOG's or cloud-provisioning.md
+  §7's. `llms.txt` regenerated from its front matter; the site checked and built
+  with the pinned Zola 0.23.6 after `site_sync_assets.py` — 28 pages and two
+  sections, the post at `blog/mindfork-0-14-1/`, the home page's structured
+  data says `0.14.1`. `site.yml` holds the deploy until the release is public.
+- **Owed to the draft** (§6 step 5). `install.sh` changes for the first time
+  since 0.11.1, so its digest is no longer `d0c4a156…` and the job's install
+  step should report ten more passes than 0.14.0's 27. The ten new scenarios
+  stub `ldconfig`, `apt-get` and `sudo` on `PATH`, and `has_openmp` takes the
+  first `ldconfig` it finds, so the runner's own `libgomp1` cannot answer for
+  the stub. The release job's install of its own archive hands over
+  `--version`, which installs no llama.cpp, so the OpenMP step does not run
+  there. The draft's own archive and script on a bare `ubuntu:24.04` is the
+  check the job cannot make. The Docker stand that measured PR 676 was deleted
+  on 2026-10-02 and rebuilds in about six minutes.
