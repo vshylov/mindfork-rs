@@ -136,9 +136,10 @@ effort tiers — have all closed
   — deliberately not collected today (spec §9.6,
   [mcp-server-editor.md](history/mcp-server-editor.md) S4(b)).
 - **Provisioning — optional measurements and the wider box** — **on demand**.
-  `tools/pod_probe.sh` on an A100/H100 for the JIT (a B200 with a 13.2 driver
-  showed it needs a driver at least as new as the build: `cuda-13.4` aborted, and
-  `cuda-12`'s compile time is still unmeasured), a network volume's read
+  `tools/pod_probe.sh` on an A100/H100 for the JIT (measured on a B200 instead:
+  `cuda-13.4` needs a driver at least as new as itself and aborted on 13.2;
+  `cuda-12.8` compiles for about 60 s a start, 35 s once cached — an 8.0/9.0
+  card is the same mechanism), a network volume's read
   speed, `machine-id` across a stop
   ([cloud-provisioning.md §8](research/cloud-provisioning.md), stage 2); and,
   from its §9, Vulkan in containers, source builds, a CUDA build of our own.
