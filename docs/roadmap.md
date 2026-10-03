@@ -28,9 +28,19 @@ evidence. Adding or closing an item is part of every task's documentation step
 
 ## Most valuable next
 
-**No track is open.** The last two — small windows, and the reasoning effort
-a model does not have — closed on 2026-09-30 and 2026-10-01 and ship together
-in 0.14.0 ([Closed](#closed)); what the first left is listed in its research's
+**Promotion — making mindfork findable** (opened 2026-10-03). The application
+has no audience yet — four unique visitors to the repository in two weeks, no
+stars — and the plan, accepted by the owner, is in
+[promotion.md](research/promotion.md): the storefront first (topics, social
+preview, Discussions, an animated demo generated from code, a README and a hero
+that lead with the self-model), then the friction of a first try (Ollama
+recipe, Scoop, AUR, a macOS study), then the communities — the repeatable ones
+before the one-shot ones. Its first code track is the animated demo
+(§6 there); it also feeds the reputation Windows code signing waits on.
+
+The last two code tracks — small windows, and the reasoning effort a model
+does not have — closed on 2026-09-30 and 2026-10-01 and ship together in
+0.14.0 ([Closed](#closed)); what the first left is listed in its research's
 §9.4, and the second left nothing open. Before them, the OpenRouter mode
 shipped whole in 0.13.0; what it left on demand is under *Engine and
 providers* below.
@@ -454,8 +464,15 @@ effort tiers — have all closed
   crates.io (done), an AUR package and a winget manifest — the next two items.
 - **winget manifest** — **deferred**: pointing at the portable zip until the
   setup executable is signed ([installers.md §5.4](history/installers.md)).
-- **AUR `mindfork-rs-bin`** — **on demand**; the release already ships an Arch
-  package built by nfpm.
+- **AUR `mindfork-rs-bin`** — **planned**, stage 1 of the promotion plan
+  ([promotion.md §4](research/promotion.md)); the release already ships an
+  Arch package built by nfpm.
+- **A Scoop manifest** — **planned**, the same stage: Scoop takes an unsigned
+  binary, so Windows gets a package manager before winget can have one.
+- **macOS** — **planned as research**: no build, no runner, and no Mac on the
+  owner's desk; how to build and test it without one is
+  [promotion.md §5](research/promotion.md), and its own research document
+  comes first.
 - **MSI for GPO/Intune** — **on demand**.
 - **GPG signing of the Linux packages** — **idea**
   ([code-signing.md §6.4](research/code-signing.md), out of scope there).
@@ -482,7 +499,8 @@ effort tiers — have all closed
   "nice to have"): a port-in-use
   diagnosis for the managed server (only `setup --verify` refuses a busy port
   today); per-release debuginfo; the commit hash in `--version`; a demo
-  recording; `linguist-vendored` for the vendored grammars; a warning that
+  recording (now planned — generated from code, [promotion.md
+  §6](research/promotion.md)); `linguist-vendored` for the vendored grammars; a warning that
   restoring a stranger's backup restores its MCP commands; MCP stdout lines read
   unbounded; the site's CSP header and the Download button's contrast;
   `generation.rs`'s size as a contributor barrier.
