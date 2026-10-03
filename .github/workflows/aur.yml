@@ -1,0 +1,108 @@
+# Publishing `mindfork-rs-bin` to the AUR — the Arch channel beside the
+# release's own `.pkg.tar.zst` (docs/research/package-managers.md). The AUR
+# holds a PKGBUILD per package and an Arch user's helper (`yay`, `paru`) builds
+# it; this package repackages the release's own Arch package, so what lands on
+# the machine is the tree release.yml built, checksummed and attested.
+#
+# Every run renders the PKGBUILD for the release (tools/aur_package.py), then
+# builds it, lints it, installs it and runs it on Arch (packaging/aur/check.sh)
+# — and only then pushes it, together with the `.SRCINFO` makepkg wrote there.
+# It runs on:
+#
+#   - `release: published` — beside crates.io, once the owner has published the
+#     draft; a prerelease never reaches the AUR.
+#   - `workflow_dispatch` — a release by its tag (default: the latest), which
+#     is how the first version goes up, or one again after a failed run.
+#
+# **Nothing is pushed without `AUR_SSH_PRIVATE_KEY`**, the private half of a
+# key registered with the owner's AUR account: without it the run builds and
+# checks, says so in a notice, and stays green. The AUR's host key is pinned
+# below — taken with `ssh-keyscan` and matched against the Ed25519 fingerprint
+# the AUR publishes on its home page (SHA256:RFzBCUItH9LZS0cKB5UE6ceAYhBD5C8GeOBip8Z11+4,
+# 2026-10-03) — so a push goes to the AUR or nowhere.
+name: AUR
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "The release to publish, vX.Y.Z (empty: the latest)"
+        type: string
+        default: ""
+
+# One push at a time: two releases published close together must not race
+# for the AUR's single branch.
+concurrency:
+  group: aur
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: mindfork-rs-bin
+    if: ${{ github.event_name == 'workflow_dispatch' || !github.event.release.prerelease }}
+    runs-on: ubuntu-latest
+    # Measured in an archlinux:base-devel container: a system upgrade, the
+    # 13 MB download and the build — about two minutes on a fast line.
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Which release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ -z "$TAG" ]; then
+            TAG="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          echo "Publishing $TAG"
+      - name: Render the PKGBUILD from the release's checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern sha256sums.txt --dir release
+          python3 tools/aur_package.py --version "$TAG" --sums release/sha256sums.txt --out aur
+      # The image is a bootstrap: check.sh upgrades the system first, the way an
+      # Arch user's machine is, so a digest pin would only freeze the starting point.
+      - name: Build, lint, install and run it on Arch
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: docker run --rm -v "$PWD:/w" -w /w archlinux:base-devel bash packaging/aur/check.sh aur "$VERSION"
+      - name: Push to the AUR
+        env:
+          AUR_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -z "$AUR_KEY" ]; then
+            echo "::notice::AUR_SSH_PRIVATE_KEY is not set - mindfork-rs-bin $VERSION was built and checked, not published"
+            exit 0
+          fi
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$AUR_KEY" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+          echo 'aur.archlinux.org ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEuBKrPzbawxA/k2g6NcyV5jmqwJ2s+zpgZGZ7tpLIcN' > ~/.ssh/known_hosts
+          export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/aur -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts"
+          # Cloning a package that does not exist yet gives an empty repository,
+          # and the first push creates it.
+          git -c init.defaultBranch=master clone ssh://aur@aur.archlinux.org/mindfork-rs-bin.git aur-repo
+          cp aur/PKGBUILD aur/.SRCINFO aur/LICENSE aur-repo/
+          cd aur-repo
+          git add PKGBUILD .SRCINFO LICENSE
+          if git diff --cached --quiet; then
+            echo "The AUR already has mindfork-rs-bin $VERSION - nothing to push"
+            exit 0
+          fi
+          git -c user.name="Vladimir Shylov" -c user.email="vladimir.shylov@outlook.com" \
+            commit -m "Update to $VERSION"
+          git push origin master
+          echo "Pushed mindfork-rs-bin $VERSION: https://aur.archlinux.org/packages/mindfork-rs-bin"

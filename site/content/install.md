@@ -28,6 +28,16 @@ any terminal. Uninstalling takes all of it back out.
 > than our word for it. The state of signing is on the
 > [code signing policy](/code-signing-policy/) page.
 
+**Scoop**, if that is how your terminal gets its tools — the release's archive,
+its hash checked, with your data kept in `%APPDATA%` so an update leaves it alone:
+
+```powershell
+scoop bucket add mindfork https://github.com/vshylov/scoop-bucket
+scoop install mindfork/mindfork
+```
+
+Scoop runs no installer, so SmartScreen has nothing to say.
+
 **The archive — `mindfork-rs-v<version>-x86_64-windows.zip`.** The same binary
 with nothing installed anywhere: unpack it and run `mindfork.exe`. The app keeps
 its data next to itself, so the folder — or the USB stick it sits on — is
@@ -46,6 +56,9 @@ sudo apt install ./mindfork-rs_<version>-1_amd64.deb        # Debian, Ubuntu
 sudo dnf install ./mindfork-rs-<version>-1.x86_64.rpm       # Fedora, RHEL
 sudo pacman -U   ./mindfork-rs-<version>-1-x86_64.pkg.tar.zst   # Arch
 ```
+
+On **Arch** the same package is in the AUR, updated by every release:
+`yay -S mindfork-rs-bin` (or `paru`, or any helper).
 
 **The archive — `mindfork-rs-v<version>-x86_64-linux.tar.gz`** — is the portable
 route, the same as on Windows: unpack, run `./mindfork`, and the data folder

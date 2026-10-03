@@ -78,7 +78,7 @@ for: `gh attestation verify <archive> --repo vshylov/mindfork-rs`.
 
 ### Linux packages (deb / rpm / pkg.tar.zst)
 
-Each release ships system packages:
+Each release ships system packages (on Arch, the AUR has the same one — below):
 
 ```bash
 sudo apt install ./mindfork-rs_X.Y.Z-1_amd64.deb        # Debian/Ubuntu
@@ -131,6 +131,34 @@ The installer is **unsigned** — on first run Windows SmartScreen will show a w
 ("Windows protected your PC" → "More info" → "Run anyway"). File integrity can be
 verified against the release's `sha256sums.txt`. As an alternative — the portable
 `windows.zip` (no install).
+
+### Scoop (Windows)
+
+```powershell
+scoop bucket add mindfork https://github.com/vshylov/scoop-bucket
+scoop install mindfork/mindfork
+```
+
+The bucket ([vshylov/scoop-bucket](https://github.com/vshylov/scoop-bucket))
+installs the release's portable `windows.zip`, its hash checked, and writes a
+`defaults.json` beside the binary with `{"mode":"system"}` (§2.1): the data lives
+in `%APPDATA%\mindfork-rs\data`, so `scoop update mindfork` — and `scoop
+uninstall` — leave it in place. `mindfork` goes on `PATH`, and a Start-menu entry
+is made. The bucket picks up a new release by itself within four hours. Scoop
+downloads the zip rather than running an installer, so SmartScreen has nothing to
+say.
+
+### AUR (Arch Linux)
+
+```bash
+yay -S mindfork-rs-bin        # or paru, or any AUR helper
+```
+
+`mindfork-rs-bin` installs the release's own Arch package — the same layout as
+`pacman -U` above: the binary in `/usr/lib/mindfork-rs/`, data in
+`~/.local/share/mindfork-rs`. Every published release updates it, and its
+PKGBUILD is built, installed and run on Arch before it is pushed
+(`packaging/aur/`, docs/research/package-managers.md).
 
 ### From crates.io (`cargo install`)
 

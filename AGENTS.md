@@ -279,7 +279,12 @@ data format change adds an item to `CHANGELOG.md` → `[Unreleased]` (§4).
    number never becomes free again — so the upload waits for step 5 to have
    happened. The workflow also runs by hand (`workflow_dispatch`), where it
    is a rehearsal by default (`dry_run: true`, everything but the upload)
-   and a publish when that box is cleared.
+   and a publish when that box is cleared. **The AUR** starts on the same
+   event: `.github/workflows/aur.yml` renders `mindfork-rs-bin` for the tag,
+   builds, installs and runs it on Arch, and pushes it with
+   `AUR_SSH_PRIVATE_KEY` (without the secret it checks and stops). **Scoop**
+   needs nothing: the bucket's Excavator (`vshylov/scoop-bucket`) picks the
+   release up within four hours (docs/research/package-managers.md).
 8. **The site follows by itself.** When `crates-io.yml` completes, `site.yml`
    runs again, its gate (`tools/site_release_gate.py`) now finds the release
    published, and the deploy held since step 2 goes out — the post, `app_version`

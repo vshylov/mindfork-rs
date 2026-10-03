@@ -107,6 +107,16 @@ or in a container, the same line again repairs what a restart lost
 curl -fsSL https://github.com/vshylov/mindfork-rs/releases/latest/download/install.sh | sh
 ```
 
+Or through a package manager — **Scoop** on Windows, the **AUR** on Arch:
+
+```powershell
+scoop bucket add mindfork https://github.com/vshylov/scoop-bucket; scoop install mindfork/mindfork
+```
+
+```bash
+yay -S mindfork-rs-bin
+```
+
 Or build from source with a recent stable Rust (edition 2024):
 
 ```bash

@@ -15,6 +15,9 @@ on:
       # The pinned Inno Setup compiler both this gate and release.yml install:
       # a change to the pin is a change to what compiles the installer.
       - "tools/install_inno.ps1"
+      # The AUR package's renderer — its job below checks what it writes.
+      - "tools/aur_package.py"
+      - ".github/workflows/aur.yml"
       - "Cargo.toml"
       - "Cargo.lock"
       - "dictionaries/**"
@@ -265,6 +268,35 @@ jobs:
           sh packaging/linux/install.sh --dir /opt/released --no-link -- --version | tee released.log
           grep -q "sha256 ok" released.log
           grep -Eq "^mindfork [0-9]+\.[0-9]+\.[0-9]+" released.log
+
+  # The AUR package (aur.yml, docs/research/package-managers.md): the PKGBUILD
+  # this tree renders, for the latest published release, built, linted,
+  # installed and run on Arch by the same script aur.yml runs before it pushes.
+  # A change to the template is tried here, on its pull request, rather than on
+  # the next release day. Against a published release because the package
+  # repackages one: it has no build of its own to stand on.
+  aur:
+    name: AUR package (mindfork-rs-bin)
+    runs-on: ubuntu-latest
+    # Measured in an archlinux:base-devel container: about two minutes, the
+    # system upgrade and the 13 MB download being the network parts.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Render the PKGBUILD for the latest release
+        id: render
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern sha256sums.txt --dir release
+          python3 tools/aur_package.py --version "$tag" --sums release/sha256sums.txt --out aur
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+      - name: Build, lint, install and run it on Arch
+        env:
+          VERSION: ${{ steps.render.outputs.version }}
+        run: docker run --rm -v "$PWD:/w" -w /w archlinux:base-devel bash packaging/aur/check.sh aur "$VERSION"
 
   windows-installer:
     name: Windows installer (compile .iss)
