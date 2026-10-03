@@ -1,0 +1,36 @@
+# Maintainer: Vladimir Shylov <vladimir dot shylov at outlook dot com>
+#
+# Rendered for each release by tools/aur_package.py from packaging/aur/PKGBUILD.in
+# in https://github.com/vshylov/mindfork-rs (.github/workflows/aur.yml publishes it).
+# Change it there: this copy is rewritten on the next release.
+
+pkgname=mindfork-rs-bin
+pkgver=@VERSION@
+pkgrel=1
+pkgdesc='A terminal AI chat: local models via llama.cpp or cloud providers, with persistent memory, notes, RAG and tools'
+arch=('x86_64')
+url='https://mindfork.io'
+license=('MIT')
+# What namcap finds the binary and the tree need: libasound for speech, glibc
+# and libgcc_s for any Rust binary, the hicolor hierarchy for the icons.
+depends=('alsa-lib' 'glibc' 'hicolor-icon-theme' 'libgcc')
+provides=('mindfork-rs')
+conflicts=('mindfork-rs')
+backup=('usr/lib/mindfork-rs/defaults.json')
+# The release's binary as it was built, attested and checksummed — not
+# stripped again, and no debug package split from a binary that has no symbols.
+options=('!strip' '!debug')
+source_x86_64=("https://github.com/vshylov/mindfork-rs/releases/download/v${pkgver}/mindfork-rs-${pkgver}-1-${CARCH}.pkg.tar.zst")
+sha256sums_x86_64=('@SHA256@')
+
+package() {
+  # The release's own Arch package (nfpm, packaging/nfpm.yaml), which its
+  # release workflow built and smoke-tested: makepkg has unpacked it into
+  # $srcdir, and its tree is this package — its metadata files are not.
+  cp -a "${srcdir}/usr" "${pkgdir}/"
+  # Arch keeps a package's licence under /usr/share/licenses/<pkgname>. A copy,
+  # not a link to the one in /usr/share/doc: pacman's NoExtract commonly drops
+  # documentation (the archlinux image does), which would leave a link dangling.
+  install -Dm644 "${srcdir}/usr/share/doc/mindfork-rs/LICENSE" \
+    "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+}

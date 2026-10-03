@@ -4336,6 +4336,15 @@ Principles:
   same in five bare images, plus the download path. A tag is checked
   against `Cargo.toml` and the CHANGELOG by `tools/release_guard.py` before
   anything builds, and the release is created as a draft (AGENTS.md §6).
+- **Package managers** (docs/research/package-managers.md): **Scoop** from a
+  bucket of its own, `vshylov/scoop-bucket` — the release's Windows zip, a
+  `defaults.json` saying `system` written beside it, Excavator bumping it from the
+  releases with the hash read from `sha256sums.txt`; **the AUR's
+  `mindfork-rs-bin`** — `packaging/aur/PKGBUILD.in` rendered per release by
+  `tools/aur_package.py`, repackaging the release's own `.pkg.tar.zst`, built,
+  linted, installed and run on Arch by `packaging/aur/check.sh` before
+  `aur.yml` pushes it (on `release: published`, with the owner's key; the AUR's
+  host key pinned). `packaging.yml` runs the same check on packaging pull requests.
 - **The animated demo** (docs/research/demo-reel.md §3.6): the release's
   `demo-reel` job plays the scripted turn through the tag's own interface
   (`dump_demo_reel`, `app/runtime/demo_reel.rs`) and draws it with
