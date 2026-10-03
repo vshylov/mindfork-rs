@@ -3516,3 +3516,18 @@ every reversible check first. Full record —
   in `ci.yml` is on `main` already, an intended word split); `actions_pin_check`,
   link, Cyrillic and index gates clean; `site_llms_txt --check` still matches.
   No Rust changed — 3892 unit tests as before.
+- **What the Sonar gate caught on the PR** (new-code security rating C → gate
+  red): two `pythonsecurity:S8707` — `--sums` and `--out` reached `read_text`
+  and `mkdir` unvalidated, the trap docs/lessons.md §1 records, met a fourth
+  time. Fixed the way `screenshots.py` was: `confined()` resolves
+  each path and refuses it unless `is_relative_to` the repository, the base both
+  workflows' paths sit in, called in `write` right before the reads and writes.
+  The base is a parameter so the self-test can confine to its temporary
+  directory, and the self-test now proves the guard: `--out` beside the base,
+  through `..` and in a directory sharing its prefix, and `--sums` outside it,
+  are refused with nothing created. Mutants: no check — five failures; a
+  `startswith` prefix in its place — two (the prefix case). With it, the two
+  maintainability findings the gate let through: `@SHA256@` spelt three times
+  (S1192, now `VERSION_MARK`/`SHA256_MARK`) and `self_test` at complexity 22
+  (S3776, now four `_check_*` parts like `indexnow.py`'s). The snippet analyzer
+  is clean on the result; the taint engine is measured by the PR analysis alone.

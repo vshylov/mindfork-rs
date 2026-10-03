@@ -35,7 +35,9 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 TEMPLATE = REPO / "packaging" / "aur" / "PKGBUILD.in"
 LICENSE = REPO / "packaging" / "aur" / "LICENSE"
-PLACEHOLDERS = ("@VERSION@", "@SHA256@")
+VERSION_MARK = "@VERSION@"
+SHA256_MARK = "@SHA256@"
+PLACEHOLDERS = (VERSION_MARK, SHA256_MARK)
 
 VERSION = re.compile(r"v?(\d+\.\d+\.\d+)")
 SUMS_LINE = re.compile(r"([0-9a-fA-F]{64})\s+\*?(?:\./)?(\S+)")
@@ -74,11 +76,28 @@ def render(template: str, version: str, sha256: str) -> str:
     for placeholder in PLACEHOLDERS:
         if template.count(placeholder) != 1:
             raise Refusal(f"the template holds {placeholder} {template.count(placeholder)} times")
-    return template.replace("@VERSION@", version).replace("@SHA256@", sha256)
+    return template.replace(VERSION_MARK, version).replace(SHA256_MARK, sha256)
 
 
-def write(tag: str, sums_path: Path, out: Path) -> Path:
+def confined(path: Path, base: Path, what: str) -> Path:
+    """Canonicalize a CLI-supplied path and refuse it outside `base`.
+
+    Both paths the release workflows pass (`release/sha256sums.txt`, `aur`) sit
+    in the checkout, so the repository is the base. Resolve first, then
+    `is_relative_to` — not a `startswith` prefix, the partial-traversal pitfall —
+    which is what `pythonsecurity:S8707` asks of a path-taking tool
+    (docs/lessons.md §1).
+    """
+    resolved = path.resolve()
+    if not resolved.is_relative_to(base.resolve()):
+        raise Refusal(f"{what} {path} resolves outside {base}")
+    return resolved
+
+
+def write(tag: str, sums_path: Path, out: Path, base: Path = REPO) -> Path:
     version = version_of(tag)
+    sums_path = confined(sums_path, base, "--sums")
+    out = confined(out, base, "--out")
     sha256 = sha256_of(sums_path.read_text(encoding="utf-8"), asset_name(version))
     out.mkdir(parents=True, exist_ok=True)
     pkgbuild = out / "PKGBUILD"
@@ -97,6 +116,8 @@ b7da088bbee0e0f516d7e137e0c222feee97eafbb1424213f63b10dd715e051a  ./install.sh
 381572bdefac8c13cdc2341cef3b7ef8cece9807b80799ae64e65454a3bbe4e7  ./mindfork-rs-0.14.1-1.x86_64.rpm
 """
 SHA = "97dbead3b811031451796a8876f530e74ee79a8b5a7564c89d0c1edb412f95b7"
+TAG = "v0.14.1"
+SUMS_FILE = "sha256sums.txt"
 
 
 def _refused(fn, *args) -> bool:
@@ -107,17 +128,17 @@ def _refused(fn, *args) -> bool:
     return False
 
 
-def self_test() -> int:
-    failures: list[str] = []
-    name = asset_name("0.14.1")
-
-    for tag, want in (("v0.14.1", "0.14.1"), ("0.14.1", "0.14.1"), (" v1.2.3\n", "1.2.3")):
+def _check_version(failures: list[str]) -> None:
+    for tag, want in ((TAG, "0.14.1"), ("0.14.1", "0.14.1"), (" v1.2.3\n", "1.2.3")):
         if version_of(tag) != want:
             failures.append(f"version_of({tag!r}) is {version_of(tag)!r}")
     for tag in ("v0.15.0-rc1", "0.15", "latest", "v0.14.1.2", ""):
         if not _refused(version_of, tag):
             failures.append(f"version_of({tag!r}) was accepted")
 
+
+def _check_sums(failures: list[str]) -> None:
+    name = asset_name("0.14.1")
     # The release's own shape, a bare name, and sha256sum's binary-mode star.
     for sums in (SUMS, SUMS.replace("./", ""), SUMS.replace("  ./", " *")):
         if sha256_of(sums, name) != SHA:
@@ -132,27 +153,57 @@ def self_test() -> int:
     if not _refused(sha256_of, SUMS + SUMS.splitlines()[1] + "\n", name):
         failures.append("a package named twice was accepted")
 
+
+def _check_render(failures: list[str]) -> None:
     template = TEMPLATE.read_text(encoding="utf-8")
     rendered = render(template, "0.14.1", SHA)
     for want in ("pkgver=0.14.1\n", f"sha256sums_x86_64=('{SHA}')\n", "pkgname=mindfork-rs-bin\n"):
         if want not in rendered:
             failures.append(f"the rendered PKGBUILD lacks {want!r}")
-    if not _refused(render, template.replace("@SHA256@", "x"), "0.14.1", SHA):
+    if not _refused(render, template.replace(SHA256_MARK, "x"), "0.14.1", SHA):
         failures.append("a template without its digest placeholder was rendered")
-    if not _refused(render, template + "\n# @VERSION@", "0.14.1", SHA):
+    if not _refused(render, f"{template}\n# {VERSION_MARK}", "0.14.1", SHA):
         failures.append("a template with a placeholder twice was rendered")
     # The source URL the template builds must be the asset sha256sums names.
     if "mindfork-rs-${pkgver}-1-${CARCH}.pkg.tar.zst" not in template:
         failures.append("the template's source is not the release's Arch package")
 
-    with tempfile.TemporaryDirectory() as tmp:
-        sums_path = Path(tmp) / "sha256sums.txt"
-        sums_path.write_text(SUMS, encoding="utf-8")
-        out = Path(tmp) / "aur"
-        write("v0.14.1", sums_path, out)
-        if sorted(p.name for p in out.iterdir()) != ["LICENSE", "PKGBUILD"]:
-            failures.append(f"write left {sorted(p.name for p in out.iterdir())}")
 
+def _check_write(failures: list[str]) -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        base = Path(tmp) / "checkout"
+        base.mkdir()
+        sums_path = base / SUMS_FILE
+        sums_path.write_text(SUMS, encoding="utf-8")
+        out = base / "aur"
+        write(TAG, sums_path, out, base)
+        left = sorted(p.name for p in out.iterdir())
+        if left != ["LICENSE", "PKGBUILD"]:
+            failures.append(f"write left {left}")
+
+        # Outside the base — beside it, through `..`, or a directory that only
+        # begins like it — is refused before anything is read or created.
+        stray = Path(tmp) / SUMS_FILE
+        stray.write_text(SUMS, encoding="utf-8")
+        for label, sums, dest in (
+            ("--out beside the base", sums_path, Path(tmp) / "elsewhere"),
+            ("--out through ..", sums_path, base / ".." / "elsewhere"),
+            ("--out sharing the base's prefix", sums_path, Path(tmp) / "checkout-2"),
+            ("--sums outside the base", stray, out),
+        ):
+            if not _refused(write, TAG, sums, dest, base):
+                failures.append(f"{label} was accepted")
+        created = sorted(p.name for p in Path(tmp).iterdir())
+        if created != ["checkout", SUMS_FILE]:
+            failures.append(f"a refused --out was created anyway: {created}")
+
+
+def self_test() -> int:
+    failures: list[str] = []
+    _check_version(failures)
+    _check_sums(failures)
+    _check_render(failures)
+    _check_write(failures)
     for failure in failures:
         print(f"FAIL: {failure}")
     print(f"aur_package --self-test: {len(failures)} failure(s)")

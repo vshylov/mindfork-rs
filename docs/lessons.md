@@ -159,8 +159,9 @@ another function and a taint analysis does not follow a guard across that
 boundary. What it accepts is validating immediately before use and passing the
 **match object'''s own output** rather than the string it came from. The rule is
 right for a human reader too: a check one function away reads as safe and is one
-refactor from being gone. **Recorded three times.**
-— *demo screenshots — stage 1*, *the code workspace — stages 0 and 1*.
+refactor from being gone. **Recorded four times.**
+— *demo screenshots — stage 1*, *the code workspace — stages 0 and 1*,
+*Scoop and the AUR*.
 
 **The `LICENSE` file is a machine input; keep it byte-identical to the canonical
 text.** An addendum appended to it — however clearly marked as "not part of the MIT
