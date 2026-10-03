@@ -36,7 +36,9 @@ preview, Discussions, an animated demo generated from code, a README and a hero
 that lead with the self-model), then the friction of a first try (Ollama
 recipe, Scoop, AUR, a macOS study), then the communities — the repeatable ones
 before the one-shot ones. Its first code track is the animated demo
-(§6 there); it also feeds the reputation Windows code signing waits on.
+([demo-reel.md](research/demo-reel.md)) — stage 1, the reel and its renderer,
+done; stage 2 publishes it. The plan also feeds the reputation Windows code
+signing waits on.
 
 The last two code tracks — small windows, and the reasoning effort a model
 does not have — closed on 2026-09-30 and 2026-10-01 and ship together in

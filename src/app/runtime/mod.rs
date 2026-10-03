@@ -1169,6 +1169,8 @@ mod input;
 use self::{clipboard::*, dispatch::*, input::*};
 
 #[cfg(test)]
+mod demo_reel;
+#[cfg(test)]
 mod small_window_tests;
 #[cfg(test)]
 mod tests;

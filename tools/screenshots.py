@@ -241,14 +241,36 @@ def draw_cell(
         draw.line((x0, sy, x0 + box_w - 1, sy), fill=fg, width=SS)
 
 
+def metrics(faces: Faces) -> Metrics:
+    """The cell grid of the raster faces — one cell is the primary face's `0`."""
+    mono = faces.primary[""]
+    ascent, descent = mono.getmetrics()
+    return Metrics(cell_w=round(mono.getlength("0")), cell_h=ascent + descent, ascent=ascent)
+
+
+def draw_row(
+    draw: ImageDraw.ImageDraw,
+    faces: Faces,
+    row: list[dict],
+    x0: int,
+    y0: int,
+    m: Metrics,
+    canvas_fg: tuple[int, int, int],
+    canvas_bg: tuple[int, int, int],
+) -> None:
+    """One row of cells from `(x0, y0)`, advancing by each cell's width."""
+    x = 0
+    for cell in row:
+        draw_cell(draw, faces, cell, x0 + x * m.cell_w, y0, m, canvas_fg, canvas_bg)
+        x += cell.get("w", 1)
+
+
 def render(dump: Path, out_dir: Path, faces: Faces, pad: int) -> Path:
     frame = json.loads(dump.read_text(encoding="utf-8"))
     canvas_bg = parse_hex(frame["canvas_bg"])
     canvas_fg = parse_hex(frame["canvas_fg"])
 
-    mono = faces.primary[""]
-    ascent, descent = mono.getmetrics()
-    m = Metrics(cell_w=round(mono.getlength("0")), cell_h=ascent + descent, ascent=ascent)
+    m = metrics(faces)
     pad_px = pad * SS
 
     img = Image.new(
@@ -258,12 +280,7 @@ def render(dump: Path, out_dir: Path, faces: Faces, pad: int) -> Path:
     )
     draw = ImageDraw.Draw(img)
     for y, row in enumerate(frame["rows"]):
-        x = 0
-        for cell in row:
-            draw_cell(
-                draw, faces, cell, pad_px + x * m.cell_w, pad_px + y * m.cell_h, m, canvas_fg, canvas_bg
-            )
-            x += cell.get("w", 1)
+        draw_row(draw, faces, row, pad_px, pad_px + y * m.cell_h, m, canvas_fg, canvas_bg)
 
     img = img.resize((img.width // SS, img.height // SS), Image.LANCZOS)
     out = out_dir / f"{dump.stem}.png"

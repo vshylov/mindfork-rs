@@ -289,6 +289,11 @@ src/
 │  │  │                     the notice, a quit key or one Esc to the layer in front)
 │  │  ├─ small_window_tests.rs  #[cfg(test)]: the gate — every screen and popup at 459
 │  │  │                     window sizes, each frame the notice or the screen whole
+│  │  ├─ demo_reel.rs       #[cfg(test)]: the animated demo — a Director plays the
+│  │  │                     orchestrator's part from a script through this loop's own
+│  │  │                     path (keys, apply_event, present), a frame per beat on a
+│  │  │                     virtual clock; regenerator → target/reel/, drawn by
+│  │  │                     tools/demo_reel.py (docs/research/demo-reel.md)
 │  │  ├─ dispatch.rs        apply_event (AppEvent→screen) + Intent→AppCommand translation
 │  │  └─ clipboard.rs       read/write the system clipboard (arboard)
 │  ├─ supervisor.rs         ServerSupervisor: (re)start managed / connect to external;

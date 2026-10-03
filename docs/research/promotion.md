@@ -86,7 +86,7 @@ before stages 0–1 have removed what a first visitor would bounce off.
 | Repository topics (`rust`, `tui`, `ratatui`, `llm`, `local-llm`, `llama-cpp`, `ollama`, `mcp`, `rag`, …) | agent, `gh` | approved 2026-10-03 |
 | Discussions enabled | agent, `gh` | approved 2026-10-03 |
 | Social preview = `assets/og-card.png` (1200×630) — no API exists, Settings → General → Social preview | owner, one upload | approved 2026-10-03 |
-| An animated demo, generated from code (§6) | agent, a track | next |
+| An animated demo, generated from code (§6) | agent, a track | stage 1 done ([demo-reel.md](demo-reel.md)); publication is stage 2 |
 | README shortened: hook → animation → install in three lines → features; the long OpenRouter paragraph moves to install.md; the stale test count goes | agent | after §6 |
 | The differentiator first: the site's hero and the README's first line say "memory and a self-model", not "an AI chat in your terminal" | agent | after §6 |
 
@@ -191,8 +191,8 @@ scripted stream frame by frame into an APNG/GIF"
 roadmap's "a demo recording" item
 ([public-release-readiness.md §2.4](public-release-readiness.md)).
 
-Shape, as accepted on 2026-10-03 (the details and the remaining forks go to the
-track's own design document, `docs/research/demo-reel.md`):
+Shape, as accepted on 2026-10-03 (the details and the remaining forks are in the
+track's own design document, [demo-reel.md](demo-reel.md)):
 
 - **Generated from code, never recorded by hand** — the application changes
   too fast for a manual recording to stay current.

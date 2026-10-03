@@ -177,11 +177,11 @@ Backend selection: `MINDFORK_ENGINE_URL` (external, any OpenAI server) OR
 rented instead of hosted — `python tools/e2e_hf.py run`, see
 `docs/history/remote-e2e-hf.md`.
 
-## Status (2026-10-02, version 0.14.1)
+## Status (2026-10-03, version 0.14.1)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3880 unit tests
-green, 256 `#[ignore]`** (live smokes + a real-clipboard round trip + the
-screenshot-dump regenerator).
+The **M0–M9** plan is done, plus extensive post-M9 work — **3888 unit tests
+green, 257 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+screenshot-dump and demo-reel regenerators).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
 it is, and where the reasoning lives. What was decided, what was measured and
@@ -192,6 +192,13 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **Promotion — making mindfork findable** (opened 2026-10-03): the plan and its
+  baseline ([docs/research/promotion.md](docs/research/promotion.md)). Its first
+  code track, stage 1: a ~25 s animated demo **generated from code** — a scripted
+  turn played through the runtime's own path, drawn to GIF/WebP by
+  `tools/demo_reel.py`
+  ([docs/research/demo-reel.md](docs/research/demo-reel.md),
+  [docs/journal/release.md](docs/journal/release.md)).
 - **A pod's failures say what they are** — a managed server that dies shows the
   error it logged (a CUDA build newer than the driver names `cuda-12`), a port
   another program holds is refused, one death is one relaunch. Live **GO**
@@ -392,13 +399,6 @@ being recent is dropped, not shortened.
   item closed with 0.10.1 — `cargo install mindfork`
   ([docs/research/public-release-readiness.md](docs/research/public-release-readiness.md) §5,
   [docs/journal/release.md](docs/journal/release.md)).
-- **A chat's history images, on an engine that takes none** — replayed every turn,
-  they got each turn refused (`500` from llama.cpp without a projector, `404` from a
-  gateway). On the engine's "no" the request carries a marker per image instead —
-  a silent drop made models deny what was there, 10/10; the marker, 10/10 "I cannot
-  see it" — and the chat is told once. Live **GO**, control red
-  ([docs/research/history-images-no-vision.md](docs/research/history-images-no-vision.md),
-  spec §9.10, [docs/journal/engine.md](docs/journal/engine.md)).
 - **A headless launch (no TTY) exits with code 2** and a one-line reason — the
   TUI cannot be run from an agent's shell; how it *looks* needs a real terminal
   and a person. What a console *holds* can be measured on Windows:
