@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (30)
+## Entries (31)
 
 - Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - Post-M9: SonarQube Cloud analysis in CI (done)
@@ -42,6 +42,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: SonarQube follow-up — the pod probe's shell findings (done)
 - Post-M9: the gate judges new-code coverage again, and the file says so (done)
 - Post-M9: SonarQube follow-up — four runs of `append()` become one call (done)
+- Post-M9: SonarQube follow-up — the demo reel's two findings (done)
 
 ### Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - **28 relative links in the docs pointed at nothing**, and had for a while.
@@ -1673,3 +1674,30 @@ structure (AGENTS.md §3).
   suite green on the branch); the documentation gates green. No CHANGELOG
   entry: internal tooling (AGENTS.md §4). No live run: developer tools, no
   engine path (AGENTS.md §3).
+
+### Post-M9: SonarQube follow-up — the demo reel's two findings (done)
+
+- **Two open findings on `main`, the gate green and no hotspots** (read through
+  the Sonar MCP on 2026-10-03; branch `refactor/sonar-demo-reel`). Both arrived
+  with the animated-demo track (#680–#682) — a green PR gate judges ratings, not
+  counts ([lessons.md](../lessons.md) §10) — and neither moves behaviour.
+- **`python:S7632` on `tools/demo_reel.py:46`** — `# noqa: E402 - the sibling
+  module, …`: a reason after the code joined by ` - ` is punctuation the
+  suppression syntax does not allow (`# noqa: E402,E501` and nothing else). The
+  reason moved to a comment of its own above the `sys.path` line. The snippet
+  analyzer reported the old line (the control) and is clean on the new one.
+  `console_probe.py`'s `# noqa: E402  (after the platform gate)` is not raised
+  and stays.
+- **`rust:S2208` on `src/features/demo/ru.rs:140`** — `use super::*` in a `mod
+  tests`, which the rule's test exemption should have covered and did not. The
+  file is test-only as a whole — declared `#[cfg(test)] pub mod ru;` in
+  `features/demo.rs` — so its inner `mod tests` carries no attribute of its own,
+  and every other inline `mod tests` in the crate, which does, is not raised:
+  for an inline module the exemption follows the attribute, not the name.
+  Imported by name (`GOALS`, `NARRATIVE`, `self_model`, `showcase_messages`), as
+  the `*_tests.rs` files were after #673; the note in `sonar-project.properties`
+  that said a module named `tests` is exempt now says which ones.
+- No behaviour change: 3892 unit tests green, 257 `#[ignore]`; fmt, clippy `-D
+  warnings` and the documentation gates green. No CHANGELOG entry: internal
+  (AGENTS.md §4). No live run: a test module's imports and a developer tool's
+  comment, no engine path (AGENTS.md §3).

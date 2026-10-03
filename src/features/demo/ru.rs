@@ -137,7 +137,7 @@ pub fn self_model() -> SelfModel {
 }
 
 mod tests {
-    use super::*;
+    use super::{GOALS, NARRATIVE, self_model, showcase_messages};
 
     /// The English showcase with other words: the same ids, times, roles and
     /// tool call shape — a `zip` that silently stopped short would leave an
