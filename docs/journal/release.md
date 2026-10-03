@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (55)
+## Entries (56)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -67,6 +67,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Release 0.13.0 (prepared)
 - Release 0.14.0 (prepared)
 - Release 0.14.1 (prepared)
+- Post-M9: the animated demo — stage 1 (a reel played through the runtime, GIF and WebP) (done)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -3346,3 +3347,50 @@ every reversible check first. Full record —
   0; the same line again said `already installed`. On 0.14.0 such an image got a
   build that could not start, the loader's error printed as its version (the
   control arm of PR 676).
+
+### Post-M9: the animated demo — stage 1 (a reel played through the runtime, GIF and WebP) (done)
+
+- **Why** (branch `feat/demo-reel`, design [demo-reel.md](../research/demo-reel.md)):
+  the promotion plan's storefront asks for an animation, and the owner ruled out a
+  recording made by hand — the application changes every few days, and a recording
+  is stale within a week. The demo-screenshots plan had left this as its optional
+  stage 4 ("replaying the scripted stream frame by frame"), and the public-release
+  audit as "a demo recording".
+- **The director** (`app/runtime/demo_reel.rs`, test-gated like every capture):
+  it holds what `run_loop` holds — the chat screen, the screen in front, the
+  back-stack, the help overlay, a command channel — and plays the orchestrator's
+  part. Keys go through `process_input_batch`; what the interface then asks for
+  is asserted (`Enter` must send the typed question, `Ctrl+T` must store the
+  fold, `F3` must request the self-model); the answer is the events the
+  orchestrator emits for such a turn, through `apply_event`; every beat is a frame
+  from `present` on one persistent `TestBackend`, kept with a duration on a
+  virtual clock. Identical consecutive frames merge. The scenario is the showcase
+  chat's own last exchange — the question typed, the thoughts and the `note_save`
+  card, the table and the flowchart streaming in, the fold, `F3` — so it needed no
+  new fixture.
+- **The wall clock, checked before the code**: on a turn's path the only clocks
+  are the indexing and impersonation banners' spinners and the spellcheck
+  debounce, none of which the reel runs; the feed draws no message times. The
+  determinism test held on the first run.
+- **The renderer** (`tools/demo_reel.py`) reuses `screenshots.py`'s faces and
+  cell drawing — the raster path split into `metrics` and `draw_row`, the ten
+  committed PNGs re-rendered byte-identical after the split. Each distinct row is
+  drawn once and pasted wherever it recurs (17 s for the whole reel); the GIF
+  gets one palette quantized from a sample of frames and no dithering, so nothing
+  flickers; the cursor is a bar where the frame placed it.
+- **Measured** on the first reel: 134 frames, 21 s, 1122×966. GIF **1 137 KB**;
+  lossless WebP **1 344 KB** at Pillow's default effort — larger than the GIF —
+  and **955 KB** at `method=6` with `minimize_size`, 5.5 s to encode; lossy WebP
+  at quality 90 was 1 756 KB — larger than lossless — and at 80, 529 KB. The site
+  gets the lossless one: pixel-exact text, already below the GIF; lossy at 80 is
+  the lever if size ever matters more than exactness (its artefacts not looked at).
+- **Found on the way**: the folded thoughts pill reads "thinking · 1 lines" for
+  a one-line block — left to a task of its own (it is an interface fix, not
+  this track's).
+- **Tests**: 3886 unit tests green (+6: determinism, the grid covered in every
+  frame, each beat's content on screen, the cursor, the reel's length and frame
+  delays, the piece splitter), 257 `#[ignore]` (+1, the regenerator
+  `dump_demo_reel`). No live run: nothing here reaches an engine — the reel
+  replaces one by design.
+- **Stage 2** publishes it: rendered in CI at release time, served by
+  mindfork.io, embedded in the README by absolute URL.
