@@ -41,9 +41,10 @@ import json
 import sys
 from pathlib import Path
 
+# `screenshots` is the sibling module: this directory goes on the path to import it.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from screenshots import (  # noqa: E402 - the sibling module, found through the path above
+from screenshots import (  # noqa: E402
     PAD_CELLS,
     REPO,
     SS,
