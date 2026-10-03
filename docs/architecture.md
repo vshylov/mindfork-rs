@@ -4341,7 +4341,9 @@ Principles:
   (`dump_demo_reel`, `app/runtime/demo_reel.rs`) and draws it with
   `tools/demo_reel.py` — JetBrains Mono from the site's own woff2 faces, the
   Python packages from the hash-pinned `tools/media-requirements.txt` — into
-  `mindfork-demo-{dark,light}-en.{gif,webp}`, release assets like the rest
+  `mindfork-demo-{dark,light}-en.{gif,webp}` and `mindfork-demo-dark-ru.*` (the
+  Russian showcase: `features/demo/ru.rs`, test-only, the English one's ids and
+  times in other words), release assets like the rest
   (checksummed, attested). **Not a gate**: the job may fail and the release goes
   out without the files. The site's deploy fetches them from the newest
   published release that carries them into `site/static/demo/`; the home page
