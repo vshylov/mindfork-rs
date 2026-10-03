@@ -373,6 +373,10 @@ fn tokens(text: &str) -> u64 {
     (text.len() / 4) as u64
 }
 
+/// The reels a release publishes: the README's dark one, and the light one the
+/// site shows a visitor whose system is light (design doc §3.6).
+pub const LOOKS: [(Theme, Lang); 2] = [(Theme::Dark, Lang::En), (Theme::Light, Lang::En)];
+
 /// The reel: the showcase chat's last exchange, played live (design doc §3.2).
 pub fn reel(theme: Theme, lang: Lang) -> Reel {
     let messages = demo::showcase_messages();
@@ -530,7 +534,8 @@ pub fn reel(theme: Theme, lang: Lang) -> Reel {
     d.key(plain(KeyCode::Esc), 1_500);
     assert!(d.active.is_chat(), "Esc did not lead back to the chat");
 
-    let name = format!("reel-{}-{}", d.theme, d.locale);
+    // The name is the published file's (docs/research/demo-reel.md §3.6).
+    let name = format!("mindfork-demo-{}-{}", d.theme, d.locale);
     d.into_reel(name)
 }
 
@@ -565,9 +570,27 @@ mod tests {
     /// Byte-stable across runs — nothing in a frame reads the wall clock.
     #[test]
     fn the_reel_is_deterministic() {
-        let a = serde_json::to_string(&dark()).unwrap();
-        let b = serde_json::to_string(&dark()).unwrap();
-        assert!(a == b, "two runs gave two reels");
+        for (theme, lang) in LOOKS {
+            let a = serde_json::to_string(&reel(theme, lang)).unwrap();
+            let b = serde_json::to_string(&reel(theme, lang)).unwrap();
+            assert!(a == b, "{theme:?}: two runs gave two reels");
+        }
+    }
+
+    /// Every published look is the same story on its own canvas — the light
+    /// reel is not the dark one under another name — and its file name is the
+    /// one the release and the site look for.
+    #[test]
+    fn every_look_plays_on_its_own_canvas() {
+        let reels: Vec<Reel> = LOOKS.iter().map(|&(t, l)| reel(t, l)).collect();
+        assert_eq!(reels[0].name, "mindfork-demo-dark-en");
+        assert_eq!(reels[1].name, "mindfork-demo-light-en");
+        assert_ne!(
+            reels[0].frames[0].frame.canvas_bg,
+            reels[1].frames[0].frame.canvas_bg
+        );
+        let beats = |r: &Reel| r.frames.iter().map(|f| f.beat).collect::<Vec<_>>();
+        assert_eq!(beats(&reels[0]), beats(&reels[1]));
     }
 
     /// Every row of every frame covers the grid — a hole or an overrun means
@@ -698,14 +721,16 @@ mod tests {
     fn dump_demo_reel() {
         let root = reel_dir();
         fs::create_dir_all(&root).unwrap();
-        let reel = dark();
-        let path = root.join(format!("{}.json", reel.name));
-        fs::write(&path, serde_json::to_string(&reel).unwrap()).unwrap();
-        eprintln!(
-            "wrote {} — {} frames, {} ms",
-            path.display(),
-            reel.frames.len(),
-            reel.total_ms()
-        );
+        for (theme, lang) in LOOKS {
+            let reel = reel(theme, lang);
+            let path = root.join(format!("{}.json", reel.name));
+            fs::write(&path, serde_json::to_string(&reel).unwrap()).unwrap();
+            eprintln!(
+                "wrote {} — {} frames, {} ms",
+                path.display(),
+                reel.frames.len(),
+                reel.total_ms()
+            );
+        }
     }
 }

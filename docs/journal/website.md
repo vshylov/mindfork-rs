@@ -10,7 +10,7 @@ the reasoning behind the site, not its current shape. For the current shape
 read the research/design doc above; for the traps that recur across areas
 read [lessons.md](../lessons.md).
 
-## Entries (26)
+## Entries (27)
 
 - Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 - Post-M9: website — S2 infra: one CloudFormation stack, mindfork.io live (done)
@@ -38,6 +38,7 @@ read [lessons.md](../lessons.md).
 - Post-M9: website — the site waits for the release (done)
 - Post-M9: website — crates.io in the header and on the install page (done)
 - Post-M9: website — the gateway in the description, and speech through it (done)
+- Post-M9: website — the home page plays the release's animated demo (done)
 
 ### Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 
@@ -1361,3 +1362,27 @@ both on `main` at `88e5ce29`, the merge of the pull request.
 - **Not done here.** No release post: it is the release's. The feature grid stays twelve
   cards. `docs/research/public-documents.md`, which records the grid's order and the
   sentence as they were decided, is history and keeps its words.
+
+### Post-M9: website — the home page plays the release's animated demo (done)
+
+- **What** (branch `feat/demo-reel-publish`, [demo-reel.md §3.6](../research/demo-reel.md)):
+  the hero window under the home page's intro plays the release's animated demo
+  instead of the still chat screenshot — once a release carries one.
+- **The deploy fetches it.** A step before the build asks the API for the newest
+  published, non-prerelease release whose assets include `mindfork-demo-*` and
+  downloads them into `site/static/demo/` (gitignored); none found → a notice; listed
+  but not downloadable → the deploy fails rather than quietly reverting to the still.
+- **The template decides from what the build has**: `get_image_metadata(...,
+  allow_missing=true)` on both WebP files — present, a `<picture>` per theme with the
+  file's own width and height; absent (a pull request's build, every deploy before
+  the first such release), the still SVGs as before. Probed on Zola 0.23.6 first:
+  metadata for a present animated WebP, `null` for an absent one. Tera 2 has no
+  `pair.0` — index with `pair[0]`.
+- **One animation downloaded, not two.** Both looks carry `loading="lazy"`, and a
+  lazy image under `display: none` is never fetched — measured in the browser: the
+  dark WebP loaded, the light one was not requested until the theme switched.
+  `prefers-reduced-motion` gets the still PNG through a `<source>`.
+- **The bucket**: `demo/*` has a sync pass of its own (a day's `Cache-Control`, like
+  the screenshots — same names every release), run only when the fetch found the
+  files, and the pages pass excludes it — so a deploy without them deletes nothing
+  the README will point at.

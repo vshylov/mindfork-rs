@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (56)
+## Entries (57)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -68,6 +68,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Release 0.14.0 (prepared)
 - Release 0.14.1 (prepared)
 - Post-M9: the animated demo — stage 1 (a reel played through the runtime, GIF and WebP) (done)
+- Post-M9: the animated demo — stage 2 (drawn by the release, played by the site) (done)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -3402,3 +3403,38 @@ every reversible check first. Full record —
   replaces one by design.
 - **Stage 2** publishes it: rendered in CI at release time, served by
   mindfork.io, embedded in the README by absolute URL.
+
+### Post-M9: the animated demo — stage 2 (drawn by the release, played by the site) (done)
+
+- **What** (branch `feat/demo-reel-publish`, [demo-reel.md §3.6](../research/demo-reel.md)):
+  the reel stage 1 made is now drawn by every release from the tag's own interface
+  and played on mindfork.io. `release.yml` gained a `demo-reel` job: the
+  regenerator (both looks now — `LOOKS`, dark and light, since the site follows the
+  visitor's theme) and `tools/demo_reel.py`, whose four files
+  (`mindfork-demo-{dark,light}-en.{gif,webp}`) the release job copies among the
+  assets **before** the checksums and the attestation.
+- **Not a gate, on purpose.** `continue-on-error` on the job, and the release job's
+  condition names every other job's result and not this one's — spelled out rather
+  than left to how a tolerated failure reads in `needs`. A failure leaves a warning
+  and a release without the files; the reel's own tests already run on every pull
+  request, so what can fail here is the drawing.
+- **The same faces on every machine.** `demo_reel.py` writes JetBrains Mono back out
+  as TTF from the site's woff2 faces into `target/reel/fonts/` (timestamps not
+  recalculated, so the files are reproducible), instead of probing the system —
+  lessons §1's recipe, made the default. The fallbacks were measured in an
+  `ubuntu:22.04` container: DejaVu covers six of the seven glyphs JetBrains Mono
+  lacks (`✦ ⚒ ⟳ ∝ ₖ ᵥ`), not the fullwidth `＋` of the self-model's "add goal";
+  WenQuanYi Micro Hei (5 MB) covers it where Noto CJK would cost sixty, so it joined
+  `screenshots.py`'s `FALLBACKS`. Both looks drew in 24 s there, exit 0, the frames
+  eyeballed.
+- **Pinned Python**: `tools/media-requirements.txt`, Pillow 12.3.0, fontTools 4.63.0,
+  Brotli 1.2.0, installed `--require-hashes` — only the CPython 3.10–3.13 wheels for
+  x86_64 Linux and Windows are named. Moved by hand; Dependabot does not watch it.
+- **Checked before CI could**: `actionlint` (with its shellcheck) clean on both
+  workflows; the release-selection query run against the real API — empty today,
+  and `v0.14.1` for its control, a query for `install.sh`.
+- **The site half** is the website journal's entry of the same day.
+- **Tests**: 3889 unit tests green (+1: every look plays on its own canvas, under
+  the file name the release and the site look for), 257 `#[ignore]`. No live run: no
+  engine is involved; the workflows run for real on the next release, whose
+  `demo-reel` job and site deploy are the stage's proof.

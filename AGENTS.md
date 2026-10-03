@@ -250,7 +250,10 @@ data format change adds an item to `CHANGELOG.md` → `[Unreleased]` (§4).
    script, `packaging/linux/install.sh` — before the draft is created the job
    runs its scenarios against the release's own binary and then installs the
    release's own archive with it, `--from dist`, requiring the tag's version
-   back) + `sha256sums.txt` → `gh release create
+   back) + the **animated demo** (`mindfork-demo-{dark,light}-en.{gif,webp}`,
+   drawn from the tag's own interface by the `demo-reel` job — not a gate: a
+   failed job leaves the release without them, and the site keeps the previous
+   release's; docs/research/demo-reel.md §3.6) + `sha256sums.txt` → `gh release create
    --draft` with notes = the `[X.Y.Z]` section from the CHANGELOG.
    Packaging changes (`packaging/**`) are validated on the PR by a separate `packaging.yml`
    (Linux: package build + install smoke in Ubuntu/Fedora/Arch containers, and
@@ -259,7 +262,8 @@ data format change adds an item to `CHANGELOG.md` → `[Unreleased]` (§4).
    release; Windows: `.iss` compilation).
 5. **Artifact smoke test — on the draft, before anyone else can see it**:
    download the archive, `mindfork --version` (matches the tag), run the TUI on a
-   copy of the data; optionally — install the package/installer in a VM. A
+   copy of the data, glance at `mindfork-demo-dark-en.gif` (what the site will
+   play once the release is out); optionally — install the package/installer in a VM. A
    release that moves a schema constant is also run, as released, on files of
    the version before (the golden fixtures of its step), and the previous
    release's binary on what it wrote — it must refuse as a newer version's data.

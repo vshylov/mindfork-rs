@@ -52,12 +52,32 @@
   </div>
 </section>
 
+{#- The animated demo, when the build has it: the deploy fetches it from the
+    newest release that carries one (site.yml, docs/research/demo-reel.md §3.6),
+    and a build without it — a pull request's, or any before the first such
+    release — shows the still screenshots instead. `loading="lazy"` is what keeps
+    the theme that is hidden from being downloaded at all: a lazy image under
+    `display: none` is never fetched. A visitor who asked for less motion gets
+    the still, as a PNG beside the animation. -#}
+{%- set demo_dark = get_image_metadata(path="demo/mindfork-demo-dark-en.webp", allow_missing=true) -%}
+{%- set demo_light = get_image_metadata(path="demo/mindfork-demo-light-en.webp", allow_missing=true) -%}
 <section class="shot">
   <div class="wrap">
     <figure class="term">
       <div class="term-bar"><span class="term-title">mindfork — chat</span><span class="term-controls" aria-hidden="true">─ □ ✕</span></div>
+      {%- if demo_dark and demo_light %}
+      {%- for look in [["dark", demo_dark], ["light", demo_light]] %}
+      <div class="only-{{ look[0] }}">
+        <picture>
+          <source media="(prefers-reduced-motion: reduce)" srcset="{{ get_url(path='screenshots/chat-' ~ look[0] ~ '-en.png') }}">
+          <img src="{{ get_url(path='demo/mindfork-demo-' ~ look[0] ~ '-en.webp') }}" width="{{ look[1].width }}" height="{{ look[1].height }}" loading="lazy" decoding="async" alt="mindfork in a terminal: a question typed, the assistant's thoughts, a note saved, a table and a flowchart streamed in, then the assistant's self-model">
+        </picture>
+      </div>
+      {%- endfor %}
+      {%- else %}
       <div class="only-dark">{{ load_data(path="static/screenshots/chat-dark-en.svg", format="plain") | safe }}</div>
       <div class="only-light">{{ load_data(path="static/screenshots/chat-light-en.svg", format="plain") | safe }}</div>
+      {%- endif %}
     </figure>
   </div>
 </section>
