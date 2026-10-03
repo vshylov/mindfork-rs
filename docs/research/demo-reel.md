@@ -3,7 +3,7 @@
 Status: **design accepted 2026-10-03** (its shape is the promotion plan's §6,
 [promotion.md](promotion.md)); **stage 1 — the MVP probe — GO** (the owner,
 2026-10-03, after one round of review, §7); **stage 2 — publication —
-implemented** (§8); stage 3, the Russian variant, next.
+implemented** (§8); **stage 3 — the Russian variant — implemented** (§9).
 
 ## 1. Context and goal
 
@@ -177,7 +177,10 @@ serve` shows the page as a deploy would.
   follows the first release that carries the files (§3.6).
 - **Stage 3 — the Russian variant**, for Habr. More than the interface's
   language: the showcase conversation itself is English, so a Russian reel needs
-  the fixture's exchange and self-model in Russian (test-only data).
+  the fixture's exchange and self-model in Russian (test-only data). Published
+  with the others as `mindfork-demo-dark-ru.{gif,webp}`; the site does not show
+  it (it is English), but the deploy fetches every `mindfork-demo-*`, so it is
+  served from mindfork.io all the same.
 
 ## 5. Forks
 
@@ -269,4 +272,35 @@ python tools/demo_reel.py --font-dir <dir with JetBrainsMono-*.ttf>
   `install.sh`.
 - **Not yet seen**: the two workflows running for real. The next release is the
   proof — its `demo-reel` job, its assets, and the deploy that follows it.
+
+## 9. Stage 3 — the Russian variant
+
+- **The fixture** — `features/demo/ru.rs`, test-only: the English showcase with
+  its words replaced (the chat's title, both exchanges, the thoughts, the note,
+  the self-model's summary, goals, user model and observations), every id,
+  timestamp, status and the tool call's shape kept. A test pins that — and that no
+  `zip` stopped short, which would leave an English text behind.
+- **The reel** takes its showcase by its language (`Showcase::of`), and the
+  interface speaks the same one, so `LOOKS` gained `(Dark, Ru)`:
+  `mindfork-demo-dark-ru`, 82 frames, 24.1 s; GIF 1 056 KB, WebP 923 KB.
+- **The flowchart's labels are the English ones' lengths to the character**
+  (17/20/19/20). The first translation bent the middle leg into a jog — exactly
+  the trap the English fixture's comment warns of — and it was the eye on the
+  rendered frame that caught it; a test now walks the middle leg from the arrow
+  up to the decision node in every look's last answer frame, and fails on the
+  first draft's labels (checked) and passes on these.
+- **Russian through and through** — a test holds each beat's Russian needles,
+  the interface's own words among them (the role labels, the thoughts' header,
+  the input box's hint, the self-model screen's title), and that no frame
+  carries the English showcase's words or labels.
+- **The source-language gate**: the Russian texts sit in an explicit
+  `cyrillic-ok` block in a test-only file. Checked that the gate is real — without
+  the block and without the file's mention of `#[cfg(test)]` (which alone also
+  puts the scanner in test mode), 48 lines are flagged; with either, none. A
+  control run on the untracked file proved nothing: the scanner reads tracked
+  files only.
+- **Left as it was**: the note card's arguments (`title`, `text`) and result are
+  the English fixture's shape, which is not the real tool's (one `content`; "Note
+  saved (id=…)"). Making both honest regenerates the committed stills — a task
+  of its own, with the Russian file to change alongside.
 

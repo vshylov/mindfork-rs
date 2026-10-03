@@ -250,8 +250,8 @@ data format change adds an item to `CHANGELOG.md` → `[Unreleased]` (§4).
    script, `packaging/linux/install.sh` — before the draft is created the job
    runs its scenarios against the release's own binary and then installs the
    release's own archive with it, `--from dist`, requiring the tag's version
-   back) + the **animated demo** (`mindfork-demo-{dark,light}-en.{gif,webp}`,
-   drawn from the tag's own interface by the `demo-reel` job — not a gate: a
+   back) + the **animated demo** (`mindfork-demo-{dark,light}-en.{gif,webp}` and
+   `mindfork-demo-dark-ru.{gif,webp}`, drawn from the tag's own interface by the `demo-reel` job — not a gate: a
    failed job leaves the release without them, and the site keeps the previous
    release's; docs/research/demo-reel.md §3.6) + `sha256sums.txt` → `gh release create
    --draft` with notes = the `[X.Y.Z]` section from the CHANGELOG.

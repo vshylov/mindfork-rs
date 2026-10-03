@@ -24,6 +24,11 @@ use crate::shared::config::{AppConfig, ServerMode};
 use crate::shared::i18n::Lang;
 use crate::shared::storage::Storage;
 
+/// The showcase in Russian, for the animated demo's Russian reel — the same
+/// story in other words (docs/research/demo-reel.md, stage 3).
+#[cfg(test)]
+pub mod ru;
+
 /// Title of the showcase chat (shown in the feed header).
 pub const CHAT_TITLE: &str = "Gemma 4 on a 12 GB GPU";
 

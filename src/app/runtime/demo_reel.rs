@@ -22,6 +22,7 @@ use tokio::sync::mpsc::unbounded_channel;
 use crate::app::demo_shots::{HERO_H, SHOT_W};
 use crate::entities::message::Message;
 use crate::entities::profile::CharacterNames;
+use crate::entities::self_model::SelfModel;
 use crate::features::demo;
 use crate::shared::api::contract::FinishReason;
 use crate::shared::config::Theme;
@@ -156,7 +157,7 @@ struct Director {
 impl Director {
     /// The showcase chat holding `history`, both servers ready, an empty input
     /// box — the settings the stills are taken with.
-    fn new(theme: Theme, lang: Lang, history: &[Message]) -> Self {
+    fn new(theme: Theme, lang: Lang, title: &str, history: &[Message]) -> Self {
         let mut config = demo::app_config();
         config.interface.theme = theme;
         config.interface.language = lang;
@@ -175,7 +176,7 @@ impl Director {
         });
         screen.activate_chat(
             demo::chat_id(),
-            demo::CHAT_TITLE.into(),
+            title.into(),
             history,
             "",
             demo::feed_view(),
@@ -373,13 +374,48 @@ fn tokens(text: &str) -> u64 {
     (text.len() / 4) as u64
 }
 
-/// The reels a release publishes: the README's dark one, and the light one the
-/// site shows a visitor whose system is light (design doc §3.6).
-pub const LOOKS: [(Theme, Lang); 2] = [(Theme::Dark, Lang::En), (Theme::Light, Lang::En)];
+/// The reels a release publishes: the README's dark one, the light one the
+/// site shows a visitor whose system is light (design doc §3.6), and a dark
+/// Russian one for an article in Russian (stage 3).
+pub const LOOKS: [(Theme, Lang); 3] = [
+    (Theme::Dark, Lang::En),
+    (Theme::Light, Lang::En),
+    (Theme::Dark, Lang::Ru),
+];
+
+/// What a reel tells, in its language: the chat's title, its conversation and
+/// the self-model `F3` opens on. The interface speaks the same language — it
+/// is the reel's `lang` — so a Russian reel is Russian through and through.
+struct Showcase {
+    title: &'static str,
+    messages: Vec<Message>,
+    self_model: SelfModel,
+}
+
+impl Showcase {
+    fn of(lang: Lang) -> Self {
+        match lang {
+            Lang::Ru => Self {
+                title: demo::ru::CHAT_TITLE,
+                messages: demo::ru::showcase_messages(),
+                self_model: demo::ru::self_model(),
+            },
+            Lang::En | Lang::Ext(_) => Self {
+                title: demo::CHAT_TITLE,
+                messages: demo::showcase_messages(),
+                self_model: demo::self_model(),
+            },
+        }
+    }
+}
 
 /// The reel: the showcase chat's last exchange, played live (design doc §3.2).
 pub fn reel(theme: Theme, lang: Lang) -> Reel {
-    let messages = demo::showcase_messages();
+    let Showcase {
+        title,
+        messages,
+        self_model,
+    } = Showcase::of(lang);
     let [_, _, question, answer] = &messages[..] else {
         panic!("the showcase conversation is two exchanges");
     };
@@ -391,7 +427,7 @@ pub fn reel(theme: Theme, lang: Lang) -> Reel {
         panic!("the showcase answer makes one tool call");
     };
     let id = generation_id();
-    let mut d = Director::new(theme, lang, &messages[..2]);
+    let mut d = Director::new(theme, lang, title, &messages[..2]);
 
     d.beat("open");
     d.hold(1_500);
@@ -524,7 +560,7 @@ pub fn reel(theme: Theme, lang: Lang) -> Reel {
     );
     d.event(
         AppEvent::SelfModelView {
-            model: Box::new(Some(demo::self_model())),
+            model: Box::new(Some(self_model)),
             names: CharacterNames::default(),
         },
         SELF_MS,
@@ -577,20 +613,32 @@ mod tests {
         }
     }
 
-    /// Every published look is the same story on its own canvas — the light
-    /// reel is not the dark one under another name — and its file name is the
-    /// one the release and the site look for.
+    /// Every published look tells the same story — the same beats, in order —
+    /// on its own canvas and in its own language, under the file name the
+    /// release and the site look for.
     #[test]
-    fn every_look_plays_on_its_own_canvas() {
+    fn every_look_tells_the_same_story() {
         let reels: Vec<Reel> = LOOKS.iter().map(|&(t, l)| reel(t, l)).collect();
-        assert_eq!(reels[0].name, "mindfork-demo-dark-en");
-        assert_eq!(reels[1].name, "mindfork-demo-light-en");
-        assert_ne!(
-            reels[0].frames[0].frame.canvas_bg,
-            reels[1].frames[0].frame.canvas_bg
+        let names: Vec<&str> = reels.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "mindfork-demo-dark-en",
+                "mindfork-demo-light-en",
+                "mindfork-demo-dark-ru"
+            ]
         );
-        let beats = |r: &Reel| r.frames.iter().map(|f| f.beat).collect::<Vec<_>>();
-        assert_eq!(beats(&reels[0]), beats(&reels[1]));
+        let canvas = |r: &Reel| r.frames[0].frame.canvas_bg.clone();
+        assert_ne!(canvas(&reels[0]), canvas(&reels[1]));
+        assert_eq!(canvas(&reels[0]), canvas(&reels[2]));
+        let beats = |r: &Reel| {
+            let mut beats: Vec<&str> = r.frames.iter().map(|f| f.beat).collect();
+            beats.dedup();
+            beats
+        };
+        for r in &reels[1..] {
+            assert_eq!(beats(r), beats(&reels[0]), "{}", r.name);
+        }
     }
 
     /// Every row of every frame covers the grid — a hole or an overrun means
@@ -608,11 +656,29 @@ mod tests {
         }
     }
 
-    /// What each beat is there to show is on screen when the beat ends.
+    /// Each beat's needles are on screen when the beat ends, and the fold
+    /// takes the thoughts (`thought`, a piece of them) off the screen.
     /// Needles are strings that render on one line (lessons §2).
+    fn assert_beats(reel: &Reel, needles: &[(&str, &[&str])], thought: &str) {
+        for (beat, needles) in needles {
+            let screen = text(end_of(reel, beat));
+            for needle in *needles {
+                assert!(
+                    screen.contains(needle),
+                    "{}: {beat}: {needle:?} is not on screen:\n{screen}",
+                    reel.name
+                );
+            }
+        }
+        let before = text(end_of(reel, "rest"));
+        let after = text(end_of(reel, "fold"));
+        assert!(before.contains(thought), "{before}");
+        assert!(!after.contains(thought), "{after}");
+    }
+
+    /// What each beat is there to show is on screen when the beat ends.
     #[test]
     fn each_beat_shows_what_it_is_for() {
-        let reel = dark();
         #[rustfmt::skip]
         let needles: &[(&str, &[&str])] = &[
             ("open", &["Which Gemma 4 12B quant", "Q5_K_M", "sweet spot"]),
@@ -622,20 +688,81 @@ mod tests {
             ("answer", &["How much context?", "KV headroom", "double the cache"]),
             ("self", &["I run locally", "receipts beat repetition"]),
         ];
-        for (beat, needles) in needles {
-            let screen = text(end_of(&reel, beat));
-            for needle in *needles {
-                assert!(
-                    screen.contains(needle),
-                    "{beat}: {needle:?} is not on screen:\n{screen}"
-                );
+        assert_beats(&dark(), needles, "The note should record");
+    }
+
+    /// The Russian reel tells the same beats in Russian — the conversation
+    /// and the interface both: the needles include the interface's own words
+    /// (the role labels, the input box's hint, the screen's title), and no
+    /// frame carries the English showcase's words or labels.
+    #[test]
+    fn the_russian_reel_is_russian_through_and_through() {
+        let reel = reel(Theme::Dark, Lang::Ru);
+        #[rustfmt::skip]
+        let needles: &[(&str, &[&str])] = &[
+            ("open", &["Какой квант Gemma 4 12B", "золотая середина", "ВЫ", "АССИСТЕНТ"]),
+            ("type", &["сохрани заметку о моём железе.", "Enter отправить"]),
+            ("think", &["В заметке стоит записать", "мысли"]),
+            ("tool", &["note_save", "Бюджет железа"]),
+            ("answer", &["Какое окно нужно?", "запас на KV", "кэш вдвое больше"]),
+            ("self", &["Модель себя", "Я работаю локально", "Ответы со ссылкой на заметку"]),
+        ];
+        assert_beats(&reel, needles, "В заметке стоит записать");
+        for frame in &reel.frames {
+            let screen = text(frame);
+            for english in [
+                "sweet spot",
+                "YOU",
+                "ASSISTANT",
+                "Self-model",
+                "Hardware budget",
+            ] {
+                assert!(!screen.contains(english), "{english:?} in:\n{screen}");
             }
         }
-        // The fold is visible: the thoughts' text is gone from the frame.
-        let before = text(end_of(&reel, "rest"));
-        let after = text(end_of(&reel, "fold"));
-        assert!(before.contains("The note should record"), "{before}");
-        assert!(!after.contains("The note should record"), "{after}");
+    }
+
+    /// Whether the flowchart's middle leg runs straight from the decision node
+    /// to its arrow. The chart is laid out by its labels' widths, and a label
+    /// of another length bends that leg into a jog — the Russian labels' first
+    /// draft did, and only an eye on the render caught it.
+    fn middle_leg_is_straight(frame: &ReelFrame) -> bool {
+        // The grid by column: a wide glyph's trailing cell is empty.
+        let grid: Vec<Vec<&str>> = frame
+            .frame
+            .rows
+            .iter()
+            .map(|row| {
+                row.iter()
+                    .flat_map(|c| std::iter::once(c.s.as_str()).chain((1..c.w).map(|_| "")))
+                    .collect()
+            })
+            .collect();
+        let arrows =
+            |row: &[&str]| -> Vec<usize> { (0..row.len()).filter(|&x| row[x] == "▾").collect() };
+        let Some(arrow_row) = (0..grid.len()).rev().find(|&y| arrows(&grid[y]).len() == 3) else {
+            return false;
+        };
+        let column = arrows(&grid[arrow_row])[1];
+        let mut y = arrow_row - 1;
+        while y > 0 && grid[y][column] == "│" {
+            y -= 1;
+        }
+        // The walk has to end on the decision node's bottom border.
+        grid[y][column] == "─" && grid[y].contains(&"╲")
+    }
+
+    #[test]
+    fn the_flowchart_s_legs_are_straight_in_every_language() {
+        for (theme, lang) in LOOKS {
+            let reel = reel(theme, lang);
+            assert!(
+                middle_leg_is_straight(end_of(&reel, "answer")),
+                "{}: the middle leg is bent:\n{}",
+                reel.name,
+                text(end_of(&reel, "answer"))
+            );
+        }
     }
 
     /// The typing has a cursor to follow, and the self-model screen, which

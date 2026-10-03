@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (57)
+## Entries (58)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -69,6 +69,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Release 0.14.1 (prepared)
 - Post-M9: the animated demo — stage 1 (a reel played through the runtime, GIF and WebP) (done)
 - Post-M9: the animated demo — stage 2 (drawn by the release, played by the site) (done)
+- Post-M9: the animated demo — stage 3 (the Russian reel) (done)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -3438,3 +3439,32 @@ every reversible check first. Full record —
   the file name the release and the site look for), 257 `#[ignore]`. No live run: no
   engine is involved; the workflows run for real on the next release, whose
   `demo-reel` job and site deploy are the stage's proof.
+
+### Post-M9: the animated demo — stage 3 (the Russian reel) (done)
+
+- **What** (branch `feat/demo-reel-ru`, [demo-reel.md §9](../research/demo-reel.md)):
+  a Russian reel for an article in Russian (Habr), published with the others as
+  `mindfork-demo-dark-ru.{gif,webp}` — 82 frames, 24.1 s; GIF 1 056 KB, WebP
+  923 KB. The interface's language alone would have been half of it: the showcase
+  conversation is English, so the reel takes its showcase by its language.
+- **The fixture**: `features/demo/ru.rs`, test-only — the English showcase with
+  its words replaced, every id, timestamp, status and the tool call's shape kept,
+  so the two reels tell one story; a test pins that, and that no `zip` stopped
+  short and left an English text behind.
+- **The trap the English fixture warns of, hit and fenced.** The flowchart is laid
+  out by its labels' widths; the first Russian labels bent the middle leg into a
+  jog, caught by looking at the rendered frame. The labels are now the English
+  ones' lengths to the character (17/20/19/20), and a test walks the middle leg
+  from its arrow up to the decision node in every look's last answer frame —
+  red on the first draft's labels (checked), green on these.
+- **Russian through and through**: each beat's needles in Russian, the
+  interface's own words among them, and no frame with the English showcase's
+  words or labels.
+- **The source-language gate is real here**: the Russian texts sit in a
+  `cyrillic-ok` block; without it, and without the file's doc comment naming
+  `#[cfg(test)]` (which also flips the scanner into test mode), 48 lines are
+  flagged. A first control run proved nothing — the scanner reads tracked files
+  only, and the file was not yet added.
+- **Tests**: 3892 unit tests green (+3: the Russian fixture is the English one in
+  other words, the Russian reel is Russian through and through, the flowchart's
+  legs are straight in every language), 257 `#[ignore]`. No live run: no engine.
