@@ -3387,9 +3387,17 @@ every reversible check first. Full record —
 - **Found on the way**: the folded thoughts pill reads "thinking · 1 lines" for
   a one-line block — left to a task of its own (it is an interface fix, not
   this track's).
-- **Tests**: 3886 unit tests green (+6: determinism, the grid covered in every
+- **The owner's review of the first GIF** (2026-10-03): the self-model too
+  brief, the typing a machine's — a character every 40 ms. The self-model now
+  holds 7 s, the longest frame by test; the question is typed by a `Hand`, a
+  fixed-seed generator giving bursts of one to three characters a frame, a beat
+  between words, now and then a pause, a longer one after a mark (its space typed
+  with it). The first cut of that rhythm ran 7.2 s of typing and a 27 s reel;
+  trimmed to 5.8 s and **25.5 s, 92 frames — GIF 1 090 KB, WebP 946 KB**, smaller
+  than the first reel for its fewer frames.
+- **Tests**: 3888 unit tests green (+8: determinism, the grid covered in every
   frame, each beat's content on screen, the cursor, the reel's length and frame
-  delays, the piece splitter), 257 `#[ignore]` (+1, the regenerator
+  delays, the typing's rhythm, the self-model's hold, the piece splitter), 257 `#[ignore]` (+1, the regenerator
   `dump_demo_reel`). No live run: nothing here reaches an engine — the reel
   replaces one by design.
 - **Stage 2** publishes it: rendered in CI at release time, served by

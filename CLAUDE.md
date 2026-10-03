@@ -179,7 +179,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-10-03, version 0.14.1)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3886 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **3888 unit tests
 green, 257 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump and demo-reel regenerators).
 
@@ -194,7 +194,7 @@ being recent is dropped, not shortened.
 <!-- cyrillic-ok:start -->
 - **Promotion — making mindfork findable** (opened 2026-10-03): the plan and its
   baseline ([docs/research/promotion.md](docs/research/promotion.md)). Its first
-  code track, stage 1: a ~20 s animated demo **generated from code** — a scripted
+  code track, stage 1: a ~25 s animated demo **generated from code** — a scripted
   turn played through the runtime's own path, drawn to GIF/WebP by
   `tools/demo_reel.py`
   ([docs/research/demo-reel.md](docs/research/demo-reel.md),

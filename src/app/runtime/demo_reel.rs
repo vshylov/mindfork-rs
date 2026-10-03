@@ -41,10 +41,9 @@ fn generation_id() -> Uuid {
 /// status bar's context figure.
 const PROMPT_TOKENS: u64 = 1_874;
 
-/// How fast the reel types and streams. A GIF's delay is counted in hundredths
-/// of a second, and browsers stretch one under 20 ms to 100 ms, so nothing here
-/// goes below 40 ms (design doc §3.4).
-const TYPE_MS: u32 = 40;
+/// How fast the reel streams. A GIF's delay is counted in hundredths of a
+/// second, and browsers stretch one under 20 ms to 100 ms, so nothing here goes
+/// below 40 ms (design doc §3.4). The typing has a rhythm of its own ([`Hand`]).
 const THOUGHT_MS: u32 = 110;
 const ANSWER_MS: u32 = 90;
 /// Words per streamed piece — the demo engine's own grain (`features/demo`).
@@ -52,6 +51,65 @@ const WORDS_PER_PIECE: usize = 3;
 /// A `TokenUsage` every this many answer pieces, the way a server reports
 /// usage while it streams rather than once at the end.
 const USAGE_EVERY: usize = 6;
+
+/// How long the self-model stays on screen — the reel's point, so the longest
+/// hold in it (the owner's review of the first reel, 2026-10-03).
+const SELF_MS: u32 = 7_000;
+
+/// A hand on a keyboard, for the question the reel types: an even stream of
+/// one character every 40 ms read as a machine (the owner's review of the
+/// first reel, 2026-10-03). A person types in bursts — a frame shows one to
+/// [`Hand::BURST`] new characters — slows between words, sometimes stops
+/// before the next one, and stops longer after punctuation. The irregularity
+/// comes from a fixed-seed generator, so it is the same on every run.
+struct Hand(u64);
+
+impl Hand {
+    const SEED: u64 = 0x6d66_5f68_616e_6401;
+    /// The most characters one frame adds.
+    const BURST: u32 = 3;
+    /// A frame of typing stays up this long, plus up to [`Self::KEY_JITTER`].
+    const KEY_MS: u32 = 40;
+    const KEY_JITTER: u32 = 50;
+
+    fn new() -> Self {
+        Self(Self::SEED)
+    }
+
+    /// The next number below `n` — an LCG (Knuth's MMIX constants), its high
+    /// bits taken, since an LCG's low bits cycle.
+    fn below(&mut self, n: u32) -> u32 {
+        self.0 = self
+            .0
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        ((self.0 >> 33) % u64::from(n)) as u32
+    }
+
+    /// How many characters the next frame adds.
+    fn burst(&mut self) -> usize {
+        1 + self.below(Self::BURST) as usize
+    }
+
+    /// How long the frame stays up, given the last character it added.
+    fn delay_after(&mut self, last: char) -> u32 {
+        let key = Self::KEY_MS + self.below(Self::KEY_JITTER);
+        let pause = match last {
+            // Between words: a beat, and one time in four a pause for the
+            // next word.
+            ' ' if self.below(4) == 0 => 140 + self.below(120),
+            ' ' => 20 + self.below(50),
+            ',' | '.' | ';' | ':' | '?' | '!' | '—' => 200 + self.below(120),
+            _ => 0,
+        };
+        key + pause
+    }
+}
+
+/// Whether a burst ends after `c` — a person's bursts stop at a word's edge.
+fn ends_burst(c: char) -> bool {
+    c == ' ' || c.is_ascii_punctuation() || c == '—'
+}
 
 /// One frame of the reel: how long it stays up, where the terminal's cursor
 /// is (when the frame shows one), which beat of the scenario it belongs to,
@@ -195,8 +253,9 @@ impl Director {
         self.frame(ms);
     }
 
-    /// A key, the way the loop delivers one: a batch of one event.
-    fn key(&mut self, key: KeyEvent, ms: u32) {
+    /// A key, the way the loop delivers one: a batch of one event. No frame —
+    /// a burst of typing is several keys under one.
+    fn press(&mut self, key: KeyEvent) {
         let quit = process_input_batch(
             vec![Event::Key(key)],
             &mut self.screen,
@@ -207,13 +266,37 @@ impl Director {
             &mut self.clipboard,
         );
         assert!(!quit, "a reel key asked to quit: {key:?}");
+    }
+
+    /// A key, then the frame it leaves.
+    fn key(&mut self, key: KeyEvent, ms: u32) {
+        self.press(key);
         self.frame(ms);
     }
 
-    /// Types `text` into whatever has the focus, a character a frame.
-    fn type_text(&mut self, text: &str, ms: u32) {
-        for c in text.chars() {
-            self.key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE), ms);
+    /// Types `text` into whatever has the focus, the way a person does
+    /// ([`Hand`]): every character a key of its own, a frame per burst.
+    fn type_by_hand(&mut self, text: &str) {
+        let mut hand = Hand::new();
+        let mut chars = text.chars().peekable();
+        while chars.peek().is_some() {
+            let mut last = ' ';
+            for _ in 0..hand.burst() {
+                let Some(c) = chars.next() else { break };
+                self.press(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+                last = c;
+                if ends_burst(c) {
+                    // ", " is typed as one: the space after a mark goes with
+                    // it, and the pause is the mark's.
+                    if c != ' ' && chars.peek() == Some(&' ') {
+                        let space = chars.next().unwrap();
+                        self.press(KeyEvent::new(KeyCode::Char(space), KeyModifiers::NONE));
+                    }
+                    break;
+                }
+            }
+            let ms = hand.delay_after(last);
+            self.frame(ms);
         }
     }
 
@@ -310,7 +393,7 @@ pub fn reel(theme: Theme, lang: Lang) -> Reel {
     d.hold(1_500);
 
     d.beat("type");
-    d.type_text(&question.text, TYPE_MS);
+    d.type_by_hand(&question.text);
     d.hold(400);
 
     // `Enter` sends what was typed — asserted, so an interface that stopped
@@ -440,7 +523,7 @@ pub fn reel(theme: Theme, lang: Lang) -> Reel {
             model: Box::new(Some(demo::self_model())),
             names: CharacterNames::default(),
         },
-        4_500,
+        SELF_MS,
     );
 
     d.beat("back");
@@ -554,6 +637,44 @@ mod tests {
         for (i, frame) in reel.frames.iter().enumerate() {
             assert!(frame.ms >= 40, "frame {i} is up for {} ms", frame.ms);
         }
+    }
+
+    /// The question is typed the way a person types it, not at a machine's
+    /// even 40 ms: frames add bursts (fewer frames than characters, but more
+    /// than the bursts' bound allows at the least), the delays vary, and the
+    /// typing stops somewhere to think.
+    #[test]
+    fn the_typing_has_a_hand_s_rhythm() {
+        let reel = dark();
+        let question = &demo::showcase_messages()[2].text;
+        let chars = question.chars().count();
+        let typing: Vec<u32> = reel
+            .frames
+            .iter()
+            .filter(|f| f.beat == "type")
+            .map(|f| f.ms)
+            .collect();
+        // The beat's last frame is the hold after the question, not a key.
+        let keys = &typing[..typing.len() - 1];
+        assert!(
+            keys.len() < chars && keys.len() >= chars / Hand::BURST as usize,
+            "{} frames for {chars} characters",
+            keys.len()
+        );
+        let distinct: std::collections::BTreeSet<_> = keys.iter().collect();
+        assert!(distinct.len() >= 10, "delays barely vary: {distinct:?}");
+        assert!(keys.iter().any(|&ms| ms >= 200), "no pause: {keys:?}");
+        assert!(keys.iter().all(|&ms| ms >= Hand::KEY_MS), "{keys:?}");
+    }
+
+    /// The self-model is the reel's point: it stays up longer than any other
+    /// frame.
+    #[test]
+    fn the_self_model_is_the_longest_hold() {
+        let reel = dark();
+        let longest = reel.frames.iter().max_by_key(|f| f.ms).unwrap();
+        assert_eq!(longest.beat, "self");
+        assert_eq!(longest.ms, SELF_MS);
     }
 
     #[test]

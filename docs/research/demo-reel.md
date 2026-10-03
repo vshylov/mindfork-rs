@@ -72,17 +72,17 @@ a virtual clock. Consecutive identical frames merge into one longer frame.
 | Beat | What happens | Time |
 |---|---|---|
 | Open | the showcase chat with its first exchange, an empty input box | 1.5 s |
-| Type | the question (m3), a character at a time | ~4.5 s |
+| Type | the question (m3), by hand: bursts of one to three characters, a beat between words, now and then a pause, a longer one after a mark | ~6 s |
 | Send | `Enter` → the question in the feed, the reply's bubble opens | 0.8 s |
 | Think | the thoughts stream in a few words at a time | ~1 s |
 | Tool | the `note_save` card — running, then its result | 1.4 s |
 | Answer | the reply streams: the table, the flowchart (drawn once its block closes), the formula | ~2.5 s |
 | Rest | the finished turn | 2.5 s |
 | Fold | `Ctrl+T` folds the thoughts | 1.5 s |
-| Self | `F3` — the self-model, whose notes and observations are the point | 4.5 s |
+| Self | `F3` — the self-model, whose notes and observations are the point; the longest hold | 7 s |
 | Back | `Esc` to the chat | 1.5 s |
 
-About 20 seconds, looping. It shows the differentiator — memory and a
+About 25 seconds, looping. It shows the differentiator — memory and a
 self-model — and the renderer's range in one turn.
 
 ### 3.3 The output
@@ -166,9 +166,9 @@ are stage 2's.
 
 ## 7. Stage 1 — what was built and measured
 
-- `app/runtime/demo_reel.rs`: the director and the scenario of §3.2; 6 tests
+- `app/runtime/demo_reel.rs`: the director and the scenario of §3.2; 8 tests
   (determinism, the grid, each beat's content, the cursor, length and frame
-  delays, the piece splitter) and the `#[ignore]` regenerator `dump_demo_reel`.
+  delays, the typing's rhythm, the self-model's hold, the piece splitter) and the `#[ignore]` regenerator `dump_demo_reel`.
   The determinism test held on the first run — §2's survey of the clocks was
   right.
 - `tools/demo_reel.py`: the renderer of §3.4. `screenshots.py`'s raster path was
@@ -178,6 +178,16 @@ are stage 2's.
   machine. **GIF 1 137 KB**; **lossless WebP 955 KB** at `method=6` with
   `minimize_size` (1 344 KB at Pillow's default effort — larger than the GIF;
   lossy at quality 90 was 1 756 KB, at 80 529 KB).
+- **The owner's review of that GIF (2026-10-03)**: the self-model should stay
+  up longer, and the typing read as a machine — a character every 40 ms. Now
+  the self-model holds 7 s (from 4.5), the longest frame of the reel by test,
+  and the question is typed by a `Hand`: a fixed-seed generator gives bursts
+  of one to three characters per frame, 40–90 ms a frame, a beat between words
+  and one time in four a pause, and 200–320 ms after a mark (with its space,
+  as one would type `, `). A first cut of that rhythm made the typing 7.2 s and
+  the reel 27 s; the pauses were trimmed to 5.8 s of typing.
+- The reviewed reel: **92 frames, 25.5 s**; **GIF 1 090 KB**, **WebP 946 KB** —
+  fewer frames for the bursts, so smaller for a longer reel.
 - Found on the way: the folded thoughts pill says "1 lines" — an interface
   fix, left to a task of its own.
 
