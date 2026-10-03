@@ -14,6 +14,15 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Added
+
+- **An animated demo of the app, in every release.** A 25-second animation of a
+  turn — a question typed, the thoughts, a note saved, a table and a flowchart
+  streamed in, then the assistant's self-model — drawn from the release's own
+  interface rather than captured by hand, in a dark and a light look
+  (`mindfork-demo-*.gif` and `.webp` among the release's files, covered by its
+  checksums). mindfork.io plays it on its home page.
+
 ## [0.14.1] — 2026-10-02
 
 **A rented GPU box that starts, or says why not.** On a RunPod B200 the

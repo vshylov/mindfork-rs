@@ -94,6 +94,10 @@ FALLBACKS = [
     "C:/Windows/Fonts/YuGothM.ttc",  # Yu Gothic — fullwidth/CJK forms (e.g. U+FF0B)
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    # WenQuanYi Micro Hei — fullwidth forms (U+FF0B) in 5 MB, where Noto CJK
+    # takes sixty: what the release job's runner installs for them
+    # (docs/research/demo-reel.md §3.6).
+    "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
 ]
 
 

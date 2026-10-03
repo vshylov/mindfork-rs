@@ -4336,6 +4336,17 @@ Principles:
   same in five bare images, plus the download path. A tag is checked
   against `Cargo.toml` and the CHANGELOG by `tools/release_guard.py` before
   anything builds, and the release is created as a draft (AGENTS.md §6).
+- **The animated demo** (docs/research/demo-reel.md §3.6): the release's
+  `demo-reel` job plays the scripted turn through the tag's own interface
+  (`dump_demo_reel`, `app/runtime/demo_reel.rs`) and draws it with
+  `tools/demo_reel.py` — JetBrains Mono from the site's own woff2 faces, the
+  Python packages from the hash-pinned `tools/media-requirements.txt` — into
+  `mindfork-demo-{dark,light}-en.{gif,webp}`, release assets like the rest
+  (checksummed, attested). **Not a gate**: the job may fail and the release goes
+  out without the files. The site's deploy fetches them from the newest
+  published release that carries them into `site/static/demo/`; the home page
+  draws the animation only when its build finds the files, the still otherwise,
+  and the bucket's `demo/` is synced only by a deploy that found them.
 
 ---
 

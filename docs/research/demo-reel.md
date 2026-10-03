@@ -1,8 +1,9 @@
 # The animated demo — a reel generated from code
 
 Status: **design accepted 2026-10-03** (its shape is the promotion plan's §6,
-[promotion.md](promotion.md)); **stage 1 — the MVP probe — implemented**, its
-go/no-go (the owner judging the GIF) pending; measurements in §7.
+[promotion.md](promotion.md)); **stage 1 — the MVP probe — GO** (the owner,
+2026-10-03, after one round of review, §7); **stage 2 — publication —
+implemented** (§8); stage 3, the Russian variant, next.
 
 ## 1. Context and goal
 
@@ -122,9 +123,48 @@ drawing (refactored so a frame renders to an image rather than to a file):
 
 Rendered in CI at release time and published to mindfork.io; the README embeds
 it by absolute URL. Nothing binary is committed, no gate turns red on every
-interface change, and the animation always shows the released version. The
-details — which job runs the regenerator, how the site receives the files —
-are stage 2's.
+interface change, and the animation always shows the released version.
+
+- **The release draws it.** `release.yml`'s `demo-reel` job checks out the tag,
+  runs the regenerator (both looks, [`LOOKS`](../../src/app/runtime/demo_reel.rs))
+  and `tools/demo_reel.py`, and hands `mindfork-demo-{dark,light}-en.{gif,webp}`
+  to the release job, which puts them among the assets **before** the checksums
+  and the attestation — so they are covered like the archives. The job is **not a
+  gate** (`continue-on-error`, and the release job's condition names every other
+  job but this one): a release without a fresh animation is still a release.
+- **The same faces everywhere.** JetBrains Mono is written back out as TTF from
+  the woff2 faces the site ships, so a developer's machine and the runner draw
+  the primary face identically; the runner installs DejaVu and WenQuanYi Micro
+  Hei for the seven glyphs the face lacks (`✦ ⚒ ⟳ ∝ ₖ ᵥ ＋` — checked in an
+  `ubuntu:22.04` container; DejaVu alone missed only the fullwidth plus, which
+  Noto CJK would have cost sixty megabytes for). A glyph no font covers fails
+  the job rather than shipping as tofu.
+- **Pinned Python.** Pillow, fontTools and Brotli install from
+  `tools/media-requirements.txt` with `--require-hashes`: what draws a release
+  asset is pinned the way the workflow's actions and nfpm are.
+- **The site takes it from the newest release that has it.** `site.yml`'s deploy
+  asks the API for the newest published, non-prerelease release whose assets
+  include `mindfork-demo-*` and downloads them into `site/static/demo/`; a
+  release whose demo job failed falls back to the one before. None found (before
+  the first such release) → a notice, and the page keeps its still; a release
+  that lists them but cannot be downloaded from fails the deploy.
+- **The home page draws the animation only when its build has it**
+  (`get_image_metadata(..., allow_missing=true)`), the still SVGs otherwise — so
+  a pull request's build and every deploy before the first release with a demo
+  look as they did. Both looks are `loading="lazy"`: the theme that is hidden is
+  never fetched (measured in the browser: the light WebP was requested only once
+  the theme switched). A visitor who asked for less motion gets the still PNG
+  (`prefers-reduced-motion`).
+- **The bucket's `demo/` has a pass of its own**, run only by a deploy that found
+  the files: a deploy without them leaves it alone rather than deleting what the
+  README points at; the pages pass excludes it.
+- **The README's embed waits for the first release that carries the files.**
+  Merged before, it would be a broken image on the repository's front page
+  until then; it lands with the README's rework (promotion plan §4, stage 0).
+
+Locally: `cargo test dump_demo_reel -- --ignored`, `python tools/demo_reel.py`,
+then copy the two WebP files into `site/static/demo/` (gitignored) and `zola
+serve` shows the page as a deploy would.
 
 ## 4. Stages
 
@@ -132,9 +172,12 @@ are stage 2's.
   regenerator and `tools/demo_reel.py`; the GIF rendered locally.
   **Go/no-go: the owner judges the GIF** — legible, smooth, representative,
   and of a size a README can carry.
-- **Stage 2 — publication.** CI at release, the site, the README's and the
-  site's embeds; the Russian variant for Habr.
-- **Later, if asked:** the light theme.
+- **Stage 2 — publication.** CI at release, the site's embed; the light look
+  came with it, since the site follows the visitor's theme. The README's embed
+  follows the first release that carries the files (§3.6).
+- **Stage 3 — the Russian variant**, for Habr. More than the interface's
+  language: the showcase conversation itself is English, so a Russian reel needs
+  the fixture's exchange and self-model in Russian (test-only data).
 
 ## 5. Forks
 
@@ -153,7 +196,13 @@ are stage 2's.
 - **F4 — formats.** GIF for the README, animated WebP for the site.
 - **F5 — the scenario.** §3.2. **Owner's decision 2026-10-03.**
 - **F6 — size and language.** The hero's 116×44; English first, Russian in
-  stage 2.
+  stage 3.
+- **F7 — how the site receives the files.** (a) release assets, fetched by the
+  deploy; (b) the release workflow's artifacts — they expire, and a second
+  workflow has to find the run; (c) the site's own workflow builds the reel —
+  a Rust test build on every content deploy, and from `main`, which is not the
+  released version. **Chosen: (a)** — permanent, versioned, covered by the
+  release's checksums and attestation.
 
 ## 6. Risks
 
@@ -197,3 +246,27 @@ Regenerate locally:
 cargo test dump_demo_reel -- --ignored
 python tools/demo_reel.py --font-dir <dir with JetBrainsMono-*.ttf>
 ```
+
+## 8. Stage 2 — what was built and checked
+
+- `release.yml`: the `demo-reel` job and the release job's condition and copy step
+  (§3.6). `site.yml`: the fetch step and the bucket's `demo/` pass.
+  `site/templates/index.html`: the animation when the build has it.
+  `tools/demo_reel.py`: the site's faces by default. `tools/media-requirements.txt`:
+  the hash-pinned packages. `tools/screenshots.py`: WenQuanYi Micro Hei among the
+  fallbacks. The regenerator writes both looks; +1 test that they differ only in
+  their canvas and are named as the release and the site expect.
+- **In an `ubuntu:22.04` container**, as the runner: the packages installed with
+  `--require-hashes` on Python 3.10.12; DejaVu alone missed `＋`; with WenQuanYi
+  Micro Hei both looks drew in 24 s, exit 0 — dark GIF 1 090 KB, WebP 945 KB; light
+  GIF 1 010 KB, WebP 935 KB.
+- **The site, built both ways**: without the files, ten still SVGs and no
+  `<picture>`; with them, two `<picture>`s in place of the hero's two SVGs. In the
+  browser the dark WebP played and the light one was not fetched until the theme
+  switched to light.
+- `actionlint` (with shellcheck) clean on both workflows; the release-selection
+  query run against the API — empty today, `v0.14.1` for a control asking for
+  `install.sh`.
+- **Not yet seen**: the two workflows running for real. The next release is the
+  proof — its `demo-reel` job, its assets, and the deploy that follows it.
+

@@ -1,0 +1,38 @@
+# Python packages of the media tools (tools/demo_reel.py; tools/screenshots.py
+# needs the first two). Installed in CI with `pip install --require-hashes -r`:
+# exact versions, and only the wheels these hashes name — CPython 3.10-3.13 on
+# x86_64 Linux (manylinux) and Windows. The release job's assets are drawn
+# with them, so they are pinned the way the workflow's actions and nfpm are.
+#
+# To move a version: change it here and regenerate its hashes from
+# https://pypi.org/pypi/<name>/<version>/json — the `digests.sha256` of each
+# wheel of the kinds named above. docs/research/demo-reel.md §3.6.
+
+pillow==12.3.0 \
+    --hash=sha256:0847a763afefb695bc912d7c131e7e0632d4edc1d8698f58ddabec8e46b8b6d3 \
+    --hash=sha256:1cca606cd25738df4ed873d5ad46bbdb3d83b5cbca291f6b4ff13a4df6b0bbe8 \
+    --hash=sha256:23d27a3e0307ec2244cc51e7287b919aa68d097504ebe19df4e76a98a3eea5bd \
+    --hash=sha256:300557495eb45ebb8aec96c2da9c4be642fbf7cd937278b4013ba894ea8eb0eb \
+    --hash=sha256:78cb2c6865a35ab8ff8b75fd122f6033b92a62c82801110e48ddd6c936a45d91 \
+    --hash=sha256:8e95e1385e4998ae9694eeaa4730ba5457ff61185b3a55e2e7bea0880aef452a \
+    --hash=sha256:a2b55dd6b2a4c4b7d87ffa56bdb33fdc5fdb9a462173861a7bc097f17d91cb09 \
+    --hash=sha256:f0606c8bf2cdefea14a43530f7657cbbb7ecf1c4222512492ef4a4434a9501ec
+fonttools==4.63.0 \
+    --hash=sha256:063e08bd17bd5a90127a14123de0d6a952dbc847695fd98b63c043d58057f90c \
+    --hash=sha256:0c18358a155d75034911c5ee397a5b44cd19dd325dbb8b35fb60bf421d6a72ac \
+    --hash=sha256:22135da48a348785c5e2d5d2d9d6bec5ed44adacbaeb9db12d9493bf6c6bfa68 \
+    --hash=sha256:445af2eab030a16b9171ea8bdda7ebf7d96bda2df88ee182a464252f6e05e20d \
+    --hash=sha256:58dc6bb86a78d782f00f9190ca02c119cf5bbe2807536e361e18d42019f877d8 \
+    --hash=sha256:59ac449f8cca9b4ffa08d2e7bbadad87ce710d69d1eda5c3c1ce579baa987272 \
+    --hash=sha256:ba04cb5891d4c0c21b6da95eda8d7b090021508a294fff33464fc7d241e0856b \
+    --hash=sha256:d76ac49f929aecaf82d83250b8347e099d7aecba0f4726c1d9b6df3b8bb5fe18 \
+    --hash=sha256:d7e5c9973aa04c95650c96e5f5ad865fbf42d62079163ecfab1e01cbc2504c22
+brotli==1.2.0 \
+    --hash=sha256:022426c9e99fd65d9475dce5c195526f04bb8be8907607e27e747893f6ee3e24 \
+    --hash=sha256:072e7624b1fc4d601036ab3f4f27942ef772887e876beff0301d261210bca97f \
+    --hash=sha256:1b557b29782a643420e08d75aea889462a4a8796e9a6cf5621ab05a3f7da8ef2 \
+    --hash=sha256:40d918bce2b427a0c4ba189df7a006ac0c7277c180aee4617d99e9ccaaf59e6a \
+    --hash=sha256:67a91c5187e1eec76a61625c77a6c8c785650f5b576ca732bd33ef58b0dff49c \
+    --hash=sha256:b35c13ce241abdd44cb8ca70683f20c0c079728a36a996297adb5334adfc1c44 \
+    --hash=sha256:b63daa43d82f0cdabf98dee215b375b4058cce72871fd07934f179885aad16e8 \
+    --hash=sha256:ef87b8ab2704da227e83a246356a2b179ef826f550f794b2c52cddb4efbd0196

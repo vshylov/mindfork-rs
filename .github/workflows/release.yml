@@ -188,9 +188,73 @@ jobs:
           path: dist\*.exe
           if-no-files-found: error
 
+  # The animated demo (docs/research/demo-reel.md §3.6): the regenerator plays
+  # the scripted turn through *this tag's* interface, and tools/demo_reel.py
+  # draws it — a GIF for the README and a WebP for the site, in a dark and a
+  # light look. The files become release assets, so the checksums and the
+  # attestation below cover them like everything else, and the site's deploy
+  # takes them from the newest published release that carries them (site.yml).
+  #
+  # Not a gate. A release without a fresh animation is still a release: a
+  # failure here shows as this job's red mark, the release job goes on without
+  # the files, and the site keeps the previous release's animation. The reel's
+  # own tests run on every pull request (ci.yml's `test`), so what can fail here
+  # is the drawing, not the story.
+  demo-reel:
+    name: Animated demo
+    needs: guard
+    runs-on: ubuntu-22.04
+    continue-on-error: true
+    # A debug test build from a cold cache — ci.yml's `test` measured 7.5 min of
+    # cold compile — then about 25 s of drawing (measured in an ubuntu:22.04
+    # container). Runs beside the Windows build, which takes longer.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Install the toolchain (from rust-toolchain.toml)
+        run: rustup show
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # v2.9.2
+      # ALSA for the build (rodio/cpal); DejaVu and WenQuanYi Micro Hei for the
+      # glyphs JetBrains Mono lacks — between them every one the reel draws
+      # (`✦ ⚒ ⟳ ∝ ₖ ᵥ ＋`, checked in an ubuntu:22.04 container), where Noto CJK
+      # would cost sixty megabytes for the one fullwidth plus.
+      - name: System dependencies (ALSA, the fallback fonts)
+        timeout-minutes: 5
+        run: >-
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          && sudo apt-get install -y --no-install-recommends libasound2-dev fonts-dejavu-core fonts-wqy-microhei
+      - name: Play the reels
+        run: cargo test --locked dump_demo_reel -- --ignored
+      # Exact versions, and only the wheels the file's hashes name.
+      - name: Python packages (hash-pinned)
+        timeout-minutes: 5
+        run: python3 -m pip install --require-hashes -r tools/media-requirements.txt
+      # JetBrains Mono comes from the site's own woff2 faces, so this runner and
+      # a developer's machine draw with the same primary face; a glyph no font
+      # covers fails the step rather than shipping as tofu.
+      - name: Draw the reels
+        run: python3 tools/demo_reel.py
+      - name: Upload the animations
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: demo-reel
+          path: |
+            target/reel/*.gif
+            target/reel/*.webp
+          if-no-files-found: error
+
   release:
     name: Publish the release
-    needs: [guard, build, linux-packages, windows-installer]
+    needs: [guard, build, linux-packages, windows-installer, demo-reel]
+    # Every job but the demo must have succeeded; the demo may have failed
+    # (`continue-on-error` above) and the release still goes out without it.
+    # Spelled out rather than left to how a tolerated failure reads in `needs`.
+    if: >-
+      !cancelled()
+      && needs.guard.result == 'success'
+      && needs.build.result == 'success'
+      && needs.linux-packages.result == 'success'
+      && needs.windows-installer.result == 'success'
     runs-on: ubuntu-22.04
     # Measured: 0.3–0.4 min on every release so far; the asset upload is the network part.
     timeout-minutes: 10
@@ -271,6 +335,14 @@ jobs:
           # no root of trust that the binary beside it did not already have
           # (docs/research/cloud-provisioning.md §6 F5).
           cp packaging/linux/install.sh dist/install.sh
+
+          # The animated demo, when the demo-reel job drew it (it is not a gate).
+          # Before the checksums, so they and the attestation cover it.
+          if compgen -G "artifacts/demo-reel/*" > /dev/null; then
+            cp artifacts/demo-reel/* dist/
+          else
+            echo "::warning::No animated demo in this release - the site keeps the previous one"
+          fi
 
           # Checksums (over all artifacts: archives + packages + the installer).
           (cd dist && sha256sum ./* > sha256sums.txt)

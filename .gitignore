@@ -9,6 +9,7 @@ __pycache__/
 # brand assets mirrored from assets/ by tools/site_sync_assets.py.
 site/public/
 site/static/screenshots/
+site/static/demo/
 site/static/brand/
 site/static/favicon.ico
 # Coverage report for SonarQube Cloud (`cargo llvm-cov`, .github/workflows/ci.yml).

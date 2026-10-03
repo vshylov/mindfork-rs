@@ -20,11 +20,18 @@ What it writes, beside each reel unless `--out` says otherwise:
 Speed: a streamed frame changes a few rows, so each distinct row is drawn once
 and pasted wherever it recurs.
 
-Third-party deps: the same as screenshots.py — `pip install pillow fonttools`.
+Fonts: JetBrains Mono, written back out as TTF from the woff2 faces the site
+ships (`site/static/fonts/`, the full family) into `target/reel/fonts/` — so
+this machine and a CI runner draw with the same faces, and nothing has to be
+installed for the primary face. `--font-dir` overrides. The symbol fallbacks
+are screenshots.py's (`FALLBACKS`): system fonts, which CI installs.
+
+Third-party deps: `tools/media-requirements.txt` — Pillow, fontTools, and
+Brotli for the woff2 faces; CI installs it with `--require-hashes`.
 
 Usage:
     python tools/demo_reel.py                    # every reel -> GIF + WebP
-    python tools/demo_reel.py --format gif --font-dir target/shot-check/fonts
+    python tools/demo_reel.py --format gif --font-dir DIR
 """
 
 from __future__ import annotations
@@ -44,6 +51,7 @@ from screenshots import (  # noqa: E402 - the sibling module, found through the 
     Image,
     ImageDraw,
     Metrics,
+    TTFont,
     draw_row,
     metrics,
     parse_hex,
@@ -51,6 +59,8 @@ from screenshots import (  # noqa: E402 - the sibling module, found through the 
 )
 
 REELS = REPO / "target" / "reel"
+SITE_FONTS = REPO / "site" / "static" / "fonts"
+FONT_CACHE = REELS / "fonts"
 
 # The terminal's cursor, drawn as the bar Windows Terminal and most emulators
 # default to: this many supersampled pixels wide, in the text colour.
@@ -60,6 +70,26 @@ CURSOR_W = 2 * SS
 # reel uses (the beats differ — the feed, the tool card, the self-model) while
 # keeping the quantizer's input small.
 PALETTE_SAMPLES = 12
+
+
+def site_faces() -> Path:
+    """JetBrains Mono as TTF, written out of the site's woff2 faces once (and
+    again when a face changes), into a directory `Faces` can read."""
+    faces = sorted(SITE_FONTS.glob("JetBrainsMono-*.woff2"))
+    if not faces:
+        sys.exit(f"no JetBrains Mono faces under {SITE_FONTS.relative_to(REPO)}")
+    FONT_CACHE.mkdir(parents=True, exist_ok=True)
+    for woff2 in faces:
+        ttf = FONT_CACHE / f"{woff2.stem}.ttf"
+        if ttf.is_file() and ttf.stat().st_mtime >= woff2.stat().st_mtime:
+            continue
+        try:
+            font = TTFont(str(woff2), recalcTimestamp=False)
+            font.flavor = None
+            font.save(str(ttf))
+        except ImportError:  # pragma: no cover - environment guard
+            sys.exit("Brotli is required to read the woff2 faces: pip install brotli")
+    return FONT_CACHE
 
 
 class Sheet:
@@ -181,7 +211,8 @@ def main() -> int:
     out_dir = under_repo(args.out, "--out") if args.out else None
     formats = ["gif", "webp"] if args.format == "both" else [args.format]
 
-    faces = Faces(args.font_dir, args.size * SS)
+    font_dir = under_repo(args.font_dir, "--font-dir") if args.font_dir else site_faces()
+    faces = Faces(font_dir, args.size * SS)
     pad = args.pad if args.pad is not None else round(PAD_CELLS * args.size * faces.em_advance)
     sheet = Sheet(faces, pad)
     for reel in reels:

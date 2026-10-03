@@ -148,6 +148,30 @@ jobs:
           zola --version
       - name: Mirror brand assets into site/static/
         run: python tools/site_sync_assets.py
+      # The animated demo is drawn by the release workflow and published as
+      # release assets (docs/research/demo-reel.md §3.6), so it is taken from the
+      # newest published release that carries one — a release whose demo job
+      # failed falls back to the one before, not to nothing. Before any release
+      # carries one, the home page shows its still screenshot: the template draws
+      # the animation only when the build finds the file. A release that lists
+      # the files but cannot be downloaded from fails the deploy, rather than
+      # quietly swapping the animation back for the still.
+      - name: Fetch the animated demo
+        id: demo
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=30" --jq \
+            '[.[] | select((.draft or .prerelease) | not)
+                  | select(any(.assets[]; .name | startswith("mindfork-demo-")))][0].tag_name // empty')"
+          if [ -z "$tag" ]; then
+            echo "::notice::No published release carries the animated demo yet - the home page keeps its still"
+            exit 0
+          fi
+          gh release download "$tag" --pattern 'mindfork-demo-*' --dir site/static/demo
+          echo "found=true" >> "$GITHUB_OUTPUT"
+          echo "The animated demo of $tag:"; ls -l site/static/demo
       - name: Build
         run: zola --root site build
       - name: Assume the deploy role
@@ -189,10 +213,21 @@ jobs:
           aws s3 sync site/public/ "s3://$BUCKET" --delete --no-progress \
             --exclude "*" --include "brand/*" --include "screenshots/*" \
             --cache-control "public, max-age=86400"
+      # The animation has a pass of its own, run only when the step above found
+      # one: a deploy that found none leaves the bucket's copy alone rather than
+      # deleting what the README points at. It is regenerated under the same
+      # names every release, hence the screenshots' day rather than a year.
+      - name: Sync to S3 - the animated demo
+        if: steps.demo.outputs.found == 'true'
+        run: |
+          aws s3 sync site/public/ "s3://$BUCKET" --delete --no-progress \
+            --exclude "*" --include "demo/*" \
+            --cache-control "public, max-age=86400"
       - name: Sync to S3 - pages, styles and feeds
         run: |
           aws s3 sync site/public/ "s3://$BUCKET" --delete --no-progress \
             --exclude "fonts/*" --exclude "brand/*" --exclude "screenshots/*" \
+            --exclude "demo/*" \
             --cache-control "public, max-age=300, s-maxage=86400"
       - name: Invalidate CloudFront
         run: aws cloudfront create-invalidation --distribution-id "$DISTRIBUTION" --paths "/*"
