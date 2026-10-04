@@ -744,6 +744,41 @@ mod tests {
     }
 
     #[test]
+    fn no_english_count_a_person_reads_comes_before_a_plural() {
+        // Pluralization is number-neutral wording (docs/journal/i18n.md, axis B):
+        // there are no plural rules, so `{n} lines` reads "1 lines" whenever the
+        // count is one — which is how the folded thoughts pill showed it. A count
+        // goes after a label (`lines: {n}`) or before a `(s)` noun instead. The
+        // model-facing families are left out: the model is not put off by grammar.
+        // Listed here are the strings whose count is never one by construction.
+        const HUMAN: &[&str] = &["ui.", "cli.", "setup.", "llamacpp.", "sandbox.", "backup."];
+        const NEVER_ONE: &[&str] = &[
+            "ui.chat.bg.subagents",      // the chip counts only from two runs up
+            "ui.err.mcp.restart_budget", // `RESTART_BUDGET`, a constant of 3
+        ];
+        let count_then_words = regex::Regex::new(r"\{(?:n|count)\}((?:\s+[a-z][a-z-]*){1,3})")
+            .expect("a valid pattern");
+        let plural = |word: &str| {
+            word.ends_with('s') && !matches!(word, "is" | "was" | "has" | "this" | "its" | "as")
+        };
+        let offenders: Vec<(&String, &String)> = locale(Lang::En)
+            .map
+            .iter()
+            .filter(|(key, _)| HUMAN.iter().any(|p| key.starts_with(p)))
+            .filter(|(key, _)| !NEVER_ONE.contains(&key.as_str()))
+            .filter(|(_, val)| {
+                count_then_words
+                    .captures_iter(val)
+                    .any(|c| c[1].split_whitespace().any(plural))
+            })
+            .collect();
+        assert!(
+            offenders.is_empty(),
+            "a count before a plural reads wrong at one: {offenders:?}"
+        );
+    }
+
+    #[test]
     fn fallback_to_reference_then_key() {
         let en = locale(Lang::En);
         // A nonexistent key → the key itself (no panic).

@@ -381,7 +381,7 @@ mod tests {
         let loc = locale(Lang::En);
         assert_eq!(
             facts_phrase(Some(32768), VisionSupport::Supported, Some(4), loc),
-            " — context 32768, takes images, 4 slots"
+            " — context 32768, takes images, slots 4"
         );
         assert_eq!(
             facts_phrase(Some(4096), VisionSupport::Unsupported, None, loc),

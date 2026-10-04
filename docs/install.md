@@ -1162,7 +1162,7 @@ prints one line per server:
 == Starting what was configured
   chat server: starting on port 8000…
   embedding server: starting on port 8001…
-  chat server: ready in 41 s — context 32768, takes images, 4 slots
+  chat server: ready in 41 s — context 32768, takes images, slots 4
   embedding server: ready in 6 s
 ```
 
@@ -1210,7 +1210,7 @@ unpacked — and its device list reading `CUDA0: NVIDIA RTX PRO 6000 Blackwell
 == Starting what was configured
   chat server: starting on port 8000…
   embedding server: no model configured — skipped (memory search and the knowledge base stay off)
-  chat server: ready in 4 s — context 131072, text only, 4 slots
+  chat server: ready in 4 s — context 131072, text only, slots 4
 Done. Start the app with: mindfork
 ```
 

@@ -28,6 +28,15 @@ split by subsystem.
   Russian (`mindfork-demo-*.gif` and `.webp` among the release's files, covered
   by its checksums). mindfork.io plays it on its home page.
 
+### Fixed
+
+- **Counts that read right at one.** The folded thoughts said "thinking · 1
+  lines"; it is "lines: 1" now, and the same goes for the chat list's dialogs,
+  the server's slots in the settings and in `mindfork setup --verify`, the
+  compaction notice, the re-index hint, the tasks screen's "more" line and the
+  file-limit warning. In Russian, the tasks line, the re-index hint and the MCP
+  restart message no longer pair a number with the wrong case.
+
 ## [0.14.1] — 2026-10-02
 
 **A rented GPU box that starts, or says why not.** On a RunPod B200 the

@@ -1882,6 +1882,14 @@ fixed width, measure the rendered line for **every** bundled locale in a gate te
 not reason about the language you happen to be reading.
 — *a disclaimer for what the models say and do*.
 
+**There are no plural rules, so a count goes after a label.** `{n} lines` reads "1
+lines" the first time the count is one — the folded thoughts showed it in the animated
+demo, and seven more English strings had the same shape. Write `lines: {n}`, or
+`{n} file(s)` inside a sentence; in Russian the case after a number changes at 1, 2–4
+and 5, so `строк: {n}` there too. The English half is gated <!-- cyrillic-ok -->
+(`no_english_count_a_person_reads_comes_before_a_plural`); Russian is not.
+— *counts that read right at one*.
+
 **Know where `cyrillic_scan.py` cannot see.** It allowlists test files **wholesale**
 (they legitimately hold fixture data and reference-locale assertions), and it sets
 `in_test` on the first `#[cfg(test)]` it sees and **never unsets it** — so production
