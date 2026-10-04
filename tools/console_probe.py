@@ -166,6 +166,10 @@ BRIGHT_WHITE = 15
 SETTINGS_KEY = "ctrl+p"
 EMOJI_KEY = "ctrl+b"
 SETTINGS_FILE = "settings.json"
+# What clears the input box, and the AltGr chord that types the ruble sign —
+# the `altgr` scenario presses each more than once.
+CLEAR_KEY = "ctrl+k"
+RUBLE_KEY = "altgr+8"
 # The schema the scenarios write their settings at: the app's own
 # `SETTINGS_SCHEMA`. A file below it is migrated at the start — with a
 # pre-migration backup no scenario asked for — and one above it is refused.
@@ -266,10 +270,10 @@ KEYS = {
     EMOJI_KEY: (0x42, "\x02", LEFT_CTRL_PRESSED),
     SETTINGS_KEY: (0x50, "\x10", LEFT_CTRL_PRESSED),
     "ctrl+q": (0x51, "\x11", LEFT_CTRL_PRESSED),
-    "ctrl+k": (0x4B, "\x0b", LEFT_CTRL_PRESSED),
+    CLEAR_KEY: (0x4B, "\x0b", LEFT_CTRL_PRESSED),
     # AltGr+8 on the Russian layout (Windows 8.1 on): the ruble sign. The
     # `altgr` scenario needs that layout installed, and says so if it is not.
-    "altgr+8": (0x38, "₽", ALTGR),
+    RUBLE_KEY: (0x38, "₽", ALTGR),
     # The left Ctrl and Alt on a key no installed layout maps under AltGr: the
     # console gives no character, and crossterm names the key's own.
     "ctrl+alt+a": (0x41, "\0", LEFT_CTRL_PRESSED | LEFT_ALT_PRESSED),
@@ -1223,10 +1227,10 @@ def input_row(rows: list[list[tuple[str, int]]]) -> str:
 def scenario_altgr(exe: Path, report: Report) -> None:
     session = Session(exe, ["demo"])
     try:
-        press("ctrl+k")
+        press(CLEAR_KEY)
         report.check(input_row(read_screen()).strip() == "", "Ctrl+K cleared the draft")
         type_text("price ")
-        press("altgr+8")
+        press(RUBLE_KEY)
         press("ctrl+alt+a")
         row = input_row(read_screen())
         print(f"    the input box: {row.strip()!r}")
@@ -1236,11 +1240,11 @@ def scenario_altgr(exe: Path, report: Report) -> None:
             not any(c in row.replace("price", "") for c in "a\u0444"),
             "control arm: Ctrl+Alt+A typed nothing",
         )
-        press("ctrl+k")
+        press(CLEAR_KEY)
         report.check(input_row(read_screen()).strip() == "", "Ctrl+K still clears the box")
         # The chat list's search line takes typed text of its own.
         press("esc", SETTLE_REPAINT)
-        press("altgr+8")
+        press(RUBLE_KEY)
         search = next((line for line in text_of(read_screen()).split("\n") if "\u2315" in line), "")
         print(f"    the chat list's search: {search.strip()!r}")
         report.check("\u20bd" in search, "AltGr+8 typed into the chat list's search")

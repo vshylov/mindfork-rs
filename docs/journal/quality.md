@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (31)
+## Entries (32)
 
 - Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - Post-M9: SonarQube Cloud analysis in CI (done)
@@ -43,6 +43,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: the gate judges new-code coverage again, and the file says so (done)
 - Post-M9: SonarQube follow-up — four runs of `append()` become one call (done)
 - Post-M9: SonarQube follow-up — the demo reel's two findings (done)
+- Post-M9: SonarQube follow-up — the console probe's two key names (done)
 
 ### Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - **28 relative links in the docs pointed at nothing**, and had for a while.
@@ -1701,3 +1702,29 @@ structure (AGENTS.md §3).
   warnings` and the documentation gates green. No CHANGELOG entry: internal
   (AGENTS.md §4). No live run: a test module's imports and a developer tool's
   comment, no engine path (AGENTS.md §3).
+
+### Post-M9: SonarQube follow-up — the console probe's two key names (done)
+
+- **Two open findings on `main`, the gate green and no hotspots** (read through
+  the Sonar MCP on 2026-10-05; branch `refactor/sonar-console-probe-keys`). Both
+  `python:S1192`, CRITICAL — "define a constant instead of duplicating this
+  literal … 3 times" — in `tools/console_probe.py`, and both arrived with the
+  `altgr` scenario of #692, whose PR gate let them through: it judges ratings,
+  not counts ([lessons.md](../lessons.md) §10). `"ctrl+k"` was the key table's
+  entry and the two presses that clear the input box; `"altgr+8"` the entry and
+  the two presses that type the ruble sign.
+- **Named the way the file already names its keys.** `SETTINGS_KEY` and
+  `EMOJI_KEY` exist for the same reason — a key the table defines and more than
+  one place presses — so `CLEAR_KEY` and `RUBLE_KEY` join them, as the table's
+  keys and in `scenario_altgr`. Keys spelt twice (`ctrl+q`, `ctrl+alt+a`) stay
+  literals: the rule counts three.
+- **Measured, old against new.** An AST count of the file's string literals
+  repeated three times or more: the two names gone, the rest of the list
+  unchanged (Sonar raises a subset of that list, and which subset is its own).
+  The scenario rerun on the branch against a debug build: 6/6 checks, exit
+  code 0 — `price ₽` in the input box, `Ctrl+Alt+A` typed nothing, `Ctrl+K`
+  cleared the box both times, `₽` in the chat list's search.
+- No Rust touched — test totals unchanged (fmt, clippy `-D warnings` and the
+  suite green on the branch); the documentation gates green. No CHANGELOG
+  entry: internal tooling (AGENTS.md §4). No live run beyond the probe's own: a
+  developer tool, no engine path (AGENTS.md §3).
