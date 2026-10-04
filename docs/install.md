@@ -132,6 +132,22 @@ The installer is **unsigned** — on first run Windows SmartScreen will show a w
 verified against the release's `sha256sums.txt`. As an alternative — the portable
 `windows.zip` (no install).
 
+### Scoop (Windows)
+
+```powershell
+scoop bucket add mindfork https://github.com/vshylov/scoop-bucket
+scoop install mindfork/mindfork
+```
+
+The bucket ([vshylov/scoop-bucket](https://github.com/vshylov/scoop-bucket))
+installs the release's portable `windows.zip`, its hash checked, and writes a
+`defaults.json` beside the binary with `{"mode":"system"}` (§2.1): the data lives
+in `%APPDATA%\mindfork-rs\data`, so `scoop update mindfork` — and `scoop
+uninstall` — leave it in place. `mindfork` goes on `PATH`, and a Start-menu entry
+is made. The bucket picks up a new release by itself within four hours. Scoop
+downloads the zip rather than running an installer, so SmartScreen has nothing to
+say.
+
 ### From crates.io (`cargo install`)
 
 ```bash

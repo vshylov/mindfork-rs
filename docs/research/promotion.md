@@ -95,8 +95,8 @@ before stages 0–1 have removed what a first visitor would bounce off.
 | Item | Status |
 |---|---|
 | An Ollama / LM Studio recipe at the top of the README and the site (three lines); idea: the engineless chat offers a server it finds on `localhost:11434` or `:1234` | todo |
-| A Scoop manifest (own bucket first) — Scoop does not need a signed binary, so Windows gets a package manager now rather than after signing | todo |
-| AUR `mindfork-rs-bin` — the release already builds an Arch package with nfpm | todo (roadmap: on demand → now) |
+| A Scoop manifest (own bucket first) — Scoop does not need a signed binary, so Windows gets a package manager now rather than after signing | done 2026-10-03: `vshylov/scoop-bucket` ([package-managers.md](package-managers.md)) |
+| AUR `mindfork-rs-bin` — the release already builds an Arch package with nfpm | ready, **blocked**: the AUR's registration is closed (2026-10-04), so there is no account to publish from; every release builds and checks it ([package-managers.md](package-managers.md) §4) |
 | macOS (§5) | research first |
 | winget | unchanged: waits for signing |
 

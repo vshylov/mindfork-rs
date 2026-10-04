@@ -467,11 +467,15 @@ effort tiers — have all closed
   crates.io (done), an AUR package and a winget manifest — the next two items.
 - **winget manifest** — **deferred**: pointing at the portable zip until the
   setup executable is signed ([installers.md §5.4](history/installers.md)).
-- **AUR `mindfork-rs-bin`** — **planned**, stage 1 of the promotion plan
-  ([promotion.md §4](research/promotion.md)); the release already ships an
-  Arch package built by nfpm.
-- **A Scoop manifest** — **planned**, the same stage: Scoop takes an unsigned
-  binary, so Windows gets a package manager before winget can have one.
+- **AUR `mindfork-rs-bin`** — **blocked on the AUR's registration**, closed
+  since before 2026-10-04 ([package-managers.md §4](research/package-managers.md)):
+  the package is built and checked by every release (`aur.yml`) and stops short of
+  the push; an account, a key in `AUR_SSH_PRIVATE_KEY` and one dispatch publish it,
+  and the user-facing docs gain the line then.
+  A source package (`mindfork-rs`, built with cargo) — **on demand**.
+- **A Scoop manifest** — **done** (2026-10-03): `vshylov/scoop-bucket`, updated by
+  its Excavator. ScoopInstaller's Extras — **deferred** until the project meets
+  its notability bar.
 - **macOS** — **planned as research**: no build, no runner, and no Mac on the
   owner's desk; how to build and test it without one is
   [promotion.md §5](research/promotion.md), and its own research document

@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (58)
+## Entries (59)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -70,6 +70,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: the animated demo — stage 1 (a reel played through the runtime, GIF and WebP) (done)
 - Post-M9: the animated demo — stage 2 (drawn by the release, played by the site) (done)
 - Post-M9: the animated demo — stage 3 (the Russian reel) (done)
+- Post-M9: Scoop and the AUR — two package managers before winget (done)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -3468,3 +3469,75 @@ every reversible check first. Full record —
 - **Tests**: 3892 unit tests green (+3: the Russian fixture is the English one in
   other words, the Russian reel is Russian through and through, the flowchart's
   legs are straight in every language), 257 `#[ignore]`. No live run: no engine.
+
+### Post-M9: Scoop and the AUR — two package managers before winget (done)
+
+- **Why** (branch `feat/package-managers`, [package-managers.md](../research/package-managers.md)):
+  the promotion plan's stage 1 — the friction of a first try. winget waits for a
+  signed installer and the signing for reputation; Scoop takes the portable zip
+  and asks for no signature, and the AUR needs only the Arch package every
+  release already builds.
+- **Scoop — `vshylov/scoop-bucket`**, a repository of its own (a `bucket/` here
+  would make `scoop bucket add` clone 46 MB), from `ScoopInstaller/BucketTemplate`
+  (its CI and Excavator, both SHA-pinned upstream), topic `scoop-bucket`. The
+  manifest installs the release's zip and writes `defaults.json` with
+  `{"mode": "system"}` beside the binary: Scoop gives every version a directory of
+  its own, and the portable default would strand the data in the old one on the
+  first update. Checked on this machine's Scoop — install (hash, script, shim,
+  shortcut), `mindfork stats` naming `%APPDATA%\mindfork-rs\data`, uninstall
+  clean; `checkver.ps1 -Update` from a manifest set back to 0.14.0 found 0.14.1
+  and its digest in `sha256sums.txt` by Scoop's built-in rule, which reads the
+  release's `./name` lines as they are. Excavator dispatched once: green, nothing
+  to bump. Two things the template did not say: a repository made from it got its
+  default branch as `master` (renamed to `main`), and GitHub registered only its
+  CI workflow — Excavator appeared after its file was touched by a push.
+- **The AUR — `mindfork-rs-bin`**: `packaging/aur/PKGBUILD.in` repackages the
+  release's own `.pkg.tar.zst`, so the layout is the one `packaging.yml` already
+  tests. `tools/aur_package.py` renders it per release (version from the tag, a
+  prerelease refused; the digest from `sha256sums.txt`, exactly one line or a
+  refusal; `--self-test` in `ci.yml`'s lint). `packaging/aur/check.sh` builds it
+  in `archlinux:base-devel` as an unprivileged user, lints it with `namcap`,
+  installs it and requires `mindfork --version` to name the release, then writes
+  `.SRCINFO` with makepkg. Measured on 0.14.1, three rounds: namcap's error
+  wanted `hicolor-icon-theme` for the icons, and it called `gcc-libs` unneeded
+  where `libgcc` is what the binary links (current Arch splits them); then the
+  licence link into `/usr/share/doc` dangled, because the image's `NoExtract`
+  drops the docs — a copy now; then green: namcap silent, `installed: mindfork
+  0.14.1`.
+- **`aur.yml`** runs on `release: published` (never a prerelease) and by
+  dispatch with a tag: render, check, push with `AUR_SSH_PRIVATE_KEY` — or a
+  notice and a green run without it. The AUR's Ed25519 host key, taken with
+  `ssh-keyscan`, matched the fingerprint the AUR publishes on its home page and
+  is pinned. `packaging.yml` runs the same check on packaging pull requests,
+  against the latest release.
+- **Left to the owner**, since the agent creates no accounts and handles no keys:
+  the AUR account, a key for CI, the secret, and the first dispatch (§4 there).
+- **Then blocked (2026-10-04).** The AUR has closed new-account registration — its
+  page answers `503`, "temporarily closed" during a wave of automated sign-ups, no
+  queue; the owner reports it reopens only now and then, for a couple of weeks. So
+  the package stays built and checked by every release and stops at the push, and
+  the AUR lines came back out of install.md, the README, the site and the
+  CHANGELOG — a `yay -S` answering "target not found" would be the very first
+  thing an Arch user tried. Measured on the way: `pacman -U <release URL>` is no
+  substitute — pacman fetches a `.sig` beside the URL, the unsigned release has
+  none, and the `404` aborts the install; downloading the file first works, as
+  install.md already says.
+- **Checks**: `actionlint` clean on `aur.yml` and `packaging.yml` (its one finding
+  in `ci.yml` is on `main` already, an intended word split); `actions_pin_check`,
+  link, Cyrillic and index gates clean; `site_llms_txt --check` still matches.
+  No Rust changed — 3892 unit tests as before.
+- **What the Sonar gate caught on the PR** (new-code security rating C → gate
+  red): two `pythonsecurity:S8707` — `--sums` and `--out` reached `read_text`
+  and `mkdir` unvalidated, the trap docs/lessons.md §1 records, met a fourth
+  time. Fixed the way `screenshots.py` was: `confined()` resolves
+  each path and refuses it unless `is_relative_to` the repository, the base both
+  workflows' paths sit in, called in `write` right before the reads and writes.
+  The base is a parameter so the self-test can confine to its temporary
+  directory, and the self-test now proves the guard: `--out` beside the base,
+  through `..` and in a directory sharing its prefix, and `--sums` outside it,
+  are refused with nothing created. Mutants: no check — five failures; a
+  `startswith` prefix in its place — two (the prefix case). With it, the two
+  maintainability findings the gate let through: `@SHA256@` spelt three times
+  (S1192, now `VERSION_MARK`/`SHA256_MARK`) and `self_test` at complexity 22
+  (S3776, now four `_check_*` parts like `indexnow.py`'s). The snippet analyzer
+  is clean on the result; the taint engine is measured by the PR analysis alone.

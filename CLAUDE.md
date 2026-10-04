@@ -155,6 +155,7 @@ python tools/site_llms_txt.py --check  # /llms.txt matches the site content
 python tools/site_release_gate.py --self-test  # the gate that holds the site's deploy for a release
 python tools/actions_pin_check.py  # every workflow action is pinned to a commit
 python tools/release_guard.py --self-test  # the tag guard release.yml runs, against fixtures
+python tools/aur_package.py --self-test    # the AUR renderer aur.yml runs, against fixtures
 python tools/console_probe.py      # Windows: drive the TUI in a hidden console, read the screen back
 ```
 
@@ -192,6 +193,11 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **Scoop and the AUR** (2026-10-03): `vshylov/scoop-bucket` — the release's zip,
+  data in `%APPDATA%`, Excavator for updates — is live; `mindfork-rs-bin` is built
+  and checked by every release (`aur.yml`) and **blocked**: the AUR's registration
+  is closed, so no user doc names it yet ([docs/research/package-managers.md](docs/research/package-managers.md),
+  [docs/journal/release.md](docs/journal/release.md)).
 - **Promotion — making mindfork findable** (opened 2026-10-03): the plan and its
   baseline ([docs/research/promotion.md](docs/research/promotion.md)). Its first
   code track: a ~25 s animated demo **generated from code** — a scripted turn
@@ -384,21 +390,6 @@ being recent is dropped, not shortened.
   32 MB ceiling, and on unix the data root is `0700` with `0600` files
   ([docs/research/safe-defaults.md](docs/research/safe-defaults.md),
   [docs/journal/tools.md](docs/journal/tools.md)).
-- **Before the first public release — the track is closed** (stage 6, 2026-09-19).
-  An audit of the flip, the defaults and the first run found twelve blockers and
-  staged them; stage 1 made a terminal-less launch refuse (it hung), gave an engineless
-  chat the ways to connect one, and rewrote PRIVACY.md from the code (16 corrections;
-  `llama setup` reads no `GITHUB_TOKEN`). The flip itself was measured before it was
-  taken: **9 229** blobs and **582** pull requests scanned for nine credential shapes,
-  **zero** hits, and the Hugging Face namespace the audit feared is the owner's own
-  GitHub login; 59 release assets and **183 CI artifacts** deleted for carrying the
-  spellcheck dictionaries without their licences; v0.10.0 published and **immutable**
-  (a draft created before the setting still becomes immutable at publish — measured,
-  the documentation is silent); the settings SECURITY.md had been promising, minus the
-  two paid secret-scanning options GitHub refuses in silence. The track's last
-  item closed with 0.10.1 — `cargo install mindfork`
-  ([docs/research/public-release-readiness.md](docs/research/public-release-readiness.md) §5,
-  [docs/journal/release.md](docs/journal/release.md)).
 - **A headless launch (no TTY) exits with code 2** and a one-line reason — the
   TUI cannot be run from an agent's shell; how it *looks* needs a real terminal
   and a person. What a console *holds* can be measured on Windows:
