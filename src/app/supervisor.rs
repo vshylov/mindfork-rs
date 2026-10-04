@@ -2448,9 +2448,10 @@ mod tests {
     /// The whole point of the feature, end to end: a server that was `Ready` goes
     /// away, the monitor notices *on its own* (nobody asked it to), and when the
     /// server comes back it recovers *on its own* too — no restart, no settings edit.
-    /// Time is paused, so the 60s/5s intervals cost nothing; the stub hangs up rather
-    /// than closing the port, so a failing probe is instant.
-    #[tokio::test(start_paused = true)]
+    /// Time is paused after the first verdict (see the next test for why not before),
+    /// so the 60s/5s intervals cost nothing; the stub hangs up rather than closing the
+    /// port, so a failing probe is instant.
+    #[tokio::test]
     async fn monitor_notices_a_server_going_down_and_coming_back() {
         let (url, switch) = spawn_stub_server(true).await;
         let (tx, mut rx) = unbounded_channel();
@@ -2466,6 +2467,7 @@ mod tests {
             Some(ServerStatus::Ready),
             "initial verdict"
         );
+        tokio::time::pause();
 
         switch.store(false, Ordering::SeqCst); // the server goes away
         match rx.recv().await {
@@ -2484,7 +2486,14 @@ mod tests {
     /// A steady server publishes nothing after its first verdict — the monitor must
     /// not wake the UI on every poll. (Paused time makes "a while" free: 10 minutes of
     /// virtual time is ~10 healthy polls.)
-    #[tokio::test(start_paused = true)]
+    ///
+    /// The first verdict is waited for in **real** time, and the clock paused only
+    /// after it. A paused clock jumps to the next timer whenever the runtime has
+    /// nothing ready, and the readiness probe's timers are short: on a slow macOS
+    /// runner the loopback connection had not completed when the clock looked, and
+    /// the 15 s readiness deadline went by in an instant — `Disconnected`, 1 run in 3
+    /// (docs/research/macos.md §3.3).
+    #[tokio::test]
     async fn monitor_stays_quiet_while_the_server_is_steady() {
         let (url, _switch) = spawn_stub_server(true).await;
         let (tx, mut rx) = unbounded_channel();
@@ -2496,6 +2505,7 @@ mod tests {
             ru(),
         );
         assert_eq!(rx.recv().await, Some(ServerStatus::Ready));
+        tokio::time::pause();
         tokio::time::sleep(HEALTHY_POLL * 10).await;
         assert!(
             rx.try_recv().is_err(),

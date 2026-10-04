@@ -1,5 +1,5 @@
 # CI: lints (source language + doc links + fmt + clippy) on Linux + tests on
-# Linux and Windows + SonarQube Cloud analysis (advisory) on Linux.
+# Linux, Windows and macOS + SonarQube Cloud analysis (advisory) on Linux.
 # The toolchain comes from rust-toolchain.toml (a pin, release-engineering.md F4).
 # #[ignore] smokes (engine/network/live model) without env variables are silently skipped —
 # CI needs no network or a live server. See docs/release-engineering.md §3.3.
@@ -261,14 +261,22 @@ jobs:
         # code that has already passed; what `main` is here for is to leave a
         # warm Windows cache behind, which is the single biggest cost on a pull
         # request (measured: 7m31s of cold compile out of a 19-minute job).
-        os: [ubuntu-latest, windows-latest]
+        #
+        # macOS (Apple Silicon — docs/research/macos.md, fork F3) follows the
+        # Windows pattern for the same reason: on `main` it builds to leave a warm
+        # cache. Standard runners are free on a public repository, macOS ones
+        # included; what it costs is a third job beside Windows' longer one.
+        os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     # Measured: Linux p50 2.3 min, max 4.7 over 269 runs. Windows p50 6.1, max
     # 27.6 over 231 runs — the worst of them before the 2026-08-05 speedup
     # (since then max 16), but a cold cache on top of the disk-contention tail
     # the journal records (a 2.4x test phase) can still reach the low twenties,
     # so Windows keeps the wider ceiling rather than the current-regime one.
-    timeout-minutes: ${{ matrix.os == 'windows-latest' && 35 || 15 }}
+    # macOS: no history yet; the probe measured a cold test build at 4m20s-4m53s
+    # and the run at 35-50s on the 3-core M1 VMs (docs/research/macos.md §3), plus
+    # the clippy pass below — 25 leaves a cold cache room.
+    timeout-minutes: ${{ matrix.os == 'windows-latest' && 35 || matrix.os == 'macos-latest' && 25 || 15 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - name: Install the toolchain (from rust-toolchain.toml)
@@ -308,8 +316,14 @@ jobs:
       # different key and warm nothing.
       - name: Tests
         run: >-
-          ${{ (github.event_name == 'push' && runner.os == 'Windows')
+          ${{ (github.event_name == 'push' && runner.os != 'Linux')
               && 'cargo test --no-run' || 'cargo test' }}
+      # The code under `#[cfg(target_os = "macos")]` is compiled nowhere else: the
+      # `lint` job's clippy runs on Linux, and the owner develops on Windows. A
+      # pull request lints it here, on the OS it is for.
+      - name: Clippy (the macOS-only code)
+        if: runner.os == 'macOS' && github.event_name == 'pull_request'
+        run: cargo clippy --all-targets -- -D warnings
 
   # SonarQube Cloud analysis (project `vshylov_mindfork-rs`, configuration in
   # sonar-project.properties). The Sonar Rust analyzer runs `cargo clippy` itself

@@ -1,8 +1,9 @@
 # macOS — mindfork on a Mac, built and tested without one
 
-Status: **research, MVP probe GO (2026-10-04)** — the forks in §8 wait for the
-owner. Part of the promotion plan's stage 1, the friction of a first try
-([promotion.md §5](promotion.md)): today a Mac user has no download at all.
+Status: **MVP probe GO; every fork as recommended (the owner, 2026-10-04);
+stage 1a built (§10)** — stage 1b, the keys, next. Part of the promotion plan's
+stage 1, the friction of a first try ([promotion.md §5](promotion.md)): today a
+Mac user has no download at all.
 
 The owner has no Mac. Everything below was measured on GitHub's Apple Silicon
 runners (§3) or read from the code (§4) and from Apple's, GitHub's and
@@ -313,10 +314,12 @@ iTerm2 and Ghostty:
 - **Stage 0 — this document and its probe.** GO: it builds on macOS 15 and
   26, 3879 of 3892 tests pass, the TUI runs in a pty, and llama.cpp with Metal,
   the managed engine and the Python sandbox work on a runner.
-- **Stage 1 — the code, with no Mac needed.** The secret scheme (F2), the lock
-  (§4.2), the symlink (§4.3), the keys (F5), `.DS_Store`, the `metal` name, the
-  dyld message, the two tests (§3.3); macOS joins the CI test matrix (F3), so
-  every pull request from then on is tested there.
+- **Stage 1 — the code, with no Mac needed**, in two pull requests:
+  - **1a** — what a Mac needs to run right: the secret scheme (F2), the lock
+    (§4.2), the symlink (§4.3), `.DS_Store`, the `metal` name, the dyld message,
+    the two tests (§3.3); macOS joins the CI test matrix (F3), so every pull
+    request from then on is tested there — 1b included. Built: §10.
+  - **1b** — the keys (F5), a change to how every OS reads them.
 - **Stage 2 — the release.** `aarch64-macos` in `release.yml` (the archive, its
   checksum and attestation, the notices' target), `install.sh` on macOS, the
   tap (F4's channels), install.md and the site's install page marking macOS a
@@ -327,6 +330,8 @@ iTerm2 and Ghostty:
   pass if macOS 15's Terminal.app needs one (§4.5).
 
 ## 8. Forks
+
+**The owner's decision, 2026-10-04: every fork as recommended** — (a) for each.
 
 - **F1 — which Macs.** (a) Apple Silicon only; (b) Intel too, as a second
   target. (b) would ship without the sandbox (no Wasmer build) and without
@@ -372,3 +377,40 @@ iTerm2 and Ghostty:
 - **Unsigned builds** may cost the browser-download audience (F4).
 - **The paused-clock test** may fail on any slow runner, not only a Mac
   (§3.3).
+
+## 10. Stage 1a — built
+
+Each item of §4 that needs no Mac to fix, in the order of §7:
+
+- **Stored secrets — `platform-uuid-v1`** (`shared/secrets.rs`, F2). The Linux
+  scheme's HKDF and ChaCha20-Poly1305 keyed by the hardware UUID, which
+  `gethostuuid(2)` returns (in `libc` already — no new dependency). It is keyed
+  in the form `ioreg` prints as `IOPlatformUUID`, upper-case and hyphenated, so
+  a later reader through IOKit derives the same key. Each scheme answers for its
+  own identity only: an entry under another OS's scheme is a foreign machine's,
+  as before. `machine_label` falls back to `gethostname(3)`, which a Mac has
+  where `HOSTNAME` and `/etc/hostname` are not.
+- **The lock** (`shared/instance.rs`): on macOS the crate is given a path in
+  the per-user temporary directory rather than a bare name; a test asserts that
+  nothing lands in the working directory.
+- **The symlink** (`shared/paths.rs`): `exe_dir_of` resolves `current_exe` on
+  every unix — a no-op on Linux, where it already is the target — and not on
+  Windows, where `canonicalize` would return a `\\?\` path. A unix test
+  starts it through a link.
+- **`.DS_Store`**: `chat_files::unlisted` skips dot-files — Finder's, and its
+  `._name` companions on a volume without extended attributes.
+- **`metal`**: the plain build is `metal` on macOS arm64 and `cpu` everywhere
+  else, the Intel Mac's build included (Metal off upstream).
+- **dyld**: `missing_library` reads dyld's line. Measured on a runner first —
+  b11396 with `libggml-base.0.dylib` moved away prints
+  `dyld[2653]: Library not loaded: @rpath/libggml-base.0.dylib` and dies of
+  SIGABRT (exit 134) — and the test holds that line.
+- **The two tests**: the backends listing names its OS; the two monitor tests
+  wait for their first verdict in real time and pause the clock after it.
+- **CI**: `macos-latest` in the test matrix, building only on `main` as Windows
+  does, plus a clippy pass on a pull request — the macOS-only code is compiled
+  nowhere else.
+
+The OS-specific halves — `gethostuuid`, the lock path — run only on the macOS
+runner; the pull request's `Tests (macos-latest)` is their test.
+
