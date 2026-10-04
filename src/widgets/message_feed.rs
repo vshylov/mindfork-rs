@@ -3542,6 +3542,30 @@ mod tests {
         assert!(!joined.contains("секрет"));
     }
 
+    /// The folded pill counts the thoughts' lines in words that read right at
+    /// one: it said "thinking · 1 lines" (docs/journal/ui-feed.md).
+    #[test]
+    fn the_folded_pill_counts_lines_in_words_that_fit_one() {
+        use crate::shared::i18n::{Lang, locale};
+        let pill = |thoughts: &str, lang: Lang| {
+            let lines = MessageFeed::new().build_lines(
+                &[msg(FeedRole::Assistant, "answer", thoughts)],
+                &Palette::default(),
+                80,
+                locale(lang),
+            );
+            joined(&lines)
+        };
+        for (thoughts, en, ru) in [
+            ("one", "thinking · lines: 1 · ", "мысли · 1 стр. · "),
+            ("one\ntwo", "thinking · lines: 2 · ", "мысли · 2 стр. · "),
+        ] {
+            let (en_pill, ru_pill) = (pill(thoughts, Lang::En), pill(thoughts, Lang::Ru));
+            assert!(en_pill.contains(en), "{en_pill}");
+            assert!(ru_pill.contains(ru), "{ru_pill}");
+        }
+    }
+
     #[test]
     fn expanded_thoughts_show_content() {
         let mut feed = MessageFeed::new();
