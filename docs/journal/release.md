@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (59)
+## Entries (60)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -71,6 +71,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: the animated demo — stage 2 (drawn by the release, played by the site) (done)
 - Post-M9: the animated demo — stage 3 (the Russian reel) (done)
 - Post-M9: Scoop and the AUR — two package managers before winget (done)
+- Post-M9: the demo's `note_save` card is a call the real tool could answer (done)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -3541,3 +3542,38 @@ every reversible check first. Full record —
   (S1192, now `VERSION_MARK`/`SHA256_MARK`) and `self_test` at complexity 22
   (S3776, now four `_check_*` parts like `indexnow.py`'s). The snippet analyzer
   is clean on the result; the taint engine is measured by the PR analysis alone.
+
+### Post-M9: the demo's `note_save` card is a call the real tool could answer (done)
+
+**What.** Writing the Russian reel showed that the showcase's tool card was made
+up: `note_save` called with `title` and `text` and answering `Note saved: "Hardware
+budget".`, where the real tool takes one required `content` (and optional `tags`)
+and answers `Note saved (id=…).` (spec §9.3, `features/tools/notes/save.rs`). The
+card is in the README's hero still, in `mindfork demo` and in both reels, so every
+place that shows the app at work showed a call the app cannot make.
+
+**How.** The call is built from the tool's shape: `{"content": …}`, and a result
+taken from the bundle's `tool.note_save.result.saved` with a fixed id — so the
+card's text is the tool's own and cannot drift from it, in English and in Russian
+(`features/demo/ru.rs` uses the same two helpers). The note is written the way a
+model writes one about the user ("The user's GPU has 12 GB; …"), not as a
+`Title: text` pair, which as `content: Hardware budget: …` read with two colons.
+`provision` seeds that note with that id, so in `mindfork demo` the id the card
+names is a note the demo profile holds.
+
+**Tests.** `the_note_save_card_is_the_real_tools_shape` reads `NoteSave`'s own
+schema: every argument is a parameter, every required parameter is there, and the
+result is the bundle's string naming the seeded note — both languages. The
+provisioning test checks the note is there once after two runs. The reel's tool
+beat now looks for the note's words and the `(id=` of the result in each language,
+and the Russian reel's ban on English words covers the new text.
+
+**Screenshots.** The card is a row shorter (one argument, not two), so the hero
+still scrolls by a row: `chat-{dark,light}-en` re-rendered from fresh dumps, the
+other stills byte-identical. Looked at: the card reads `content: The user's GPU has
+12 GB; Gemma 4 12B at Q5_K_M with a 16k context fits it.` over `Note saved
+(id=6d665f64-656d-6f5f-6e6f-746500000001).`
+
+**Tests:** +1 unit test — **3895 unit tests green, 257 `#[ignore]`**; fmt / clippy /
+`cyrillic_scan.py` clean. No live run: demo fixture and its renders; no engine,
+memory or tool behaviour changed.

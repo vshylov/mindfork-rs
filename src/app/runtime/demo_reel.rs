@@ -684,7 +684,7 @@ mod tests {
             ("open", &["Which Gemma 4 12B quant", "Q5_K_M", "sweet spot"]),
             ("type", &["save a note about my setup."]),
             ("think", &["The note should record"]),
-            ("tool", &["note_save", "Hardware budget"]),
+            ("tool", &["note_save", "The user's GPU has 12 GB", "Note saved (id="]),
             ("answer", &["How much context?", "KV headroom", "double the cache"]),
             ("self", &["I run locally", "receipts beat repetition"]),
         ];
@@ -703,7 +703,7 @@ mod tests {
             ("open", &["Какой квант Gemma 4 12B", "золотая середина", "ВЫ", "АССИСТЕНТ"]),
             ("type", &["сохрани заметку о моём железе.", "Enter отправить"]),
             ("think", &["В заметке стоит записать", "мысли"]),
-            ("tool", &["note_save", "Бюджет железа"]),
+            ("tool", &["note_save", "видеокарта на 12 ГБ", "Заметка сохранена (id="]),
             ("answer", &["Какое окно нужно?", "запас на KV", "кэш вдвое больше"]),
             ("self", &["Модель себя", "Я работаю локально", "Ответы со ссылкой на заметку"]),
         ];
@@ -715,7 +715,8 @@ mod tests {
                 "YOU",
                 "ASSISTANT",
                 "Self-model",
-                "Hardware budget",
+                "The user's GPU",
+                "Note saved",
             ] {
                 assert!(!screen.contains(english), "{english:?} in:\n{screen}");
             }
