@@ -1,7 +1,8 @@
 # macOS — mindfork on a Mac, built and tested without one
 
 Status: **MVP probe GO; every fork as recommended (the owner, 2026-10-04);
-stage 1 built (§10, §11)** — stage 2, the release, next. Part of the promotion plan's
+stages 1 and 2 built (§10–§12)** — the first release that carries the macOS
+build, then a day on a rented Mac (stage 3). Part of the promotion plan's
 stage 1, the friction of a first try ([promotion.md §5](promotion.md)): today a
 Mac user has no download at all.
 
@@ -323,7 +324,8 @@ iTerm2 and Ghostty:
 - **Stage 2 — the release.** `aarch64-macos` in `release.yml` (the archive, its
   checksum and attestation, the notices' target), `install.sh` on macOS, the
   tap (F4's channels), install.md and the site's install page marking macOS a
-  preview.
+  preview. Built: §12 — the user-facing documents wait for the release that
+  carries the archive.
 - **Stage 3 — a day on a rented Mac** (§6.2), the fixes it finds, and the
   call for testers.
 - **Later, on demand** — signing and notarization (F4), Intel (F1), a 256-colour
@@ -425,4 +427,60 @@ an `Alt`+character is never typed, and `Ctrl+J` breaks a line in every
 multi-line field — named in the footer in Terminal.app. The settings a Mac user
 may turn on (Option as Meta) are in the manual's keys section; install.md's macOS
 section comes with stage 2. What only a Mac answers stays on §6.2's list.
+
+## 12. Stage 2 — built
+
+- **The release** (`release.yml`): `macos-latest` joins the build matrix with
+  `MACOSX_DEPLOYMENT_TARGET=11.0` — the first macOS for Apple Silicon, rustc's
+  default for the target, said once so the C code `cc` builds has the same
+  floor. The release job packs `mindfork-rs-vX.Y.Z-aarch64-macos.tar.gz` in the
+  Linux layout (the binary, `data/dictionaries`, the licences and documents),
+  inside `sha256sums.txt` and the attestation like every asset. The macOS build
+  job runs `install_test.sh` with the binary it just built — the one place a Mac
+  binary and a Mac meet before a user's machine.
+- **The notices**: `about.toml` lists `aarch64-apple-darwin`, so the crates only
+  a Mac links (objc2, coreaudio, security-framework) carry their licences into
+  every archive; `packaging.yml` now runs when `about.toml` or `about.hbs`
+  changes, which it did not.
+- **`install.sh` on a Mac** (`packaging/linux/install.sh` — the path stays):
+  `Darwin` + Apple Silicon (asked of the machine, so a Rosetta shell gets the
+  Apple Silicon build) installs `aarch64-macos`; an Intel Mac is refused with
+  `cargo install` as the way. The digest is read with `sha256sum` or `shasum`;
+  ALSA, glibc and OpenMP stay Linux's. The link goes into `/usr/local/bin`, or
+  Homebrew's `/opt/homebrew/bin`, which Apple Silicon has instead and its user
+  can write. An archive a browser saved, installed with `--from`, carries its
+  quarantine onto what `tar` unpacks (measured, below); the script says so and
+  names `xattr -dr com.apple.quarantine`, and does not clear it itself — that
+  is the question macOS means to ask a person.
+- **Its scenarios on a Mac**: `install_test.sh` packs with bsdtar's flags and
+  checks with `shasum` on a Mac; new arms stub `uname`/`sysctl`, so the
+  platform choice (another OS, an Intel Mac, a Rosetta shell) is tested on both
+  runners; a Mac adds the quarantine note and its control arm, and the OpenMP
+  arms are Linux's. `packaging.yml` runs them on `macos-latest`; on Linux all 41
+  passed in an `ubuntu:24.04` container before any of it was pushed.
+- **The Homebrew tap** — its own repository, `vshylov/homebrew-tap`
+  (fork F4's channel): `formula.rb.in` installs the archive into `libexec`,
+  writes `defaults.json` with `{"mode": "system"}` beside the binary — the data
+  in `~/Library/Application Support/mindfork-rs`, out of the Cellar an upgrade
+  replaces — and links `bin/mindfork`, which the app follows back (§10's
+  symlink fix is what makes that work). `bump.py` and a workflow every six hours
+  keep it at the latest release with a macOS build — Scoop's Excavator again,
+  with no secret: the workflow installs the formula from a tap of its own
+  commit, tests it, and only then pushes.
+
+**Measured before any release had it** — a rehearsal on the spike branch:
+
+| What | Result (`macos-latest`, macOS 26.6.2; run 37237653131) |
+|---|---|
+| The release build with the floor set | 9 min 03 s; `LC_BUILD_VERSION`: **`minos 11.0`**, `sdk 26.5` |
+| The archive, packed as `release.yml` packs it | `mindfork-rs-v0.14.1-aarch64-macos.tar.gz`, 12.3 MB, and its `sha256sums.txt` line |
+| `install_test.sh` with the real binary | **35 passed, 0 failed** — the macOS arms among them |
+| `install.sh --from` that archive | installed into `~/mf`, **linked `/usr/local/bin/mindfork`**; through the link the data root is **`~/mf/data`** — beside the real file |
+| The formula, rendered by `bump.py` with a `file://` URL, from a tap of a local repository | `brew tap` + `brew install vshylov/tap/mindfork` + `brew test` pass; `brew audit --strict` reports nothing; `/opt/homebrew/bin/mindfork` → the Cellar; `mindfork --version` 0.14.1; the data root **`~/Library/Application Support/mindfork-rs`**; the dictionaries in `libexec/data/dictionaries`; after `brew uninstall` the data is still there |
+
+**Quarantine, measured on a runner** (Gatekeeper's assessments on): `curl`
+leaves none; a mark put on an archive is copied by `tar -xzf FILE` onto every
+file it unpacks, and not by `… | tar -xzf -`; `spctl` rejects the ad-hoc-signed
+binary, which a shell on the runner still started — whether a Terminal window on
+a Mac does is §6.2's item 9.
 
