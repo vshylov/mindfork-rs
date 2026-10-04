@@ -97,7 +97,7 @@ before stages 0–1 have removed what a first visitor would bounce off.
 | An Ollama / LM Studio recipe at the top of the README and the site (three lines); idea: the engineless chat offers a server it finds on `localhost:11434` or `:1234` | todo |
 | A Scoop manifest (own bucket first) — Scoop does not need a signed binary, so Windows gets a package manager now rather than after signing | done 2026-10-03: `vshylov/scoop-bucket` ([package-managers.md](package-managers.md)) |
 | AUR `mindfork-rs-bin` — the release already builds an Arch package with nfpm | ready, **blocked**: the AUR's registration is closed (2026-10-04), so there is no account to publish from; every release builds and checks it ([package-managers.md](package-managers.md) §4) |
-| macOS (§5) | research first |
+| macOS (§5) | researched 2026-10-04, MVP probe **GO** on GitHub's Apple Silicon runners — it builds, 3879 of 3892 tests pass, llama.cpp runs with Metal and the Python sandbox starts; the forks wait for the owner ([macos.md](macos.md)) |
 | winget | unchanged: waits for signing |
 
 ### Stage 2 — communities: the repeatable first, the one-shot last
@@ -179,9 +179,10 @@ Traps already known:
 - The machine-bound encryption of API keys needs a macOS source for the
   machine's identity.
 
-Next step: a research document of its own (`docs/research/macos.md`) whose MVP
-probe is a CI job — build and unit tests on an Apple Silicon runner — with a
-go/no-go.
+Its research document is [macos.md](macos.md): the MVP probe — a CI job, the
+build and the unit tests on an Apple Silicon runner — came out **GO**, and what
+it found (no stored secrets on a Mac, a lock file in the working directory, the
+keys) is staged there.
 
 ## 6. The animated demo — a track
 

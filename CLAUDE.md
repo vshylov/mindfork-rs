@@ -204,7 +204,9 @@ being recent is dropped, not shortened.
   played through the runtime's own path, drawn to GIF/WebP by
   `tools/demo_reel.py` in every release (English and Russian), played by mindfork.io
   ([docs/research/demo-reel.md](docs/research/demo-reel.md),
-  [docs/journal/release.md](docs/journal/release.md)).
+  [docs/journal/release.md](docs/journal/release.md)). macOS is researched, its
+  probe on Apple Silicon runners GO, the forks open
+  ([docs/research/macos.md](docs/research/macos.md)).
 - **A pod's failures say what they are** — a managed server that dies shows the
   error it logged (a CUDA build newer than the driver names `cuda-12`), a port
   another program holds is refused, one death is one relaunch. Live **GO**
