@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (61)
+## Entries (62)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -73,6 +73,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: Scoop and the AUR — two package managers before winget (done)
 - Post-M9: the demo's `note_save` card is a call the real tool could answer (done)
 - Post-M9: macOS stage 1a — what a Mac needs to run right (done)
+- Post-M9: macOS stage 2 — the release, `install.sh` and a Homebrew tap (done)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -3617,4 +3618,37 @@ pause after it.
 257 `#[ignore]`**; fmt / clippy / `cyrillic_scan.py` clean. No live run: no
 engine, memory or tool behaviour changed; the secret scheme's round trip is the
 existing `entry_round_trip_on_local_scheme`, now exercised on macOS by CI.
+
+### Post-M9: macOS stage 2 — the release, `install.sh` and a Homebrew tap (done)
+
+**Why.** Stage 2 of the macOS track ([docs/research/macos.md](../research/macos.md)
+§7, §12): with stage 1 merged the app runs right on a Mac, and the release still
+built none. Fork F4 (the owner's choice) ships it unnotarized, through the
+channels that do not quarantine: `curl … | sh`, a Homebrew formula and `cargo
+install`.
+
+**What.** `release.yml` builds on `macos-latest` with `MACOSX_DEPLOYMENT_TARGET`
+11.0 and packs `mindfork-rs-vX.Y.Z-aarch64-macos.tar.gz` in the Linux layout,
+checksummed and attested with the rest; the macOS build job runs the install
+script's scenarios with the binary it built. `about.toml` lists the Apple
+target, so the macOS-only crates' licences travel. `install.sh` installs the
+Apple Silicon build on a Mac — the machine asked rather than the shell, so
+Rosetta does not mislead it; `shasum` where there is no `sha256sum`; nothing of
+ALSA, glibc or OpenMP; a link into `/usr/local/bin` or `/opt/homebrew/bin`; and
+a note, not a silent `xattr`, when a `--from` archive carries a browser's
+quarantine. Its scenarios run on both OSes, the platform choice through stubbed
+`uname`/`sysctl`, and `packaging.yml` runs them on a Mac. The Homebrew tap is a
+repository of its own, `vshylov/homebrew-tap`: a formula template, `bump.py`,
+and a workflow that installs and tests a new formula before it pushes it.
+
+**Rehearsed** before any release could: the archive packed as `release.yml`
+packs it, installed by `install.sh` and by the formula from a local tap on a
+macOS runner (macos.md §12 has the run). The user-facing documents — install.md,
+the site's install page, the README — wait for the release that carries the
+archive: a Mac user reading them before it would download a release with no
+macOS build, and the 0.14.1 `install.sh` that refuses a Mac.
+
+**Tests:** no Rust changed — 3902 unit tests, 257 `#[ignore]`, as before;
+`install_test.sh` 41/41 on Linux, its macOS arms on the runner; shellcheck clean
+at CI's severity. No live run: packaging only.
 

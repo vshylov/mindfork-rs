@@ -1,7 +1,7 @@
 # Validates packaging on PRs and pushes to main. Linux: builds packages (deb/rpm/archlinux)
 # via nfpm and checks the install in Ubuntu/Fedora/Arch containers (a smoke: the layout +
 # running `--version` as a regular user); runs the install script (install.sh) in five
-# bare distribution images. Windows: compiles the Inno Setup installer
+# bare distribution images, and its scenarios on a macOS runner. Windows: compiles the Inno Setup installer
 # script (a syntax check for the .iss + [Code], without building a real binary).
 # The real public release builds and attaches artifacts separately — release.yml.
 # See docs/history/installers.md §8.
@@ -20,6 +20,10 @@ on:
       - ".github/workflows/aur.yml"
       - "Cargo.toml"
       - "Cargo.lock"
+      # What the notices are generated from: a target added to about.toml adds
+      # crates whose licences the generation must accept.
+      - "about.toml"
+      - "about.hbs"
       - "dictionaries/**"
   # Deliberately no `push: [main]` trigger: the pull_request run validates the
   # merge result for exactly these paths, so a main run would repeat ~9 billable
@@ -268,6 +272,21 @@ jobs:
           sh packaging/linux/install.sh --dir /opt/released --no-link -- --version | tee released.log
           grep -q "sha256 ok" released.log
           grep -Eq "^mindfork [0-9]+\.[0-9]+\.[0-9]+" released.log
+
+  # install.sh on a Mac (docs/research/macos.md): the same scenarios on macOS's
+  # own userland — bsdtar, `shasum`, BSD `sed` and `awk` — plus the Mac's own
+  # arms (the browser's quarantine, no OpenMP). The stand-in binary only: the
+  # real one is built and installed by release.yml's macOS build, which is
+  # where a Mac binary exists; nothing here is worth a ten-minute LTO build.
+  install-script-macos:
+    name: install.sh (macOS)
+    runs-on: macos-latest
+    # The scenarios take seconds; the budget is the runner's start.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Scenarios (no network needed)
+        run: sh packaging/linux/install_test.sh
 
   # The AUR package (aur.yml, docs/research/package-managers.md): the PKGBUILD
   # this tree renders, for the latest published release, built, linted,

@@ -1,5 +1,5 @@
 #!/bin/sh
-# mindfork — the install script for Linux x86_64.
+# mindfork — the install script for Linux x86_64 and macOS on Apple Silicon.
 #
 #   curl -fsSL https://github.com/vshylov/mindfork-rs/releases/latest/download/install.sh | sh
 #   … | sh -s -- --dir /workspace/mindfork -- setup --llama cuda-12 --model /models/chat.gguf --verify
@@ -15,13 +15,18 @@
 # the same line again downloads nothing that is already there and only puts back
 # what the container lost (docs/research/cloud-provisioning.md §4.4).
 #
+# On a Mac the same, minus what a Mac does not need: no glibc to check, no
+# system library to install (CoreAudio and the rest are the OS's), no OpenMP
+# for llama.cpp's macOS build (docs/research/macos.md §4.7). Downloaded with
+# `curl`, nothing it installs is quarantined (§5.1).
+#
 # Options (all optional):
 #   --dir DIR        where to install                      (default: $HOME/mindfork)
 #   --version vX.Y.Z which release                         (default: the latest)
 #   --from DIR       install from files already on disk — the archive and
 #                    sha256sums.txt — instead of downloading them
-#   --no-deps        do not install the system libraries the app needs (ALSA),
-#                    and llama.cpp when the hand-over installs it (OpenMP)
+#   --no-deps        Linux: do not install the system libraries the app needs
+#                    (ALSA), and llama.cpp when the hand-over installs it (OpenMP)
 #   --no-link        do not link the binary into /usr/local/bin
 #   -h, --help
 #   -- ARGS…         run `mindfork ARGS…` when the install is done
@@ -45,7 +50,7 @@ die() {
 # Spelled out rather than read back from `$0`: piped into `sh`, there is no file.
 usage() {
     cat <<'EOF'
-mindfork install script (Linux x86_64)
+mindfork install script (Linux x86_64, macOS on Apple Silicon)
 
   install.sh [OPTIONS] [-- MINDFORK ARGS…]
 
@@ -53,8 +58,8 @@ mindfork install script (Linux x86_64)
   --version vX.Y.Z  which release                    (default: the latest)
   --from DIR        install from files already on disk (the archive and
                     sha256sums.txt) instead of downloading them
-  --no-deps         do not install the system libraries the app needs (ALSA),
-                    and llama.cpp when the hand-over installs it (OpenMP)
+  --no-deps         Linux: do not install the system libraries the app needs
+                    (ALSA), and llama.cpp when the hand-over installs it (OpenMP)
   --no-link         do not link the binary into /usr/local/bin
   -h, --help        this text
   -- ARGS…          run `mindfork ARGS…` when the install is done, e.g.
@@ -69,9 +74,36 @@ have() { command -v "$1" >/dev/null 2>&1; }
 
 # ------------------------------------------------------------------ the platform
 
+# Set by `check_platform`: which build, and the archive name's tail for it.
+OS=""
+SUFFIX=""
+
 check_platform() {
-    [ "$(uname -s)" = "Linux" ] ||
-        die "this script installs the Linux build; on $(uname -s) see docs/install.md"
+    case "$(uname -s)" in
+    Linux) check_linux ;;
+    Darwin) check_macos ;;
+    *) die "there is a prebuilt build for Linux x86_64 and for macOS on Apple Silicon; on $(uname -s) see docs/install.md" ;;
+    esac
+    have tar || die "tar is required"
+}
+
+# `uname -m` says x86_64 in a shell Rosetta translates, on Apple Silicon all the
+# same — so the machine is asked, not the shell. An Intel Mac has no build: the
+# sandbox's Wasmer has none for it, and llama.cpp's has no Metal
+# (docs/research/macos.md §1, fork F1).
+check_macos() {
+    OS=macos
+    SUFFIX=aarch64-macos
+    if [ "$(uname -m)" != arm64 ] && [ "$(sysctl -n hw.optional.arm64 2>/dev/null || true)" != 1 ]; then
+        die "the macOS build is for Apple Silicon; an Intel Mac has none — build from source with cargo (docs/install.md §1)"
+    fi
+    # macOS 26 has `sha256sum`; every macOS has `shasum`.
+    have sha256sum || have shasum || die "shasum is required"
+}
+
+check_linux() {
+    OS=linux
+    SUFFIX=x86_64-linux
     case "$(uname -m)" in
     x86_64 | amd64) ;;
     *) die "a prebuilt archive exists for x86_64 only; on $(uname -m) build from source (docs/install.md §1)" ;;
@@ -88,8 +120,15 @@ check_platform() {
     minor="${minor%%[!0-9]*}"
     [ "${minor:-0}" -ge "$MIN_GLIBC_MINOR" ] ||
         die "the prebuilt binary needs glibc 2.${MIN_GLIBC_MINOR} or newer; this system has ${libc} — build from source (docs/install.md §1)"
-    have tar || die "tar is required"
     have sha256sum || die "sha256sum is required (coreutils)"
+}
+
+sha256_of() { # file
+    if have sha256sum; then
+        sha256sum "$1"
+    else
+        shasum -a 256 "$1"
+    fi | awk '{ print $1 }'
 }
 
 # ------------------------------------------------------------------ the network
@@ -138,19 +177,19 @@ check_tag() {
 
 # ------------------------------------------------------------------ the install
 
-archive_name() { printf 'mindfork-rs-%s-x86_64-linux.tar.gz' "$1"; }
+archive_name() { printf 'mindfork-rs-%s-%s.tar.gz' "$1" "$SUFFIX"; }
 
 # The one archive a `--from` directory holds, as its tag.
 tag_in_dir() {
     found=""
-    for f in "$1"/mindfork-rs-v*-x86_64-linux.tar.gz; do
+    for f in "$1"/mindfork-rs-v*-"$SUFFIX".tar.gz; do
         [ -f "$f" ] || continue
         [ -z "$found" ] || die "--from $1 holds more than one archive; name the release with --version"
         found="$f"
     done
-    [ -n "$found" ] || die "--from $1 holds no mindfork-rs-v…-x86_64-linux.tar.gz"
+    [ -n "$found" ] || die "--from $1 holds no mindfork-rs-v…-${SUFFIX}.tar.gz"
     found="${found##*/mindfork-rs-}"
-    printf '%s' "${found%-x86_64-linux.tar.gz}"
+    printf '%s' "${found%-"$SUFFIX".tar.gz}"
 }
 
 # Refuses unless `sha256sums.txt` names the archive and the digests agree. The
@@ -164,7 +203,7 @@ verify() { # directory, archive name
     [ -f "$1/sha256sums.txt" ] || die "sha256sums.txt is missing from $1"
     want="$(awk -v f="$2" '{ n = $2; sub(/^\*/, "", n); sub(/^\.\//, "", n); if (n == f) print $1 }' "$1/sha256sums.txt")"
     [ -n "$want" ] || die "sha256sums.txt does not list $2 — refusing to install it"
-    got="$(sha256sum "$1/$2" | awk '{ print $1 }')"
+    got="$(sha256_of "$1/$2")"
     [ "$want" = "$got" ] ||
         die "checksum mismatch for $2 (expected $want, got $got) — refusing to install it"
     say "  sha256 ok"
@@ -193,6 +232,18 @@ unpack() { # archive path, install dir
     mv -f "$stage/mindfork" "$2/mindfork"
     cp -Rf "$stage/." "$2/"
     rm -rf "$stage"
+}
+
+# A Mac's `tar -xf FILE` gives every file it unpacks the archive's quarantine
+# (measured, docs/research/macos.md §5.1), and an archive a browser saved has
+# one — so a `--from` of it installs a binary macOS may refuse to start. `curl`
+# sets none, so a download by this script never gets here. The mark is the
+# user's to clear, not ours: it is what macOS asks a person about.
+quarantine_note() { # install dir
+    [ "$OS" = macos ] || return 0
+    xattr -p com.apple.quarantine "$1/mindfork" >/dev/null 2>&1 || return 0
+    warn "the archive came through a browser, and macOS quarantined what it unpacked. If macOS refuses to start mindfork, clear the mark:"
+    warn "    xattr -dr com.apple.quarantine $1"
 }
 
 # ------------------------------------------------------------------ what a bare image lacks
@@ -249,6 +300,8 @@ ensure_starts() { # install dir, no_deps
         return 0
     fi
     why="$("$1/mindfork" --version 2>&1 || true)"
+    # A Mac has no library to install for it: what does not start is said.
+    [ "$OS" = linux ] || die "the installed binary does not start: ${why:-no output}"
     case "$why" in
     *libasound*) ;;
     *) die "the installed binary does not start: ${why:-no output}" ;;
@@ -326,6 +379,8 @@ openmp_hint() {
 # without it, and `llama setup` refuses the build it cannot start, saying the
 # same thing.
 ensure_openmp() { # no_deps, the hand-over's arguments...
+    # llama.cpp's macOS build has no OpenMP (it uses Accelerate).
+    [ "$OS" = linux ] || return 0
     no_deps_openmp="$1"
     shift
     wants_llama "$@" || return 0
@@ -344,13 +399,21 @@ ensure_openmp() { # no_deps, the hand-over's arguments...
     openmp_hint >&2
 }
 
+# Into /usr/local/bin — and on a Mac, failing that, into Homebrew's
+# /opt/homebrew/bin, which a Mac with Homebrew has on its PATH and lets its user
+# write: Apple Silicon has no /usr/local/bin of its own. The app follows the link
+# back to its directory, so its data stays beside the binary.
 link_binary() { # install dir
-    bin="/usr/local/bin/mindfork"
-    if [ -d /usr/local/bin ] && as_root ln -sf "$1/mindfork" "$bin" 2>/dev/null; then
-        say "  linked $bin"
-    else
-        say "  not linked into /usr/local/bin (no permission). Run it as:  $1/mindfork"
-    fi
+    dirs="/usr/local/bin"
+    [ "$OS" = macos ] && dirs="$dirs /opt/homebrew/bin"
+    for d in $dirs; do
+        [ -d "$d" ] || continue
+        if ln -sf "$1/mindfork" "$d/mindfork" 2>/dev/null || as_root ln -sf "$1/mindfork" "$d/mindfork" 2>/dev/null; then
+            say "  linked $d/mindfork"
+            return 0
+        fi
+    done
+    say "  not linked into $(printf '%s' "$dirs" | sed 's/ / or /') (no permission). Run it as:  $1/mindfork"
 }
 
 # ------------------------------------------------------------------ main
@@ -408,6 +471,7 @@ main() {
         [ -f "$src/$archive" ] || die "$src holds no $archive"
         verify "$src" "$archive"
         unpack "$src/$archive" "$dir"
+        quarantine_note "$dir"
         printf '%s\n' "$version" >"$marker"
         [ -n "$from" ] || rm -rf "$dir/.download"
         say "  unpacked"

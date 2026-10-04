@@ -205,8 +205,9 @@ being recent is dropped, not shortened.
   `tools/demo_reel.py` in every release (English and Russian), played by mindfork.io
   ([docs/research/demo-reel.md](docs/research/demo-reel.md),
   [docs/journal/release.md](docs/journal/release.md)). macOS: researched, probe
-  GO on Apple Silicon runners, forks decided; stage 1 built — secrets, the lock,
-  the keys, CI on macOS ([docs/research/macos.md](docs/research/macos.md)).
+  GO on Apple Silicon runners, forks decided; stages 1–2 built — secrets, the lock,
+  the keys, CI on macOS, the release's `aarch64-macos` archive, `install.sh` and a
+  Homebrew tap ([docs/research/macos.md](docs/research/macos.md)).
 - **A pod's failures say what they are** — a managed server that dies shows the
   error it logged (a CUDA build newer than the driver names `cuda-12`), a port
   another program holds is refused, one death is one relaunch. Live **GO**

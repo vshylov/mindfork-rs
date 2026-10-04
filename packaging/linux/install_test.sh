@@ -1,6 +1,7 @@
 #!/bin/sh
 # Scenarios for install.sh, run by packaging.yml in bare distribution containers
-# (and by hand: `sh packaging/linux/install_test.sh` inside any Linux container).
+# and on a macOS runner (and by hand: `sh packaging/linux/install_test.sh` inside
+# any Linux container, or on a Mac).
 #
 #   BIN=/path/to/mindfork sh packaging/linux/install_test.sh
 #
@@ -21,6 +22,16 @@ WORK="$(mktemp -d)"
 pass=0
 fail=0
 
+# The build this machine installs, as install.sh names its archive.
+case "$(uname -s)" in
+Darwin) OS=macos SUFFIX=aarch64-macos ;;
+*) OS=linux SUFFIX=x86_64-linux ;;
+esac
+
+sha256() { # files… — `sha256sum`'s lines, from whichever tool the system has
+    if command -v sha256sum >/dev/null 2>&1; then sha256sum "$@"; else shasum -a 256 "$@"; fi
+}
+
 check() { # description, expected exit code, actual exit code
     if [ "$2" = "$3" ]; then
         pass=$((pass + 1))
@@ -39,9 +50,16 @@ release_dir() { # directory, tag, binary to pack
     chmod 0755 "$1/stage/mindfork"
     echo "readme" >"$1/stage/README.md"
     echo "dict" >"$1/stage/data/dictionaries/en_US.dic"
-    tar --owner="$FOREIGN_UID" --group="$FOREIGN_UID" --numeric-owner         -C "$1/stage" -czf "$1/mindfork-rs-$2-x86_64-linux.tar.gz" .
+    if [ "$OS" = macos ]; then
+        # bsdtar spells the recorded owner its own way.
+        tar --uid "$FOREIGN_UID" --gid "$FOREIGN_UID" --numeric-owner \
+            -C "$1/stage" -czf "$1/mindfork-rs-$2-$SUFFIX.tar.gz" .
+    else
+        tar --owner="$FOREIGN_UID" --group="$FOREIGN_UID" --numeric-owner \
+            -C "$1/stage" -czf "$1/mindfork-rs-$2-$SUFFIX.tar.gz" .
+    fi
     rm -rf "$1/stage"
-    (cd "$1" && sha256sum ./*.tar.gz >sha256sums.txt)
+    (cd "$1" && sha256 ./*.tar.gz >sha256sums.txt)
 }
 
 # The archive records whoever packed it. release.yml packs as the CI runner
@@ -94,7 +112,7 @@ fi
 echo "== root without CAP_CHOWN (the pod's shape)"
 if [ "$(id -u)" = 0 ] && command -v capsh >/dev/null 2>&1; then
     release_dir "$WORK/relc" v9.9.9 "$STANDIN"
-    capsh --drop=cap_chown -- -c "mkdir -p $WORK/plain && cd $WORK/plain && tar -xzf $WORK/relc/mindfork-rs-v9.9.9-x86_64-linux.tar.gz" >/dev/null 2>&1
+    capsh --drop=cap_chown -- -c "mkdir -p $WORK/plain && cd $WORK/plain && tar -xzf $WORK/relc/mindfork-rs-v9.9.9-$SUFFIX.tar.gz" >/dev/null 2>&1
     check "control arm: a plain tar -x is refused without CAP_CHOWN" 2 $?
     capsh --drop=cap_chown -- -c "sh $S --from $WORK/relc --dir $WORK/opt-c --no-link -- --version" >/dev/null 2>&1
     check "install.sh installs where a plain tar cannot" 0 $?
@@ -143,7 +161,8 @@ check "the marker moved, the data did not" 0 $ok
 # (`ubuntu:24.04`, measured 2026-10-02). The system is stubbed — `ldconfig`
 # answers from a state file, `apt-get` records what it was asked and "installs"
 # by writing that file, `sudo` runs what it is given — so every arm runs the
-# same as root or not, on any image, with no network.
+# same as root or not, on any image, with no network. On a Mac only the control
+# arm runs: its llama.cpp has no OpenMP, so nothing is ever asked for.
 echo "== OpenMP for llama.cpp"
 STUBS="$WORK/stubs"
 STATE="$WORK/state"
@@ -170,6 +189,16 @@ chmod 0755 "$STUBS/ldconfig" "$STUBS/apt-get" "$STUBS/sudo"
 fresh() { rm -f "$STATE/gomp" "$STATE/apt.log" "$STATE/apt-fails"; }
 asked() { [ -e "$STATE/apt.log" ] && grep -q "install.*libgomp1" "$STATE/apt.log"; }
 omp() { PATH="$STUBS:$PATH" sh "$S" --from "$WORK/rel" --dir "$WORK/opt-omp" --no-link "$@" 2>&1; }
+
+if [ "$OS" = macos ]; then
+fresh
+out="$(omp -- setup --llama metal)"
+check "macOS: the hand-over installs llama.cpp" 0 $?
+if [ -e "$STATE/apt.log" ]; then apt_asked=0; else apt_asked=1; fi
+check "…and no OpenMP is asked for" 1 "$apt_asked"
+echo "$out" | grep -q "^ARGC:3$"
+check "…and the hand-over goes on" 0 $?
+else
 
 fresh
 out="$(omp -- setup --llama cuda-12)"
@@ -213,10 +242,54 @@ code=$?
 check "an install that fails does not stop the hand-over" 0 $code
 echo "$out" | grep -q "could not install it" && echo "$out" | grep -q "apt-get install -y libgomp1"
 check "…it says so and names the line to run" 0 $?
+fi
+
+# Which build a machine gets is the machine's: stubs of `uname` and `sysctl`
+# stand in for the systems this runner is not, so every arm runs everywhere.
+echo "== the platform"
+PLAT="$WORK/plat"
+mkdir -p "$PLAT" "$WORK/empty"
+plat() { # uname -s, uname -m, hw.optional.arm64 — then install.sh's arguments
+    cat >"$PLAT/uname" <<EOF
+#!/bin/sh
+case "\$1" in -s) echo "$1" ;; -m) echo "$2" ;; *) echo "$1" ;; esac
+EOF
+    cat >"$PLAT/sysctl" <<EOF
+#!/bin/sh
+echo "$3"
+EOF
+    chmod 0755 "$PLAT/uname" "$PLAT/sysctl"
+    shift 3
+    PATH="$PLAT:$PATH" sh "$S" "$@" 2>&1
+}
+out="$(plat FreeBSD amd64 0 --from "$WORK/empty" --dir "$WORK/opt-plat")"
+check "another OS is refused" 1 $?
+echo "$out" | grep -q "Apple Silicon"
+check "…naming the two builds there are" 0 $?
+out="$(plat Darwin x86_64 0 --from "$WORK/empty" --dir "$WORK/opt-plat")"
+check "an Intel Mac is refused" 1 $?
+echo "$out" | grep -q "Intel Mac has none"
+check "…saying why and what to do" 0 $?
+out="$(plat Darwin x86_64 1 --from "$WORK/empty" --dir "$WORK/opt-plat")"
+echo "$out" | grep -q "aarch64-macos"
+check "a Rosetta shell on Apple Silicon looks for the Apple Silicon build" 0 $?
+
+if [ "$OS" = macos ]; then
+echo "== a browser's quarantine (macOS)"
+mkdir -p "$WORK/relq" && cp "$WORK/rel"/* "$WORK/relq/"
+xattr -w com.apple.quarantine "0081;66e00000;Safari;" "$WORK/relq/mindfork-rs-v9.9.9-$SUFFIX.tar.gz"
+out="$(sh "$S" --from "$WORK/relq" --dir "$WORK/opt-q" --no-link 2>&1)"
+check "a quarantined archive installs" 0 $?
+echo "$out" | grep -q "xattr -dr com.apple.quarantine"
+check "…and says how to clear the mark" 0 $?
+out="$(sh "$S" --from "$WORK/rel" --dir "$WORK/opt-nq" --no-link 2>&1)"
+echo "$out" | grep -q "quarantine"
+check "control arm: an archive with no mark says nothing of it" 1 $?
+fi
 
 echo "== refusals"
 mkdir -p "$WORK/bad" && cp "$WORK/rel"/* "$WORK/bad/"
-printf 'x' >>"$WORK/bad/mindfork-rs-v9.9.9-x86_64-linux.tar.gz"
+printf 'x' >>"$WORK/bad/mindfork-rs-v9.9.9-$SUFFIX.tar.gz"
 out="$(sh "$S" --from "$WORK/bad" --dir "$WORK/opt-bad" --no-link 2>&1)"
 check "a tampered archive" 1 $?
 echo "$out" | grep -q "checksum mismatch"

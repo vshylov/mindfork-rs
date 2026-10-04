@@ -16,6 +16,13 @@ split by subsystem.
 
 ### Added
 
+- **macOS on Apple Silicon — a preview.** Each release now carries
+  `mindfork-rs-vX.Y.Z-aarch64-macos.tar.gz`: install it with `brew install
+  vshylov/tap/mindfork`, or with the same `curl … | sh` line as on Linux. Stored
+  API keys work there, keyed to the Mac's hardware; local models run through
+  llama.cpp's Metal build (`mindfork llama setup --backend metal`). Built and
+  tested on GitHub's Apple Silicon runners; not yet on a Mac with a screen.
+
 - **Keys that work on a Mac, and in every terminal.** `Alt+←/→` (Option on a
   Mac, where macOS keeps `Ctrl+←/→` for its Spaces) move by words and
   `Alt+Backspace/Delete` delete one, as `Ctrl` does; `Ctrl+J` breaks a line in

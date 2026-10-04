@@ -1,4 +1,5 @@
-# Release: on a `vX.Y.Z` tag, builds binaries (Windows + Linux glibc 2.35),
+# Release: on a `vX.Y.Z` tag, builds binaries (Windows + Linux glibc 2.35 +
+# macOS on Apple Silicon — docs/research/macos.md),
 # packs archives + sha256sums.txt, and publishes a GitHub Release with notes from
 # the corresponding CHANGELOG.md section. See docs/release-engineering.md §3.5.
 #
@@ -53,11 +54,24 @@ jobs:
           - os: windows-latest
             bin: mindfork.exe
             artifact: windows
+          # Apple Silicon only (docs/research/macos.md, fork F1). The binary's
+          # oldest macOS is set by MACOSX_DEPLOYMENT_TARGET below, not by the
+          # runner's own version.
+          - os: macos-latest
+            bin: mindfork
+            artifact: macos
     runs-on: ${{ matrix.os }}
     # Measured over the last three releases: Linux 7.8–8.8 min, Windows
     # 14.9–17.9 — LTO release builds, and a tag ref has no warm cache of its
-    # own to count on. One budget for both, sized from the Windows figure.
+    # own to count on. macOS: 7–10 min cold on the probe's M1 VMs
+    # (docs/research/macos.md §3). One budget for all, sized from Windows.
     timeout-minutes: 45
+    env:
+      # The oldest macOS the binary runs on: 11, the first for Apple Silicon and
+      # rustc's own default for this target — said once, so the C code `cc`
+      # compiles (onig, sqlite, sqlite-vec) is built for the same floor as the
+      # Rust that links it. Ignored by the other two builds.
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - name: Install the toolchain (from rust-toolchain.toml)
@@ -72,6 +86,13 @@ jobs:
           && sudo apt-get install -y libasound2-dev
       - name: Release build
         run: cargo build --release --locked
+      # install.sh installs this binary on a Mac: its scenarios on macOS's own
+      # userland (bsdtar, `shasum`), with the real binary's `--version` among
+      # them. The release job runs the same scenarios on Linux; a Mac's are here,
+      # where there is a Mac.
+      - name: The install script on macOS
+        if: runner.os == 'macOS'
+        run: BIN="$PWD/target/release/mindfork" sh packaging/linux/install_test.sh
       - name: Upload the binary
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
@@ -88,8 +109,8 @@ jobs:
       #
       # In this job rather than one of its own: the toolchain and the registry
       # are already warm here, and everything that needs the file already waits
-      # for this job. Linux only — the file is identical on both, and the config
-      # asks for both targets' graphs (about.toml).
+      # for this job. Linux only — the file is identical on every OS, and the
+      # config asks for every shipped target's graph (about.toml).
       - name: Install cargo-about
         if: runner.os == 'Linux'
         uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172  # v2.87.20
@@ -317,6 +338,16 @@ jobs:
           stage_data stage-linux
           tar -C stage-linux -czf "dist/mindfork-rs-${TAG}-x86_64-linux.tar.gz" .
 
+          # macOS (Apple Silicon): tar.gz, the Linux layout. The binary carries
+          # the linker's ad-hoc signature (docs/research/macos.md §5.1), which
+          # copying keeps; it is not notarized (fork F4).
+          mkdir -p stage-macos
+          cp "artifacts/bin-macos/mindfork" stage-macos/
+          chmod +x stage-macos/mindfork
+          cp "${DOCS[@]}" stage-macos/
+          stage_data stage-macos
+          tar -C stage-macos -czf "dist/mindfork-rs-${TAG}-aarch64-macos.tar.gz" .
+
           # Windows: zip
           mkdir -p stage-win
           cp "artifacts/bin-windows/mindfork.exe" stage-win/
@@ -329,7 +360,7 @@ jobs:
           cp artifacts/linux-packages/* dist/
           cp artifacts/windows-installer/* dist/
 
-          # The Linux install script — what
+          # The install script (Linux, and macOS on Apple Silicon) — what
           # `releases/latest/download/install.sh` resolves to. An asset like the
           # rest, so it is listed in sha256sums.txt and attested below: it adds
           # no root of trust that the binary beside it did not already have

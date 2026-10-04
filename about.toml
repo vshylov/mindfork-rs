@@ -8,9 +8,10 @@
 # The file is NOT committed: it is derived from the locked graph, and the copy
 # that matters is the one built from the exact `Cargo.lock` of the release.
 
-# Both shipped targets, so a Windows-only or Linux-only dependency is not
-# silently dropped from the notices of the artifact that contains it.
-targets = ["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"]
+# Every shipped target, so a Windows-, Linux- or macOS-only dependency (objc2,
+# coreaudio, security-framework — docs/research/macos.md §4.6) is not silently
+# dropped from the notices of the artifact that contains it.
+targets = ["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu", "aarch64-apple-darwin"]
 
 # Build-only dependencies do not travel in the binary; `cc`, `winresource` and
 # friends have no notice obligation towards a user who receives the artifact.
