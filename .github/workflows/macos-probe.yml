@@ -1,0 +1,109 @@
+# The macOS MVP probe (docs/research/macos.md): does mindfork build, pass its
+# unit tests and start on an Apple Silicon runner, and what does that runner
+# offer a managed llama-server (Metal or not)? A spike: it lives on the
+# `spike/macos-probe` branch only and runs on a push to it. Every step after
+# the build is allowed to fail, so one run reports everything at once.
+name: macOS probe
+
+on:
+  push:
+    branches: [spike/macos-probe]
+  workflow_dispatch:
+
+concurrency:
+  group: macos-probe-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  probe:
+    name: Probe (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: The machine
+        run: |
+          sw_vers
+          uname -a
+          sysctl -n machdep.cpu.brand_string hw.ncpu hw.memsize
+          system_profiler SPDisplaysDataType || true
+          df -h / | tail -1
+      - name: Install the toolchain (from rust-toolchain.toml)
+        run: rustup show
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # v2.9.2
+        with:
+          save-if: false
+      - name: Build (release)
+        run: time cargo build --release --locked
+      - name: The binary
+        continue-on-error: true
+        run: |
+          ls -l target/release/mindfork
+          file target/release/mindfork
+          otool -L target/release/mindfork
+          codesign -dv --verbose=2 target/release/mindfork 2>&1 || true
+          target/release/mindfork --version
+      - name: Unit tests
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          time cargo test --locked --no-fail-fast 2>&1 | tee test.log
+      - name: Which tests failed
+        if: always()
+        run: |
+          grep -E '^test result|FAILED|panicked at' test.log | head -200 || true
+      - name: A launch with no terminal says so
+        continue-on-error: true
+        run: |
+          target/release/mindfork demo < /dev/null > out.txt 2>&1; echo "exit=$?"
+          cat out.txt
+      - name: The TUI in a real pty (tmux)
+        continue-on-error: true
+        timeout-minutes: 10
+        run: |
+          which tmux || HOMEBREW_NO_AUTO_UPDATE=1 brew install tmux
+          tmux -V
+          tmux new-session -d -s m -x 120 -y 40 "target/release/mindfork demo"
+          sleep 8
+          echo '--- the demo chat ---'
+          tmux capture-pane -p -t m
+          tmux send-keys -t m Escape
+          sleep 2
+          echo '--- Esc: the chat list ---'
+          tmux capture-pane -p -t m
+          tmux send-keys -t m C-q
+          sleep 2
+          tmux has-session -t m 2>/dev/null && echo 'still running after Ctrl+Q' || echo 'quit on Ctrl+Q'
+      - name: llama.cpp for this machine (our asset naming)
+        continue-on-error: true
+        timeout-minutes: 10
+        run: |
+          target/release/mindfork llama backends
+          target/release/mindfork llama setup --backend cpu --set-binary
+          target/release/mindfork llama installed
+      - name: Metal on the runner
+        continue-on-error: true
+        timeout-minutes: 10
+        run: |
+          server=$(find target/release/data -name llama-server -type f | head -1)
+          echo "server: $server"
+          "$server" --version 2>&1 | tail -5
+          "$server" --list-devices 2>&1 | tail -10
+          curl -fsSL -o stories15M.gguf https://huggingface.co/ggml-org/models/resolve/main/tinyllamas/stories15M-q4_0.gguf
+          "$server" -m stories15M.gguf --port 8099 -ngl 99 -c 512 > server.log 2>&1 &
+          for i in $(seq 1 30); do curl -fs http://127.0.0.1:8099/health && break; sleep 1; done
+          curl -fs http://127.0.0.1:8099/completion -d '{"prompt":"Once upon a time","n_predict":24}' | head -c 600; echo
+          kill %1 || true
+          grep -i -E 'metal|mtl|gpu|offload|device' server.log | head -40
+      - name: The managed engine end to end (setup --verify)
+        continue-on-error: true
+        timeout-minutes: 10
+        run: |
+          target/release/mindfork setup --model "$PWD/stories15M.gguf" --ctx 512 --verify
