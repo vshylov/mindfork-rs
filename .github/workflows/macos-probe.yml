@@ -29,7 +29,7 @@ jobs:
       - name: A llama-server without one of its dylibs
         run: |
           set +e
-          tag=$(curl -fsSL https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=5 | python3 -c "import json,sys; print(next(r['tag_name'] for r in json.load(sys.stdin) if r['tag_name'].startswith('b')))")
+          tag=b11396   # the build round 1 installed
           echo "build: $tag"
           curl -fsSL -o l.tar.gz "https://github.com/ggml-org/llama.cpp/releases/download/$tag/llama-$tag-bin-macos-arm64.tar.gz"
           tar -xzf l.tar.gz
