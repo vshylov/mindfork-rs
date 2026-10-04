@@ -4,7 +4,7 @@ A console (TUI) AI chat application in Rust. Local models **Gemma 3/4** and
 **Qwen 3.5/3.6** via **llama.cpp `llama-server`** (an OpenAI-compatible server;
 in external mode any such server works — vLLM/LM Studio/Ollama), plus the cloud
 providers OpenAI, Gemini, Anthropic and xAI, and the OpenRouter gateway. UI on
-**ratatui**. Platforms: Windows + Linux. Architecture — **Feature-Sliced Design
+**ratatui**. Platforms: Windows + Linux, macOS on Apple Silicon (a preview). Architecture — **Feature-Sliced Design
 (FSD)**.
 
 > **Engine:** originally designed around `xinfer`, which turned out too raw

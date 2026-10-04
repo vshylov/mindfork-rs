@@ -1,6 +1,6 @@
 +++
 title = "Install"
-description = "Get mindfork for Windows or Linux: the installer, the packages, the portable archives or crates.io — what each one is for, how to verify it, and what to do first."
+description = "Get mindfork for Windows, Linux or macOS: the installer, the packages, Homebrew, the portable archives or crates.io — what each one is for, how to verify it, and what to do first."
 updated = "2026-09-28"
 template = "doc.html"
 
@@ -81,12 +81,35 @@ twice, and your data is never touched.
 x86-64, glibc 2.35 or newer (Ubuntu 22.04 and anything later). A terminal
 emulator you already have.
 
+## macOS (Apple Silicon) — a preview
+
+**Homebrew**, from the project's own tap — your data kept in
+`~/Library/Application Support/mindfork-rs`, so an upgrade leaves it alone:
+
+```bash
+brew install vshylov/tap/mindfork
+```
+
+**One line** works on a Mac too — the same `curl … | sh` as on Linux, into
+`~/mindfork`. Both download with `curl`, so macOS has nothing to object to.
+
+**The archive — `mindfork-rs-v<version>-aarch64-macos.tar.gz`.** Downloaded in a
+browser, macOS quarantines it and everything unpacked from it, and the binary
+is not notarized: clear the mark with `xattr -dr com.apple.quarantine` on the
+unpacked folder before the first run.
+
+Apple Silicon only — an Intel Mac has no build; `cargo install` below makes one.
+Local models run through llama.cpp's Metal build. A **preview**: built and tested
+on GitHub's Apple Silicon runners, not yet on a Mac with a screen, so reports are
+welcome ([the details](https://github.com/vshylov/mindfork-rs/blob/main/docs/install.md#macos-apple-silicon--a-preview)).
+
 ## Verify what you downloaded
 
 Every release carries `sha256sums.txt` with a line for each artifact:
 
 ```bash
 sha256sum -c sha256sums.txt --ignore-missing          # Linux
+shasum -a 256 -c sha256sums.txt --ignore-missing      # macOS
 ```
 
 ```powershell

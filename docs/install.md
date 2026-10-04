@@ -12,18 +12,19 @@ backed up and restored (§2.2).
 
 ### Prebuilt binaries (releases)
 
-Prebuilt binaries for **Windows** and **Linux** are published on
+Prebuilt binaries for **Windows**, **Linux** and **macOS on Apple Silicon** (a
+preview — see [macOS](#macos-apple-silicon--a-preview) below) are published on
 [GitHub Releases](https://github.com/vshylov/mindfork-rs/releases): download the
-`mindfork-rs-vX.Y.Z-x86_64-{windows.zip,linux.tar.gz}` archive, optionally verify the
-checksum against `sha256sums.txt`, unpack it, and run the binary (`mindfork --version`
-prints the version). The Linux build is built against glibc 2.35 (`ubuntu-22.04`) and
+`mindfork-rs-vX.Y.Z-{x86_64-windows.zip,x86_64-linux.tar.gz,aarch64-macos.tar.gz}`
+archive, optionally verify the checksum against `sha256sums.txt`, unpack it, and run
+the binary (`mindfork --version` prints the version). The Linux build is built against glibc 2.35 (`ubuntu-22.04`) and
 runs on most current distros (Ubuntu 22.04+, Debian 12+, Fedora 36+, Arch;
 RHEL/Rocky 9 with glibc 2.34 is **not** supported).
 
 The portable archive keeps data **next to the binary** (in `data/`); it's a
 self-contained folder/flash drive. For an "installed" setup — see the packages below.
 
-### The install script (Linux)
+### The install script (Linux, macOS)
 
 One line puts the portable build into a directory and makes it startable — the
 route for a machine that is new every time (a container, a rented GPU box, §3.4),
@@ -48,8 +49,8 @@ POSIX script.
 | `--no-link` | do not link the binary into `/usr/local/bin` |
 | `-- ARGS…` | when the install is done, run `mindfork ARGS…` — typically `-- setup …` (§3.3) |
 
-What it does, in order: refuses anything but Linux x86_64 with glibc 2.35+, in
-words; finds the latest release from the *redirect* of the releases page (not
+What it does, in order: refuses anything but Linux x86_64 with glibc 2.35+ or a
+Mac with Apple Silicon, in words; finds the latest release from the *redirect* of the releases page (not
 the API, whose 60 requests an hour are shared by everyone behind a datacenter's
 address); downloads the archive and `sha256sums.txt`, **refuses the archive if
 the two disagree**, and unpacks it; then **runs the binary** to see whether it
@@ -66,7 +67,9 @@ disk yet, so the system's library cache is asked instead, and the package —
 `libgomp1`, `libgomp` on Fedora, `gcc-libs` on Arch — is installed the same way;
 if it cannot be, the script says so and goes on, since the app itself runs
 without it and `llama setup` names it again. Finally it links
-`/usr/local/bin/mindfork` and prints the version.
+`/usr/local/bin/mindfork` and prints the version. On a Mac there is nothing to
+install — no glibc, no ALSA, no OpenMP — and the link goes into
+`/usr/local/bin` or, failing that, Homebrew's `/opt/homebrew/bin`.
 
 **Running it again is safe and cheap**: a version that is already in place is
 recognised and not downloaded, your data in `DIR/data` is never touched (the
@@ -147,6 +150,39 @@ uninstall` — leave it in place. `mindfork` goes on `PATH`, and a Start-menu en
 is made. The bucket picks up a new release by itself within four hours. Scoop
 downloads the zip rather than running an installer, so SmartScreen has nothing to
 say.
+
+### macOS (Apple Silicon) — a preview
+
+```bash
+brew install vshylov/tap/mindfork
+```
+
+The tap ([vshylov/homebrew-tap](https://github.com/vshylov/homebrew-tap))
+installs the release's `aarch64-macos.tar.gz`, its digest taken from the
+release's `sha256sums.txt`, and writes a `defaults.json` beside the binary with
+`{"mode":"system"}` (§2.1): the data lives in `~/Library/Application
+Support/mindfork-rs`, so `brew upgrade` and `brew uninstall` leave it in place.
+The tap picks up a new release by itself within six hours. The install script
+above works on a Mac too, with the same line as on Linux.
+
+Both routes download with `curl`, so macOS does not quarantine what they
+install. **The archive downloaded in a browser is quarantined** — and so is
+everything unpacked from it — and since the binary is signed only ad hoc, not
+notarized, macOS refuses to start it until the mark is cleared:
+`xattr -dr com.apple.quarantine <the unpacked folder>`, or *System Settings →
+Privacy & Security → Open Anyway*.
+
+- **Apple Silicon only.** An Intel Mac has no prebuilt build: the Python
+  sandbox's Wasmer has none for it, and llama.cpp's Intel build has no Metal.
+  `cargo install --locked mindfork` (below) builds one.
+- **Local models run on Metal**: `mindfork llama setup --backend metal
+  --set-binary` (§3.1).
+- **The keys**: macOS keeps `Ctrl+←/→` for switching Spaces, so words are
+  Option+←/→; Terminal.app breaks a line with `Ctrl+J`; the `F` keys need `fn`
+  ([the manual](manual.md) §9).
+- **A preview**: built and tested on GitHub's Apple Silicon runners, not yet on
+  a Mac with a screen. What is still to be checked there is listed in
+  [docs/research/macos.md](research/macos.md) §6.2 — reports are welcome.
 
 ### From crates.io (`cargo install`)
 

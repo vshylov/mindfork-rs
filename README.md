@@ -16,8 +16,8 @@
 
 **A terminal AI chat written in Rust: local models via llama.cpp, or OpenAI,
 Anthropic, Gemini, Grok and OpenRouter in the cloud, with persistent memory,
-notes, RAG and tools.** One native binary for **Windows** and **Linux**, built on
-[ratatui](https://ratatui.rs).
+notes, RAG and tools.** One native binary for **Windows**, **Linux** and **macOS**
+on Apple Silicon (a preview), built on [ratatui](https://ratatui.rs).
 
 **No model yet?** `mindfork demo` opens the app with sample chats and a scripted
 model in a throwaway folder — no download, no key, nothing written outside a
@@ -111,6 +111,13 @@ On Windows, **Scoop** installs it and keeps it current:
 
 ```powershell
 scoop bucket add mindfork https://github.com/vshylov/scoop-bucket; scoop install mindfork/mindfork
+```
+
+On a Mac with Apple Silicon, **Homebrew** does (a preview —
+[install.md](docs/install.md) §1):
+
+```bash
+brew install vshylov/tap/mindfork
 ```
 
 Or build from source with a recent stable Rust (edition 2024):
