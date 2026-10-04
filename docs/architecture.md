@@ -4245,9 +4245,10 @@ Principles:
   Records are **per-machine**: the config is portable, on another machine
   the record won't decrypt (the key must be re-entered as its own record),
   and it reads back on returning to the original machine. Schemes: **DPAPI**
-  (Windows, a user key managed by the OS) and **`machine-key-v1`** (Linux:
+  (Windows, a user key managed by the OS), **`machine-key-v1`** (Linux:
   HKDF-SHA256 over `/etc/machine-id` + ChaCha20-Poly1305, per-user binding
-  via `info`); "our" record is recognized by decrypting the `check` probe
+  via `info`) and **`platform-uuid-v1`** (macOS: the same, over the hardware
+  UUID from `gethostuuid` — docs/research/macos.md F2); "our" record is recognized by decrypting the `check` probe
   (we never store the machine id itself in the file). Resolution happens in
   `EngineManager` (`stored_key`); the supervisor gets an already-decrypted
   `stored_key: Option<&str>`; the order is **stored → env fallback**

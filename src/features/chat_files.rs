@@ -166,7 +166,10 @@ pub fn mark(path: &Path, zone: Option<&[u8]>) {
 /// [`FileOrigin::Recovered`] listings, in name order (§11 S6). Nothing is deleted: a file
 /// here that no listing names was written by a call whose chat was not saved, and the
 /// user may already have seen it. A name that is not UTF-8 cannot be listed faithfully and
-/// is left alone.
+/// is left alone, and so is a dot-file: `/file folder` shows the folder in the system's
+/// file manager, and Finder writes its `.DS_Store` there (`._name` beside each file on a
+/// volume without extended attributes) — the file manager's, not a call's
+/// (docs/research/macos.md §4.6).
 pub fn unlisted(dir: &Path, listed: &[ChatFile]) -> Vec<ChatFile> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
@@ -176,6 +179,9 @@ pub fn unlisted(dir: &Path, listed: &[ChatFile]) -> Vec<ChatFile> {
         let Some(name) = entry.file_name().to_str().map(str::to_string) else {
             continue;
         };
+        if name.starts_with('.') {
+            continue;
+        }
         if listed
             .iter()
             .chain(&found)
@@ -453,6 +459,9 @@ mod tests {
         std::fs::write(dir.path().join("listed.csv"), b"a,b").unwrap();
         std::fs::write(dir.path().join("orphan.png"), PNG).unwrap();
         std::fs::create_dir(dir.path().join("a directory")).unwrap();
+        // What Finder leaves in a folder it has shown.
+        std::fs::write(dir.path().join(".DS_Store"), b"Bud1").unwrap();
+        std::fs::write(dir.path().join("._orphan.png"), b"Mac OS X").unwrap();
         let listed = [listing("LISTED.csv", b"a,b")];
         let found = unlisted(dir.path(), &listed);
         assert_eq!(found.len(), 1);

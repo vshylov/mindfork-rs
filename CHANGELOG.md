@@ -30,6 +30,10 @@ split by subsystem.
 
 ### Fixed
 
+- **A file manager's own files are not taken for a chat's files.** Opening a
+  chat's folder (`/file folder`) in Finder leaves a `.DS_Store` there, which the
+  next start adopted as a file the chat had lost; dot-files are left alone now.
+
 - **Counts that read right at one.** The folded thoughts said "thinking · 1
   lines"; it is "lines: 1" now, and the same goes for the chat list's dialogs,
   the server's slots in the settings and in `mindfork setup --verify`, the

@@ -511,11 +511,27 @@ fn ptx_newer_than_driver(record: &str) -> bool {
 /// ```
 ///
 /// It starts with the binary's path, so neither the parser's `error…` line nor
-/// a log record takes it. `None` for every other line.
+/// a log record takes it. On macOS the loader is dyld, which names the library
+/// by its install name and is answered by the file's name
+/// (docs/research/macos.md §4.6):
+///
+/// ```text
+/// dyld[2653]: Library not loaded: @rpath/libggml-base.0.dylib
+/// ```
+///
+/// `None` for every other line.
 pub fn missing_library(line: &str) -> Option<String> {
     let clean = strip_ansi(line);
-    let (_, rest) = clean.split_once(": error while loading shared libraries: ")?;
-    let lib = rest.split(": ").next()?.trim();
+    let lib = if let Some((_, rest)) = clean.split_once(": error while loading shared libraries: ")
+    {
+        rest.split(": ").next()?.trim()
+    } else {
+        let (head, rest) = clean.split_once(": Library not loaded: ")?;
+        if !head.trim_start().starts_with("dyld") {
+            return None;
+        }
+        rest.trim().rsplit('/').next()?
+    };
     (!lib.is_empty()).then(|| lib.to_string())
 }
 
@@ -2359,6 +2375,9 @@ mod tests {
     /// The loader's line on a bare `ubuntu:24.04`, as measured (2026-10-02).
     const NO_LIBGOMP: &str = "/workspace/mindfork/data/llama/cuda-12.8-b11332//llama-server: error while loading shared libraries: libgomp.so.1: cannot open shared object file: No such file or directory";
 
+    /// dyld's line on macOS, as measured (2026-10-04).
+    const NO_LIBGGML_BASE: &str = "dyld[2653]: Library not loaded: @rpath/libggml-base.0.dylib";
+
     /// The library is the loader's line's third field; no other line names one.
     #[test]
     fn the_loader_line_names_the_missing_library() {
@@ -2367,11 +2386,24 @@ mod tests {
             missing_library("./x: error while loading shared libraries: libcudart.so.12: cannot open shared object file: No such file or directory").as_deref(),
             Some("libcudart.so.12")
         );
+        // dyld's: measured on a macOS runner, b11396 with `libggml-base.0.dylib`
+        // moved away (2026-10-04; the process then dies of SIGABRT) — and the
+        // form before macOS 12, with no process id.
+        assert_eq!(
+            missing_library(NO_LIBGGML_BASE).as_deref(),
+            Some("libggml-base.0.dylib")
+        );
+        assert_eq!(
+            missing_library("dyld: Library not loaded: @rpath/libllama.dylib").as_deref(),
+            Some("libllama.dylib")
+        );
         for line in [
             "error: invalid argument: --x",
             CUDA_ABORT[0],
             "0.00.000.001 I srv  load_model: loading model",
             "error while loading shared libraries",
+            "srv: Library not loaded: @rpath/libggml.dylib",
+            "dyld[1]: Library not loaded: ",
             "",
         ] {
             assert_eq!(missing_library(line), None, "{line}");

@@ -246,7 +246,16 @@ fn backend_of(name: &str, tag: &str, os_tok: &str, arch_tok: &str) -> Option<(St
         return None;
     }
     let id = if head.is_empty() {
-        "cpu".to_string()
+        // Upstream names no backend in its plain build. That is the CPU build
+        // everywhere but on Apple Silicon, where the plain build is the Metal
+        // one (the CPU besides) — named for what a Mac runs it for
+        // (docs/research/macos.md §4.6).
+        if (os_tok, arch_tok) == ("macos", "arm64") {
+            "metal"
+        } else {
+            "cpu"
+        }
+        .to_string()
     } else {
         head.join("-")
     };
@@ -836,6 +845,7 @@ async fn probe(
     progress(&loc.tf("llamacpp.setup.version", &[("version", &version)]));
     if devices.is_empty() {
         if backend != "cpu" {
+            // `metal` lands here too: a Mac with no GPU device is worth saying.
             progress(&loc.tf("llamacpp.setup.no_devices", &[("backend", backend)]));
         }
     } else {
@@ -1859,6 +1869,26 @@ mod tests {
 
     /// Everything that is not a server build for this platform is skipped by the
     /// shape alone — no per-name special case exists or is needed.
+    /// The plain macOS build carries Metal on Apple Silicon and is named so;
+    /// the Intel one has Metal off upstream and stays `cpu`.
+    #[test]
+    fn the_plain_apple_silicon_build_is_named_metal() {
+        assert_eq!(
+            ids(&release("b10883", B10883), "macos", "aarch64"),
+            ["metal"]
+        );
+        assert_eq!(ids(&release("b10883", B10883), "macos", "x86_64"), ["cpu"]);
+        assert_eq!(
+            backend_of(
+                "llama-b10883-bin-ubuntu-x64.tar.gz",
+                "b10883",
+                "ubuntu",
+                "x64"
+            ),
+            Some(("cpu".to_string(), Ext::TarGz))
+        );
+    }
+
     #[test]
     fn non_server_and_foreign_assets_are_skipped() {
         for name in [
@@ -2304,7 +2334,9 @@ mod tests {
         let listing = Listing {
             tag: "b10883".to_string(),
             date: "2026-09-09".to_string(),
-            backends: backends(&release("b10883", B10883), std::env::consts::OS, "x86_64"),
+            // An OS named, not the host's: a Mac's only build is `metal`, and
+            // the line looked for here is Linux's `vulkan`.
+            backends: backends(&release("b10883", B10883), "linux", "x86_64"),
         };
         let lines = render_backends(&listing, dir.path(), locale(Lang::En));
         assert!(lines[0].contains("b10883") && lines[0].contains("2026-09-09"));

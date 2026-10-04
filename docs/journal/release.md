@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (60)
+## Entries (61)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -72,6 +72,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: the animated demo — stage 3 (the Russian reel) (done)
 - Post-M9: Scoop and the AUR — two package managers before winget (done)
 - Post-M9: the demo's `note_save` card is a call the real tool could answer (done)
+- Post-M9: macOS stage 1a — what a Mac needs to run right (done)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -3577,3 +3578,43 @@ other stills byte-identical. Looked at: the card reads `content: The user's GPU 
 **Tests:** +1 unit test — **3895 unit tests green, 257 `#[ignore]`**; fmt / clippy /
 `cyrillic_scan.py` clean. No live run: demo fixture and its renders; no engine,
 memory or tool behaviour changed.
+
+### Post-M9: macOS stage 1a — what a Mac needs to run right (done)
+
+**Why.** The macOS research ([docs/research/macos.md](../research/macos.md))
+built and tested the app on GitHub's Apple Silicon runners: it compiles, the TUI
+runs, llama.cpp runs with Metal — and 13 tests fail, the probe and a code audit
+having found what a Mac lacks. The owner took every fork as recommended
+(2026-10-04). Stage 1 is the code that needs no Mac; this half is everything but
+the keys, which change how every OS reads them and come next (1b).
+
+**What.** Each measured defect, fixed where it lives (details in macos.md §10):
+`platform-uuid-v1`, a secret scheme keyed by the hardware UUID from
+`gethostuuid` (fork F2 — not the Keychain, which ADR 0008 rejected and which
+re-asks an ad-hoc-signed binary after every update); the single-instance lock
+moved from the working directory into the per-user temporary directory; the
+binary's directory resolved through a symlink on every unix; dot-files no longer
+adopted as a chat's lost files (Finder's `.DS_Store`); the plain Apple Silicon
+build of llama.cpp named `metal`; dyld's missing-library line read — measured on
+a runner first, `dyld[2653]: Library not loaded: @rpath/libggml-base.0.dylib`,
+then SIGABRT; and `macos-latest` in the CI test matrix with a clippy pass, so the
+macOS-only code is compiled and linted somewhere (F3).
+
+**Two tests were the tests' fault.** The backends listing assumed the host was
+not a Mac (it lists the host's OS with an x86_64 fixture and looks for Linux's
+`vulkan`); it names its OS now. The two supervisor monitor tests ran on a paused
+clock against a real loopback socket: a paused clock jumps to the next timer
+whenever nothing is ready, and on a slow M1 VM the connection had not completed
+when it looked, so the 15 s readiness deadline passed in an instant —
+`Disconnected`, 1 run in 3. They wait for the first verdict in real time and
+pause after it.
+
+**Not measurable here.** `gethostuuid` and the lock's path run only on a Mac;
+`Tests (macos-latest)` on this pull request is their test, with
+`each_os_stores_secrets_under_its_own_scheme` pinning that a Mac has a scheme.
+
+**Tests:** +6 unit tests (two unix-only) — **3899 unit tests green on Windows,
+257 `#[ignore]`**; fmt / clippy / `cyrillic_scan.py` clean. No live run: no
+engine, memory or tool behaviour changed; the secret scheme's round trip is the
+existing `entry_round_trip_on_local_scheme`, now exercised on macOS by CI.
+

@@ -180,7 +180,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-10-04, version 0.14.1)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3895 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **3899 unit tests
 green, 257 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump and demo-reel regenerators).
 
@@ -204,9 +204,9 @@ being recent is dropped, not shortened.
   played through the runtime's own path, drawn to GIF/WebP by
   `tools/demo_reel.py` in every release (English and Russian), played by mindfork.io
   ([docs/research/demo-reel.md](docs/research/demo-reel.md),
-  [docs/journal/release.md](docs/journal/release.md)). macOS is researched, its
-  probe on Apple Silicon runners GO, the forks open
-  ([docs/research/macos.md](docs/research/macos.md)).
+  [docs/journal/release.md](docs/journal/release.md)). macOS: researched, probe
+  GO on Apple Silicon runners, forks decided; stage 1a built — secrets, the lock,
+  CI on macOS ([docs/research/macos.md](docs/research/macos.md)).
 - **A pod's failures say what they are** — a managed server that dies shows the
   error it logged (a CUDA build newer than the driver names `cuda-12`), a port
   another program holds is refused, one death is one relaunch. Live **GO**

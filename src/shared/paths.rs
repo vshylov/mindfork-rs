@@ -150,9 +150,8 @@ impl Defaults {
 pub struct Paths {
     root: PathBuf,
     default_language: Lang,
-    /// The executable's directory (on Linux — the real path: `current_exe`
-    /// resolves `/proc/self/exe`, i.e. the symlink target `/usr/bin/…` →
-    /// `/usr/lib/<pkg>/…`). Needed to find read-only resources placed next to
+    /// The executable's directory — on unix the real path, the symlink target
+    /// (`/usr/bin/…` → `/usr/lib/<pkg>/…`; [`exe_dir_of`]). Needed to find read-only resources placed next to
     /// the binary (dictionaries, installers.md §4.2) when the data root isn't
     /// portable (`system`/`path`). `None` in tests (`with_root`).
     exe_dir: Option<PathBuf>,
@@ -173,10 +172,7 @@ impl Paths {
     /// directories is separate — [`Paths::ensure_dirs`].
     pub fn resolve() -> Result<Self> {
         let exe = std::env::current_exe().context("cannot resolve current executable path")?;
-        let exe_dir = exe
-            .parent()
-            .context("cannot determine executable directory")?
-            .to_path_buf();
+        let exe_dir = exe_dir_of(exe)?;
 
         let defaults = Defaults::read(&exe_dir)?;
         let root = defaults.location.root_dir(&exe_dir)?;
@@ -467,6 +463,24 @@ impl Paths {
     }
 }
 
+/// The directory the binary really lives in, for the path `current_exe` gave.
+///
+/// On Linux that path is `/proc/self/exe` — already the symlink's target. On
+/// macOS it is the path the binary was **started by**, so through
+/// `/usr/local/bin/mindfork` or a Homebrew `bin/` link the portable data root,
+/// `defaults.json` and the dictionaries were looked for beside the link
+/// (measured, docs/research/macos.md §4.3). Resolved on every unix; not on
+/// Windows, where `canonicalize` returns a `\\?\` verbatim path and
+/// `current_exe` already names the file itself.
+fn exe_dir_of(exe: PathBuf) -> Result<PathBuf> {
+    #[cfg(unix)]
+    let exe = std::fs::canonicalize(&exe).unwrap_or(exe);
+    Ok(exe
+        .parent()
+        .context("cannot determine executable directory")?
+        .to_path_buf())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -728,6 +742,23 @@ mod tests {
     /// older version created under the default umask is `0755`, which on a shared home
     /// (the project's own lab image has one at `2770`) is every group member's read of
     /// the chats and the encrypted keys (docs/research/safe-defaults.md D8).
+    /// A binary started through a symlink has its data beside the real file,
+    /// not beside the link — `install.sh`'s `/usr/local/bin` link and a
+    /// Homebrew `bin/` link both start it that way.
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_binary_keeps_its_data_beside_the_real_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let (real, links) = (dir.path().join("app"), dir.path().join("bin"));
+        std::fs::create_dir_all(&real).unwrap();
+        std::fs::create_dir_all(&links).unwrap();
+        std::fs::write(real.join("mindfork"), b"").unwrap();
+        std::os::unix::fs::symlink(real.join("mindfork"), links.join("mindfork")).unwrap();
+
+        let got = exe_dir_of(links.join("mindfork")).unwrap();
+        assert_eq!(got, std::fs::canonicalize(&real).unwrap());
+    }
+
     #[cfg(unix)]
     #[test]
     fn ensure_dirs_restricts_an_existing_root_to_its_owner() {

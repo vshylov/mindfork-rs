@@ -1242,7 +1242,8 @@ what makes "attach it again" a real way out of a missing copy instead of a dead 
 first and drops the listing second, so a delete that fails leaves the file listed and
 retryable. A file in a chat's folder that the chat does not list — the output of a call
 whose chat was not saved before the app stopped — is adopted at startup, never
-deleted. Backups pack `files/`.
+deleted; a dot-file is not, being the file manager's (`.DS_Store`, which Finder writes
+into a folder `/file folder` showed it). Backups pack `files/`.
 
 Stored files are also where **`/file attach` keeps what the text is not** (fork F8a of
 the same plan): a binary is no longer refused — it is kept with the chat and makes no

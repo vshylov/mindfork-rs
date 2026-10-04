@@ -20,6 +20,11 @@
 //!   explicitly instructs against using the raw machine-id), encryption is
 //!   ChaCha20-Poly1305 (AEAD, a random nonce prefixed to the ciphertext). The
 //!   username goes into `info` → per-user binding, like DPAPI.
+//! * **`platform-uuid-v1`** (macOS) — the same HKDF + ChaCha20-Poly1305, keyed by
+//!   the Mac's hardware UUID (`IOPlatformUUID`, read with `gethostuuid(2)`): a
+//!   Mac has no machine-id. Not the Keychain — ADR 0008 keeps the secret in the
+//!   file, and an ad-hoc-signed binary is a new application to the Keychain
+//!   after every update (docs/research/macos.md §4.1, fork F2).
 //!
 //! **Threat model** (docs/research/api-key-storage.md §3): we protect the
 //! **file** — a copy/move/backup of the config (outside its "own" machine it is a
@@ -40,6 +45,8 @@ use serde::{Deserialize, Serialize};
 pub const SCHEME_DPAPI: &str = "dpapi";
 /// The Linux scheme: HKDF(machine-id) + ChaCha20-Poly1305.
 pub const SCHEME_MACHINE_KEY_V1: &str = "machine-key-v1";
+/// The macOS scheme: HKDF(IOPlatformUUID) + ChaCha20-Poly1305.
+pub const SCHEME_PLATFORM_UUID_V1: &str = "platform-uuid-v1";
 
 /// Reserved entry key for the **backup password** (spec §12.3), stored beside
 /// the API keys in the same per-machine entry.
@@ -212,7 +219,7 @@ pub struct ApiKeyEntry {
 
 /// Whether a secret-encryption scheme is available on this machine (otherwise
 /// stored keys are not supported — the env path remains). On Windows — always;
-/// on Linux depends on machine-id being present.
+/// on Linux depends on machine-id being present; on macOS — on the hardware UUID.
 // Consumers: tests (skip on systems without machine-id) and the stage-2 settings
 // screen (the "API key" field is hidden/explained when storage is unavailable).
 #[allow(dead_code)]
@@ -278,9 +285,29 @@ pub fn machine_label() -> String {
         .ok()
         .or_else(|| std::env::var("HOSTNAME").ok())
         .or_else(|| std::fs::read_to_string("/etc/hostname").ok())
+        .or_else(host_name)
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "?".into())
+}
+
+/// The host's name from `gethostname(3)` — what a Mac has instead of both
+/// `HOSTNAME` (zsh does not export it) and `/etc/hostname`.
+#[cfg(unix)]
+fn host_name() -> Option<String> {
+    let mut buf = [0u8; 256];
+    // SAFETY: the buffer is writable for its whole length, which is what we pass.
+    let rc = unsafe { libc::gethostname(buf.as_mut_ptr().cast(), buf.len()) };
+    if rc != 0 {
+        return None;
+    }
+    let end = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+    String::from_utf8(buf[..end].to_vec()).ok()
+}
+
+#[cfg(not(unix))]
+fn host_name() -> Option<String> {
+    None
 }
 
 /// Error working with stored secrets.
@@ -288,7 +315,7 @@ pub fn machine_label() -> String {
 pub enum SecretError {
     /// No scheme is available on this machine (Linux without machine-id) —
     /// storing keys is not supported, the env path remains.
-    #[error("storing keys is not supported on this machine (no machine-id)")]
+    #[error("storing keys is not supported on this machine (no machine identity)")]
     Unavailable,
     /// Platform encryption failure (DPAPI/AEAD).
     #[error("failed to encrypt the secret")]
@@ -303,7 +330,9 @@ fn local_scheme() -> Option<&'static str> {
     }
     #[cfg(not(windows))]
     {
-        machine_ikm().map(|_| SCHEME_MACHINE_KEY_V1)
+        [SCHEME_MACHINE_KEY_V1, SCHEME_PLATFORM_UUID_V1]
+            .into_iter()
+            .find(|scheme| scheme_ikm(scheme).is_some())
     }
 }
 
@@ -312,8 +341,8 @@ fn encrypt(scheme: &str, plaintext: &str) -> Result<String, SecretError> {
     let bytes = match scheme {
         #[cfg(windows)]
         SCHEME_DPAPI => dpapi::protect(plaintext.as_bytes()).ok_or(SecretError::Encrypt)?,
-        SCHEME_MACHINE_KEY_V1 => {
-            let key = machine_key().ok_or(SecretError::Unavailable)?;
+        SCHEME_MACHINE_KEY_V1 | SCHEME_PLATFORM_UUID_V1 => {
+            let key = machine_key(scheme).ok_or(SecretError::Unavailable)?;
             encrypt_with_key(&key, plaintext.as_bytes()).ok_or(SecretError::Encrypt)?
         }
         _ => return Err(SecretError::Unavailable),
@@ -329,13 +358,18 @@ fn decrypt(scheme: &str, hex: &str) -> Option<String> {
     let plain = match scheme {
         #[cfg(windows)]
         SCHEME_DPAPI => dpapi::unprotect(&bytes)?,
-        SCHEME_MACHINE_KEY_V1 => decrypt_with_key(&machine_key()?, &bytes)?,
+        SCHEME_MACHINE_KEY_V1 | SCHEME_PLATFORM_UUID_V1 => {
+            decrypt_with_key(&machine_key(scheme)?, &bytes)?
+        }
         _ => return None,
     };
     String::from_utf8(plain).ok()
 }
 
-// ── The `machine-key-v1` scheme: HKDF(machine-id) + ChaCha20-Poly1305 ──────────
+// ── The machine-key schemes: HKDF(machine identity) + ChaCha20-Poly1305 ────────
+//
+// `machine-key-v1` (Linux, the machine-id) and `platform-uuid-v1` (macOS, the
+// hardware UUID) differ only in the identity they are keyed by.
 
 /// ChaCha20-Poly1305 nonce length (ciphertext prefix).
 const NONCE_LEN: usize = 12;
@@ -380,15 +414,62 @@ fn decrypt_with_key(key: &[u8; 32], data: &[u8]) -> Option<Vec<u8>> {
     ChaCha20Poly1305::new(key.into()).decrypt(nonce, ct).ok()
 }
 
-/// This machine's key for the `machine-key-v1` scheme (`None` — no machine-id).
-fn machine_key() -> Option<[u8; 32]> {
-    Some(derive_key(&machine_ikm()?, &current_user()))
+/// This machine's key for a machine-key scheme (`None` — this machine has no
+/// identity of that scheme's kind, so an entry under it is another machine's).
+fn machine_key(scheme: &str) -> Option<[u8; 32]> {
+    Some(derive_key(&scheme_ikm(scheme)?, &current_user()))
 }
 
-/// Key input material: the OS instance identifier. Primary source —
-/// `/etc/machine-id` (systemd), fallback — `/var/lib/dbus/machine-id`. `None` —
-/// a non-systemd system without either (the scheme is unavailable, the env path
-/// remains). Not used on Windows (DPAPI is used there).
+/// The identity a machine-key scheme is keyed by, on this machine.
+fn scheme_ikm(scheme: &str) -> Option<Vec<u8>> {
+    match scheme {
+        SCHEME_MACHINE_KEY_V1 => machine_ikm(),
+        SCHEME_PLATFORM_UUID_V1 => platform_uuid_ikm(),
+        _ => None,
+    }
+}
+
+/// Key input material of `platform-uuid-v1`: the Mac's hardware UUID in the
+/// form `ioreg` prints as `IOPlatformUUID` (upper-case, hyphenated), so a later
+/// reader of it through IOKit or `ioreg` derives the same key. `None` off macOS,
+/// or if the call fails.
+fn platform_uuid_ikm() -> Option<Vec<u8>> {
+    #[cfg(target_os = "macos")]
+    {
+        let mut id = [0u8; 16];
+        // At most five seconds: `gethostuuid` may have to ask a daemon.
+        let timeout = libc::timespec {
+            tv_sec: 5,
+            tv_nsec: 0,
+        };
+        // SAFETY: `id` is the 16-byte `uuid_t` the call fills and `timeout` a
+        // valid timespec; both outlive the call.
+        let rc = unsafe { libc::gethostuuid(id.as_mut_ptr(), &timeout) };
+        if rc != 0 || id == [0u8; 16] {
+            return None;
+        }
+        Some(platform_uuid_text(id).into_bytes())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        None
+    }
+}
+
+/// The hardware UUID as `ioreg` prints it — the pure half of
+/// [`platform_uuid_ikm`], testable on any OS.
+#[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
+fn platform_uuid_text(id: [u8; 16]) -> String {
+    uuid::Uuid::from_bytes(id)
+        .hyphenated()
+        .to_string()
+        .to_uppercase()
+}
+
+/// Key input material of `machine-key-v1`: the OS instance identifier. Primary
+/// source — `/etc/machine-id` (systemd), fallback — `/var/lib/dbus/machine-id`.
+/// `None` — a system without either, a Mac among them (the scheme is
+/// unavailable there). Not used on Windows (DPAPI is used there).
 fn machine_ikm() -> Option<Vec<u8>> {
     for path in ["/etc/machine-id", "/var/lib/dbus/machine-id"] {
         if let Ok(s) = std::fs::read_to_string(path) {
@@ -650,9 +731,48 @@ mod tests {
         assert_eq!(decrypt_with_key(&key, &sealed).unwrap(), b"sk-secret-value");
     }
 
+    /// Each OS stores secrets under its own scheme. A Mac always has a hardware
+    /// UUID, so there the scheme must be available — this is what pins
+    /// `gethostuuid` on the macOS runner; a Linux box has one only with a
+    /// machine-id.
+    #[test]
+    fn each_os_stores_secrets_under_its_own_scheme() {
+        #[cfg(windows)]
+        assert_eq!(local_scheme(), Some(SCHEME_DPAPI));
+        #[cfg(target_os = "macos")]
+        assert_eq!(local_scheme(), Some(SCHEME_PLATFORM_UUID_V1));
+        #[cfg(target_os = "linux")]
+        assert_eq!(local_scheme(), machine_ikm().map(|_| SCHEME_MACHINE_KEY_V1));
+        // Off its own OS a scheme has no identity, so its entries are foreign.
+        #[cfg(not(target_os = "macos"))]
+        assert_eq!(scheme_ikm(SCHEME_PLATFORM_UUID_V1), None);
+        assert_eq!(scheme_ikm("no-such-scheme"), None);
+    }
+
+    /// The hardware UUID is keyed in the form `ioreg` prints it, so a reader of
+    /// it through IOKit later derives the same key.
+    #[test]
+    fn the_platform_uuid_is_keyed_as_ioreg_prints_it() {
+        let id = [
+            0x6d, 0x66, 0x5f, 0x64, 0x65, 0x6d, 0x6f, 0x5f, 0xab, 0xcd, 0, 0, 0, 0, 0, 1,
+        ];
+        assert_eq!(
+            platform_uuid_text(id),
+            "6D665F64-656D-6F5F-ABCD-000000000001"
+        );
+    }
+
+    /// A Mac has no `HOSTNAME` and no `/etc/hostname`; the label then comes from
+    /// `gethostname`, not `?`.
+    #[cfg(unix)]
+    #[test]
+    fn the_host_name_is_read_from_the_system() {
+        assert!(host_name().is_some_and(|name| !name.is_empty()));
+    }
+
     /// Full round trip over a config entry — on this machine's platform scheme
     /// (Windows: DPAPI; Linux: machine-id if present — otherwise the test is
-    /// skipped).
+    /// skipped; macOS: the hardware UUID).
     #[test]
     fn entry_round_trip_on_local_scheme() {
         if !scheme_available() {

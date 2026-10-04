@@ -2,10 +2,11 @@
 //! See spec §1.4 (single instance) and plan M0.
 //!
 //! The lock is OS-level: a named mutex on Windows, an abstract unix socket on
-//! Linux (a detail of the `single-instance` crate). The unprefixed name lands
-//! in the current login session's namespace — enough to keep one user from
-//! launching the app twice; the binary's path doesn't affect the lock (two
-//! copies in different directories still conflict by name).
+//! Linux, an `flock` on a file on macOS (a detail of the `single-instance`
+//! crate). The unprefixed name lands in the current login session's namespace
+//! — enough to keep one user from launching the app twice; the binary's path
+//! doesn't affect the lock (two copies in different directories still conflict
+//! by name). On macOS the name is turned into a path first ([`lock_name`]).
 
 use single_instance::SingleInstance;
 use thiserror::Error;
@@ -48,11 +49,30 @@ pub fn acquire() -> Result<InstanceGuard, InstanceError> {
 /// to conflict with the real lock of a running app instance on the same
 /// machine).
 fn acquire_named(name: &str) -> Result<InstanceGuard, InstanceError> {
-    let inner = SingleInstance::new(name).map_err(|e| InstanceError::Init(e.to_string()))?;
+    let inner =
+        SingleInstance::new(&lock_name(name)).map_err(|e| InstanceError::Init(e.to_string()))?;
     if !inner.is_single() {
         return Err(InstanceError::AlreadyRunning);
     }
     Ok(InstanceGuard { _inner: inner })
+}
+
+/// What the crate is given for `name`. On macOS `single-instance` takes the
+/// name as a **file path** (`File::create` + `flock`), so a bare name was a file
+/// in the working directory: it littered it, two instances started from two
+/// directories both got "the" lock and ran on one data root, and a start from
+/// `/` failed (all three measured, docs/research/macos.md §3.2). There it is a
+/// path in the per-user temporary directory (`/var/folders/…/T/`), so the lock
+/// is one per user, as the other two OSes' are.
+fn lock_name(name: &str) -> String {
+    if cfg!(target_os = "macos") {
+        std::env::temp_dir()
+            .join(name)
+            .to_string_lossy()
+            .into_owned()
+    } else {
+        name.to_string()
+    }
 }
 
 #[cfg(test)]
@@ -74,5 +94,23 @@ mod tests {
         // After the first lock is released, acquiring again is possible.
         drop(first);
         let _again = acquire_named(name).expect("after drop, acquiring again is possible");
+    }
+
+    /// The lock does not depend on where the app was started: nothing is
+    /// written to the working directory, and on macOS the lock is a file in
+    /// the per-user temporary directory.
+    #[test]
+    fn the_lock_leaves_the_working_directory_alone() {
+        let name = "mindfork-rs-test-the-lock-leaves-the-working-directory-alone";
+        let _guard = acquire_named(name).expect("acquire");
+        assert!(
+            !std::path::Path::new(name).exists(),
+            "a lock file in the cwd"
+        );
+        if cfg!(target_os = "macos") {
+            assert!(std::env::temp_dir().join(name).is_file());
+        } else {
+            assert_eq!(lock_name(name), name);
+        }
     }
 }
