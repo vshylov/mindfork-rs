@@ -39,6 +39,35 @@ jobs:
           mv "$dir/$lib" "$dir/$lib.away"
           "$dir/llama-server" --version; echo "exit=$?"
 
+  # What install.sh meets on a Mac: does Gatekeeper run here at all, does `tar`
+  # carry an archive's quarantine onto what it unpacks, and does a quarantined
+  # unsigned binary start from a shell.
+  quarantine:
+    name: Quarantine and Gatekeeper
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - name: A quarantined archive, unpacked and run
+        run: |
+          set +e
+          spctl --status; echo "spctl exit=$?"
+          tag=b11396
+          curl -fsSL -o l.tar.gz "https://github.com/ggml-org/llama.cpp/releases/download/$tag/llama-$tag-bin-macos-arm64.tar.gz"
+          echo "--- after curl:"; xattr -l l.tar.gz; echo "(end)"
+          xattr -w com.apple.quarantine "0083;66e00000;Safari;F0E1D2C3-0000-0000-0000-000000000001" l.tar.gz
+          echo "--- after marking:"; xattr -l l.tar.gz
+          mkdir a && tar -xzf l.tar.gz -C a
+          b=$(find a -name llama-server -type f | head -1)
+          echo "--- unpacked with tar -xzf FILE:"; xattr -l "$b"; echo "(end)"
+          codesign -dv "$b" 2>&1 | grep -E 'Signature|flags' ; spctl -a -vv -t exec "$b"; echo "spctl assess exit=$?"
+          "$b" --version 2>&1 | head -2; echo "run exit=$?"
+          mkdir p && cat l.tar.gz | tar -xzf - -C p
+          b2=$(find p -name llama-server -type f | head -1)
+          echo "--- unpacked from a pipe:"; xattr -l "$b2"; echo "(end)"
+          mkdir n && tar --no-same-owner -xzf l.tar.gz -C n; echo "bsdtar --no-same-owner exit=$?"
+          printf 'x' | shasum -a 256; which sha256sum; echo "sha256sum exit=$?"
+          ls -ld /usr/local/bin /opt/homebrew/bin; id -u; sudo -n true; echo "sudo -n exit=$?"
+
   probe:
     name: Probe (${{ matrix.os }})
     # The full probe only when the commit asks for it ([full]); the dyld job
