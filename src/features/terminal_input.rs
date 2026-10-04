@@ -15,7 +15,7 @@
 use std::io::{IsTerminal, Write};
 use std::time::Duration;
 
-use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::terminal;
 
 /// Whether an interactive prompt is possible at all (stdin is a terminal).
@@ -91,17 +91,90 @@ fn read_line_raw() -> std::io::Result<Option<String>> {
         if key.kind == KeyEventKind::Release {
             continue;
         }
-        match key.code {
-            KeyCode::Enter => return Ok(Some(buf).filter(|s| !s.is_empty())),
-            KeyCode::Esc => return Ok(None),
-            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => return Ok(None),
-            KeyCode::Backspace => {
+        match password_key(&key) {
+            PasswordKey::Done => return Ok(Some(buf).filter(|s| !s.is_empty())),
+            PasswordKey::Cancel => return Ok(None),
+            PasswordKey::Erase => {
                 buf.pop();
             }
-            // A password is data, not a shortcut: only a bare (or shifted)
-            // character is text — `Ctrl+<char>` must not end up in the buffer.
-            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => buf.push(c),
-            _ => {}
+            PasswordKey::Text(c) => buf.push(c),
+            PasswordKey::Nothing => {}
         }
+    }
+}
+
+/// What one key press does to a password being typed.
+#[derive(Debug, PartialEq)]
+enum PasswordKey {
+    Done,
+    Cancel,
+    Erase,
+    Text(char),
+    Nothing,
+}
+
+fn password_key(key: &KeyEvent) -> PasswordKey {
+    match key.code {
+        KeyCode::Enter => PasswordKey::Done,
+        KeyCode::Esc => PasswordKey::Cancel,
+        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => PasswordKey::Cancel,
+        KeyCode::Backspace => PasswordKey::Erase,
+        // A password is data, not a shortcut: only a bare (or shifted)
+        // character is text — `Ctrl+<char>` must not end up in the buffer.
+        // AltGr's characters are text: Windows reports AltGr as Ctrl+Alt, and
+        // `@` is AltGr+Q on a German keyboard — dropping it would make the
+        // password wrong in silence (`keys::is_altgr_text`).
+        KeyCode::Char(c)
+            if !key.modifiers.contains(KeyModifiers::CONTROL)
+                || crate::shared::keys::is_altgr_text(key) =>
+        {
+            PasswordKey::Text(c)
+        }
+        _ => PasswordKey::Nothing,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// What each key does to a password: the text it types, and the keys that
+    /// end, cancel or erase — an AltGr character among the text (`@` on a
+    /// German keyboard arrives as Ctrl+Alt on Windows), a Ctrl shortcut not.
+    #[test]
+    fn a_password_takes_text_altgr_included_and_no_shortcut() {
+        let key = |code, modifiers| KeyEvent::new(code, modifiers);
+        let ctrl_alt = KeyModifiers::CONTROL | KeyModifiers::ALT;
+        crate::shared::keys::pretend_altgr(Some('@'));
+        for (k, want) in [
+            (
+                key(KeyCode::Char('p'), KeyModifiers::NONE),
+                PasswordKey::Text('p'),
+            ),
+            (
+                key(KeyCode::Char('P'), KeyModifiers::SHIFT),
+                PasswordKey::Text('P'),
+            ),
+            (key(KeyCode::Char('@'), ctrl_alt), PasswordKey::Text('@')),
+            (key(KeyCode::Char('a'), ctrl_alt), PasswordKey::Nothing),
+            (
+                key(KeyCode::Char('v'), KeyModifiers::CONTROL),
+                PasswordKey::Nothing,
+            ),
+            (
+                key(KeyCode::Char('c'), KeyModifiers::CONTROL),
+                PasswordKey::Cancel,
+            ),
+            (key(KeyCode::Esc, KeyModifiers::NONE), PasswordKey::Cancel),
+            (key(KeyCode::Enter, KeyModifiers::NONE), PasswordKey::Done),
+            (
+                key(KeyCode::Backspace, KeyModifiers::NONE),
+                PasswordKey::Erase,
+            ),
+            (key(KeyCode::Tab, KeyModifiers::NONE), PasswordKey::Nothing),
+        ] {
+            assert_eq!(password_key(&k), want, "{k:?}");
+        }
+        crate::shared::keys::pretend_altgr(None);
     }
 }

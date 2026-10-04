@@ -137,6 +137,68 @@ fn physical_char(c: char) -> char {
     jcuken_key(lower).unwrap_or(lower)
 }
 
+/// Whether `key` is text typed with **AltGr** on Windows rather than a
+/// `Ctrl+Alt` shortcut.
+///
+/// Windows reports AltGr as Ctrl+Alt — the right Alt, and a left Ctrl it
+/// synthesizes — so `@` on a German layout, `ą` on a Polish one or `₽` on the
+/// Russian one arrives with `CONTROL | ALT`, and the input box, which types no
+/// `Ctrl` character, dropped it (measured: `tools/console_probe.py --scenario
+/// altgr`). It is text when an installed layout makes the character with
+/// Ctrl+Alt. A real `Ctrl+Alt+A`, which the console gives no character for,
+/// arrives as the key's own letter (crossterm looks it up), which no layout
+/// makes that way — so it is not. Elsewhere AltGr is composed by the terminal,
+/// and the character arrives with no modifier at all.
+pub fn is_altgr_text(key: &KeyEvent) -> bool {
+    altgr_text(key, |c| made_with_altgr(c) || pretended_altgr(c))
+}
+
+#[cfg(test)]
+thread_local! {
+    /// A character this thread's tests treat as made with AltGr: the real
+    /// lookup is Windows' and needs a layout that has one, which CI's en-US
+    /// does not — so the fields that type AltGr text are tested through this.
+    static PRETENDED_ALTGR: std::cell::Cell<Option<char>> = const { std::cell::Cell::new(None) };
+}
+
+/// Makes `c` AltGr text for this thread's [`is_altgr_text`] (`None` undoes it).
+#[cfg(test)]
+pub fn pretend_altgr(c: Option<char>) {
+    PRETENDED_ALTGR.with(|p| p.set(c));
+}
+
+#[cfg(test)]
+fn pretended_altgr(c: char) -> bool {
+    PRETENDED_ALTGR.with(|p| p.get() == Some(c))
+}
+
+#[cfg(not(test))]
+fn pretended_altgr(_: char) -> bool {
+    false
+}
+
+/// The pure half of [`is_altgr_text`]: the decision, with the layout lookup
+/// passed in.
+fn altgr_text(key: &KeyEvent, made_with_altgr: impl Fn(char) -> bool) -> bool {
+    let KeyCode::Char(c) = key.code else {
+        return false;
+    };
+    key.modifiers
+        .contains(KeyModifiers::CONTROL | KeyModifiers::ALT)
+        && !c.is_control()
+        && made_with_altgr(c)
+}
+
+#[cfg(windows)]
+fn made_with_altgr(c: char) -> bool {
+    win_layout::made_with_altgr(c)
+}
+
+#[cfg(not(windows))]
+fn made_with_altgr(_: char) -> bool {
+    false
+}
+
 /// Returns `true` if the character corresponds to the physical `/` key
 /// (opening search).
 ///
@@ -286,6 +348,20 @@ mod win_layout {
             .find_map(|hkl| translate(c, hkl))
     }
 
+    /// Whether an installed layout makes `c` with Ctrl+Alt — that is, with
+    /// AltGr (Shift may come with it: some layouts have a Shift+AltGr level).
+    pub(super) fn made_with_altgr(c: char) -> bool {
+        let Ok(code) = u16::try_from(c as u32) else {
+            return false;
+        };
+        installed_layouts().into_iter().any(|hkl| {
+            // SAFETY: a table lookup in the layout `hkl`, as in `translate`.
+            let res = unsafe { VkKeyScanExW(code, hkl) };
+            let altgr = SHIFT_STATE_CTRL | SHIFT_STATE_ALT;
+            res != -1 && (res >> 8) & altgr == altgr
+        })
+    }
+
     /// char → virtual key → scan code → the letter at that position on QWERTY.
     fn translate(c: char, hkl: HKL) -> Option<char> {
         // `VkKeyScanExW` takes a single UTF-16 code unit, so a character
@@ -412,6 +488,25 @@ mod win_layout {
             assert_ne!(q, a, "distinct characters must resolve to distinct keys");
         }
 
+        /// No layout makes a Latin letter with AltGr, so a real `Ctrl+Alt+A` —
+        /// which arrives as the letter — is a shortcut, never text; and on a
+        /// machine with the Russian layout (Windows 8.1 on), `₽` is AltGr+8
+        /// there and is text. Skipped where that layout is not installed (CI).
+        #[test]
+        fn altgr_is_told_by_the_installed_layouts() {
+            for c in ['a', 'q', '1', 'ф'] {
+                assert!(!made_with_altgr(c), "{c:?} is a bare key, not AltGr");
+            }
+            if from_installed_layouts('й') != Some('q') {
+                eprintln!("skipping the ruble: no standard Russian layout installed");
+                return;
+            }
+            assert!(
+                made_with_altgr('\u{20bd}'),
+                "the ruble is AltGr+8 on Russian"
+            );
+        }
+
         /// Cross-checks the OS pipeline against the static JCUKEN table: on a
         /// machine with the standard Russian layout installed, both must agree
         /// for every character of the table. Skipped when Russian isn't
@@ -443,6 +538,35 @@ mod tests {
 
     fn ctrl(c: char) -> KeyEvent {
         KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
+    }
+
+    /// AltGr text is a character with Ctrl and Alt that a layout makes that
+    /// way; the same modifiers on anything else stay a shortcut.
+    #[test]
+    fn altgr_text_is_a_character_a_layout_makes_with_ctrl_alt() {
+        let ruble_only = |c: char| c == '\u{20bd}';
+        let key = |c, m| KeyEvent::new(KeyCode::Char(c), m);
+        let ctrl_alt = KeyModifiers::CONTROL | KeyModifiers::ALT;
+        assert!(altgr_text(&key('\u{20bd}', ctrl_alt), ruble_only));
+        // A Shift+AltGr level.
+        assert!(altgr_text(
+            &key('\u{20bd}', ctrl_alt | KeyModifiers::SHIFT),
+            ruble_only
+        ));
+        // A real Ctrl+Alt+A arrives as the key's own letter.
+        assert!(!altgr_text(&key('a', ctrl_alt), ruble_only));
+        // Ctrl alone, or Alt alone, is not AltGr.
+        assert!(!altgr_text(
+            &key('\u{20bd}', KeyModifiers::CONTROL),
+            ruble_only
+        ));
+        assert!(!altgr_text(&key('\u{20bd}', KeyModifiers::ALT), ruble_only));
+        // A control character, or a key that is not a character, never is.
+        assert!(!altgr_text(&key('\u{1}', ctrl_alt), |_| true));
+        assert!(!altgr_text(
+            &KeyEvent::new(KeyCode::Enter, ctrl_alt),
+            |_| true
+        ));
     }
 
     #[test]

@@ -79,6 +79,13 @@ Scenarios (`--scenario`):
   theme taken away: the name then answers to nothing and the canvas is the
   dark one. Takes the single-instance lock, like `first-frame`.
 
+* `altgr` — `mindfork demo`: text typed with AltGr reaches the input box. Windows
+  reports AltGr as Ctrl+Alt, so the probe injects AltGr+8 as the console gives
+  it — the ruble sign with `LEFT_CTRL | RIGHT_ALT` — and needs the Russian
+  layout installed, where that is the ruble's key. The control arm is Ctrl+Alt+A,
+  which no installed layout maps: it must type nothing, and `Ctrl+K` must still
+  clear the box. Then the chat list's search line, which takes text of its own.
+
 * `small-window` — `mindfork demo` in consoles started small (spec §11.1.1):
   at 57×5, the window of the report, the frame is the "window too small"
   notice and no key but quit does anything; at 57×9 it is the chat, whole;
@@ -98,6 +105,7 @@ Usage:
     python tools/console_probe.py --scenario user-theme
     python tools/console_probe.py --scenario gateway
     python tools/console_probe.py --scenario small-window
+    python tools/console_probe.py --scenario altgr
     python tools/console_probe.py --exe target/release/mindfork.exe
 
 Exit code: 0 — every check passed, 1 — a check failed, 2 — cannot run here.
@@ -131,7 +139,11 @@ FILE_SHARE_READ_WRITE = 1 | 2
 OPEN_EXISTING = 3
 INVALID_HANDLE = wt.HANDLE(-1).value
 KEY_EVENT = 0x0001
+RIGHT_ALT_PRESSED = 0x0001
+LEFT_ALT_PRESSED = 0x0002
 LEFT_CTRL_PRESSED = 0x0008
+# What Windows reports for AltGr: the right Alt, and a left Ctrl it synthesizes.
+ALTGR = LEFT_CTRL_PRESSED | RIGHT_ALT_PRESSED
 SHIFT_PRESSED = 0x0010
 ENHANCED_KEY = 0x0100
 # A wide glyph takes two cells, and the console marks both: the first as the
@@ -254,6 +266,13 @@ KEYS = {
     EMOJI_KEY: (0x42, "\x02", LEFT_CTRL_PRESSED),
     SETTINGS_KEY: (0x50, "\x10", LEFT_CTRL_PRESSED),
     "ctrl+q": (0x51, "\x11", LEFT_CTRL_PRESSED),
+    "ctrl+k": (0x4B, "\x0b", LEFT_CTRL_PRESSED),
+    # AltGr+8 on the Russian layout (Windows 8.1 on): the ruble sign. The
+    # `altgr` scenario needs that layout installed, and says so if it is not.
+    "altgr+8": (0x38, "₽", ALTGR),
+    # The left Ctrl and Alt on a key no installed layout maps under AltGr: the
+    # console gives no character, and crossterm names the key's own.
+    "ctrl+alt+a": (0x41, "\0", LEFT_CTRL_PRESSED | LEFT_ALT_PRESSED),
 }
 
 # Settings opens on the first section; "Interface" is the eighth.
@@ -1193,6 +1212,43 @@ def no_cursor_under_the_help(exe: Path, report: Report) -> None:
     report.check(code == 0, f"80x24: the app exited with code {code}")
 
 
+def input_row(rows: list[list[tuple[str, int]]]) -> str:
+    """The input box's row: the one the prompt mark `❯` starts."""
+    for line in text_of(rows).split("\n"):
+        if "❯" in line:
+            return line.split("❯", 1)[1].rstrip(" │")
+    return ""
+
+
+def scenario_altgr(exe: Path, report: Report) -> None:
+    session = Session(exe, ["demo"])
+    try:
+        press("ctrl+k")
+        report.check(input_row(read_screen()).strip() == "", "Ctrl+K cleared the draft")
+        type_text("price ")
+        press("altgr+8")
+        press("ctrl+alt+a")
+        row = input_row(read_screen())
+        print(f"    the input box: {row.strip()!r}")
+        report.check("price ₽" in row, "AltGr+8 typed the ruble sign")
+        report.check(
+            # `a`, or the Russian layout's letter on that key.
+            not any(c in row.replace("price", "") for c in "a\u0444"),
+            "control arm: Ctrl+Alt+A typed nothing",
+        )
+        press("ctrl+k")
+        report.check(input_row(read_screen()).strip() == "", "Ctrl+K still clears the box")
+        # The chat list's search line takes typed text of its own.
+        press("esc", SETTLE_REPAINT)
+        press("altgr+8")
+        search = next((line for line in text_of(read_screen()).split("\n") if "\u2315" in line), "")
+        print(f"    the chat list's search: {search.strip()!r}")
+        report.check("\u20bd" in search, "AltGr+8 typed into the chat list's search")
+    finally:
+        code = session.close()
+    report.check(code == 0, f"the app exited with code {code}")
+
+
 def scenario_small_window(exe: Path, report: Report) -> None:
     too_small_for_the_chat(exe, report)
     the_reported_window(exe, report)
@@ -1204,6 +1260,7 @@ def scenario_small_window(exe: Path, report: Report) -> None:
 
 
 SCENARIOS = {
+    "altgr": scenario_altgr,
     "small-window": scenario_small_window,
     "full-mode": scenario_full_mode,
     "gateway": scenario_gateway,

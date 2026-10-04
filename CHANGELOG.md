@@ -44,6 +44,12 @@ split by subsystem.
 
 ### Fixed
 
+- **Text typed with AltGr on Windows.** Windows reports AltGr as Ctrl+Alt, and
+  every character typed with it was dropped — `@` and `€` on a German keyboard,
+  `ą` on a Polish one, `₽` on the Russian one — in the input box, the chat list's
+  search and the password prompt. They are typed now; a real `Ctrl+Alt`
+  combination still types nothing.
+
 - **A file manager's own files are not taken for a chat's files.** Opening a
   chat's folder (`/file folder`) in Finder leaves a `.DS_Store` there, which the
   next start adopted as a file the chat had lost; dot-files are left alone now.

@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (33)
+## Entries (34)
 
 - Post-M9: fast multiline clipboard paste (done)
 - Post-M9: `↑/↓` navigation by visual row of a wrapped line (done)
@@ -45,6 +45,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the input box's height is a setting (done)
 - Post-M9: `Ctrl+←/→` stop at punctuation (done)
 - Post-M9: keys a Mac delivers — `Alt` for words, `Ctrl+J` for a line break (done)
+- Post-M9: AltGr text on Windows is typed (done)
 
 ### Post-M9: fast multiline clipboard paste (done)
 - **Symptom**: a large clipboard paste lagged in Windows Terminal, and a line break
@@ -1794,4 +1795,45 @@ task of its own, to be measured first.
 **3902 unit tests green, 257 `#[ignore]`**; fmt / clippy / `cyrillic_scan.py`
 clean; on macOS through CI. No live run: input handling, no engine, memory or
 tool behaviour involved.
+
+### Post-M9: AltGr text on Windows is typed (done)
+
+**What.** Found while teaching the input box a Mac's keys (the entry above):
+Windows reports **AltGr as Ctrl+Alt** — the right Alt, and a left Ctrl it
+synthesizes — and crossterm passes the character on with `CONTROL | ALT`. The
+input box types no `Ctrl` character, so every character typed with AltGr was
+dropped: `@`, `{`, `[` and `€` on a German keyboard, `ą` and `ł` on a Polish
+one, `₽` on the Russian one. The chat list's search line sent it to its Ctrl
+shortcuts, and the CLI's password prompt dropped it — a password with an `@`
+typed on a German keyboard came out wrong in silence.
+
+**Measured first.** `tools/console_probe.py --scenario altgr` (new) injects
+AltGr+8 into a hidden console the way the console reports it — the ruble sign
+with `LEFT_CTRL | RIGHT_ALT` — on this machine, where the Russian layout makes
+`₽` with Ctrl+Alt on the 8 key (`VkKeyScanExW` shift state 6). On `main`:
+**FAIL** — the input box read `price`, the sign gone. The control arm, a
+`Ctrl+Alt+A` the console gives no character for, typed nothing; `Ctrl+K` still
+cleared the box.
+
+**What changed.** One predicate, `keys::is_altgr_text`: a character with Ctrl
+and Alt is text when an installed layout makes it with Ctrl+Alt
+(`VkKeyScanExW`, Shift allowed for a Shift+AltGr level). A real `Ctrl+Alt+A`
+arrives as the key's own letter — crossterm looks it up when the console gives
+none — which no layout makes that way, so a shortcut stays a shortcut. Off
+Windows it is always false: AltGr is composed by the terminal there, and the
+character arrives with no modifier. The input box types such a key before
+anything takes it for a shortcut; the chat list's search skips its Ctrl
+shortcuts for it; the password prompt keeps it. The probe after: **all checks
+passed** — `price ₽` in the box, `₽` in the chat list's search, the control arm
+still typing nothing.
+
+**Tests:** +4 — the decision with the lookup stubbed; the lookup against the
+machine's layouts (no Latin letter is AltGr; `₽` is, where Russian is
+installed — skipped on CI's en-US); and the input box and the password prompt
+typing AltGr text, through `keys::pretend_altgr`, a test-only seam that makes
+a character AltGr on any OS (the first push left those branches covered on no
+runner, and Sonar's new-code coverage at 79.5 %). The password prompt's per-key
+decision moved into `password_key` for it. **3906 unit tests green, 257
+`#[ignore]`**;
+fmt / clippy / `cyrillic_scan.py` clean. No live run: input handling only.
 

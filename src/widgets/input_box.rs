@@ -1251,6 +1251,14 @@ impl InputBox {
         if key.kind != KeyEventKind::Press {
             return KeyOutcome::Ignored;
         }
+        // Text typed with AltGr on Windows arrives as Ctrl+Alt: it is typed,
+        // before anything takes it for a shortcut (`keys::is_altgr_text`).
+        if let KeyCode::Char(c) = key.code
+            && keys::is_altgr_text(&key)
+        {
+            self.insert_char(c);
+            return KeyOutcome::Edited;
+        }
         // Ctrl upgrades navigation/deletion to word/whole-text level
         // (`Ctrl+←/→` — by word, `Ctrl+Backspace/Delete` — delete a word,
         // `Ctrl+Home/End` — to the start/end of the text). See spec §11.5.
@@ -2990,6 +2998,25 @@ mod tests {
             KeyModifiers::ALT | KeyModifiers::SHIFT,
         ));
         assert_eq!(ib.selected_text().as_deref(), Some("три"));
+    }
+
+    /// Text typed with AltGr on Windows arrives as `Ctrl+Alt` and is typed —
+    /// replacing a selection, like any character — while the same modifiers on
+    /// a character no layout makes with them stay a shortcut and type nothing.
+    #[test]
+    fn altgr_text_is_typed_and_ctrl_alt_is_not() {
+        let ctrl_alt =
+            |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL | KeyModifiers::ALT);
+        crate::shared::keys::pretend_altgr(Some('\u{20bd}'));
+        let mut ib = InputBox::new();
+        ib.set_text("price ");
+        assert!(ib.on_key(ctrl_alt('\u{20bd}')).edited());
+        assert!(!ib.on_key(ctrl_alt('a')).edited());
+        assert_eq!(ib.text(), "price \u{20bd}");
+        ib.select_all();
+        assert!(ib.on_key(ctrl_alt('\u{20bd}')).edited());
+        assert_eq!(ib.text(), "\u{20bd}");
+        crate::shared::keys::pretend_altgr(None);
     }
 
     /// An `Alt`+character is a meta-prefixed key, not text: it is not typed.
