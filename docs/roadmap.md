@@ -476,10 +476,13 @@ effort tiers — have all closed
 - **A Scoop manifest** — **done** (2026-10-03): `vshylov/scoop-bucket`, updated by
   its Excavator. ScoopInstaller's Extras — **deferred** until the project meets
   its notability bar.
-- **macOS** — **planned as research**: no build, no runner, and no Mac on the
-  owner's desk; how to build and test it without one is
-  [promotion.md §5](research/promotion.md), and its own research document
-  comes first.
+- **macOS** — **researched** (2026-10-04,
+  [macos.md](research/macos.md)): Apple Silicon only; the MVP probe on GitHub's
+  runners is **GO** — it builds, 3879 of 3892 unit tests pass, the TUI runs in a
+  pty, llama.cpp runs with Metal. Three stages before a preview release: the
+  code a Mac needs (stored secrets, the single-instance lock, a symlinked
+  binary, the keys), the release archive with `install.sh` and a Homebrew tap,
+  and a day on a rented Mac. The forks wait for the owner.
 - **MSI for GPO/Intune** — **on demand**.
 - **GPG signing of the Linux packages** — **idea**
   ([code-signing.md §6.4](research/code-signing.md), out of scope there).
