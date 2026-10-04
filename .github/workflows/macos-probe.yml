@@ -18,8 +18,32 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # What dyld prints when a library a binary needs is gone — the line
+  # `managed::missing_library` has to recognise. No mindfork build: upstream's
+  # archive, one of its dylibs moved away. Runs on every push.
+  dyld:
+    name: dyld's missing-library line
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - name: A llama-server without one of its dylibs
+        run: |
+          set +e
+          tag=$(curl -fsSL https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=5 | python3 -c "import json,sys; print(next(r['tag_name'] for r in json.load(sys.stdin) if r['tag_name'].startswith('b')))")
+          echo "build: $tag"
+          curl -fsSL -o l.tar.gz "https://github.com/ggml-org/llama.cpp/releases/download/$tag/llama-$tag-bin-macos-arm64.tar.gz"
+          tar -xzf l.tar.gz
+          dir=$(dirname "$(find . -name llama-server -type f | head -1)")
+          ls "$dir" | grep dylib
+          lib=$(ls "$dir" | grep '^libggml-base' | head -1)
+          mv "$dir/$lib" "$dir/$lib.away"
+          "$dir/llama-server" --version; echo "exit=$?"
+
   probe:
     name: Probe (${{ matrix.os }})
+    # The full probe only when the commit asks for it ([full]); the dyld job
+    # alone otherwise.
+    if: contains(github.event.head_commit.message, '[full]')
     strategy:
       fail-fast: false
       matrix:
