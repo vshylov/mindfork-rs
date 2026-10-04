@@ -443,8 +443,12 @@ impl ChatListState {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         // Ctrl shortcuts are matched by "physical" Latin key — work under
         // any layout (see shared::keys). Any other Ctrl+character is swallowed,
-        // so it doesn't end up in the search line.
-        if ctrl && let Some(physical) = keys::hotkey_char(&key) {
+        // so it doesn't end up in the search line — except text typed with
+        // AltGr, which Windows reports as Ctrl+Alt (`keys::is_altgr_text`).
+        if ctrl
+            && !keys::is_altgr_text(&key)
+            && let Some(physical) = keys::hotkey_char(&key)
+        {
             return self.on_ctrl_search(physical);
         }
         match key.code {

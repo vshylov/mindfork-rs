@@ -1613,6 +1613,15 @@ tick (`SPINNER_STEP`, asserted at compile time against `TICK`).
 
 ## 6. Windows and cross-platform
 
+**Windows reports AltGr as Ctrl+Alt.** The right Alt comes with a left Ctrl the system
+synthesizes, so a character typed with AltGr (`@` on a German keyboard, `ą` on a Polish
+one) reaches crossterm with `CONTROL | ALT` — and any text field that types "no `Ctrl`
+character" drops it. Ask `keys::is_altgr_text`, which checks whether an installed layout
+makes that character with Ctrl+Alt, before treating a `Ctrl` key as a shortcut in
+anything that takes text. On unix the terminal composes AltGr and the character arrives
+bare. `tools/console_probe.py --scenario altgr` injects it as the console reports it.
+— *AltGr text on Windows is typed*.
+
 **A hidden console cannot be resized under a running app, but it can be started at a
 size.** From a process attached to it, `SetConsoleWindowInfo` returns success and changes
 nothing, and `SetConsoleScreenBufferSize` fails with error 87 — hidden, or minimized and

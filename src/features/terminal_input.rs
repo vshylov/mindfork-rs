@@ -100,7 +100,15 @@ fn read_line_raw() -> std::io::Result<Option<String>> {
             }
             // A password is data, not a shortcut: only a bare (or shifted)
             // character is text — `Ctrl+<char>` must not end up in the buffer.
-            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => buf.push(c),
+            // AltGr's characters are text: Windows reports AltGr as Ctrl+Alt,
+            // and `@` is AltGr+Q on a German keyboard — dropping it would make
+            // the password wrong in silence (`keys::is_altgr_text`).
+            KeyCode::Char(c)
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    || crate::shared::keys::is_altgr_text(&key) =>
+            {
+                buf.push(c)
+            }
             _ => {}
         }
     }

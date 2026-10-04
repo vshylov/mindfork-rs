@@ -1251,6 +1251,14 @@ impl InputBox {
         if key.kind != KeyEventKind::Press {
             return KeyOutcome::Ignored;
         }
+        // Text typed with AltGr on Windows arrives as Ctrl+Alt: it is typed,
+        // before anything takes it for a shortcut (`keys::is_altgr_text`).
+        if let KeyCode::Char(c) = key.code
+            && keys::is_altgr_text(&key)
+        {
+            self.insert_char(c);
+            return KeyOutcome::Edited;
+        }
         // Ctrl upgrades navigation/deletion to word/whole-text level
         // (`Ctrl+←/→` — by word, `Ctrl+Backspace/Delete` — delete a word,
         // `Ctrl+Home/End` — to the start/end of the text). See spec §11.5.
