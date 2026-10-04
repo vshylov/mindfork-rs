@@ -15,6 +15,7 @@ use crate::entities::chat::{Chat, FeedView};
 #[cfg(test)]
 use crate::entities::chat::{ChatSummary, ChildSummary};
 use crate::entities::message::{Message, MessageRole, ToolCallRecord};
+use crate::entities::note::Note;
 use crate::entities::profile::Profile;
 use crate::entities::self_model::{Goal, GoalStatus, NarrativeSegment, SelfModel, UserModel};
 use crate::entities::subagent::{RunKind, RunOutcome, SubagentRun};
@@ -136,17 +137,45 @@ pub fn showcase_messages() -> Vec<Message> {
     m4.tool_calls = vec![ToolCallRecord {
         id: "call_demo_1".into(),
         name: "note_save".into(),
-        arguments: serde_json::json!({
-            "title": "Hardware budget",
-            "text": "12 GB GPU; Gemma 4 12B at Q5_K_M, 16k context."
-        }),
-        result: Some("Note saved: \"Hardware budget\".".into()),
+        arguments: note_save_arguments(NOTE),
+        result: Some(note_save_result(Lang::En)),
         thought_signature: None,
         images: 0,
         subagent: None,
     }];
 
     vec![m1, m2, m3, m4]
+}
+
+/// The note the showcase's `note_save` call writes.
+const NOTE: &str = "The user's GPU has 12 GB; Gemma 4 12B at Q5_K_M with a 16k context fits it.";
+
+/// The arguments of a `note_save` call, in the tool's own shape: the note is
+/// its one required `content` (`features/tools/notes/save.rs`).
+fn note_save_arguments(content: &str) -> serde_json::Value {
+    serde_json::json!({ "content": content })
+}
+
+/// What `note_save` answers for the showcase's note, in the tool's own words
+/// — the bundle's string, so the card cannot drift from the real result.
+fn note_save_result(lang: Lang) -> String {
+    crate::shared::i18n::locale(lang).tf(
+        "tool.note_save.result.saved",
+        &[("id", &saved_note().id.to_string())],
+    )
+}
+
+/// The note that call saved, seeded by [`provision`] — so the id its result
+/// names is a note the demo profile holds, written when the call was made.
+pub fn saved_note() -> Note {
+    Note {
+        id: Uuid::from_u128(0x6d66_5f64_656d_6f5f_6e6f_7465_0000_0001),
+        profile_id: profile_id(),
+        content: NOTE.into(),
+        tags: Vec::new(),
+        created_at: at(3),
+        updated_at: at(3),
+    }
 }
 
 /// Fixed profile id for the demo companion.
@@ -712,6 +741,10 @@ pub fn provision(storage: &Storage) -> anyhow::Result<()> {
         storage.json().save_chat(&chat)?;
     }
     storage.db().self_model_upsert(&self_model())?;
+    let note = saved_note();
+    if storage.db().note_get(note.profile_id, note.id)?.is_none() {
+        storage.db().note_insert(&note)?;
+    }
     Ok(())
 }
 
@@ -817,6 +850,47 @@ mod tests {
 
         let model = storage.db().self_model_get(profile_id()).unwrap();
         assert!(model.is_some(), "F3 must have something to show");
+
+        // The note the showcase's tool card says it saved is there, once.
+        let note = saved_note();
+        assert_eq!(
+            storage.db().note_get(profile_id(), note.id).unwrap(),
+            Some(note)
+        );
+    }
+
+    /// The showcase's tool card is a call the real `note_save` could have
+    /// answered: its arguments are what the tool's schema asks for, and its
+    /// result is the tool's own text — in either language — naming the note
+    /// the demo seeds.
+    #[test]
+    fn the_note_save_card_is_the_real_tools_shape() {
+        use crate::features::tools::Tool;
+        let tool = crate::features::tools::notes::NoteSave;
+        for lang in [Lang::En, Lang::Ru] {
+            let schema = tool.parameters(crate::shared::i18n::locale(lang));
+            let messages = match lang {
+                Lang::Ru => ru::showcase_messages(),
+                _ => showcase_messages(),
+            };
+            let call = &messages[3].tool_calls[0];
+            assert_eq!(call.name, tool.id());
+            let arguments = call.arguments.as_object().unwrap();
+            for key in arguments.keys() {
+                assert!(
+                    schema["properties"].get(key).is_some(),
+                    "{key} is no parameter"
+                );
+            }
+            for required in schema["required"].as_array().unwrap() {
+                assert!(arguments.contains_key(required.as_str().unwrap()));
+            }
+            assert_eq!(
+                call.result.as_deref(),
+                Some(note_save_result(lang).as_str())
+            );
+            assert!(note_save_result(lang).contains(&saved_note().id.to_string()));
+        }
     }
 
     /// Every canned reply is a complete turn — text, usage, a terminal Stop —

@@ -13,6 +13,7 @@
 
 use crate::entities::message::Message;
 use crate::entities::self_model::SelfModel;
+use crate::shared::i18n::Lang;
 
 // cyrillic-ok:start — the Russian showcase is fixture data (AGENTS.md §3).
 
@@ -54,9 +55,8 @@ const ANSWER: &str = "Коротко:\n\n\
 const THOUGHTS: &str = "В заметке стоит записать бюджет в 12 ГБ и выбор Q5_K_M — \
      тогда следующие вопросы о размерах начнутся с железа.";
 
-const NOTE_TITLE: &str = "Бюджет железа";
-const NOTE_TEXT: &str = "Видеокарта 12 ГБ; Gemma 4 12B в Q5_K_M, контекст 16k.";
-const NOTE_RESULT: &str = "Заметка сохранена: «Бюджет железа».";
+const NOTE: &str =
+    "У пользователя видеокарта на 12 ГБ; в неё влезает Gemma 4 12B в Q5_K_M с контекстом 16k.";
 
 const SUMMARY: &str = "Я работаю локально и помогаю с практической инженерией — \
      подбор моделей, Rust, иногда планы поездок. Измеренные числа предпочитаю \
@@ -115,8 +115,8 @@ pub fn showcase_messages() -> Vec<Message> {
     let answer = &mut messages[3];
     answer.thoughts = Some(THOUGHTS.into());
     let call = &mut answer.tool_calls[0];
-    call.arguments = serde_json::json!({ "title": NOTE_TITLE, "text": NOTE_TEXT });
-    call.result = Some(NOTE_RESULT.into());
+    call.arguments = super::note_save_arguments(NOTE);
+    call.result = Some(super::note_save_result(Lang::Ru));
     messages
 }
 
