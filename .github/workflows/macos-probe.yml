@@ -23,7 +23,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-15]
+        # macos-15 and macos-26 (= macos-latest since 2026-07), both Apple M1 VMs.
+        os: [macos-15, macos-26]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
@@ -62,6 +63,7 @@ jobs:
       - name: A launch with no terminal says so
         continue-on-error: true
         run: |
+          set +e
           target/release/mindfork demo < /dev/null > out.txt 2>&1; echo "exit=$?"
           cat out.txt
       - name: The TUI in a real pty (tmux)
@@ -81,6 +83,32 @@ jobs:
           tmux send-keys -t m C-q
           sleep 2
           tmux has-session -t m 2>/dev/null && echo 'still running after Ctrl+Q' || echo 'quit on Ctrl+Q'
+      - name: Option-key chords in the input box (tmux sends ESC-prefixed keys)
+        continue-on-error: true
+        timeout-minutes: 5
+        run: |
+          tmux new-session -d -s k -x 120 -y 40 "target/release/mindfork demo"
+          sleep 8
+          tmux capture-pane -p -t k | grep -A1 'newline' | tail -1
+          echo '--- after M-b M-f (Option+b / Option+f as Terminal.app sends Option+arrows) ---'
+          tmux send-keys -t k M-b M-f
+          sleep 1
+          tmux capture-pane -p -t k | grep -A1 'newline' | tail -1
+          echo '--- after M-Left M-Left then X ---'
+          tmux send-keys -t k M-Left M-Left X
+          sleep 1
+          tmux capture-pane -p -t k | grep -A1 'newline' | tail -1
+          tmux send-keys -t k C-q
+      - name: The data root through a symlinked binary
+        continue-on-error: true
+        run: |
+          set +e
+          mkdir -p /tmp/mfbin && ln -sf "$PWD/target/release/mindfork" /tmp/mfbin/mindfork
+          echo '--- run directly ---'
+          target/release/mindfork stats 2>&1 | head -3
+          echo '--- run through /tmp/mfbin/mindfork ---'
+          /tmp/mfbin/mindfork stats 2>&1 | head -3
+          ls -la /tmp/mfbin
       - name: llama.cpp for this machine (our asset naming)
         continue-on-error: true
         timeout-minutes: 10
@@ -107,3 +135,31 @@ jobs:
         timeout-minutes: 10
         run: |
           target/release/mindfork setup --model "$PWD/stories15M.gguf" --ctx 512 --verify
+      - name: The Python sandbox (wasmer + V8 on macOS)
+        continue-on-error: true
+        timeout-minutes: 25
+        run: |
+          time target/release/mindfork sandbox setup --enable-python
+          ls -la target/release/data/sandbox | head -20
+      - name: The single-instance lock (a file in the working directory?)
+        continue-on-error: true
+        timeout-minutes: 5
+        run: |
+          set +e
+          echo '--- the checkout after the CLI commands that take the lock ---'
+          ls -la | grep -i instance || echo 'no lock file here'
+          echo '--- the app started from two directories at once ---'
+          mkdir -p /tmp/a /tmp/b
+          bin="$PWD/target/release/mindfork"
+          tmux new-session -d -s a -c /tmp/a -x 120 -y 30 "$bin; echo exit=\$?; sleep 60"
+          sleep 6
+          tmux new-session -d -s b -c /tmp/b -x 120 -y 30 "$bin; echo exit=\$?; sleep 60"
+          sleep 6
+          echo '--- pane a (bottom rows) ---'; tmux capture-pane -p -t a | grep -v '^\s*$' | tail -4
+          echo '--- pane b (bottom rows) ---'; tmux capture-pane -p -t b | grep -v '^\s*$' | tail -4
+          ls -la /tmp/a /tmp/b
+          tmux send-keys -t a C-q; tmux send-keys -t b C-q; sleep 2
+          echo '--- the app started from / (not writable) ---'
+          tmux new-session -d -s r -c / -x 120 -y 30 "$bin; echo exit=\$?; sleep 60"
+          sleep 6
+          tmux capture-pane -p -t r | grep -v '^\s*$' | tail -6
