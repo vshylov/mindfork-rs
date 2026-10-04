@@ -57,7 +57,7 @@ pub(crate) static HELP_SECTION: HelpSection = HelpSection {
     // editing · panels and toggles.
     rows: &[
         ("Enter", "ui.help.send"),
-        ("Shift+Enter / Alt+Enter", "ui.help.newline"),
+        ("Shift+Enter / Alt+Enter / Ctrl+J", "ui.help.newline"),
         ("Shift+←/→/↑/↓", "ui.help.select"),
         ("Ctrl+A", "ui.help.select_all"),
         ("Ctrl+C", "ui.help.copy"),
@@ -73,8 +73,8 @@ pub(crate) static HELP_SECTION: HelpSection = HelpSection {
         ("Ctrl+U", "ui.help.impersonate"),
         ("Ctrl+K", "ui.help.clear_input"),
         ("Ctrl+Z / Ctrl+Y", "ui.help.undo_redo"),
-        ("Ctrl+←/→", "ui.help.word_move"),
-        ("Ctrl+Backspace/Delete", "ui.help.word_delete"),
+        ("Ctrl/Alt+←/→", "ui.help.word_move"),
+        ("Ctrl/Alt+Backspace/Delete", "ui.help.word_delete"),
         ("Home", "ui.help.line_home"),
         ("End", "ui.help.line_end"),
         ("Ctrl+Home/End", "ui.help.doc_move"),

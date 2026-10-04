@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (32)
+## Entries (33)
 
 - Post-M9: fast multiline clipboard paste (done)
 - Post-M9: `↑/↓` navigation by visual row of a wrapped line (done)
@@ -44,6 +44,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a stress mark is part of the word (done)
 - Post-M9: the input box's height is a setting (done)
 - Post-M9: `Ctrl+←/→` stop at punctuation (done)
+- Post-M9: keys a Mac delivers — `Alt` for words, `Ctrl+J` for a line break (done)
 
 ### Post-M9: fast multiline clipboard paste (done)
 - **Symptom**: a large clipboard paste lagged in Windows Terminal, and a line break
@@ -1747,3 +1748,50 @@ base is a word character and whose riders are not, that tells the rules apart.
 
 **A live model run is not required** (AGENTS.md §3) — pure input handling, no
 engine, memory or tool.
+
+### Post-M9: keys a Mac delivers — `Alt` for words, `Ctrl+J` for a line break (done)
+
+**Why.** Stage 1b of the macOS track (docs/research/macos.md §4.4, fork F5 —
+the owner's choice, 2026-10-04: chords that work in every terminal rather than
+terminal settings to document). On a Mac, word movement is Option+←/→: macOS
+takes `Ctrl+←/→` for switching Spaces before the terminal sees them. Terminal.app
+sends Option+←/→ as `ESC b`/`ESC f` — readline's word motions — which crossterm
+reports as `Alt+b`/`Alt+f`, and the input box typed every character without
+`Ctrl`: the probe measured a `b` and an `f` landing in the message. And
+Terminal.app has no line break the footer could name: no kitty protocol, so
+`Shift+Enter` is not reported, and Option is not Meta by default, so `Alt+Enter`
+is a bare CR.
+
+**What.**
+- `Alt+←/→` move by words as `Ctrl+←/→` do (`Shift` selects), and so do
+  `Alt+b`/`Alt+f`; `Alt+Backspace/Delete` delete a word. Only `←/→` are
+  upgraded — `Alt+Home` or `Alt+↑` stay what they were.
+- An `Alt`+character is never typed: it is a meta-prefixed key. A character
+  composed with Option on a Mac, or with AltGr on Linux, arrives without the
+  modifier and is typed as before; a Windows Alt code arrives as a key
+  *release*, which the runtime already drops.
+- `Ctrl+J` breaks the line in all three multi-line fields (the chat, the
+  settings' multi-line editor, the self-model editor), through one predicate,
+  `keys::is_line_break`, where each had its own `SHIFT | ALT` test. A line feed
+  is what every terminal delivers for it: in raw mode crossterm reads LF as
+  `Ctrl+J`. It is read by its physical key, as every shortcut is.
+- The footer names `Ctrl+J` in Terminal.app (`TERM_PROGRAM=Apple_Terminal`)
+  when no modified `Enter` is reported; elsewhere it still names `Shift+Enter`
+  or `Alt+Enter`. The help lists `Shift+Enter / Alt+Enter / Ctrl+J`,
+  `Ctrl/Alt+←/→` and `Ctrl/Alt+Backspace/Delete`.
+
+**Left for the rented Mac** (macos.md §6.2): whether Terminal.app's
+`Shift+Enter` is distinguishable after all (sources disagree), what Ghostty's
+`CSI 27;2;13~` becomes in crossterm, and Home/End and Page Up/Down, which
+Terminal.app may keep for its own scrolling.
+
+**Seen, not touched.** On Windows, a character typed with AltGr arrives with
+`CONTROL | ALT`, and the input box does not type a `Ctrl` character — so AltGr
+text may never have been typable there. Not this change (it was so before); a
+task of its own, to be measured first.
+
+**Tests:** +4 unit tests and three line-break tests extended with `Ctrl+J` —
+**3902 unit tests green, 257 `#[ignore]`**; fmt / clippy / `cyrillic_scan.py`
+clean; on macOS through CI. No live run: input handling, no engine, memory or
+tool behaviour involved.
+

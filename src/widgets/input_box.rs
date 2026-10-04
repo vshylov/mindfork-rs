@@ -1255,6 +1255,7 @@ impl InputBox {
         // (`Ctrl+←/→` — by word, `Ctrl+Backspace/Delete` — delete a word,
         // `Ctrl+Home/End` — to the start/end of the text). See spec §11.5.
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let alt = key.modifiers.contains(KeyModifiers::ALT);
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
 
         // Editor Ctrl shortcuts: select all / undo / redo / clear
@@ -1270,7 +1271,19 @@ impl InputBox {
         // Navigation (incl. `Ctrl`+word / `Ctrl`+start/end): with `Shift` we grow
         // the selection (set the anchor before moving), without — clear it. Any
         // navigation/selection ends undo coalescing (a following edit is a new unit).
-        if let Some(mv) = navigation(key.code, ctrl) {
+        //
+        // `Alt` moves by words too, as a Mac does with Option: macOS takes
+        // `Ctrl+←/→` for its Spaces before the terminal sees them, and
+        // Terminal.app sends Option+←/→ as `ESC b`/`ESC f` — readline's word
+        // motions, which arrive as `Alt+b`/`Alt+f` and used to be typed as
+        // letters (docs/research/macos.md §4.4).
+        let code = match key.code {
+            KeyCode::Char('b') if alt && !ctrl => KeyCode::Left,
+            KeyCode::Char('f') if alt && !ctrl => KeyCode::Right,
+            code => code,
+        };
+        let by_word = ctrl || (alt && matches!(code, KeyCode::Left | KeyCode::Right));
+        if let Some(mv) = navigation(code, by_word) {
             if shift {
                 self.set_anchor_if_none();
             } else {
@@ -1281,7 +1294,7 @@ impl InputBox {
             return KeyOutcome::Moved;
         }
 
-        self.on_edit_key(key.code, ctrl)
+        self.on_edit_key(key.code, ctrl, alt)
     }
 
     /// An editor Ctrl shortcut (select all / undo / redo / clear). Undo/redo
@@ -1315,19 +1328,22 @@ impl InputBox {
     /// Replacing/deleting a selection is done by the mutators
     /// themselves (at the start — `delete_selection`), so paste/`Shift+Enter`/
     /// emoji respect it too.
-    fn on_edit_key(&mut self, code: KeyCode, ctrl: bool) -> KeyOutcome {
+    fn on_edit_key(&mut self, code: KeyCode, ctrl: bool, alt: bool) -> KeyOutcome {
         match code {
-            KeyCode::Backspace if ctrl => {
+            // `Alt+Backspace` is readline's and a Mac's (Option) word deletion.
+            KeyCode::Backspace if ctrl || alt => {
                 self.delete_word_left();
                 KeyOutcome::Edited
             }
-            KeyCode::Delete if ctrl => {
+            KeyCode::Delete if ctrl || alt => {
                 self.delete_word_right();
                 KeyOutcome::Edited
             }
-            // Plain character input: don't type Ctrl+character (that's a shortcut
-            // for the layer above), otherwise a control character would land in the field.
-            KeyCode::Char(c) if !ctrl => {
+            // Plain character input: don't type Ctrl+character or Alt+character —
+            // a shortcut for the layer above, or a meta-prefixed key (`ESC b`) whose
+            // letter is not text. A character composed with Option on a Mac, or
+            // with AltGr on Linux, arrives without the modifier and is typed.
+            KeyCode::Char(c) if !ctrl && !alt => {
                 self.insert_char(c);
                 KeyOutcome::Edited
             }
@@ -1680,8 +1696,9 @@ impl InputBox {
 /// The cursor-movement method for a navigation key (or `None` if the key isn't
 /// navigation). Factored into a table so selection logic (`Shift` → anchor,
 /// plain → clear) applies uniformly to every direction with no duplicated
-/// branches. `Ctrl` upgrades `←/→` to word level, `Home/End` — to text
-/// boundaries; `Ctrl+↑/↓` isn't defined (falls into `None` → `Ignored`, as before).
+/// branches. `Ctrl` (or, for `←/→`, `Alt` — the caller's `by_word`) upgrades
+/// `←/→` to word level, `Home/End` — to text boundaries; `Ctrl+↑/↓` isn't
+/// defined (falls into `None` → `Ignored`, as before).
 fn navigation(code: KeyCode, ctrl: bool) -> Option<fn(&mut InputBox)> {
     Some(match (code, ctrl) {
         (KeyCode::Left, true) => InputBox::move_word_left,
@@ -2938,6 +2955,63 @@ mod tests {
         // again → past the end of the middle word
         assert!(ib.on_key(ctrl(KeyCode::Right)).handled());
         assert_eq!(ib.cursor(), (0, 8));
+    }
+
+    /// A Mac's word movement: Option+←/→ — `Alt+←/→` where the terminal
+    /// reports it, `Alt+b`/`Alt+f` from Terminal.app (`ESC b`/`ESC f`) — stops
+    /// where `Ctrl+←/→` stops, types nothing, and with `Shift` selects
+    /// (docs/research/macos.md §4.4). The probe measured `Alt+b` typing a `b`.
+    #[test]
+    fn alt_and_its_readline_letters_move_by_word_as_ctrl_does() {
+        let alt = |code| KeyEvent::new(code, KeyModifiers::ALT);
+        let stops = |left: KeyEvent, right: KeyEvent| {
+            let mut ib = InputBox::new();
+            ib.set_text("один два три");
+            let mut seen = Vec::new();
+            for key in [left, left, left, right, right] {
+                assert!(ib.on_key(key).handled(), "{key:?}");
+                seen.push(ib.cursor().1);
+            }
+            assert_eq!(ib.text(), "один два три", "a word motion typed");
+            seen
+        };
+        let ctrl_stops = stops(ctrl(KeyCode::Left), ctrl(KeyCode::Right));
+        assert_eq!(ctrl_stops, [9, 5, 0, 4, 8]);
+        assert_eq!(stops(alt(KeyCode::Left), alt(KeyCode::Right)), ctrl_stops);
+        assert_eq!(
+            stops(alt(KeyCode::Char('b')), alt(KeyCode::Char('f'))),
+            ctrl_stops
+        );
+
+        let mut ib = InputBox::new();
+        ib.set_text("один два три");
+        ib.on_key(KeyEvent::new(
+            KeyCode::Left,
+            KeyModifiers::ALT | KeyModifiers::SHIFT,
+        ));
+        assert_eq!(ib.selected_text().as_deref(), Some("три"));
+    }
+
+    /// An `Alt`+character is a meta-prefixed key, not text: it is not typed.
+    /// `Alt+Backspace/Delete` delete a word, as on a Mac and in readline.
+    #[test]
+    fn alt_characters_are_not_typed_and_alt_backspace_deletes_a_word() {
+        let alt = |code| KeyEvent::new(code, KeyModifiers::ALT);
+        let mut ib = InputBox::new();
+        ib.set_text("один два");
+        for c in ['x', 'b', 'f', 'щ'] {
+            ib.on_key(alt(KeyCode::Char(c)));
+        }
+        assert_eq!(ib.text(), "один два");
+        assert!(ib.on_key(alt(KeyCode::Backspace)).edited());
+        assert_eq!(ib.text(), "один ");
+        ib.col = 0;
+        assert!(ib.on_key(alt(KeyCode::Delete)).edited());
+        assert_eq!(ib.text(), " ");
+        // A plain character still types — and so does one composed with
+        // Option or AltGr, which arrives without the modifier.
+        assert!(ib.on_key(k(KeyCode::Char('é'))).edited());
+        assert_eq!(ib.text(), "é ");
     }
 
     #[test]

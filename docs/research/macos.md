@@ -1,7 +1,7 @@
 # macOS — mindfork on a Mac, built and tested without one
 
 Status: **MVP probe GO; every fork as recommended (the owner, 2026-10-04);
-stage 1a built (§10)** — stage 1b, the keys, next. Part of the promotion plan's
+stage 1 built (§10, §11)** — stage 2, the release, next. Part of the promotion plan's
 stage 1, the friction of a first try ([promotion.md §5](promotion.md)): today a
 Mac user has no download at all.
 
@@ -319,7 +319,7 @@ iTerm2 and Ghostty:
     (§4.2), the symlink (§4.3), `.DS_Store`, the `metal` name, the dyld message,
     the two tests (§3.3); macOS joins the CI test matrix (F3), so every pull
     request from then on is tested there — 1b included. Built: §10.
-  - **1b** — the keys (F5), a change to how every OS reads them.
+  - **1b** — the keys (F5), a change to how every OS reads them. Built: §11.
 - **Stage 2 — the release.** `aarch64-macos` in `release.yml` (the archive, its
   checksum and attestation, the notices' target), `install.sh` on macOS, the
   tap (F4's channels), install.md and the site's install page marking macOS a
@@ -413,4 +413,16 @@ Each item of §4 that needs no Mac to fix, in the order of §7:
 
 The OS-specific halves — `gethostuuid`, the lock path — run only on the macOS
 runner; the pull request's `Tests (macos-latest)` is their test.
+
+The pull request's `Tests (macos-latest)` passed: **3898 tests, none failing**,
+the lock and the secret scheme among them, and clippy clean on macOS.
+
+## 11. Stage 1b — built
+
+F5's chords, on every OS ([docs/journal/ui-input.md](../journal/ui-input.md)):
+`Alt+←/→` and `Alt+b`/`Alt+f` move by words, `Alt+Backspace/Delete` delete one,
+an `Alt`+character is never typed, and `Ctrl+J` breaks a line in every
+multi-line field — named in the footer in Terminal.app. The settings a Mac user
+may turn on (Option as Meta) are in the manual's keys section; install.md's macOS
+section comes with stage 2. What only a Mac answers stays on §6.2's list.
 

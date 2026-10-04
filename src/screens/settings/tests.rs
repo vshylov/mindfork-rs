@@ -1558,11 +1558,14 @@ fn alt_enter_also_inserts_newline_in_multiline_editor() {
     s.handle_key(key(KeyCode::Char('A')));
     s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT));
     s.handle_key(key(KeyCode::Char('B')));
+    // Ctrl+J — the line feed Terminal.app delivers — breaks the line too.
+    s.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL));
+    s.handle_key(key(KeyCode::Char('C')));
     assert!(s.editor.is_some(), "Alt+Enter doesn't close the editor");
     let intent = s.handle_key(key(KeyCode::Enter)); // commit
     match intent {
         Some(SettingsIntent::SaveProfile { edit, .. }) => {
-            assert_eq!(edit.system_message.unwrap(), "Ты — ассистент.A\nB");
+            assert_eq!(edit.system_message.unwrap(), "Ты — ассистент.A\nB\nC");
         }
         other => panic!("expected SaveProfile, got {other:?}"),
     }
