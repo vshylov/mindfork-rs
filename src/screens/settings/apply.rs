@@ -468,10 +468,7 @@ impl SettingsScreen {
         // unique among the others), and a validator holding the editor borrow
         // could not look at it.
         let ed = self.editor.as_ref()?;
-        let multiline_break = ed.multiline
-            && key
-                .modifiers
-                .intersects(KeyModifiers::SHIFT | KeyModifiers::ALT);
+        let multiline_break = ed.multiline && crate::shared::keys::is_line_break(&key);
         if key.code == KeyCode::Enter && !multiline_break {
             let (field, text) = (ed.field, ed.input.text());
             // Validation without closing: an invalid value leaves the editor
@@ -496,8 +493,9 @@ impl SettingsScreen {
             }
             // The multiline editor (system message/greeting): `Shift+Enter` (or
             // `Alt+Enter` — a fallback for terminals without the kitty protocol,
-            // see item 11) — a line break, Enter — commit (as in chat input, spec §11.7).
-            (KeyCode::Enter, _) => {
+            // see item 11; or `Ctrl+J`) — a line break, Enter — commit (as in chat
+            // input, spec §11.7). A bare Enter never reaches here: it committed above.
+            _ if multiline_break => {
                 editor.input.insert_newline();
                 None
             }

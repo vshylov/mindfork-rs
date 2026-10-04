@@ -87,7 +87,7 @@ decoding — are in [install.md §3](install.md).
 ### Your first message
 
 `Esc` closes settings. Type into the box at the bottom and press `Enter`.
-`Shift+Enter` (or `Alt+Enter`) makes a line break instead.
+`Shift+Enter` (or `Alt+Enter`, or `Ctrl+J`) makes a line break instead.
 
 While the reply streams, `Esc` stops it. What arrived stays, and `/continue`
 resumes from where it stopped.
@@ -469,7 +469,7 @@ things on different screens. The highlights:
 
 | Key | Action |
 |---|---|
-| `Enter` / `Shift+Enter` | send / line break (`Alt+Enter` — the same break for terminals without the kitty protocol, KDE Konsole among them; the input box's footer names the one your terminal can deliver) |
+| `Enter` / `Shift+Enter` | send / line break (`Alt+Enter` — the same break for terminals without the kitty protocol, KDE Konsole among them; `Ctrl+J` works in every terminal, macOS's Terminal.app included; the input box's footer names the one your terminal can deliver) |
 | `Esc` | stop a running generation; otherwise back — to the chat list, or to the search results or the conversation you came from (the status bar says which) |
 | `Ctrl+Q` / `F10` | quit (or type `/exit`) |
 | `F1` | help and about |
@@ -491,6 +491,7 @@ things on different screens. The highlights:
 | `Ctrl+Z` / `Ctrl+Y` | undo / redo in the input box |
 | `Ctrl+B` | emoji picker |
 | `Ctrl+L` | follow a `chat://` reference the assistant wrote |
+| `Ctrl+←/→`, `Ctrl+Backspace/Delete` | move by words, delete a word — `Alt` (Option on a Mac) does the same |
 | `Home` / `End` | a ladder: first the on-screen row, then the whole line |
 | `Ctrl+W` | toggle mouse capture: wheel scrolling ↔ native text selection |
 | `PageUp` / `PageDown` / wheel | scroll the feed |
@@ -500,6 +501,11 @@ things on different screens. The highlights:
 > scrolls the feed and selection needs `Shift`. `Ctrl` shortcuts are
 > layout-independent: on Windows under any installed layout, elsewhere under
 > Cyrillic.
+
+> **On a Mac.** macOS takes `Ctrl+←/→` for switching Spaces, so words are Option+←/→
+> there. Terminal.app breaks a line with `Ctrl+J` (its footer says so); with *Use Option
+> as Meta key* on (Settings → Profiles → Keyboard) `Alt+Enter` and the other `Alt` chords
+> work too. The `F` keys need `fn`.
 
 > **Copying over SSH.** The clipboard the app writes belongs to the machine it
 > runs on — over SSH that is the server, and a headless one has no clipboard at

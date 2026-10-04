@@ -464,8 +464,9 @@ impl SelfModelScreen {
                 None
             }
             // Shift+Enter (or Alt+Enter — a fallback line break for terminals with no
-            // kitty protocol, see item 11) — a line break; Enter — commit.
-            (KeyCode::Enter, m) if m.intersects(KeyModifiers::SHIFT | KeyModifiers::ALT) => {
+            // kitty protocol, see item 11; or Ctrl+J — `keys::is_line_break`) — a line
+            // break; Enter — commit.
+            _ if crate::shared::keys::is_line_break(&key) => {
                 editor.input.insert_newline();
                 None
             }
@@ -963,10 +964,13 @@ mod tests {
         s.handle_key(key(KeyCode::Char('A')));
         s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT));
         s.handle_key(key(KeyCode::Char('B')));
+        // Ctrl+J — the line feed Terminal.app delivers — breaks the line too.
+        s.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL));
+        s.handle_key(key(KeyCode::Char('C')));
         assert!(s.editor.is_some(), "Alt+Enter must not close the editor");
         let intent = s.handle_key(key(KeyCode::Enter)).unwrap();
         match intent {
-            SelfModelIntent::Edit(SelfModelEdit::SetSummary(t)) => assert!(t.contains("A\nB")),
+            SelfModelIntent::Edit(SelfModelEdit::SetSummary(t)) => assert!(t.contains("A\nB\nC")),
             other => panic!("expected SetSummary, got {other:?}"),
         }
     }

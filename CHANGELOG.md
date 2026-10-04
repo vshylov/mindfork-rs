@@ -16,6 +16,13 @@ split by subsystem.
 
 ### Added
 
+- **Keys that work on a Mac, and in every terminal.** `Alt+←/→` (Option on a
+  Mac, where macOS keeps `Ctrl+←/→` for its Spaces) move by words and
+  `Alt+Backspace/Delete` delete one, as `Ctrl` does; `Ctrl+J` breaks a line in
+  any terminal, and in macOS's Terminal.app the input box names it. An
+  `Alt`+letter no longer types the letter — Terminal.app's Option+←/→ arrive as
+  one, and typed a `b` or an `f` into the message.
+
 - **Scoop.** On Windows, `scoop bucket add mindfork
   https://github.com/vshylov/scoop-bucket` and `scoop install mindfork/mindfork`:
   the release's archive with its hash checked and your data kept in `%APPDATA%`,

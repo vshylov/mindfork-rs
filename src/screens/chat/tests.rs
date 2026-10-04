@@ -552,7 +552,7 @@ fn enter_sends_when_idle_and_nonempty() {
 }
 
 #[test]
-fn shift_and_alt_enter_insert_newline_not_send() {
+fn shift_alt_enter_and_ctrl_j_insert_newline_not_send() {
     let mut s = ChatScreen::new();
     s.set_server_status(ready_statuses());
     for c in "ab".chars() {
@@ -574,11 +574,19 @@ fn shift_and_alt_enter_insert_newline_not_send() {
     for c in "ef".chars() {
         s.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
     }
-    assert_eq!(s.input.text(), "ab\ncd\nef");
+    // Ctrl+J — a line feed, the break Terminal.app delivers.
+    assert_eq!(
+        s.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL)),
+        None
+    );
+    for c in "gh".chars() {
+        s.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+    }
+    assert_eq!(s.input.text(), "ab\ncd\nef\ngh");
     // A bare Enter still sends the whole multiline input.
     assert_eq!(
         s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
-        Some(ChatIntent::Send("ab\ncd\nef".into()))
+        Some(ChatIntent::Send("ab\ncd\nef\ngh".into()))
     );
 }
 

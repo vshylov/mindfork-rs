@@ -39,7 +39,7 @@
 
 use std::sync::OnceLock;
 
-use ratatui::crossterm::event::{KeyCode, KeyEvent};
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 /// Returns the "physical" Latin character (lowercase) for a hotkey event, or
 /// `None` if the event isn't a character key.
@@ -177,6 +177,24 @@ const SHIFT_ENTER: &str = "Shift+Enter";
 /// The chord to name when it does not; both are handled everywhere a line
 /// break is accepted (`screens/chat/input.rs`, settings, the self-model editor).
 const ALT_ENTER: &str = "Alt+Enter";
+/// The chord to name in Terminal.app, where neither of the others arrives by
+/// default (see [`newline_chord`]).
+const CTRL_J: &str = "Ctrl+J";
+
+/// Whether `key` breaks the line in a multi-line field (the chat's input box,
+/// the settings' multi-line editor, the self-model editor): `Shift+Enter`;
+/// `Alt+Enter`, which arrives where a modified `Enter` does not; or `Ctrl+J`,
+/// a line feed — which every terminal delivers, since in raw mode crossterm
+/// reads LF as `Ctrl+J`, and which is the only one Terminal.app delivers by
+/// default (docs/research/macos.md §4.4).
+pub fn is_line_break(key: &KeyEvent) -> bool {
+    match key.code {
+        KeyCode::Enter => key
+            .modifiers
+            .intersects(KeyModifiers::SHIFT | KeyModifiers::ALT),
+        _ => key.modifiers == KeyModifiers::CONTROL && hotkey_char(key) == Some('j'),
+    }
+}
 
 /// Records what the terminal turned out to be capable of. Called once, from
 /// startup; later calls are ignored, so nothing can re-label a running UI.
@@ -196,14 +214,32 @@ pub fn set_modified_enter_reported(reported: bool) {
 /// (≤ 26.04) answers the kitty protocol's `CSI ? u` either, so there is
 /// nothing to negotiate: on such a terminal the honest thing is to name
 /// `Alt+Enter`, which arrives as `ESC` + CR = `Enter`+`ALT`.
+///
+/// Except in **Terminal.app** (`TERM_PROGRAM=Apple_Terminal`): it speaks no
+/// kitty protocol, and Option is not Meta there unless the user turns it on,
+/// so `Alt+Enter` is a bare CR too. `Ctrl+J`, a line feed, arrives from it as
+/// from every terminal, and is named there (docs/research/macos.md §4.4).
 pub fn newline_chord() -> &'static str {
-    chord_for(MODIFIED_ENTER_REPORTED.get().copied().unwrap_or(true))
+    chord_for(
+        MODIFIED_ENTER_REPORTED.get().copied().unwrap_or(true),
+        in_apple_terminal(),
+    )
 }
 
-/// The pure half of [`newline_chord`] — the choice itself, without the global.
-const fn chord_for(modified_enter_reported: bool) -> &'static str {
+/// Whether this process runs in macOS's Terminal.app — read once: like the
+/// other facts here, it is the terminal's and does not change while we run.
+fn in_apple_terminal() -> bool {
+    static APPLE_TERMINAL: OnceLock<bool> = OnceLock::new();
+    *APPLE_TERMINAL
+        .get_or_init(|| std::env::var("TERM_PROGRAM").is_ok_and(|v| v == "Apple_Terminal"))
+}
+
+/// The pure half of [`newline_chord`] — the choice itself, without the globals.
+const fn chord_for(modified_enter_reported: bool, apple_terminal: bool) -> &'static str {
     if modified_enter_reported {
         SHIFT_ENTER
+    } else if apple_terminal {
+        CTRL_J
     } else {
         ALT_ENTER
     }
@@ -404,7 +440,6 @@ mod win_layout {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ratatui::crossterm::event::KeyModifiers;
 
     fn ctrl(c: char) -> KeyEvent {
         KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
@@ -415,8 +450,41 @@ mod tests {
         // The whole point of the flag: on a terminal that cannot deliver a
         // modified `Enter` (Konsole sends `\EOM`, which crossterm drops; a bare
         // xterm sends a plain CR) the footer must name the chord that works.
-        assert_eq!(chord_for(true), "Shift+Enter");
-        assert_eq!(chord_for(false), "Alt+Enter");
+        assert_eq!(chord_for(true, false), "Shift+Enter");
+        assert_eq!(chord_for(false, false), "Alt+Enter");
+        // Terminal.app delivers neither Shift+Enter nor (without Option as
+        // Meta) Alt+Enter; a modified Enter, where reported, still wins.
+        assert_eq!(chord_for(false, true), "Ctrl+J");
+        assert_eq!(chord_for(true, true), "Shift+Enter");
+    }
+
+    /// Every chord the footer may name breaks the line, and nothing else
+    /// does: a bare `Enter` sends, `Ctrl+Enter` and `Ctrl+Shift+J` are other
+    /// keys. `Ctrl+J` is read by its physical key, as every shortcut is.
+    #[test]
+    fn the_line_break_chords_are_the_ones_the_footer_names() {
+        let key = |code, modifiers| KeyEvent::new(code, modifiers);
+        for chord in [
+            key(KeyCode::Enter, KeyModifiers::SHIFT),
+            key(KeyCode::Enter, KeyModifiers::ALT),
+            ctrl('j'),
+            ctrl('о'), // the J key on the Russian layout
+        ] {
+            assert!(is_line_break(&chord), "{chord:?}");
+        }
+        for other in [
+            key(KeyCode::Enter, KeyModifiers::NONE),
+            key(KeyCode::Enter, KeyModifiers::CONTROL),
+            key(KeyCode::Char('j'), KeyModifiers::NONE),
+            key(
+                KeyCode::Char('j'),
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            ),
+            key(KeyCode::Char('j'), KeyModifiers::ALT),
+            ctrl('k'),
+        ] {
+            assert!(!is_line_break(&other), "{other:?}");
+        }
     }
 
     #[test]
