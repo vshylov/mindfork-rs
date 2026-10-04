@@ -150,7 +150,31 @@ fn physical_char(c: char) -> char {
 /// makes that way — so it is not. Elsewhere AltGr is composed by the terminal,
 /// and the character arrives with no modifier at all.
 pub fn is_altgr_text(key: &KeyEvent) -> bool {
-    altgr_text(key, made_with_altgr)
+    altgr_text(key, |c| made_with_altgr(c) || pretended_altgr(c))
+}
+
+#[cfg(test)]
+thread_local! {
+    /// A character this thread's tests treat as made with AltGr: the real
+    /// lookup is Windows' and needs a layout that has one, which CI's en-US
+    /// does not — so the fields that type AltGr text are tested through this.
+    static PRETENDED_ALTGR: std::cell::Cell<Option<char>> = const { std::cell::Cell::new(None) };
+}
+
+/// Makes `c` AltGr text for this thread's [`is_altgr_text`] (`None` undoes it).
+#[cfg(test)]
+pub fn pretend_altgr(c: Option<char>) {
+    PRETENDED_ALTGR.with(|p| p.set(c));
+}
+
+#[cfg(test)]
+fn pretended_altgr(c: char) -> bool {
+    PRETENDED_ALTGR.with(|p| p.get() == Some(c))
+}
+
+#[cfg(not(test))]
+fn pretended_altgr(_: char) -> bool {
+    false
 }
 
 /// The pure half of [`is_altgr_text`]: the decision, with the layout lookup

@@ -1827,8 +1827,13 @@ shortcuts for it; the password prompt keeps it. The probe after: **all checks
 passed** — `price ₽` in the box, `₽` in the chat list's search, the control arm
 still typing nothing.
 
-**Tests:** +2 — the decision with the lookup stubbed, and the lookup against the
+**Tests:** +4 — the decision with the lookup stubbed; the lookup against the
 machine's layouts (no Latin letter is AltGr; `₽` is, where Russian is
-installed — skipped on CI's en-US) — **3904 unit tests green, 257 `#[ignore]`**;
+installed — skipped on CI's en-US); and the input box and the password prompt
+typing AltGr text, through `keys::pretend_altgr`, a test-only seam that makes
+a character AltGr on any OS (the first push left those branches covered on no
+runner, and Sonar's new-code coverage at 79.5 %). The password prompt's per-key
+decision moved into `password_key` for it. **3906 unit tests green, 257
+`#[ignore]`**;
 fmt / clippy / `cyrillic_scan.py` clean. No live run: input handling only.
 
