@@ -1,9 +1,11 @@
 # Scoop and the AUR — two package managers before winget
 
 Status: **built and checked 2026-10-03** — the Scoop bucket is live
-(`vshylov/scoop-bucket`); the AUR package is ready to publish and goes up once
-the owner's AUR key is in the repository's secrets (§4). Part of the promotion
-plan's stage 1, the friction of a first try ([promotion.md §4](promotion.md)).
+(`vshylov/scoop-bucket`). **The AUR package is ready and blocked**: the AUR has
+closed new-account registration (§4), so it has no account to be published
+from; every release still builds and checks it, and the user-facing documents
+do not mention it until it is published. Part of the promotion plan's stage 1,
+the friction of a first try ([promotion.md §4](promotion.md)).
 
 ## 1. Why these two, and why now
 
@@ -111,9 +113,32 @@ release.
 `tools/aur_package.py --self-test` runs in `ci.yml`'s lint: a prerelease tag and
 a package `sha256sums.txt` names other than exactly once are refused.
 
-## 4. What the owner does once
+## 4. What the owner does once — blocked on the AUR's registration
 
-The agent creates no accounts and handles no keys:
+**Blocked (2026-10-04).** The AUR's registration page answers `503` with *"New
+account registration is temporarily closed"*: paused during a wave of automated
+account creation, no manual queue, the reopening to be announced on
+`aur-general` and the Arch news feed — the owner reports it opens only now and
+then, for a couple of weeks. Until then:
+
+- **`aur.yml` keeps running on every published release** — render, build, lint,
+  install, run, `.SRCINFO` — and stops at the push with a notice, so the PKGBUILD
+  is known to work on the day an account exists rather than found broken then.
+- **No user-facing document names the AUR** (install.md, the README, the site's
+  install page, the CHANGELOG): a `yay -S` that answers "target not found" is the
+  door-closing message this project keeps finding (lessons §4). They gain the
+  line in the pull request that follows the first push.
+- **On Arch meanwhile**, the release's own package: download the
+  `.pkg.tar.zst` and `pacman -U ./…` it, as install.md says. Not
+  `pacman -U <url>` — measured in `archlinux:base`: pacman then fetches a
+  `.sig` beside the URL, gets a `404` (the packages are unsigned) and installs
+  nothing.
+- **Another route, if one turns up**: anyone with an AUR account can submit the
+  rendered PKGBUILD and add the owner as a co-maintainer later; `aur.yml` would
+  then push with that account's key in the secret.
+
+The steps, once registration reopens — the agent creates no accounts and
+handles no keys:
 
 1. An account at <https://aur.archlinux.org/register>.
 2. A key for CI alone: `ssh-keygen -t ed25519 -f aur_mindfork -C mindfork-aur -N ""`.
@@ -141,3 +166,7 @@ The agent creates no accounts and handles no keys:
 - **F4 — who updates them.** Scoop: Excavator in the bucket, no secret. AUR: this
   repository's release, with a key only the owner can register. **Owner's
   decision 2026-10-03: the owner registers the account and the key.**
+- **F5 — what to do while the AUR's registration is closed.** (a) keep the
+  machinery, checked on every release, and say nothing to users until it is
+  published; (b) take it out until an account exists. **Owner's report
+  2026-10-04: registration closed for weeks or months — (a).**

@@ -3512,6 +3512,16 @@ every reversible check first. Full record —
   against the latest release.
 - **Left to the owner**, since the agent creates no accounts and handles no keys:
   the AUR account, a key for CI, the secret, and the first dispatch (§4 there).
+- **Then blocked (2026-10-04).** The AUR has closed new-account registration — its
+  page answers `503`, "temporarily closed" during a wave of automated sign-ups, no
+  queue; the owner reports it reopens only now and then, for a couple of weeks. So
+  the package stays built and checked by every release and stops at the push, and
+  the AUR lines came back out of install.md, the README, the site and the
+  CHANGELOG — a `yay -S` answering "target not found" would be the very first
+  thing an Arch user tried. Measured on the way: `pacman -U <release URL>` is no
+  substitute — pacman fetches a `.sig` beside the URL, the unsigned release has
+  none, and the `404` aborts the install; downloading the file first works, as
+  install.md already says.
 - **Checks**: `actionlint` clean on `aur.yml` and `packaging.yml` (its one finding
   in `ci.yml` is on `main` already, an intended word split); `actions_pin_check`,
   link, Cyrillic and index gates clean; `site_llms_txt --check` still matches.

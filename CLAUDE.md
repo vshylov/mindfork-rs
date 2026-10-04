@@ -194,9 +194,9 @@ being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
 - **Scoop and the AUR** (2026-10-03): `vshylov/scoop-bucket` — the release's zip,
-  data in `%APPDATA%`, Excavator for updates — and `mindfork-rs-bin`, pushed by
-  every release from `aur.yml` once the owner's key is set; both installed and
-  run for real ([docs/research/package-managers.md](docs/research/package-managers.md),
+  data in `%APPDATA%`, Excavator for updates — is live; `mindfork-rs-bin` is built
+  and checked by every release (`aur.yml`) and **blocked**: the AUR's registration
+  is closed, so no user doc names it yet ([docs/research/package-managers.md](docs/research/package-managers.md),
   [docs/journal/release.md](docs/journal/release.md)).
 - **Promotion — making mindfork findable** (opened 2026-10-03): the plan and its
   baseline ([docs/research/promotion.md](docs/research/promotion.md)). Its first

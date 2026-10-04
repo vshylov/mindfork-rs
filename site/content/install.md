@@ -57,9 +57,6 @@ sudo dnf install ./mindfork-rs-<version>-1.x86_64.rpm       # Fedora, RHEL
 sudo pacman -U   ./mindfork-rs-<version>-1-x86_64.pkg.tar.zst   # Arch
 ```
 
-On **Arch** the same package is in the AUR, updated by every release:
-`yay -S mindfork-rs-bin` (or `paru`, or any helper).
-
 **The archive — `mindfork-rs-v<version>-x86_64-linux.tar.gz`** — is the portable
 route, the same as on Windows: unpack, run `./mindfork`, and the data folder
 lives beside the binary.

@@ -16,12 +16,10 @@ split by subsystem.
 
 ### Added
 
-- **Scoop and the AUR.** On Windows, `scoop bucket add mindfork
+- **Scoop.** On Windows, `scoop bucket add mindfork
   https://github.com/vshylov/scoop-bucket` and `scoop install mindfork/mindfork`:
   the release's archive with its hash checked and your data kept in `%APPDATA%`,
-  so an update leaves it alone; the bucket picks up a new release by itself. On
-  Arch, `mindfork-rs-bin` in the AUR — the release's own Arch package, published
-  by every release after it has been built, installed and run on Arch.
+  so an update leaves it alone; the bucket picks up a new release by itself.
 
 - **An animated demo of the app, in every release.** A 25-second animation of a
   turn — a question typed, the thoughts, a note saved, a table and a flowchart

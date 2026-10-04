@@ -467,9 +467,11 @@ effort tiers — have all closed
   crates.io (done), an AUR package and a winget manifest — the next two items.
 - **winget manifest** — **deferred**: pointing at the portable zip until the
   setup executable is signed ([installers.md §5.4](history/installers.md)).
-- **AUR `mindfork-rs-bin`** — **done** (2026-10-03,
-  [package-managers.md](research/package-managers.md)): every published release
-  pushes it from `aur.yml`, once the owner's AUR key is in the secrets (§4 there).
+- **AUR `mindfork-rs-bin`** — **blocked on the AUR's registration**, closed
+  since before 2026-10-04 ([package-managers.md §4](research/package-managers.md)):
+  the package is built and checked by every release (`aur.yml`) and stops short of
+  the push; an account, a key in `AUR_SSH_PRIVATE_KEY` and one dispatch publish it,
+  and the user-facing docs gain the line then.
   A source package (`mindfork-rs`, built with cargo) — **on demand**.
 - **A Scoop manifest** — **done** (2026-10-03): `vshylov/scoop-bucket`, updated by
   its Excavator. ScoopInstaller's Extras — **deferred** until the project meets
