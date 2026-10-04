@@ -155,11 +155,11 @@ jobs:
           sleep 6
           tmux new-session -d -s b -c /tmp/b -x 120 -y 30 "$bin; echo exit=\$?; sleep 60"
           sleep 6
-          echo '--- pane a (bottom rows) ---'; tmux capture-pane -p -t a | grep -v '^\s*$' | tail -4
-          echo '--- pane b (bottom rows) ---'; tmux capture-pane -p -t b | grep -v '^\s*$' | tail -4
+          echo '--- pane a (bottom rows) ---'; tmux capture-pane -p -t a | grep -v '^[[:space:]]*$' | tail -4
+          echo '--- pane b (bottom rows) ---'; tmux capture-pane -p -t b | grep -v '^[[:space:]]*$' | tail -4
           ls -la /tmp/a /tmp/b
           tmux send-keys -t a C-q; tmux send-keys -t b C-q; sleep 2
           echo '--- the app started from / (not writable) ---'
           tmux new-session -d -s r -c / -x 120 -y 30 "$bin; echo exit=\$?; sleep 60"
           sleep 6
-          tmux capture-pane -p -t r | grep -v '^\s*$' | tail -6
+          tmux capture-pane -p -t r | grep -v '^[[:space:]]*$' | tail -6
