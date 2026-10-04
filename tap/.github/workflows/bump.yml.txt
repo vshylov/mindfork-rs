@@ -1,0 +1,62 @@
+# Keeps Formula/mindfork.rb at mindfork's latest release with a macOS build —
+# this tap's Excavator. Every six hours (and by hand): bump.py renders the
+# formula for the latest release; when that changes it, the formula is
+# installed from a tap of this very commit and its test run, as a user's
+# `brew install` would, and only then pushed. No secret: the workflow's own
+# token reads the public release and pushes to this repository.
+name: Bump the formula
+
+on:
+  schedule:
+    - cron: "23 */6 * * *"
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "formula.rb.in"
+      - "bump.py"
+      - ".github/workflows/bump.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: bump
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: The script's own arms
+        run: python3 bump.py --self-test
+      - name: Render the formula for the latest release
+        id: render
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 bump.py
+      - name: Commit it
+        if: steps.render.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/mindfork.rb
+          git commit -m "mindfork ${{ steps.render.outputs.version }}"
+      # A tap of this commit — the formula exactly as it would be published —
+      # installed and tested the way a user installs it.
+      - name: Install it and run it
+        if: steps.render.outputs.changed == 'true'
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          HOMEBREW_NO_INSTALL_CLEANUP: "1"
+        run: |
+          brew tap vshylov/tap "$PWD"
+          brew install vshylov/tap/mindfork
+          brew test vshylov/tap/mindfork
+          mindfork --version
+          test "$(mindfork --version)" = "mindfork ${{ steps.render.outputs.version }}"
+      - name: Publish it
+        if: steps.render.outputs.changed == 'true'
+        run: git push origin HEAD:main

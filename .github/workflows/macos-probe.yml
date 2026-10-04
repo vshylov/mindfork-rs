@@ -23,6 +23,7 @@ jobs:
   # archive, one of its dylibs moved away. Runs on every push.
   dyld:
     name: dyld's missing-library line
+    if: "!contains(github.event.head_commit.message, '[release]')"
     runs-on: macos-latest
     timeout-minutes: 10
     steps:
@@ -39,11 +40,87 @@ jobs:
           mv "$dir/$lib" "$dir/$lib.away"
           "$dir/llama-server" --version; echo "exit=$?"
 
+  # The release's macOS shape before any release has it (stage 2): the archive
+  # packed as release.yml packs it, install.sh with the real binary, and the
+  # Homebrew formula installed from a tap of it with a file:// URL. Runs when
+  # the commit message says [release].
+  release-shape:
+    name: The macOS release, rehearsed
+    if: contains(github.event.head_commit.message, '[release]')
+    runs-on: macos-latest
+    timeout-minutes: 45
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: feat/macos-release
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          path: spike
+      - name: Install the toolchain (from rust-toolchain.toml)
+        run: rustup show
+      - name: Release build
+        run: cargo build --release --locked
+      - name: The binary's floor
+        run: |
+          vtool -show-build target/release/mindfork 2>/dev/null || otool -l target/release/mindfork | grep -A4 LC_BUILD_VERSION
+      - name: Pack it as release.yml does
+        run: |
+          set -euo pipefail
+          TAG=v0.14.1
+          mkdir -p dist stage-macos/data/dictionaries/licenses stage-macos/licenses/syntaxes
+          cp target/release/mindfork stage-macos/
+          cp README.md CHANGELOG.md LICENSE DISCLAIMER.md PRIVACY.md docs/install.md stage-macos/
+          cp dictionaries/*.aff dictionaries/*.dic stage-macos/data/dictionaries/
+          cp dictionaries/licenses/*.txt stage-macos/data/dictionaries/licenses/
+          cp syntaxes/licenses/*.txt stage-macos/licenses/syntaxes/
+          tar -C stage-macos -czf "dist/mindfork-rs-${TAG}-aarch64-macos.tar.gz" .
+          (cd dist && shasum -a 256 ./* | sed 's#  \./#  ./#' > sha256sums.txt)
+          cat dist/sha256sums.txt; ls -l dist
+      - name: install.sh scenarios with the real binary
+        run: BIN="$PWD/target/release/mindfork" sh packaging/linux/install_test.sh
+      - name: install.sh from the archive, linked, data beside the real file
+        run: |
+          set -eu
+          sh packaging/linux/install.sh --from dist --dir "$HOME/mf" -- --version
+          ls -l /usr/local/bin/mindfork /opt/homebrew/bin/mindfork 2>/dev/null || true
+          mindfork setup --set interface.theme_mode=full
+          mindfork stats | head -2
+          test -f "$HOME/mf/data/settings.json" && echo "data beside the real file, not the link"
+      - name: The Homebrew formula from a tap of it
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          HOMEBREW_NO_INSTALL_CLEANUP: "1"
+        run: |
+          set -eu
+          rm -f /usr/local/bin/mindfork /opt/homebrew/bin/mindfork
+          tap="$RUNNER_TEMP/tap"
+          cp -R spike/tap "$tap"
+          archive="$PWD/dist/mindfork-rs-v0.14.1-aarch64-macos.tar.gz"
+          sha="$(shasum -a 256 "$archive" | awk '{print $1}')"
+          (cd "$tap" && python3 bump.py --self-test && python3 bump.py --url "file://$archive" --sha256 "$sha" \
+             && git init -q && git add -A && git -c user.name=t -c user.email=t@t commit -qm formula)
+          cat "$tap/Formula/mindfork.rb"
+          brew tap vshylov/tap "$tap"
+          brew install vshylov/tap/mindfork
+          brew test vshylov/tap/mindfork
+          brew audit --strict vshylov/tap/mindfork || echo "audit: see above"
+          which mindfork; ls -l "$(which mindfork)"
+          mindfork --version
+          mindfork setup --set interface.theme_mode=full
+          mindfork stats | head -2
+          test -f "$HOME/Library/Application Support/mindfork-rs/settings.json" && echo "data in Application Support"
+          ls "$(brew --prefix mindfork)/libexec/data/dictionaries" | head -5
+          brew uninstall mindfork
+          test -d "$HOME/Library/Application Support/mindfork-rs" && echo "the data outlived the uninstall"
+
   # What install.sh meets on a Mac: does Gatekeeper run here at all, does `tar`
   # carry an archive's quarantine onto what it unpacks, and does a quarantined
   # unsigned binary start from a shell.
   quarantine:
     name: Quarantine and Gatekeeper
+    if: "!contains(github.event.head_commit.message, '[release]')"
     runs-on: macos-latest
     timeout-minutes: 10
     steps:
