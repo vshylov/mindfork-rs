@@ -737,12 +737,26 @@ mindfork setup --set engine.mode=external --set engine.external.url=http://local
   48 GB, 262144 above ([Ollama's
   documentation](https://docs.ollama.com/context-length)). `ollama ps` shows the
   window a loaded model runs with.
-- **A prompt that outgrows it is cut in silence.** Measured on Ollama 0.35.1:
-  a prompt just over the window (2060 tokens in 2048; 2040 still fit) was cut
-  to half of it from the front, `keep=5` — the system message went first — and
-  answered with a `200`, so the model answered without its instructions. Its
-  `usage` then reports the cut length, so nothing on the app's side can see
-  what was lost.
+- **A prompt that outgrows it is cut in silence**, in one of two ways, and
+  answered with a `200` (measured on Ollama 0.35.1). A conversation loses its
+  **oldest messages** whole until the rest fits — the system message and the
+  last message are kept, and the `usage` lands just under the window (2017 of
+  2048). When the system message and the last message alone do not fit — a
+  long paste, a large tool result — the prompt is **cut to half the window from
+  the front**, `keep=5`: the system message goes first (2656 tokens in 2048
+  became 1027), and the model answers without its instructions.
+- **The app tells a cut prompt** from Ollama's `usage`, which reports what it
+  processed: it knows the exact size of the chat's previous request, and a
+  request that extends it cannot hold less. A cut is said in the feed once per
+  session — what the server processed of how much at least, and Ollama's
+  setting — and a fold into a summary starts if there is anything to fold, after
+  which `/regen` asks again. The half-window cut is told whenever the chat's
+  previous request was over half the window; a few of the oldest messages
+  dropped near the window are told only when they outweigh the slack the bound
+  allows — and that cut leaves the `usage` near the window, where compaction
+  starts anyway ([prompt-cut-detection.md](research/prompt-cut-detection.md)).
+  Measured at 4096: a page pasted after a first turn of 3446 tokens was cut from
+  5210 to 2051, and the feed said *of at least 4357 tokens it processed 2051*.
 - **mindfork's first turn is already about 3500 tokens** — its instructions,
   the memory and the tool schemas (measured on `gemma4:e4b`: 3503, then 3813
   after a one-word exchange), so a 4096 window is gone by the third.

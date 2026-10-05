@@ -677,6 +677,7 @@ fn usage(prompt: u32, completion: u64) -> Option<TurnUsage> {
         prompt_tokens: prompt,
         completion_tokens: completion,
         prefill: None,
+        cut: None,
     })
 }
 
@@ -1613,5 +1614,303 @@ async fn a_roll_records_its_usage_for_the_budget() {
         budget.density(crate::shared::session_budget::Shape::Turn),
         1.0,
         "the roll's record is the roll's kind's (title-impersonation-usage §3.1)"
+    );
+}
+
+// ---------- a prompt the server cut in silence (docs/research/prompt-cut-detection.md) ----------
+
+use super::super::prompt_cut::{PromptCut, RequestShape};
+use super::subagent::{Script, ScriptRecorder};
+use crate::shared::session_budget::Shape;
+
+/// A turn's last round, cut: the server processed `processed` of at least `held`.
+fn cut_usage(processed: u32, held: u64) -> Option<TurnUsage> {
+    Some(TurnUsage {
+        prompt_tokens: processed,
+        completion_tokens: 10,
+        prefill: None,
+        cut: Some(PromptCut { processed, held }),
+    })
+}
+
+/// One scripted round reporting `prompt` tokens: a call to a tool when `call`,
+/// else a reply.
+fn round(prompt: u32, call: bool) -> Script {
+    let mut chunks = vec![if call {
+        ChatChunk::ToolCall(crate::shared::api::contract::ToolCallDelta {
+            thought_signature: None,
+            index: 0,
+            id: Some(format!("c{prompt}")),
+            name: Some("probe".into()),
+            arguments: "{}".into(),
+        })
+    } else {
+        ChatChunk::Text("ответ".into())
+    }];
+    chunks.push(ChatChunk::Usage(TokenUsage {
+        prompt_tokens: prompt,
+        completion_tokens: 5,
+        reasoning_tokens: 0,
+        prefill: None,
+    }));
+    chunks.push(ChatChunk::Finished(if call {
+        crate::shared::api::FinishReason::ToolCalls
+    } else {
+        crate::shared::api::FinishReason::Stop
+    }));
+    Script {
+        chunks,
+        hang: false,
+    }
+}
+
+/// A bare orchestrator on a scripted engine, its profile offering the default
+/// tools — so a turn's rounds carry schemas, and the round limit's final round
+/// drops them. No title, which would take a script out of turn.
+fn scripted(mode: ServerMode, scripts: Vec<Script>) -> (HistoryFixture, Arc<ScriptRecorder>) {
+    let (d, mut orch, rx, chat_id, backend) = orch_with_history(1);
+    orch.config = no_auto_cfg();
+    orch.config.engine.mode = mode;
+    orch.profiles[0].enabled_tools = crate::features::tools::default_tool_ids();
+    let script = ScriptRecorder::new(scripts);
+    orch.engines.backend = Some(script.clone() as Arc<dyn EngineBackend>);
+    ((d, orch, rx, chat_id, backend), script)
+}
+
+/// Runs one turn on a bare orchestrator to its result — not yet landed, so a
+/// test sees what the turn reported before the orchestrator acts on it.
+async fn turn_result(orch: &mut Orchestrator, text: &str) -> super::super::generation::GenResult {
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    orch.done_tx = tx;
+    orch.handle_send(text.into());
+    loop {
+        let message = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+            .await
+            .expect("the turn ends")
+            .expect("a result");
+        if let super::super::generation::GenMessage::Done(res) = message {
+            return res;
+        }
+    }
+}
+
+fn notes_of(rx: &mut UnboundedReceiver<AppEvent>) -> Vec<String> {
+    drain(rx)
+        .into_iter()
+        .filter_map(|e| match e {
+            AppEvent::Notice(t) => Some(t),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Within a turn a round's request only grows, so a round the server reports
+/// less of than the round before it was cut — Ollama's prompt cut, to half
+/// its window (§3.1). The turn carries the cut; the round's figure is kept out
+/// of the session budget's calibration; the landing says it once.
+// Spawns: a turn runs in its own task.
+#[tokio::test]
+async fn a_round_reported_short_of_the_one_before_was_cut() {
+    let ((_d, mut orch, mut rx, _chat, _), script) = scripted(
+        ServerMode::External,
+        vec![round(30_000, true), round(10_270, false)],
+    );
+    let res = turn_result(&mut orch, "вопрос").await;
+    let usage = res.usage.expect("the rounds reported usage");
+    assert_eq!(usage.prompt_tokens, 10_270);
+    let cut = usage.cut.expect("the second round was cut");
+    assert_eq!(cut.processed, 10_270);
+    assert!(cut.held >= 30_000, "the round before bounds it: {cut:?}");
+
+    let first = super::super::generation::estimate_prompt_tokens(&script.requests()[0]);
+    assert_eq!(
+        orch.session_budget().density(Shape::Turn),
+        30_000.0 / first as f64,
+        "the first round's ratio stands — the cut one was not recorded"
+    );
+
+    let _ = drain(&mut rx);
+    orch.handle_done(res);
+    let told = notes_of(&mut rx);
+    assert_eq!(told.len(), 1, "{told:?}");
+    assert!(
+        told[0].contains("10270")
+            && told[0].contains("OLLAMA_CONTEXT_LENGTH")
+            && told[0].contains("/regen"),
+        "the figure, the setting and the way back: {}",
+        told[0]
+    );
+}
+
+/// llama-server refuses an overlong prompt rather than cut it, and a cloud
+/// counts its cache apart: nothing but an external server is judged.
+// Spawns: a turn runs in its own task.
+#[tokio::test]
+async fn a_managed_servers_rounds_are_not_judged() {
+    let ((_d, mut orch, mut rx, _chat, _), _script) = scripted(
+        ServerMode::Managed,
+        vec![round(30_000, true), round(10_270, false)],
+    );
+    let res = turn_result(&mut orch, "вопрос").await;
+    assert_eq!(res.usage.and_then(|u| u.cut), None);
+    assert!(res.anchor.is_none(), "nothing kept to bound the next turn");
+    let _ = drain(&mut rx);
+    orch.handle_done(res);
+    assert!(notes_of(&mut rx).is_empty());
+}
+
+/// The round limit's final round goes without the tool schemas, so it is
+/// smaller than the round before it and was not cut: other tools, no bound.
+// Spawns: a turn runs in its own task.
+#[tokio::test]
+async fn the_final_round_without_tools_is_not_a_cut() {
+    let ((_d, mut orch, _rx, _chat, _), script) = scripted(
+        ServerMode::External,
+        vec![round(3000, true), round(3100, true), round(1000, false)],
+    );
+    orch.config.max_tool_rounds = 1;
+    let res = turn_result(&mut orch, "вопрос").await;
+    let requests = script.requests();
+    assert_eq!(requests.len(), 3, "two rounds and the final one");
+    assert!(!requests[1].tools.is_empty() && requests[2].tools.is_empty());
+    assert_eq!(res.usage.and_then(|u| u.cut), None);
+}
+
+/// Across turns the chat's previous request bounds the next one when the next
+/// extends it (§3.1): the landing keeps it, the next turn starts from it.
+// Spawns: a turn runs in its own task.
+#[tokio::test]
+async fn the_previous_turn_bounds_the_next() {
+    async fn second_turn(reported: u32) -> Option<PromptCut> {
+        let ((_d, mut orch, _rx, _chat, _), _script) = scripted(
+            ServerMode::External,
+            vec![round(3500, false), round(reported, false)],
+        );
+        let first = turn_result(&mut orch, "первый").await;
+        assert!(first.anchor.is_some(), "an external server's turn is kept");
+        orch.handle_done(first);
+        turn_result(&mut orch, "второй").await.usage?.cut
+    }
+    let cut = second_turn(2051)
+        .await
+        .expect("half a 4096 window after 3500");
+    assert!(cut.held >= 3500, "{cut:?}");
+    assert_eq!(second_turn(3600).await, None, "a grown prompt is no cut");
+}
+
+/// A cut turn was over the server's window whatever the window is: it folds
+/// even when no window is known — Ollama's first turn, before `/api/ps` has
+/// it — and the note then says to ask again once the fold lands.
+// Spawns: a roll starts a task.
+#[tokio::test]
+async fn a_cut_turn_folds_without_a_known_window() {
+    let (_d, mut orch, mut rx, chat_id, _backend) = orch_with_history(3);
+    orch.config = compact_cfg(1);
+    orch.config.engine.mode = ServerMode::External;
+    assert_eq!(orch.context_budget(), None, "no window known");
+    let _ = drain(&mut rx);
+
+    assert!(!orch.maybe_auto_compact(chat_id, usage(1027, 10)));
+    assert!(
+        !orch.bg_running(BackgroundKind::Compaction),
+        "no window, no cut: nothing to measure against"
+    );
+
+    assert!(orch.maybe_auto_compact(chat_id, cut_usage(1027, 3000)));
+    assert!(
+        orch.bg_running(BackgroundKind::Compaction),
+        "the fold started"
+    );
+    orch.note_prompt_cut(
+        PromptCut {
+            processed: 1027,
+            held: 3000,
+        },
+        true,
+    );
+    let folding = orch.ui_locale().tf(
+        "ui.notice.prompt_cut_folding",
+        &[("processed", "1027"), ("held", "3000")],
+    );
+    assert_eq!(
+        notes_of(&mut rx),
+        vec![folding],
+        "the variant with the fold"
+    );
+}
+
+/// Once per server session, like the window note; again after `Ready`; never
+/// of a managed server.
+#[test]
+fn the_cut_note_is_said_once_per_server_session() {
+    let (_d, mut orch, mut rx, _chat_id, _backend) = orch_with_history(1);
+    let _ = drain(&mut rx);
+    let cut = PromptCut {
+        processed: 2051,
+        held: 3600,
+    };
+    orch.note_prompt_cut(cut, false);
+    assert!(notes_of(&mut rx).is_empty(), "a managed server is not told");
+
+    orch.config.engine.mode = ServerMode::External;
+    orch.note_prompt_cut(cut, false);
+    let told = notes_of(&mut rx);
+    assert_eq!(told.len(), 1, "{told:?}");
+    assert!(
+        told[0].contains("2051") && told[0].contains("3600"),
+        "{}",
+        told[0]
+    );
+    orch.note_prompt_cut(cut, false);
+    assert!(notes_of(&mut rx).is_empty(), "once per server session");
+
+    orch.engines
+        .set_chat_status(crate::shared::server::ServerStatus::Ready);
+    orch.note_prompt_cut(cut, false);
+    assert_eq!(notes_of(&mut rx).len(), 1, "a new session, told again");
+}
+
+/// In a cut turn the window note is not said: its figure would be the cut one,
+/// and the cut's note names the same setting.
+#[test]
+fn the_window_note_waits_out_a_cut_turn() {
+    let (_d, mut orch, mut rx, chat_id, _backend) = orch_with_history(1);
+    orch.config = auto_cfg(0, 75);
+    orch.config.engine.mode = ServerMode::External;
+    orch.config.compaction.context_tokens = Some(4096);
+    let _ = drain(&mut rx);
+
+    assert!(!orch.maybe_auto_compact(chat_id, cut_usage(2051, 4300)));
+    assert!(
+        notes_of(&mut rx).is_empty(),
+        "nothing to fold, nothing said"
+    );
+
+    orch.maybe_auto_compact(chat_id, usage(3503, 10));
+    assert_eq!(
+        notes_of(&mut rx).len(),
+        1,
+        "an uncut turn over 75 % is told"
+    );
+}
+
+/// A turn's last request is kept per chat for the engine that measured it: an
+/// engine change forgets it, and a turn that ran across the change does not
+/// bring the old engine's back.
+#[test]
+fn a_kept_request_is_forgotten_with_the_engine() {
+    let (_d, mut orch, _rx, chat_id, _backend) = orch_with_history(1);
+    let anchor = || RequestShape::of(&ChatRequest::default(), Some("m")).served(100);
+    let (epoch, none) = orch.context.anchor_for(chat_id);
+    assert!(none.is_none());
+    orch.context.keep_anchor(epoch, chat_id, anchor());
+    assert!(orch.context.anchor_for(chat_id).1.is_some());
+
+    orch.context.invalidate();
+    assert!(orch.context.anchor_for(chat_id).1.is_none(), "forgotten");
+    orch.context.keep_anchor(epoch, chat_id, anchor());
+    assert!(
+        orch.context.anchor_for(chat_id).1.is_none(),
+        "measured on the engine that is gone"
     );
 }

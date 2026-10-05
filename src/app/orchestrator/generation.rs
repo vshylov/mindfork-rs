@@ -164,6 +164,11 @@ pub(super) struct GenResult {
     /// How many of the chat's images the request carried as markers, because the engine
     /// takes none — the orchestrator's once-per-chat note reads it.
     pub(super) images_withheld: usize,
+    /// The turn's last request beside the size the server reported for it, and the
+    /// engine generation it was measured on — what the chat's next turn is bounded
+    /// by (docs/research/prompt-cut-detection.md §3.1). `None` off an external
+    /// server and when no round reported a size.
+    pub(super) anchor: Option<(u64, super::prompt_cut::PromptAnchor)>,
 }
 
 /// The exact size of one round, as reported by the server's `usage`.
@@ -179,6 +184,12 @@ pub(super) struct TurnUsage {
     /// only; `None` elsewhere) — what the slow-prefill note is computed
     /// from (docs/research/slow-prefill-detection.md §3).
     pub(super) prefill: Option<crate::shared::api::contract::Prefill>,
+    /// The first round of the turn the server processed less of than it
+    /// certainly held — cut in silence to fit its window, as Ollama does
+    /// (docs/research/prompt-cut-detection.md). Then `prompt_tokens` is the cut
+    /// figure, and the trigger reads the cut itself instead. Told of an
+    /// external server only.
+    pub(super) cut: Option<super::prompt_cut::PromptCut>,
 }
 
 impl TurnUsage {
@@ -914,6 +925,7 @@ impl Orchestrator {
             continuation_supported: self.continuation_supported(),
             endpoint_sampling_fields: self.endpoint_sampling_fields(),
             model_name,
+            anchor: self.context.anchor_for(active_id),
             ui_loc: self.ui_locale(),
             compaction_enabled: self.config.compaction.enabled,
             continuation,
@@ -1138,7 +1150,16 @@ impl Orchestrator {
         if res.usage.is_some() {
             self.ask_window_after_turn();
         }
-        self.maybe_auto_compact(res.chat_id, res.usage);
+        // The turn's last request, kept so the chat's next turn can tell a
+        // prompt the server cut in silence (docs/research/prompt-cut-detection.md
+        // §3.1).
+        if let Some((epoch, anchor)) = res.anchor {
+            self.context.keep_anchor(epoch, res.chat_id, anchor);
+        }
+        let folding = self.maybe_auto_compact(res.chat_id, res.usage);
+        if let Some(cut) = res.usage.and_then(|u| u.cut) {
+            self.note_prompt_cut(cut, folding);
+        }
         // Then background auto-reflection (Tier 3), notes auto-consolidation
         // ("sleep", Tier 3), and/or self-model auto-consolidation ("sleep"
         // for the self-model, stage A1 — docs/history/self-model-consolidation.md).
@@ -1348,6 +1369,11 @@ struct GenSpawn {
     /// same snapshot (docs/history/gateway-capabilities.md §4, G3(ii)).
     endpoint_sampling_fields: Option<std::sync::Arc<[String]>>,
     model_name: Option<String>,
+    /// The chat's last request beside the size the server reported for it — the
+    /// bound of this turn's first round (docs/research/prompt-cut-detection.md
+    /// §3.1) — and the engine generation it was kept under, which the turn's own
+    /// anchor goes back with. `None` off an external server.
+    anchor: (u64, Option<super::prompt_cut::PromptAnchor>),
     /// Interface language (axis B) — for error messages shown to a human.
     ui_loc: &'static crate::shared::i18n::Locale,
     /// `tools.confirm_dangerous` — when off, nothing is asked and no tool is
@@ -1583,6 +1609,7 @@ fn spawn_generation(spawn: GenSpawn) {
         continuation_supported,
         endpoint_sampling_fields,
         model_name,
+        anchor: (anchor_epoch, anchor),
         ui_loc,
         compaction_enabled,
         compaction_summary,
@@ -1681,6 +1708,7 @@ fn spawn_generation(spawn: GenSpawn) {
             ended_by_limit: None,
             persona: None,
             echo_seed: continuation.as_ref().map(|c| c.text.clone()),
+            anchor,
         };
         let reason = turn.run().await;
 
@@ -1715,6 +1743,7 @@ fn spawn_generation(spawn: GenSpawn) {
             usage: turn.last_usage,
             continuation: continuation.map(|c| c.message_id),
             images_withheld: turn.images_withheld,
+            anchor: turn.anchor.map(|a| (anchor_epoch, a)),
         }));
     });
 }
@@ -1888,6 +1917,12 @@ struct TurnLoop<'a> {
     /// screen and out of the round (`/continue`, research §4d). `None` on an
     /// ordinary turn, on every later round, and on a sub-agent's loop.
     echo_seed: Option<std::sync::Arc<str>>,
+    /// The loop's last request beside the size the server reported for it: what
+    /// the next round is bounded by when the server may cut a prompt in silence
+    /// (docs/research/prompt-cut-detection.md §3.1). Seeded with the chat's
+    /// previous turn on the turn's own loop; written by [`Self::stream`]; `None`
+    /// off an external server.
+    anchor: Option<super::prompt_cut::PromptAnchor>,
 }
 
 /// The limits of one sub-agent run, snapshotted from `config.tools` with the
@@ -2151,6 +2186,14 @@ impl TurnLoop<'_> {
             floor,
             self.request.sampling.max_tokens.map(|m| m as u64),
         );
+        // What the request certainly holds, for telling a server that cut it in
+        // silence (docs/research/prompt-cut-detection.md §3): an external
+        // server's alone — llama-server and the clouds refuse an overlong
+        // prompt rather than cut it.
+        let shape = (self.shared.engine_mode == ServerMode::External).then(|| {
+            super::prompt_cut::RequestShape::of(&self.request, self.shared.model_name.as_deref())
+        });
+        let held = shape.as_ref().map(|s| s.held(self.anchor.as_ref()));
         // A session for the stream, and only for the stream: the permit and
         // the reservation are dropped with this block, before the round's
         // tools run.
@@ -2179,12 +2222,23 @@ impl TurnLoop<'_> {
         // thinking there would change rounds that continue nothing.
         self.request.continue_final = false;
         if let Some(prompt_tokens) = out.prompt_tokens {
-            // The exact size next to the estimate made for the same request:
-            // the estimator's correction for every later reservation of the
-            // turn (admission-by-budget §4.3).
-            self.shared
-                .sessions
-                .record_usage(self.shape(), estimate, prompt_tokens as u64);
+            let cut =
+                held.and_then(|held| super::prompt_cut::PromptCut::judge(prompt_tokens, held));
+            if let Some(cut) = cut {
+                tracing::warn!(
+                    processed = cut.processed,
+                    held = cut.held,
+                    "the server processed less of the prompt than it held — cut to fit its window"
+                );
+            } else {
+                // The exact size next to the estimate made for the same request:
+                // the estimator's correction for every later reservation of the
+                // turn (admission-by-budget §4.3) — never a cut one, which would
+                // price the next request by a figure the server did not process.
+                self.shared
+                    .sessions
+                    .record_usage(self.shape(), estimate, prompt_tokens as u64);
+            }
             // The turn keeps its largest prefill sample: a session's first
             // round processes the prompt cold, later rounds ride the cache
             // (docs/research/slow-prefill-detection.md §3.1).
@@ -2194,7 +2248,11 @@ impl TurnLoop<'_> {
                 prompt_tokens,
                 completion_tokens: out.tokens,
                 prefill,
+                cut: self.last_usage.and_then(|u| u.cut).or(cut),
             });
+            if let Some(shape) = shape {
+                self.anchor = Some(shape.served(prompt_tokens));
+            }
         }
         out
     }
@@ -3790,6 +3848,9 @@ async fn run_child(
         persona: Some(parsed.initial_title()),
         // A sub-agent's run continues nothing — the seed is the turn's.
         echo_seed: None,
+        // Its first request extends nothing the server has measured: its own
+        // text bounds it, its later rounds the round before.
+        anchor: None,
     };
     // Boxed: `run` → `tool_round` → here → `run` is a recursive async chain,
     // and the compiler needs one indirection in it.

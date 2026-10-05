@@ -127,6 +127,9 @@ pub(super) struct EngineManager {
     /// (docs/research/ollama-window.md F3) — the same lifetime as the
     /// slow-prefill note's.
     window_noted: bool,
+    /// Whether the cut-prompt note went out this chat-server session
+    /// (docs/research/prompt-cut-detection.md F2) — the same lifetime again.
+    cut_noted: bool,
     /// The impersonation-server status (for managed/external; in `shared` —
     /// `NotConfigured`, the chip in the status line is hidden).
     imp_status: ServerStatus,
@@ -199,6 +202,7 @@ impl EngineManager {
             server_status: ServerStatus::NotConfigured,
             prefill_noted: false,
             window_noted: false,
+            cut_noted: false,
             imp_status: ServerStatus::NotConfigured,
             embed_status: ServerStatus::NotConfigured,
             status_tx,
@@ -425,6 +429,7 @@ impl EngineManager {
                 // more, with the new server's own figure.
                 self.prefill_noted = false;
                 self.window_noted = false;
+                self.cut_noted = false;
             }
         }
     }
@@ -440,6 +445,12 @@ impl EngineManager {
     /// [`Self::claim_prefill_note`] does its own.
     pub(super) fn claim_window_note(&mut self) -> bool {
         !std::mem::replace(&mut self.window_noted, true)
+    }
+
+    /// Claims the chat-server session's one cut-prompt note, as
+    /// [`Self::claim_prefill_note`] does its own.
+    pub(super) fn claim_cut_note(&mut self) -> bool {
+        !std::mem::replace(&mut self.cut_noted, true)
     }
 
     /// Whether `server`'s last apply was refused before anything started (see

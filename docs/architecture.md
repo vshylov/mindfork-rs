@@ -197,8 +197,16 @@ src/
 │  │  │                     re-found by message id, plus `ContextDiscovery` — what
 │  │  │                     is known about the engine's context window (asked once
 │  │  │                     per applied engine, epoch-guarded against a stale
-│  │  │                     answer). Never edits `chat.messages` — only what a
-│  │  │                     request carries, spec §6.7
+│  │  │                     answer) and each chat's last request beside the size
+│  │  │                     the server reported for it. Never edits
+│  │  │                     `chat.messages` — only what a request carries, spec §6.7
+│  │  ├─ prompt_cut.rs      a prompt the server cut in silence (Ollama): a
+│  │  │                     request's `RequestShape` — hashes and byte sizes of
+│  │  │                     what a server renders as given — and the lower bound
+│  │  │                     of what it held, from the previous request's exact
+│  │  │                     size or its own text's floor; `PromptCut::judge`
+│  │  │                     against the round's `usage`. External servers only.
+│  │  │                     Spec §6.7, docs/research/prompt-cut-detection.md
 │  │  ├─ pool.rs            the KV pool the app's streams share, when the app can
 │  │  │                     know it (`pool_for`: managed `-c` unless the server
 │  │  │                     reported exactly one slot — without `-np` it runs four

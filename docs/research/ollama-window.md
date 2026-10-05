@@ -115,7 +115,11 @@ What follows from the table:
   compaction trigger reads a small conversation and never fires — a long chat
   reopened against a 4096 window stays cut. Seeing it needs the app's own
   estimate beside the server's figure (a "truncation detector"), which spec
-  §6.7 S2 deliberately keeps out of the trigger. A track of its own.
+  §6.7 S2 deliberately keeps out of the trigger. A track of its own — built in
+  [prompt-cut-detection.md](prompt-cut-detection.md), whose measurement
+  corrected this line: Ollama drops a long chat's oldest messages first, which
+  leaves its `usage` near the window, and cuts to half the window only when the
+  last message does not fit beside the system message.
 - **LM Studio** reports its loaded window too (`/api/v0/models`,
   `loaded_context_length`); not run here, so not designed here.
 - **The engineless chat offering a server it finds** on `localhost:11434` or

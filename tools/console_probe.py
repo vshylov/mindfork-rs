@@ -96,7 +96,14 @@ Scenarios (`--scenario`):
   is saved through the agentic loop, and `Enter` on the model row lists what
   the server serves. With no window typed the app must have read Ollama's own
   from `/api/ps` after the first turn (its log says so); a server whose window
-  is 4096 or less must have been told it is too small. Takes the single-instance lock, like `first-frame`.
+  is 4096 or less must have been told it is too small, and no round may be
+  told as cut (the control of `ollama-cut`). Takes the single-instance lock,
+  like `first-frame`.
+* `ollama-cut` — the same recipe against an Ollama started with
+  `OLLAMA_CONTEXT_LENGTH=4096`: a short question fits; a page pasted after it
+  does not fit beside the instructions, so Ollama cuts the prompt to half its
+  window from the front and answers. The feed must carry the cut-prompt note
+  and the app's log the cut round (docs/research/prompt-cut-detection.md).
 
 * `small-window` — `mindfork demo` in consoles started small (spec §11.1.1):
   at 57×5, the window of the report, the frame is the "window too small"
@@ -347,6 +354,30 @@ def type_text(text: str) -> None:
     injected this way is not taken as input — use the emoji picker for those."""
     for char in text:
         _send(0, char, 0, 0.25)
+
+
+def paste_text(text: str) -> None:
+    """Characters in one burst, which the app reads as a paste — a page put
+    into the input at once. The Basic Multilingual Plane, no line breaks."""
+    records = (InputRecord * (2 * len(text)))()
+    for i, char in enumerate(text):
+        for k, down in enumerate((True, False)):
+            record = records[2 * i + k]
+            record.EventType = KEY_EVENT
+            key = record.Event.KeyEvent
+            key.bKeyDown = down
+            key.wRepeatCount = 1
+            key.uChar = char
+    handle = _open("CONIN$")
+    try:
+        written = wt.DWORD(0)
+        _check(
+            KERNEL32.WriteConsoleInputW(handle, records, len(records), ctypes.byref(written)),
+            "WriteConsoleInputW",
+        )
+    finally:
+        KERNEL32.CloseHandle(handle)
+    time.sleep(SETTLE_REPAINT)
 
 
 def read_cursor() -> tuple[int, int]:
@@ -1292,6 +1323,18 @@ LAUNCH_LINE = "-b 256 -ub 256"
 # says what its window is (docs/research/ollama-window.md).
 WINDOW_NOTE = "OLLAMA_CONTEXT_LENGTH"
 WINDOW_LOGGED = "engine reported its context window"
+# A page the window cannot hold beside the instructions, pasted at once, its
+# question at the end where Ollama's cut keeps it; and what the app says and
+# logs of the cut that follows (docs/research/prompt-cut-detection.md).
+_CUT_WORDS = ("river", "lantern", "copper", "meadow", "harbor", "violet",
+              "engine", "marble", "orchard", "glacier", "compass", "willow")
+CUT_PAGE = "Here are my notes. " + " ".join(
+    f"Note {i}: the {_CUT_WORDS[i % 12]} by the {_CUT_WORDS[(i * 5 + 3) % 12]}"
+    f" keeps its {_CUT_WORDS[(i * 7 + 1) % 12]} until spring."
+    for i in range(110)
+) + " Now answer with one word: what is the capital of France?"
+CUT_NOTE = "/regen"
+CUT_LOGGED = "the server processed less of the prompt than it held"
 
 
 def ollama_window(url: str, model: str) -> int | None:
@@ -1378,6 +1421,13 @@ def scenario_ollama(exe: Path, report: Report) -> None:
         finally:
             code = session.close()
         report.check(code == 0, f"the app exited with code {code}")
+        cuts = [
+            line
+            for log in sorted((root / "data" / "logs").glob("*"))
+            for line in log.read_text(encoding="utf-8", errors="replace").splitlines()
+            if CUT_LOGGED in line
+        ]
+        report.check(not cuts, f"no round told as cut: {cuts}")
         if not window:
             logged = [
                 line
@@ -1393,9 +1443,77 @@ def scenario_ollama(exe: Path, report: Report) -> None:
             )
 
 
+def scenario_ollama_cut(exe: Path, report: Report) -> None:
+    """A prompt Ollama cut in silence, told (docs/research/prompt-cut-detection.md).
+
+    Needs Ollama started with a small window — `OLLAMA_CONTEXT_LENGTH=4096`,
+    under which mindfork's first turn of about 3500 tokens fits and a pasted
+    page after it does not: the system message and the paste alone are over the
+    window, so Ollama cuts the prompt to half of it from the front. The app
+    knows the first turn's exact size, and the second cannot hold less."""
+    url = os.environ.get("MINDFORK_OLLAMA_URL", OLLAMA_URL)
+    model = os.environ.get("MINDFORK_OLLAMA_MODEL", OLLAMA_MODEL)
+    with tempfile.TemporaryDirectory(prefix="mindfork-probe-") as scratch:
+        root = Path(scratch)
+        copy = root / exe.name
+        shutil.copy(exe, copy)
+        language = [str(copy), "setup", "--set", "interface.language=en"]
+        subprocess.run(language, cwd=root, check=True, capture_output=True)
+        recipe = [
+            str(copy), "setup",
+            "--set", "engine.mode=external",
+            "--set", f"engine.external.url={url}",
+            "--set", f"engine.external.model_name={model}",
+        ]
+        done = subprocess.run(recipe, cwd=root, capture_output=True, text=True)
+        report.check(done.returncode == 0, f"the recipe's setup line exited with {done.returncode}")
+
+        session = Session(copy, [], cwd=root)
+        try:
+            print("the first turn: a short question, which fits")
+            report.says("the start", wait_for_text(CHAT_READY, 60), (CHAT_READY,))
+            type_text("Answer with one word: what is the capital of France?")
+            press("enter", SETTLE_REPAINT)
+            wait_for_text("Paris", 180)
+            wait_for_text("Enter send", 30)
+            served = ollama_window(url, model)
+            print(f"Ollama runs {model} with a window of {served}")
+            report.check(
+                served is not None and served <= 4096,
+                f"Ollama's window is {served}: start it with OLLAMA_CONTEXT_LENGTH=4096",
+            )
+            report.check(CUT_NOTE not in text_of(read_screen()), "no cut after a turn that fit")
+
+            print("the second turn: a pasted page the window cannot hold beside the instructions")
+            paste_text(CUT_PAGE)
+            # The burst is drained as one paste: an Enter in the same drain would
+            # be a line break in it, so it waits for the page to be in the box.
+            wait_for_text("capital of France?", 30)
+            time.sleep(2)
+            press("enter", SETTLE_REPAINT)
+            wait_for_text("Enter send", 300)
+            time.sleep(2)
+            rows = read_screen()
+            print(text_of(rows))
+            report.says("the cut-prompt note", rows, (CUT_NOTE,))
+        finally:
+            code = session.close()
+        report.check(code == 0, f"the app exited with code {code}")
+        logged = [
+            line
+            for log in sorted((root / "data" / "logs").glob("*"))
+            for line in log.read_text(encoding="utf-8", errors="replace").splitlines()
+            if CUT_LOGGED in line
+        ]
+        for line in logged:
+            print(line)
+        report.check(bool(logged), "the cut round told in the log")
+
+
 SCENARIOS = {
     "altgr": scenario_altgr,
     "ollama": scenario_ollama,
+    "ollama-cut": scenario_ollama_cut,
     "small-window": scenario_small_window,
     "full-mode": scenario_full_mode,
     "gateway": scenario_gateway,

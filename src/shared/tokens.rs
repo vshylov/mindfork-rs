@@ -17,6 +17,34 @@ pub fn estimate_text(text: &str) -> u64 {
     (text.len() as u64).div_ceil(4)
 }
 
+/// A **lower bound** on a text's token count — what the app can defend when it
+/// tells a prompt the server cut in silence from the server's own figure
+/// (docs/research/prompt-cut-detection.md §3.2). [`estimate_text`] cannot be
+/// one: measured against Ollama's count it is over the real figure by 2.28× on
+/// columns aligned with spaces and 3.36× on rule lines of `=`, because a
+/// tokenizer merges a run of one character. So a run's first two characters
+/// count and the rest do not, and the bytes left are divided by 8 — half the
+/// estimate's four a token, which covers the largest overcount measured on
+/// ordinary text (Russian prose, 1.68×). Under 0.71 of the real figure on every
+/// sample measured.
+pub fn floor_text(text: &str) -> u64 {
+    let mut bytes: u64 = 0;
+    let mut prev = None;
+    let mut run = 0u32;
+    for c in text.chars() {
+        if Some(c) == prev {
+            run += 1;
+        } else {
+            prev = Some(c);
+            run = 1;
+        }
+        if run <= 2 {
+            bytes += c.len_utf8() as u64;
+        }
+    }
+    bytes / 8
+}
+
 /// Token-count estimate for the "conversation" (prompt): the system message +
 /// all messages, adjusted for chat-template markup. `parts` — message content
 /// in order (role only affects the overhead, so text alone is enough).
@@ -51,6 +79,41 @@ mod tests {
     fn non_empty_text_is_at_least_one_token() {
         assert_eq!(estimate_text("a"), 1);
         assert_eq!(estimate_text(""), 0);
+    }
+
+    #[test]
+    fn the_floor_is_half_the_estimate_on_ordinary_text() {
+        // 16 bytes with no run longer than two: 16 / 8.
+        assert_eq!(floor_text("abcdefghijklmnop"), 2);
+        // Cyrillic counts by bytes, as the estimate does: 9 chars, 18 bytes.
+        assert_eq!(floor_text("текстовый"), 2);
+        assert_eq!(floor_text(""), 0);
+    }
+
+    #[test]
+    fn a_run_of_one_character_counts_two() {
+        // 120 '=' are one or two tokens to a tokenizer, not 30.
+        let rule = "=".repeat(120);
+        assert_eq!(floor_text(&rule), 0);
+        // Aligned columns: the padding counts two spaces a gap.
+        let padded = format!("item{}42", " ".repeat(40));
+        assert_eq!(floor_text(&padded), floor_text("item  42"));
+        // A doubled letter is ordinary text and counts in full.
+        assert_eq!(floor_text("aabbccddeeffgghh"), 2);
+    }
+
+    #[test]
+    fn the_floor_never_exceeds_the_estimate() {
+        for text in [
+            "",
+            "a",
+            "hello, world",
+            "== == ==",
+            "текст",
+            "日本語のテキスト",
+        ] {
+            assert!(floor_text(text) <= estimate_text(text), "{text}");
+        }
     }
 
     #[test]

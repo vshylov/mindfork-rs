@@ -14,6 +14,26 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Added
+
+- **A prompt the server cut in silence is told.** Ollama answers a prompt
+  longer than its window with a reply instead of an error: it drops the
+  conversation's oldest messages, and when the last message alone does not fit
+  beside the instructions, it cuts the prompt to half the window from the
+  start, the instructions first. mindfork now tells it from the size the server
+  reports against the size of the chat's previous request, says once in the
+  feed that the reply was made without part of the conversation, and folds the
+  conversation into a summary if there is anything to fold — even before the
+  window is known — after which `/regen` asks again. Only an external server
+  is judged: llama-server and the cloud providers refuse such a prompt.
+
+### Fixed
+
+- **The window-too-small note described Ollama's cut wrongly.** It said Ollama
+  cuts a prompt over its window from the start, the system message first; it
+  does that only when the last message alone does not fit, and otherwise drops
+  the oldest messages. The note and the install guide say both now.
+
 ## [0.16.0] — 2026-10-05
 
 **Ollama, with nothing to keep in step.** mindfork reads the context window of
