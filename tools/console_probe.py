@@ -94,7 +94,10 @@ Scenarios (`--scenario`):
   answered, no slow-prefill note names llama-server's launch flags — Ollama
   sends llama.cpp's timings, its first with the model's load in them — a note
   is saved through the agentic loop, and `Enter` on the model row lists what
-  the server serves. Takes the single-instance lock, like `first-frame`.
+  the server serves. With `MINDFORK_OLLAMA_CONTEXT=` (empty) no window is
+  typed, and the app must have read Ollama's own from `/api/ps` after the first
+  turn (its log says so); a server whose window is 4096 or less must have been
+  told it is too small. Takes the single-instance lock, like `first-frame`.
 
 * `small-window` — `mindfork demo` in consoles started small (spec §11.1.1):
   at 57×5, the window of the report, the frame is the "window too small"
@@ -133,6 +136,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.request
 from collections import Counter
 from pathlib import Path
 
@@ -1283,6 +1287,19 @@ OLLAMA_WINDOW = "16384"
 # The slow-prefill note's launch line — llama-server's flags, which Ollama does
 # not take.
 LAUNCH_LINE = "-b 256 -ub 256"
+# What the window-too-small note names, and what the app logs when the engine
+# says what its window is (docs/research/ollama-window.md).
+WINDOW_NOTE = "OLLAMA_CONTEXT_LENGTH"
+WINDOW_LOGGED = "engine reported its context window"
+
+
+def ollama_window(url: str, model: str) -> int | None:
+    """The window Ollama loaded `model` with, from its `/api/ps` — what the app
+    is expected to have read."""
+    root = url.rstrip("/").removesuffix("/v1")
+    with urllib.request.urlopen(f"{root}/api/ps", timeout=10) as resp:
+        loaded = json.load(resp).get("models", [])
+    return next((m.get("context_length") for m in loaded if m.get("name") == model), None)
 
 
 def scenario_ollama(exe: Path, report: Report) -> None:
@@ -1302,8 +1319,11 @@ def scenario_ollama(exe: Path, report: Report) -> None:
             "--set", "engine.mode=external",
             "--set", f"engine.external.url={url}",
             "--set", f"engine.external.model_name={model}",
-            "--set", f"compaction.context_tokens={window}",
         ]
+        # An empty window is the recipe once a release reads Ollama's own: the
+        # window is set in Ollama alone.
+        if window:
+            recipe += ["--set", f"compaction.context_tokens={window}"]
         done = subprocess.run(recipe, cwd=root, capture_output=True, text=True)
         print(done.stdout)
         report.check(done.returncode == 0, f"the recipe's setup line exited with {done.returncode}")
@@ -1336,6 +1356,12 @@ def scenario_ollama(exe: Path, report: Report) -> None:
             print(text_of(rows))
             report.says("the tool's card", rows, ("note_save(",))
             report.check(LAUNCH_LINE not in text_of(rows), "nor after the second turn")
+            served = ollama_window(url, model)
+            print(f"Ollama runs {model} with a window of {served}")
+            if served is not None and served <= 4096:
+                report.says("the window-too-small note", rows, (WINDOW_NOTE,))
+            else:
+                report.check(WINDOW_NOTE not in text_of(rows), "no window-too-small note")
 
             print("the settings: the model row lists what Ollama serves")
             press(SETTINGS_KEY, SETTLE_REPAINT)  # opens on "Model/server"
@@ -1351,6 +1377,19 @@ def scenario_ollama(exe: Path, report: Report) -> None:
         finally:
             code = session.close()
         report.check(code == 0, f"the app exited with code {code}")
+        if not window:
+            logged = [
+                line
+                for log in sorted((root / "data" / "logs").glob("*"))
+                for line in log.read_text(encoding="utf-8", errors="replace").splitlines()
+                if WINDOW_LOGGED in line
+            ]
+            for line in logged:
+                print(line)
+            report.check(
+                any(f"context_budget={served}" in line for line in logged),
+                f"the app read Ollama's window, {served}, with none typed",
+            )
 
 
 SCENARIOS = {

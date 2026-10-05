@@ -762,6 +762,138 @@ fn nothing_left_to_fold_is_silent() {
     );
 }
 
+/// …but an external server is told, once per server session, that its window
+/// is too small for the conversation itself — Ollama's default of 4096 tokens
+/// against a first turn of about 3500 (docs/research/ollama-window.md F3).
+/// Nothing more on the next turn; told again once the server is `Ready` anew.
+#[test]
+fn an_external_window_too_small_for_the_conversation_is_said_once() {
+    let notes = |rx: &mut UnboundedReceiver<AppEvent>| -> Vec<String> {
+        drain(rx)
+            .into_iter()
+            .filter_map(|e| match e {
+                AppEvent::Notice(t) => Some(t),
+                _ => None,
+            })
+            .collect()
+    };
+    let (_d, mut orch, mut rx, chat_id, _backend) = orch_with_history(1);
+    orch.config = auto_cfg(0, 75);
+    orch.config.engine.mode = ServerMode::External;
+    orch.config.compaction.context_tokens = Some(4096);
+    let _ = drain(&mut rx);
+
+    orch.maybe_auto_compact(chat_id, usage(3503, 10));
+    assert!(
+        !orch.bg_running(BackgroundKind::Compaction),
+        "nothing to fold"
+    );
+    let told = notes(&mut rx);
+    assert_eq!(told.len(), 1, "{told:?}");
+    assert!(
+        told[0].contains("4096")
+            && told[0].contains("3513")
+            && told[0].contains("OLLAMA_CONTEXT_LENGTH"),
+        "the window, the prompt and the setting: {}",
+        told[0]
+    );
+
+    orch.maybe_auto_compact(chat_id, usage(3813, 10));
+    assert!(notes(&mut rx).is_empty(), "once per server session");
+
+    orch.engines
+        .set_chat_status(crate::shared::server::ServerStatus::Ready);
+    orch.maybe_auto_compact(chat_id, usage(3813, 10));
+    assert_eq!(notes(&mut rx).len(), 1, "a new session, told again");
+}
+
+/// Ollama lists a model's window only once the model is loaded, and it loads
+/// on the first request: when nothing said what the window is when the engine
+/// was applied, it is asked once more after a turn the server served
+/// (docs/research/ollama-window.md F1).
+// Spawns: asking the engine for its window starts a task.
+#[tokio::test]
+async fn an_external_window_is_asked_again_after_the_first_turn() {
+    let (_d, mut orch, _rx, _chat_id, _backend) = orch_with_history(1);
+    orch.config = auto_cfg(0, 75);
+    orch.config.engine.mode = ServerMode::External;
+    let epoch = orch.context.epoch();
+    // The start: a cold Ollama, nothing loaded, nothing said.
+    orch.handle_budget_result(
+        epoch,
+        crate::app::orchestrator::compaction::EngineFacts::default(),
+    );
+    assert_eq!(orch.context_budget(), None);
+    assert!(!orch.context.pending());
+
+    orch.ask_window_after_turn();
+    assert!(orch.context.pending(), "asked once more");
+    orch.handle_budget_result(
+        epoch,
+        crate::app::orchestrator::compaction::EngineFacts {
+            budget: Some(16384),
+            caps: None,
+        },
+    );
+    assert_eq!(orch.context_budget(), Some(16384));
+}
+
+/// Once per engine, and only where there is something to learn: not before the
+/// start's answer is in, not a second time of a server that cannot say (vLLM,
+/// LM Studio), not when a window is known or typed, not of a managed server.
+// Spawns: asking the engine for its window starts a task.
+#[tokio::test]
+async fn the_window_is_not_asked_again_without_a_reason() {
+    use crate::app::orchestrator::compaction::EngineFacts;
+    let asked = |mode: ServerMode, typed: Option<usize>, known: Option<u32>| {
+        let (_d, mut orch, _rx, _chat_id, _backend) = orch_with_history(1);
+        orch.config = auto_cfg(4096, 75);
+        orch.config.engine.mode = mode;
+        orch.config.compaction.context_tokens = typed;
+        let epoch = orch.context.epoch();
+        orch.handle_budget_result(
+            epoch,
+            EngineFacts {
+                budget: known,
+                caps: None,
+            },
+        );
+        orch.ask_window_after_turn();
+        orch.context.pending()
+    };
+    assert!(
+        asked(ServerMode::External, None, None),
+        "the control: asked"
+    );
+    assert!(
+        !asked(ServerMode::External, None, Some(8192)),
+        "the window is known"
+    );
+    assert!(
+        !asked(ServerMode::External, Some(4096), None),
+        "a typed window wins"
+    );
+    assert!(
+        !asked(ServerMode::Managed, None, None),
+        "a managed server's is its -c"
+    );
+
+    let (_d, mut orch, _rx, _chat_id, _backend) = orch_with_history(1);
+    orch.config = auto_cfg(0, 75);
+    orch.config.engine.mode = ServerMode::External;
+    orch.ask_window_after_turn();
+    assert!(
+        !orch.context.pending(),
+        "not before the start's answer is in"
+    );
+    let epoch = orch.context.epoch();
+    orch.handle_budget_result(epoch, EngineFacts::default());
+    orch.ask_window_after_turn();
+    orch.handle_budget_result(epoch, EngineFacts::default());
+    orch.ask_window_after_turn();
+    assert!(!orch.context.pending(), "once per engine, not every turn");
+}
+
 // ---------- stage 2: resolving the budget ----------
 
 #[test]

@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (89)
+## Entries (90)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -101,6 +101,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the CUDA kernel cache lives with the data (done)
 - Post-M9: llama.cpp on a bare image — OpenMP installed, a build that cannot start refused (done)
 - Post-M9: the slow-prefill note is for a llama-server — Ollama sends llama.cpp's timings (done)
+- Post-M9: Ollama's context window, read from `/api/ps` (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -6339,4 +6340,40 @@ CHANGELOG (Fixed); lessons §3 (a probe's output is not its verdict).
   Ollama sends `delta.reasoning`, which the client reads; tool calls stream
   whole; the usage chunk arrives with `include_usage`; `/health` is a 404,
   which the probe reads as ready.
+
+### Post-M9: Ollama's context window, read from `/api/ps` (done)
+
+- **Why** (branch `feat/ollama-window`, design
+  [ollama-window.md](../research/ollama-window.md)): the README's Ollama recipe
+  asked for the window twice — in Ollama, and typed into mindfork — because
+  the app could not ask Ollama for it, and automatic compaction measures
+  against a window. Without one, a long chat ends in Ollama's silent cut of the
+  prompt's front, the system message first (measured in the website journal's
+  recipe entry).
+- **What Ollama says** (0.35.1, measured): `/api/ps` lists the loaded models
+  with `context_length`; a cold server lists nothing, and a model loads on its
+  first request (63 s when loaded on purpose, cold disk). Another client's
+  `num_ctx` reloads the model at its own window, and the next OpenAI-shaped
+  request reloads it at the server's setting — so the figure read right after
+  one of mindfork's own turns is the one its next turn runs in. A bare name is
+  `:latest` to Ollama (`gemma4` with only `gemma4:e4b` pulled: `404`).
+- **The owner's decisions** (2026-10-05, each the recommendation): **F1 (a)**
+  asked at the start and once more after the first turn the server served —
+  one more look per session at a server that never answers, against a model
+  load on opening the app (b) or a question every turn (c); **F2 (a)** the
+  recipe drops the typed window at the next release; **F3 (a)** a feed note,
+  once per session, external only, when a turn ends over the threshold with
+  nothing to fold — at Ollama's default of 4096 that is the second turn, and
+  without it knowing the window helps only those who already raised it.
+- **Built** — see the design's §7 for the parts and the tests. **3915 unit
+  tests, 257 `#[ignore]`** (+8).
+- **Live**: the `ollama` scenario of `console_probe.py`, no window typed, cold
+  Ollama: at 16384 the log says `context_budget=16384` and the feed nothing;
+  at 4096, `context_budget=4096` and, after the second turn, *The conversation
+  already takes 3651 tokens of this server's 4096-token window …* — with no
+  `truncating input prompt` in Ollama's log yet.
+- **Not in this branch**: a prompt Ollama already cut (its `usage` reports the
+  cut length, so a long chat reopened against 4096 stays cut — a detector needs
+  the app's own estimate, which spec §6.7 S2 keeps out of the trigger); LM
+  Studio's `loaded_context_length`; the engineless chat offering a local server.
 

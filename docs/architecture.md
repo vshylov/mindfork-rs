@@ -1868,6 +1868,14 @@ its own — or named by `api_key_env`, resolved through the same
   every such request. The choice is static
   per provider; a request with no images serializes byte-identically to before in
   all four formats, each with its own test.
+- **`EngineBackend::context_budget() -> Option<u32>`** (`None` by default) —
+  the window the engine runs, for the compaction trigger (spec §6.7).
+  `OpenAiClient` reads llama.cpp's `/props` (`n_ctx`, as given) and, where that
+  says nothing, Ollama's `/api/ps` — the `context_length` of the configured
+  model's entry among the loaded ones (`LoadedModels::window_of`, `:latest`
+  for a bare name). The list holds only loaded models, so the orchestrator asks
+  an external server that said nothing once more after the first turn it
+  served (`ask_window_after_turn`, docs/research/ollama-window.md).
 - **`EngineBackend::vision() -> VisionSupport`** (`Unknown` by default,
   `Supported`/`Unsupported`) — the same "engine knowledge belongs on the engine
   contract" shape as `context_budget`, and delegated by `RetryBackend` for the

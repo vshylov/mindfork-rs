@@ -745,11 +745,19 @@ mindfork setup --set engine.mode=external --set engine.external.url=http://local
 - **mindfork's first turn is already about 3500 tokens** — its instructions,
   the memory and the tool schemas (measured on `gemma4:e4b`: 3503, then 3813
   after a one-word exchange), so a 4096 window is gone by the third.
-- **The app cannot ask Ollama for the window**: it serves no `/props`, which
-  is where a llama.cpp says it. So the number goes into **Settings → Memory →
-  Context** (`compaction.context_tokens`), the same as Ollama's. Automatic
-  compaction then folds the conversation into a summary at 75 % of it, before
-  Ollama would cut anything.
+- **The app reads Ollama's window** from its `/api/ps`, which lists the models
+  it has loaded and the window of each — after the first turn, since Ollama
+  loads a model on its first request. Automatic compaction then folds the
+  conversation into a summary at 75 % of it, before Ollama would cut anything.
+  **Released versions up to 0.15.0 cannot**, and need the number typed into
+  **Settings → Memory → Context** (`compaction.context_tokens`), the same as
+  Ollama's — which is what the recipe above does. A typed number wins over the
+  one read, so if you typed one, keep it equal to Ollama's or clear it.
+- **A window too small for the conversation is said in the feed**, once per
+  session: when a turn ends over the 75 % with nothing earlier to fold — at
+  Ollama's 4096, the second turn — the note names the window, the prompt and
+  Ollama's setting. Measured at 4096: *3651 tokens of this server's 4096-token
+  window*, before Ollama had cut anything.
 
 What else was measured against Ollama 0.35.1 (`gemma4:e4b`): streaming, the
 thoughts (it sends them as `delta.reasoning`), tool calls and the usage of
