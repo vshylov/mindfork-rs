@@ -14,6 +14,14 @@ split by subsystem.
 
 ## [Unreleased]
 
+## [0.16.0] — 2026-10-05
+
+**Ollama, with nothing to keep in step.** mindfork reads the context window of
+an Ollama server from Ollama, so a long conversation is folded into a summary
+before Ollama would cut the prompt, and a window too small for the
+conversation is said once. Against Ollama, the first reply no longer ends in
+advice meant for llama-server.
+
 ### Added
 
 - **The context window of an Ollama server is read from Ollama.** mindfork asks
@@ -3133,7 +3141,8 @@ history is in the [docs/journal/](docs/journal/) log).
   (notes/RAG/self-model, sqlite-vec, per-profile isolation). Schema format is
   v1; schema versioning and migrations are formalized in later releases.
 
-[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/vshylov/mindfork-rs/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/vshylov/mindfork-rs/compare/v0.14.1...v0.15.0
 [0.14.1]: https://github.com/vshylov/mindfork-rs/compare/v0.14.0...v0.14.1
 [0.14.0]: https://github.com/vshylov/mindfork-rs/compare/v0.13.0...v0.14.0

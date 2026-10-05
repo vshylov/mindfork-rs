@@ -210,14 +210,15 @@ Give it a window of 16k — the context slider in the Ollama app's settings, or
 
 ```bash
 ollama pull gemma4:e4b
-mindfork setup --set engine.mode=external --set engine.external.url=http://localhost:11434/v1 --set engine.external.model_name=gemma4:e4b --set compaction.context_tokens=16384
+mindfork setup --set engine.mode=external --set engine.external.url=http://localhost:11434/v1 --set engine.external.model_name=gemma4:e4b
 ```
 
-The window is the same number on both sides on purpose. On a GPU under 24 GB
-Ollama gives a model 4096 tokens, mindfork's first turn already takes about
-3500, and a prompt that outgrows Ollama's window is cut in silence, the system
-message first. Told the window, mindfork folds the conversation into a summary
-before it gets there.
+mindfork reads the window from Ollama once the first turn has loaded the model,
+and folds the conversation into a summary before it fills — which matters,
+because a prompt that outgrows Ollama's window is cut in silence, the system
+message first. Ollama's default is 4096 tokens on a GPU under 24 GB, and
+mindfork's first turn already takes about 3500: there the app says once that
+the window is too small, and how to raise it.
 
 ## What it does with your machine
 

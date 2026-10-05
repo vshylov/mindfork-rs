@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (64)
+## Entries (65)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -76,6 +76,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: macOS stage 2 — the release, `install.sh` and a Homebrew tap (done)
 - Release 0.15.0 (prepared)
 - Post-M9: the README leads with the self-model and plays the animation (done)
+- Release 0.16.0 (prepared)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -3802,4 +3803,48 @@ at CI's severity. No live run: packaging only.
   user's profile.
 - **crates.io keeps the old README until the next publish** — its rendering is
   a snapshot taken at publish time. GitHub's changes on merge.
+
+### Release 0.16.0 (prepared)
+
+- **A release PR** per [AGENTS.md §6](../../AGENTS.md), branch
+  `chore/release-0.16.0`: `Cargo.toml` `0.15.0 → 0.16.0` (+ `Cargo.lock`, one
+  line), `site/zola.toml` `app_version`, `CHANGELOG.md` — `[Unreleased]` →
+  `[0.16.0] — 2026-10-05` under a lead paragraph, a fresh `[Unreleased]`, the
+  comparison links; CLAUDE.md's status heading and a line for the Ollama track;
+  the closed-tracks index of `docs/roadmap.md`; the release's post for
+  mindfork.io. A MINOR by §6: `[Unreleased]` held two items under *Added* (the
+  window read from Ollama, the window-too-small note) and one under *Fixed* (the
+  slow-prefill advice), all three from PRs 699–701.
+- **The recipe loses its typed window** — the owner's decision F2 (a) of
+  [ollama-window.md](../research/ollama-window.md): the README, the site's
+  install page and install.md §3 drop `--set compaction.context_tokens=16384`,
+  and say instead that the app reads the window from Ollama. Held until this PR
+  because the site describes the released version, and 0.15.0 cannot read it;
+  install.md keeps the typed line as what 0.15.0 and earlier need.
+  `console_probe.py --scenario ollama` follows: its recipe types no window, and
+  `MINDFORK_OLLAMA_CONTEXT` is now the arm that types one. Run on this branch
+  against a cold Ollama 0.35.1 at 16384: all fifteen checks, the app's log
+  saying `context_budget=16384` with none typed.
+- **No `Data` rubric, by measurement.** `git diff v0.15.0 -- src/shared/storage
+  src/shared/config.rs src/entities src/features/data_migration.rs
+  src/features/backup.rs` is empty: nothing in the release writes a new value
+  of a stored type, so there is nothing for the previous binary to be run on.
+- **No rehearsal.** `release.yml` changed since `v0.15.0` in one line, a
+  Dependabot bump of the pinned `taiki-e/install-action` (2.87.20 → 2.87.22)
+  that installs `cargo-about`. The same commit of that action installs
+  `cargo-llvm-cov` in CI's coverage job, which ran green on PRs 699–701 (the
+  Sonar analysis reads its report), so the action itself has run; nothing in
+  the jobs, the assets or their names moved.
+- **The post** says what a user of Ollama meets, in the order they meet it: the
+  two lines, the window read from Ollama and why it matters (the silent cut,
+  the default of 4096 against a first turn of about 3500), the note, the fixed
+  advice. Every figure is the CHANGELOG's, install.md §3's or the design's.
+  `llms.txt` regenerated; the site checked (`--skip-external-links`, the CI's
+  form) and built with the pinned Zola 0.23.6: the post in the blog's index
+  and the sitemap, the home page's structured data saying `0.16.0`.
+  `site.yml` holds the deploy until the release is public.
+- **Gates** on Windows: **3915 unit tests, 257 `#[ignore]`**, `clippy -D
+  warnings`, `fmt`, every Python gate of the Lints job, and `release_guard.py
+  --tag v0.16.0` accepting the tag — its notes the `[0.16.0]` section, 28 lines
+  (the `notes.md` it writes was removed, not committed).
 
