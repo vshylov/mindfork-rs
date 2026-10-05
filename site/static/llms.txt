@@ -6,7 +6,7 @@ Run local models through llama.cpp — or bring OpenAI, Anthropic, Gemini, Grok 
 
 ## Start here
 
-- [Install](https://mindfork.io/install/): Get mindfork for Windows or Linux: the installer, the packages, the portable archives or crates.io — what each one is for, how to verify it, and what to do first.
+- [Install](https://mindfork.io/install/): Get mindfork for Windows, Linux or macOS: the installer, the packages, Homebrew, the portable archives or crates.io — what each one is for, how to verify it, and what to do first.
 - [Source on GitHub](https://github.com/vshylov/mindfork-rs): the source, the issue tracker and the releases
 - [mindfork on crates.io](https://crates.io/crates/mindfork): the published crate, for `cargo install --locked mindfork`
 
@@ -24,6 +24,7 @@ Run local models through llama.cpp — or bring OpenAI, Anthropic, Gemini, Grok 
 
 ## News
 
+- [mindfork 0.15.0 — on a Mac, in Scoop, and an animated demo](https://mindfork.io/blog/mindfork-0-15-0/): mindfork comes to macOS on Apple Silicon as a preview — through Homebrew or the same install line as on Linux, with stored keys and Metal for local models — and to Windows through Scoop. Every release now draws an animated demo from its own interface. Option and Alt move by words in every terminal, Ctrl+J breaks a line where nothing else can, and on Windows text typed with AltGr is no longer lost.
 - [mindfork 0.14.1 — a rented GPU box that starts, or says why not](https://mindfork.io/blog/mindfork-0-14-1/): On a rented B200 the one-line install ended with neither server working and a status that blamed the model. A local server that dies now shows the error it logged and names the llama.cpp build that works, a port another program holds is refused, a bare Linux image gets the library llama.cpp needs, and the GPU kernels a server compiles are kept with the data — about a minute back on every start of a B200.
 - [mindfork 0.14.0 — a window of any size, and one reasoning effort for every model](https://mindfork.io/blog/mindfork-0-14-0/): A window too small for the screen in front says so instead of drawing a frame with parts missing, and the chat gives up its chrome one piece at a time and stays a chat down to three rows. The reasoning effort is one setting for every model: a value a model does not have becomes the nearest it has, with a new top tier, max. And the models a recent setting had stopped — Claude Haiku 4.5, three of Grok's, titles on GPT 6.1 and Gemini 3.8 Flash — answer again.
 - [mindfork 0.13.0 — OpenRouter as a mode of its own](https://mindfork.io/blog/mindfork-0-13-0/): One OpenRouter key for the assistant, impersonation, memory, speech and YouTube video: a mode beside the four clouds and your own server, with a model list that shows each model's context window and price, and a key checked before your first message. A message read aloud no longer stops half way, and an edit of the embedding settings no longer switches the embedder's checks off until the restart.

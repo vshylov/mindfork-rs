@@ -476,13 +476,13 @@ effort tiers — have all closed
 - **A Scoop manifest** — **done** (2026-10-03): `vshylov/scoop-bucket`, updated by
   its Excavator. ScoopInstaller's Extras — **deferred** until the project meets
   its notability bar.
-- **macOS** — **researched** (2026-10-04,
-  [macos.md](research/macos.md)): Apple Silicon only; the MVP probe on GitHub's
-  runners is **GO** — it builds, 3879 of 3892 unit tests pass, the TUI runs in a
-  pty, llama.cpp runs with Metal. Three stages before a preview release: the
-  code a Mac needs (stored secrets, the single-instance lock, a symlinked
-  binary, the keys), the release archive with `install.sh` and a Homebrew tap,
-  and a day on a rented Mac. The forks wait for the owner.
+- **macOS** — **a preview in 0.15.0** ([macos.md](research/macos.md)): Apple
+  Silicon only; stage 1 (stored secrets, the single-instance lock, a symlinked
+  binary, the keys, macOS in CI) and stage 2 (the release's `aarch64-macos`
+  archive, `install.sh` on a Mac, the `vshylov/homebrew-tap` tap) shipped.
+  **Open: stage 3** — a day on a rented Mac (Scaleway M4) through the checklist
+  of macos.md §6.2, then the call for testers; signing and notarization on
+  demand (fork F4).
 - **MSI for GPO/Intune** — **on demand**.
 - **GPG signing of the Linux packages** — **idea**
   ([code-signing.md §6.4](research/code-signing.md), out of scope there).
@@ -644,6 +644,10 @@ An index, newest first — one line per track, with the release that shipped it
 and where its story is told. What a track left open is a bullet above, under
 its area.
 
+- **The animated demo** — 0.15.0 (2026-10-05), three stages: a turn played
+  through the runtime's own path and drawn to GIF and WebP by
+  `tools/demo_reel.py`; every release draws it, in a dark and a light look and
+  in Russian, and mindfork.io plays it. [demo-reel.md](research/demo-reel.md).
 - **A reasoning effort a model does not have** — 0.14.0 (2026-10-02), two
   stages and four fixes beside them: a refused effort is asked once more as
   the nearest the model lists, and remembered; `max` is the scale's top, real

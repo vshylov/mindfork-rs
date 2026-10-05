@@ -4,7 +4,7 @@ A console (TUI) AI chat application in Rust. Local models **Gemma 3/4** and
 **Qwen 3.5/3.6** via **llama.cpp `llama-server`** (an OpenAI-compatible server;
 in external mode any such server works — vLLM/LM Studio/Ollama), plus the cloud
 providers OpenAI, Gemini, Anthropic and xAI, and the OpenRouter gateway. UI on
-**ratatui**. Platforms: Windows + Linux. Architecture — **Feature-Sliced Design
+**ratatui**. Platforms: Windows + Linux, macOS on Apple Silicon (a preview). Architecture — **Feature-Sliced Design
 (FSD)**.
 
 > **Engine:** originally designed around `xinfer`, which turned out too raw
@@ -178,7 +178,7 @@ Backend selection: `MINDFORK_ENGINE_URL` (external, any OpenAI server) OR
 rented instead of hosted — `python tools/e2e_hf.py run`, see
 `docs/history/remote-e2e-hf.md`.
 
-## Status (2026-10-04, version 0.14.1)
+## Status (2026-10-05, version 0.15.0)
 
 The **M0–M9** plan is done, plus extensive post-M9 work — **3906 unit tests
 green, 257 `#[ignore]`** (live smokes + a real-clipboard round trip + the

@@ -14,6 +14,15 @@ split by subsystem.
 
 ## [Unreleased]
 
+## [0.15.0] — 2026-10-05
+
+**On a Mac, and in your package manager.** mindfork comes to macOS on Apple
+Silicon as a preview — through Homebrew or the same install line as on Linux,
+with stored keys and llama.cpp's Metal build — and to Windows through Scoop.
+Every release now draws an animated demo from its own interface. Option and Alt
+move by words in every terminal, `Ctrl+J` breaks a line where nothing else can,
+and on Windows text typed with AltGr is no longer lost.
+
 ### Added
 
 - **macOS on Apple Silicon — a preview.** Each release now carries
@@ -3101,7 +3110,8 @@ history is in the [docs/journal/](docs/journal/) log).
   (notes/RAG/self-model, sqlite-vec, per-profile isolation). Schema format is
   v1; schema versioning and migrations are formalized in later releases.
 
-[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.14.1...HEAD
+[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/vshylov/mindfork-rs/compare/v0.14.1...v0.15.0
 [0.14.1]: https://github.com/vshylov/mindfork-rs/compare/v0.14.0...v0.14.1
 [0.14.0]: https://github.com/vshylov/mindfork-rs/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/vshylov/mindfork-rs/compare/v0.12.0...v0.13.0
