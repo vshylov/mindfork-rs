@@ -954,8 +954,9 @@ impl Orchestrator {
     /// default for an external server — and, when that is worth saying, one
     /// feed note per server session naming the figures and the one change:
     /// the *Batch (-b)* field for a managed server, the launch line for an
-    /// external one. A cloud, a server without timings, a batch at the knee
-    /// or a prompt too short to measure say nothing.
+    /// external one. A cloud, a server without timings, an external server
+    /// that is not a llama-server, a batch at the knee or a prompt too short
+    /// to measure say nothing.
     pub(super) fn note_slow_prefill(
         &mut self,
         prefill: Option<crate::shared::api::contract::Prefill>,
@@ -969,7 +970,18 @@ impl Orchestrator {
                 launched_batch(managed.batch_size, managed.gpu_layers),
                 "ui.notice.slow_prefill_managed",
             ),
-            ServerMode::External => (LLAMA_DEFAULT_BATCH, "ui.notice.slow_prefill_external"),
+            // The note names llama-server's launch flags, so an external server
+            // is told only once it has answered llama.cpp's own `/props` — the
+            // slot count is that answer. Ollama runs llama.cpp inside and sends
+            // its `timings`, but answers `/props` with a 404, takes no `-b`, and
+            // times its first request with the model's load in it: measured on
+            // 0.35.1, 19 tokens in 30.8 s, and a first turn told it ran at 124
+            // tokens/s on a 4090 (docs/research/slow-prefill-detection.md §2.1).
+            // Asked before the claim, so a llama-server whose answer is still on
+            // its way is told at the next turn instead.
+            ServerMode::External if self.slots.known().is_some() => {
+                (LLAMA_DEFAULT_BATCH, "ui.notice.slow_prefill_external")
+            }
             _ => return,
         };
         let Some(hold) = prefill_hold(batch, prefill) else {

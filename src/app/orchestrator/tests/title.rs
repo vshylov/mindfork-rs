@@ -403,6 +403,7 @@ fn the_titles_landing_offers_its_sample() {
     let (_d, mut orch, mut rx, chat_id) =
         bare_with_chat(vec![crate::entities::message::Message::user("Привет!")]);
     orch.config.engine.mode = crate::shared::config::ServerMode::External;
+    orch.slots.pretend_known(Some(1));
     while rx.try_recv().is_ok() {}
     let cold = Some(crate::shared::api::contract::Prefill {
         tokens: 1000,
@@ -438,6 +439,7 @@ fn a_failed_titles_prompt_was_processed_all_the_same() {
     let (_d, mut orch, mut rx, chat_id) =
         bare_with_chat(vec![crate::entities::message::Message::user("Привет!")]);
     orch.config.engine.mode = crate::shared::config::ServerMode::External;
+    orch.slots.pretend_known(Some(1));
     while rx.try_recv().is_ok() {}
     let mut res = title_result(chat_id, Err("boom"), TitleOrigin::Auto);
     res.prefill = Some(crate::shared::api::contract::Prefill {

@@ -65,6 +65,16 @@ measurement and says so. No other provider sends them: the clouds have no
 batch to speak of, vLLM/Ollama/LM Studio report nothing — R4 by
 construction.
 
+**Measured again on 2026-10-05: Ollama sends them.** Ollama 0.35.1 runs
+llama.cpp's server inside, and its stream's usage chunk carries the same
+`timings`. Its first request after a load times the load as well: a 19-token
+prompt in 30 776 ms, and a first turn of about 3500 tokens read as 124
+tokens/s on a 4090, which processes that model's prompts in the thousands.
+It answers `/props` with a 404 and takes no `-b` (its batch is a model
+parameter, `num_batch`). So R4 now rests on `/props`: the external note goes
+only to a server that answered it, the `total_slots` the sessions hint already
+reads (§3.3).
+
 ### 2.2 The batch the server runs
 
 Managed: `build_args` (`shared/api/managed.rs`) passes `-b n` when the

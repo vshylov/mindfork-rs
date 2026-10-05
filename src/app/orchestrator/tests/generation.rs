@@ -1865,6 +1865,7 @@ mod slow_prefill {
     fn an_external_server_is_told_the_launch_line() {
         let (_d, mut orch, mut rx) = bare_orch_rx();
         orch.config.engine.mode = ServerMode::External;
+        orch.slots.pretend_known(Some(4));
         orch.note_slow_prefill(Some(SLOW));
         let notes = notices(&mut rx);
         assert_eq!(notes.len(), 1, "{notes:?}");
@@ -1873,6 +1874,23 @@ mod slow_prefill {
             "{}",
             notes[0]
         );
+    }
+
+    /// An external server that has not answered llama.cpp's `/props` is not
+    /// told llama-server's flags: Ollama sends the same `timings`, its first
+    /// request's with the model's load in them, and takes no `-b`. The session's
+    /// one note is not spent on it — the same server, once it answers, is told.
+    #[test]
+    fn an_external_server_that_is_not_a_llama_server_is_told_nothing() {
+        let (_d, mut orch, mut rx) = bare_orch_rx();
+        orch.config.engine.mode = ServerMode::External;
+        orch.slots.pretend_known(None);
+        orch.note_slow_prefill(Some(SLOW));
+        assert!(notices(&mut rx).is_empty(), "no /props, no launch line");
+
+        orch.slots.pretend_known(Some(1));
+        orch.note_slow_prefill(Some(SLOW));
+        assert_eq!(notices(&mut rx).len(), 1, "a llama-server, told");
     }
 
     /// A tool's own request is a stream of the turn (spec §9.3.1): the
@@ -1912,8 +1930,9 @@ mod slow_prefill {
             hang: false,
         };
         let backend = ScriptRecorder::new(vec![call, reply]);
-        let mut config = no_auto_cfg();
-        config.engine.mode = ServerMode::External;
+        // The default managed server: its note needs no answer from `/props`,
+        // which a scripted backend never gives.
+        let config = no_auto_cfg();
         let tool = Arc::new(crate::app::orchestrator::tests::SampledTool {
             id: "sampled",
             sample: Some(SLOW),
@@ -1947,7 +1966,7 @@ mod slow_prefill {
         cmd_tx.send(AppCommand::SendMessage("go".into())).unwrap();
         let note = wait_for(
             &mut evt_rx,
-            |e| matches!(e, AppEvent::Notice(t) if t.contains("-b 256 -ub 256")),
+            |e| matches!(e, AppEvent::Notice(t) if t.contains("Batch (-b)")),
         )
         .await;
         assert!(note.is_some(), "the tool's cold sample reached the note");
@@ -1970,8 +1989,8 @@ mod slow_prefill {
             }),
             ChatChunk::Finished(FinishReason::Stop),
         ])) as Arc<dyn EngineBackend>;
-        let mut config = AppConfig::default();
-        config.engine.mode = ServerMode::External;
+        // The default managed server, for the reason the tool's path above gives.
+        let config = no_auto_cfg();
         let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch_cfg(Some(backend), config);
         wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
             .await
@@ -1984,7 +2003,7 @@ mod slow_prefill {
         let AppEvent::Notice(text) = note else {
             unreachable!()
         };
-        assert!(text.contains("-b 256 -ub 256"), "{text}");
+        assert!(text.contains("Batch (-b)"), "{text}");
 
         cmd_tx.send(AppCommand::SendMessage("two".into())).unwrap();
         wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))

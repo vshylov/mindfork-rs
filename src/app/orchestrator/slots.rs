@@ -45,6 +45,13 @@ impl SlotsDiscovery {
         self.known
     }
 
+    /// What a test needs of a server's answer without a server: the count as
+    /// if it had just been reported for the current engine.
+    #[cfg(test)]
+    pub(super) fn pretend_known(&mut self, slots: Option<u32>) {
+        self.known = slots;
+    }
+
     fn apply(&mut self, epoch: u64, slots: Option<u32>) -> bool {
         if epoch != self.epoch {
             return false;

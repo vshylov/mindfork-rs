@@ -1830,6 +1830,7 @@ async fn a_tools_own_request_is_the_loops_sample_too() {
 fn the_landing_offers_the_sample_whatever_the_outcome() {
     let (_d, mut orch, mut rx) = bare_orch_rx();
     orch.config.engine.mode = crate::shared::config::ServerMode::External;
+    orch.slots.pretend_known(Some(1));
     let cold = Some(Prefill {
         tokens: 2800,
         ms: 74_000,

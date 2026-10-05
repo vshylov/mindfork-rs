@@ -563,6 +563,7 @@ async fn impersonations_landing_offers_its_sample_on_the_shared_engine() {
     ]);
     orch.active_id = Some(chat_id);
     orch.config.engine.mode = crate::shared::config::ServerMode::External;
+    orch.slots.pretend_known(Some(1));
     orch.engines.backend = Some(Arc::new(MockBackend::scripted(vec![
         ChatChunk::Text("Расскажи о себе.".into()),
         ChatChunk::Usage(TokenUsage {
