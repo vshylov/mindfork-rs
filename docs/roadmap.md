@@ -644,6 +644,10 @@ An index, newest first — one line per track, with the release that shipped it
 and where its story is told. What a track left open is a bullet above, under
 its area.
 
+- **A prompt the server cut** — 0.16.1 (2026-10-06): Ollama's two silent cuts
+  measured, each round of an external server judged against a lower bound of
+  what it held, a cut turn folded even with no window known and said once.
+  [prompt-cut-detection.md](research/prompt-cut-detection.md).
 - **Ollama's window** — 0.16.0 (2026-10-05): the README's recipe run live, the
   slow-prefill note kept to a llama-server, the window read from `/api/ps`
   after the first turn, a window too small for the conversation said once.
