@@ -295,6 +295,43 @@ impl OpenAiClient {
         }
     }
 
+    /// Reads Ollama's `/api/ps` — the models it has loaded, each with the window
+    /// it loaded it with (`context_length`) — for **the configured model**
+    /// (docs/research/ollama-window.md §2, measured on 0.35.1).
+    ///
+    /// The list holds only what is loaded, and Ollama loads a model on its first
+    /// request, so before that it is silence; the orchestrator asks again after
+    /// the first turn for exactly that reason. The window read then is the one
+    /// mindfork's own requests run in: an OpenAI-shaped request reloads the model
+    /// at the server's setting, whatever another client asked for before it.
+    /// A blank model field is not looked up — Ollama refuses a request without
+    /// one anyway — and a gateway serves no such endpoint (the guard `/props` has).
+    async fn loaded_window(&self) -> Option<u32> {
+        if self.gateway.is_some() {
+            return None;
+        }
+        let wanted = self
+            .model
+            .as_deref()
+            .map(str::trim)
+            .filter(|m| !m.is_empty())?;
+        let url = server_root_url(&self.base_url, "api/ps");
+        let resp = match self.auth(self.http.get(&url)).send().await {
+            Ok(r) if r.status().is_success() => r,
+            other => {
+                tracing::debug!(%url, ok = other.is_ok(), "no answer from /api/ps");
+                return None;
+            }
+        };
+        match resp.json::<LoadedModels>().await {
+            Ok(loaded) => loaded.window_of(wanted),
+            Err(err) => {
+                tracing::debug!(%url, error = %err, "/api/ps did not parse");
+                None
+            }
+        }
+    }
+
     /// The catalogue entry for **the model this client is configured for**, or
     /// `None` when there is nothing to look up or nothing to find.
     ///
@@ -831,17 +868,27 @@ impl EngineBackend for OpenAiClient {
     /// dividing would be wrong by 4x; where slots do divide the context, the
     /// field already reports the per-slot figure.
     ///
-    /// Any failure — a server without the endpoint (vLLM, LM Studio, a cloud
+    /// Where `/props` says nothing, Ollama's `/api/ps` is asked next: the window
+    /// it loaded the configured model with ([`Self::loaded_window`]). `/props`
+    /// first, because a llama-server is the server this client was built for and
+    /// answers it; Ollama answers `/props` with a `404`.
+    ///
+    /// Any failure — a server without either endpoint (vLLM, LM Studio, a cloud
     /// proxy), a network error, a body that doesn't parse — is `None`, i.e.
     /// "cannot say" (see [`Self::props`]).
     async fn context_budget(&self) -> Option<u32> {
         // A zero would be a nonsense window; treat it as "cannot say" rather than
         // as a budget every prompt exceeds.
-        self.props()
-            .await?
-            .default_generation_settings
+        let props = self
+            .props()
+            .await
+            .and_then(|p| p.default_generation_settings)
             .and_then(|g| g.n_ctx)
-            .filter(|&n| n > 0)
+            .filter(|&n| n > 0);
+        match props {
+            Some(n) => Some(n),
+            None => self.loaded_window().await,
+        }
     }
 
     /// Reads the endpoint's catalogue for the configured model
@@ -989,6 +1036,40 @@ fn server_root_url(base_url: &str, path: &str) -> String {
     let trimmed = base_url.trim_end_matches('/');
     let root = trimmed.strip_suffix("/v1").unwrap_or(trimmed);
     format!("{root}/{path}")
+}
+
+/// The part of Ollama's `/api/ps` we read: the loaded models, each by name, with
+/// the window it was loaded with. Every other field is ignored.
+#[derive(serde::Deserialize)]
+struct LoadedModels {
+    #[serde(default)]
+    models: Vec<LoadedModel>,
+}
+
+#[derive(serde::Deserialize)]
+struct LoadedModel {
+    name: Option<String>,
+    model: Option<String>,
+    context_length: Option<u32>,
+}
+
+impl LoadedModels {
+    /// The window of `wanted`, named as Ollama names a model: a name without a
+    /// tag is `:latest` (measured — a request naming `gemma4` when only
+    /// `gemma4:e4b` is pulled is a `404`). A model that is not loaded, and a zero,
+    /// are silence.
+    fn window_of(&self, wanted: &str) -> Option<u32> {
+        let latest = (!wanted.contains(':')).then(|| format!("{wanted}:latest"));
+        let named = |n: &Option<String>| {
+            n.as_deref()
+                .is_some_and(|n| n == wanted || Some(n) == latest.as_deref())
+        };
+        self.models
+            .iter()
+            .find(|m| named(&m.name) || named(&m.model))
+            .and_then(|m| m.context_length)
+            .filter(|&n| n > 0)
+    }
 }
 
 /// The part of llama.cpp's `/props` we read. Every other field is ignored, so a
@@ -2030,6 +2111,84 @@ mod tests {
             server.join().unwrap().starts_with("GET /props "),
             "asked at the server root, outside /v1"
         );
+    }
+
+    /// Ollama's `/api/ps` as measured on 0.35.1, trimmed to what is read and a
+    /// little of what is not.
+    const PS_BODY: &str = r#"{"models":[{"name":"gemma4:e4b","model":"gemma4:e4b",
+        "size":364107529,"details":{"format":"gguf","family":"gemma4"},
+        "expires_at":"2026-10-05T12:53:34Z","size_vram":364107529,"context_length":16384}]}"#;
+
+    /// Ollama answers `/props` with a `404` and lists the window it loaded the
+    /// configured model with on `/api/ps`, at the server's root.
+    #[tokio::test]
+    async fn context_budget_reads_ollamas_loaded_window() {
+        let (url, server) = path_server(2, &[("/api/ps", "200 OK", PS_BODY)]);
+        let client = OpenAiClient::new(url).with_model(Some("gemma4:e4b".into()));
+        assert_eq!(client.context_budget().await, Some(16384));
+        assert_eq!(
+            server.join().unwrap(),
+            ["/props", "/api/ps"],
+            "/props first"
+        );
+    }
+
+    /// A name without a tag is Ollama's `:latest`, as it reads it itself.
+    #[tokio::test]
+    async fn a_bare_name_is_ollamas_latest() {
+        const BODY: &str = r#"{"models":[{"name":"qwen3.5:latest","context_length":8192}]}"#;
+        let (url, server) = path_server(2, &[("/api/ps", "200 OK", BODY)]);
+        let client = OpenAiClient::new(url).with_model(Some("qwen3.5".into()));
+        assert_eq!(client.context_budget().await, Some(8192));
+        server.join().unwrap();
+    }
+
+    /// Silence, each way: a model that is not loaded (another one is, or none
+    /// is — a cold server), a window of zero, a body that is not the list, a
+    /// server without the endpoint.
+    #[tokio::test]
+    async fn ollamas_list_without_the_model_is_silence() {
+        const OTHER: &str = r#"{"models":[{"name":"gemma4:12b","context_length":32768}]}"#;
+        const COLD: &str = r#"{"models":[]}"#;
+        const ZERO: &str = r#"{"models":[{"name":"gemma4:e4b","context_length":0}]}"#;
+        const NOT_JSON: &str = "<html>not a list</html>";
+        let cases: [&'static [(&str, &str, &str)]; 5] = [
+            &[("/api/ps", "200 OK", OTHER)],
+            &[("/api/ps", "200 OK", COLD)],
+            &[("/api/ps", "200 OK", ZERO)],
+            &[("/api/ps", "200 OK", NOT_JSON)],
+            &[],
+        ];
+        for routes in cases {
+            let (url, server) = path_server(2, routes);
+            let client = OpenAiClient::new(url).with_model(Some("gemma4:e4b".into()));
+            assert_eq!(client.context_budget().await, None, "{routes:?}");
+            server.join().unwrap();
+        }
+    }
+
+    /// A blank model field is not looked up: there is no name to find, and
+    /// Ollama refuses a request without one anyway.
+    #[tokio::test]
+    async fn no_model_no_lookup() {
+        let (url, server) = path_server(1, &[("/api/ps", "200 OK", PS_BODY)]);
+        assert_eq!(OpenAiClient::new(url).context_budget().await, None);
+        assert_eq!(server.join().unwrap(), ["/props"]);
+    }
+
+    /// A llama-server's own `/props` wins, and `/api/ps` is not asked at all.
+    #[tokio::test]
+    async fn props_answered_first_wins() {
+        let (url, server) = path_server(
+            1,
+            &[
+                ("/props", "200 OK", PROPS_BODY),
+                ("/api/ps", "200 OK", PS_BODY),
+            ],
+        );
+        let client = OpenAiClient::new(url).with_model(Some("gemma4:e4b".into()));
+        assert_eq!(client.context_budget().await, Some(16384));
+        assert_eq!(server.join().unwrap(), ["/props"]);
     }
 
     /// The slot count comes from the same `/props` body, read as given; a

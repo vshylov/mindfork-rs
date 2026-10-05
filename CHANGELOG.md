@@ -14,6 +14,21 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Added
+
+- **The context window of an Ollama server is read from Ollama.** mindfork asks
+  its `/api/ps` for the window it loaded the model with, after the first turn
+  has loaded it, so automatic compaction folds a long conversation into a
+  summary before Ollama cuts the prompt — which it does in silence, the system
+  message first. Before, the window had to be typed into the settings, the
+  same number as Ollama's.
+- **A window too small for the conversation is said once.** On an external
+  server, when a turn ends near the window's end with nothing earlier left to
+  fold, the feed says so, with the window, the prompt and how to raise
+  Ollama's (`OLLAMA_CONTEXT_LENGTH`, or the context slider in its app). Ollama
+  gives a model 4096 tokens on a GPU under 24 GB, and mindfork's first turn
+  takes about 3500 of them.
+
 ### Fixed
 
 - **Against Ollama, the first reply no longer ends in advice meant for

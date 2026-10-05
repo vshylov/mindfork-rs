@@ -138,6 +138,10 @@ pub(super) struct ContextDiscovery {
     /// Learned by the same background question, in the same epoch — one fetch,
     /// one landing (docs/history/gateway-capabilities.md §3).
     caps: Option<crate::shared::api::contract::ModelCapabilities>,
+    /// The question was asked once more after a turn, because nothing had
+    /// answered it when the engine was applied — once per engine
+    /// (docs/research/ollama-window.md F1).
+    asked_after_turn: bool,
 }
 
 impl ContextDiscovery {
@@ -149,6 +153,7 @@ impl ContextDiscovery {
         self.answered = false;
         self.known = None;
         self.caps = None;
+        self.asked_after_turn = false;
     }
 
     /// The engine generation a pending answer would have to match.
@@ -264,8 +269,10 @@ impl Orchestrator {
         let Some(plan) = self.plan_roll(chat) else {
             // Nothing left to fold: the tail alone already fills the window. Only
             // the read-back tools (stage 3) or a bigger `-c` help here, and both
-            // are the user's move — saying it every turn would be nagging.
+            // are the user's move — saying it every turn would be nagging, so an
+            // external server is told once per session (F3 below).
             tracing::debug!(chat = %chat_id, "over the compaction threshold with nothing left to fold");
+            self.note_window_too_small(usage.next_prompt_estimate(), budget);
             return;
         };
         let folded = plan.cut;
@@ -356,6 +363,56 @@ impl Orchestrator {
         // again (docs/research/history-images-no-vision.md, W1(a)).
         self.images_withheld_noted.clear();
         self.ask_engine_for_budget();
+    }
+
+    /// Asks the engine for its window once more after a turn it served, when
+    /// nothing said what the window is when the engine was applied
+    /// (docs/research/ollama-window.md F1). Ollama lists the window only for a
+    /// model it has loaded, and it loads on the first request — so the turn that
+    /// just ended is what made the answer possible, and the window it reports is
+    /// the one mindfork's own requests run in. Once per engine: a server that
+    /// cannot say at all (vLLM, LM Studio) is asked one time more, not every turn.
+    pub(super) fn ask_window_after_turn(&mut self) {
+        if self.config.engine.mode != ServerMode::External {
+            return;
+        }
+        // A typed window wins over anything the engine could say.
+        if self.config.compaction.context_tokens.is_some_and(|n| n > 0) {
+            return;
+        }
+        let ctx = &self.context;
+        let said =
+            ctx.known.is_some() || ctx.caps.as_ref().and_then(|c| c.context_length).is_some();
+        if !ctx.answered || ctx.pending || ctx.asked_after_turn || said {
+            return;
+        }
+        self.context.asked_after_turn = true;
+        self.ask_engine_for_budget();
+    }
+
+    /// A turn ended over the compaction threshold with nothing earlier to fold:
+    /// the window is too small for the conversation itself — Ollama's default of
+    /// 4096 tokens against a first turn of about 3500
+    /// (docs/research/ollama-window.md F3). Said once per server session, and only
+    /// of an external server: its window is a setting of the server's own, and a
+    /// server that runs out of it may cut the prompt in silence, as Ollama does.
+    fn note_window_too_small(&mut self, prompt: u64, window: u64) {
+        if self.config.engine.mode != ServerMode::External {
+            return;
+        }
+        if !self.engines.claim_window_note() {
+            return;
+        }
+        let loc = self.ui_locale();
+        let _ = self
+            .evt_tx
+            .send(crate::app::events::AppEvent::Notice(loc.tf(
+                "ui.notice.window_too_small",
+                &[
+                    ("prompt", &prompt.to_string()),
+                    ("window", &window.to_string()),
+                ],
+            )));
     }
 
     /// Asks the engine what its window is, in the background (S1).

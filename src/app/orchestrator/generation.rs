@@ -1133,6 +1133,11 @@ impl Orchestrator {
         // (docs/research/slow-prefill-detection.md §3.3): once per server
         // session, before the roll it may be about to advise on.
         self.note_slow_prefill(res.usage.as_ref().and_then(|u| u.prefill));
+        // A turn the server served may have loaded the model, and Ollama says
+        // what window it loaded it with only then (docs/research/ollama-window.md).
+        if res.usage.is_some() {
+            self.ask_window_after_turn();
+        }
         self.maybe_auto_compact(res.chat_id, res.usage);
         // Then background auto-reflection (Tier 3), notes auto-consolidation
         // ("sleep", Tier 3), and/or self-model auto-consolidation ("sleep"
