@@ -87,6 +87,7 @@ fn fan_out(orch: &mut Orchestrator, chat_id: Uuid) {
             prompt_tokens: 900,
             completion_tokens: 10,
             prefill: None,
+            cut: None,
         }),
     );
     orch.maybe_auto_reflect(chat_id);
@@ -1556,6 +1557,7 @@ async fn a_quit_during_a_roll_hears_it_land_at_once() {
             prompt_tokens: 900,
             completion_tokens: 10,
             prefill: None,
+            cut: None,
         }),
     );
     assert!(orch.bg_running(BackgroundKind::Compaction));

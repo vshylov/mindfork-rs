@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (90)
+## Entries (91)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -102,6 +102,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: llama.cpp on a bare image — OpenMP installed, a build that cannot start refused (done)
 - Post-M9: the slow-prefill note is for a llama-server — Ollama sends llama.cpp's timings (done)
 - Post-M9: Ollama's context window, read from `/api/ps` (done)
+- Post-M9: a prompt the server cut in silence is told (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -6377,3 +6378,57 @@ CHANGELOG (Fixed); lessons §3 (a probe's output is not its verdict).
   the app's own estimate, which spec §6.7 S2 keeps out of the trigger); LM
   Studio's `loaded_context_length`; the engineless chat offering a local server.
 
+### Post-M9: a prompt the server cut in silence is told (done)
+
+- **Why** (branch `feat/prompt-cut-detection`, design
+  [prompt-cut-detection.md](../research/prompt-cut-detection.md)): the Ollama
+  window entry above left out a prompt Ollama already cut — its `usage` reports
+  the cut length, so the trigger reads the cut figure.
+- **What Ollama does** (0.35.1, `OLLAMA_DEBUG=1`, a code word in the system
+  message): it has **two cuts**. A conversation over the window loses its
+  oldest messages whole — the system message and the last one kept, the
+  `usage` just under the window (2017 of 2048), the code word still answered;
+  only when the system message and the last message alone do not fit is the
+  prompt cut from the front to half the window (`truncating input prompt
+  limit=1027 prompt=2656 keep=5`), and the model answers filler words. `/v1`
+  ignores `"truncate": false`; the native `/api/chat` honours it with a `400
+  exceed_context_size_error` carrying the real size (2087) — a client of its
+  own, not this branch. So what this project had said — Ollama cuts "from the
+  start, the system message first" — was the rarer cut; install.md §3, the
+  window-too-small note and ollama-window.md §5 are corrected.
+- **The byte estimate cannot be the bound**: measured against Ollama's count
+  on sixteen 12 KB samples it is 3.36× over on rule lines and 2.28× over on
+  space-aligned columns. A floor that counts a run of one character twice and
+  divides the bytes by 8 stays under 0.71 of the real figure on all of them.
+  The tool schemas, most of a turn's prompt, are left out: Ollama renders them
+  in its own format.
+- **The owner's decisions** (2026-10-05, each the recommendation): **F1 (a)**
+  the note, and a cut turn counts as over the compaction threshold — a fold
+  starts with no window known, and the note then says `/regen`; **F2 (a)** the
+  note once per server session, the log every time.
+- **Built** — see the design's §3–§4: `orchestrator/prompt_cut.rs`
+  (`RequestShape`, `PromptAnchor`, `PromptCut::judge`), `shared::tokens::floor_text`,
+  the round's judgement in `TurnLoop::stream` (external only, no calibration
+  from a cut round), each chat's last request in `ContextDiscovery` (forgotten
+  with the engine), the trigger and the note in `compaction.rs`. **3936 unit
+  tests, 257 `#[ignore]`** (+21). Eight mutants — the tools check, the anchor
+  kept, the calibration, the trigger, the window note, the mode gate, the
+  system diff, the runs — each caught by its test.
+- **Live**: `console_probe.py`, Ollama 0.35.1 in Docker, the recipe with no
+  window typed. The new `ollama-cut` scenario at `OLLAMA_CONTEXT_LENGTH=4096`:
+  a question that fits, then a 6 KB page pasted at once — Ollama logged
+  `truncating input prompt limit=2051 prompt=5210 keep=5 new=2051`, the app
+  `processed=2051 held=4357`, and the feed carried the note. The `ollama`
+  scenario, now with a check that no round is told as cut, passed at 16384
+  (13 checks) and at 4096 (the window-too-small note, no truncation in
+  Ollama's log, no false cut). The bound held 84 % of the real 5210. Pasting
+  needed one fix in the probe: an Enter in the same drain as the paste is a
+  line break in it, so it waits for the page to be in the box.
+- **Sonar on the PR**: two `python:S1192` in the probe — the input box's idle
+  title `"Enter send"` four times and the first question three, both from the
+  `ollama` scenarios. They become `TURN_OVER` and `CAPITAL_QUESTION` beside
+  `CHAT_READY`; the AST count of repeated literals loses exactly those two, and
+  `ollama` (13 checks, at 4096) and `ollama-cut` (7) rerun green.
+- **Not in this branch**: asking Ollama to refuse through its own `/api/chat`;
+  the roll's own prompt, which a small window can cut the same way; OpenRouter's
+  `middle-out`; a server that would report only the uncached part.

@@ -34,6 +34,7 @@ use super::background::BgOutcome;
 
 use super::Orchestrator;
 use super::generation::TurnUsage;
+use super::prompt_cut::{PromptAnchor, PromptCut};
 use super::title::salvage_title_source;
 
 /// A safety net **well above** the stated word limit, not the budget itself.
@@ -142,6 +143,11 @@ pub(super) struct ContextDiscovery {
     /// answered it when the engine was applied — once per engine
     /// (docs/research/ollama-window.md F1).
     asked_after_turn: bool,
+    /// Each chat's last request beside the size the server reported for it —
+    /// what its next turn is bounded by (docs/research/prompt-cut-detection.md
+    /// §3.1). A size belongs to the engine that measured it, so it is forgotten
+    /// with the rest.
+    anchors: std::collections::HashMap<Uuid, PromptAnchor>,
 }
 
 impl ContextDiscovery {
@@ -154,6 +160,21 @@ impl ContextDiscovery {
         self.known = None;
         self.caps = None;
         self.asked_after_turn = false;
+        self.anchors.clear();
+    }
+
+    /// The chat's last request with its size, and the engine generation the
+    /// turn's own must come back under to be kept.
+    pub(super) fn anchor_for(&self, chat: Uuid) -> (u64, Option<PromptAnchor>) {
+        (self.epoch, self.anchors.get(&chat).cloned())
+    }
+
+    /// Keeps a turn's last request for the chat's next turn — unless the engine
+    /// changed while the turn ran, and its size measured another one.
+    pub(super) fn keep_anchor(&mut self, epoch: u64, chat: Uuid, anchor: PromptAnchor) {
+        if epoch == self.epoch {
+            self.anchors.insert(chat, anchor);
+        }
     }
 
     /// The engine generation a pending answer would have to match.
@@ -237,43 +258,58 @@ impl Orchestrator {
     /// Runs on **the chat whose turn just finished**, not "the active one": they
     /// are the same today (one generation at a time), and reading the turn's own
     /// id is what stays correct if that ever stops being true (S7).
-    pub(super) fn maybe_auto_compact(&mut self, chat_id: Uuid, usage: Option<TurnUsage>) {
+    ///
+    /// Says whether a fold is under way for the chat once it returns — the
+    /// cut-prompt note tells the user to ask again after it lands only then.
+    pub(super) fn maybe_auto_compact(&mut self, chat_id: Uuid, usage: Option<TurnUsage>) -> bool {
         let (enabled, threshold_pct) = {
             let cfg = &self.config.compaction;
             (cfg.enabled, cfg.threshold_pct)
         };
         if !enabled || threshold_pct == 0 {
-            return;
+            return false;
         }
         // S2: the exact figure or nothing. The byte estimate's error changes sign
         // by content type (§9a M9), so it would fire late on exactly the
         // tool-heavy chats that overflow first — a fallback worse than silence.
-        let Some(usage) = usage else { return };
-        let Some(budget) = self.context_budget() else {
-            return;
-        };
-        // The reply reserve lives in the headroom the percentage leaves, not in a
-        // knob of its own (S5).
-        let threshold = budget.saturating_mul(threshold_pct as u64) / 100;
-        if usage.next_prompt_estimate() < threshold {
-            return;
+        let Some(usage) = usage else { return false };
+        let budget = self.context_budget();
+        // A request the server cut in silence was over its window, whatever the
+        // window is and whatever the cut figure says — so the turn is over the
+        // threshold even with no window known (Ollama's, before `/api/ps` has
+        // it). No estimate is read as a size: the cut is a fact its bound
+        // established, and the fold's size is `tail_tokens`
+        // (docs/research/prompt-cut-detection.md §4).
+        let over = usage.cut.is_some()
+            || budget.is_some_and(|budget| {
+                // The reply reserve lives in the headroom the percentage leaves,
+                // not in a knob of its own (S5).
+                let threshold = budget.saturating_mul(threshold_pct as u64) / 100;
+                usage.next_prompt_estimate() >= threshold
+            });
+        if !over {
+            return false;
         }
         // One at a time — the same gate as the other background tasks. A roll
         // already running will move the boundary anyway.
         if self.bg_running(BackgroundKind::Compaction) {
-            return;
+            return true;
         }
         let Some(chat) = self.chats.iter().find(|c| c.id == chat_id) else {
-            return;
+            return false;
         };
         let Some(plan) = self.plan_roll(chat) else {
             // Nothing left to fold: the tail alone already fills the window. Only
             // the read-back tools (stage 3) or a bigger `-c` help here, and both
             // are the user's move — saying it every turn would be nagging, so an
-            // external server is told once per session (F3 below).
+            // external server is told once per session (F3 below). Not in a turn
+            // the server cut: its figure is the cut one, and the cut's own note
+            // names the same setting.
             tracing::debug!(chat = %chat_id, "over the compaction threshold with nothing left to fold");
-            self.note_window_too_small(usage.next_prompt_estimate(), budget);
-            return;
+            if let (None, Some(budget)) = (usage.cut, budget) {
+                self.note_window_too_small(usage.next_prompt_estimate(), budget);
+            }
+            return false;
         };
         let folded = plan.cut;
         if let Err(reason) = self.spawn_roll(chat_id, plan, CompactOrigin::Auto) {
@@ -281,15 +317,17 @@ impl Orchestrator {
             // that just ended used it, so this is a transient state and the next
             // turn will try again. It must not spend a strike.
             tracing::debug!(chat = %chat_id, %reason, "auto-compaction deferred");
-            return;
+            return false;
         }
         tracing::info!(
             chat = %chat_id,
             prompt = usage.prompt_tokens,
-            budget,
+            budget = ?budget,
+            cut = usage.cut.is_some(),
             folded,
             "auto-compaction started"
         );
+        true
     }
 
     /// The context window to measure against, in tokens, or `None` when nothing
@@ -413,6 +451,35 @@ impl Orchestrator {
                     ("window", &window.to_string()),
                 ],
             )));
+    }
+
+    /// The server cut a request of the turn to fit its window and said nothing
+    /// (docs/research/prompt-cut-detection.md): the reply was made without part
+    /// of the conversation. Said once per server session, like the window note
+    /// (F2) — a window too small for the conversation cuts every turn — and only
+    /// of an external server, the only kind it is told of. With a fold under
+    /// way the note says to ask again once it lands; without one, what raises
+    /// the window.
+    pub(super) fn note_prompt_cut(&mut self, cut: PromptCut, folding: bool) {
+        if self.config.engine.mode != ServerMode::External {
+            return;
+        }
+        if !self.engines.claim_cut_note() {
+            return;
+        }
+        let key = if folding {
+            "ui.notice.prompt_cut_folding"
+        } else {
+            "ui.notice.prompt_cut"
+        };
+        let loc = self.ui_locale();
+        let _ = self.evt_tx.send(AppEvent::Notice(loc.tf(
+            key,
+            &[
+                ("processed", &cut.processed.to_string()),
+                ("held", &cut.held.to_string()),
+            ],
+        )));
     }
 
     /// Asks the engine what its window is, in the background (S1).

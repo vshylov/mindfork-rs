@@ -44,6 +44,7 @@ mod mcp;
 mod model_name;
 mod pool;
 mod profiles;
+mod prompt_cut;
 mod rag;
 mod reembed;
 mod reflection;

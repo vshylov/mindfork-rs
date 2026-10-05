@@ -180,7 +180,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-10-05, version 0.16.0)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **3915 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **3936 unit tests
 green, 257 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump and demo-reel regenerators).
 
@@ -195,8 +195,9 @@ being recent is dropped, not shortened.
 <!-- cyrillic-ok:start -->
 - **Ollama** (2026-10-05): the README's recipe, run live, found a slow-prefill note
   meant for llama-server (fixed) and Ollama's silent cut of an overlong prompt; its
-  window is read from `/api/ps` after the first turn, and one too small for the
-  conversation is said once ([docs/research/ollama-window.md](docs/research/ollama-window.md),
+  window is read from `/api/ps`, one too small is said once, and a prompt it cut is
+  told from its `usage` ([docs/research/ollama-window.md](docs/research/ollama-window.md),
+  [prompt-cut-detection.md](docs/research/prompt-cut-detection.md),
   [docs/journal/engine.md](docs/journal/engine.md)).
 - **Scoop and the AUR** (2026-10-03): `vshylov/scoop-bucket` — the release's zip,
   data in `%APPDATA%`, Excavator for updates — is live; `mindfork-rs-bin` is built
