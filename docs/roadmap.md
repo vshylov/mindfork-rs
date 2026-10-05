@@ -644,6 +644,10 @@ An index, newest first — one line per track, with the release that shipped it
 and where its story is told. What a track left open is a bullet above, under
 its area.
 
+- **Ollama's window** — 0.16.0 (2026-10-05): the README's recipe run live, the
+  slow-prefill note kept to a llama-server, the window read from `/api/ps`
+  after the first turn, a window too small for the conversation said once.
+  [ollama-window.md](research/ollama-window.md).
 - **The animated demo** — 0.15.0 (2026-10-05), three stages: a turn played
   through the runtime's own path and drawn to GIF and WebP by
   `tools/demo_reel.py`; every release draws it, in a dark and a light look and

@@ -88,16 +88,15 @@ Scenarios (`--scenario`):
 
 * `ollama` — a copy of the binary in a scratch directory, set up by the
   README's Ollama recipe (`mindfork setup --set …`, word for word), against a
-  **running Ollama** with the model pulled and `OLLAMA_CONTEXT_LENGTH` equal to
-  the recipe's window (`MINDFORK_OLLAMA_URL`, `MINDFORK_OLLAMA_MODEL` and
-  `MINDFORK_OLLAMA_CONTEXT` override the recipe's values): a question is
+  **running Ollama** with the model pulled and `OLLAMA_CONTEXT_LENGTH` set
+  (`MINDFORK_OLLAMA_URL` and `MINDFORK_OLLAMA_MODEL` override the recipe's
+  values, and `MINDFORK_OLLAMA_CONTEXT` types a window as 0.15.0's recipe did): a question is
   answered, no slow-prefill note names llama-server's launch flags — Ollama
   sends llama.cpp's timings, its first with the model's load in them — a note
   is saved through the agentic loop, and `Enter` on the model row lists what
-  the server serves. With `MINDFORK_OLLAMA_CONTEXT=` (empty) no window is
-  typed, and the app must have read Ollama's own from `/api/ps` after the first
-  turn (its log says so); a server whose window is 4096 or less must have been
-  told it is too small. Takes the single-instance lock, like `first-frame`.
+  the server serves. With no window typed the app must have read Ollama's own
+  from `/api/ps` after the first turn (its log says so); a server whose window
+  is 4096 or less must have been told it is too small. Takes the single-instance lock, like `first-frame`.
 
 * `small-window` — `mindfork demo` in consoles started small (spec §11.1.1):
   at 57×5, the window of the report, the frame is the "window too small"
@@ -1278,12 +1277,12 @@ def scenario_small_window(exe: Path, report: Report) -> None:
     no_cursor_under_the_help(exe, report)
 
 
-# The Ollama recipe as the README prints it (install.md §3): the server's window
-# and the one the app measures against are the same number, since Ollama cuts a
-# prompt that does not fit in silence.
+# The Ollama recipe as the README prints it (install.md §3): the window is
+# Ollama's own setting, which the app reads from `/api/ps`; a window typed into
+# the app (`MINDFORK_OLLAMA_CONTEXT=16384`) is 0.15.0's recipe.
 OLLAMA_URL = "http://localhost:11434/v1"
 OLLAMA_MODEL = "gemma4:e4b"
-OLLAMA_WINDOW = "16384"
+OLLAMA_WINDOW = ""
 # The slow-prefill note's launch line — llama-server's flags, which Ollama does
 # not take.
 LAUNCH_LINE = "-b 256 -ub 256"
@@ -1320,8 +1319,8 @@ def scenario_ollama(exe: Path, report: Report) -> None:
             "--set", f"engine.external.url={url}",
             "--set", f"engine.external.model_name={model}",
         ]
-        # An empty window is the recipe once a release reads Ollama's own: the
-        # window is set in Ollama alone.
+        # The recipe types no window: the app reads Ollama's. A typed one is
+        # 0.15.0's recipe, kept as an arm.
         if window:
             recipe += ["--set", f"compaction.context_tokens={window}"]
         done = subprocess.run(recipe, cwd=root, capture_output=True, text=True)

@@ -723,12 +723,12 @@ Two modes (configured on the settings screen, `Ctrl+P`, "Model/server" section):
 **Ollama is an `external` server**, at `http://localhost:11434/v1`, with the
 model's name — the one `ollama list` prints — in "Model (opt.)": it serves every
 model it has pulled and routes on that field. `Enter` on the field lists them.
-One thing needs setting by hand, and it needs it on both sides: **the context
-window.**
+One thing needs setting, in Ollama: **the context window** — the app reads it
+from there.
 
 ```bash
 ollama pull gemma4:e4b
-mindfork setup --set engine.mode=external --set engine.external.url=http://localhost:11434/v1 --set engine.external.model_name=gemma4:e4b --set compaction.context_tokens=16384
+mindfork setup --set engine.mode=external --set engine.external.url=http://localhost:11434/v1 --set engine.external.model_name=gemma4:e4b
 ```
 
 - **Ollama's window is its own setting** — the context slider in the Ollama
@@ -740,8 +740,9 @@ mindfork setup --set engine.mode=external --set engine.external.url=http://local
 - **A prompt that outgrows it is cut in silence.** Measured on Ollama 0.35.1:
   a prompt just over the window (2060 tokens in 2048; 2040 still fit) was cut
   to half of it from the front, `keep=5` — the system message went first — and
-  answered with a `200`, so the model answered without its instructions. Its `usage` then reports the cut
-  length, so nothing on the app's side can see what was lost.
+  answered with a `200`, so the model answered without its instructions. Its
+  `usage` then reports the cut length, so nothing on the app's side can see
+  what was lost.
 - **mindfork's first turn is already about 3500 tokens** — its instructions,
   the memory and the tool schemas (measured on `gemma4:e4b`: 3503, then 3813
   after a one-word exchange), so a 4096 window is gone by the third.
@@ -749,10 +750,10 @@ mindfork setup --set engine.mode=external --set engine.external.url=http://local
   it has loaded and the window of each — after the first turn, since Ollama
   loads a model on its first request. Automatic compaction then folds the
   conversation into a summary at 75 % of it, before Ollama would cut anything.
-  **Released versions up to 0.15.0 cannot**, and need the number typed into
-  **Settings → Memory → Context** (`compaction.context_tokens`), the same as
-  Ollama's — which is what the recipe above does. A typed number wins over the
-  one read, so if you typed one, keep it equal to Ollama's or clear it.
+  **0.15.0 and earlier cannot**, and need the number typed into **Settings →
+  Memory → Context** (`compaction.context_tokens`), the same as Ollama's — add
+  `--set compaction.context_tokens=16384` to the line above. A typed number wins
+  over the one read, so if you typed one, keep it equal to Ollama's or clear it.
 - **A window too small for the conversation is said in the feed**, once per
   session: when a turn ends over the 75 % with nothing earlier to fold — at
   Ollama's 4096, the second turn — the note names the window, the prompt and

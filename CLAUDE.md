@@ -178,7 +178,7 @@ Backend selection: `MINDFORK_ENGINE_URL` (external, any OpenAI server) OR
 rented instead of hosted — `python tools/e2e_hf.py run`, see
 `docs/history/remote-e2e-hf.md`.
 
-## Status (2026-10-05, version 0.15.0)
+## Status (2026-10-05, version 0.16.0)
 
 The **M0–M9** plan is done, plus extensive post-M9 work — **3915 unit tests
 green, 257 `#[ignore]`** (live smokes + a real-clipboard round trip + the
@@ -193,6 +193,11 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **Ollama** (2026-10-05): the README's recipe, run live, found a slow-prefill note
+  meant for llama-server (fixed) and Ollama's silent cut of an overlong prompt; its
+  window is read from `/api/ps` after the first turn, and one too small for the
+  conversation is said once ([docs/research/ollama-window.md](docs/research/ollama-window.md),
+  [docs/journal/engine.md](docs/journal/engine.md)).
 - **Scoop and the AUR** (2026-10-03): `vshylov/scoop-bucket` — the release's zip,
   data in `%APPDATA%`, Excavator for updates — is live; `mindfork-rs-bin` is built
   and checked by every release (`aur.yml`) and **blocked**: the AUR's registration
