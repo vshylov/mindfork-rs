@@ -830,14 +830,17 @@ def scenario_user_theme(exe: Path, report: Report) -> None:
 
 
 # What the status line says while a message is read aloud, the picker's first
-# row, the row of the gateway's key, the unit a listed price is in and the
-# status line's chip for a ready chat engine — each read off the screen more
-# than once.
+# row, the row of the gateway's key, the unit a listed price is in, the status
+# line's chip for a ready chat engine and the input box's title once no turn
+# runs — each read off the screen more than once.
 SPEAKING = "speaking"
 BY_HAND = "Type a name by hand"
 KEY_ROW = "OpenRouter API key"
 PRICED = "per 1M tokens"
 CHAT_READY = "● chat"
+TURN_OVER = "Enter send"
+# The chat scenarios' first question; its one-word answer is read off the screen.
+CAPITAL_QUESTION = "Answer with one word: what is the capital of France?"
 
 
 def text_of(rows: list[list[tuple[str, int]]]) -> str:
@@ -912,7 +915,7 @@ def scenario_gateway(exe: Path, report: Report) -> None:
         session = Session(copy, [], cwd=root)
         try:
             print("the chat: a question through the gateway")
-            type_text("Answer with one word: what is the capital of France?")
+            type_text(CAPITAL_QUESTION)
             press("enter", SETTLE_REPAINT)
             rows = wait_for_text("Paris", 60)
             print(text_of(rows))
@@ -1376,11 +1379,11 @@ def scenario_ollama(exe: Path, report: Report) -> None:
         try:
             print("the chat: a question through Ollama (the first loads the model)")
             report.says("the start", wait_for_text(CHAT_READY, 60), (CHAT_READY,))
-            type_text("Answer with one word: what is the capital of France?")
+            type_text(CAPITAL_QUESTION)
             press("enter", SETTLE_REPAINT)
             rows = wait_for_text("Paris", 180)
             # The turn's notes land at its end, after the reply's last token.
-            wait_for_text("Enter send", 30)
+            wait_for_text(TURN_OVER, 30)
             time.sleep(2)
             rows = read_screen()
             print(text_of(rows))
@@ -1394,7 +1397,7 @@ def scenario_ollama(exe: Path, report: Report) -> None:
             type_text("Save a note with the note_save tool: my GPU has 24 GB. Then say done.")
             press("enter", SETTLE_REPAINT)
             wait_for_text("note_save(", 180)
-            wait_for_text("Enter send", 120)
+            wait_for_text(TURN_OVER, 120)
             time.sleep(2)
             rows = read_screen()
             print(text_of(rows))
@@ -1472,10 +1475,10 @@ def scenario_ollama_cut(exe: Path, report: Report) -> None:
         try:
             print("the first turn: a short question, which fits")
             report.says("the start", wait_for_text(CHAT_READY, 60), (CHAT_READY,))
-            type_text("Answer with one word: what is the capital of France?")
+            type_text(CAPITAL_QUESTION)
             press("enter", SETTLE_REPAINT)
             wait_for_text("Paris", 180)
-            wait_for_text("Enter send", 30)
+            wait_for_text(TURN_OVER, 30)
             served = ollama_window(url, model)
             print(f"Ollama runs {model} with a window of {served}")
             report.check(
@@ -1491,7 +1494,7 @@ def scenario_ollama_cut(exe: Path, report: Report) -> None:
             wait_for_text("capital of France?", 30)
             time.sleep(2)
             press("enter", SETTLE_REPAINT)
-            wait_for_text("Enter send", 300)
+            wait_for_text(TURN_OVER, 300)
             time.sleep(2)
             rows = read_screen()
             print(text_of(rows))

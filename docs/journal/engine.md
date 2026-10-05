@@ -6424,6 +6424,11 @@ CHANGELOG (Fixed); lessons §3 (a probe's output is not its verdict).
   Ollama's log, no false cut). The bound held 84 % of the real 5210. Pasting
   needed one fix in the probe: an Enter in the same drain as the paste is a
   line break in it, so it waits for the page to be in the box.
+- **Sonar on the PR**: two `python:S1192` in the probe — the input box's idle
+  title `"Enter send"` four times and the first question three, both from the
+  `ollama` scenarios. They become `TURN_OVER` and `CAPITAL_QUESTION` beside
+  `CHAT_READY`; the AST count of repeated literals loses exactly those two, and
+  `ollama` (13 checks, at 4096) and `ollama-cut` (7) rerun green.
 - **Not in this branch**: asking Ollama to refuse through its own `/api/chat`;
   the roll's own prompt, which a small window can cut the same way; OpenRouter's
   `middle-out`; a server that would report only the uncached part.
