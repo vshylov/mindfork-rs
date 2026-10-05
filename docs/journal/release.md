@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (62)
+## Entries (63)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -74,6 +74,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: the demo's `note_save` card is a call the real tool could answer (done)
 - Post-M9: macOS stage 1a — what a Mac needs to run right (done)
 - Post-M9: macOS stage 2 — the release, `install.sh` and a Homebrew tap (done)
+- Release 0.15.0 (prepared)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -3651,4 +3652,32 @@ macOS build, and the 0.14.1 `install.sh` that refuses a Mac.
 **Tests:** no Rust changed — 3902 unit tests, 257 `#[ignore]`, as before;
 `install_test.sh` 41/41 on Linux, its macOS arms on the runner; shellcheck clean
 at CI's severity. No live run: packaging only.
+
+### Release 0.15.0 (prepared)
+
+- **A release PR** per [AGENTS.md §6](../../AGENTS.md), branch
+  `chore/release-0.15.0`: `Cargo.toml` `0.14.1 → 0.15.0` (+ `Cargo.lock`, one
+  line), `site/zola.toml` `app_version`, `CHANGELOG.md` — `[Unreleased]` →
+  `[0.15.0] — 2026-10-05` under a lead paragraph, a fresh `[Unreleased]`, the
+  comparison links; the closed-tracks index of `docs/roadmap.md` gains the
+  animated demo, and the macOS item says what shipped and what is open; the
+  release's post for mindfork.io. A MINOR by §6: `[Unreleased]` held four items
+  under *Added* (macOS, the keys, Scoop, the animated demo).
+- **The macOS install documents ride with it.** They were a draft of their own
+  (PR 691), held back because before this release a Mac user following them
+  would reach 0.14.1 — no macOS build, and an `install.sh` that refuses a Mac.
+  This branch is cut from that one's head, so one merge brings both, and the
+  site, which holds its deploy while `Cargo.toml` names an unpublished version,
+  publishes them with the release.
+- **The `Data` rubric is empty, and was asked.** Of what `[Unreleased]` writes
+  to disk, one value is new: `platform-uuid-v1`, the macOS secret scheme, in an
+  entry of `settings.json`'s `api_keys`. Its field is a free-form string, not an
+  enum — ADR 0008 made it one so that an unfamiliar scheme reads as another
+  machine's entry, kept and not decrypted (`foreign_entries_are_ignored_and_preserved`)
+  — and only a Mac writes it, where 0.14.1 never ran. Nothing else in the
+  release changes a stored type.
+- **Rehearsed first.** `release.yml` changed in this release (the macOS build
+  job and its archive, PR 690), so the whole workflow was run on a prerelease
+  tag, `v0.14.1-rc1`, before this PR was merged — its outcome is recorded below
+  once it is in.
 
