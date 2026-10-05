@@ -3823,7 +3823,7 @@ at CI's severity. No live run: packaging only.
   install.md keeps the typed line as what 0.15.0 and earlier need.
   `console_probe.py --scenario ollama` follows: its recipe types no window, and
   `MINDFORK_OLLAMA_CONTEXT` is now the arm that types one. Run on this branch
-  against a cold Ollama 0.35.1 at 16384: all fifteen checks, the app's log
+  against a cold Ollama 0.35.1 at 16384: all twelve checks, the app's log
   saying `context_budget=16384` with none typed.
 - **No `Data` rubric, by measurement.** `git diff v0.15.0 -- src/shared/storage
   src/shared/config.rs src/entities src/features/data_migration.rs
@@ -3847,4 +3847,59 @@ at CI's severity. No live run: packaging only.
   warnings`, `fmt`, every Python gate of the Lints job, and `release_guard.py
   --tag v0.16.0` accepting the tag — its notes the `[0.16.0]` section, 28 lines
   (the `notes.md` it writes was removed, not committed).
+- **A correction to the line above**: the `ollama` scenario makes twelve
+  checks, not fifteen — the release PR's description said fifteen as well.
+- **The draft, checked before anyone else could see it** (§6 step 5). The owner
+  merged at 16:07:29Z and set `v0.16.0` on the merge commit `b0e2e8fc`, which
+  was `origin/main`; `release.yml` (run 37338705559) was green in all eight
+  jobs in 16 min 21 s — Windows the longest at 14 min 48 s, macOS 13 min 02 s
+  (5 min 43 s for 0.15.0), the demo 4 min 13 s — and left a draft that was not a
+  prerelease, with fifteen assets under 0.15.0's names. Its notes were the
+  CHANGELOG's `[0.16.0]` section under its lead paragraph, 33 lines with the
+  footer. Every file downloaded hashed to the line `sha256sums.txt` gives it,
+  fourteen of fourteen.
+- **The job's install steps: `passed=35 failed=0` in the macOS build and
+  `passed=43 failed=0` in the publication**, and `installed: mindfork 0.16.0
+  (expected: mindfork 0.16.0)`. `install.sh` did not change in this release:
+  its digest is 0.15.0's, `0b66b243…`.
+- **The released Windows binary against Ollama** — the release's own subject.
+  The zip's `mindfork.exe` says `mindfork 0.16.0`; `console_probe.py --scenario
+  ollama --exe` it, against a cold Ollama 0.35.1 at `OLLAMA_CONTEXT_LENGTH=16384`
+  with the recipe as published (no window typed): all twelve checks — the
+  reply, no launch line after either turn, `note_save` through the agentic loop,
+  no window-too-small note at 16384, Ollama's models behind the model row, exit
+  0 — and the app's log saying `context_budget=16384`.
+- **The macOS archive**: a `Mach-O 64-bit arm64 executable`, its
+  `THIRD-PARTY-NOTICES.md` naming objc2 and coreaudio-rs (twelve lines), as in
+  0.15.0. Not run here, where there is no Mac.
+- **Attestations**: one each, `v0.16.0`, for the three archives and the
+  installer; a scratch file the release never made exits 1. **The six animation
+  files are byte for byte 0.15.0's** — each digest is a line of 0.15.0's
+  `sha256sums.txt`, and the attestation looked up by it lists three runs:
+  `v0.14.1-rc1`, `v0.15.0` and `v0.16.0`. Nothing the reel shows changed in this
+  release, and three release runs on different runners drew the same bytes.
+  `install.sh` carries the same three, being the same file.
+- **Published, and the numbers of it.** The owner published at 17:58:17Z
+  (immutable), 1 h 51 min after the merge. `crates-io.yml` 17:58:20Z →
+  18:01:08Z, `mindfork 0.16.0` on the registry at 18:01:00Z (4 423 224 bytes);
+  `Site` started by itself two seconds after `crates.io` completed and deployed
+  at 18:01:49Z — **3 min 32 s after the publication** (0.15.0: 3 min 20 s). The
+  hold on the merge had shown as before: "Is this version out?" green, the
+  build and the deploy skipped. From outside: the post answers 200; the home
+  page's and the install page's structured data say `"softwareVersion":
+  "0.16.0"`; the blog's index, `/llms.txt`, the feed and the sitemap list the
+  post; the install page carries the recipe with no `context_tokens` in it, and
+  the home page's demo line its *Two lines*; `releases/latest` resolves to
+  `v0.16.0`, its `install.sh` hashing to the draft's.
+- **The package managers.** `aur.yml` built and checked `mindfork-rs-bin` 0.16.0
+  and stopped at its notice — no key. The Homebrew tap was **not** run by hand
+  this time — it publishes a commit to a public repository, and the owner did
+  not ask — so it moves on its six-hour schedule; when this was written its
+  formula still named `v0.15.0`. Scoop's Excavator, measured on the release
+  before: 0.15.0, published at 01:39:16Z, reached the bucket at 04:56:20Z
+  (`mindfork: Update to version 0.15.0`), 3 h 17 min later.
+- **Not run**: anything on a Mac with a screen (stage 3 of
+  [macos.md](../research/macos.md)); the TUI on real data, which is the owner's;
+  the Windows installer and the `.deb`, `.rpm` and Arch packages, of which the
+  digests were compared; a managed server with a model on a GPU.
 
