@@ -215,10 +215,12 @@ mindfork setup --set engine.mode=external --set engine.external.url=http://local
 
 mindfork reads the window from Ollama once the first turn has loaded the model,
 and folds the conversation into a summary before it fills — which matters,
-because a prompt that outgrows Ollama's window is cut in silence, the system
-message first. Ollama's default is 4096 tokens on a GPU under 24 GB, and
-mindfork's first turn already takes about 3500: there the app says once that
-the window is too small, and how to raise it.
+because Ollama cuts a prompt that outgrows its window in silence: the oldest
+messages go, and when the last message alone does not fit, the start of the
+prompt with the instructions. Ollama's default is 4096 tokens on a GPU under
+24 GB, and mindfork's first turn already takes about 3500: there the app says
+once that the window is too small, and how to raise it, and a prompt Ollama
+cut is told.
 
 ## What it does with your machine
 

@@ -14,6 +14,13 @@ split by subsystem.
 
 ## [Unreleased]
 
+## [0.16.1] — 2026-10-06
+
+**When Ollama cuts the prompt, you are told.** Ollama answers a prompt longer
+than its window with a reply instead of an error, and reports the cut size.
+mindfork now tells such a cut, says once that the reply was made without part
+of the conversation, and folds the conversation into a summary when it can.
+
 ### Added
 
 - **A prompt the server cut in silence is told.** Ollama answers a prompt
@@ -32,7 +39,8 @@ split by subsystem.
 - **The window-too-small note described Ollama's cut wrongly.** It said Ollama
   cuts a prompt over its window from the start, the system message first; it
   does that only when the last message alone does not fit, and otherwise drops
-  the oldest messages. The note and the install guide say both now.
+  the oldest messages. The note, the install guide, the README and
+  mindfork.io's install page say both now.
 
 ## [0.16.0] — 2026-10-05
 
@@ -3161,7 +3169,8 @@ history is in the [docs/journal/](docs/journal/) log).
   (notes/RAG/self-model, sqlite-vec, per-profile isolation). Schema format is
   v1; schema versioning and migrations are formalized in later releases.
 
-[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.16.1...HEAD
+[0.16.1]: https://github.com/vshylov/mindfork-rs/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/vshylov/mindfork-rs/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/vshylov/mindfork-rs/compare/v0.14.1...v0.15.0
 [0.14.1]: https://github.com/vshylov/mindfork-rs/compare/v0.14.0...v0.14.1

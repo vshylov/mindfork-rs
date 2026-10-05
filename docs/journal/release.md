@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (65)
+## Entries (66)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -77,6 +77,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Release 0.15.0 (prepared)
 - Post-M9: the README leads with the self-model and plays the animation (done)
 - Release 0.16.0 (prepared)
+- Release 0.16.1 (prepared)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -3903,3 +3904,44 @@ at CI's severity. No live run: packaging only.
   the Windows installer and the `.deb`, `.rpm` and Arch packages, of which the
   digests were compared; a managed server with a model on a GPU.
 
+### Release 0.16.1 (prepared)
+
+- **A release PR** per [AGENTS.md §6](../../AGENTS.md), branch
+  `chore/release-0.16.1`: `Cargo.toml` `0.16.0 → 0.16.1` (+ `Cargo.lock`, one
+  line), `site/zola.toml` `app_version`, `CHANGELOG.md` — `[Unreleased]` →
+  `[0.16.1] — 2026-10-06` under a lead paragraph, a fresh `[Unreleased]`, the
+  comparison links; CLAUDE.md's status heading; the closed-tracks index of
+  `docs/roadmap.md`; the release's post for mindfork.io. Since `v0.16.0`: the
+  cut-prompt detection (PR 705) and two PRs with no effect for a user — the
+  journal of 0.16.0's publication (703) and a Sonar cleanup of
+  `console_probe.py` (704).
+- **A PATCH, as the owner asked, with an item under *Added*.** By the letter of
+  §6 a feature is a MINOR; 0.9.x, 0.10.1, 0.10.2 and 0.11.2 shipped *Added*
+  under a PATCH — the last two at the owner's request — and this one is the
+  same: one item, the
+  continuation of 0.16.0's Ollama track, nothing stored, and the one other
+  change a fix of a note's text. Recorded so that the number is not later read
+  as an oversight.
+- **The README and the site's install page said the old cut.** Both described
+  Ollama's cut as "the system message first", which the measurement of PR 705
+  showed to be the rarer of two; install.md was corrected in that PR, these two
+  wait for the release because the site describes the released version and
+  the README is the crate's page. Both now name both cuts and that a cut is
+  told.
+- **No `Data` rubric, by measurement.** `git diff v0.16.0 -- src/shared/storage
+  src/shared/config.rs src/entities src/features/data_migration.rs
+  src/features/backup.rs` is empty: the kept requests the detection compares
+  against live in memory, per session.
+- **No rehearsal.** `git diff v0.16.0 -- .github/workflows packaging` is empty.
+- **The post** says what an Ollama user meets: the two cuts and why only the
+  second matters, what the app now does, the measured run (5210 → 2051 at 4096,
+  *of at least 4357 tokens it processed 2051*) and its controls, the fixed note.
+  Every figure is the design's or install.md §3's. `llms.txt` regenerated; the
+  site checked (`--skip-external-links`, the CI's form) and built with the
+  pinned Zola 0.23.6: the post in the blog's index and the sitemap, the home
+  page's structured data saying `0.16.1`. `site.yml` holds the deploy until
+  the release is public.
+- **Gates** on Windows: **3936 unit tests, 257 `#[ignore]`**, `clippy -D
+  warnings`, `fmt`, every Python gate of the Lints job, and `release_guard.py
+  --tag v0.16.1` accepting the tag — its notes the `[0.16.1]` section, 25 lines
+  (the `notes.md` it writes was removed, not committed).
