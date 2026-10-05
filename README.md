@@ -14,34 +14,30 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Built With Ratatui](https://img.shields.io/badge/Built_With_Ratatui-000?logo=ratatui&logoColor=fff)](https://ratatui.rs/)
 
-**A terminal AI chat written in Rust: local models via llama.cpp, or OpenAI,
-Anthropic, Gemini, Grok and OpenRouter in the cloud, with persistent memory,
-notes, RAG and tools.** One native binary for **Windows**, **Linux** and **macOS**
+**A terminal AI chat with a memory and a self-model.** The assistant keeps notes
+about you, a model of itself that it revisits, and a knowledge base over your
+files — on a local Gemma or Qwen through llama.cpp, or on OpenAI, Anthropic,
+Gemini, Grok and OpenRouter in the cloud — and works with real tools behind
+switches you set. One native Rust binary for **Windows**, **Linux** and **macOS**
 on Apple Silicon (a preview), built on [ratatui](https://ratatui.rs).
 
-**No model yet?** `mindfork demo` opens the app with sample chats and a scripted
-model in a throwaway folder — no download, no key, nothing written outside a
-temporary directory.
-
-> mindfork is not trying to be yet another LLM client. The premise is that a
-> local Gemma or Qwen becomes **more self-aware and more interesting to talk
-> to** once it is given room to reflect: it keeps notes about you, maintains a
-> self-model it can revisit, reads and adjusts its own system message and
-> sampling mid-conversation, and can delegate work to a subagent that has its
-> own tools.
-
 <p align="center">
-  <img src="assets/screenshots/chat-dark-en.png" alt="mindfork chat: a conversation with an expanded thoughts block, a GFM table, a Mermaid flowchart drawn as text graphics, a LaTeX line and a note_save tool card" width="900">
+  <picture>
+    <source media="(prefers-reduced-motion: reduce)" srcset="https://github.com/vshylov/mindfork-rs/raw/HEAD/assets/screenshots/chat-dark-en.png">
+    <img src="https://mindfork.io/demo/mindfork-demo-dark-en.gif" alt="mindfork in a terminal: a question typed, the assistant's thoughts, a note saved, a table and a flowchart streamed in, then the assistant's self-model" width="900">
+  </picture>
 </p>
 
-Every screenshot here is **generated from code** against a demo profile — never
-captured from a real session — and a gate test fails the build the moment they
-drift from what the app renders
-([docs/history/demo-screenshots.md](docs/history/demo-screenshots.md)).
+Not a screen recording: every release draws this turn from its own interface,
+so it shows the version you download. The stills are generated from code too,
+against a demo profile, and a gate test fails the build the moment they drift
+from what the app renders ([demo-reel.md](docs/research/demo-reel.md),
+[demo-screenshots.md](docs/history/demo-screenshots.md)).
 
 <details>
-<summary><b>More screens</b> — the chat list, settings (model &amp; tools), and the assistant's self-model</summary>
+<summary><b>More screens</b> — the chat, the chat list, settings (model &amp; tools), and the assistant's self-model</summary>
 <p align="center">
+  <img src="assets/screenshots/chat-dark-en.png" alt="mindfork chat: a conversation with an expanded thoughts block, a GFM table, a Mermaid flowchart drawn as text graphics, a LaTeX line and a note_save tool card" width="900">
   <img src="assets/screenshots/chat-list-dark-en.png" alt="the full-screen chat list: search, sort, message counts, an active-chat marker" width="900">
   <img src="assets/screenshots/settings-model-dark-en.png" alt="settings, Model/server: a managed llama-server with model path, context, GPU layers, FlashAttention and speculative decoding" width="900">
   <img src="assets/screenshots/settings-tools-dark-en.png" alt="settings, Tools: the agentic loop, web search, the Python sandbox, video and file-access switches" width="900">
@@ -51,7 +47,53 @@ drift from what the app renders
 
 ---
 
+## Install
+
+**Linux**, or a Mac: one line installs the portable build, and refuses the
+archive unless it matches the release's checksums.
+
+```bash
+curl -fsSL https://github.com/vshylov/mindfork-rs/releases/latest/download/install.sh | sh
+```
+
+**macOS** on Apple Silicon, through Homebrew (a preview):
+
+```bash
+brew install vshylov/tap/mindfork
+```
+
+**Windows**, through Scoop, which also keeps it current:
+
+```powershell
+scoop bucket add mindfork https://github.com/vshylov/scoop-bucket; scoop install mindfork/mindfork
+```
+
+Then **`mindfork demo`** opens the app with sample chats and a scripted model in
+a throwaway folder: no model to download, no key, nothing written outside a
+temporary directory. `mindfork` on its own starts with your data, and
+[Getting started](#getting-started) connects a model.
+
+The [releases](https://github.com/vshylov/mindfork-rs/releases) also carry a
+Windows installer and zip, and Linux deb, rpm and pkg.tar.zst packages.
+`cargo install mindfork` builds from crates.io, and `cargo build --release` from
+a checkout with a recent stable Rust. On a rented GPU box or in a container, the
+`curl` line run again repairs what a restart lost. All of it is in
+[install.md](docs/install.md) §1 and §3.4.
+
+> mindfork is a TUI and needs a **real terminal**. Started with its output
+> redirected or with no console, it says so and exits; the line commands
+> (`backup`, `import`, `llama setup`, …) work anywhere.
+
+---
+
 ## What it does
+
+> mindfork is not trying to be yet another LLM client. The premise is that a
+> local Gemma or Qwen becomes **more self-aware and more interesting to talk
+> to** once it is given room to reflect: it keeps notes about you, maintains a
+> self-model it can revisit, reads and adjusts its own system message and
+> sampling mid-conversation, and can delegate work to a subagent that has its
+> own tools.
 
 - **Any engine, one contract.** A managed `llama-server` the app launches
   itself, any OpenAI-compatible server you already run (vLLM, LM Studio, Ollama,
@@ -83,9 +125,11 @@ drift from what the app renders
   (a theme of your own is a file of one colour or of twenty), or no colours at
   all (`NO_COLOR` is honoured) — and an interface in English or Russian.
 - **Private by construction.** No telemetry, no update check, no account.
-  Everything lives in a `data/` folder next to the binary — take the folder, or
-  the USB stick it is on, and it comes with you. API keys are encrypted and bound
-  to the machine; backups are a zip with optional AES-256.
+  Everything lives in one data folder on your disk: in your user profile when a
+  package or the installer put the app there, beside the binary for the portable
+  build — take the folder, or the USB stick it is on, and it comes with you. API
+  keys are encrypted and bound to the machine; backups are a zip with optional
+  AES-256.
 
 The longer version, with the reasoning: [the manual](docs/manual.md) and the
 articles at [mindfork.io](https://mindfork.io/articles/).
@@ -94,43 +138,7 @@ articles at [mindfork.io](https://mindfork.io/articles/).
 
 ## Getting started
 
-### 1. Install
-
-Grab a build from the
-[releases](https://github.com/vshylov/mindfork-rs/releases): a Windows
-**installer** or zip archive, Linux **deb / rpm / pkg.tar.zst** packages or a
-tar.gz. On Linux one line installs the portable build — and on a rented GPU box
-or in a container, the same line again repairs what a restart lost
-([install.md](docs/install.md) §1, §3.4):
-
-```bash
-curl -fsSL https://github.com/vshylov/mindfork-rs/releases/latest/download/install.sh | sh
-```
-
-On Windows, **Scoop** installs it and keeps it current:
-
-```powershell
-scoop bucket add mindfork https://github.com/vshylov/scoop-bucket; scoop install mindfork/mindfork
-```
-
-On a Mac with Apple Silicon, **Homebrew** does (a preview —
-[install.md](docs/install.md) §1):
-
-```bash
-brew install vshylov/tap/mindfork
-```
-
-Or build from source with a recent stable Rust (edition 2024):
-
-```bash
-cargo build --release          # binary lands in target/release/
-```
-
-> mindfork is a TUI and needs a **real terminal**. Started with its output
-> redirected or with no console, it says so and exits; the line commands
-> (`backup`, `import`, `llama setup`, …) work anywhere.
-
-### 2. Connect a model
+### Connect a model
 
 Three routes, and they can all stay configured side by side.
 
@@ -141,24 +149,9 @@ there (stored encrypted and machine-bound, never shown back), and choose the
 list, filtered as you type.
 
 **The OpenRouter gateway** is the `openrouter` mode: one key serves the
-assistant, impersonation, embeddings, speech and video, each with a model of
-its own. Its model
-list opens before a key is entered and shows, per model, the context window, the
-price per million tokens in and out, and a mark on a model that takes no tools.
-The key is checked when an engine in this mode is applied — the embedder
-included — so a refused key is that engine's status rather than the first
-request's error; the context window, the
-sampling fields on offer and image support are read from the gateway's own entry
-for the model. Requests to the gateway carry two headers that name the
-application — never you — and a switch in the same section turns them off
-([PRIVACY.md](PRIVACY.md) §3.1). `/tts` speaks through the gateway as well: the
-Speech tab lists its speech models and each model's voices, and settles the
-audio format with the model by itself ([install.md](docs/install.md) §4.3).
-And a YouTube video can be watched through it: the video tool has a provider of
-its own to choose — Google's API or the gateway — and through the gateway the
-whole video is read and charged, even when a part of it is asked for
-([install.md](docs/install.md) §4.4). Details:
-[install.md](docs/install.md) §3.2.
+assistant, impersonation, embeddings, speech and video, each with a model of its
+own, and its model list shows each model's context window and price per million
+tokens ([install.md](docs/install.md) §3.2).
 
 **An external server.** Run any OpenAI-compatible server and point the app at it
 (mode `external`, the URL includes `/v1`):
@@ -171,8 +164,7 @@ llama-server -m google_gemma-4-E4B-it-Q4_1.gguf \
 
 A gateway or an authenticated server takes its key in the field below the URL,
 and its model name in the one above — that name is what a multi-model endpoint
-routes on, while a single-model server ignores it. (OpenRouter works this way
-too, as it always did; its own mode above is the better road to it.)
+routes on, while a single-model server ignores it.
 
 **A managed server.** The app launches and supervises `llama-server` itself, and
 can fetch one for your machine:
@@ -203,7 +195,7 @@ and everything else keeps working.
 data paths, the Python sandbox, MCP servers, speech, backups and the environment
 variables.
 
-### 3. Learn the app
+### Learn the app
 
 **[docs/manual.md](docs/manual.md)** — the screens, what it remembers, files and
 your project, the tools and their switches, and the full list of keys and
@@ -292,8 +284,8 @@ for convenience: the English originals are the texts with legal force.
 ## Project status
 
 Actively developed, in small reviewed tracks; the original ten-milestone plan
-([docs/history/plan.md](docs/history/plan.md)) is long finished. The suite stands
-at **3693 unit tests** plus **218 `#[ignore]` smoke tests** that are run against
-real stacks — a local `llama-server` and the live cloud APIs — before
-provider-touching changes ship. See the [changelog](CHANGELOG.md) for what is new
+([docs/history/plan.md](docs/history/plan.md)) is long finished. Every change
+lands with its unit tests, and the smoke tests that need a real stack — a local
+`llama-server` and the live cloud APIs — are run before a change that touches a
+provider ships. See the [changelog](CHANGELOG.md) for what is new
 and the [roadmap](docs/roadmap.md) for what may come next.

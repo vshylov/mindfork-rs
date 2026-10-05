@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (63)
+## Entries (64)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -75,6 +75,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: macOS stage 1a — what a Mac needs to run right (done)
 - Post-M9: macOS stage 2 — the release, `install.sh` and a Homebrew tap (done)
 - Release 0.15.0 (prepared)
+- Post-M9: the README leads with the self-model and plays the animation (done)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -3762,4 +3763,43 @@ at CI's severity. No live run: packaging only.
   ([macos.md](../research/macos.md) §6.2); the TUI on real data, which is the
   owner's; the Windows installer and the `.deb`, `.rpm` and Arch packages, of
   which the digests were compared; a managed server with a model on a GPU.
+
+### Post-M9: the README leads with the self-model and plays the animation (done)
+
+- **Why** (branch `docs/readme-animation`, the promotion plan's stage 0,
+  [promotion.md](../research/promotion.md) §4): the README led with the
+  category — "a terminal AI chat written in Rust" — which a dozen projects
+  share, showed a still, and asked a visitor to read through four install
+  routes and a paragraph on OpenRouter before the first command. The plan's
+  order is hook → animation → install → features, and the animation could be
+  embedded only once a release carried it; 0.15.0 is the first.
+- **The first line is the differentiator**: "a terminal AI chat with a memory
+  and a self-model", then what it runs on. The premise blockquote, which said
+  it best and sat below the lead, now opens *What it does*.
+- **The animation is the dark GIF, from mindfork.io, in either theme.** The
+  site's deploy keeps `/demo/` at the newest release that has a reel
+  ([demo-reel.md](../research/demo-reel.md) §3.6), so the README follows each
+  release without a commit. Dark only, because the owner's ruling on the
+  README's stills holds here too: a terminal's picture shows the terminal, not
+  the page around it (the entry *the README's screenshots are the dark ones*).
+  A reader who asked for less motion gets the dark still through a `<source
+  media="(prefers-reduced-motion: reduce)">` with an absolute URL — the form
+  crates.io leaves alone, measured in that entry. Checked before the commit:
+  GitHub's renderer (`gh api markdown`) keeps the `media` attribute and routes
+  the GIF through its image proxy, which answers `200 image/gif` with all
+  1 161 629 bytes.
+- **Install is one line per system** — the `curl` line for Linux or a Mac,
+  Homebrew, Scoop — then `mindfork demo`; the installer, the packages, crates.io
+  and a source build are one paragraph under them. The four stills that were
+  behind *More screens* gained the chat's, which the animation replaced at the
+  top.
+- **What went**: the OpenRouter paragraph — every claim in it is in install.md
+  §3.2–§4.4 — is now three lines and a link; "Getting started" lost its install
+  step and its numbering; the project status no longer quotes a test count,
+  which said 3693 while the suite had grown to 3906. One claim was wrong
+  for the new install lines and was fixed: the data lives beside the binary
+  only for the portable build; a package or the installer keeps it in the
+  user's profile.
+- **crates.io keeps the old README until the next publish** — its rendering is
+  a snapshot taken at publish time. GitHub's changes on merge.
 

@@ -87,8 +87,8 @@ before stages 0–1 have removed what a first visitor would bounce off.
 | Discussions enabled | agent, `gh` | approved 2026-10-03 |
 | Social preview = `assets/og-card.png` (1200×630) — no API exists, Settings → General → Social preview | owner, one upload | approved 2026-10-03 |
 | An animated demo, generated from code (§6) | agent, a track | stages 1–3 done ([demo-reel.md](demo-reel.md)): drawn by every release, played by the site from the first release that carries it, and in Russian for Habr |
-| README shortened: hook → animation → install in three lines → features; the long OpenRouter paragraph moves to install.md; the stale test count goes | agent | after the first release that carries the animation — embedded before, it would be a broken image |
-| The differentiator first: the site's hero and the README's first line say "memory and a self-model", not "an AI chat in your terminal" | agent | after §6 |
+| README shortened: hook → animation → install in three lines → features; the long OpenRouter paragraph moves to install.md; the stale test count goes | agent | done 2026-10-05, once 0.15.0 carried the files: the dark GIF from mindfork.io, the still for a reader who asked for less motion; install is one line per system and `mindfork demo` |
+| The differentiator first: the site's hero and the README's first line say "memory and a self-model", not "an AI chat in your terminal" | agent | the README's first line done 2026-10-05; the site's hero next, with the Ollama recipe |
 
 ### Stage 1 — friction on the first try
 
