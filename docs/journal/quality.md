@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (32)
+## Entries (33)
 
 - Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - Post-M9: SonarQube Cloud analysis in CI (done)
@@ -44,6 +44,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: SonarQube follow-up — four runs of `append()` become one call (done)
 - Post-M9: SonarQube follow-up — the demo reel's two findings (done)
 - Post-M9: SonarQube follow-up — the console probe's two key names (done)
+- Post-M9: SonarQube follow-up — the console probe's ready-chat chip (done)
 
 ### Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - **28 relative links in the docs pointed at nothing**, and had for a while.
@@ -1728,3 +1729,25 @@ structure (AGENTS.md §3).
   suite green on the branch); the documentation gates green. No CHANGELOG
   entry: internal tooling (AGENTS.md §4). No live run beyond the probe's own: a
   developer tool, no engine path (AGENTS.md §3).
+
+### Post-M9: SonarQube follow-up — the console probe's ready-chat chip (done)
+
+- **One open finding on `main`, the gate green** (read through the Sonar MCP on
+  2026-10-05; branch `refactor/sonar-console-probe-chat-chip`). `python:S1192`,
+  CRITICAL, in `tools/console_probe.py`: `"● chat"` — the status line's chip for
+  a ready chat engine — spelt three times. The `gateway` scenario read it once;
+  the `ollama` scenario of #699 added two more, waiting for the chip and
+  checking it, and its PR gate let the third through, as with the key names
+  above ([lessons.md](../lessons.md) §10).
+- **Named beside the other texts read off the screen more than once**:
+  `CHAT_READY` joins `SPEAKING`, `BY_HAND`, `KEY_ROW` and `PRICED`, and both
+  scenarios use it. `"● emb"`, spelt once, stays a literal.
+- **Measured, old against new.** The AST count of string literals repeated three
+  times or more loses exactly `"● chat"` and gains nothing. The `gateway`
+  scenario rerun on the branch against a debug build, through OpenRouter: 41/41
+  checks, exit code 0 — `● chat` and `● emb` on the status line after the reply.
+  The `ollama` scenario was not rerun: no Ollama on this machine; it reads the
+  same constant, which the gateway run resolved.
+- No Rust touched — test totals unchanged; the documentation gates green. No
+  CHANGELOG entry: internal tooling (AGENTS.md §4). No live run beyond the
+  probe's own: a developer tool, no engine path (AGENTS.md §3).
