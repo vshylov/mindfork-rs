@@ -3945,3 +3945,50 @@ at CI's severity. No live run: packaging only.
   warnings`, `fmt`, every Python gate of the Lints job, and `release_guard.py
   --tag v0.16.1` accepting the tag — its notes the `[0.16.1]` section, 25 lines
   (the `notes.md` it writes was removed, not committed).
+- **The draft, checked before anyone else could see it** (§6 step 5). The owner
+  merged and set `v0.16.1` on the merge commit `c9805193`, which was
+  `origin/main`; `release.yml` (run 37386698963) was green in all eight jobs in
+  12 min 37 s — Windows the longest at 11 min 24 s, macOS 9 min 21 s, the demo
+  3 min 57 s — and left a draft that was not a prerelease, with fifteen assets
+  under 0.16.0's names. Its notes were the CHANGELOG's `[0.16.1]` section under
+  its lead paragraph, 30 lines with the footer. Every file downloaded hashed to
+  the line `sha256sums.txt` gives it, fourteen of fourteen.
+- **The job's install steps: `passed=35 failed=0` in the macOS build and
+  `passed=43 failed=0` in the publication**, and `installed: mindfork 0.16.1
+  (expected: mindfork 0.16.1)`. `install.sh` is 0.16.0's file, `0b66b243…`.
+- **The released Windows binary against Ollama** — the release's own subject.
+  The zip's `mindfork.exe` says `mindfork 0.16.1`. `console_probe.py --scenario
+  ollama-cut --exe` it against Ollama 0.35.1 at `OLLAMA_CONTEXT_LENGTH=4096`:
+  all seven checks, Ollama's log `truncating input prompt limit=2051
+  prompt=5210 keep=5 new=2051`, the app's `processed=2051 held=4357` — the
+  branch's figures to the token — and the note in the feed. The control,
+  `--scenario ollama` at 16384: all thirteen checks, no round told as cut,
+  `context_budget=16384` read with none typed.
+- **The macOS archive**: a `Mach-O 64-bit arm64 executable`, its
+  `THIRD-PARTY-NOTICES.md` naming objc2 and coreaudio-rs (twelve lines). Not run
+  here, where there is no Mac.
+- **Attestations** verify for the three archives, the installer and
+  `install.sh`; a scratch file exits 1. **The six animation files are byte
+  for byte 0.16.0's** — each digest is a line of 0.16.0's `sha256sums.txt`:
+  nothing the reel shows changed.
+- **Published, and the numbers of it.** The owner published at 23:30:18Z
+  (immutable), 9 min 51 s after the draft appeared.
+  `crates-io.yml` 23:30:20Z → 23:33:00Z, `mindfork 0.16.1` on the registry at
+  23:32:54Z (4 434 163 bytes); `Site` started by itself two seconds after
+  `crates.io` completed and deployed at 23:34:11Z — **3 min 53 s after the
+  publication** (0.16.0: 3 min 32 s). The hold on the merge had shown as
+  before: "Is this version out?" green, the build and the deploy skipped. From
+  outside: the post answers 200; the home page's and the install page's
+  structured data say `"softwareVersion": "0.16.1"`; the install page names
+  both of Ollama's cuts; the blog's index, `/llms.txt`, the feed and the
+  sitemap list the post; `releases/latest` resolves to `v0.16.1`, its
+  `install.sh` hashing to the draft's.
+- **The package managers.** `aur.yml` built and checked `mindfork-rs-bin` 0.16.1
+  and stopped at its notice — no key. The Homebrew tap moves on its six-hour
+  schedule; when this was written its formula still named `v0.16.0`, as it took
+  0.16.0 by schedule 43 min after that publication. Scoop's Excavator, measured
+  on the release before: 0.16.0, published at 17:58:17Z, reached the bucket at
+  20:43:56Z, 2 h 46 min later (0.15.0: 3 h 17 min).
+- **Not run**: anything on a Mac with a screen; the TUI on real data, which is
+  the owner's; the Windows installer and the `.deb`, `.rpm` and Arch packages,
+  of which the digests were compared.
