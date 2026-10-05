@@ -3691,4 +3691,75 @@ at CI's severity. No live run: packaging only.
   release job on Linux, which then installed the release's own archive and got
   `mindfork 0.14.1` back. The animated demo's frames look as they should. The
   draft and the tag were deleted afterwards.
+- **The draft, checked before anyone else could see it** (§6 step 5). The owner
+  merged at 01:20:20Z on 2026-10-05 and set `v0.15.0` on the merge commit
+  `226a2f2a`, which was `origin/main`; `release.yml` (run 37251086216) was green
+  in all eight jobs in 13 min 48 s — Windows the longest at 12 min 32 s, macOS
+  5 min 43 s, the demo 3 min 38 s — and left a draft that was not a prerelease,
+  with fifteen assets: 0.14.1's eight, the macOS archive and the six animation
+  files. Its notes were the CHANGELOG's `[0.15.0]` section under its lead
+  paragraph, 58 lines. Every file downloaded hashed to the line
+  `sha256sums.txt` gives it, fourteen of fourteen.
+- **The job's install steps: `passed=35 failed=0` in the macOS build and
+  `passed=43 failed=0` in the publication**, each with that system's real
+  binary, as the rehearsal had them; the release job then installed its own
+  archive and read `installed: mindfork 0.15.0 (expected: mindfork 0.15.0)`.
+- **The Windows binary, in a console** — the fix this release names for
+  Windows. The zip's `mindfork.exe` says `mindfork 0.15.0`; driven through
+  `console_probe.py --scenario altgr`, `AltGr+8` typed `₽` into the input box
+  and into the chat list's search, `Ctrl+Alt+A` typed nothing (the control),
+  `Ctrl+K` still cleared the box, and the app exited 0
+  ([lessons.md](../lessons.md) §6).
+- **The macOS archive**: a `Mach-O 64-bit arm64 executable`, and its
+  `THIRD-PARTY-NOTICES.md` names the crates only a Mac links (objc2 and its
+  family, coreaudio-rs — twelve lines). Not run here, where there is no Mac:
+  the build job's install step started it, and the tap's run below installs
+  it as a user would.
+- **Attestations**, checked after the publication: one each, `refs/tags/v0.15.0`,
+  for the three archives and the installer; a scratch file the release never
+  made exits 1. `install.sh` and **all six animation files carry two** — this
+  tag's and the rehearsal's `v0.14.1-rc1`: the attestation is looked up by
+  digest, so the rehearsal 28 minutes earlier, on other runners and under
+  another version, drew the reel byte for byte the same. That is the
+  determinism [demo-reel.md](../research/demo-reel.md) designed for (a virtual
+  clock, no version in a frame), measured for the first time on two release
+  runs.
+- **Published, and the numbers of it.** The owner published at 01:39:16Z
+  (immutable). `crates-io.yml` 01:39:18Z → 01:42:02Z, `mindfork 0.15.0` on the
+  registry at 01:41:57Z (4 417 864 bytes); `Site` started by itself two seconds
+  after `crates.io` completed and deployed at 01:42:36Z — **3 min 20 s after the
+  publication**, as for 0.14.1. The hold on the merge had shown as before: "Is
+  this version out?" green, the build and the deploy skipped, for the 19
+  minutes between the merge and the publication. From outside: the post answers
+  200; the home page's and the install page's structured data say
+  `"softwareVersion": "0.15.0"`; the blog's index, `/llms.txt`, the feed and the
+  sitemap list the post; the home page names both animations, and
+  `/demo/mindfork-demo-dark-en.gif` answers 200 with the release asset's
+  1 161 629 bytes (`max-age=86400`); the install page carries the Homebrew
+  line; `releases/latest` resolves to `v0.15.0`, its `install.sh` hashing to
+  the draft's `0b66b243…`.
+- **The package managers.** The Homebrew tap was run by hand at the owner's
+  request, a minute after the publication (`vshylov/homebrew-tap`, run
+  37252291761, 54 s), instead of waiting up to six hours for its schedule: the
+  script's own arms, the formula rendered for `v0.15.0` with the digest from
+  `sha256sums.txt`, then `brew install` on the runner — `48 files, 29.3MB` in the
+  Cellar — and `mindfork --version` equal to `mindfork 0.15.0` before the commit
+  `mindfork 0.15.0` was pushed — the first install of the macOS build outside
+  `release.yml`. `aur.yml` built and checked `mindfork-rs-bin` 0.15.0 and
+  stopped at its notice — no `AUR_SSH_PRIVATE_KEY`, nothing pushed. Scoop's
+  Excavator had last run 26 minutes before the publication, so when this was
+  written the bucket still said `0.14.1`; it picks a release up on its next run,
+  within about four hours.
+- **The README's install line, as published, on a bare image** — `install.sh`
+  was reworked for the Mac in this release (PR 690). Root without `CAP_CHOWN` in
+  `ubuntu:24.04` with `curl` added and no `libgomp1` (`ldconfig -p` counted 0),
+  `curl … | sh -s -- --dir /workspace/mindfork -- llama setup --backend cpu`:
+  `mindfork v0.15.0`, downloaded, `sha256 ok`, unpacked, ALSA and OpenMP each
+  *missing … installed*, linked, `mindfork 0.15.0`, then llama.cpp `b11401`
+  installed with its version (`build 11401`), exit 0; the files owned `0:0`. The
+  same line again ended `mindfork 0.15.0` and `Done.`
+- **Not run**: anything on a Mac with a screen — that is stage 3
+  ([macos.md](../research/macos.md) §6.2); the TUI on real data, which is the
+  owner's; the Windows installer and the `.deb`, `.rpm` and Arch packages, of
+  which the digests were compared; a managed server with a model on a GPU.
 
