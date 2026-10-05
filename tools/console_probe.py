@@ -799,12 +799,14 @@ def scenario_user_theme(exe: Path, report: Report) -> None:
 
 
 # What the status line says while a message is read aloud, the picker's first
-# row, the row of the gateway's key and the unit a listed price is in — each
-# read off the screen more than once.
+# row, the row of the gateway's key, the unit a listed price is in and the
+# status line's chip for a ready chat engine — each read off the screen more
+# than once.
 SPEAKING = "speaking"
 BY_HAND = "Type a name by hand"
 KEY_ROW = "OpenRouter API key"
 PRICED = "per 1M tokens"
+CHAT_READY = "● chat"
 
 
 def text_of(rows: list[list[tuple[str, int]]]) -> str:
@@ -885,7 +887,7 @@ def scenario_gateway(exe: Path, report: Report) -> None:
             print(text_of(rows))
             report.says("the reply", rows, ("Paris",))
             # Both keys were judged by now: the chips are the ready ones.
-            report.says("the status line", rows, ("● chat", "● emb"))
+            report.says("the status line", rows, (CHAT_READY, "● emb"))
 
             print("the embedder: a file indexed through the gateway")
             type_text("/rag add notes.txt")
@@ -1330,7 +1332,7 @@ def scenario_ollama(exe: Path, report: Report) -> None:
         session = Session(copy, [], cwd=root)
         try:
             print("the chat: a question through Ollama (the first loads the model)")
-            report.says("the start", wait_for_text("● chat", 60), ("● chat",))
+            report.says("the start", wait_for_text(CHAT_READY, 60), (CHAT_READY,))
             type_text("Answer with one word: what is the capital of France?")
             press("enter", SETTLE_REPAINT)
             rows = wait_for_text("Paris", 180)
