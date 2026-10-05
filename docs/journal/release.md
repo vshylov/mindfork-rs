@@ -3676,8 +3676,19 @@ at CI's severity. No live run: packaging only.
   machine's entry, kept and not decrypted (`foreign_entries_are_ignored_and_preserved`)
   — and only a Mac writes it, where 0.14.1 never ran. Nothing else in the
   release changes a stored type.
-- **Rehearsed first.** `release.yml` changed in this release (the macOS build
-  job and its archive, PR 690), so the whole workflow was run on a prerelease
-  tag, `v0.14.1-rc1`, before this PR was merged — its outcome is recorded below
-  once it is in.
+- **Rehearsed first, GO.** `release.yml` changed in this release (the macOS
+  build job and its archive, PR 690), so the whole workflow was run on a
+  prerelease tag, `v0.14.1-rc1`, on `main` before this PR was merged (run
+  37249230121): every job green — the macOS build in 8 min 05 s beside Linux's
+  8 min 51 s and Windows' 11 min 16 s, the demo in 4 min 20 s, the publication
+  in 28 s. The draft prerelease carried fifteen assets, the new one
+  `mindfork-rs-v0.14.1-rc1-aarch64-macos.tar.gz` (12.3 MB). Checked by hand: its
+  digest is the one `sha256sums.txt` lists; it unpacks to the Linux layout
+  (dictionaries, licences, documents); the binary is a `Mach-O 64-bit arm64
+  executable`; and `THIRD-PARTY-NOTICES.md` now names the crates only a Mac links
+  (objc2 and its family, coreaudio-rs). The install script's scenarios passed
+  with each OS's real binary — 35/35 in the macOS build job, 43/43 in the
+  release job on Linux, which then installed the release's own archive and got
+  `mindfork 0.14.1` back. The animated demo's frames look as they should. The
+  draft and the tag were deleted afterwards.
 
