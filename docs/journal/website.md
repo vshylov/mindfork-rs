@@ -10,7 +10,7 @@ the reasoning behind the site, not its current shape. For the current shape
 read the research/design doc above; for the traps that recur across areas
 read [lessons.md](../lessons.md).
 
-## Entries (27)
+## Entries (28)
 
 - Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 - Post-M9: website — S2 infra: one CloudFormation stack, mindfork.io live (done)
@@ -39,6 +39,7 @@ read [lessons.md](../lessons.md).
 - Post-M9: website — crates.io in the header and on the install page (done)
 - Post-M9: website — the gateway in the description, and speech through it (done)
 - Post-M9: website — the home page plays the release's animated demo (done)
+- Post-M9: website — the hero leads with the self-model, and the Ollama recipe (done)
 
 ### Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 
@@ -1386,3 +1387,50 @@ both on `main` at `88e5ce29`, the merge of the pull request.
   the screenshots — same names every release), run only when the fetch found the
   files, and the pages pass excludes it — so a deploy without them deletes nothing
   the README will point at.
+
+### Post-M9: website — the hero leads with the self-model, and the Ollama recipe (done)
+
+- **Why** (branch `docs/site-hero-ollama`, the promotion plan's stage 0 and
+  stage 1, [promotion.md](../research/promotion.md) §4). The hero said "An AI
+  chat that lives in your terminal", the category of a dozen projects; what no
+  other one does is the memory and the self-model, which the README's first line
+  now leads with. The *at a glance* panel and the description still said
+  "Windows · Linux", a release after macOS. And Ollama, which most people who
+  run local models already have, was a word in a parenthesis.
+- **The hero**: "An AI chat with a memory and a self-model" — the page's title
+  and the social tags say "a terminal AI chat with …", but the hero's column
+  wrapped that to four lines at 1366 px where the old one took three, and the
+  `$ mindfork` prompt above it already says terminal. The sub names what the
+  assistant keeps, then the engines with Ollama among them, then the three
+  systems. The panel's engine row is "llama.cpp · Ollama · any OpenAI API", and
+  it runs on macOS. The *Local first* card names Ollama. Checked in the browser
+  at 1366 px and at 375 px, where nothing scrolls sideways.
+- **The social card** (`tools/og_card.py`, `assets/og-card.png`) carries the same
+  line and macOS in its foot. The longer line overflowed the card's 1200 px and
+  was cut. **GitHub's social preview is uploaded by hand** (no API), so the
+  repository's card stays the old one until the owner uploads the new file.
+- **The Ollama recipe** — two lines and a window, on the site's install page
+  (linked from the hero's demo line), in the README under *Install*, and in
+  install.md §3 with what was measured. Run live before it was written, Ollama
+  0.35.1 in Docker on the 4090 with `gemma4:e4b`:
+  - **the window decides everything.** Ollama gives a model 4096 tokens under
+    24 GB of GPU memory, and mindfork's first turn was 3503 of them; a prompt
+    just over the window (2060 tokens in 2048) was cut to half of it from the front — the
+    system message first — and answered with a `200`, its `usage` reporting
+    the cut length, so nothing on the app's side can tell. Ollama serves no
+    `/props`, so the app cannot ask for the window either: the recipe sets the
+    same number on both sides, and compaction folds the conversation at 75 % of
+    it, before Ollama cuts anything;
+  - the recipe's `setup --set` line ran word for word in
+    `console_probe.py --scenario ollama`: a reply, the thoughts
+    (`delta.reasoning`), `note_save` through the agentic loop, and `Enter` on
+    the model row listing Ollama's models;
+  - **the run found a defect**, fixed in the PR this one stands on: the first
+    reply ended in advice to launch llama-server with `-b 256 -ub 256`, drawn
+    from Ollama's timings with the model's load in them
+    ([engine.md](engine.md), *the slow-prefill note is for a llama-server*).
+- **LM Studio** is in the plan's item and not in the recipe: it was not run, and
+  a recipe that was not run is the kind this project does not publish.
+- `llms.txt` regenerated; `zola check --skip-external-links` (the CI's form)
+  passes.
+

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-{% block title %}<title>{{ config.title }} — an AI chat that lives in your terminal</title>{% endblock %}
+{% block title %}<title>{{ config.title }} — a terminal AI chat with a memory and a self-model</title>{% endblock %}
 {% block desc %}<meta name="description" content="{{ config.description }}">{% endblock %}
 <link rel="icon" href="/favicon.ico" sizes="32x32">
 <link rel="icon" type="image/svg+xml" href="/brand/mindfork-icon-transparent.svg">
@@ -15,7 +15,7 @@
    there is no second copy of them here. #}
 {% block og %}
 <meta property="og:type" content="website">
-<meta property="og:title" content="{{ config.title }} — an AI chat that lives in your terminal">
+<meta property="og:title" content="{{ config.title }} — a terminal AI chat with a memory and a self-model">
 <meta property="og:description" content="{{ config.description }}">
 {% endblock og %}
 <meta property="og:site_name" content="mindfork">
@@ -23,7 +23,7 @@
 <meta property="og:image" content="{{ get_url(path='brand/og-card.png') }}">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
-<meta property="og:image:alt" content="mindfork — an AI chat that lives in your terminal">
+<meta property="og:image:alt" content="mindfork — a terminal AI chat with a memory and a self-model">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="canonical" href="{{ current_url | default(value=config.base_url) }}">
 <meta name="author" content="{{ config.extra.author }}">

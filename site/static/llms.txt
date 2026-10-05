@@ -2,7 +2,7 @@
 
 > A terminal AI chat written in Rust: local models via llama.cpp, or OpenAI, Anthropic, Gemini, Grok and OpenRouter in the cloud — with persistent memory, notes, RAG and tools. Windows and Linux.
 
-Run local models through llama.cpp — or bring OpenAI, Anthropic, Gemini, Grok or an OpenRouter key. Persistent memory, notes and RAG, an agentic tool loop that reaches your own code project: one fast native binary for Windows and Linux.
+The assistant keeps notes about you, a model of itself that it revisits, and a knowledge base over your files. Run a local Gemma or Qwen through llama.cpp or Ollama — or bring OpenAI, Anthropic, Gemini, Grok or an OpenRouter key. Real tools behind switches you set; one fast native binary for Windows, Linux and macOS.
 
 ## Start here
 
