@@ -158,9 +158,12 @@ interface change, and the animation always shows the released version.
 - **The bucket's `demo/` has a pass of its own**, run only by a deploy that found
   the files: a deploy without them leaves it alone rather than deleting what the
   README points at; the pages pass excludes it.
-- **The README's embed waits for the first release that carries the files.**
-  Merged before, it would be a broken image on the repository's front page
-  until then; it lands with the README's rework (promotion plan §4, stage 0).
+- **The README's embed waited for the first release that carries the files.**
+  Merged before, it would have been a broken image on the repository's front
+  page; it landed with the README's rework (promotion plan §4, stage 0) on
+  2026-10-05, after 0.15.0: the dark GIF from mindfork.io in either theme, as
+  the README's stills are, and the dark still for a reader who asked for less
+  motion.
 
 Locally: `cargo test dump_demo_reel -- --ignored`, `python tools/demo_reel.py`,
 then copy the two WebP files into `site/static/demo/` (gitignored) and `zola

@@ -38,7 +38,7 @@ recipe, Scoop, AUR, a macOS study), then the communities — the repeatable ones
 before the one-shot ones. Its first code track is the animated demo
 ([demo-reel.md](research/demo-reel.md)) — the reel and its renderer, then
 its publication: every release draws it — in English and in Russian — and
-the site plays it from the first release that carries it. The plan also feeds the reputation Windows code
+the site and the README play it. The plan also feeds the reputation Windows code
 signing waits on.
 
 The last two code tracks — small windows, and the reasoning effort a model
