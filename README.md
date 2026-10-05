@@ -73,6 +73,21 @@ a throwaway folder: no model to download, no key, nothing written outside a
 temporary directory. `mindfork` on its own starts with your data, and
 [Getting started](#getting-started) connects a model.
 
+**Already running Ollama?** Give it a window of 16k — the context slider in the
+Ollama app's settings, or `OLLAMA_CONTEXT_LENGTH=16384` for `ollama serve` —
+and point mindfork at it:
+
+```bash
+ollama pull gemma4:e4b
+mindfork setup --set engine.mode=external --set engine.external.url=http://localhost:11434/v1 --set engine.external.model_name=gemma4:e4b --set compaction.context_tokens=16384
+```
+
+The window is the same number on both sides on purpose. On a GPU under 24 GB
+Ollama gives a model 4096 tokens, mindfork's first turn already takes about
+3500, and a prompt that outgrows Ollama's window is cut in silence, the system
+message first. Told the window, mindfork folds the conversation into a summary
+before it gets there ([install.md](docs/install.md) §3).
+
 The [releases](https://github.com/vshylov/mindfork-rs/releases) also carry a
 Windows installer and zip, and Linux deb, rpm and pkg.tar.zst packages.
 `cargo install mindfork` builds from crates.io, and `cargo build --release` from

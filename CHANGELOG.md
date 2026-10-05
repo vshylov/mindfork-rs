@@ -14,6 +14,14 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Against Ollama, the first reply no longer ends in advice meant for
+  llama-server.** Ollama runs llama.cpp inside and now reports its timings, the
+  first of them with the model's load in it. So mindfork read a slow server
+  and told it to launch with `-b 256 -ub 256`, a flag Ollama does not take. The
+  advice now goes only to an external server that is a llama-server.
+
 ## [0.15.0] — 2026-10-05
 
 **On a Mac, and in your package manager.** mindfork comes to macOS on Apple

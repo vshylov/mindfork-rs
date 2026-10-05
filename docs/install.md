@@ -720,6 +720,42 @@ Two modes (configured on the settings screen, `Ctrl+P`, "Model/server" section):
   calls"** field sits beside it, **1** by default here as on managed; the
   cloud modes default to **4**.
 
+**Ollama is an `external` server**, at `http://localhost:11434/v1`, with the
+model's name — the one `ollama list` prints — in "Model (opt.)": it serves every
+model it has pulled and routes on that field. `Enter` on the field lists them.
+One thing needs setting by hand, and it needs it on both sides: **the context
+window.**
+
+```bash
+ollama pull gemma4:e4b
+mindfork setup --set engine.mode=external --set engine.external.url=http://localhost:11434/v1 --set engine.external.model_name=gemma4:e4b --set compaction.context_tokens=16384
+```
+
+- **Ollama's window is its own setting** — the context slider in the Ollama
+  app's settings, or `OLLAMA_CONTEXT_LENGTH` for `ollama serve` — and by
+  default it follows the GPU's memory: 4096 tokens under 24 GB, 32768 up to
+  48 GB, 262144 above ([Ollama's
+  documentation](https://docs.ollama.com/context-length)). `ollama ps` shows the
+  window a loaded model runs with.
+- **A prompt that outgrows it is cut in silence.** Measured on Ollama 0.35.1:
+  a prompt just over the window (2060 tokens in 2048; 2040 still fit) was cut
+  to half of it from the front, `keep=5` — the system message went first — and
+  answered with a `200`, so the model answered without its instructions. Its `usage` then reports the cut
+  length, so nothing on the app's side can see what was lost.
+- **mindfork's first turn is already about 3500 tokens** — its instructions,
+  the memory and the tool schemas (measured on `gemma4:e4b`: 3503, then 3813
+  after a one-word exchange), so a 4096 window is gone by the third.
+- **The app cannot ask Ollama for the window**: it serves no `/props`, which
+  is where a llama.cpp says it. So the number goes into **Settings → Memory →
+  Context** (`compaction.context_tokens`), the same as Ollama's. Automatic
+  compaction then folds the conversation into a summary at 75 % of it, before
+  Ollama would cut anything.
+
+What else was measured against Ollama 0.35.1 (`gemma4:e4b`): streaming, the
+thoughts (it sends them as `delta.reasoning`), tool calls and the usage of
+every stream work as they do against a llama-server; `/health` is a `404`,
+which the readiness probe reads as ready.
+
 **A cloud gateway is an `external` server too** — LiteLLM, a vLLM behind a
 proxy, or any OpenAI-compatible reseller. **OpenRouter has a mode of its own**,
 `openrouter` (§3.2), and that mode is the way to use it: one key for every slot,

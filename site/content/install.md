@@ -188,8 +188,8 @@ what the thing is before deciding whether to feed it a model.
 
 For the real thing you need an engine, and there are three routes: a **cloud
 provider** (a key and a model, both entered in the settings screen), an
-**OpenAI-compatible server** you already run, or a **managed `llama-server`**
-that the app downloads and supervises for you —
+**OpenAI-compatible server** you already run — Ollama among them, below — or a
+**managed `llama-server`** that the app downloads and supervises for you —
 `mindfork llama setup --backend vulkan --set-binary` fetches a llama.cpp build
 for your machine, verified against the checksum the release publishes.
 
@@ -202,6 +202,22 @@ for your machine, verified against the checksum the release publishes.
 mindfork is a terminal application: it needs a **real terminal**. Started with
 its output redirected or with no console at all, it says so and exits rather than
 pretending to run.
+
+### Already running Ollama?
+
+Give it a window of 16k — the context slider in the Ollama app's settings, or
+`OLLAMA_CONTEXT_LENGTH=16384` for `ollama serve` — and point mindfork at it:
+
+```bash
+ollama pull gemma4:e4b
+mindfork setup --set engine.mode=external --set engine.external.url=http://localhost:11434/v1 --set engine.external.model_name=gemma4:e4b --set compaction.context_tokens=16384
+```
+
+The window is the same number on both sides on purpose. On a GPU under 24 GB
+Ollama gives a model 4096 tokens, mindfork's first turn already takes about
+3500, and a prompt that outgrows Ollama's window is cut in silence, the system
+message first. Told the window, mindfork folds the conversation into a summary
+before it gets there.
 
 ## What it does with your machine
 

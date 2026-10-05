@@ -86,6 +86,16 @@ Scenarios (`--scenario`):
   which no installed layout maps: it must type nothing, and `Ctrl+K` must still
   clear the box. Then the chat list's search line, which takes text of its own.
 
+* `ollama` — a copy of the binary in a scratch directory, set up by the
+  README's Ollama recipe (`mindfork setup --set …`, word for word), against a
+  **running Ollama** with the model pulled and `OLLAMA_CONTEXT_LENGTH` equal to
+  the recipe's window (`MINDFORK_OLLAMA_URL`, `MINDFORK_OLLAMA_MODEL` and
+  `MINDFORK_OLLAMA_CONTEXT` override the recipe's values): a question is
+  answered, no slow-prefill note names llama-server's launch flags — Ollama
+  sends llama.cpp's timings, its first with the model's load in them — a note
+  is saved through the agentic loop, and `Enter` on the model row lists what
+  the server serves. Takes the single-instance lock, like `first-frame`.
+
 * `small-window` — `mindfork demo` in consoles started small (spec §11.1.1):
   at 57×5, the window of the report, the frame is the "window too small"
   notice and no key but quit does anything; at 57×9 it is the chat, whole;
@@ -106,6 +116,7 @@ Usage:
     python tools/console_probe.py --scenario gateway
     python tools/console_probe.py --scenario small-window
     python tools/console_probe.py --scenario altgr
+    python tools/console_probe.py --scenario ollama
     python tools/console_probe.py --exe target/release/mindfork.exe
 
 Exit code: 0 — every check passed, 1 — a check failed, 2 — cannot run here.
@@ -1263,8 +1274,88 @@ def scenario_small_window(exe: Path, report: Report) -> None:
     no_cursor_under_the_help(exe, report)
 
 
+# The Ollama recipe as the README prints it (install.md §3): the server's window
+# and the one the app measures against are the same number, since Ollama cuts a
+# prompt that does not fit in silence.
+OLLAMA_URL = "http://localhost:11434/v1"
+OLLAMA_MODEL = "gemma4:e4b"
+OLLAMA_WINDOW = "16384"
+# The slow-prefill note's launch line — llama-server's flags, which Ollama does
+# not take.
+LAUNCH_LINE = "-b 256 -ub 256"
+
+
+def scenario_ollama(exe: Path, report: Report) -> None:
+    url = os.environ.get("MINDFORK_OLLAMA_URL", OLLAMA_URL)
+    model = os.environ.get("MINDFORK_OLLAMA_MODEL", OLLAMA_MODEL)
+    window = os.environ.get("MINDFORK_OLLAMA_CONTEXT", OLLAMA_WINDOW)
+    with tempfile.TemporaryDirectory(prefix="mindfork-probe-") as scratch:
+        root = Path(scratch)
+        copy = root / exe.name
+        shutil.copy(exe, copy)
+        # The interface's language first, so the screen reads the same on any
+        # machine; then the recipe's own line, word for word.
+        language = [str(copy), "setup", "--set", "interface.language=en"]
+        subprocess.run(language, cwd=root, check=True, capture_output=True)
+        recipe = [
+            str(copy), "setup",
+            "--set", "engine.mode=external",
+            "--set", f"engine.external.url={url}",
+            "--set", f"engine.external.model_name={model}",
+            "--set", f"compaction.context_tokens={window}",
+        ]
+        done = subprocess.run(recipe, cwd=root, capture_output=True, text=True)
+        print(done.stdout)
+        report.check(done.returncode == 0, f"the recipe's setup line exited with {done.returncode}")
+
+        session = Session(copy, [], cwd=root)
+        try:
+            print("the chat: a question through Ollama (the first loads the model)")
+            report.says("the start", wait_for_text("● chat", 60), ("● chat",))
+            type_text("Answer with one word: what is the capital of France?")
+            press("enter", SETTLE_REPAINT)
+            rows = wait_for_text("Paris", 180)
+            # The turn's notes land at its end, after the reply's last token.
+            wait_for_text("Enter send", 30)
+            time.sleep(2)
+            rows = read_screen()
+            print(text_of(rows))
+            report.says("the reply", rows, ("Paris", model))
+            report.check(
+                LAUNCH_LINE not in text_of(rows),
+                "no llama-server launch line for a server that is not one",
+            )
+
+            print("a tool: a note saved through the agentic loop")
+            type_text("Save a note with the note_save tool: my GPU has 24 GB. Then say done.")
+            press("enter", SETTLE_REPAINT)
+            wait_for_text("note_save(", 180)
+            wait_for_text("Enter send", 120)
+            time.sleep(2)
+            rows = read_screen()
+            print(text_of(rows))
+            report.says("the tool's card", rows, ("note_save(",))
+            report.check(LAUNCH_LINE not in text_of(rows), "nor after the second turn")
+
+            print("the settings: the model row lists what Ollama serves")
+            press(SETTINGS_KEY, SETTLE_REPAINT)  # opens on "Model/server"
+            press("enter", SETTLE_REPAINT)  # into its fields: the row of tabs
+            press("down")  # -> "Mode"
+            press("down")  # -> "URL (external)"
+            press("down")  # -> "Model (opt.)"
+            press("enter", SETTLE_REPAINT)
+            rows = wait_for_text(BY_HAND, 30)
+            print(text_of(rows))
+            report.says("the server's models", rows, (BY_HAND, model))
+            press("esc")
+        finally:
+            code = session.close()
+        report.check(code == 0, f"the app exited with code {code}")
+
+
 SCENARIOS = {
     "altgr": scenario_altgr,
+    "ollama": scenario_ollama,
     "small-window": scenario_small_window,
     "full-mode": scenario_full_mode,
     "gateway": scenario_gateway,

@@ -50,12 +50,12 @@ ACCENT = (194, 90, 39)
 
 TITLE = "mindfork"
 PROMPT = "$ mindfork"
-TAGLINE = "An AI chat that lives in your terminal"
+TAGLINE = "An AI chat with a memory and a self-model"
 LINES = [
-    "Local models via llama.cpp — or OpenAI, Anthropic,",
-    "Gemini, Grok and OpenRouter. Memory, notes, RAG, tools.",
+    "Local models via llama.cpp or Ollama — or OpenAI,",
+    "Anthropic, Gemini, Grok and OpenRouter. Notes, RAG, tools.",
 ]
-FOOT = "MIT  ·  Windows + Linux  ·  mindfork.io"
+FOOT = "MIT  ·  Windows · Linux · macOS  ·  mindfork.io"
 
 
 def font(px: int, bold: bool = False) -> ImageFont.FreeTypeFont:

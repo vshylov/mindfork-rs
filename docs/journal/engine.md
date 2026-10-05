@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (88)
+## Entries (89)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -100,6 +100,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a pod's failures say what they are — the logged cause, a taken port, one report per death (done)
 - Post-M9: the CUDA kernel cache lives with the data (done)
 - Post-M9: llama.cpp on a bare image — OpenMP installed, a build that cannot start refused (done)
+- Post-M9: the slow-prefill note is for a llama-server — Ollama sends llama.cpp's timings (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -6288,3 +6289,54 @@ CHANGELOG (Fixed); lessons §3 (a probe's output is not its verdict).
 
 **Gates**: fmt / clippy / test green — **3880 unit tests, 256 `#[ignore]`**
 (+5 unit tests); `install_test.sh` 36 scenarios (+10).
+
+### Post-M9: the slow-prefill note is for a llama-server — Ollama sends llama.cpp's timings (done)
+
+- **Found by the README's Ollama recipe, run live** (branch
+  `fix/prefill-note-llama-server`; the recipe is the promotion plan's stage 1,
+  [promotion.md](../research/promotion.md) §4). Ollama 0.35.1 in Docker on the
+  4090, `gemma4:e4b`, mindfork set up by `setup --set` alone. The first reply,
+  "Paris", came with a note: *This server processes prompts at 124 tokens/s
+  … Launch it with -b 256 -ub 256.* Both halves were wrong for Ollama. It takes
+  no `-b`, since it runs llama.cpp's server inside and its batch is a model
+  parameter (`num_batch`). And the figure was the model's load: Ollama loads on
+  the first request and times the load into the prompt. Measured with `curl`, a
+  19-token prompt took 30 776 ms.
+- **The design's premise had aged.** [slow-prefill-detection.md](../research/slow-prefill-detection.md)
+  §2.1 says "vLLM/Ollama/LM Studio report nothing", which was true when written.
+  Ollama 0.35.1 streams llama.cpp's `timings` in its usage chunk, so the
+  external arm, which assumed the default batch of any server that sent them,
+  spoke to it.
+- **The fix**: the external arm of `note_slow_prefill` asks first whether the
+  server answered llama.cpp's `/props`. The answer is the `total_slots` the
+  sessions hint already reads (`slots.known()`); Ollama answers that endpoint
+  with a 404. It is asked before the session's one note is claimed, so a
+  llama-server whose answer is still on its way is told at the next turn, not
+  never.
+- **Tests**: `an_external_server_that_is_not_a_llama_server_is_told_nothing`
+  (no answer, no note; the same server once it answers, told). Seven tests of
+  the note's other roads — the title's, a silent loop's, impersonation's, the
+  roll's — set an external server whose streams close with `timings`, which is
+  a llama-server, so each now answers `/props` too: the bare orchestrators are
+  given the answer, and the compaction tests' `RecordingBackend` reports one
+  slot (one: no shared pool, so no admission they did not have). The two
+  path tests whose scripted backend answers nothing moved to the default managed
+  server, whose note needs no `/props`. The spawned roll tests ran five times
+  in a row, green each time — the answer races the first turn and lands first.
+  **3907 unit tests, 257 `#[ignore]`** (+1).
+- **The live smoke, both arms**: `slow_prefill_e2e_live` against a cold Ollama
+  (`gemma4:e4b`, the model not loaded, the turn 8.2 s with the load in it): no
+  note. Against a llama-server on the CPU only (`CUDA_VISIBLE_DEVICES=-1`,
+  Gemma 4 E2B Q8_0, `MINDFORK_EXPECT_SLOW_PREFILL=1`): the note, 86 tokens/s and
+  a 24 s hold — the server answered `/props` (four slots), so the fix does not
+  silence the server the note is for.
+- **Live**: `console_probe.py --scenario ollama`, a scenario of its own that
+  sets a scratch copy up with the recipe's line word for word. Before the fix,
+  the note was on the screen after the first reply. After it: the reply, no
+  launch line after either turn, `note_save` called through the agentic loop
+  with the thoughts folded above it, and `Enter` on the model row listing
+  `gemma4:e4b` from Ollama's `/v1/models`. Measured on the way, for the recipe:
+  Ollama sends `delta.reasoning`, which the client reads; tool calls stream
+  whole; the usage chunk arrives with `include_usage`; `/health` is a 404,
+  which the probe reads as ready.
+

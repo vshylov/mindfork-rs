@@ -95,6 +95,13 @@ impl EngineBackend for RecordingBackend {
         };
         Ok(Box::pin(s))
     }
+
+    /// A llama-server, as the streams above model one: it answers `/props`,
+    /// which is what the slow-prefill note's external arm asks for. One slot,
+    /// so no shared pool and no admission the tests here did not have.
+    async fn parallel_slots(&self) -> Option<u32> {
+        Some(1)
+    }
 }
 
 /// Compaction on, with a tiny verbatim tail so a couple of exchanges already
@@ -1401,6 +1408,7 @@ async fn the_collect_keeps_the_figure_only_off_a_stream_that_ended() {
 async fn a_discarded_summarys_landing_still_offers_the_sample() {
     let (_d, mut orch, mut rx, chat_id, _backend) = orch_with_history(3);
     orch.config.engine.mode = ServerMode::External;
+    orch.slots.pretend_known(Some(1));
     orch.begin_bg(BackgroundKind::Compaction, CancellationToken::new(), None);
     let _ = drain(&mut rx);
 
