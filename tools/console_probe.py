@@ -853,6 +853,8 @@ CHAT_READY = "● chat"
 TURN_OVER = "Enter send"
 # The chat scenarios' first question; its one-word answer is read off the screen.
 CAPITAL_QUESTION = "Answer with one word: what is the capital of France?"
+# What a `note_save` call's card begins with in the feed.
+NOTE_CARD = "note_save("
 
 
 def text_of(rows: list[list[tuple[str, int]]]) -> str:
@@ -1431,12 +1433,12 @@ def scenario_ollama(exe: Path, report: Report) -> None:
             print("a tool: a note saved through the agentic loop")
             type_text("Save a note with the note_save tool: my GPU has 24 GB. Then say done.")
             press("enter", SETTLE_REPAINT)
-            wait_for_text("note_save(", 180)
+            wait_for_text(NOTE_CARD, 180)
             wait_for_text(TURN_OVER, 120)
             time.sleep(2)
             rows = read_screen()
             print(text_of(rows))
-            report.says("the tool's card", rows, ("note_save(",))
+            report.says("the tool's card", rows, (NOTE_CARD,))
             report.check(LAUNCH_LINE not in text_of(rows), "nor after the second turn")
             served = ollama_window(url, model)
             print(f"Ollama runs {model} with a window of {served}")
@@ -1581,12 +1583,12 @@ def scenario_lmstudio(exe: Path, report: Report) -> None:
             print("a tool: a note saved through the agentic loop")
             type_text("Save a note with the note_save tool: my GPU has 24 GB. Then say done.")
             press("enter", SETTLE_REPAINT)
-            wait_for_text("note_save(", 180)
+            wait_for_text(NOTE_CARD, 180)
             wait_for_text(TURN_OVER, 120)
             time.sleep(2)
             rows = read_screen()
             print(text_of(rows))
-            report.says("the tool's card", rows, ("note_save(",))
+            report.says("the tool's card", rows, (NOTE_CARD,))
         finally:
             code = session.close()
         report.check(code == 0, f"the app exited with code {code}")
