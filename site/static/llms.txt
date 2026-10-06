@@ -2,7 +2,7 @@
 
 > A terminal AI chat written in Rust: local models via llama.cpp, or OpenAI, Anthropic, Gemini, Grok and OpenRouter in the cloud — with persistent memory, notes, RAG and tools. Windows and Linux.
 
-The assistant keeps notes about you, a model of itself that it revisits, and a knowledge base over your files. Run a local Gemma or Qwen through llama.cpp or Ollama — or bring OpenAI, Anthropic, Gemini, Grok or an OpenRouter key. Real tools behind switches you set; one fast native binary for Windows, Linux and macOS.
+The assistant keeps notes about you, a model of itself that it revisits, and a knowledge base over your files. Run a local Gemma or Qwen through llama.cpp, Ollama or LM Studio — or bring OpenAI, Anthropic, Gemini, Grok or an OpenRouter key. Real tools behind switches you set; one fast native binary for Windows, Linux and macOS.
 
 ## Start here
 
@@ -24,6 +24,7 @@ The assistant keeps notes about you, a model of itself that it revisits, and a k
 
 ## News
 
+- [mindfork 0.17.0 — your Ollama or LM Studio, found and offered](https://mindfork.io/blog/mindfork-0-17-0/): Start mindfork with no model set up and it looks for a local Ollama or LM Studio, lists what they serve, and connects the one you pick with Enter — its embedding model too. LM Studio joins Ollama as a server mindfork knows: its window is read, and its silent cut of a long conversation, which drops the whole middle, is told.
 - [mindfork 0.16.1 — when Ollama cuts the prompt, you are told](https://mindfork.io/blog/mindfork-0-16-1/): Ollama answers a prompt longer than its window with a reply, not an error: it drops the oldest messages, and when the last one alone does not fit beside the instructions, it cuts the prompt to half the window from the start. mindfork now tells such a cut from the size Ollama reports, says once that the reply was made without part of the conversation, and folds the conversation into a summary when there is anything to fold.
 - [mindfork 0.16.0 — Ollama, with nothing to keep in step](https://mindfork.io/blog/mindfork-0-16-0/): mindfork now reads the context window of an Ollama server from Ollama itself, so a long conversation is folded into a summary before Ollama would cut the prompt — which it does without a word, the instructions first. A window too small for the conversation is said once, with the setting that raises it, and the first reply no longer ends in advice meant for llama-server.
 - [mindfork 0.15.0 — on a Mac, in Scoop, and an animated demo](https://mindfork.io/blog/mindfork-0-15-0/): mindfork comes to macOS on Apple Silicon as a preview — through Homebrew or the same install line as on Linux, with stored keys and Metal for local models — and to Windows through Scoop. Every release now draws an animated demo from its own interface. Option and Alt move by words in every terminal, Ctrl+J breaks a line where nothing else can, and on Windows text typed with AltGr is no longer lost.

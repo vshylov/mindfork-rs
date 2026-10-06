@@ -14,6 +14,14 @@ split by subsystem.
 
 ## [Unreleased]
 
+## [0.17.0] — 2026-10-06
+
+**Ollama and LM Studio, found and offered.** Start mindfork with no model set up
+and it looks for a local Ollama or LM Studio, lists what they serve, and
+connects the one you pick with `Enter` — its embedding model too, when none is
+set up. LM Studio joins Ollama as a server mindfork knows: its window is read,
+and its silent cut of a long conversation is told.
+
 ### Added
 
 - **LM Studio is a server mindfork knows.** It reads the window LM Studio runs
@@ -3189,7 +3197,8 @@ history is in the [docs/journal/](docs/journal/) log).
   (notes/RAG/self-model, sqlite-vec, per-profile isolation). Schema format is
   v1; schema versioning and migrations are formalized in later releases.
 
-[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.16.1...HEAD
+[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/vshylov/mindfork-rs/compare/v0.16.1...v0.17.0
 [0.16.1]: https://github.com/vshylov/mindfork-rs/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/vshylov/mindfork-rs/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/vshylov/mindfork-rs/compare/v0.14.1...v0.15.0
