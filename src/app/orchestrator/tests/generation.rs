@@ -1570,6 +1570,7 @@ async fn continue_through_a_gateway_follows_the_route_table() {
                     context_length: Some(262_144),
                     sampling_fields: None,
                 }),
+                server: Default::default(),
             },
         );
     };

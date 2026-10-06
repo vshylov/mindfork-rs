@@ -14,6 +14,7 @@ pub mod error;
 pub mod gemini;
 pub mod http;
 pub mod llama_args;
+pub mod local_servers;
 pub mod managed;
 pub mod openai;
 pub mod retry;
@@ -39,8 +40,8 @@ pub(crate) mod sse_stub;
 pub use anthropic::AnthropicClient;
 pub use contract::{
     ApiImage, ApiMessage, ApiToolCall, ChatChunk, ChatRequest, EmbedRole, Embedder, EngineBackend,
-    FinishReason, ThinkingAccumulator, ThinkingBlock, ThinkingRef, ToolCallAccumulator, ToolSchema,
-    UnavailableEmbedder, VisionSupport,
+    FinishReason, ServerKind, ThinkingAccumulator, ThinkingBlock, ThinkingRef, ToolCallAccumulator,
+    ToolSchema, UnavailableEmbedder, VisionSupport,
 };
 pub use gemini::GeminiClient;
 pub use managed::{ManagedConfig, ServerHandle, wait_until_ready};

@@ -623,6 +623,35 @@ pub trait EngineBackend: Send + Sync {
     async fn parallel_slots(&self) -> Option<u32> {
         None
     }
+
+    /// Which local server this is, when it is one the app knows by name —
+    /// Ollama or LM Studio (docs/research/local-servers.md §4, stage 1). What
+    /// the app tells the user about the server's window names that server's own
+    /// setting, and what its silent cut loses, and the two servers differ in
+    /// both.
+    ///
+    /// The fifth question of the same shape as
+    /// [`context_budget`](Self::context_budget), with the same kind of default:
+    /// [`ServerKind::Other`] — "not one the app knows", never a guess. Only
+    /// [`super::openai::OpenAiClient`] overrides it, and each answer rests on a
+    /// field only that server sends: LM Studio answers every unknown path `200`,
+    /// so a status alone would name it whatever was asked.
+    async fn server_kind(&self) -> ServerKind {
+        ServerKind::Other
+    }
+}
+
+/// Which local server an endpoint is. See [`EngineBackend::server_kind`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ServerKind {
+    /// Answers `GET /api/version` with its version.
+    Ollama,
+    /// Answers `GET /api/v1/models` with its models, each keyed.
+    LmStudio,
+    /// Anything else: a llama-server, vLLM, a proxy — or a server that has not
+    /// answered yet.
+    #[default]
+    Other,
 }
 
 /// Whether an engine accepts image input. See [`EngineBackend::vision`].
