@@ -367,7 +367,7 @@ Branch `feat/local-offer`, stacked on stage 1.
 **The live run.** `console_probe.py`, the dev build, Ollama 0.35.1 in Docker
 and LM Studio 1.1.7:
 
-- **`first-run`: 14/14.**
+- **`first-run`: 15/15.** (Counted 14 when this was first written; the run printed fifteen.)
   - A fresh copy opened the list by itself. The log says `servers=2 offers=2
     asked=false`.
   - `Enter` on Ollama's row: Paris, and `settings.json` holds the Ollama URL
