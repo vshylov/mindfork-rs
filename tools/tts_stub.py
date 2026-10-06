@@ -50,6 +50,7 @@ import wave
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HOST = "127.0.0.1"
+LOOPBACK = "http://127.0.0.1"
 DEFAULT_PORT = 8880
 SPEECH_PATH = "/v1/audio/speech"
 MODELS_PATH = "/v1/models"
@@ -57,6 +58,7 @@ MODEL_NAME = "tone"
 FORMAT_FIELD = "response_format"
 CONTENT_TYPE = "Content-Type"
 JSON_TYPE = "application/json"
+NO_ROUTE = "no such route"
 
 # OpenAI's raw PCM: 24 kHz, signed 16-bit little-endian, mono — what the app
 # assumes for `pcm` (shared/tts/openai.rs, OPENAI_PCM_RATE).
@@ -113,7 +115,9 @@ def speech(body: dict) -> tuple[int, str, bytes]:
         return 200, "audio/wav", as_wav(samples)
     if fmt == "pcm":
         return 200, f"audio/pcm;rate={RATE};channels=1", samples
-    return 400, JSON_TYPE, refusal(f"`{FORMAT_FIELD}` must be wav or pcm, not {fmt!r}")
+    # The value asked for is printed in the request's log line, not sent back:
+    # an error body echoes nothing of the request.
+    return 400, JSON_TYPE, refusal(f"`{FORMAT_FIELD}` must be wav or pcm")
 
 
 def refusal(message: str) -> bytes:
@@ -129,11 +133,11 @@ class Handler(BaseHTTPRequestHandler):
             listing = {"object": "list", "data": [{"id": MODEL_NAME, "object": "model"}]}
             self.answer(200, JSON_TYPE, json.dumps(listing).encode())
         else:
-            self.answer(404, JSON_TYPE, refusal(f"no route {self.path}"))
+            self.answer(404, JSON_TYPE, refusal(NO_ROUTE))
 
     def do_POST(self) -> None:  # noqa: N802 - the name http.server dispatches to
         if self.path.rstrip("/") != SPEECH_PATH:
-            self.answer(404, JSON_TYPE, refusal(f"no route {self.path}"))
+            self.answer(404, JSON_TYPE, refusal(NO_ROUTE))
             return
         length = int(self.headers.get("Content-Length") or 0)
         try:
@@ -175,7 +179,7 @@ def serve(port: int) -> ThreadingHTTPServer:
 def self_test() -> int:
     """Every route against a server on a free port, in this process."""
     server = serve(0)
-    base = f"http://{HOST}:{server.server_address[1]}"
+    base = f"{LOOPBACK}:{server.server_address[1]}"
     threading.Thread(target=server.serve_forever, daemon=True).start()
     failures = []
 
@@ -218,8 +222,9 @@ def self_test() -> int:
             abs(struct.unpack("<h", body[:2])[0]) < 100,
             "the tone starts from silence (no click)",
         )
-        status, _, body = ask("mp3")
-        check(status == 400 and FORMAT_FIELD.encode() in body, "mp3 is refused, naming the field")
+        status, _, body = ask("<mp3>")
+        check(status == 400 and FORMAT_FIELD.encode() in body and b"mp3" not in body,
+              "another format is refused, naming the field and echoing nothing")
         status, _, _ = ask("wav", text="")
         check(status == 400, "an empty input is refused")
         status, _, _ = call("POST", SPEECH_PATH, b"not json")
@@ -231,8 +236,8 @@ def self_test() -> int:
             status == 200 and json.loads(body)["data"][0]["id"] == MODEL_NAME,
             "the model list names the tone",
         )
-        status, _, _ = call("GET", "/v1/voices")
-        check(status == 404, "an unknown route is a 404")
+        status, _, body = call("GET", "/v1/voices?<b>")
+        check(status == 404 and b"voices" not in body, "an unknown route is a 404 that echoes nothing")
         check(seconds_for("x" * 1000) == LONGEST, "a long text is capped")
         check(seconds_for("x") == SHORTEST, "a short text still sounds")
     finally:
@@ -249,7 +254,7 @@ def main() -> int:
     if args.self_test:
         return self_test()
     server = serve(args.port)
-    print(f"tts_stub: http://{HOST}:{args.port}/v1 — Ctrl+C stops it", flush=True)
+    print(f"tts_stub: {LOOPBACK}:{args.port}/v1 — Ctrl+C stops it", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

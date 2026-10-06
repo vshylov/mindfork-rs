@@ -4142,6 +4142,20 @@ the rest.
 - Both tools' offline arms run in CI's `lint` job: `tts_stub.py --self-test`
   (15 checks, against a server on a free port) and `mac_probe.py --self-test`
   (25 checks).
+- **Sonar's first pass failed the security rating** with a blocker:
+  `pythonsecurity:S5131`, a reflected XSS. The stub's 404 put the request's path
+  into the body, and its format refusal put the value that was asked for. The
+  server listens on 127.0.0.1 only, but an error body has no reason to repeat
+  the request. The value now goes into the server's own log line only, and two
+  checks send markup and see that none of it comes back.
+
+  Four lesser findings were fixed in the same pass:
+  - an `except` that listed `URLError` beside `OSError`, which it derives from;
+  - `step_install` was split into its three routes (complexity 18, the ceiling
+    is 15);
+  - a test name, `a::c`, which `python:S1313` read as an IPv6 address;
+  - a base URL that built `http://` from a variable instead of the loopback
+    literal, which `python:S5332` exempts.
 
 **Live, on Windows, against the stands here.**
 - **The stub** passed `tts_stub.py --self-test` 15/15. The app's own smoke of

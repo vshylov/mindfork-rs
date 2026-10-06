@@ -191,7 +191,7 @@ def http(method: str, url: str, body: object = None, timeout: float = 300) -> tu
             status, raw = response.status, response.read()
     except urllib.error.HTTPError as error:
         status, raw = error.code, error.read()
-    except (urllib.error.URLError, OSError):
+    except OSError:  # a URLError is one: nothing answered
         return 0, None
     text = raw.decode("utf-8", errors="replace")
     try:
@@ -310,7 +310,12 @@ def step_host(probe: Probe, root: Path) -> None:
 
 def step_install(probe: Probe, root: Path) -> None:
     probe.section("M1 the install routes")
-    portable = root / "portable"
+    install_script(probe, root / "portable")
+    install_tap(probe)
+    install_crate(probe, root)
+
+
+def install_script(probe: Probe, portable: Path) -> None:
     probe.say("-- M1a install.sh, as the README gives it, into DIR/portable")
     probe.run("install-sh", f"curl -fsSL {INSTALL_SH} | sh -s -- --dir '{portable}'", timeout=900)
     probe.run("portable-version", [str(portable / "mindfork"), "--version"], tail=1)
@@ -323,25 +328,29 @@ def step_install(probe: Probe, root: Path) -> None:
                 link.unlink()
                 probe.say("   removed, so that Homebrew's formula can take the name")
 
-    probe.say("-- M1b the Homebrew tap")
-    if shutil.which("brew"):
-        probe.run("brew-install", ["brew", "install", FORMULA], timeout=1800)
-        prefix = Path(capture(["brew", "--prefix", FORMULA]) or "/nonexistent")
-        defaults = prefix / "libexec" / "defaults.json"
-        probe.say(f"defaults.json: {defaults.read_text().strip() if defaults.is_file() else 'MISSING'}")
-        dictionaries = prefix / "libexec" / "data" / "dictionaries"
-        count = len(list(dictionaries.glob("*.dic"))) if dictionaries.is_dir() else 0
-        probe.say(f"dictionaries beside the binary: {count}")
-        brew_app = Path(capture(["brew", "--prefix"]) or "/opt/homebrew") / "bin" / "mindfork"
-        probe.run("brew-version", [str(brew_app), "--version"], tail=1)
-        probe.run("brew-llama-installed", [str(brew_app), "llama", "installed"], tail=3)
-        data = Path.home() / "Library" / "Application Support" / "mindfork-rs"
-        probe.say(f"data root of the brew install: {data} ({'present' if data.is_dir() else 'ABSENT'})")
-        probe.say("-- M1d the terminals the screen half needs")
-        probe.run("casks", ["brew", "install", "--cask", *CASKS], timeout=1800, tail=4)
-    else:
-        probe.say("brew: not found — the tap and the casks are skipped")
 
+def install_tap(probe: Probe) -> None:
+    probe.say("-- M1b the Homebrew tap")
+    if not shutil.which("brew"):
+        probe.say("brew: not found — the tap and the casks are skipped")
+        return
+    probe.run("brew-install", ["brew", "install", FORMULA], timeout=1800)
+    prefix = Path(capture(["brew", "--prefix", FORMULA]) or "/nonexistent")
+    defaults = prefix / "libexec" / "defaults.json"
+    probe.say(f"defaults.json: {defaults.read_text().strip() if defaults.is_file() else 'MISSING'}")
+    dictionaries = prefix / "libexec" / "data" / "dictionaries"
+    count = len(list(dictionaries.glob("*.dic"))) if dictionaries.is_dir() else 0
+    probe.say(f"dictionaries beside the binary: {count}")
+    brew_app = Path(capture(["brew", "--prefix"]) or "/opt/homebrew") / "bin" / "mindfork"
+    probe.run("brew-version", [str(brew_app), "--version"], tail=1)
+    probe.run("brew-llama-installed", [str(brew_app), "llama", "installed"], tail=3)
+    data = Path.home() / "Library" / "Application Support" / "mindfork-rs"
+    probe.say(f"data root of the brew install: {data} ({'present' if data.is_dir() else 'ABSENT'})")
+    probe.say("-- M1d the terminals the screen half needs")
+    probe.run("casks", ["brew", "install", "--cask", *CASKS], timeout=1800, tail=4)
+
+
+def install_crate(probe: Probe, root: Path) -> None:
     probe.say("-- M1c crates.io, built here")
     if ensure_rust(probe):
         probe.run(
@@ -681,12 +690,13 @@ def self_test() -> int:
     check(platform_uuid("nothing here") is None, "no UUID is no UUID")
 
     cargo = (
-        "test a::b ... ok\ntest a::c ... FAILED\ntest result: FAILED. 10 passed; 1 failed; 2 ignored; 0 measured\n"
+        "test keys::echo_works ... ok\ntest keys::echo_fails ... FAILED\n"
+        "test result: FAILED. 10 passed; 1 failed; 2 ignored; 0 measured\n"
         "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured\n"
     )
     totals, failed = test_summary(cargo)
     check(totals == {"passed": 13, "failed": 1, "ignored": 2}, "test results are summed")
-    check(failed == ["a::c"], "the failed tests are named")
+    check(failed == ["keys::echo_fails"], "the failed tests are named")
 
     ps = {"models": [{"name": OLLAMA_MODEL, "context_length": 4096}, "junk"]}
     check(ollama_windows(ps) == [(OLLAMA_MODEL, 4096)], "Ollama's window is read from /api/ps")
