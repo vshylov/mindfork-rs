@@ -566,18 +566,21 @@ What a remote screen cannot show, known in advance:
    Built: §13.9.
 2. **A speech stub**: a standard-library Python server that answers
    `/v1/audio/speech` with a short WAV, for the `external` speech mode — the
-   playback path (rodio → CoreAudio) without a key. Scratch, not shipped.
+   playback path (rodio → CoreAudio) without a key. Built: §13.10,
+   `tools/tts_stub.py`.
 3. **The headless script**: §13.5's steps in order, each logging to its own
-   file, stopping at none. Scratch, not shipped.
+   file, stopping at none. Built: §13.10, `tools/mac_probe.py`.
 
 The tap already serves 0.17.0 (it took the release by itself), so the day tests
 what a Mac user would install that day.
 
 ### 13.5 The day, headless
 
+These are the steps of `tools/mac_probe.py`, M1–M5; M0 is the host itself.
+
 1. **The install routes.**
-   - `curl -fsSL …/install.sh | sh` → `~/mindfork`, the link, `mindfork
-     --version`, the data in `~/mindfork/data`.
+   - `curl -fsSL …/install.sh | sh` → the portable build (the probe gives it
+     `--dir`), the link, `mindfork --version`, the data beside the binary.
    - `brew install vshylov/tap/mindfork` (the AMI has Homebrew) → the data in
      `~/Library/Application Support/mindfork-rs`, the dictionaries in
      `libexec`.
@@ -697,4 +700,49 @@ The header names:
 Live on Windows, `console_probe --scenario keys` passed 18/18. On the day it is
 built from `main` (§13.5 step 3). In the next release, it is what the call for
 testers asks them to run.
+
+### 13.10 The day's tools — built
+
+Both are in `tools/` and use Python's standard library only. They target the
+python3 of Apple's Command Line Tools (3.9). Their offline arms run in the
+`lint` job (`--self-test`).
+
+**`tools/tts_stub.py`** stands in for a speech server. It answers `POST
+/v1/audio/speech` with a two-note tone:
+- `wav` for the `external` mode;
+- `pcm` at 24 kHz, as the OpenAI cloud sends it.
+
+Any other `response_format` is refused with a 400 that names the parameter.
+The tone lasts as long as the text takes to read, between 0.4 and 6 s. Each
+request is printed, so the session sees what was asked even where nothing can
+be heard. The app's own smoke of the mode, `external_server_synthesizes_live`,
+passed against it on Windows.
+
+**`tools/mac_probe.py`** is §13.5 as one command over SSH: `python3
+mac_probe.py [DIR] [--only M2,M4]`. It writes one report and a log per
+command. It is shaped like `tools/pod_probe.sh`:
+- no step stops the next;
+- the environment is never dumped, and the hardware UUID — the key material of
+  `platform-uuid-v1` — is reported as a hash prefix only;
+- everything lands under DIR, except what a step exists to measure.
+
+Two traps of a command sent over SSH are handled before they could cost a paid
+hour:
+- **The bare `PATH`.** It has none of Homebrew's directories, so `brew` and
+  what it installs would be "not found". The probe puts them first.
+- **The SSH session's end.** It would take `ollama serve` down with it, so the
+  server is started in a session of its own and is left running for the screen
+  half.
+
+M4 and M5 speak only HTTP. Run on Windows against the stands there, they gave
+back what had been measured by hand:
+- Ollama 0.35.1 in Docker: the window 4096.
+- LM Studio 1.1.7 with Gemma 4 E4B Q4_1 at 4096:
+  - the model's `format: gguf`;
+  - a last message over the window refused with a 400 naming 6148 tokens of 4096;
+  - a conversation over it answered after a cut: 1924 prompt tokens of about
+    6256 sent.
+
+So the classifier tells the two answers apart. On the Mac the same step asks
+the same of the MLX build, which 0.17.0 was never measured on.
 

@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (67)
+## Entries (68)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -79,6 +79,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Release 0.16.0 (prepared)
 - Release 0.16.1 (prepared)
 - Release 0.17.0 (prepared)
+- Post-M9: macOS stage 3 — the rented day's tools (done)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -4094,3 +4095,83 @@ at CI's severity. No live run: packaging only.
 - **Not run**: anything on a Mac with a screen; the TUI on real data, which is
   the owner's; the Windows installer and the `.deb`, `.rpm` and Arch packages,
   of which the digests were compared.
+
+### Post-M9: macOS stage 3 — the rented day's tools (done)
+
+**Why.** Stage 3 is one day on a rented Mac (docs/research/macos.md §13). An
+AWS `mac-m4.metal` host is billed for 24 hours at least, so what can run
+without a person at the screen should run as one command, and should be tried
+before the meter starts. The plan named two tools for it (§13.4): a speech
+server that needs no key, because no real key goes on a rented machine; and
+the headless half of the day as a script. They are in `tools/` rather than in
+a scratchpad, so they outlive the session that wrote them and are reviewed like
+the rest.
+
+**What.**
+- **`tools/tts_stub.py`** answers `POST /v1/audio/speech` with a two-note
+  tone:
+  - `wav` (what the `external` mode asks for);
+  - `pcm` at 24 kHz s16le (the OpenAI cloud's shape);
+  - any other format: a 400 naming `response_format`.
+
+  `GET /v1/models` lists one model. The tone lasts as long as the text takes to
+  read, between 0.4 and 6 s, so the playback queue gets fragments of different
+  lengths. It fades at each end so playback does not click, and listens on
+  127.0.0.1 only.
+- **`tools/mac_probe.py`** runs steps M0–M5 of §13.5:
+  - M0: the host;
+  - M1: the install routes, and the two terminals as casks;
+  - M2: the managed engine on Metal, with `llama-bench`;
+  - M3: the live gate from a checkout of `main`, against two llama-servers and
+    the stub;
+  - M4: Ollama's window;
+  - M5: LM Studio's window and its two overflows, for each downloaded LLM.
+
+  It writes one report and a log per command, and is shaped like
+  `tools/pod_probe.sh`: no step stops the next, nothing secret is reported (the
+  hardware UUID is a hash prefix), and everything lands under one directory.
+  The overflows are measured against a calibration: two short requests give the
+  tokens a sentence takes and the fixed overhead. A 400 is a refusal; fewer
+  prompt tokens than were sent is a cut.
+- **Two SSH traps, found by reading rather than on the meter.**
+  - A command sent over SSH runs with the system's bare `PATH`, with none of
+    Homebrew's directories, so `brew` would have been "not found". The probe
+    puts them first.
+  - The end of the SSH session would have taken a plain `ollama serve` down
+    with it, so the server is started in a session of its own.
+- Both tools' offline arms run in CI's `lint` job: `tts_stub.py --self-test`
+  (15 checks, against a server on a free port) and `mac_probe.py --self-test`
+  (25 checks).
+- **Sonar's first pass failed the security rating** with a blocker:
+  `pythonsecurity:S5131`, a reflected XSS. The stub's 404 put the request's path
+  into the body, and its format refusal put the value that was asked for. The
+  server listens on 127.0.0.1 only, but an error body has no reason to repeat
+  the request. The value now goes into the server's own log line only, and two
+  checks send markup and see that none of it comes back.
+
+  Four lesser findings were fixed in the same pass:
+  - an `except` that listed `URLError` beside `OSError`, which it derives from;
+  - `step_install` was split into its three routes (complexity 18, the ceiling
+    is 15);
+  - a test name, `a::c`, which `python:S1313` read as an IPv6 address;
+  - a base URL that built `http://` from a variable instead of the loopback
+    literal, which `python:S5332` exempts.
+
+**Live, on Windows, against the stands here.**
+- **The stub** passed `tts_stub.py --self-test` 15/15. The app's own smoke of
+  the external mode, `external_server_synthesizes_live`, passed against it:
+  a 67 244-byte WAV.
+- **The probe's M4 and M5**, against Ollama 0.35.1 in Docker and LM Studio
+  1.1.7, gave back what had been measured by hand:
+  - the Ollama window: 4096;
+  - LM Studio's model: `format: gguf`, loaded at a 4096 window, which it
+    reports;
+  - 12.0 tokens a sentence, 16 of overhead;
+  - one message over the window: refused with a 400 naming 6148 tokens of 4096;
+  - a conversation over it: answered after a cut, 1924 prompt tokens of about
+    6256 sent.
+- **M0, M2 and M3** on Windows took their skip paths without an error.
+- **M1–M3 proper** (Homebrew, rustup, Metal, the gate) can only run on the Mac.
+
+**Not done.** Nothing ran on a Mac. The AWS quota for the host is still open
+(a support case).
