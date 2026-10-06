@@ -487,8 +487,8 @@ effort tiers — have all closed
   Silicon only; stage 1 (stored secrets, the single-instance lock, a symlinked
   binary, the keys, macOS in CI) and stage 2 (the release's `aarch64-macos`
   archive, `install.sh` on a Mac, the `vshylov/homebrew-tap` tap) shipped.
-  **Open: stage 3** — a day on a rented Mac (Scaleway M4) through the checklist
-  of macos.md §6.2, then the call for testers; signing and notarization on
+  **Open: stage 3** — a day on a rented Mac (AWS `mac-m4.metal`), planned in
+  macos.md §13, then the call for testers; signing and notarization on
   demand (fork F4).
 - **MSI for GPO/Intune** — **on demand**.
 - **GPG signing of the Linux packages** — **idea**

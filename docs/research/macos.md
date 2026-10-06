@@ -1,10 +1,10 @@
 # macOS — mindfork on a Mac, built and tested without one
 
 Status: **MVP probe GO; every fork as recommended (the owner, 2026-10-04);
-stages 1 and 2 built (§10–§12)** — the first release that carries the macOS
-build, then a day on a rented Mac (stage 3). Part of the promotion plan's
-stage 1, the friction of a first try ([promotion.md §5](promotion.md)): today a
-Mac user has no download at all.
+stages 1 and 2 built (§10–§12), shipped in 0.15.0; stage 3, a day on a
+rented Mac, planned (§13)**. Part of the promotion plan's stage 1, the
+friction of a first try ([promotion.md §5](promotion.md)): until 0.15.0 a Mac
+user had no download at all.
 
 The owner has no Mac. Everything below was measured on GitHub's Apple Silicon
 runners (§3) or read from the code (§4) and from Apple's, GitHub's and
@@ -310,6 +310,8 @@ iTerm2 and Ghostty:
    with a small Gemma), and the sandbox running Python;
 9. the release archive downloaded in Safari — the quarantine path, end to end.
 
+The day's plan, with what is prepared before it and what runs headless: §13.
+
 ## 7. Stages
 
 - **Stage 0 — this document and its probe.** GO: it builds on macOS 15 and
@@ -368,6 +370,7 @@ iTerm2 and Ghostty:
   site's account already is, an M1 for ~$16; (c) skip it and rely on testers.
   **Recommended: (a)** — the cheapest, the newest GPU, a console VNC — after
   stage 2, so the day tests the archive a user would download.
+  **Changed to (b) on 2026-10-06**: Scaleway refused the owner's card (§13.1).
 
 ## 9. Risks
 
@@ -483,4 +486,193 @@ leaves none; a mark put on an archive is copied by `tar -xzf FILE` onto every
 file it unpacks, and not by `… | tar -xzf -`; `spctl` rejects the ad-hoc-signed
 binary, which a shell on the runner still started — whether a Terminal window on
 a Mac does is §6.2's item 9.
+
+## 13. Stage 3 — the plan for the rented day
+
+The checklist of §6.2 as a day's work: what is prepared before it, what runs
+headless, what needs a person at a screen, and what is measured rather than
+looked at. Forks F7–F9 (§13.8): **every one as recommended — (a) — the
+owner, 2026-10-06.**
+
+### 13.1 The machine
+
+**AWS EC2, `mac-m4.metal`.** F6 chose Scaleway; on 2026-10-06 Scaleway
+refused the owner's card, and the day moved to the AWS account the site already
+runs on. Read the same day from AWS's documentation:
+
+- **`mac-m4.metal`**: a 2024 Mac mini, M4 (10-core GPU), **24 GiB** —
+  **$1.23 an hour** in `us-east-1` (Frankfurt $1.476). A Mac is a *Dedicated
+  Host* with a **24-hour minimum** before it can be released: **~$30 a day**.
+  24 GiB holds Gemma 4 E4B and bge-m3 with room to spare; one server at a time
+  all the same.
+- **A quota first.** Every Mac host quota of a new account is 0 (measured on
+  this one, read-only). *Running Dedicated mac-m4 Hosts* (`L-2CBA8B92`) = 1 in
+  `us-east-1` was requested on 2026-10-06; people review it, in hours or days.
+- **macOS**: AWS's AMIs carry Sequoia 15 (15.6 or later on an M4) and Tahoe 26
+  — 15.8 and 26.7 in the 2026-09-23 release — and already Golden Gate 27.0.
+  Preinstalled: Homebrew, the Command Line Tools, Safari, the AWS CLI;
+  `ec2-user` has `sudo` without a password.
+- **Another macOS on the same host** means stopping the instance: the host is
+  *scrubbed* — up to **4.5 hours** on Apple silicon, unbilled — and a new one
+  is launched from the other AMI.
+- **Access**: SSH as `ec2-user` with the key pair named at launch (a `.pem`
+  that stays the owner's). The desktop: a password set with `sudo passwd
+  ec2-user`, Screen Sharing turned on with `launchctl`, and VNC through an SSH
+  tunnel — `ssh -L 5900:localhost:5900 …`, then an ARD-capable VNC client on
+  Windows pointed at `localhost:5900`.
+- **Released by hand** once the 24 hours have passed: the instance stopped,
+  then *Release host*. A forgotten host bills by the hour.
+
+Scaleway (§6.1) would have been a sixth of the price; MacinCloud's hourly plan
+has no admin rights, which the casks need.
+
+### 13.2 What never goes on it
+
+- **No real API key** and no personal account (no Apple ID is needed). The
+  secret store is checked with a made-up value; speech with a local stub
+  (§13.4).
+- The desktop's password and the key pair stay the owner's.
+- When the work is done the host is released (§13.1) — and with it the disk,
+  which AWS scrubs.
+
+### 13.3 Who does what
+
+- **Headless, over SSH** — the installs, the managed engine on Metal, the live
+  gate, the servers' APIs (§13.5). Run by the agent if the owner gives it a host
+  alias (F9), pasted by the owner otherwise. Every step's output is kept as a
+  file, so the results come back as logs rather than as recollection.
+- **At the screen, over VNC** — everything a terminal decides: the keys, the
+  colour, the mouse, the clipboard, a browser's download (§13.6). The owner at
+  the keyboard; the agent in the session, reading the key echo's lines and
+  writing the results down.
+
+What a remote screen cannot show, known in advance:
+
+- **The keyboard is a PC's, through VNC.** Alt has to arrive as Option — checked
+  first in TextEdit, where Option+←/→ moves by words natively. The F keys
+  arrive as F keys, so whether `fn`+F1 reaches the app is left to testers.
+- **No sound** over VNC: playback is checked for running to its end without an
+  error, not heard.
+- **The VNC client's clipboard sharing off**: the clipboard is checked between
+  programs on the Mac (TextEdit ↔ mindfork), not between the two machines.
+
+### 13.4 Before the day — the agent's
+
+1. **A key echo** (F7): what crossterm reports for a chord under the app's own
+   terminal setup — bracketed paste, the kitty push where the terminal answers
+   the query (`app/runtime/mod.rs`), mouse capture on a key — and what the
+   input box does with it — printed, and kept in a file the agent reads over
+   SSH. It turns "Shift+Enter did nothing" into the event that arrived.
+2. **A speech stub**: a standard-library Python server that answers
+   `/v1/audio/speech` with a short WAV, for the `external` speech mode — the
+   playback path (rodio → CoreAudio) without a key. Scratch, not shipped.
+3. **The headless script**: §13.5's steps in order, each logging to its own
+   file, stopping at none. Scratch, not shipped.
+
+The tap already serves 0.17.0 (it took the release by itself), so the day tests
+what a Mac user would install that day.
+
+### 13.5 The day, headless
+
+1. **The install routes.**
+   - `curl -fsSL …/install.sh | sh` → `~/mindfork`, the link, `mindfork
+     --version`, the data in `~/mindfork/data`.
+   - `brew install vshylov/tap/mindfork` (the AMI has Homebrew) → the data in
+     `~/Library/Application Support/mindfork-rs`, the dictionaries in
+     `libexec`.
+   - rustup (no password), then `cargo install --locked mindfork` → 0.17.0
+     built from crates.io; the build time noted.
+2. **The managed engine on a real GPU.** The Gemma 4 E4B GGUF (Q4_1) and
+   `bge-m3-Q8_0` downloaded with `curl`; `mindfork setup --sandbox --llama metal
+   --model … --embed-model … --ctx 16384 --verify` → the build named `metal`,
+   `ready in N s — context 16384`. `llama-bench` from the same build: prompt
+   and generation tokens per second — the first number a Mac user asks.
+3. **The live gate on a Mac.** A checkout of `main`; `cargo test` on real
+   hardware (its count beside the runner's), then `cargo test -- --ignored
+   --test-threads=1` against the managed engine of step 2 — passed, failed and
+   skipped, the table the RunPod gate keeps. The runner's GPU is paravirtual
+   (§9); this is the first measure of Metal rather than a smoke.
+4. **Ollama** (`brew install ollama`, `ollama serve`, `ollama pull
+   gemma4:e4b`): `/api/version`, and the window `/api/ps` reports on 16 GB of
+   unified memory — 4096 was measured under 24 GiB of VRAM on the 4090 box.
+5. **LM Studio** (the app installed by the owner over VNC, its terms the
+   owner's to accept; `lms` over SSH after): the GGUF and the **MLX** build of
+   the same model. For each, `/api/v1/models` — whether an MLX instance reports
+   `type` and `config.context_length` as the llama.cpp engine does — and a
+   prompt over the window: a refusal, the middle cut 1.1.7 measured on Windows
+   ([local-servers.md](local-servers.md) §2), or something else. Most Mac users
+   of LM Studio run MLX; 0.17.0 was measured on llama.cpp only.
+
+### 13.6 The day, at the screen
+
+**In each terminal** — Terminal.app (macOS 26), iTerm2, Ghostty (both as casks),
+and Terminal.app on macOS 15 (F8) — the same list, kept as a table of terminal
+by check:
+
+1. **A line break**: `Shift+Enter`, `Option+Enter`, `Ctrl+J`; the chord the
+   footer names works; the key echo's line for each.
+2. **Words**: Option+←/→, Option+Backspace/Delete; `Ctrl+←/→` with the Spaces
+   shortcuts on (expected to never arrive) and off.
+3. **Paging**: Home/End, Page Up/Down and their `Shift` forms in the feed and
+   the chat list; F1.
+4. **Colour**: `full` in a dark and a light theme, `mono`, `NO_COLOR=1`. In
+   Terminal.app on macOS 15: is 24-bit colour drawn, approximated or garbled —
+   the 256-colour pass of §7's *later* waits on this answer.
+5. **The mouse**: native selection with capture off, the wheel after `Ctrl+W`,
+   a link — Cmd+click (the terminal's own) and the app's.
+6. **The clipboard**: the app → TextEdit, TextEdit → the app (bracketed paste),
+   an image copied in Preview and pasted as an attachment.
+7. **A Russian layout** (added to the Mac by the owner): `Ctrl`+letter
+   shortcuts with it active (`shared/keys.rs` — the static table, unverified on
+   a Mac), Cyrillic typed, the spellcheck's underline.
+
+**Once, in Terminal.app on macOS 26:**
+
+1. `mindfork demo` — the first try that needs nothing set up.
+2. 0.17.0's first run with Ollama serving → the offer, `Enter`, a turn; again
+   with LM Studio's MLX model loaded → the offer, its window read; `/local`.
+3. The managed chat of §13.5 step 2: a turn with its thoughts, `python_exec`
+   in the sandbox, a note saved and found by meaning, `/file folder` opening
+   Finder, then a restart — no chat recovered from Finder's `.DS_Store`.
+4. A made-up key stored for OpenAI, the app restarted, the key still there
+   (`platform-uuid-v1`, §10).
+5. `/tts` through the stub of §13.4 — plays to its end with no error.
+6. The window shrunk below what a frame needs → the notice; `Ctrl+Q` quits.
+7. A second `mindfork` refused while the first runs (the lock in `$TMPDIR`).
+
+**The browser's road** (§6.2 item 9): Safari downloads the
+`aarch64-macos.tar.gz`; unpacked with a double click (Archive Utility — does the
+quarantine travel, as `tar` was measured to carry it, §12?); started in
+Terminal → Gatekeeper's refusal in its own words; `xattr -dr
+com.apple.quarantine` → it starts; and the other road, *System Settings →
+Privacy & Security → Open Anyway*. `install.sh --from` that download says its
+quarantine note.
+
+### 13.7 After the day
+
+- What was measured goes here, as §14, and into the journal of each area it
+  touched; each defect gets its own branch and pull request.
+- install.md's macOS section says what was seen instead of "not yet on a Mac
+  with a screen".
+- The call for testers — a Discussions post in the owner's words, after the
+  owner's yes; the key echo (F7 a) is what it asks them to run.
+
+### 13.8 Forks
+
+- **F7 — the key echo.** (a) a diagnostic subcommand, `mindfork keys`, shipped:
+  built from `main` on the day, and in the next release for testers to run and
+  paste; (b) a scratch program built on the Mac that day; (c) none — behaviour
+  only. **Recommended: (a)** — the same question comes back from every tester
+  with a terminal not on this list, and (b) answers it once.
+- **F8 — macOS 15 and 26.** (a) one M4 on 26 for the whole list, then
+  relaunched on 15 for Terminal.app's half (§13.6, its first table only) — one
+  host, a wait in the middle (on AWS the scrub, up to 4.5 hours, §13.1), the
+  short install repeated; (b) two hosts at once — twice the price, no wait;
+  (c) 26 only. **Recommended: (a)** — the 24 hours have room for the wait, and
+  macOS 15 is needed for one question (colour) and a repeat of the keys.
+- **F9 — the headless half.** (a) run by the agent: the owner puts the machine
+  in `~/.ssh/config` under an alias with the key pair's file, which stays
+  theirs, and the agent only runs `ssh <alias> …`; (b) pasted by the owner from the script.
+  **Recommended: (a)** — half the list runs while the owner is not at the
+  screen, and its logs land in the session as they are written.
 
