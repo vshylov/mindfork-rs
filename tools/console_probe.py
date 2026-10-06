@@ -863,6 +863,8 @@ CAPITAL_QUESTION = "Answer with one word: what is the capital of France?"
 # A turn through the agentic loop: the model saves a note, which the embedder
 # indexes when there is one.
 SAVE_A_NOTE = "Save a note with the note_save tool: my GPU has 24 GB. Then say done."
+# What a `note_save` call's card begins with in the feed.
+NOTE_CARD = "note_save("
 
 
 def text_of(rows: list[list[tuple[str, int]]]) -> str:
@@ -1447,12 +1449,12 @@ def scenario_ollama(exe: Path, report: Report) -> None:
             print("a tool: a note saved through the agentic loop")
             type_text(SAVE_A_NOTE)
             press("enter", SETTLE_REPAINT)
-            wait_for_text("note_save(", 180)
+            wait_for_text(NOTE_CARD, 180)
             wait_for_text(TURN_OVER, 120)
             time.sleep(2)
             rows = read_screen()
             print(text_of(rows))
-            report.says("the tool's card", rows, ("note_save(",))
+            report.says("the tool's card", rows, (NOTE_CARD,))
             report.check(LAUNCH_LINE not in text_of(rows), "nor after the second turn")
             served = ollama_window(url, model)
             print(f"Ollama runs {model} with a window of {served}")
@@ -1597,12 +1599,12 @@ def scenario_lmstudio(exe: Path, report: Report) -> None:
             print("a tool: a note saved through the agentic loop")
             type_text(SAVE_A_NOTE)
             press("enter", SETTLE_REPAINT)
-            wait_for_text("note_save(", 180)
+            wait_for_text(NOTE_CARD, 180)
             wait_for_text(TURN_OVER, 120)
             time.sleep(2)
             rows = read_screen()
             print(text_of(rows))
-            report.says("the tool's card", rows, ("note_save(",))
+            report.says("the tool's card", rows, (NOTE_CARD,))
         finally:
             code = session.close()
         report.check(code == 0, f"the app exited with code {code}")
@@ -1685,6 +1687,7 @@ def scenario_lmstudio_cut(exe: Path, report: Report) -> None:
 # The engineless chat offering what it finds (docs/research/local-servers.md,
 # stage 2): the list's title, and what a pick says.
 LOCAL_TITLE = "Local servers"
+LOCAL_COMMAND = "/local"
 OLLAMA_ROW = "Ollama · "
 LMSTUDIO_ROW = "LM Studio · "
 NOTHING_ANSWERED = "Neither Ollama"
@@ -1733,7 +1736,7 @@ def scenario_first_run(exe: Path, report: Report) -> None:
             report.check(written["embed"]["mode"] != "external", "no embedder from a server with none")
 
             print("/local: the list again, and LM Studio with its embedder")
-            type_text("/local")
+            type_text(LOCAL_COMMAND)
             press("enter", SETTLE_REPAINT)
             rows = wait_for_text(LOCAL_TITLE, 30)
             print(text_of(rows))
@@ -1754,12 +1757,12 @@ def scenario_first_run(exe: Path, report: Report) -> None:
             print("a note saved, which the embedder indexes")
             type_text(SAVE_A_NOTE)
             press("enter", SETTLE_REPAINT)
-            wait_for_text("note_save(", 180)
+            wait_for_text(NOTE_CARD, 180)
             wait_for_text(TURN_OVER, 120)
             time.sleep(3)
             rows = read_screen()
             print(text_of(rows))
-            report.says("LM Studio's turns", rows, ("Rome", "note_save("))
+            report.says("LM Studio's turns", rows, ("Rome", NOTE_CARD))
             written = settings_of(root)
             report.check(
                 written["engine"]["external"]["url"].endswith(":1234/v1")
@@ -1791,9 +1794,9 @@ def scenario_first_run_none(exe: Path, report: Report) -> None:
             time.sleep(5)
             rows = read_screen()
             print(text_of(rows))
-            report.says("the empty feed", rows, ("Four ways to start", "/local"))
+            report.says("the empty feed", rows, ("Four ways to start", LOCAL_COMMAND))
             report.check(LOCAL_TITLE not in text_of(rows), "no list when nothing answered")
-            type_text("/local")
+            type_text(LOCAL_COMMAND)
             press("enter", SETTLE_REPAINT)
             rows = wait_for_text(NOTHING_ANSWERED, 30)
             print(text_of(rows))
