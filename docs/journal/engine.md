@@ -6505,7 +6505,7 @@ stacked on the LM Studio stage; the promotion plan's idea for its stage 1.
 
   **3962 unit tests, 257 `#[ignore]`** (+16).
 - **Live** (`console_probe.py`):
-  - `first-run`, both servers up: 14/14. The list opens by itself; Ollama's
+  - `first-run`, both servers up: 15/15. The list opens by itself; Ollama's
     row answers; `/local` then LM Studio's row brings nomic, and a saved note
     is indexed with no error.
   - `first-run-none`, both stopped: 7/7.

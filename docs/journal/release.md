@@ -4033,3 +4033,64 @@ at CI's severity. No live run: packaging only.
 
   `llms.txt` is regenerated. Zola puts the post above 0.16.1's, though both are
   dated 2026-10-06.
+- **The draft, checked before anyone else could see it** (§6 step 5).
+  - The owner merged and set `v0.17.0` on the merge commit `20561b70`, which
+    was `origin/main`.
+  - `release.yml` (run 37497012868) was green in all eight jobs in
+    **16 min 57 s**. Windows took the longest, 15 min 46 s (0.16.1: 11 min
+    24 s); then macOS 12 min 55 s, Linux 7 min 47 s, the demo 3 min 51 s.
+  - It left a draft that was not a prerelease, with fifteen assets under
+    0.16.1's names. Its notes were the CHANGELOG's `[0.17.0]` section under its
+    lead paragraph, 30 lines with the footer.
+  - Every file downloaded hashed to the line `sha256sums.txt` gives it, fourteen
+    of fourteen.
+- **The job's install steps: `passed=35 failed=0` in the macOS build and
+  `passed=43 failed=0` in the publication.** `install.sh` is still 0.16.0's
+  file, `0b66b243…`.
+- **The released Windows binary against both servers** — the release's own
+  subject. The zip's `mindfork.exe` says `mindfork 0.17.0`. `console_probe.py
+  --exe` it, against Ollama 0.35.1 in Docker at 4096 and LM Studio 1.1.7:
+  - **`first-run`: 15/15.** The list opened by itself (`servers=2 offers=2
+    asked=false`). Ollama's row answered; `/local`, then LM Studio's row, brought
+    nomic, and a saved note was indexed with no embedder error.
+  - **`first-run-none`, both servers stopped: 7/7.**
+  - **`lmstudio`: 14/14**, `context_budget=4096 server=LmStudio`.
+  - **`lmstudio-cut`** at 8192: **11/11**, `processed=6332 held=7368`.
+  - **`ollama`: 13/13**, and **`ollama-cut`: 7/7**, `processed=2051 held=4357`.
+
+  Every figure is the branches' to the token.
+- **A count corrected.** `first-run` has fifteen checks; the stage-2 PR (709),
+  [local-servers.md](../research/local-servers.md) §9 and the engine journal
+  said fourteen. The two documents say fifteen now; the PR's text stays as it
+  was merged.
+- **The macOS archive** is a `Mach-O 64-bit arm64 executable`. Not run here,
+  where there is no Mac.
+- **Attestations** verify for the three archives, the installer and
+  `install.sh`; a scratch file exits 1. **The six animation files are byte
+  for byte 0.16.1's**: the reel's scripted engine is configured, so nothing it
+  shows changed.
+- **Published, and the numbers of it.**
+  - The owner published at 17:05:59Z, 12 min 42 s after the draft appeared.
+  - `crates-io.yml` ran 17:06:01Z → 17:08:24Z. `mindfork 0.17.0` was on the
+    registry at 17:08:19Z, 2 min 20 s after the publication.
+  - `Site` started by itself three seconds after `crates.io` completed and
+    deployed at 17:09:19Z — **3 min 20 s after the publication** (0.16.1: 3 min
+    53 s). The merge's run had held, as before.
+  - From outside:
+    - the post answers 200;
+    - the home page's and the install page's structured data say
+      `"softwareVersion": "0.17.0"`;
+    - the install page leads with "Already running Ollama or LM Studio?";
+    - the home page names LM Studio;
+    - the blog's index, `/llms.txt`, the feed and the sitemap list the post;
+    - `releases/latest` resolves to `v0.17.0`, its `install.sh` hashing to the
+      draft's.
+- **The package managers.**
+  - `aur.yml` built and checked `mindfork-rs-bin` 0.17.0, and stopped at its
+    notice: there is no key.
+  - The Homebrew tap and Scoop's Excavator both still named 0.16.1 at 17:09Z.
+    On the release before, both took 0.16.1 within 1 h 38 min of its
+    publication: the tap at 01:09:02Z, the bucket at 01:07:47Z.
+- **Not run**: anything on a Mac with a screen; the TUI on real data, which is
+  the owner's; the Windows installer and the `.deb`, `.rpm` and Arch packages,
+  of which the digests were compared.
