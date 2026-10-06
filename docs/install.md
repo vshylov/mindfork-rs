@@ -779,6 +779,49 @@ thoughts (it sends them as `delta.reasoning`), tool calls and the usage of
 every stream work as they do against a llama-server; `/health` is a `404`,
 which the readiness probe reads as ready.
 
+**LM Studio is an `external` server** too, at `http://localhost:1234/v1`, with
+the model's key — the one `lms ls` prints — in "Model (opt.)". Its server is off
+until started: `lms server start`, or the Developer tab of the app. A model that
+is not loaded is loaded by the first request that names it.
+
+```bash
+lms server start
+mindfork setup --set engine.mode=external --set engine.external.url=http://localhost:1234/v1 --set engine.external.model_name=google_gemma-4-e4b-it
+```
+
+- **LM Studio's window is its own setting** — the model's *Context Length* in
+  the app's load settings, or `lms load <model> -c 16384`. A model loaded on a
+  request takes its default configuration; measured on LM Studio 1.1.7 with
+  `gemma-4-E4B` on a 24 GB GPU, that was the model's maximum, 131072. `lms ps`
+  shows the window a loaded model runs with. Loading a loaded model again starts
+  a **second instance** (`<model>:2`) and requests naming the model keep going
+  to the first, so to change the window, `lms unload <model>` first.
+- **The app reads it** from LM Studio's `/api/v1/models`, which lists every
+  model with its loaded instances and the window of each — at the start, and
+  once more after the first turn, since a model may be loaded by that turn.
+  Automatic compaction then folds at 75 % of it.
+- **A prompt that outgrows it is answered in one of two ways** (measured on
+  1.1.7). When the last message does not fit beside mindfork's instructions,
+  LM Studio refuses it with a `400`, and the feed says the conversation no
+  longer fits. When the conversation does not fit, LM Studio asks its runtime
+  again with **the middle removed** — the instructions, the first message and
+  the last, everything between them dropped at once — and answers with a `200`.
+  The app tells that cut from the `usage` as it does Ollama's, in LM Studio's
+  words: measured at 8192, a second page pasted into a conversation was cut from
+  at least 7368 tokens to 6332, and the feed named the model's Context Length and
+  the `lms unload` / `lms load` line for it.
+- **The window-too-small note** names LM Studio's setting the same way. At
+  4096 it comes after the first turn — mindfork's 3446 tokens are already over
+  75 % of it.
+
+What else was measured against LM Studio 1.1.7: streaming, the thoughts
+(`delta.reasoning_content`), tool calls and the usage of every stream work as
+against a llama-server. It answers every path it does not serve — `/health`,
+`/props` among them — with a `200` and an `error` body, which the app reads as
+no answer; a model name it does not hold is answered by whatever model is
+loaded, with no error, so check the key with `lms ls`. `Enter` on the model
+field lists every model LM Studio holds, its embedding models among them.
+
 **A cloud gateway is an `external` server too** — LiteLLM, a vLLM behind a
 proxy, or any OpenAI-compatible reseller. **OpenRouter has a mode of its own**,
 `openrouter` (§3.2), and that mode is the way to use it: one key for every slot,

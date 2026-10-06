@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (91)
+## Entries (92)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -103,6 +103,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the slow-prefill note is for a llama-server — Ollama sends llama.cpp's timings (done)
 - Post-M9: Ollama's context window, read from `/api/ps` (done)
 - Post-M9: a prompt the server cut in silence is told (done)
+- Post-M9: LM Studio, a server the app knows by name (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -6432,3 +6433,44 @@ CHANGELOG (Fixed); lessons §3 (a probe's output is not its verdict).
 - **Not in this branch**: asking Ollama to refuse through its own `/api/chat`;
   the roll's own prompt, which a small window can cut the same way; OpenRouter's
   `middle-out`; a server that would report only the uncached part.
+
+### Post-M9: LM Studio, a server the app knows by name (done)
+
+Stage 1 of [local-servers.md](../research/local-servers.md); the promotion
+plan's LM Studio recipe waited for a live run, and this is it.
+
+- **Measured** (LM Studio 1.1.7, `gemma-4-E4B` Q4_1 imported with
+  `lms import --copy`, the 4090):
+  - Today's build already worked through `external`: 12 of the `ollama`
+    scenario's 13 checks. The window was the one it did not read.
+  - LM Studio answers every path it does not serve with `200` and an `error`
+    body.
+  - A model named on a request is loaded just in time, at its default
+    configuration — the model's maximum, 131072, here.
+  - Over its window it does one of two things:
+    - refuses (a `400`, llama.cpp's error in a string) when the last message
+      does not fit;
+    - otherwise asks its runtime again with the middle of the conversation
+      removed: 4044 tokens kept every turn, one turn more processed 2809 and
+      remembered only the first.
+  - A second `lms load` of a loaded model starts `<model>:2`.
+- **The owner's decisions** (2026-10-06): F1 (a) a text per server; for stage
+  2, F2 (a), F3 (b) as `/local`, F4 (a), F5 (b), F6 (a) — F3 and F5 against
+  the recommendation.
+- **Built**:
+  - `shared/api/local_servers.rs` — the listings, each shape with a required
+    field, and `LmStudioModels::window_of`.
+  - `OpenAiClient`'s window chain gains LM Studio after Ollama.
+  - `EngineBackend::server_kind`, delegated by `RetryBackend`, asked with the
+    window in `external` mode and kept in `ContextDiscovery`.
+  - The three notes in a text per server (`Orchestrator::for_server`).
+  - **3946 unit tests, 257 `#[ignore]`** (+10).
+- **Live** (`console_probe.py`, two new scenarios):
+  - `lmstudio` at 4096: 14/14. The log names `server=LmStudio`, and the note
+    names Context Length and the `lms` line.
+  - `lmstudio-cut` at 8192: 11/11. `processed=6332 held=7368`, LM Studio's
+    note, and a fold.
+  - Ollama as the control: `ollama` 13/13 at 16384 and at 4096, `ollama-cut`
+    7/7 with 0.16.1's figures.
+- **Next**: stage 2, the engineless chat offering what it finds; the README's
+  and the site's LM Studio paragraph in the release PR.

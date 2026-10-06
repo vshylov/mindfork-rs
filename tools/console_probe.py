@@ -104,6 +104,18 @@ Scenarios (`--scenario`):
   does not fit beside the instructions, so Ollama cuts the prompt to half its
   window from the front and answers. The feed must carry the cut-prompt note
   and the app's log the cut round (docs/research/prompt-cut-detection.md).
+* `lmstudio` — LM Studio's recipe against its **running server**, the model
+  loaded first at a small window (`lms load <model> -c 4096`;
+  `MINDFORK_LMSTUDIO_URL` and `MINDFORK_LMSTUDIO_MODEL` override the URL and
+  the model's key): a question is answered with no launch line, the app has
+  read LM Studio's window from `/api/v1/models` and knows the server (its log
+  says so), the window-too-small note names LM Studio's setting and not
+  Ollama's, a note is saved, and no round is told as cut
+  (docs/research/local-servers.md).
+* `lmstudio-cut` — the same, the model loaded at 8192: a question and a page
+  fit; a second page does not, and LM Studio drops the middle of the
+  conversation in silence. The feed must carry the cut-prompt note in LM
+  Studio's words and the app's log the cut round.
 
 * `small-window` — `mindfork demo` in consoles started small (spec §11.1.1):
   at 57×5, the window of the report, the frame is the "window too small"
@@ -1349,6 +1361,42 @@ def ollama_window(url: str, model: str) -> int | None:
     return next((m.get("context_length") for m in loaded if m.get("name") == model), None)
 
 
+def chat_is_up(report: Report) -> None:
+    """The chat's status chip is on the screen: the app is up and its engine
+    applied."""
+    report.says("the start", wait_for_text(CHAT_READY, 60), (CHAT_READY,))
+
+
+def set_up_external(
+    copy: Path, root: Path, url: str, model: str, report: Report, extra: list[str] | None = None
+) -> None:
+    """The interface's language first, so the screen reads the same on any
+    machine; then the recipe's own line for an external server, word for word
+    (with `extra` keys after it)."""
+    language = [str(copy), "setup", "--set", "interface.language=en"]
+    subprocess.run(language, cwd=root, check=True, capture_output=True)
+    recipe = [
+        str(copy), "setup",
+        "--set", "engine.mode=external",
+        "--set", f"engine.external.url={url}",
+        "--set", f"engine.external.model_name={model}",
+    ] + (extra or [])
+    done = subprocess.run(recipe, cwd=root, capture_output=True, text=True)
+    print(done.stdout)
+    report.check(done.returncode == 0, f"the recipe's setup line exited with {done.returncode}")
+
+
+def log_lines(root: Path, needle: str) -> list[str]:
+    """The lines of the app's logs, in the scratch copy's data, that hold
+    `needle`."""
+    return [
+        line
+        for log in sorted((root / "data" / "logs").glob("*"))
+        for line in log.read_text(encoding="utf-8", errors="replace").splitlines()
+        if needle in line
+    ]
+
+
 def scenario_ollama(exe: Path, report: Report) -> None:
     url = os.environ.get("MINDFORK_OLLAMA_URL", OLLAMA_URL)
     model = os.environ.get("MINDFORK_OLLAMA_MODEL", OLLAMA_MODEL)
@@ -1357,28 +1405,15 @@ def scenario_ollama(exe: Path, report: Report) -> None:
         root = Path(scratch)
         copy = root / exe.name
         shutil.copy(exe, copy)
-        # The interface's language first, so the screen reads the same on any
-        # machine; then the recipe's own line, word for word.
-        language = [str(copy), "setup", "--set", "interface.language=en"]
-        subprocess.run(language, cwd=root, check=True, capture_output=True)
-        recipe = [
-            str(copy), "setup",
-            "--set", "engine.mode=external",
-            "--set", f"engine.external.url={url}",
-            "--set", f"engine.external.model_name={model}",
-        ]
         # The recipe types no window: the app reads Ollama's. A typed one is
         # 0.15.0's recipe, kept as an arm.
-        if window:
-            recipe += ["--set", f"compaction.context_tokens={window}"]
-        done = subprocess.run(recipe, cwd=root, capture_output=True, text=True)
-        print(done.stdout)
-        report.check(done.returncode == 0, f"the recipe's setup line exited with {done.returncode}")
+        extra = ["--set", f"compaction.context_tokens={window}"] if window else []
+        set_up_external(copy, root, url, model, report, extra)
 
         session = Session(copy, [], cwd=root)
         try:
             print("the chat: a question through Ollama (the first loads the model)")
-            report.says("the start", wait_for_text(CHAT_READY, 60), (CHAT_READY,))
+            chat_is_up(report)
             type_text(CAPITAL_QUESTION)
             press("enter", SETTLE_REPAINT)
             rows = wait_for_text("Paris", 180)
@@ -1424,20 +1459,10 @@ def scenario_ollama(exe: Path, report: Report) -> None:
         finally:
             code = session.close()
         report.check(code == 0, f"the app exited with code {code}")
-        cuts = [
-            line
-            for log in sorted((root / "data" / "logs").glob("*"))
-            for line in log.read_text(encoding="utf-8", errors="replace").splitlines()
-            if CUT_LOGGED in line
-        ]
+        cuts = log_lines(root, CUT_LOGGED)
         report.check(not cuts, f"no round told as cut: {cuts}")
         if not window:
-            logged = [
-                line
-                for log in sorted((root / "data" / "logs").glob("*"))
-                for line in log.read_text(encoding="utf-8", errors="replace").splitlines()
-                if WINDOW_LOGGED in line
-            ]
+            logged = log_lines(root, WINDOW_LOGGED)
             for line in logged:
                 print(line)
             report.check(
@@ -1460,21 +1485,12 @@ def scenario_ollama_cut(exe: Path, report: Report) -> None:
         root = Path(scratch)
         copy = root / exe.name
         shutil.copy(exe, copy)
-        language = [str(copy), "setup", "--set", "interface.language=en"]
-        subprocess.run(language, cwd=root, check=True, capture_output=True)
-        recipe = [
-            str(copy), "setup",
-            "--set", "engine.mode=external",
-            "--set", f"engine.external.url={url}",
-            "--set", f"engine.external.model_name={model}",
-        ]
-        done = subprocess.run(recipe, cwd=root, capture_output=True, text=True)
-        report.check(done.returncode == 0, f"the recipe's setup line exited with {done.returncode}")
+        set_up_external(copy, root, url, model, report)
 
         session = Session(copy, [], cwd=root)
         try:
             print("the first turn: a short question, which fits")
-            report.says("the start", wait_for_text(CHAT_READY, 60), (CHAT_READY,))
+            chat_is_up(report)
             type_text(CAPITAL_QUESTION)
             press("enter", SETTLE_REPAINT)
             wait_for_text("Paris", 180)
@@ -1502,12 +1518,149 @@ def scenario_ollama_cut(exe: Path, report: Report) -> None:
         finally:
             code = session.close()
         report.check(code == 0, f"the app exited with code {code}")
-        logged = [
-            line
-            for log in sorted((root / "data" / "logs").glob("*"))
-            for line in log.read_text(encoding="utf-8", errors="replace").splitlines()
-            if CUT_LOGGED in line
-        ]
+        logged = log_lines(root, CUT_LOGGED)
+        for line in logged:
+            print(line)
+        report.check(bool(logged), "the cut round told in the log")
+
+
+# LM Studio's recipe (docs/research/local-servers.md): its own server, the
+# model's key; the window is LM Studio's load setting, which the app reads from
+# `/api/v1/models`. Its notes name LM Studio's setting, never Ollama's.
+LMSTUDIO_URL = "http://localhost:1234/v1"
+LMSTUDIO_MODEL = "google_gemma-4-e4b-it"
+LMSTUDIO_NOTE = ("Context", "Length", "unload")
+
+
+def lmstudio_window(url: str, model: str) -> int | None:
+    """The window of the LM Studio instance a request naming `model` runs in,
+    from `/api/v1/models` — what the app is expected to have read."""
+    root = url.rstrip("/").removesuffix("/v1")
+    with urllib.request.urlopen(f"{root}/api/v1/models", timeout=10) as resp:
+        models = json.load(resp).get("models", [])
+    for entry in models:
+        for instance in entry.get("loaded_instances", []):
+            if instance.get("id") == model:
+                return instance.get("config", {}).get("context_length")
+    return None
+
+
+def scenario_lmstudio(exe: Path, report: Report) -> None:
+    """LM Studio's recipe against its running server, the model loaded at a
+    small window first — `lms load <model> -c 4096` — which the app must read
+    and say is too small in LM Studio's own words."""
+    url = os.environ.get("MINDFORK_LMSTUDIO_URL", LMSTUDIO_URL)
+    model = os.environ.get("MINDFORK_LMSTUDIO_MODEL", LMSTUDIO_MODEL)
+    served = lmstudio_window(url, model)
+    print(f"LM Studio runs {model} with a window of {served}")
+    report.check(served is not None, f"LM Studio has {model} loaded: lms load {model} -c 4096")
+    with tempfile.TemporaryDirectory(prefix="mindfork-probe-") as scratch:
+        root = Path(scratch)
+        copy = root / exe.name
+        shutil.copy(exe, copy)
+        set_up_external(copy, root, url, model, report)
+        session = Session(copy, [], cwd=root)
+        try:
+            print("the chat: a question through LM Studio")
+            chat_is_up(report)
+            type_text(CAPITAL_QUESTION)
+            press("enter", SETTLE_REPAINT)
+            wait_for_text("Paris", 180)
+            wait_for_text(TURN_OVER, 30)
+            time.sleep(2)
+            rows = read_screen()
+            print(text_of(rows))
+            report.says("LM Studio's reply", rows, ("Paris", model))
+            report.check(LAUNCH_LINE not in text_of(rows), "no llama-server launch line")
+            if served is not None and served <= 4096:
+                report.says("the window-too-small note, LM Studio's", rows, LMSTUDIO_NOTE)
+                report.check("OLLAMA" not in text_of(rows), "no Ollama setting named")
+            else:
+                report.check(LMSTUDIO_NOTE[0] not in text_of(rows), "no window-too-small note")
+
+            print("a tool: a note saved through the agentic loop")
+            type_text("Save a note with the note_save tool: my GPU has 24 GB. Then say done.")
+            press("enter", SETTLE_REPAINT)
+            wait_for_text("note_save(", 180)
+            wait_for_text(TURN_OVER, 120)
+            time.sleep(2)
+            rows = read_screen()
+            print(text_of(rows))
+            report.says("the tool's card", rows, ("note_save(",))
+        finally:
+            code = session.close()
+        report.check(code == 0, f"the app exited with code {code}")
+        cuts = log_lines(root, CUT_LOGGED)
+        report.check(not cuts, f"no round told as cut: {cuts}")
+        logged = log_lines(root, WINDOW_LOGGED)
+        for line in logged:
+            print(line)
+        report.check(
+            any(f"context_budget={served}" in line and "LmStudio" in line for line in logged),
+            f"the app read LM Studio's window, {served}, and knew the server",
+        )
+
+
+def notes_page(count: int, question: str) -> str:
+    """A page of `count` numbered notes, its question at the end — about
+    sixteen tokens a note."""
+    return "Here are my notes. " + " ".join(
+        f"Note {i}: the {_CUT_WORDS[i % 12]} by the {_CUT_WORDS[(i * 5 + 3) % 12]}"
+        f" keeps its {_CUT_WORDS[(i * 7 + 1) % 12]} until spring."
+        for i in range(count)
+    ) + f" Now answer with one word: {question}"
+
+
+def scenario_lmstudio_cut(exe: Path, report: Report) -> None:
+    """LM Studio's silent cut of the middle of a conversation, told
+    (docs/research/local-servers.md §2). Needs the model loaded at 8192 —
+    `lms unload <model>`, then `lms load <model> -c 8192`: at 4096 mindfork's
+    instructions are so much of the window that LM Studio cannot cut a
+    conversation down to fit and refuses it instead. The first turn and a page
+    fit; a second page puts the request over the window while the instructions,
+    the first message and the last still fit, so LM Studio drops the first page
+    and answers."""
+    url = os.environ.get("MINDFORK_LMSTUDIO_URL", LMSTUDIO_URL)
+    model = os.environ.get("MINDFORK_LMSTUDIO_MODEL", LMSTUDIO_MODEL)
+    served = lmstudio_window(url, model)
+    print(f"LM Studio runs {model} with a window of {served}")
+    report.check(
+        served == 8192,
+        f"LM Studio's window is {served}: lms unload {model}, then lms load {model} -c 8192",
+    )
+    with tempfile.TemporaryDirectory(prefix="mindfork-probe-") as scratch:
+        root = Path(scratch)
+        copy = root / exe.name
+        shutil.copy(exe, copy)
+        set_up_external(copy, root, url, model, report)
+        session = Session(copy, [], cwd=root)
+        rows = []
+        try:
+            print("the first turn: a short question")
+            chat_is_up(report)
+            type_text(CAPITAL_QUESTION)
+            press("enter", SETTLE_REPAINT)
+            wait_for_text("Paris", 180)
+            wait_for_text(TURN_OVER, 30)
+            pages = [(150, "what is the capital of Italy?"), (175, "what is the capital of Spain?")]
+            for page, (count, question) in enumerate(pages):
+                print(f"page {page + 1}: {count} notes")
+                paste_text(notes_page(count, question))
+                wait_for_text(question, 30)
+                time.sleep(2)
+                press("enter", SETTLE_REPAINT)
+                wait_for_text(TURN_OVER, 300)
+                time.sleep(2)
+                rows = read_screen()
+                if page == 0:
+                    report.check(CUT_NOTE not in text_of(rows), "no cut while the pages fit")
+            print(text_of(rows))
+            report.says("the cut-prompt note, LM Studio's", rows, (CUT_NOTE,) + LMSTUDIO_NOTE)
+            report.check("OLLAMA" not in text_of(rows), "no Ollama setting named")
+        finally:
+            code = session.close()
+        report.check(code == 0, f"the app exited with code {code}")
+        logged = log_lines(root, CUT_LOGGED)
         for line in logged:
             print(line)
         report.check(bool(logged), "the cut round told in the log")
@@ -1517,6 +1670,8 @@ SCENARIOS = {
     "altgr": scenario_altgr,
     "ollama": scenario_ollama,
     "ollama-cut": scenario_ollama_cut,
+    "lmstudio": scenario_lmstudio,
+    "lmstudio-cut": scenario_lmstudio_cut,
     "small-window": scenario_small_window,
     "full-mode": scenario_full_mode,
     "gateway": scenario_gateway,

@@ -120,10 +120,12 @@ What follows from the table:
   corrected this line: Ollama drops a long chat's oldest messages first, which
   leaves its `usage` near the window, and cuts to half the window only when the
   last message does not fit beside the system message.
-- **LM Studio** reports its loaded window too (`/api/v0/models`,
-  `loaded_context_length`); not run here, so not designed here.
+- **LM Studio** reports its loaded window too; not run here, so not designed
+  here. Run and designed in [local-servers.md](local-servers.md), which reads
+  it from `/api/v1/models`.
 - **The engineless chat offering a server it finds** on `localhost:11434` or
-  `:1234` — the promotion plan's idea, a track of its own.
+  `:1234` — the promotion plan's idea, a track of its own: stage 2 of
+  [local-servers.md](local-servers.md).
 
 ## 6. Tests and the live run
 

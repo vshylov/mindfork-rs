@@ -270,3 +270,51 @@ Two stages, each its own branch and live run.
   - **`first-run`:** a fresh data directory with both servers up. The list
     names both; a pick writes the external section and the chat answers. A
     second run with neither up shows the empty feed unchanged.
+
+## 8. Built: stage 1, and the live run (2026-10-06)
+
+Branch `feat/local-servers`.
+
+- **The window.** `OpenAiClient::context_budget` asks LM Studio's
+  `/api/v1/models` after `/props` and `/api/ps`
+  (`local_servers::LmStudioModels::window_of`: the instance with the
+  configured name, or else the model's only one).
+- **The server.** `EngineBackend::server_kind` (`Ollama`, `LmStudio`,
+  `Other`) is asked by the window's background task, in `external` mode only,
+  and kept in `ContextDiscovery` beside the window; `RetryBackend` delegates it.
+  Ollama is told by `/api/version`, LM Studio by `/api/v1/models`, each shape
+  with a required field — the `200 {"error":…}` body parses as neither.
+- **The notes.** The window note and both cut notes have a text per server
+  (`ui.notice.*.ollama|lm_studio|other`), chosen by `Orchestrator::for_server`.
+  LM Studio's names the configured model in `lms unload <model>` then
+  `lms load <model> -c 16384`. Measured while writing it: a second
+  `lms load` of a loaded model starts `<model>:2`, and requests naming the
+  model keep going to the first instance — so the line unloads first.
+- **Tests.** 3946 unit tests, 10 new:
+  - the instance chosen, and silence four ways;
+  - the error body parses as neither server;
+  - the window read with `/props` and `/api/ps` answering `200` with nothing;
+  - each server told by its field;
+  - the delegation;
+  - each note in each server's words;
+  - the server landing with the window and going with the engine.
+
+**The live run.** Two new `console_probe.py` scenarios, LM Studio 1.1.7,
+`gemma-4-E4B` Q4_1, the dev build:
+
+- **`lmstudio`, at 4096: 14/14.**
+  - The log: `engine reported its context window context_budget=4096
+    server=LmStudio`.
+  - The window-too-small note after the first turn (3446 tokens) names
+    Context Length and `lms unload`, and not Ollama.
+  - A `note_save` card, and no round told as cut.
+- **`lmstudio-cut`, at 8192: 11/11.** A question; a page of 150 notes, which
+  fits; a page of 175, which does not. LM Studio dropped the first page and
+  answered "Madrid". The log says `processed=6332 held=7368`. The feed carried
+  LM Studio's cut note, which names the model in the `lms` line, and folded 4
+  earlier messages.
+- **Ollama 0.35.1 as the control.**
+  - `ollama` at 16384 and at 4096: 13/13 each, the log naming `server=Ollama`,
+    and at 4096 the note naming `OLLAMA_CONTEXT_LENGTH`.
+  - `ollama-cut`: 7/7, with 0.16.1's figures to the token
+    (`processed=2051 held=4357`).
