@@ -19,8 +19,8 @@ use tokio_util::sync::CancellationToken;
 
 use super::super::compaction::{CompactEnd, CompactOrigin};
 use crate::features::compaction::summary_system_message;
-use crate::shared::api::ChatRequest;
 use crate::shared::api::contract::ChatStream;
+use crate::shared::api::{ChatRequest, ServerKind};
 use crate::shared::config::{CompactionSettings, DEFAULT_COMPACTION_SUMMARY_WORDS};
 use crate::shared::i18n::{Lang, locale};
 
@@ -782,6 +782,7 @@ fn an_external_window_too_small_for_the_conversation_is_said_once() {
     orch.config = auto_cfg(0, 75);
     orch.config.engine.mode = ServerMode::External;
     orch.config.compaction.context_tokens = Some(4096);
+    orch.context.set_server(ServerKind::Ollama);
     let _ = drain(&mut rx);
 
     orch.maybe_auto_compact(chat_id, usage(3503, 10));
@@ -834,6 +835,7 @@ async fn an_external_window_is_asked_again_after_the_first_turn() {
         crate::app::orchestrator::compaction::EngineFacts {
             budget: Some(16384),
             caps: None,
+            server: Default::default(),
         },
     );
     assert_eq!(orch.context_budget(), Some(16384));
@@ -857,6 +859,7 @@ async fn the_window_is_not_asked_again_without_a_reason() {
             EngineFacts {
                 budget: known,
                 caps: None,
+                server: Default::default(),
             },
         );
         orch.ask_window_after_turn();
@@ -952,6 +955,7 @@ fn a_gateway_is_measured_against_the_catalogue_it_publishes() {
                 context_length: Some(64000),
                 sampling_fields: None,
             }),
+            server: Default::default(),
         },
     );
     assert_eq!(orch.context_budget(), Some(64000));
@@ -974,6 +978,7 @@ fn a_reported_window_wins_over_the_catalogues() {
                 context_length: Some(64000),
                 sampling_fields: None,
             }),
+            server: Default::default(),
         },
     );
     assert_eq!(orch.context_budget(), Some(16384));
@@ -1006,6 +1011,7 @@ fn the_published_sampling_fields_reach_the_gates() {
                 context_length: None,
                 sampling_fields: Some(vec!["temperature".to_string()].into()),
             }),
+            server: Default::default(),
         },
     );
     let fields = orch
@@ -1031,6 +1037,7 @@ async fn a_discovered_window_is_used_and_can_be_re_asked() {
         crate::app::orchestrator::compaction::EngineFacts {
             budget: Some(16384),
             caps: None,
+            server: Default::default(),
         },
     );
     assert_eq!(orch.context_budget(), Some(16384));
@@ -1055,6 +1062,7 @@ async fn an_answer_about_a_replaced_engine_is_dropped() {
         crate::app::orchestrator::compaction::EngineFacts {
             budget: Some(131072),
             caps: None,
+            server: Default::default(),
         },
     );
     assert_eq!(
@@ -1730,6 +1738,7 @@ async fn a_round_reported_short_of_the_one_before_was_cut() {
     );
 
     let _ = drain(&mut rx);
+    orch.context.set_server(ServerKind::Ollama);
     orch.handle_done(res);
     let told = notes_of(&mut rx);
     assert_eq!(told.len(), 1, "{told:?}");
@@ -1828,8 +1837,9 @@ async fn a_cut_turn_folds_without_a_known_window() {
         },
         true,
     );
+    // No server named: the words name no product.
     let folding = orch.ui_locale().tf(
-        "ui.notice.prompt_cut_folding",
+        "ui.notice.prompt_cut_folding.other",
         &[("processed", "1027"), ("held", "3000")],
     );
     assert_eq!(
@@ -1892,6 +1902,87 @@ fn the_window_note_waits_out_a_cut_turn() {
         1,
         "an uncut turn over 75 % is told"
     );
+}
+
+/// Each note names the setting of the server it is about, and what that
+/// server's silent cut loses (docs/research/local-servers.md F1): Ollama's
+/// variable, LM Studio's Context Length and the `lms` line with the configured
+/// model, and for any other server no product at all.
+#[test]
+fn the_notes_name_the_server_they_are_about() {
+    let (_d, mut orch, mut rx, chat_id, _backend) = orch_with_history(1);
+    orch.config = auto_cfg(0, 75);
+    orch.config.engine.mode = ServerMode::External;
+    orch.config.engine.external.model_name = Some("google_gemma-4-e4b-it".into());
+    orch.config.compaction.context_tokens = Some(4096);
+    let cut = PromptCut {
+        processed: 2809,
+        held: 4300,
+    };
+    let mut told = |orch: &mut Orchestrator, server: ServerKind| -> Vec<String> {
+        // A new server session, so each note is said again.
+        orch.engines
+            .set_chat_status(crate::shared::server::ServerStatus::Ready);
+        orch.context.set_server(server);
+        let _ = drain(&mut rx);
+        orch.maybe_auto_compact(chat_id, usage(3503, 10));
+        orch.note_prompt_cut(cut, false);
+        notes_of(&mut rx)
+    };
+
+    let ollama = told(&mut orch, ServerKind::Ollama);
+    assert_eq!(ollama.len(), 2, "{ollama:?}");
+    assert!(
+        ollama.iter().all(|t| t.contains("OLLAMA_CONTEXT_LENGTH")),
+        "{ollama:?}"
+    );
+
+    let lm_studio = told(&mut orch, ServerKind::LmStudio);
+    assert_eq!(lm_studio.len(), 2, "{lm_studio:?}");
+    for text in &lm_studio {
+        assert!(
+            text.contains("Context Length")
+                && text.contains("lms unload google_gemma-4-e4b-it")
+                && text.contains("lms load google_gemma-4-e4b-it -c 16384")
+                && !text.contains("OLLAMA"),
+            "{text}"
+        );
+    }
+
+    let other = told(&mut orch, ServerKind::Other);
+    assert_eq!(other.len(), 2, "{other:?}");
+    for text in &other {
+        assert!(
+            !text.contains("OLLAMA") && !text.contains("LM Studio") && text.contains("4"),
+            "{text}"
+        );
+    }
+}
+
+/// Which server it is lands with the window, in the same answer, and is
+/// forgotten with it when the engine changes — a note about the next engine
+/// must not name the last one's setting.
+#[test]
+fn the_server_lands_with_the_window_and_goes_with_the_engine() {
+    let (_d, mut orch, _rx, _chat_id, _backend) = orch_with_history(1);
+    assert_eq!(
+        orch.context.server(),
+        ServerKind::Other,
+        "nothing has answered"
+    );
+    let epoch = orch.context.epoch();
+    orch.handle_budget_result(
+        epoch,
+        super::super::compaction::EngineFacts {
+            budget: Some(4096),
+            caps: None,
+            server: ServerKind::LmStudio,
+        },
+    );
+    assert_eq!(orch.context.server(), ServerKind::LmStudio);
+
+    orch.context.invalidate();
+    assert_eq!(orch.context.server(), ServerKind::Other, "another engine");
 }
 
 /// A turn's last request is kept per chat for the engine that measured it: an

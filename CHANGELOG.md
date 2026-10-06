@@ -14,6 +14,21 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Added
+
+- **LM Studio is a server mindfork knows.** It reads the window LM Studio runs
+  your model with, so a long conversation is folded into a summary before LM
+  Studio cuts it — and LM Studio does cut in silence: a conversation over its
+  window loses its whole middle, everything between the first message and the
+  last. A conversation it cut anyway is told, with the model's Context Length
+  and the `lms` line that raises it.
+
+### Changed
+
+- **The notes about a server's window speak of that server.** Ollama's name
+  `OLLAMA_CONTEXT_LENGTH` and its app's slider, LM Studio's its Context Length,
+  and those of any other server name no product, where every one named Ollama's.
+
 ## [0.16.1] — 2026-10-06
 
 **When Ollama cuts the prompt, you are told.** Ollama answers a prompt longer

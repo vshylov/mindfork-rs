@@ -193,6 +193,9 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **LM Studio** (2026-10-06): run live, it works as `external`; its window is read
+  from `/api/v1/models`, its silent cut of a conversation's middle is told, and the
+  notes name each server's own setting ([docs/research/local-servers.md](docs/research/local-servers.md)).
 - **Ollama** (2026-10-05): the README's recipe, run live, found a slow-prefill note
   meant for llama-server (fixed) and Ollama's silent cut of an overlong prompt; its
   window is read from `/api/ps`, one too small is said once, and a prompt it cut is
@@ -270,9 +273,6 @@ being recent is dropped, not shortened.
   **GO**, each stage
   ([docs/research/openrouter-mode.md](docs/research/openrouter-mode.md) §7, §11–§14,
   spec §3.4, §9.9, §11.6, §11.9, [docs/journal/engine.md](docs/journal/engine.md)).
-- **`Ctrl+←/→` stop at punctuation** — three character classes, not two: a run of
-  marks is a stop of its own, and deletion and selection share it
-  ([docs/journal/ui-input.md](docs/journal/ui-input.md), spec §11.5).
 - **A settings file the typed parse refuses ends the start, not the settings** —
   one misspelt value reset the whole config, which the first save wrote over the
   file. The gate parses typed, no reader falls back to the defaults, a backup
@@ -288,8 +288,6 @@ being recent is dropped, not shortened.
   export|check`). Measured on Windows 11's console host; other terminals are a look
   ([docs/history/theme-modes.md](docs/history/theme-modes.md), spec §11.6,
   [docs/journal/ui-feed.md](docs/journal/ui-feed.md)).
-- **The input box's height is a setting** — `interface.input_max_rows`, capped at
-  half the window ([docs/journal/ui-input.md](docs/journal/ui-input.md), spec §11.5).
 - **A fetched page is searchable in its birth turn — track complete** (2026-09-26).
   Stage 1: no search promised before it exists, a cut says where, ceiling 1 000 000;
   stage 2: the index starts at the round's end (`IndexBoard`) and a search waits, 6/6

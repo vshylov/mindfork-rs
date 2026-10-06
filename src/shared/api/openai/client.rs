@@ -16,11 +16,12 @@ use super::wire;
 use crate::entities::sampling::ReasoningEffort;
 use crate::shared::api::contract::{
     ChatChunk, ChatRequest, ChatStream, EmbedRole, Embedder, EngineBackend, FinishReason,
-    ModelCapabilities, Served, TokenUsage, ToolCallDelta, VisionSupport,
+    ModelCapabilities, Served, ServerKind, TokenUsage, ToolCallDelta, VisionSupport,
 };
 use crate::shared::api::effort::{self, EffortMemo, EffortWire};
 use crate::shared::api::error::{self, SUBJECT_EMBEDDER, SUBJECT_ENGINE};
 use crate::shared::api::http;
+use crate::shared::api::local_servers::{LmStudioModels, OllamaVersion};
 use crate::shared::api::thoughts::{Piece, ThoughtsParser};
 
 /// A client to an OpenAI-compatible inference server (local/external `llama-server`,
@@ -327,6 +328,47 @@ impl OpenAiClient {
             Ok(loaded) => loaded.window_of(wanted),
             Err(err) => {
                 tracing::debug!(%url, error = %err, "/api/ps did not parse");
+                None
+            }
+        }
+    }
+
+    /// Reads LM Studio's `/api/v1/models` for the window of the instance the
+    /// configured model runs in (docs/research/local-servers.md §2, measured on
+    /// 1.1.7). Like Ollama, LM Studio loads a model on its first request, so
+    /// before that it is silence and the orchestrator asks again after the first
+    /// turn; a blank model field is not looked up.
+    async fn lm_studio_window(&self) -> Option<u32> {
+        if self.gateway.is_some() || self.xai {
+            return None;
+        }
+        let wanted = self
+            .model
+            .as_deref()
+            .map(str::trim)
+            .filter(|m| !m.is_empty())?;
+        self.root_json::<LmStudioModels>("api/v1/models")
+            .await?
+            .window_of(wanted)
+    }
+
+    /// One `GET` at the server root, parsed as `T`; any failure is `None`,
+    /// logged at debug, since a server that does not serve the path is the
+    /// normal case. The shapes asked for here each require a field, because LM
+    /// Studio answers every path with `200` (`local_servers.rs`).
+    async fn root_json<T: serde::de::DeserializeOwned>(&self, path: &str) -> Option<T> {
+        let url = server_root_url(&self.base_url, path);
+        let resp = match self.auth(self.http.get(&url)).send().await {
+            Ok(r) if r.status().is_success() => r,
+            other => {
+                tracing::debug!(%url, ok = other.is_ok(), "no answer");
+                return None;
+            }
+        };
+        match resp.json().await {
+            Ok(parsed) => Some(parsed),
+            Err(err) => {
+                tracing::debug!(%url, error = %err, "the answer did not parse");
                 None
             }
         }
@@ -869,11 +911,13 @@ impl EngineBackend for OpenAiClient {
     /// field already reports the per-slot figure.
     ///
     /// Where `/props` says nothing, Ollama's `/api/ps` is asked next: the window
-    /// it loaded the configured model with ([`Self::loaded_window`]). `/props`
-    /// first, because a llama-server is the server this client was built for and
-    /// answers it; Ollama answers `/props` with a `404`.
+    /// it loaded the configured model with ([`Self::loaded_window`]); then LM
+    /// Studio's `/api/v1/models` ([`Self::lm_studio_window`]). `/props` first,
+    /// because a llama-server is the server this client was built for and
+    /// answers it; Ollama answers `/props` with a `404`, LM Studio with a `200`
+    /// that carries no window.
     ///
-    /// Any failure — a server without either endpoint (vLLM, LM Studio, a cloud
+    /// Any failure — a server without any of the endpoints (vLLM, a cloud
     /// proxy), a network error, a body that doesn't parse — is `None`, i.e.
     /// "cannot say" (see [`Self::props`]).
     async fn context_budget(&self) -> Option<u32> {
@@ -885,10 +929,35 @@ impl EngineBackend for OpenAiClient {
             .and_then(|p| p.default_generation_settings)
             .and_then(|g| g.n_ctx)
             .filter(|&n| n > 0);
-        match props {
-            Some(n) => Some(n),
-            None => self.loaded_window().await,
+        if props.is_some() {
+            return props;
         }
+        match self.loaded_window().await {
+            Some(n) => Some(n),
+            None => self.lm_studio_window().await,
+        }
+    }
+
+    /// Ollama by `/api/version`, then LM Studio by `/api/v1/models` — each by
+    /// a field only it sends (docs/research/local-servers.md §3). A gateway and
+    /// xAI are neither, and are not asked.
+    async fn server_kind(&self) -> ServerKind {
+        if self.gateway.is_some() || self.xai {
+            return ServerKind::Other;
+        }
+        if let Some(ollama) = self.root_json::<OllamaVersion>("api/version").await {
+            tracing::debug!(version = %ollama.version, "the server is Ollama");
+            return ServerKind::Ollama;
+        }
+        if self
+            .root_json::<LmStudioModels>("api/v1/models")
+            .await
+            .is_some()
+        {
+            tracing::debug!("the server is LM Studio");
+            return ServerKind::LmStudio;
+        }
+        ServerKind::Other
     }
 
     /// Reads the endpoint's catalogue for the configured model
@@ -2174,6 +2243,71 @@ mod tests {
         let (url, server) = path_server(1, &[("/api/ps", "200 OK", PS_BODY)]);
         assert_eq!(OpenAiClient::new(url).context_budget().await, None);
         assert_eq!(server.join().unwrap(), ["/props"]);
+    }
+
+    /// What LM Studio answers a path it does not serve, `/props` and `/api/ps`
+    /// among them: a `200` (measured on 1.1.7, docs/research/local-servers.md §2).
+    const LM_STUDIO_ERROR: &str = r#"{"error":"Unexpected endpoint or method. (GET /props)"}"#;
+
+    /// LM Studio's `/api/v1/models` with the model loaded at 4096, as measured.
+    const LM_STUDIO_MODELS: &str = r#"{"models":[{"type":"llm","key":"google_gemma-4-e4b-it",
+        "max_context_length":131072,"loaded_instances":[{"id":"google_gemma-4-e4b-it",
+        "config":{"context_length":4096,"parallel":4}}]}]}"#;
+
+    /// LM Studio answers `/props` and `/api/ps` with a `200` that says nothing,
+    /// and lists the window of the loaded instance on `/api/v1/models` — asked
+    /// last, after the two servers this client knew first.
+    #[tokio::test]
+    async fn context_budget_reads_lm_studios_loaded_window() {
+        let (url, server) = path_server(
+            3,
+            &[
+                ("/props", "200 OK", LM_STUDIO_ERROR),
+                ("/api/ps", "200 OK", LM_STUDIO_ERROR),
+                ("/api/v1/models", "200 OK", LM_STUDIO_MODELS),
+            ],
+        );
+        let client = OpenAiClient::new(url).with_model(Some("google_gemma-4-e4b-it".into()));
+        assert_eq!(client.context_budget().await, Some(4096));
+        assert_eq!(
+            server.join().unwrap(),
+            ["/props", "/api/ps", "/api/v1/models"]
+        );
+    }
+
+    /// Ollama answers `/api/version`; LM Studio answers it `200` with an error,
+    /// so it is told by its own listing; a llama-server answers neither. Each
+    /// by a field, never a status.
+    #[tokio::test]
+    async fn the_server_is_told_by_a_field_only_it_sends() {
+        let (url, server) =
+            path_server(1, &[("/api/version", "200 OK", r#"{"version":"0.35.1"}"#)]);
+        assert_eq!(
+            OpenAiClient::new(url).server_kind().await,
+            ServerKind::Ollama
+        );
+        assert_eq!(server.join().unwrap(), ["/api/version"]);
+
+        let (url, server) = path_server(
+            2,
+            &[
+                ("/api/version", "200 OK", LM_STUDIO_ERROR),
+                ("/api/v1/models", "200 OK", LM_STUDIO_MODELS),
+            ],
+        );
+        assert_eq!(
+            OpenAiClient::new(url).server_kind().await,
+            ServerKind::LmStudio
+        );
+        assert_eq!(server.join().unwrap(), ["/api/version", "/api/v1/models"]);
+
+        // A llama-server: `404` to both.
+        let (url, server) = path_server(2, &[]);
+        assert_eq!(
+            OpenAiClient::new(url).server_kind().await,
+            ServerKind::Other
+        );
+        server.join().unwrap();
     }
 
     /// A llama-server's own `/props` wins, and `/api/ps` is not asked at all.

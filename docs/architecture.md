@@ -688,6 +688,7 @@ src/
    │  │                     clouds only). See spec §6.8, §9.3
    │  ├─ managed.rs         ServerHandle (managed llama-server process), ManagedConfig, wait_until_ready, ChildExit, PortLedger
    │  ├─ llama_args.rs      the user's raw server arguments: which are refused per ManagedRole
+   │  ├─ local_servers.rs   Ollama and LM Studio as the app reads them: what tells each apart, LM Studio's per-instance window
    │  │                     (a field's flag, the connection, an agent, a fetch) and which LLAMA_*
    │  │                     variables the child loses — a table read from llama.cpp's --help
    │  ├─ thoughts.rs        streaming <think> parser (falls back to reasoning_content)
@@ -1881,9 +1882,22 @@ its own — or named by `api_key_env`, resolved through the same
   `OpenAiClient` reads llama.cpp's `/props` (`n_ctx`, as given) and, where that
   says nothing, Ollama's `/api/ps` — the `context_length` of the configured
   model's entry among the loaded ones (`LoadedModels::window_of`, `:latest`
-  for a bare name). The list holds only loaded models, so the orchestrator asks
-  an external server that said nothing once more after the first turn it
-  served (`ask_window_after_turn`, docs/research/ollama-window.md).
+  for a bare name), then LM Studio's `/api/v1/models` — the window of the
+  instance a request naming the configured model runs in
+  (`local_servers::LmStudioModels::window_of`). Both lists hold only loaded
+  models, so the orchestrator asks an external server that said nothing once
+  more after the first turn it served (`ask_window_after_turn`,
+  docs/research/ollama-window.md, docs/research/local-servers.md).
+- **`EngineBackend::server_kind() -> ServerKind`** (`Other` by default:
+  `Ollama`, `LmStudio`, `Other`) — which local server an external engine is,
+  asked by the same background task as the window, in `external` mode only,
+  and kept in `ContextDiscovery` with it: the window and cut notes are written
+  per server (`Orchestrator::for_server`), each naming that server's setting.
+  `OpenAiClient` tells Ollama by `/api/version` and LM Studio by
+  `/api/v1/models`, each by a **required** field — LM Studio answers every
+  path it does not serve with `200` and an `error` body, so a status, or a
+  shape whose every field is optional, would name it whatever was asked.
+  Delegated by `RetryBackend`, with its test.
 - **`EngineBackend::vision() -> VisionSupport`** (`Unknown` by default,
   `Supported`/`Unsupported`) — the same "engine knowledge belongs on the engine
   contract" shape as `context_budget`, and delegated by `RetryBackend` for the

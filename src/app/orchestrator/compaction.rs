@@ -26,7 +26,7 @@ use crate::entities::sampling::{ReasoningEffort, SamplingConfig};
 use crate::features::compaction::{
     build_compaction_digest, plan_cut, roll_user_message, summary_system_message,
 };
-use crate::shared::api::{ApiMessage, ChatChunk, ChatRequest, EngineBackend};
+use crate::shared::api::{ApiMessage, ChatChunk, ChatRequest, EngineBackend, ServerKind};
 use crate::shared::config::ServerMode;
 use crate::shared::session_budget::SILENT_YIELDS_MAX;
 
@@ -120,6 +120,9 @@ pub(super) struct EngineFacts {
     pub(super) budget: Option<u32>,
     /// The endpoint's catalogue entry for the configured model.
     pub(super) caps: Option<crate::shared::api::contract::ModelCapabilities>,
+    /// Which local server answered, for an external one — what the notes about
+    /// its window name (docs/research/local-servers.md F1).
+    pub(super) server: ServerKind,
 }
 
 #[derive(Default)]
@@ -139,6 +142,9 @@ pub(super) struct ContextDiscovery {
     /// Learned by the same background question, in the same epoch — one fetch,
     /// one landing (docs/history/gateway-capabilities.md §3).
     caps: Option<crate::shared::api::contract::ModelCapabilities>,
+    /// Which local server the external engine is — `Other` until it answers,
+    /// and for every engine that is not Ollama or LM Studio.
+    server: ServerKind,
     /// The question was asked once more after a turn, because nothing had
     /// answered it when the engine was applied — once per engine
     /// (docs/research/ollama-window.md F1).
@@ -159,6 +165,7 @@ impl ContextDiscovery {
         self.answered = false;
         self.known = None;
         self.caps = None;
+        self.server = ServerKind::Other;
         self.asked_after_turn = false;
         self.anchors.clear();
     }
@@ -189,6 +196,19 @@ impl ContextDiscovery {
         self.pending
     }
 
+    /// Which local server answered — what the notes' texts are chosen by.
+    #[cfg(test)]
+    pub(super) fn server(&self) -> ServerKind {
+        self.server
+    }
+
+    /// Sets the server a note is about, for a test that is about one without
+    /// running the background question.
+    #[cfg(test)]
+    pub(super) fn set_server(&mut self, server: ServerKind) {
+        self.server = server;
+    }
+
     /// Would this answer change what the endpoint offers? Asked before
     /// [`Self::apply`] so a landing that says the same thing (a re-ask after a
     /// readiness flip) does not rebuild the tool registry for nothing.
@@ -209,6 +229,7 @@ impl ContextDiscovery {
         self.answered = true;
         self.known = facts.budget;
         self.caps = facts.caps;
+        self.server = facts.server;
         true
     }
 }
@@ -441,16 +462,42 @@ impl Orchestrator {
         if !self.engines.claim_window_note() {
             return;
         }
-        let loc = self.ui_locale();
-        let _ = self
-            .evt_tx
-            .send(crate::app::events::AppEvent::Notice(loc.tf(
-                "ui.notice.window_too_small",
-                &[
-                    ("prompt", &prompt.to_string()),
-                    ("window", &window.to_string()),
-                ],
-            )));
+        let prompt = prompt.to_string();
+        let window = window.to_string();
+        let mut args = vec![("prompt", prompt.as_str()), ("window", window.as_str())];
+        let key = self.for_server(
+            [
+                "ui.notice.window_too_small.ollama",
+                "ui.notice.window_too_small.lm_studio",
+                "ui.notice.window_too_small.other",
+            ],
+            &mut args,
+        );
+        let text = self.ui_locale().tf(key, &args);
+        let _ = self.evt_tx.send(crate::app::events::AppEvent::Notice(text));
+    }
+
+    /// The text of a note about the server's window, for the server it is
+    /// about (docs/research/local-servers.md F1): each names that server's own
+    /// setting, and what its silent cut loses. `keys` is Ollama's, LM Studio's,
+    /// and the one for any other server, in that order. LM Studio's names the
+    /// configured model in the `lms load` line, so its text alone takes the
+    /// `{model}` argument — `tf` refuses one its template does not use.
+    fn for_server<'a>(
+        &'a self,
+        keys: [&'static str; 3],
+        args: &mut Vec<(&str, &'a str)>,
+    ) -> &'static str {
+        let [ollama, lm_studio, other] = keys;
+        match self.context.server {
+            ServerKind::Ollama => ollama,
+            ServerKind::LmStudio => {
+                let model = self.config.engine.external.model_name.as_deref();
+                args.push(("model", model.unwrap_or("<model>")));
+                lm_studio
+            }
+            ServerKind::Other => other,
+        }
     }
 
     /// The server cut a request of the turn to fit its window and said nothing
@@ -467,19 +514,25 @@ impl Orchestrator {
         if !self.engines.claim_cut_note() {
             return;
         }
-        let key = if folding {
-            "ui.notice.prompt_cut_folding"
+        let keys = if folding {
+            [
+                "ui.notice.prompt_cut_folding.ollama",
+                "ui.notice.prompt_cut_folding.lm_studio",
+                "ui.notice.prompt_cut_folding.other",
+            ]
         } else {
-            "ui.notice.prompt_cut"
+            [
+                "ui.notice.prompt_cut.ollama",
+                "ui.notice.prompt_cut.lm_studio",
+                "ui.notice.prompt_cut.other",
+            ]
         };
-        let loc = self.ui_locale();
-        let _ = self.evt_tx.send(AppEvent::Notice(loc.tf(
-            key,
-            &[
-                ("processed", &cut.processed.to_string()),
-                ("held", &cut.held.to_string()),
-            ],
-        )));
+        let processed = cut.processed.to_string();
+        let held = cut.held.to_string();
+        let mut args = vec![("processed", processed.as_str()), ("held", held.as_str())];
+        let key = self.for_server(keys, &mut args);
+        let text = self.ui_locale().tf(key, &args);
+        let _ = self.evt_tx.send(AppEvent::Notice(text));
     }
 
     /// Asks the engine what its window is, in the background (S1).
@@ -493,11 +546,19 @@ impl Orchestrator {
         self.context.pending = true;
         let epoch = self.context.epoch;
         let tx = self.budget_tx.clone();
+        // Only an external server is one of the local servers the app knows by
+        // name; a managed llama-server would answer two `404`s for nothing.
+        let external = self.config.engine.mode == ServerMode::External;
         tokio::spawn(async move {
-            // Both questions, one task: see `EngineFacts`.
+            // The questions, one task: see `EngineFacts`.
             let facts = EngineFacts {
                 budget: backend.context_budget().await,
                 caps: backend.model_capabilities().await,
+                server: if external {
+                    backend.server_kind().await
+                } else {
+                    ServerKind::Other
+                },
             };
             let _ = tx.send((epoch, facts));
         });
@@ -506,7 +567,7 @@ impl Orchestrator {
     /// Records what the engine answered about its context window.
     pub(super) fn handle_budget_result(&mut self, epoch: u64, facts: EngineFacts) {
         if let Some(n) = facts.budget {
-            tracing::info!(context_budget = n, "engine reported its context window");
+            tracing::info!(context_budget = n, server = ?facts.server, "engine reported its context window");
         }
         if let Some(caps) = &facts.caps {
             tracing::info!(

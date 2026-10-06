@@ -402,6 +402,14 @@ impl EngineBackend for RetryBackend {
     async fn parallel_slots(&self) -> Option<u32> {
         self.inner.parallel_slots().await
     }
+
+    /// The fifth, with its delegation and its test from the start: `external`
+    /// mode wraps its client here, and a decorator answering the trait's
+    /// `Other` would put the generic words in every note an Ollama or LM Studio
+    /// user is shown (docs/research/local-servers.md).
+    async fn server_kind(&self) -> crate::shared::api::contract::ServerKind {
+        self.inner.server_kind().await
+    }
 }
 
 #[cfg(test)]
@@ -435,6 +443,7 @@ mod tests {
         vision: VisionSupport,
         model: Option<String>,
         slots: Option<u32>,
+        kind: crate::shared::api::contract::ServerKind,
     }
 
     impl Scripted {
@@ -447,6 +456,7 @@ mod tests {
                 vision: VisionSupport::Unknown,
                 model: None,
                 slots: None,
+                kind: crate::shared::api::contract::ServerKind::Other,
             })
         }
 
@@ -497,6 +507,10 @@ mod tests {
 
         async fn parallel_slots(&self) -> Option<u32> {
             self.slots
+        }
+
+        async fn server_kind(&self) -> crate::shared::api::contract::ServerKind {
+            self.kind
         }
     }
 
@@ -829,6 +843,17 @@ mod tests {
         Arc::get_mut(&mut scripted).unwrap().slots = Some(4);
         let backend = RetryBackend::wrap(scripted);
         assert_eq!(backend.parallel_slots().await, Some(4));
+    }
+
+    /// The fifth: an LM Studio behind the decorator is still LM Studio, or every
+    /// note about its window would name no setting of its own.
+    #[tokio::test]
+    async fn the_server_kind_is_delegated() {
+        use crate::shared::api::contract::ServerKind;
+        let mut scripted = Scripted::new(vec![]);
+        Arc::get_mut(&mut scripted).unwrap().kind = ServerKind::LmStudio;
+        let backend = RetryBackend::wrap(scripted);
+        assert_eq!(backend.server_kind().await, ServerKind::LmStudio);
     }
 
     /// An explicit policy is what lets a test pin the shape without waiting on the

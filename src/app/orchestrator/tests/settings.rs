@@ -776,6 +776,7 @@ async fn what_the_previous_engine_said_does_not_outlive_a_settings_edit() {
                 context_length: Some(64_000),
                 sampling_fields: Some(vec!["temperature".to_string()].into()),
             }),
+            server: Default::default(),
         },
     );
     assert_eq!(orch.context_budget(), Some(64_000));
@@ -1085,6 +1086,7 @@ async fn an_answer_of_the_engine_that_is_gone_tells_the_screens_nothing() {
             context_length: Some(64_000),
             sampling_fields: Some(vec!["temperature".to_string()].into()),
         }),
+        server: Default::default(),
     };
     let told = |rx: &mut UnboundedReceiver<AppEvent>| {
         let mut lists = Vec::new();
