@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (66)
+## Entries (67)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -78,6 +78,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: the README leads with the self-model and plays the animation (done)
 - Release 0.16.0 (prepared)
 - Release 0.16.1 (prepared)
+- Release 0.17.0 (prepared)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -3992,3 +3993,43 @@ at CI's severity. No live run: packaging only.
 - **Not run**: anything on a Mac with a screen; the TUI on real data, which is
   the owner's; the Windows installer and the `.deb`, `.rpm` and Arch packages,
   of which the digests were compared.
+
+### Release 0.17.0 (prepared)
+
+- **A release PR** per [AGENTS.md §6](../../AGENTS.md), branch
+  `chore/release-0.17.0`:
+  - `Cargo.toml` `0.16.1 → 0.17.0` (+ one line of `Cargo.lock`), and the
+    site's `app_version`;
+  - `CHANGELOG.md`: `[Unreleased]` → `[0.17.0] — 2026-10-06` under a lead
+    paragraph, a fresh `[Unreleased]`, and the comparison links;
+  - CLAUDE.md's status heading;
+  - the closed-tracks index of `docs/roadmap.md`, and what the track left, under
+    *Engine and providers*;
+  - the release's post for mindfork.io.
+
+  Since `v0.16.1`: the local-servers track's two stages (PRs 708 and 709) and
+  the journal of 0.16.1's publication (707).
+- **A MINOR**, by the letter of §6: two items under *Added*, both features.
+- **The README and the site.** Their "Already running Ollama?" becomes
+  "Already running Ollama or LM Studio?": start mindfork, and `Enter` on what
+  it finds. The pull line stays for an Ollama with no model. The window
+  paragraph names both servers' settings and both servers' cuts. The site's
+  home page names LM Studio beside Ollama.
+  - **Left alone on purpose:** the social card (`tools/og_card.py`). It still
+    says "llama.cpp or Ollama", which is true, and redrawing it means the owner
+    uploading the social preview again.
+- **No `Data` rubric, by measurement.** `git diff v0.16.1 -- src/shared/storage
+  src/shared/config.rs src/entities src/features/data_migration.rs
+  src/features/backup.rs` is empty. A picked server is written into fields
+  `settings.json` already has (`engine.mode = external`, the URL, the model,
+  and the embedder's same three), with no new value of any stored type.
+- **No rehearsal.** `git diff v0.16.1 -- .github/workflows packaging` is empty.
+- **The post** says what an Ollama or LM Studio user meets:
+  - the list at the first start, `Enter`, the embedder that comes with it,
+    `Esc`, and `/local`;
+  - LM Studio's two answers to an overlong prompt, with the measured cliff
+    (4044 tokens remembered, one turn more 2809 and only the first message);
+  - the notes in each server's words.
+
+  `llms.txt` is regenerated. Zola puts the post above 0.16.1's, though both are
+  dated 2026-10-06.

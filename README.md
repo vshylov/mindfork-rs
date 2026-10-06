@@ -73,23 +73,30 @@ a throwaway folder: no model to download, no key, nothing written outside a
 temporary directory. `mindfork` on its own starts with your data, and
 [Getting started](#getting-started) connects a model.
 
-**Already running Ollama?** Give it a window of 16k — the context slider in the
-Ollama app's settings, or `OLLAMA_CONTEXT_LENGTH=16384` for `ollama serve` —
-and point mindfork at it:
+**Already running Ollama or LM Studio?** Start mindfork. With no model connected
+yet, it looks for both on this computer and lists what they serve: `Enter`
+connects one — with that server's embedding model too when none is set up — and
+`/local` looks again whenever you type it. LM Studio's server is off until
+started (`lms server start`, or its Developer tab); an Ollama with no model needs
+one first:
 
 ```bash
 ollama pull gemma4:e4b
-mindfork setup --set engine.mode=external --set engine.external.url=http://localhost:11434/v1 --set engine.external.model_name=gemma4:e4b
+mindfork
 ```
 
-mindfork reads the window from Ollama once the first turn has loaded the model,
-and folds the conversation into a summary before it fills — which matters,
-because Ollama cuts a prompt that outgrows its window in silence: the oldest
-messages go, and when the last message alone does not fit, the start of the
-prompt with the instructions. Ollama's default is 4096 tokens on a GPU under
-24 GB, and mindfork's first turn already takes about 3500: there the app says
-once that the window is too small, and how to raise it, and a prompt Ollama
-cut is told ([install.md](docs/install.md) §3).
+Give the server a window of 16k: for Ollama, the context slider in its app's
+settings or `OLLAMA_CONTEXT_LENGTH=16384` for `ollama serve`; for LM Studio, the
+model's Context Length when it loads it, or `lms load <model> -c 16384`.
+mindfork reads the window from either and folds the conversation into a summary
+before it fills — which matters, because both cut an overlong prompt in silence:
+Ollama drops the oldest messages, and when the last message alone does not fit,
+the start of the prompt with the instructions; LM Studio drops the whole middle
+of the conversation. Ollama's default is 4096 tokens on a GPU under 24 GB, and
+mindfork's first turn already takes about 3500: there the app says once that the
+window is too small, and how to raise it, and a prompt either server cut is told
+([install.md](docs/install.md) §3, which also has the `mindfork setup` line for a
+script).
 
 The [releases](https://github.com/vshylov/mindfork-rs/releases) also carry a
 Windows installer and zip, and Linux deb, rpm and pkg.tar.zst packages.

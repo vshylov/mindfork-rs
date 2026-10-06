@@ -1,10 +1,10 @@
 +++
 title = "mindfork — a terminal AI chat with a memory and a self-model"
-description = "A terminal AI chat whose assistant keeps notes about you, a self-model it revisits and a knowledge base over your files — on local models through llama.cpp or Ollama, four cloud providers or an OpenRouter key. One native binary for Windows, Linux and macOS."
+description = "A terminal AI chat whose assistant keeps notes about you, a self-model it revisits and a knowledge base over your files — on local models through llama.cpp, Ollama or LM Studio, four cloud providers or an OpenRouter key. One native binary for Windows, Linux and macOS."
 
 [extra]
 hero_title = "An AI chat with a memory and a self-model"
-hero_sub = "The assistant keeps notes about you, a model of itself that it revisits, and a knowledge base over your files. Run a local Gemma or Qwen through llama.cpp or Ollama — or bring OpenAI, Anthropic, Gemini, Grok or an OpenRouter key. Real tools behind switches you set; one fast native binary for Windows, Linux and macOS."
+hero_sub = "The assistant keeps notes about you, a model of itself that it revisits, and a knowledge base over your files. Run a local Gemma or Qwen through llama.cpp, Ollama or LM Studio — or bring OpenAI, Anthropic, Gemini, Grok or an OpenRouter key. Real tools behind switches you set; one fast native binary for Windows, Linux and macOS."
 
 [[extra.features]]
 title = "Memory that persists"
@@ -12,7 +12,7 @@ desc = "A self-model with goals and observations, notes with a link graph, and R
 
 [[extra.features]]
 title = "Local first"
-desc = "A managed llama-server under the hood — one command downloads the llama.cpp build for your GPU — or the Ollama you already run, or any OpenAI-compatible endpoint you point it at. Your conversations never have to leave your machine."
+desc = "A managed llama-server under the hood — one command downloads the llama.cpp build for your GPU — or the Ollama or LM Studio you already run, found and offered on the first start, or any OpenAI-compatible endpoint you point it at. Your conversations never have to leave your machine."
 
 [[extra.features]]
 title = "Four clouds and a gateway"

@@ -58,6 +58,13 @@ effort tiers — have all closed
 
 ### Engine and providers
 
+- **What the local-servers track left** — **idea**, each small
+  ([local-servers.md](research/local-servers.md) §6): the settings' model list
+  offers the chat slot LM Studio's embedding models too, which `/api/v1/models`
+  could leave out — it says which they are; an input convention for nomic's `search_query:` /
+  `search_document:`, measured against no prefix; the overflow message's "Run
+  /compact" when the last message alone does not fit, where folding the rest
+  cannot help — on every server.
 - **Provider bridges — what remains.** The "any OpenAI-compatible endpoint"
   pattern (external + LiteLLM/OpenRouter) is documented in install.md §3,
   with the key such a gateway needs ([external-api-key.md](history/external-api-key.md))
@@ -644,6 +651,11 @@ An index, newest first — one line per track, with the release that shipped it
 and where its story is told. What a track left open is a bullet above, under
 its area.
 
+- **Local servers** — 0.17.0 (2026-10-06), two stages: LM Studio run live and
+  known by name — its window read, its silent cut of a conversation's middle
+  told, each note in its server's words; then the engineless chat offering a
+  local Ollama or LM Studio, with its embedder, and `/local`.
+  [local-servers.md](research/local-servers.md).
 - **A prompt the server cut** — 0.16.1 (2026-10-06): Ollama's two silent cuts
   measured, each round of an external server judged against a lower bound of
   what it held, a cut turn folded even with no window known and said once.

@@ -188,7 +188,8 @@ what the thing is before deciding whether to feed it a model.
 
 For the real thing you need an engine, and there are three routes: a **cloud
 provider** (a key and a model, both entered in the settings screen), an
-**OpenAI-compatible server** you already run — Ollama among them, below — or a
+**OpenAI-compatible server** you already run — Ollama and LM Studio among them,
+below — or a
 **managed `llama-server`** that the app downloads and supervises for you —
 `mindfork llama setup --backend vulkan --set-binary` fetches a llama.cpp build
 for your machine, verified against the checksum the release publishes.
@@ -203,24 +204,32 @@ mindfork is a terminal application: it needs a **real terminal**. Started with
 its output redirected or with no console at all, it says so and exits rather than
 pretending to run.
 
-### Already running Ollama?
+### Already running Ollama or LM Studio?
 
-Give it a window of 16k — the context slider in the Ollama app's settings, or
-`OLLAMA_CONTEXT_LENGTH=16384` for `ollama serve` — and point mindfork at it:
+Start mindfork. With no model connected yet, it looks for both on this computer
+and lists what they serve: `Enter` connects one — with that server's embedding
+model too when none is set up — and `/local` looks again whenever you type it.
+LM Studio's server is off until started (`lms server start`, or its Developer
+tab); an Ollama with no model needs one first:
 
 ```bash
 ollama pull gemma4:e4b
-mindfork setup --set engine.mode=external --set engine.external.url=http://localhost:11434/v1 --set engine.external.model_name=gemma4:e4b
+mindfork
 ```
 
-mindfork reads the window from Ollama once the first turn has loaded the model,
-and folds the conversation into a summary before it fills — which matters,
-because Ollama cuts a prompt that outgrows its window in silence: the oldest
-messages go, and when the last message alone does not fit, the start of the
-prompt with the instructions. Ollama's default is 4096 tokens on a GPU under
-24 GB, and mindfork's first turn already takes about 3500: there the app says
-once that the window is too small, and how to raise it, and a prompt Ollama
-cut is told.
+Give the server a window of 16k: for Ollama, the context slider in its app's
+settings or `OLLAMA_CONTEXT_LENGTH=16384` for `ollama serve`; for LM Studio, the
+model's Context Length when it loads it, or `lms load <model> -c 16384`.
+mindfork reads the window from either and folds the conversation into a summary
+before it fills — which matters, because both cut an overlong prompt in silence:
+Ollama drops the oldest messages, and when the last message alone does not fit,
+the start of the prompt with the instructions; LM Studio drops the whole middle
+of the conversation. Ollama's default is 4096 tokens on a GPU under 24 GB, and
+mindfork's first turn already takes about 3500: there the app says once that the
+window is too small, and how to raise it, and a prompt either server cut is
+told. For a script, `mindfork setup --set engine.mode=external …` writes the
+same settings ([setup in detail](https://github.com/vshylov/mindfork-rs/blob/main/docs/install.md),
+§3).
 
 ## What it does with your machine
 
