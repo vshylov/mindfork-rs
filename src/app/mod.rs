@@ -5,6 +5,7 @@
 mod demo_shots;
 pub mod events;
 pub mod gen_state;
+pub mod key_echo;
 pub mod orchestrator;
 pub mod runtime;
 pub mod supervisor;

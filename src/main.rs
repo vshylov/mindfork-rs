@@ -112,8 +112,18 @@ fn real_main(
     // the alternate screen, wrote escape codes into a redirected stdout and waited
     // for keys forever (docs/research/public-release-readiness.md §2.2 B8).
     if refuses_tui_launch(&command, std::io::stdout().is_terminal()) {
-        eprintln!("{}", loc.t("cli.tui.no_terminal"));
+        let refusal = if matches!(command, CliCommand::Keys { .. }) {
+            "cli.keys.no_terminal"
+        } else {
+            "cli.tui.no_terminal"
+        };
+        eprintln!("{}", loc.t(refusal));
         return Ok(ExitCode::from(2));
+    }
+    // `keys` reads keys and prints them; like `stats`, it creates nothing — no
+    // data root, no log (docs/research/macos.md §13.4).
+    if let CliCommand::Keys { output } = &command {
+        return app::key_echo::run(output.as_deref(), loc);
     }
     // The demo never touches the real data root — branch off before the real
     // root's directories or log file are even created. Its own root, logging
@@ -208,7 +218,7 @@ fn real_main(
         }
         CliCommand::ThemesCheck { target } => run_themes_check(paths, target.as_deref(), loc),
         CliCommand::Run => run_tui(paths, loc),
-        CliCommand::Demo | CliCommand::Stats { .. } => {
+        CliCommand::Demo | CliCommand::Stats { .. } | CliCommand::Keys { .. } => {
             unreachable!("handled above, before the real root is touched")
         }
         CliCommand::Help { .. } | CliCommand::Version => unreachable!("handled in main"),
@@ -222,7 +232,10 @@ fn real_main(
 /// console itself (`CONIN$` on Windows, `/dev/tty` on unix), so a piped stdin is
 /// a launch that works and must not be refused.
 fn refuses_tui_launch(command: &CliCommand, stdout_is_terminal: bool) -> bool {
-    matches!(command, CliCommand::Run | CliCommand::Demo) && !stdout_is_terminal
+    matches!(
+        command,
+        CliCommand::Run | CliCommand::Demo | CliCommand::Keys { .. }
+    ) && !stdout_is_terminal
 }
 
 /// Launches the main TUI (a command with no subcommand).
@@ -2100,11 +2113,16 @@ mod tests {
         assert_eq!(effective_password(Some(String::new()), stored()), None);
     }
 
-    /// Only the two full-screen commands need a terminal, and only a missing one
-    /// refuses them; every other command prints lines and works redirected.
+    /// Only the two full-screen commands and the key echo need a terminal, and
+    /// only a missing one refuses them; every other command prints lines and
+    /// works redirected.
     #[test]
     fn only_a_full_screen_launch_without_a_terminal_is_refused() {
-        for command in [CliCommand::Run, CliCommand::Demo] {
+        for command in [
+            CliCommand::Run,
+            CliCommand::Demo,
+            CliCommand::Keys { output: None },
+        ] {
             assert!(refuses_tui_launch(&command, false), "{command:?}");
             assert!(!refuses_tui_launch(&command, true), "{command:?}");
         }

@@ -106,6 +106,10 @@ pub enum CliCommand {
     /// Launch the interactive demo (`demo`): a throwaway data root and a
     /// scripted engine — the app without a model.
     Demo,
+    /// Echo each key as the app receives it (`keys [--output <file>]`) — a
+    /// terminal's check (docs/research/macos.md §13.4). `output` — also write
+    /// the lines into that file.
+    Keys { output: Option<PathBuf> },
     /// Show help (general or for a subcommand).
     Help { topic: Option<HelpTopic> },
     /// Show the version (`-V`/`--version`).
@@ -173,6 +177,7 @@ pub enum HelpTopic {
     ThemesExport,
     ThemesCheck,
     Demo,
+    Keys,
 }
 
 /// Parses arguments (after the program name). `Err` — an already print-ready
@@ -200,6 +205,7 @@ pub fn parse(args: &[String], loc: &Locale) -> Result<CliCommand, String> {
         "locales" => parse_locales(rest, loc),
         "themes" => parse_themes(rest, loc),
         "demo" => parse_demo(rest, loc),
+        "keys" => parse_keys(rest, loc),
         other if other.starts_with('-') => Err(unknown_option(loc, other)),
         other => Err(unknown_command(loc, other)),
     }
@@ -594,6 +600,26 @@ fn parse_demo(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> {
     }
 }
 
+fn parse_keys(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> {
+    let mut output: Option<PathBuf> = None;
+    let mut i = 0;
+    while i < toks.len() {
+        let a = toks[i];
+        if a == "-h" || a == "--help" {
+            return Ok(CliCommand::Help {
+                topic: Some(HelpTopic::Keys),
+            });
+        } else if let Some(v) = opt_value(toks, &mut i, loc, &["-o", "--output"])? {
+            output = Some(PathBuf::from(v));
+        } else if a.starts_with('-') {
+            return Err(unknown_option(loc, a));
+        } else {
+            return Err(unexpected_arg(loc, a));
+        }
+    }
+    Ok(CliCommand::Keys { output })
+}
+
 fn parse_locales(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> {
     let Some((&sub, rest)) = toks.split_first() else {
         return Err(missing_subcommand(loc, "locales"));
@@ -825,7 +851,7 @@ pub fn render_help(topic: Option<HelpTopic>, loc: &Locale) -> String {
     match topic {
         None => format!(
             "{about}\n\n{usage} mindfork [COMMAND]\n\n{commands}\n\
-             {dm:<20}{cd}\n{su:<20}{csu}\n{b:<20}{cb}\n{r:<20}{cr}\n{st:<20}{cst}\n{im:<20}{ci}\n{sb:<20}{cs}\n{ll:<20}{cll}\n{lc:<20}{cl}\n{th:<20}{cth}\n\n\
+             {dm:<20}{cd}\n{su:<20}{csu}\n{b:<20}{cb}\n{r:<20}{cr}\n{st:<20}{cst}\n{im:<20}{ci}\n{sb:<20}{cs}\n{ll:<20}{cll}\n{lc:<20}{cl}\n{th:<20}{cth}\n{ky:<20}{cky}\n\n\
              {options}\n  -h, --help     {oh}\n  -V, --version  {ov}",
             about = loc.t("cli.help.about"),
             dm = "  demo",
@@ -848,6 +874,8 @@ pub fn render_help(topic: Option<HelpTopic>, loc: &Locale) -> String {
             cl = loc.t("cli.help.cmd.locales"),
             th = "  themes",
             cth = loc.t("cli.help.cmd.themes"),
+            ky = "  keys",
+            cky = loc.t("cli.help.cmd.keys"),
             oh = loc.t("cli.help.opt.help"),
             ov = loc.t("cli.help.opt.version"),
         ),
@@ -999,6 +1027,15 @@ pub fn render_help(topic: Option<HelpTopic>, loc: &Locale) -> String {
             ch = loc.t("cli.help.opt.help"),
             n = loc.t("cli.help.setup.note"),
         ),
+        Some(HelpTopic::Keys) => format!(
+            "{d}\n\n{usage} mindfork keys [OPTIONS]\n\n{options}\n{o:<24}{co}\n{h:<24}{ch}\n\n{n}",
+            d = loc.t("cli.help.cmd.keys"),
+            o = "  -o, --output <FILE>",
+            co = loc.t("cli.help.opt.keys.output"),
+            h = "  -h, --help",
+            ch = loc.t("cli.help.opt.help"),
+            n = loc.t("cli.help.keys.note"),
+        ),
         Some(HelpTopic::Demo) => format!(
             "{d}\n\n{usage} mindfork demo\n\n{n}",
             d = loc.t("cli.help.cmd.demo"),
@@ -1081,6 +1118,42 @@ mod tests {
         );
         assert!(p(&["demo", "--force"]).is_err(), "unknown option refused");
         assert!(p(&["demo", "extra"]).is_err(), "stray argument refused");
+    }
+
+    #[test]
+    fn keys_parses_bare_an_output_and_help() {
+        assert_eq!(p(&["keys"]).unwrap(), CliCommand::Keys { output: None });
+        for args in [
+            &["keys", "-o", "k.txt"][..],
+            &["keys", "--output", "k.txt"][..],
+            &["keys", "--output=k.txt"][..],
+        ] {
+            assert_eq!(
+                p(args).unwrap(),
+                CliCommand::Keys {
+                    output: Some(PathBuf::from("k.txt"))
+                },
+                "{args:?}"
+            );
+        }
+        assert_eq!(
+            p(&["keys", "--help"]).unwrap(),
+            CliCommand::Help {
+                topic: Some(HelpTopic::Keys)
+            }
+        );
+        assert!(p(&["keys", "--bogus"]).is_err());
+        assert!(p(&["keys", "extra"]).is_err());
+        assert!(p(&["keys", "--output"]).is_err());
+    }
+
+    #[test]
+    fn keys_help_is_rendered() {
+        let loc = locale(Lang::En);
+        assert!(render_help(None, loc).contains("  keys"));
+        let topic = render_help(Some(HelpTopic::Keys), loc);
+        assert!(topic.contains("mindfork keys [OPTIONS]"));
+        assert!(topic.contains("--output <FILE>"));
     }
 
     /// The demo appears in the general help and has a topic page.

@@ -520,6 +520,11 @@ things on different screens. The highlights:
 > as Meta key* on (Settings → Profiles → Keyboard) `Alt+Enter` and the other `Alt` chords
 > work too. The `F` keys need `fn`.
 
+> **When a key does nothing.** `mindfork keys` shows each key you press as the app
+> receives it, and what the input box does with it; `Ctrl+Q` quits. When a terminal
+> keeps a chord for itself or sends something else, its lines say so. Paste them
+> into a report.
+
 > **Copying over SSH.** The clipboard the app writes belongs to the machine it
 > runs on — over SSH that is the server, and a headless one has no clipboard at
 > all. So a copy is also handed to *your* terminal's clipboard using OSC 52,

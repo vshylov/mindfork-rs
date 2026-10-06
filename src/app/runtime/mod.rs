@@ -298,6 +298,58 @@ const _: () = assert!(
     "a spinner frame must leave the terminal more than 100 ms of quiet"
 );
 
+/// Puts the terminal into the modes the app reads keys in, and records what it
+/// turned out to deliver. Shared with `mindfork keys` (`app::key_echo`), so the
+/// echo sees each key exactly as the app does. Returns whether the kitty
+/// keyboard protocol was answered — `None` on Windows, where it is not asked.
+///
+/// On unix we enable bracketed paste: crossterm delivers a clipboard paste as ONE
+/// `Event::Paste` event (whole, with line breaks as text, not Enter). Windows has no
+/// such mode in crossterm (input is read via the Console API), there a paste arrives
+/// as a batch of regular key events — we collect it in the loop
+/// (`process_input_batch`), so there's nothing to enable here. See spec §11.5.
+///
+/// Here (unix) we also enable the kitty keyboard protocol at the "disambiguate"
+/// level: the terminal's legacy encoding sends the same CR for `Shift+Enter` and
+/// `Enter`, so a line break in the input box was unavailable on a "bare" unix
+/// terminal. With `DISAMBIGUATE_ESCAPE_CODES` the terminal reports modifiers for
+/// special keys (Enter/arrows/…), and `Shift+Enter` becomes distinguishable from
+/// `Enter` (and `Shift`+arrows — from bare arrows, which enables keyboard-driven
+/// selection). We push it only if the terminal supports the protocol (otherwise a
+/// no-op); the caller pops it on exit (and the app's panic hook). Text input and a
+/// lone `Shift`+character don't touch this flag (text arrives as is), so
+/// layout-independent parsing of Ctrl shortcuts (`shared::keys`) and typing
+/// `?`/emoji don't regress. Not needed on Windows — the Console API already reports
+/// modifiers. `Alt+Enter` in the input box is a fallback line break for terminals
+/// without this protocol (see spec §11.5, audit item 11).
+pub(crate) fn enable_key_modes() -> Option<bool> {
+    #[cfg(unix)]
+    {
+        let _ = execute!(stdout(), EnableBracketedPaste);
+        let reported = supports_keyboard_enhancement().unwrap_or(false);
+        if reported {
+            let _ = execute!(
+                stdout(),
+                PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+            );
+        }
+        // Whether the push happened decides which chord the input box's footer
+        // advertises: `Shift+Enter` is only *deliverable* here if it did (spec
+        // §11.5). Konsole is why the footer had to stop asserting it — its
+        // default keytab answers `Shift+Return` with `\EOM`, which crossterm
+        // drops on the floor, so the advertised key did visibly nothing.
+        crate::shared::keys::set_modified_enter_reported(reported);
+        Some(reported)
+    }
+    // Windows needs no protocol — the Console API reports modifiers itself, so
+    // `Shift+Enter` is always the right thing to advertise there.
+    #[cfg(windows)]
+    {
+        crate::shared::keys::set_modified_enter_reported(true);
+        None
+    }
+}
+
 /// Initializes the terminal, runs the loop, and restores the terminal on exit
 /// (including on panic — `ratatui::init` sets a panic hook). `app` loads the
 /// spellcheck dictionaries itself in the background per settings
@@ -333,46 +385,7 @@ pub fn run(
             env!("CARGO_PKG_VERSION"),
         )),
     );
-    // On unix we enable bracketed paste: crossterm delivers a clipboard paste as ONE
-    // `Event::Paste` event (whole, with line breaks as text, not Enter). Windows has no
-    // such mode in crossterm (input is read via the Console API), there a paste arrives
-    // as a batch of regular key events — we collect it in the loop
-    // (`process_input_batch`), so there's nothing to enable here. See spec §11.5.
-    //
-    // Here (unix) we also enable the kitty keyboard protocol at the "disambiguate"
-    // level: the terminal's legacy encoding sends the same CR for `Shift+Enter` and
-    // `Enter`, so a line break in the input box was unavailable on a "bare" unix
-    // terminal. With `DISAMBIGUATE_ESCAPE_CODES` the terminal reports modifiers for
-    // special keys (Enter/arrows/…), and `Shift+Enter` becomes distinguishable from
-    // `Enter` (and `Shift`+arrows — from bare arrows, which enables keyboard-driven
-    // selection). We push it only if the terminal supports the protocol (otherwise a
-    // no-op); we pop it on exit and in the panic hook. Text input and a lone
-    // `Shift`+character don't touch this flag (text arrives as is), so
-    // layout-independent parsing of Ctrl shortcuts (`shared::keys`) and typing
-    // `?`/emoji don't regress. Not needed on Windows — the Console API already reports
-    // modifiers. `Alt+Enter` in the input box is a fallback line break for terminals
-    // without this protocol (see spec §11.5, audit item 11).
-    #[cfg(unix)]
-    {
-        let _ = execute!(stdout(), EnableBracketedPaste);
-        let reported = supports_keyboard_enhancement().unwrap_or(false);
-        if reported {
-            let _ = execute!(
-                stdout(),
-                PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
-            );
-        }
-        // Whether the push happened decides which chord the input box's footer
-        // advertises: `Shift+Enter` is only *deliverable* here if it did (spec
-        // §11.5). Konsole is why the footer had to stop asserting it — its
-        // default keytab answers `Shift+Return` with `\EOM`, which crossterm
-        // drops on the floor, so the advertised key did visibly nothing.
-        crate::shared::keys::set_modified_enter_reported(reported);
-    }
-    // Windows needs no protocol — the Console API reports modifiers itself, so
-    // `Shift+Enter` is always the right thing to advertise there.
-    #[cfg(windows)]
-    crate::shared::keys::set_modified_enter_reported(true);
+    enable_key_modes();
     // Mouse capture is OFF by default: then native mouse text selection works. Feed
     // wheel scrolling is enabled via a toggle (`Ctrl+W`) — it sends
     // `EnableMouseCapture`/`DisableMouseCapture` (see `dispatch`). We augment ratatui's
@@ -1126,26 +1139,7 @@ fn handle_input_tick(
     }
     // Any terminal event (input, scroll, resize) may change the view.
     *dirty = true;
-    // Drain ALL currently available events at once. On Windows a clipboard
-    // paste arrives as a batch of regular key events (there's no Event::Paste
-    // there — see `run`). Without batching this is a repaint per character
-    // (laggy), and an Enter inside the text = a send. We coalesce the batch in
-    // `process_input_batch`.
-    let mut batch = Vec::new();
-    collect_press(&mut batch, event::read()?);
-    while event::poll(Duration::ZERO)? {
-        collect_press(&mut batch, event::read()?);
-    }
-    // Looks like a paste (a burst of events in one drain) — we chase its tail
-    // with a short pause-detector (`PASTE_GAP`), so a large paste made of
-    // several console chunks gets collected into ONE batch. Otherwise a chunk
-    // boundary breaks the run and a lone `Enter` slips through as a send
-    // (Windows).
-    if batch.len() >= PASTE_BURST {
-        while event::poll(PASTE_GAP)? {
-            collect_press(&mut batch, event::read()?);
-        }
-    }
+    let batch = read_batch()?;
     Ok(route_batch(
         placeholder,
         batch,
@@ -1158,6 +1152,43 @@ fn handle_input_tick(
     ))
 }
 
+/// Reads the next batch of input, waiting for its first event. Shared with
+/// `mindfork keys` (`app::key_echo`), so a burst reads there as it reads here.
+///
+/// Drains ALL currently available events at once. On Windows a clipboard
+/// paste arrives as a batch of regular key events (there's no Event::Paste
+/// there — see `run`). Without batching this is a repaint per character
+/// (laggy), and an Enter inside the text = a send. We coalesce the batch in
+/// `process_input_batch` ([`chunk_batch`]). Only presses are kept
+/// ([`collect_press`]).
+pub(crate) fn read_batch() -> Result<Vec<Event>> {
+    read_batch_from(|| Ok(event::read()?), |wait| Ok(event::poll(wait)?))
+}
+
+/// [`read_batch`] over any source: `read` waits for the next event, `poll`
+/// says whether one arrives within the wait it is given.
+fn read_batch_from(
+    mut read: impl FnMut() -> Result<Event>,
+    mut poll: impl FnMut(Duration) -> Result<bool>,
+) -> Result<Vec<Event>> {
+    let mut batch = Vec::new();
+    collect_press(&mut batch, read()?);
+    while poll(Duration::ZERO)? {
+        collect_press(&mut batch, read()?);
+    }
+    // Looks like a paste (a burst of events in one drain) — we chase its tail
+    // with a short pause-detector (`PASTE_GAP`), so a large paste made of
+    // several console chunks gets collected into ONE batch. Otherwise a chunk
+    // boundary breaks the run and a lone `Enter` slips through as a send
+    // (Windows).
+    if batch.len() >= PASTE_BURST {
+        while poll(PASTE_GAP)? {
+            collect_press(&mut batch, read()?);
+        }
+    }
+    Ok(batch)
+}
+
 // ---------- submodules (god-object breakup: docs/history/refactoring-god-objects.md, stage 7) ----------
 
 mod clipboard;
@@ -1165,7 +1196,9 @@ mod dispatch;
 mod input;
 
 // Internal wiring: run_loop calls input batching (input), event application and
-// dispatch (dispatch), the clipboard (clipboard). The external surface is run.
+// dispatch (dispatch), the clipboard (clipboard). The external surface is run —
+// and, for `mindfork keys`, how a batch is read and split.
+pub(crate) use self::input::{Chunk, chunk_batch};
 use self::{clipboard::*, dispatch::*, input::*};
 
 #[cfg(test)]

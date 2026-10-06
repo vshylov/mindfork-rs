@@ -701,7 +701,7 @@ impl InputBox {
     /// The normalized selection range `(start, end)` in lexicographic
     /// `(row, column)` order. `None` if there's no selection (the anchor is
     /// unset or coincides with the cursor).
-    fn selection_span(&self) -> Option<((usize, usize), (usize, usize))> {
+    pub fn selection_span(&self) -> Option<((usize, usize), (usize, usize))> {
         let a = self.anchor?;
         let c = (self.row, self.col);
         if a == c {
