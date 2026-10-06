@@ -1,6 +1,8 @@
 # A local Ollama or LM Studio, found and offered — and LM Studio known by name
 
-Status: **research and design; the forks (§5) wait for the owner.** Stage 1 of
+Status: **designed; forks decided by the owner on 2026-10-06** — F1 (a),
+F2 (a), F3 (b) with the command named `/local`, F4 (a), F5 (b), F6 (a) (§5).
+Stage 1 of
 the promotion plan ([promotion.md](promotion.md) §4) has two open items, and
 this document takes both: "the engineless chat offers a server it finds on
 `localhost:11434` or `:1234`", and an LM Studio recipe, which waited for a live
@@ -157,10 +159,15 @@ Two stages, each its own branch and live run.
 
 ### Stage 2 — the engineless chat offers what it finds
 
-1. **When.** At the start, when the chat's engine is `NotConfigured` — a
-   managed mode with no model, or an external one with no URL. A configured
-   engine that does not answer is `Disconnected`, and is not second-guessed.
-   The environment variables that configure an engine do so before this check.
+1. **When.**
+   - **At the start,** when the chat's engine is `NotConfigured` — a managed
+     mode with no model, or an external one with no URL. A configured engine
+     that does not answer is `Disconnected`, and is not second-guessed. The
+     environment variables that configure an engine do so before this check.
+   - **By `/local`,** whatever is configured (F3): the user who started a
+     server after mindfork, or who wants to switch to one. Nothing found is
+     then a feed note naming what was asked — Ollama on `11434`, LM Studio on
+     `1234` — and that neither answered.
 2. **What is asked.** Both servers at once, in the background, each with a
    short timeout (1 s to connect, 3 s in all), at `127.0.0.1`:
    - **Ollama:** `:11434/api/tags`, models whose `capabilities` hold
@@ -168,18 +175,34 @@ Two stages, each its own branch and live run.
    - **LM Studio:** `:1234/api/v1/models`, models of `type` `llm`, with which
      ones have `loaded_instances`.
 
-   Nothing found is silence, and the empty feed stays as it is.
-3. **What is offered.** A list on the chat screen, one row per server and
-   model — *Ollama · gemma4:e4b*, *LM Studio · google_gemma-4-e4b-it* — with a
-   loaded model first.
+   Each listing also yields the server's embedding models: `embedding` in
+   Ollama's `capabilities`, `type` `embeddings` on LM Studio. At the start,
+   nothing found is silence, and the empty feed stays as it is.
+3. **What is offered.** A list on the chat screen, titled *Local servers*, one
+   row per server and chat model — *Ollama · gemma4:e4b*, *LM Studio ·
+   google_gemma-4-e4b-it* — with a loaded model first.
    - **Enter** on a row writes `engine.mode = external`, `engine.external.url`
      (`http://127.0.0.1:<port>/v1`) and `engine.external.model_name` through
      the same `UpdateConfig` path the settings use. The file is saved
      atomically, and the engine comes up as for any external server.
    - **Esc** changes nothing.
-4. **The recipe gets shorter.** Start Ollama's or LM Studio's server, start
+4. **The embedder, from the same server (F5).** When the embedder is
+   `NotConfigured` — the default — and the picked row's server has an
+   embedding model, the same pick writes `embed.mode = external`, the same URL,
+   and that model. The row says so (*… · embeddings: nomic-embed-text-v1.5*).
+   - **Which one:** a loaded embedding model first, then `bge-m3` by name —
+     the model the app is calibrated against — then the first listed.
+   - **An embedder already configured is never replaced:** a different
+     embedder is a different vector space, and a reindex.
+   - **`embed.convention` stays `none`.** A convention is never chosen
+     silently (`shared/embed_prefix.rs`), and nomic's own task prefixes
+     (`search_query:` / `search_document:`) are not one the app has. The live
+     run measures recall with it as it is; a convention for it is a follow-up.
+5. **The recipe gets shorter.** Start Ollama's or LM Studio's server, start
    mindfork, press Enter. The `mindfork setup` line stays for a headless
-   machine and for a script.
+   machine and for a script. The empty feed's routes gain one: a local
+   Ollama or LM Studio is offered when its server runs, and `/local` looks
+   again.
 
 ## 5. Forks
 
@@ -187,27 +210,35 @@ Two stages, each its own branch and live run.
   chosen by the endpoint that answered the window; (b) one text that names
   both products. (b) is shorter, but it tells an LM Studio user about
   `OLLAMA_CONTEXT_LENGTH`, and describes a cut that LM Studio does not make.
-  **Recommended: (a).**
+  **Recommended: (a). Owner's decision 2026-10-06: (a).**
 - **F2 — how the find is offered.** (a) a list, even for one candidate: one
   shape, and the row says what will be written; (b) a yes/no question for one
-  candidate and a list for several. **Recommended: (a).**
+  candidate and a list for several. **Recommended: (a). Owner's decision
+  2026-10-06: (a).**
 - **F3 — when servers are looked for.** (a) at the start only. A user who starts
   LM Studio's server later restarts mindfork, and the empty feed says so.
-  (b) at the start, and again by a command in the empty chat; (c) every few
-  seconds while nothing is configured — a list could open while the user is
-  typing in the settings. **Recommended: (a).**
+  (b) at the start, and again by a command; (c) every few seconds while nothing
+  is configured — a list could open while the user is typing in the settings.
+  **Recommended: (a). Owner's decision 2026-10-06: (b)**, the command named
+  `/local` after the list's title, *Local servers*. It works whatever is
+  configured (§4, stage 2, item 1).
 - **F4 — a refused offer.** (a) asked again at the next start while nothing is
   configured — it stops by itself once anything is; (b) a stored "do not ask
-  again", one more setting. **Recommended: (a).**
+  again", one more setting. **Recommended: (a). Owner's decision 2026-10-06:
+  (a).**
 - **F5 — the embedder.** LM Studio ships `nomic-embed-text-v1.5` with the app,
   and Ollama serves any embedder that has been pulled. (a) the offer sets the
   chat alone; (b) also the embedder, where the same server has one. A
   different embedder later means a reindex, and nomic's English-first model is
-  not the multilingual one the app defaults to. **Recommended: (a).**
+  not the multilingual one the app defaults to. **Recommended: (a). Owner's
+  decision 2026-10-06: (b)** — notes and the knowledge base search by meaning
+  from the first run. Bounded as §4, stage 2, item 4 says: an embedder already
+  configured is never replaced, and no convention is chosen.
 - **F6 — which servers.** (a) Ollama on `11434` and LM Studio on `1234`;
   (b) also a llama-server on its default `8080`, told by `/props`. Many
   unrelated development servers sit on `8080`, and the user who starts
-  llama-server by hand knows the line already. **Recommended: (a).**
+  llama-server by hand knows the line already. **Recommended: (a). Owner's
+  decision 2026-10-06: (a).**
 
 ## 6. Not in this track
 
