@@ -10,11 +10,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use futures_util::future::BoxFuture;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio_util::sync::CancellationToken;
 
 use crate::shared::api::embed_policy::{BatchedEmbedder, RetryEmbedder};
 use crate::shared::api::llama_args::ManagedRole;
+use crate::shared::api::local_servers::{self, Found};
 use crate::shared::api::managed::{ChildExit, PortLedger};
 use crate::shared::api::{
     AnthropicClient, Embedder, EngineBackend, GeminiClient, KeyVerdict, ManagedConfig,
@@ -129,6 +131,15 @@ pub trait ServerSupervisor: Send + Sync {
         status_tx: UnboundedSender<ServerStatus>,
         loc: &'static Locale,
     ) -> ChatSetup;
+
+    /// Looks for a local Ollama or LM Studio on this machine
+    /// (docs/research/local-servers.md, stage 2). The supervisor is the
+    /// application's seam to the servers on the machine, so the look is its:
+    /// the real one asks this machine's ports; the demo's and the tests' answer
+    /// with what they were given — a unit test must never reach a server the
+    /// developer happens to be running. No default, so a supervisor cannot
+    /// forget to decide.
+    fn find_local_servers(&self) -> BoxFuture<'static, Vec<Found>>;
 }
 
 /// Where the supervisor looks for a `llama-server` the settings do not name
@@ -256,6 +267,10 @@ impl ServerSupervisor for LlamaSupervisor {
                 )
             }
         }
+    }
+
+    fn find_local_servers(&self) -> BoxFuture<'static, Vec<Found>> {
+        Box::pin(local_servers::find())
     }
 
     fn apply_impersonation(
@@ -1120,6 +1135,12 @@ impl ServerSupervisor for DemoSupervisor {
         }
     }
 
+    /// The demo looks at nothing on the machine: it is for looking around,
+    /// and leaves everything as it found it.
+    fn find_local_servers(&self) -> BoxFuture<'static, Vec<Found>> {
+        Box::pin(async { Vec::new() })
+    }
+
     fn apply_impersonation(
         &self,
         _settings: &ImpersonationEngineSettings,
@@ -1158,6 +1179,10 @@ pub struct MockSupervisor {
     /// Refuse every chat launch with this reason, synchronously — the way a
     /// managed launch refuses a missing model or a port a stranger holds.
     chat_refusal: Option<String>,
+    /// What a look for local servers finds — nothing, unless a test says.
+    local_servers: Vec<Found>,
+    /// How many times the orchestrator looked.
+    local_looks: std::sync::atomic::AtomicUsize,
 }
 
 #[cfg(test)]
@@ -1174,6 +1199,8 @@ impl MockSupervisor {
             embedder: None,
             embed_unavailable: false,
             chat_refusal: None,
+            local_servers: Vec::new(),
+            local_looks: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 
@@ -1191,6 +1218,8 @@ impl MockSupervisor {
             embedder,
             embed_unavailable: false,
             chat_refusal: None,
+            local_servers: Vec::new(),
+            local_looks: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 
@@ -1205,6 +1234,19 @@ impl MockSupervisor {
             embed_unavailable: true,
             ..Self::with_backend_and_embedder(backend, None)
         }
+    }
+
+    /// A supervisor whose look for local servers finds `found`.
+    pub fn with_local_servers(self, found: Vec<Found>) -> Self {
+        Self {
+            local_servers: found,
+            ..self
+        }
+    }
+
+    /// How many times the orchestrator looked for local servers.
+    pub fn local_look_count(&self) -> usize {
+        self.local_looks.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// A supervisor whose every chat launch is refused before anything starts.
@@ -1264,6 +1306,13 @@ impl ServerSupervisor for MockSupervisor {
             handle: None,
             status,
         }
+    }
+
+    fn find_local_servers(&self) -> BoxFuture<'static, Vec<Found>> {
+        self.local_looks
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let found = self.local_servers.clone();
+        Box::pin(async move { found })
     }
 
     fn apply_impersonation(

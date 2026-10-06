@@ -117,6 +117,7 @@ impl ChatScreen {
         match command {
             // The screens.
             UiCommand::Settings => self.open_settings_screen(),
+            UiCommand::Local => Some(ChatIntent::FindLocalServers),
             // Bare — the screen; `clear` — the wipe it offers behind `Ctrl+K`
             // twice, behind a confirmation here for the same reason.
             UiCommand::SelfModel if argument == "clear" => self.ask_clear_self_model(),

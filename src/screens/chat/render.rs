@@ -172,6 +172,9 @@ impl ChatScreen {
             self.chat_links
                 .as_ref()
                 .map(|_| ChatLinkPickerState::min_size(loc)),
+            self.local_servers
+                .as_ref()
+                .map(|_| LocalServerPickerState::min_size(loc)),
             self.tool_confirm
                 .as_ref()
                 .map(|pending| tool_prompt(pending, palette, loc).min_size(palette, area)),
@@ -331,6 +334,7 @@ impl ChatScreen {
             && self.suggest.is_none()
             && self.emoji.is_none()
             && self.chat_links.is_none()
+            && self.local_servers.is_none()
             && self.confirm.is_none()
             && self.tool_confirm.is_none();
         RenderOpts {
@@ -421,6 +425,10 @@ impl ChatScreen {
         if let Some(picker) = &mut self.chat_links {
             dim_background(frame, &self.palette);
             picker.render(frame, frame.area(), &self.palette, self.loc);
+        }
+        if let Some(list) = &mut self.local_servers {
+            dim_background(frame, &self.palette);
+            list.render(frame, frame.area(), &self.palette, self.loc);
         }
         if let Some(pending) = &self.tool_confirm {
             dim_background(frame, &self.palette);

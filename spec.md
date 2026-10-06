@@ -2735,8 +2735,8 @@ size panics, 0×0 included, which is a size real hosts report.
   inside a third. The share is a function of the window and the screen, not
   of the hints, so it does not move with the selection — only what fills it
   does.
-- **The gate** (`app/runtime/small_window_tests.rs`) draws twenty states —
-  every screen, every popup of the chat — at 459 window sizes from 0×0 up, in
+- **The gate** (`app/runtime/small_window_tests.rs`) draws twenty-one states —
+  every screen, every popup of the chat — at 493 window sizes from 0×0 up, in
   every built-in language, through the function the loop draws with; each
   frame is the notice or the screen whole — for the chat, whole as the ladder
   has it at that height; for a panel, what it is for on screen and a footer

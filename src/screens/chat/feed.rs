@@ -663,6 +663,17 @@ impl ChatScreen {
     /// The agentic loop is asking whether to run a dangerous tool call
     /// (spec §9.8). Opens the modal popup; the answer leaves as
     /// [`ChatIntent::ConfirmTool`].
+    /// Opens the *Local servers* list over what answered
+    /// (docs/research/local-servers.md, stage 2). An empty list is never sent.
+    pub fn offer_local_servers(
+        &mut self,
+        offers: Vec<crate::shared::api::local_servers::LocalOffer>,
+    ) {
+        if !offers.is_empty() {
+            self.local_servers = Some(LocalServerPickerState::new(offers));
+        }
+    }
+
     pub fn request_tool_confirm(
         &mut self,
         generation_id: Uuid,

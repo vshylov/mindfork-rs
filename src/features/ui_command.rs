@@ -31,6 +31,9 @@ use crate::shared::i18n::Locale;
 pub enum UiCommand {
     /// The settings screen (`Ctrl+P`).
     Settings,
+    /// Look for a local Ollama or LM Studio and offer what answers
+    /// (docs/research/local-servers.md F3).
+    Local,
     /// The self-model screen (`F3`); `clear` wipes the model (`Ctrl+K` twice
     /// inside that screen), behind the same confirmation.
     SelfModel,
@@ -174,6 +177,7 @@ pub const COMMANDS: &[Spec] = &[
     // this route; `/chats` and `/help` have safe keys (`Esc`, `?`) and are here
     // for symmetry — and because `Esc` means three different things.
     row(&["/settings"], UiCommand::Settings, Arity::None, "/settings", "ui.help.cmd_settings"),
+    row(&["/local"], UiCommand::Local, Arity::None, "/local", "ui.help.cmd_local"),
     row(&["/self"], UiCommand::SelfModel, Arity::Subcommand(&["clear"]), "ui.help.k.self", "ui.help.cmd_self"),
     row(&["/chats"], UiCommand::Chats, Arity::None, "/chats", "ui.help.cmd_chats"),
     row(&["/changes"], UiCommand::Changes, Arity::None, "/changes", "ui.help.cmd_changes"),

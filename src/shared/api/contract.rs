@@ -654,6 +654,18 @@ pub enum ServerKind {
     Other,
 }
 
+impl ServerKind {
+    /// The product's own name, which no locale translates; `None` for a server
+    /// that is not one the app knows.
+    pub fn product(self) -> Option<&'static str> {
+        match self {
+            Self::Ollama => Some("Ollama"),
+            Self::LmStudio => Some("LM Studio"),
+            Self::Other => None,
+        }
+    }
+}
+
 /// Whether an engine accepts image input. See [`EngineBackend::vision`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum VisionSupport {

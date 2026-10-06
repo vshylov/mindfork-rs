@@ -33,9 +33,9 @@ use crate::shared::ui::WayOut;
 /// The widths and heights of the sweep: every size up to the smallest window
 /// anything is drawn in, both sides of each screen's and each popup's
 /// threshold, and the sizes a window really has.
-const WIDTHS: [u16; 27] = [
-    0, 1, 2, 3, 4, 8, 12, 19, 20, 21, 23, 24, 29, 30, 39, 40, 41, 45, 46, 47, 57, 68, 69, 72, 80,
-    100, 116,
+const WIDTHS: [u16; 29] = [
+    0, 1, 2, 3, 4, 8, 12, 19, 20, 21, 23, 24, 29, 30, 36, 37, 39, 40, 41, 45, 46, 47, 57, 68, 69,
+    72, 80, 100, 116,
 ];
 const HEIGHTS: [u16; 17] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 16, 24, 33];
 
@@ -251,6 +251,31 @@ fn chat_tool_confirm(lang: Lang) -> Rig {
         r#"{"code":"import os\nprint(os.getcwd())"}"#.into(),
         None,
     );
+    rig
+}
+
+/// The *Local servers* list, as the start of a chat with no engine opens it
+/// (docs/research/local-servers.md, stage 2).
+fn chat_local_servers(lang: Lang) -> Rig {
+    use crate::shared::api::ServerKind;
+    use crate::shared::api::local_servers::LocalOffer;
+    let mut rig = Rig::chat(lang, "");
+    rig.screen.offer_local_servers(vec![
+        LocalOffer {
+            server: ServerKind::LmStudio,
+            url: "http://127.0.0.1:1234/v1".into(),
+            model: "google_gemma-4-e4b-it".into(),
+            loaded: true,
+            embedder: Some("text-embedding-nomic-embed-text-v1.5".into()),
+        },
+        LocalOffer {
+            server: ServerKind::Ollama,
+            url: "http://127.0.0.1:11434/v1".into(),
+            model: "gemma4:e4b".into(),
+            loaded: false,
+            embedder: None,
+        },
+    ]);
     rig
 }
 
@@ -577,6 +602,9 @@ const CASES: &[(&str, Build, Check)] = &[
     ("chat:// picker", chat_links, |s, l| {
         legend(s, l, "ui.chat_links.footer")
     }),
+    ("local servers", chat_local_servers, |s, l| {
+        legend(s, l, "ui.local_servers.footer").and_then(|()| shows(s, &["LM Studio", "Ollama"]))
+    }),
     ("profile picker", chat_profiles, |s, l| {
         legend(s, l, "ui.profile_list.footer").and_then(|()| shows(s, &["Reviewer"]))
     }),
@@ -681,8 +709,8 @@ fn sweep(name: &str, build: Build, check: Check) {
     }
 }
 
-/// One thread a state: twenty sweeps of 459 sizes in two languages are
-/// eighteen thousand frames, and none of them shares anything with another.
+/// One thread a state: twenty-one sweeps of 493 sizes in two languages are
+/// twenty thousand frames, and none of them shares anything with another.
 #[test]
 fn every_state_is_whole_or_the_placeholder_at_every_size() {
     std::thread::scope(|scope| {

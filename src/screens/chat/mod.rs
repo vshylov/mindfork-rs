@@ -41,6 +41,7 @@ use crate::widgets::emoji_picker::{EmojiPickerAction, EmojiPickerState};
 use crate::widgets::help_dialog::{HelpContext, HelpSection};
 use crate::widgets::impersonation_preview;
 use crate::widgets::input_box::InputBox;
+use crate::widgets::local_server_picker::{LocalServerAction, LocalServerPickerState};
 use crate::widgets::message_feed::{FeedMessage, FeedRole, MessageFeed};
 use crate::widgets::profile_list::{ProfileListAction, ProfileListState};
 use crate::widgets::status_bar::{self, EscTarget};
@@ -336,6 +337,12 @@ pub enum ChatIntent {
     /// the screen's settings snapshot, which every config change re-emits.
     /// `Box` — `AppConfig` is large.
     UpdateConfig(Box<AppConfig>),
+    /// `/local`: look for a local Ollama or LM Studio now
+    /// (docs/research/local-servers.md F3).
+    FindLocalServers,
+    /// A row of the *Local servers* list was picked: the orchestrator writes it
+    /// into the settings.
+    UseLocalServer(crate::shared::api::local_servers::LocalOffer),
     /// Toggle terminal mouse capture for wheel scrolling (`Ctrl+W`). `true` —
     /// the wheel scrolls the feed (text selection — with Shift); `false` —
     /// native mouse selection. See spec §11.3.
@@ -586,6 +593,10 @@ pub struct ChatScreen {
     emoji: Option<EmojiPickerState>,
     /// The open `chat://` reference picker (`Ctrl+L`). See spec §11.3.
     chat_links: Option<ChatLinkPickerState>,
+    /// The open *Local servers* list: a local Ollama or LM Studio that
+    /// answered, at the start of a chat with no engine or for `/local`
+    /// (docs/research/local-servers.md, stage 2).
+    local_servers: Option<LocalServerPickerState>,
     /// The open modal confirmation popup for an irreversible operation
     /// (`Ctrl+R`/`Ctrl+E`); `None` — the popup is closed. See spec §11.7.
     confirm: Option<ConfirmAction>,
@@ -743,6 +754,7 @@ impl ChatScreen {
             emoji: None,
             emoji_last: 0,
             chat_links: None,
+            local_servers: None,
             feed_has_risky: false,
             full_redraw: false,
             confirm: None,

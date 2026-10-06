@@ -223,6 +223,7 @@ pub(super) fn apply_event(
         } => screen.set_subagent_progress(generation_id, run, progress),
         AppEvent::Error(message) => screen.push_error(&message),
         AppEvent::Notice(message) => screen.push_note(&message),
+        AppEvent::LocalServers(offers) => screen.offer_local_servers(offers),
         // A roll can finish for a chat the user has since switched away from.
         // Applying it would clear the open chat's own boundary and post the note
         // in the wrong conversation — the same staleness the `generation_id`
@@ -765,6 +766,8 @@ pub(super) fn dispatch(
         // screen's editors use (docs/history/commands-stage3.md §3.2–3.3).
         ChatIntent::UpdateProfile { id, edit } => AppCommand::UpdateProfile { id, edit },
         ChatIntent::UpdateConfig(config) => AppCommand::UpdateConfig(config),
+        ChatIntent::FindLocalServers => AppCommand::FindLocalServers,
+        ChatIntent::UseLocalServer(offer) => AppCommand::UseLocalServer(offer),
         ChatIntent::ClearSelfModel => {
             AppCommand::UpdateSelfModel(crate::entities::self_model::SelfModelEdit::Clear)
         }

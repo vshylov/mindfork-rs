@@ -1056,7 +1056,7 @@ impl MessageFeed {
     }
 
     /// What an empty feed says: an invitation to write, or — with no engine to
-    /// answer — the three ways to start. One logical line per route; `render`
+    /// answer — the four ways to start. One logical line per route; `render`
     /// wraps them to the panel like any other line.
     fn empty_placeholder(&self, palette: &Palette, loc: &'static Locale) -> Vec<Line<'static>> {
         let line =
@@ -1068,6 +1068,7 @@ impl MessageFeed {
             line("ui.feed.no_engine.title"),
             Line::default(),
             line("ui.feed.no_engine.cloud"),
+            line("ui.feed.no_engine.server"),
             line("ui.feed.no_engine.local"),
             line("ui.feed.no_engine.demo"),
         ]
@@ -3847,8 +3848,9 @@ mod tests {
 
     // ---------- the empty feed (docs/research/public-release-readiness.md §3.2) ----------
 
-    /// With no engine configured, an empty feed names the three routes — the
-    /// settings by chord and by command, a local build, the demo — instead of
+    /// With no engine configured, an empty feed names the four routes — the
+    /// settings by chord and by command, a local server by `/local`, a local
+    /// build, the demo — instead of
     /// inviting a message that can only be refused; with one, the invitation
     /// comes back. Wide enough that no route wraps mid-phrase.
     #[test]
@@ -3857,6 +3859,7 @@ mod tests {
         let routes = [
             "Ctrl+P",
             "/settings",
+            "/local",
             "mindfork llama setup",
             "mindfork demo",
         ];

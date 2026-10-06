@@ -661,6 +661,7 @@ mod images;
 mod impersonation;
 mod live;
 mod llm_history;
+mod local_servers;
 mod mcp;
 mod model_name;
 mod parallel;

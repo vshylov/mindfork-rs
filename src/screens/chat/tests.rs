@@ -6179,3 +6179,55 @@ fn the_bare_search_row_tags_its_counter() {
     let rows = screen_rows(&mut s, 57, 5);
     assert!(rows[4].trim_end().ends_with("0/0"), "{rows:?}");
 }
+
+/// The *Local servers* list (docs/research/local-servers.md, stage 2): `/local`
+/// asks the orchestrator to look; a list it sends takes the keys — `Enter`
+/// picks the selected row, `Esc` closes and changes nothing, and `Ctrl+Q`
+/// punches through, since the list opens unasked at the start. An empty list
+/// is never opened.
+#[test]
+fn the_local_servers_list_picks_closes_and_lets_quit_through() {
+    use crate::shared::api::ServerKind;
+    use crate::shared::api::local_servers::LocalOffer;
+    let offers = || {
+        vec![
+            LocalOffer {
+                server: ServerKind::LmStudio,
+                url: "http://127.0.0.1:1234/v1".into(),
+                model: "google_gemma-4-e4b-it".into(),
+                loaded: true,
+                embedder: None,
+            },
+            LocalOffer {
+                server: ServerKind::Ollama,
+                url: "http://127.0.0.1:11434/v1".into(),
+                model: "gemma4:e4b".into(),
+                loaded: false,
+                embedder: None,
+            },
+        ]
+    };
+    let mut c = Cmd::new();
+    assert_eq!(c.run("/local"), Some(ChatIntent::FindLocalServers));
+
+    c.s.offer_local_servers(offers());
+    assert_eq!(c.key(KeyCode::Down), None);
+    assert_eq!(
+        c.key(KeyCode::Enter),
+        Some(ChatIntent::UseLocalServer(offers()[1].clone()))
+    );
+    assert!(c.s.local_servers.is_none(), "a pick closes the list");
+
+    c.s.offer_local_servers(offers());
+    assert_eq!(c.key(KeyCode::Esc), None);
+    assert!(c.s.local_servers.is_none(), "Esc closes it");
+
+    c.s.offer_local_servers(offers());
+    assert_eq!(c.ctrl('q'), Some(ChatIntent::Quit));
+
+    c.s.offer_local_servers(Vec::new());
+    assert!(
+        c.s.local_servers.is_none(),
+        "nothing to offer, nothing opened"
+    );
+}
