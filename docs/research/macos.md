@@ -370,6 +370,7 @@ The day's plan, with what is prepared before it and what runs headless: §13.
   site's account already is, an M1 for ~$16; (c) skip it and rely on testers.
   **Recommended: (a)** — the cheapest, the newest GPU, a console VNC — after
   stage 2, so the day tests the archive a user would download.
+  **Changed to (b) on 2026-10-06**: Scaleway refused the owner's card (§13.1).
 
 ## 9. Risks
 
@@ -490,41 +491,49 @@ a Mac does is §6.2's item 9.
 
 The checklist of §6.2 as a day's work: what is prepared before it, what runs
 headless, what needs a person at a screen, and what is measured rather than
-looked at. Forks F7–F9 (§13.8) are the owner's.
+looked at. Forks F7–F9 (§13.8): **every one as recommended — (a) — the
+owner, 2026-10-06.**
 
 ### 13.1 The machine
 
-Scaleway, as F6 chose — re-read on 2026-10-06 from its documentation's source
-(`scaleway/docs-content`):
+**AWS EC2, `mac-m4.metal`.** F6 chose Scaleway; on 2026-10-06 Scaleway
+refused the owner's card, and the day moved to the AWS account the site already
+runs on. Read the same day from AWS's documentation:
 
-- **M4-S**: Apple M4 (10-core GPU), 16 GB, 256 GB — **€0.22/h, ~€5.3 a day**
-  before VAT. **M4-M** (32 GB, €0.29/h, ~€7) if a 26B MoE is to be seen as
-  well; 16 GB holds Gemma 4 E4B and bge-m3, one server at a time.
-- **24 hours at least** (Apple's licence), billed by the hour after. The
-  creation form has *automatic deletion after 24 hours* — turned on, so a
-  forgotten machine does not keep billing.
-- **macOS 26 on M2 and M4** since 2025-09-22, picked at creation or by a
-  *Reinstall*, which wipes the disk; a version other than the default takes
-  about an hour longer to come up.
-- **Access**: SSH with the key added to the Scaleway project; a remote desktop
-  over VNC with the user and password the console shows — on Windows,
-  Devolutions Remote Desktop Manager (ARD) or RealVNC Viewer, Scaleway's own
-  suggestions. Preinstalled: Xcode (so `git` and `python3` work) and MacPorts;
-  **no Homebrew**.
+- **`mac-m4.metal`**: a 2024 Mac mini, M4 (10-core GPU), **24 GiB** —
+  **$1.23 an hour** in `us-east-1` (Frankfurt $1.476). A Mac is a *Dedicated
+  Host* with a **24-hour minimum** before it can be released: **~$30 a day**.
+  24 GiB holds Gemma 4 E4B and bge-m3 with room to spare; one server at a time
+  all the same.
+- **A quota first.** Every Mac host quota of a new account is 0 (measured on
+  this one, read-only). *Running Dedicated mac-m4 Hosts* (`L-2CBA8B92`) = 1 in
+  `us-east-1` was requested on 2026-10-06; people review it, in hours or days.
+- **macOS**: AWS's AMIs carry Sequoia 15 (15.6 or later on an M4) and Tahoe 26
+  — 15.8 and 26.7 in the 2026-09-23 release — and already Golden Gate 27.0.
+  Preinstalled: Homebrew, the Command Line Tools, Safari, the AWS CLI;
+  `ec2-user` has `sudo` without a password.
+- **Another macOS on the same host** means stopping the instance: the host is
+  *scrubbed* — up to **4.5 hours** on Apple silicon, unbilled — and a new one
+  is launched from the other AMI.
+- **Access**: SSH as `ec2-user` with the key pair named at launch (a `.pem`
+  that stays the owner's). The desktop: a password set with `sudo passwd
+  ec2-user`, Screen Sharing turned on with `launchctl`, and VNC through an SSH
+  tunnel — `ssh -L 5900:localhost:5900 …`, then an ARD-capable VNC client on
+  Windows pointed at `localhost:5900`.
+- **Released by hand** once the 24 hours have passed: the instance stopped,
+  then *Release host*. A forgotten host bills by the hour.
 
-AWS (§6.1) costs three times as much for the same 24 hours, and its desktop is
-Screen Sharing through an SSH tunnel; MacinCloud's hourly plan has no admin
-rights, which Homebrew and the casks need.
+Scaleway (§6.1) would have been a sixth of the price; MacinCloud's hourly plan
+has no admin rights, which the casks need.
 
 ### 13.2 What never goes on it
 
 - **No real API key** and no personal account (no Apple ID is needed). The
   secret store is checked with a made-up value; speech with a local stub
   (§13.4).
-- The console password stays the owner's: the VNC login and Homebrew's
-  installer ask for it.
-- When the work is done the machine is deleted — by the 24-hour switch, or by
-  hand.
+- The desktop's password and the key pair stay the owner's.
+- When the work is done the host is released (§13.1) — and with it the disk,
+  which AWS scrubs.
 
 ### 13.3 Who does what
 
@@ -568,8 +577,7 @@ what a Mac user would install that day.
 1. **The install routes.**
    - `curl -fsSL …/install.sh | sh` → `~/mindfork`, the link, `mindfork
      --version`, the data in `~/mindfork/data`.
-   - Homebrew (its installer run once by the owner — it asks for the
-     password), then `brew install vshylov/tap/mindfork` → the data in
+   - `brew install vshylov/tap/mindfork` (the AMI has Homebrew) → the data in
      `~/Library/Application Support/mindfork-rs`, the dictionaries in
      `libexec`.
    - rustup (no password), then `cargo install --locked mindfork` → 0.17.0
@@ -657,14 +665,14 @@ quarantine note.
   only. **Recommended: (a)** — the same question comes back from every tester
   with a terminal not on this list, and (b) answers it once.
 - **F8 — macOS 15 and 26.** (a) one M4 on 26 for the whole list, then
-  reinstalled to 15 for Terminal.app's half (§13.6, its first table only) —
-  ~€5.3, an hour's wait in the middle, the short install repeated; (b) two M4s
-  at once — ~€10.6, no wait; (c) 26 only. **Recommended: (a)** — the 24-hour
-  lease has room for the reinstall, and macOS 15 is needed for one question
-  (colour) and a repeat of the keys.
+  relaunched on 15 for Terminal.app's half (§13.6, its first table only) — one
+  host, a wait in the middle (on AWS the scrub, up to 4.5 hours, §13.1), the
+  short install repeated; (b) two hosts at once — twice the price, no wait;
+  (c) 26 only. **Recommended: (a)** — the 24 hours have room for the wait, and
+  macOS 15 is needed for one question (colour) and a repeat of the keys.
 - **F9 — the headless half.** (a) run by the agent: the owner puts the machine
-  in `~/.ssh/config` under an alias, the key file stays theirs, and the agent
-  only runs `ssh <alias> …`; (b) pasted by the owner from the script.
+  in `~/.ssh/config` under an alias with the key pair's file, which stays
+  theirs, and the agent only runs `ssh <alias> …`; (b) pasted by the owner from the script.
   **Recommended: (a)** — half the list runs while the owner is not at the
   screen, and its logs land in the session as they are written.
 
