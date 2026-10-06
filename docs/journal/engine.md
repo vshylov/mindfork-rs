@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (92)
+## Entries (93)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -104,6 +104,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: Ollama's context window, read from `/api/ps` (done)
 - Post-M9: a prompt the server cut in silence is told (done)
 - Post-M9: LM Studio, a server the app knows by name (done)
+- Post-M9: the engineless chat offers a local Ollama or LM Studio (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -6474,3 +6475,40 @@ plan's LM Studio recipe waited for a live run, and this is it.
     7/7 with 0.16.1's figures.
 - **Next**: stage 2, the engineless chat offering what it finds; the README's
   and the site's LM Studio paragraph in the release PR.
+
+### Post-M9: the engineless chat offers a local Ollama or LM Studio (done)
+
+Stage 2 of [local-servers.md](../research/local-servers.md) (§9 has the detail),
+stacked on the LM Studio stage; the promotion plan's idea for its stage 1.
+
+- **What it does**:
+  - A chat whose engine is `NotConfigured` looks at Ollama (`11434`) and LM
+    Studio (`1234`) at the start, and `/local` looks whenever it is typed.
+  - What answers is a *Local servers* list. `Enter` writes the external
+    section, and — while the embedder is `NotConfigured` — the same server's
+    embedder (owner's F5 (b)).
+  - `Esc` changes nothing and the next start asks again (F4 (a)).
+  - The command says so when nothing answered.
+- **The trap it nearly shipped**: an engineless orchestrator is what
+  `spawn_orch(None)` builds for dozens of unit tests, so the start's look would
+  have reached the developer's own Ollama and LM Studio from `cargo test`. The
+  look is the supervisor's (`find_local_servers`, no default), and the mock
+  answers it.
+- **Built**:
+  - `local_servers::{find, offers}`;
+  - `orchestrator/local_servers.rs`;
+  - `widgets/local_server_picker.rs`;
+  - `AppEvent::LocalServers`, `AppCommand::{FindLocalServers, UseLocalServer}`;
+  - `UiCommand::Local`;
+  - the empty feed's fourth route;
+  - the small-window gate at 21 states × 493 sizes.
+
+  **3962 unit tests, 257 `#[ignore]`** (+16).
+- **Live** (`console_probe.py`):
+  - `first-run`, both servers up: 14/14. The list opens by itself; Ollama's
+    row answers; `/local` then LM Studio's row brings nomic, and a saved note
+    is indexed with no error.
+  - `first-run-none`, both stopped: 7/7.
+  - `lmstudio` and `ollama` as the control: green, no list.
+- **Next**: the README's and the site's paragraph in the release PR, shorter
+  now — start the server, start mindfork, `Enter`.

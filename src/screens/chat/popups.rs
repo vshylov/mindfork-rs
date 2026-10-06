@@ -206,6 +206,31 @@ impl ChatScreen {
         }
     }
 
+    /// Handles a key in the *Local servers* list: `Enter` uses the selected
+    /// server and model, `Esc` closes and changes nothing. `Ctrl+Q`/`F10`
+    /// punch through, as through a confirmation: the list opens unasked.
+    pub(super) fn handle_local_server_key(&mut self, key: KeyEvent) -> Option<ChatIntent> {
+        if key.code == KeyCode::F(10)
+            || (key.modifiers.contains(KeyModifiers::CONTROL)
+                && keys::hotkey_char(&key) == Some('q'))
+        {
+            self.local_servers = None;
+            return Some(ChatIntent::Quit);
+        }
+        let list = self.local_servers.as_mut()?;
+        match list.on_key(key) {
+            LocalServerAction::None => None,
+            LocalServerAction::Cancel => {
+                self.local_servers = None;
+                None
+            }
+            LocalServerAction::Pick(offer) => {
+                self.local_servers = None;
+                Some(ChatIntent::UseLocalServer(offer))
+            }
+        }
+    }
+
     /// Handles a key in the emoji-picker popup: `Enter` inserts the selected
     /// emoji into the input box at the cursor and closes the popup, `Esc` closes
     /// it without inserting. See spec §11.5.

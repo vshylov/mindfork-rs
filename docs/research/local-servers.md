@@ -1,9 +1,8 @@
 # A local Ollama or LM Studio, found and offered — and LM Studio known by name
 
-Status: **designed; forks decided by the owner on 2026-10-06** — F1 (a),
-F2 (a), F3 (b) with the command named `/local`, F4 (a), F5 (b), F6 (a) (§5).
-Stage 1 of
-the promotion plan ([promotion.md](promotion.md) §4) has two open items, and
+Status: **built, both stages** — stage 1 in §8, stage 2 in §9; forks decided
+by the owner on 2026-10-06 — F1 (a), F2 (a), F3 (b) with the command named
+`/local`, F4 (a), F5 (b), F6 (a) (§5). Stage 1 of the promotion plan ([promotion.md](promotion.md) §4) has two open items, and
 this document takes both: "the engineless chat offers a server it finds on
 `localhost:11434` or `:1234`", and an LM Studio recipe, which waited for a live
 run. The run is §2; it found that LM Studio works through the external mode
@@ -176,7 +175,7 @@ Two stages, each its own branch and live run.
      ones have `loaded_instances`.
 
    Each listing also yields the server's embedding models: `embedding` in
-   Ollama's `capabilities`, `type` `embeddings` on LM Studio. At the start,
+   Ollama's `capabilities`, `type` `embedding` on LM Studio's `/api/v1/models`. At the start,
    nothing found is silence, and the empty feed stays as it is.
 3. **What is offered.** A list on the chat screen, titled *Local servers*, one
    row per server and chat model — *Ollama · gemma4:e4b*, *LM Studio ·
@@ -318,3 +317,67 @@ Branch `feat/local-servers`.
     and at 4096 the note naming `OLLAMA_CONTEXT_LENGTH`.
   - `ollama-cut`: 7/7, with 0.16.1's figures to the token
     (`processed=2051 held=4357`).
+
+## 9. Built: stage 2, and the live run (2026-10-06)
+
+Branch `feat/local-offer`, stacked on stage 1.
+
+- **The look.** `shared::api::local_servers::find` asks both servers at once,
+  at `127.0.0.1`, with no proxy, a 1 s connect and a 3 s total timeout:
+  - Ollama: `/api/tags`, then `/api/ps` for what is loaded. `capabilities`
+    decides chat or embedder, and the name decides on an Ollama old enough to
+    send none.
+  - LM Studio: `/api/v1/models`, read for `type` and loaded instances.
+
+  `offers` makes the rows — a loaded model first, each with the embedder the
+  pick brings when the embedder is free (a loaded one, then `bge-m3`, then the
+  first).
+- **The seam.** `ServerSupervisor::find_local_servers`, with no default:
+  - the real supervisor asks the machine;
+  - the demo's finds nothing;
+  - the mock answers what a test gives it, and counts its looks.
+
+  Found while wiring it: `spawn_orch(None)` starts an engineless orchestrator,
+  so without the seam every such unit test would have asked this machine's
+  Ollama and LM Studio — both running here.
+- **The orchestrator** (`orchestrator/local_servers.rs`):
+  - looks at the start when the chat is `NotConfigured`, after `bootstrap`;
+  - looks for `AppCommand::FindLocalServers`, the `/local` command;
+  - writes `AppCommand::UseLocalServer` through `handle_update_config`, and
+    asks again at that moment whether the embedder is still free;
+  - when nothing is found, the command is answered with a note — nothing
+    answered, or no chat model — and the start stays silent.
+- **The screen.** `widgets/local_server_picker.rs`, the `ListScroll` list:
+  - `Enter` picks, `Esc` closes, and `Ctrl+Q`/`F10` punch through, since the
+    list opens unasked.
+  - Its key legend is its minimum width, and the small-window gate sweeps it.
+    That is 21 states, and `WIDTHS` gains 36 and 37 around the English legend's
+    37, so 29 × 17 = 493 sizes.
+  - The empty feed names a fourth route.
+- **Tests.** 3962 unit tests, 16 new:
+  - the two listings, the wrong server's answer, a closed port, an Ollama
+    without `capabilities`;
+  - the rows and the embedder's choice;
+  - the list's keys, row and legend;
+  - the screen's keys and `/local`;
+  - the orchestrator's five: offered at the start; asked only by the command
+    when configured; the command answered; the pick written and saved; a
+    configured embedder kept.
+
+**The live run.** `console_probe.py`, the dev build, Ollama 0.35.1 in Docker
+and LM Studio 1.1.7:
+
+- **`first-run`: 14/14.**
+  - A fresh copy opened the list by itself. The log says `servers=2 offers=2
+    asked=false`.
+  - `Enter` on Ollama's row: Paris, and `settings.json` holds the Ollama URL
+    and no embedder — that Ollama has none pulled.
+  - `/local`, then LM Studio's row. The note named the model and nomic, and
+    `settings.json` holds both external sections.
+  - Rome, then a `note_save` that the new embedder indexed. The `emb` chip came
+    up, and the log has no embedder error.
+- **`first-run-none`: 7/7**, with both servers stopped.
+  - The empty feed names `/local` and no list opens.
+  - `/local` says neither 11434 nor 1234 answered.
+- **The control:** `lmstudio` and `ollama` with an engine set up by the
+  recipe: all checks passed, and no list opened.

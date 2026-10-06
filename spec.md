@@ -2735,8 +2735,8 @@ size panics, 0×0 included, which is a size real hosts report.
   inside a third. The share is a function of the window and the screen, not
   of the hints, so it does not move with the selection — only what fills it
   does.
-- **The gate** (`app/runtime/small_window_tests.rs`) draws twenty states —
-  every screen, every popup of the chat — at 459 window sizes from 0×0 up, in
+- **The gate** (`app/runtime/small_window_tests.rs`) draws twenty-one states —
+  every screen, every popup of the chat — at 493 window sizes from 0×0 up, in
   every built-in language, through the function the loop draws with; each
   frame is the notice or the screen whole — for the chat, whole as the ladder
   has it at that height; for a panel, what it is for on screen and a footer
@@ -3050,11 +3050,33 @@ this?"*; this screen answers *"where exactly, and take me there."*
 - **An empty feed** invites a message — unless the chat server reports
   `NotConfigured` (no URL, no binary and no downloaded build), and then it lists
   the ways to connect a model instead: a cloud provider through the settings
-  (`Ctrl+P` or `/settings` → Model/server), a local build through
-  `mindfork llama setup` plus a GGUF, and `mindfork demo`. The send error names
-  the settings the same way. The screen starts at `Connecting`, so a configured
-  install never flashes the routes before the first status arrives
+  (`Ctrl+P` or `/settings` → Model/server), an Ollama or LM Studio already on
+  the computer through `/local`, a local build through `mindfork llama setup`
+  plus a GGUF, and `mindfork demo`. The send error names the settings the same
+  way. The screen starts at `Connecting`, so a configured install never flashes
+  the routes before the first status arrives
   ([docs/research/public-release-readiness.md](docs/research/public-release-readiness.md) §3.2).
+- **A local server, found and offered.** At the start, a chat whose engine is
+  `NotConfigured` looks at this computer's own ports in the background — Ollama
+  on `11434` (`/api/tags`, its models' `capabilities`; `/api/ps` for which is
+  loaded), LM Studio on `1234` (`/api/v1/models`, each model's `type` and loaded
+  instances), each with a 1 s connect and 3 s total timeout and each told by a
+  field only it sends — and offers what answers as the *Local servers* list: one
+  row per server and chat model, a loaded one first, each saying whether the
+  model is loaded and which embedder the pick brings. `Enter` writes
+  `engine.mode = external`, the server's `/v1` URL and the model through the
+  settings' own path (saved atomically, the engine raised as any external one);
+  with the embedder still `NotConfigured`, the same pick sets it to the same
+  server's embedder — a loaded one, then `bge-m3` by name, then the first listed
+  — with no input convention chosen; an embedder already configured is never
+  replaced. `Esc` changes nothing, and the next start asks again while nothing
+  is configured. `/local` looks whenever it is typed, whatever is configured,
+  and says so when nothing answered (naming both ports) or a server holds no
+  chat model. A configured engine that does not answer is `Disconnected`, not
+  `NotConfigured`, and is not looked past. The look is the supervisor's
+  (`ServerSupervisor::find_local_servers`), so the tests answer it instead of the
+  machine ([docs/research/local-servers.md](docs/research/local-servers.md),
+  stage 2).
 - Incremental streaming of the assistant's latest response (the text and the "thoughts" stream separately).
 - **A tool call's card opens the moment the call starts**, marked *running…*
   where its result will go, and is completed in place when the result arrives
@@ -4340,8 +4362,8 @@ crossterm sees them — VS Code's integrated terminal claims `Ctrl+P`, `Ctrl+E`,
 the last of which **closes the tab the session runs in**. Typing survives every
 host, so the interface is fully operable by commands plus the safe key subset
 (printable characters, `Enter`, `Esc`, `Backspace`/`Delete`, `Tab`, the arrows,
-`Home`/`End`, `PageUp`/`PageDown`, `Shift`+arrows). Twenty-four commands:
-`/settings` `/self` `/chats` `/changes` `/tasks [stop <kind>|all]` `/help` · `/new [profile]`
+`Home`/`End`, `PageUp`/`PageDown`, `Shift`+arrows). Twenty-five commands:
+`/settings` `/local` `/self` `/chats` `/changes` `/tasks [stop <kind>|all]` `/help` · `/new [profile]`
 `/rename [title]` `/autotitle` `/clone` `/copy` `/regen`·`/retry` `/continue`
 `/takeback` `/impersonate [text]` `/stop` · `/find [text]` `/search <text>`
 `/links` · `/thoughts` `/toolcalls` `/subagents [expand|collapse|stop [n]]` `/mouse`

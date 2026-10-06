@@ -22,6 +22,11 @@ split by subsystem.
   window loses its whole middle, everything between the first message and the
   last. A conversation it cut anyway is told, with the model's Context Length
   and the `lms` line that raises it.
+- **A local Ollama or LM Studio is offered when nothing is connected.** Start
+  mindfork with no model set up and it looks for both on your computer: what
+  answers is listed, and `Enter` connects it — with that server's embedding
+  model too, when none is set up, so notes and the knowledge base search by
+  meaning from the first message. `/local` looks again whenever you type it.
 
 ### Changed
 

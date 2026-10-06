@@ -39,6 +39,19 @@ A seeded conversation against a scripted engine: no model download, no key,
 nothing written outside a temporary folder. It is the fastest way to see whether
 you like the shape of the thing.
 
+### Already running Ollama or LM Studio?
+
+Start its server — `ollama serve` or the Ollama app; in LM Studio,
+`lms server start` or its Developer tab — and start mindfork. With no model
+connected yet, it looks at both on this computer and lists what it finds under
+**Local servers**: one row per server and model, a loaded model first. `Enter`
+uses the row — written into the settings as the `external` mode below — and,
+when no embedding model is set up yet, the same server's embedder comes with it,
+so notes and the knowledge base search by meaning from the first message. `Esc`
+leaves everything as it was. Type `/local` to look again at any time, after
+starting a server or to switch to one. How to give either server a large
+enough window is in [install.md §3](install.md).
+
 ### Connecting a model
 
 Open settings — `Ctrl+P` (or type `/settings`) — and go to **Model/server**. The
@@ -536,6 +549,7 @@ Typed straight into the input box.
 | `/rag add <path> [-r]` · `/rag remove <path>` | index a file or directory into the knowledge base / remove it |
 | `/rag list` · `/rag rebuild` | show the store's sources / reindex after changing chunking |
 | `/reindex` | re-embed everything with the current embedding model |
+| `/local` | look for Ollama and LM Studio on this computer and offer what answers |
 | `/compact` | fold the older part of the chat into a rolling summary |
 | `/tts` · `/tts N` · `/tts all` | read the last message aloud / the last N / the whole conversation |
 | `/tts stop` · `pause` · `resume` | control playback |

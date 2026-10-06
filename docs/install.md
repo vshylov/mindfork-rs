@@ -726,6 +726,13 @@ model it has pulled and routes on that field. `Enter` on the field lists them.
 One thing needs setting, in Ollama: **the context window** — the app reads it
 from there.
 
+**Nothing has to be typed, though**, when Ollama or LM Studio runs on the same
+computer: a mindfork with no model connected looks for both at the start, and
+`/local` looks whenever it is typed. What answers is listed — `Enter` writes the
+row into these settings, and the same server's embedding model too while none
+is set up ([manual.md](manual.md) §1). The lines below are the same settings
+for a script or a machine without a terminal to look from.
+
 ```bash
 ollama pull gemma4:e4b
 mindfork setup --set engine.mode=external --set engine.external.url=http://localhost:11434/v1 --set engine.external.model_name=gemma4:e4b

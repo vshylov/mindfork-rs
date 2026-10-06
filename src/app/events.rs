@@ -303,6 +303,14 @@ pub enum AppCommand {
     /// [`AppEvent::ModelCatalogue`]; no key travels on this channel, since the
     /// orchestrator resolves the slot's own from the config it already holds.
     ListModels(crate::shared::api::catalogue::ModelSlot),
+    /// `/local`: look for Ollama and LM Studio on this machine now, whatever is
+    /// configured (docs/research/local-servers.md F3). The answer is
+    /// [`AppEvent::LocalServers`], or a note when nothing answered.
+    FindLocalServers,
+    /// A row of the *Local servers* list was picked: the orchestrator writes it
+    /// into the settings — the chat's external section, and the embedder's when
+    /// that is still not configured (F5).
+    UseLocalServer(crate::shared::api::local_servers::LocalOffer),
     /// Shut down (the orchestrator stops).
     Quit,
 }
@@ -387,6 +395,10 @@ impl AppCommand {
             // Asking a provider what models it serves is a settings-screen
             // question about an engine, not work in any conversation.
             | AppCommand::ListModels(_)
+            // Looking for a local server, and writing the pick into the
+            // settings, are config questions too.
+            | AppCommand::FindLocalServers
+            | AppCommand::UseLocalServer(_)
             | AppCommand::UpdateProfile { .. }
             | AppCommand::RagAdd { .. }
             | AppCommand::RagDelete { .. }
@@ -754,6 +766,11 @@ pub enum AppEvent {
         slot: crate::shared::api::catalogue::ModelSlot,
         models: crate::shared::api::catalogue::CatalogueAnswer,
     },
+    /// Local servers that answered, as the *Local servers* list's rows — at the
+    /// start of a chat with no engine configured, or for `/local`
+    /// (docs/research/local-servers.md §4, stage 2). Never empty: nothing found
+    /// is silence at the start and a note for the command.
+    LocalServers(Vec<crate::shared::api::local_servers::LocalOffer>),
     /// The sampling fields the **endpoint's catalogue** publishes for the
     /// configured model, when it publishes any (spec §8,
     /// [docs/history/gateway-capabilities.md](../../docs/history/gateway-capabilities.md)).

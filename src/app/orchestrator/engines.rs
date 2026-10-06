@@ -399,6 +399,15 @@ impl EngineManager {
             .is_some_and(|(a, k, g)| a == s && k == keys && *g == wanted)
     }
 
+    /// Looks for a local Ollama or LM Studio, through the supervisor — the seam
+    /// a test answers instead of the machine (docs/research/local-servers.md).
+    pub(super) fn find_local_servers(
+        &self,
+    ) -> futures_util::future::BoxFuture<'static, Vec<crate::shared::api::local_servers::Found>>
+    {
+        self.supervisor.find_local_servers()
+    }
+
     /// Updates the chat-server status (from the background monitor).
     pub(super) fn set_chat_status(&mut self, status: ServerStatus) {
         self.note_recovery(Server::Chat, &status);

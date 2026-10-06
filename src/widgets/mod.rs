@@ -9,6 +9,7 @@ pub mod emoji_picker;
 pub mod help_dialog;
 pub mod impersonation_preview;
 pub mod input_box;
+pub mod local_server_picker;
 pub mod logo;
 pub mod message_feed;
 pub mod profile_list;

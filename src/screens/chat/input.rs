@@ -64,6 +64,11 @@ impl ChatScreen {
         if self.confirm.is_some() {
             return Some(self.handle_confirm_key(key));
         }
+        // Opened unasked at the start, so it can come up over a picker the
+        // user opened first; it is drawn over them, and takes the keys first.
+        if self.local_servers.is_some() {
+            return Some(self.handle_local_server_key(key));
+        }
         if self.suggest.is_some() {
             self.handle_suggest_key(key);
             return Some(None);
@@ -650,6 +655,7 @@ impl ChatScreen {
             || self.emoji.is_some()
             || self.profile_overlay.is_some()
             || self.confirm.is_some()
+            || self.local_servers.is_some()
         {
             return;
         }
@@ -677,6 +683,7 @@ impl ChatScreen {
             || self.suggest.is_some()
             || self.emoji.is_some()
             || self.chat_links.is_some()
+            || self.local_servers.is_some()
             || self.profile_overlay.is_some()
             || self.confirm.is_some()
         {

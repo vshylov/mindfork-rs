@@ -193,9 +193,10 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
-- **LM Studio** (2026-10-06): run live, it works as `external`; its window is read
-  from `/api/v1/models`, its silent cut of a conversation's middle is told, and the
-  notes name each server's own setting ([docs/research/local-servers.md](docs/research/local-servers.md)).
+- **LM Studio and local servers** (2026-10-06): LM Studio's window is read and its
+  silent cut of a conversation's middle told, each note in its server's words; an
+  engineless chat offers a local Ollama or LM Studio, `/local` on demand
+  ([docs/research/local-servers.md](docs/research/local-servers.md)).
 - **Ollama** (2026-10-05): the README's recipe, run live, found a slow-prefill note
   meant for llama-server (fixed) and Ollama's silent cut of an overlong prompt; its
   window is read from `/api/ps`, one too small is said once, and a prompt it cut is

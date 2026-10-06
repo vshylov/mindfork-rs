@@ -40,6 +40,7 @@ mod generation;
 mod images;
 mod impersonation;
 mod llm_history;
+mod local_servers;
 mod mcp;
 mod model_name;
 mod pool;
@@ -286,6 +287,10 @@ pub async fn run(deps: OrchestratorDeps) {
         ));
     }
     orch.emit_settings();
+    // A chat with no engine looks for a local Ollama or LM Studio, and offers
+    // what answers (docs/research/local-servers.md, stage 2). After
+    // `bootstrap`, like the note above: the list opens over the chat it built.
+    orch.offer_local_servers_at_start();
     // Bring the search index in line with what is on disk — changes made
     // outside the app (import/restore/a hand-edited file/a deleted `cache.db`).
     // A background task, so it never delays the UI; a stat walk of an
@@ -942,6 +947,8 @@ impl Orchestrator {
             AppCommand::SetSecret { key, value } => self.handle_set_secret(key, value),
             AppCommand::ImportMcpServers(path) => self.handle_import_mcp_servers(path),
             AppCommand::ListModels(slot) => self.handle_list_models(slot),
+            AppCommand::FindLocalServers => self.find_local_servers(true),
+            AppCommand::UseLocalServer(offer) => self.use_local_server(offer),
         }
         false
     }

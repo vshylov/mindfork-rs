@@ -398,7 +398,7 @@ is the larger of the screen's and of whatever is open over it.
 | changes | 40×8 | the two panes side by side |
 | help dialog | its key legend (41 `en` / 49 `ru`) × 8 | the tab strip, its rule and four rows of the tab |
 | emoji picker | 46×6 | the whole grid: a cell cut off at the edge can still be selected, unseen |
-| `chat://` picker, profile picker, spelling suggestions | the key legend × 5 | the legend whole on the border, three rows of the list |
+| `chat://` picker, profile picker, spelling suggestions, *Local servers* (added with [local-servers.md](local-servers.md)) | the key legend × 5 | the legend whole on the border, three rows of the list |
 | a question — tool, destructive, revert | 20 × its rows | the box as tall as its text wraps at the window's width |
 
 The chat's nine rows are the stage-1 number: stage 2 takes it to three.
