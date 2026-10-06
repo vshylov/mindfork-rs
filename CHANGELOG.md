@@ -14,6 +14,13 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Added
+
+- **`mindfork keys`** shows each key you press as mindfork receives it, and
+  what the input box does with it. If a key does not do what the manual says,
+  the lines show what your terminal sent instead; paste them into a report. It
+  was made for checking terminals on a Mac, and works in any terminal.
+
 ## [0.17.0] — 2026-10-06
 
 **Ollama and LM Studio, found and offered.** Start mindfork with no model set up

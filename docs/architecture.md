@@ -292,6 +292,10 @@ src/
 │  ├─ gen_state.rs          GenState: pure Idle/Generating/Cancelling state machine
 │  │                        (begin/request_cancel/finish transitions, no I/O)
 │  ├─ events.rs             AppCommand (UI→orchestrator) and AppEvent (orchestrator→UI)
+│  ├─ key_echo.rs           `mindfork keys`: each key as the app receives it — the
+│  │                        runtime's own key modes and batches (enable_key_modes,
+│  │                        read_batch, chunk_batch), an InputBox sketch per key; no
+│  │                        data root, no log (spec §11.5, docs/research/macos.md §13.9)
 │  ├─ runtime/              tokio↔TUI bridge. God object broken up (docs/refactoring-god-
 │  │  │                     objects.md, stage 7; external surface — only run):
 │  │  ├─ mod.rs             run/run_loop (the loop, dirty redraw), ActiveScreen, SpellLoader;

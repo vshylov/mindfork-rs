@@ -182,7 +182,9 @@ Privacy & Security → Open Anyway*.
   ([the manual](manual.md) §9).
 - **A preview**: built and tested on GitHub's Apple Silicon runners, not yet on
   a Mac with a screen. What is still to be checked there is listed in
-  [docs/research/macos.md](research/macos.md) §6.2 — reports are welcome.
+  [docs/research/macos.md](research/macos.md) §6.2 — reports are welcome. For a
+  key that does not work, `mindfork keys` prints what your terminal sends; its
+  lines are the most useful part of a report.
 
 ### From crates.io (`cargo install`)
 

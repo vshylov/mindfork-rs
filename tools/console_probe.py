@@ -86,6 +86,13 @@ Scenarios (`--scenario`):
   which no installed layout maps: it must type nothing, and `Ctrl+K` must still
   clear the box. Then the chat list's search line, which takes text of its own.
 
+* `keys` — `mindfork keys --output FILE` (docs/research/macos.md §13.4): the
+  header names the console and its line break, each chord injected is echoed
+  with what the input box does with it — a move by a word apart from a move by
+  a character, three line breaks, `Enter` sending, a letter typed, `Alt`+letter
+  not — `Ctrl+W` switches the mouse both ways, `Ctrl+Q` ends it with code 0,
+  and the file holds the same lines.
+
 * `ollama` — a copy of the binary in a scratch directory, set up by the
   README's Ollama recipe (`mindfork setup --set …`, word for word), against a
   **running Ollama** with the model pulled and `OLLAMA_CONTEXT_LENGTH` set
@@ -144,6 +151,7 @@ Usage:
     python tools/console_probe.py --scenario gateway
     python tools/console_probe.py --scenario small-window
     python tools/console_probe.py --scenario altgr
+    python tools/console_probe.py --scenario keys
     python tools/console_probe.py --scenario ollama
     python tools/console_probe.py --exe target/release/mindfork.exe
 
@@ -317,6 +325,15 @@ KEYS = {
     # The left Ctrl and Alt on a key no installed layout maps under AltGr: the
     # console gives no character, and crossterm names the key's own.
     "ctrl+alt+a": (0x41, "\0", LEFT_CTRL_PRESSED | LEFT_ALT_PRESSED),
+    # The chords `mindfork keys` is asked about.
+    "alt+left": (0x25, "\0", ENHANCED_KEY | LEFT_ALT_PRESSED),
+    "ctrl+left": (0x25, "\0", ENHANCED_KEY | LEFT_CTRL_PRESSED),
+    "shift+enter": (0x0D, "\r", SHIFT_PRESSED),
+    "alt+enter": (0x0D, "\r", LEFT_ALT_PRESSED),
+    "ctrl+j": (0x4A, "\n", LEFT_CTRL_PRESSED),
+    "ctrl+w": (0x57, "\x17", LEFT_CTRL_PRESSED),
+    "x": (0x58, "x", 0),
+    "alt+x": (0x58, "x", LEFT_ALT_PRESSED),
 }
 
 # Settings opens on the first section; "Interface" is the eighth.
@@ -1327,6 +1344,84 @@ def scenario_altgr(exe: Path, report: Report) -> None:
     report.check(code == 0, f"the app exited with code {code}")
 
 
+# `mindfork keys`: the input box every key starts from, and the line breaks.
+KEYS_SAMPLE = "one two |three"
+KEYS_BROKEN = "one two \u23ce|three"
+
+
+def echoed(rows: list[list[tuple[str, int]]], label: str) -> str:
+    """The outcome on the last echoed line that starts with `label`."""
+    found = ""
+    for line in text_of(rows).split("\n"):
+        head, arrow, rest = line.partition(" \u2192 ")
+        if arrow and head.strip() == label:
+            found = rest.strip()
+    return found
+
+
+def scenario_keys(exe: Path, report: Report) -> None:
+    chords = [
+        ("left", "Left", "one two| three"),
+        ("alt+left", "Alt+Left", "one |two three"),
+        ("ctrl+left", "Ctrl+Left", "one |two three"),
+        ("shift+enter", "Shift+Enter", KEYS_BROKEN),
+        ("alt+enter", "Alt+Enter", KEYS_BROKEN),
+        ("ctrl+j", "Ctrl+'j'", KEYS_BROKEN),
+        ("enter", "Enter", "sends the message"),
+        ("x", "'x'", "one two x|three"),
+        ("alt+x", "Alt+'x'", "the input box does nothing with it"),
+    ]
+    with tempfile.TemporaryDirectory(prefix="mindfork-probe-") as scratch:
+        root = Path(scratch)
+        copy = root / exe.name
+        shutil.copy(exe, copy)
+        # `keys` speaks the language the settings name, like every command.
+        set_language(copy, root)
+        record = root / "keys.txt"
+        session = Session(copy, ["keys", "--output", str(record)], cwd=root)
+        try:
+            rows = wait_for_text(KEYS_SAMPLE, 5)
+            header = text_of(rows)
+            report.check(KEYS_SAMPLE in header, "the header shows the box every key starts from")
+            report.check(
+                "line break in this terminal: Shift+Enter" in header,
+                "the header names the console's line break",
+            )
+            report.check("not asked" in header, "the kitty protocol is not asked on Windows")
+            for name, label, expected in chords:
+                press(name)
+                got = echoed(read_screen(), label)
+                print(f"    {label:<12} -> {got}")
+                report.check(got == expected, f"{label} echoed as {expected!r}")
+            for _ in range(2):
+                press("ctrl+w")
+            rows = read_screen()
+            lines = [line for line in text_of(rows).split("\n") if line.startswith("Ctrl+'w'")]
+            report.check(
+                [line.split("\u2192")[-1].strip() for line in lines[-2:]]
+                == ["mouse capture on", "mouse capture off"],
+                "Ctrl+W switches the mouse on and off",
+            )
+            # A burst of keys is how a paste reaches a Windows console app.
+            paste_text("pasted words")
+            got = echoed(read_screen(), "Paste (keys)")
+            print(f"    {'a burst':<12} -> {got}")
+            report.check(
+                got.endswith("characters: 12, lines: 1: pasted words"),
+                "a burst of keys is echoed as one paste, as the app reads it",
+            )
+        finally:
+            code = session.close(esc_first=False)
+        report.check(code == 0, f"Ctrl+Q ended it with code {code}")
+        saved = record.read_text(encoding="utf-8") if record.is_file() else ""
+        report.check(KEYS_SAMPLE in saved, "the file holds the header")
+        report.check(
+            all(f"{label:<24} \u2192 {expected}" in saved for _, label, expected in chords),
+            "the file holds every echoed line",
+        )
+        report.check("\u2192 quits" in saved, "the file ends with the quit")
+
+
 def scenario_small_window(exe: Path, report: Report) -> None:
     too_small_for_the_chat(exe, report)
     the_reported_window(exe, report)
@@ -1808,6 +1903,7 @@ def scenario_first_run_none(exe: Path, report: Report) -> None:
 
 SCENARIOS = {
     "altgr": scenario_altgr,
+    "keys": scenario_keys,
     "ollama": scenario_ollama,
     "ollama-cut": scenario_ollama_cut,
     "lmstudio": scenario_lmstudio,

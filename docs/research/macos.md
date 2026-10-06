@@ -563,6 +563,7 @@ What a remote screen cannot show, known in advance:
    the query (`app/runtime/mod.rs`), mouse capture on a key — and what the
    input box does with it — printed, and kept in a file the agent reads over
    SSH. It turns "Shift+Enter did nothing" into the event that arrived.
+   Built: §13.9.
 2. **A speech stub**: a standard-library Python server that answers
    `/v1/audio/speech` with a short WAV, for the `external` speech mode — the
    playback path (rodio → CoreAudio) without a key. Scratch, not shipped.
@@ -672,7 +673,28 @@ quarantine note.
   macOS 15 is needed for one question (colour) and a repeat of the keys.
 - **F9 — the headless half.** (a) run by the agent: the owner puts the machine
   in `~/.ssh/config` under an alias with the key pair's file, which stays
-  theirs, and the agent only runs `ssh <alias> …`; (b) pasted by the owner from the script.
-  **Recommended: (a)** — half the list runs while the owner is not at the
-  screen, and its logs land in the session as they are written.
+  theirs, and the agent only runs `ssh <alias> …`; (b) pasted by the owner
+  from the script. **Recommended: (a)** — half the list runs while the owner is
+  not at the screen, and its logs land in the session as they are written.
+
+### 13.9 F7 — built
+
+`mindfork keys [--output FILE]` (`app/key_echo.rs`, spec §11.5) shows each key
+as the app receives it, beside what the chat's input box does with it. The box
+starts every key from `one two |three`.
+
+The echo uses the app's own key handling (`runtime::enable_key_modes`,
+`read_batch`, `chunk_batch`): the terminal is put into the app's key modes, and
+input is read in the app's batches. So each line is exactly what the screens are
+handed.
+
+The header names:
+- the OS;
+- `TERM_PROGRAM` and its version, `TERM`, `COLORTERM`;
+- whether the kitty protocol was answered;
+- the line break the footer names.
+
+Live on Windows, `console_probe --scenario keys` passed 18/18. On the day it is
+built from `main` (§13.5 step 3). In the next release, it is what the call for
+testers asks them to run.
 

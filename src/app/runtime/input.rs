@@ -108,7 +108,7 @@ pub(super) fn paste_char(key: &KeyEvent) -> Option<char> {
 
 /// A piece of the input batch: either a coalesced paste (a run of ≥2 text keys), or
 /// a single event (a regular key/mouse/unix `Paste`).
-pub(super) enum Chunk {
+pub(crate) enum Chunk {
     Paste(String),
     Event(Event),
 }
@@ -117,7 +117,7 @@ pub(super) enum Chunk {
 /// (see [`paste_char`]) into a single paste when there are ≥2 of them. A pure function —
 /// testable with no screen/terminal. A run of length 1 (regular character typing / a
 /// single Enter) stays a single event, so Enter still works as a send.
-pub(super) fn chunk_batch(batch: Vec<Event>) -> Vec<Chunk> {
+pub(crate) fn chunk_batch(batch: Vec<Event>) -> Vec<Chunk> {
     let mut out = Vec::new();
     let mut iter = batch.into_iter().peekable();
     while let Some(ev) = iter.next() {

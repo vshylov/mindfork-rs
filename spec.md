@@ -2419,9 +2419,10 @@ A profile holds: a unique identifier, a system message, and an **optional greeti
 
 ### 11.1. Screens and navigation
 
-The interface needs a terminal to draw on. `mindfork` and `mindfork demo` check
-that stdout is one **before anything touches the disk**, and otherwise print one
-localized line (`cli.tui.no_terminal`) and exit with code 2 — the code of a wrong
+The interface needs a terminal to draw on. `mindfork` and `mindfork demo` — and
+`mindfork keys`, which reads a terminal's keys (§11.5) — check that stdout is one
+**before anything touches the disk**, and otherwise print one localized line
+(`cli.tui.no_terminal`; `cli.keys.no_terminal` for `keys`) and exit with code 2 — the code of a wrong
 invocation. Only stdout is asked: keys never come from stdin, since crossterm
 opens the console itself (`CONIN$` on Windows, `/dev/tty` on unix), so a piped
 stdin is a launch that works. Before the check, such a launch entered the
@@ -3512,6 +3513,24 @@ Design record: [docs/history/in-feed-search.md](docs/history/in-feed-search.md).
   joins the lines, as the plain key does.
 - **Emoji picker popup** (`Ctrl+B`): a grid of popular emoji, arrow-key navigation, `Enter` inserts the selected one into the input box at the cursor (safe for multi-scalar clusters like `❤️`/`👍🏽`), `Esc` closes it; the popup remembers the last choice. Any action in the popup (moving the selection or closing it) requests a **full redraw** from the loop: a wide emoji occupies two cells, and when the glyph leaves its spot, `ratatui`'s per-cell diff doesn't repaint its **trailing** cell (in both buffers it's a default space), and the terminal doesn't clear the second half of a wide glyph itself — a "hanging" fragment was left on screen (visible via the selection background). The full redraw uses the same "sentinel buffer" technique as scrolling the feed with VS16 emoji (§11.3) — it rewrites every cell without `ESC[2J`, i.e. without flicker. **The popup's own emoji set is kept free of VS16 clusters** (`❤️`/`✌️` were replaced with `💖`/`🤞`; the "exactly 2 columns, no U+FE0F" invariant is pinned by a gate test): for VS16, `ratatui` additionally sends the glyph's trailing cell to the terminal, and the `crossterm` backend tracks position by cell number without accounting for its width — that trailing write happens without a `MoveTo`, lands one column to the right, and shifts the rest of the row (an adjacent wide emoji goes dark, the popup's border drifts). Under a full redraw, where "changed" cells are all of them, this shows up on every frame.
 - **Line breaks on unix terminals**: the legacy encoding sends the same CR for both `Shift+Enter` and `Enter`, so on a "bare" terminal a line break was unavailable. On unix, `runtime` enables the **kitty keyboard protocol** at the `DISAMBIGUATE_ESCAPE_CODES` level (`crossterm::event::PushKeyboardEnhancementFlags`) if the terminal supports it (`supports_keyboard_enhancement()`) — then modifiers on special keys (`Enter`/arrows/…) are reported, `Shift+Enter` is distinguishable from `Enter`, and `Shift`+arrows from plain arrows (bringing keyboard selection to life). Flags are cleared on exit and in the panic hook. Printable input and a lone `Shift`+character aren't touched by the protocol (text comes through as-is) → the layout-independent Ctrl-shortcut parsing and typing `?`/emoji don't regress. Not needed on Windows (the Console API reports modifiers). For terminals **without** the protocol — **`Alt+Enter`** gives the same line break (it arrives as `Enter`+`ALT` via the meta-prefix `ESC`, recognized even on legacy terminals); and **`Ctrl+J`** — a line feed, which crossterm reads as `Ctrl+J` in raw mode, so every terminal delivers it; all three are accepted in every multiline field (chat, the system message/greeting in settings, the self-model editor) through one predicate, `shared::keys::is_line_break`. **The footer names the chord that this terminal can deliver**, not the one we would prefer: `shared::keys::newline_chord()` answers `Shift+Enter` when a modified `Enter` is reportable (Windows, or a unix terminal that took the protocol push), `Alt+Enter` when it is not, and `Ctrl+J` in macOS's Terminal.app (`TERM_PROGRAM=Apple_Terminal`), where Option is not Meta by default and `Alt+Enter` is a bare CR too (docs/research/macos.md §4.4); `app/runtime` records the answer once, next to the push decision, and the two footer strings (`ui.chat.input.idle`, `ui.editor.multiline_footer`) interpolate it as `{newline}`. The terminal that made this necessary is **Konsole**: its default keytab answers `Shift+Return` with `\EOM` (SS3 `M`), crossterm's unix parser has no arm for that final byte and its `Err` branch clears the buffer, so the keypress yields no event at all — and no released Konsole (≤ 26.04) answers `CSI ? u`, so the protocol cannot rescue it either. See [docs/journal/ui-input.md](docs/journal/ui-input.md), "the line-break hint names the chord the terminal can deliver".
+- **`mindfork keys`** shows each key as the app receives it, for checking a
+  terminal ([docs/research/macos.md](docs/research/macos.md) §13.4, §13.9).
+  - **Setup and reading.** The terminal is put into the app's own key modes
+    (`runtime::enable_key_modes`). Input is read in the app's own batches
+    (`runtime::read_batch` + `chunk_batch`): presses only, and a burst of text
+    keys counts as one paste.
+  - **Each line** is the event as crossterm reports it, plus what the chat's
+    input box does with it. The outcome is sketched on a box that starts every
+    key from `one two |three` (`|` the cursor, `«…»` a selection, `⏎` a line
+    break). The sketch runs through the real `InputBox::on_key` and
+    `keys::is_line_break`.
+  - **The header** names the OS and the terminal's variables (`TERM_PROGRAM`,
+    `TERM_PROGRAM_VERSION`, `TERM`, `COLORTERM`, `WT_SESSION`), whether the
+    kitty protocol was answered, and the line break the footer names.
+  - **Keys and output.** `Ctrl+Q` or `F10` quits, and `Ctrl+W` switches mouse
+    capture. `--output FILE` also writes the lines into a new file; an existing
+    one is refused.
+  - **No side effects.** It creates no data root and no log.
 
 ### 11.6. The settings screen
 

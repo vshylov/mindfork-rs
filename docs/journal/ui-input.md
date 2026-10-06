@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (34)
+## Entries (35)
 
 - Post-M9: fast multiline clipboard paste (done)
 - Post-M9: `↑/↓` navigation by visual row of a wrapped line (done)
@@ -46,6 +46,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: `Ctrl+←/→` stop at punctuation (done)
 - Post-M9: keys a Mac delivers — `Alt` for words, `Ctrl+J` for a line break (done)
 - Post-M9: AltGr text on Windows is typed (done)
+- Post-M9: `mindfork keys` — each key as the app receives it (done)
 
 ### Post-M9: fast multiline clipboard paste (done)
 - **Symptom**: a large clipboard paste lagged in Windows Terminal, and a line break
@@ -1837,3 +1838,64 @@ decision moved into `password_key` for it. **3906 unit tests green, 257
 `#[ignore]`**;
 fmt / clippy / `cyrillic_scan.py` clean. No live run: input handling only.
 
+### Post-M9: `mindfork keys` — each key as the app receives it (done)
+
+**Why.** Stage 3 of the macOS track is a day on a rented Mac
+(docs/research/macos.md §13), and fork F7 — the owner's choice, 2026-10-06 —
+was a key echo shipped in the app. What a terminal does with a chord is the open
+question on that day's list, and "the key did nothing" does not say whether the
+terminal kept it, sent something crossterm drops, or sent something the app
+reads differently. Every tester with a terminal not on the list brings the same
+question.
+
+**What.**
+- `mindfork keys [--output FILE]` puts the terminal into the modes the app
+  reads keys in. That setup is `runtime::enable_key_modes` now, moved out of
+  `run` so the two cannot drift apart: bracketed paste and the kitty push on
+  unix, and the line-break chord recorded. Input is read the way the app reads
+  it:
+  - `runtime::read_batch` (moved out of the loop's tick);
+  - presses only;
+  - then `chunk_batch`, so a Windows paste prints as one line, not one line per
+    character.
+- Each line pairs the event, as crossterm reports it (`Alt+'b'`,
+  `Shift+Enter`, `Ctrl+'j'`), with what the chat's input box does with it. The
+  box starts every key from `one two |three` and runs the real
+  `InputBox::on_key` and the chat's own `keys::is_line_break`:
+  - a word move gives `one |two three`;
+  - a character move gives `one two| three`;
+  - a line break gives `one two ⏎|three`;
+  - `Enter` sends;
+  - a `Ctrl` chord is named by the physical letter the app matched;
+  - an `Alt`+letter does nothing.
+- The header names:
+  - the version;
+  - the OS and the variables a terminal names itself by (`TERM_PROGRAM`,
+    `TERM_PROGRAM_VERSION`, `TERM`, `COLORTERM`, `WT_SESSION`);
+  - whether the kitty protocol was answered;
+  - the line break the footer would name.
+- As in the app, `Ctrl+Q` or `F10` quits and `Ctrl+W` switches mouse capture.
+- `--output` writes the same lines into a new file. An existing file is
+  refused, so the next terminal's record does not overwrite this one.
+- Like `stats`, it creates nothing: no data root and no log. Without a terminal
+  on stdout it refuses with code 2 and its own line.
+- `InputBox::selection_span` is public, for the sketch.
+
+**Live run.** Windows console host, `console_probe --scenario keys` (new):
+**18/18**.
+- The header: the box, `Shift+Enter`, and the kitty protocol not asked.
+- Nine chords:
+  - `←` moves one character; `Alt+←` and `Ctrl+←` move one word;
+  - `Shift+Enter`, `Alt+Enter` and `Ctrl+J` break the line;
+  - `Enter` sends;
+  - `x` is typed and `Alt+x` is not.
+- `Ctrl+W` turns mouse capture on and off.
+- A burst of 12 keys is echoed as one paste.
+- `Ctrl+Q` exits with code 0.
+- The file holds the header, every line and the quit.
+
+The macOS half is left for the rented day.
+
+**Tests:** +12 unit tests (10 in `app/key_echo.rs`, 2 in `features/cli.rs`) and
+the launch-gate test extended. **3974 unit tests green, 257 `#[ignore]`**;
+fmt and clippy are clean.
