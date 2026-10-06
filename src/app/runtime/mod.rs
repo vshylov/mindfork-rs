@@ -1162,10 +1162,19 @@ fn handle_input_tick(
 /// `process_input_batch` ([`chunk_batch`]). Only presses are kept
 /// ([`collect_press`]).
 pub(crate) fn read_batch() -> Result<Vec<Event>> {
+    read_batch_from(|| Ok(event::read()?), |wait| Ok(event::poll(wait)?))
+}
+
+/// [`read_batch`] over any source: `read` waits for the next event, `poll`
+/// says whether one arrives within the wait it is given.
+fn read_batch_from(
+    mut read: impl FnMut() -> Result<Event>,
+    mut poll: impl FnMut(Duration) -> Result<bool>,
+) -> Result<Vec<Event>> {
     let mut batch = Vec::new();
-    collect_press(&mut batch, event::read()?);
-    while event::poll(Duration::ZERO)? {
-        collect_press(&mut batch, event::read()?);
+    collect_press(&mut batch, read()?);
+    while poll(Duration::ZERO)? {
+        collect_press(&mut batch, read()?);
     }
     // Looks like a paste (a burst of events in one drain) — we chase its tail
     // with a short pause-detector (`PASTE_GAP`), so a large paste made of
@@ -1173,8 +1182,8 @@ pub(crate) fn read_batch() -> Result<Vec<Event>> {
     // boundary breaks the run and a lone `Enter` slips through as a send
     // (Windows).
     if batch.len() >= PASTE_BURST {
-        while event::poll(PASTE_GAP)? {
-            collect_press(&mut batch, event::read()?);
+        while poll(PASTE_GAP)? {
+            collect_press(&mut batch, read()?);
         }
     }
     Ok(batch)

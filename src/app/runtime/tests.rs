@@ -9,6 +9,67 @@ fn key(code: KeyCode) -> Event {
     Event::Key(KeyEvent::new(code, KeyModifiers::NONE))
 }
 
+/// [`read_batch_from`] against a script: the events `read` hands out in turn,
+/// the answers `poll` gives in turn — and the waits it was asked for.
+fn read_scripted(events: Vec<Event>, answers: Vec<bool>) -> (Vec<Event>, Vec<Duration>) {
+    let mut events = std::collections::VecDeque::from(events);
+    let mut answers = std::collections::VecDeque::from(answers);
+    let mut waits = Vec::new();
+    let batch = read_batch_from(
+        || Ok(events.pop_front().expect("read past the script")),
+        |wait| {
+            waits.push(wait);
+            Ok(answers.pop_front().expect("polled past the script"))
+        },
+    )
+    .unwrap();
+    (batch, waits)
+}
+
+/// One key with nothing behind it is a batch of one, and no tail is chased.
+#[test]
+fn a_lone_key_is_a_batch_of_one() {
+    let (batch, waits) = read_scripted(vec![key(KeyCode::Char('a'))], vec![false]);
+    assert_eq!(batch, vec![key(KeyCode::Char('a'))]);
+    assert_eq!(waits, vec![Duration::ZERO]);
+}
+
+/// A burst — two keys in one drain — has its tail chased with `PASTE_GAP`,
+/// so a paste split across console chunks is still one batch; a key's
+/// release is dropped on the way.
+#[test]
+fn a_burst_has_its_tail_chased_and_releases_dropped() {
+    let mut released = KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE);
+    released.kind = KeyEventKind::Release;
+    let (batch, waits) = read_scripted(
+        vec![
+            key(KeyCode::Char('a')),
+            Event::Key(released),
+            key(KeyCode::Char('b')),
+            key(KeyCode::Char('c')),
+        ],
+        vec![true, true, false, true, false],
+    );
+    assert_eq!(
+        batch,
+        vec![
+            key(KeyCode::Char('a')),
+            key(KeyCode::Char('b')),
+            key(KeyCode::Char('c'))
+        ]
+    );
+    assert_eq!(
+        waits,
+        vec![
+            Duration::ZERO,
+            Duration::ZERO,
+            Duration::ZERO,
+            PASTE_GAP,
+            PASTE_GAP
+        ]
+    );
+}
+
 #[cfg(windows)]
 #[test]
 fn paste_projection_matches_restores_supplementary_emoji() {

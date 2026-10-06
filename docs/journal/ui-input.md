@@ -1894,8 +1894,24 @@ question.
 - `Ctrl+Q` exits with code 0.
 - The file holds the header, every line and the quit.
 
+A second run came with the Russian layout active on the machine. The console
+reported `Ctrl+J` as `Ctrl+'о'` and `Ctrl+W` as `Ctrl+'ц'`, and the echo showed
+exactly that. The outcomes were still the line break and the mouse switch: the
+app's layout-independent match, visible. The scenario now matches a `Ctrl`
+chord by its outcome, not by its letter, and passed 18/18 under that layout.
+
 The macOS half is left for the rented day.
 
-**Tests:** +12 unit tests (10 in `app/key_echo.rs`, 2 in `features/cli.rs`) and
-the launch-gate test extended. **3974 unit tests green, 257 `#[ignore]`**;
-fmt and clippy are clean.
+**Coverage.** Sonar's gate counted 78.8 % of the new code covered, against a
+floor of 80 %. Two changes brought it up:
+- The echo's loop is `echo_loop` over any batch source and writer, and is
+  tested with scripted batches.
+- `read_batch` reads over a seam, `read_batch_from`. Its drain, its chase of a
+  burst's tail and the dropping of releases are tested for the first time.
+
+What remains untested is the terminal itself: raw mode, the key modes and the
+restore guard.
+
+**Tests:** +17 unit tests (13 in `app/key_echo.rs`, 2 in `features/cli.rs`,
+2 in `app/runtime`) and the launch-gate test extended. **3979 unit tests green,
+257 `#[ignore]`**; fmt and clippy are clean.

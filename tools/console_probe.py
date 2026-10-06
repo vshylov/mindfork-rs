@@ -1347,16 +1347,29 @@ def scenario_altgr(exe: Path, report: Report) -> None:
 # `mindfork keys`: the input box every key starts from, and the line breaks.
 KEYS_SAMPLE = "one two |three"
 KEYS_BROKEN = "one two \u23ce|three"
+# A `Ctrl`+letter chord as the console reports it: the letter is the active
+# layout's (`Ctrl+'\u043e'` for `Ctrl+J` under the Russian one), so it is
+# matched by its prefix and checked by its outcome — which is the app's
+# layout-independent match.
+KEYS_CTRL_LETTER = "Ctrl+'"
+
+
+def echoed_lines(text: str, label: str) -> list[str]:
+    """The outcomes of the echoed lines whose label is `label` — or, for
+    `KEYS_CTRL_LETTER`, any `Ctrl`+character."""
+    found = []
+    for line in text.split("\n"):
+        head, arrow, rest = line.partition(" \u2192 ")
+        head = head.strip()
+        if arrow and (head == label or (label == KEYS_CTRL_LETTER and head.startswith(label))):
+            found.append(rest.strip())
+    return found
 
 
 def echoed(rows: list[list[tuple[str, int]]], label: str) -> str:
-    """The outcome on the last echoed line that starts with `label`."""
-    found = ""
-    for line in text_of(rows).split("\n"):
-        head, arrow, rest = line.partition(" \u2192 ")
-        if arrow and head.strip() == label:
-            found = rest.strip()
-    return found
+    """The outcome on the last echoed line with `label`."""
+    found = echoed_lines(text_of(rows), label)
+    return found[-1] if found else ""
 
 
 def scenario_keys(exe: Path, report: Report) -> None:
@@ -1366,7 +1379,7 @@ def scenario_keys(exe: Path, report: Report) -> None:
         ("ctrl+left", "Ctrl+Left", "one |two three"),
         ("shift+enter", "Shift+Enter", KEYS_BROKEN),
         ("alt+enter", "Alt+Enter", KEYS_BROKEN),
-        ("ctrl+j", "Ctrl+'j'", KEYS_BROKEN),
+        ("ctrl+j", KEYS_CTRL_LETTER, KEYS_BROKEN),
         ("enter", "Enter", "sends the message"),
         ("x", "'x'", "one two x|three"),
         ("alt+x", "Alt+'x'", "the input box does nothing with it"),
@@ -1395,11 +1408,9 @@ def scenario_keys(exe: Path, report: Report) -> None:
                 report.check(got == expected, f"{label} echoed as {expected!r}")
             for _ in range(2):
                 press("ctrl+w")
-            rows = read_screen()
-            lines = [line for line in text_of(rows).split("\n") if line.startswith("Ctrl+'w'")]
+            switched = echoed_lines(text_of(read_screen()), KEYS_CTRL_LETTER)[-2:]
             report.check(
-                [line.split("\u2192")[-1].strip() for line in lines[-2:]]
-                == ["mouse capture on", "mouse capture off"],
+                switched == ["mouse capture on", "mouse capture off"],
                 "Ctrl+W switches the mouse on and off",
             )
             # A burst of keys is how a paste reaches a Windows console app.
@@ -1416,7 +1427,7 @@ def scenario_keys(exe: Path, report: Report) -> None:
         saved = record.read_text(encoding="utf-8") if record.is_file() else ""
         report.check(KEYS_SAMPLE in saved, "the file holds the header")
         report.check(
-            all(f"{label:<24} \u2192 {expected}" in saved for _, label, expected in chords),
+            all(expected in echoed_lines(saved, label) for _, label, expected in chords),
             "the file holds every echoed line",
         )
         report.check("\u2192 quits" in saved, "the file ends with the quit")
