@@ -116,6 +116,13 @@ Scenarios (`--scenario`):
   fit; a second page does not, and LM Studio drops the middle of the
   conversation in silence. The feed must carry the cut-prompt note in LM
   Studio's words and the app's log the cut round.
+* `first-run` — a fresh copy with no engine, Ollama and LM Studio both running
+  (docs/research/local-servers.md, stage 2): the *Local servers* list opens by
+  itself and names both; `Enter` on Ollama's row answers a question; `/local`
+  lists again, and LM Studio's row brings its embedder, which a saved note
+  then uses — `settings.json` holds each pick. `first-run-none` — the same with
+  neither running: the empty feed names `/local`, no list opens, and `/local`
+  says nothing answered.
 
 * `small-window` — `mindfork demo` in consoles started small (spec §11.1.1):
   at 57×5, the window of the report, the frame is the "window too small"
@@ -853,6 +860,9 @@ CHAT_READY = "● chat"
 TURN_OVER = "Enter send"
 # The chat scenarios' first question; its one-word answer is read off the screen.
 CAPITAL_QUESTION = "Answer with one word: what is the capital of France?"
+# A turn through the agentic loop: the model saves a note, which the embedder
+# indexes when there is one.
+SAVE_A_NOTE = "Save a note with the note_save tool: my GPU has 24 GB. Then say done."
 
 
 def text_of(rows: list[list[tuple[str, int]]]) -> str:
@@ -1367,14 +1377,20 @@ def chat_is_up(report: Report) -> None:
     report.says("the start", wait_for_text(CHAT_READY, 60), (CHAT_READY,))
 
 
+def set_language(copy: Path, root: Path) -> None:
+    """The interface's language: English, so the screen reads the same on any
+    machine."""
+    language = [str(copy), "setup", "--set", "interface.language=en"]
+    subprocess.run(language, cwd=root, check=True, capture_output=True)
+
+
 def set_up_external(
     copy: Path, root: Path, url: str, model: str, report: Report, extra: list[str] | None = None
 ) -> None:
     """The interface's language first, so the screen reads the same on any
     machine; then the recipe's own line for an external server, word for word
     (with `extra` keys after it)."""
-    language = [str(copy), "setup", "--set", "interface.language=en"]
-    subprocess.run(language, cwd=root, check=True, capture_output=True)
+    set_language(copy, root)
     recipe = [
         str(copy), "setup",
         "--set", "engine.mode=external",
@@ -1429,7 +1445,7 @@ def scenario_ollama(exe: Path, report: Report) -> None:
             )
 
             print("a tool: a note saved through the agentic loop")
-            type_text("Save a note with the note_save tool: my GPU has 24 GB. Then say done.")
+            type_text(SAVE_A_NOTE)
             press("enter", SETTLE_REPAINT)
             wait_for_text("note_save(", 180)
             wait_for_text(TURN_OVER, 120)
@@ -1579,7 +1595,7 @@ def scenario_lmstudio(exe: Path, report: Report) -> None:
                 report.check(LMSTUDIO_NOTE[0] not in text_of(rows), "no window-too-small note")
 
             print("a tool: a note saved through the agentic loop")
-            type_text("Save a note with the note_save tool: my GPU has 24 GB. Then say done.")
+            type_text(SAVE_A_NOTE)
             press("enter", SETTLE_REPAINT)
             wait_for_text("note_save(", 180)
             wait_for_text(TURN_OVER, 120)
@@ -1666,12 +1682,135 @@ def scenario_lmstudio_cut(exe: Path, report: Report) -> None:
         report.check(bool(logged), "the cut round told in the log")
 
 
+# The engineless chat offering what it finds (docs/research/local-servers.md,
+# stage 2): the list's title, and what a pick says.
+LOCAL_TITLE = "Local servers"
+OLLAMA_ROW = "Ollama · "
+LMSTUDIO_ROW = "LM Studio · "
+NOTHING_ANSWERED = "Neither Ollama"
+
+
+def settings_of(root: Path) -> dict:
+    """The scratch copy's `settings.json`, as the app wrote it."""
+    with open(root / "data" / "settings.json", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def scenario_first_run(exe: Path, report: Report) -> None:
+    """A fresh copy with no engine, Ollama and LM Studio both running: the list
+    opens by itself and names both; a pick of Ollama answers; `/local` lists
+    again and a pick of LM Studio brings its embedder too, which a saved note
+    then uses. Needs Ollama with a chat model pulled and no embedder, and LM
+    Studio's server with a chat model and the embedder it ships."""
+    with tempfile.TemporaryDirectory(prefix="mindfork-probe-") as scratch:
+        root = Path(scratch)
+        copy = root / exe.name
+        shutil.copy(exe, copy)
+        set_language(copy, root)
+        session = Session(copy, [], cwd=root)
+        try:
+            print("the start: no engine, and the list opens by itself")
+            rows = wait_for_text(LOCAL_TITLE, 60)
+            print(text_of(rows))
+            report.says("the list", rows, (LOCAL_TITLE, OLLAMA_ROW, LMSTUDIO_ROW, "embeddings:"))
+
+            print("Enter on the first row: Ollama")
+            press("enter", SETTLE_REPAINT)
+            wait_for_text("now runs on Ollama", 30)
+            chat_is_up(report)
+            type_text(CAPITAL_QUESTION)
+            press("enter", SETTLE_REPAINT)
+            wait_for_text("Paris", 180)
+            wait_for_text(TURN_OVER, 30)
+            time.sleep(2)
+            report.says("Ollama's reply", read_screen(), ("Paris",))
+            written = settings_of(root)
+            report.check(
+                written["engine"]["mode"] == "external"
+                and written["engine"]["external"]["url"].endswith(":11434/v1"),
+                f"the pick is in settings.json: {written['engine']['external']}",
+            )
+            report.check(written["embed"]["mode"] != "external", "no embedder from a server with none")
+
+            print("/local: the list again, and LM Studio with its embedder")
+            type_text("/local")
+            press("enter", SETTLE_REPAINT)
+            rows = wait_for_text(LOCAL_TITLE, 30)
+            print(text_of(rows))
+            lines = text_of(rows).splitlines()
+            first = next(i for i, line in enumerate(lines) if OLLAMA_ROW in line or LMSTUDIO_ROW in line)
+            target = next(i for i, line in enumerate(lines) if LMSTUDIO_ROW in line)
+            for _ in range(target - first):
+                press("down")
+            press("enter", SETTLE_REPAINT)
+            rows = wait_for_text("now runs on LM Studio", 30)
+            print(text_of(rows))
+            report.says("the pick's note", rows, ("now runs on LM Studio", "nomic"))
+            time.sleep(3)
+            type_text("Answer with one word: what is the capital of Italy?")
+            press("enter", SETTLE_REPAINT)
+            wait_for_text("Rome", 180)
+            wait_for_text(TURN_OVER, 30)
+            print("a note saved, which the embedder indexes")
+            type_text(SAVE_A_NOTE)
+            press("enter", SETTLE_REPAINT)
+            wait_for_text("note_save(", 180)
+            wait_for_text(TURN_OVER, 120)
+            time.sleep(3)
+            rows = read_screen()
+            print(text_of(rows))
+            report.says("LM Studio's turns", rows, ("Rome", "note_save("))
+            written = settings_of(root)
+            report.check(
+                written["engine"]["external"]["url"].endswith(":1234/v1")
+                and written["embed"]["mode"] == "external"
+                and "nomic" in (written["embed"]["external"].get("model_name") or ""),
+                f"LM Studio and its embedder in settings.json: {written['engine']['external']}, {written['embed']['external']}",
+            )
+        finally:
+            code = session.close()
+        report.check(code == 0, f"the app exited with code {code}")
+        errors = [line for line in log_lines(root, " ERROR ") if "embed" in line.lower()]
+        report.check(not errors, f"no embedder errors in the log: {errors}")
+        for line in log_lines(root, "looked for local servers") + log_lines(root, "a local server was picked"):
+            print(line)
+
+
+def scenario_first_run_none(exe: Path, report: Report) -> None:
+    """A fresh copy with no engine and **neither server running**: the start
+    stays silent — the empty feed names the four routes, `/local` among them —
+    and `/local` says what it asked and that nothing answered."""
+    with tempfile.TemporaryDirectory(prefix="mindfork-probe-") as scratch:
+        root = Path(scratch)
+        copy = root / exe.name
+        shutil.copy(exe, copy)
+        set_language(copy, root)
+        session = Session(copy, [], cwd=root)
+        try:
+            rows = wait_for_text("Four ways to start", 60)
+            time.sleep(5)
+            rows = read_screen()
+            print(text_of(rows))
+            report.says("the empty feed", rows, ("Four ways to start", "/local"))
+            report.check(LOCAL_TITLE not in text_of(rows), "no list when nothing answered")
+            type_text("/local")
+            press("enter", SETTLE_REPAINT)
+            rows = wait_for_text(NOTHING_ANSWERED, 30)
+            print(text_of(rows))
+            report.says("the command's answer", rows, (NOTHING_ANSWERED, "11434", "1234"))
+        finally:
+            code = session.close()
+        report.check(code == 0, f"the app exited with code {code}")
+
+
 SCENARIOS = {
     "altgr": scenario_altgr,
     "ollama": scenario_ollama,
     "ollama-cut": scenario_ollama_cut,
     "lmstudio": scenario_lmstudio,
     "lmstudio-cut": scenario_lmstudio_cut,
+    "first-run": scenario_first_run,
+    "first-run-none": scenario_first_run_none,
     "small-window": scenario_small_window,
     "full-mode": scenario_full_mode,
     "gateway": scenario_gateway,

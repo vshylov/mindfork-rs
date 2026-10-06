@@ -224,6 +224,12 @@ src/
 │  │  │                     written back to settings. `effective_model_name()`
 │  │  │                     is what the turn reads; the screen gets the
 │  │  │                     discovered half via `AppEvent::EngineModel`. Spec §11.3
+│  │  ├─ local_servers.rs   a local Ollama or LM Studio, found and offered:
+│  │  │                     the look at the start of an engineless chat and for
+│  │  │                     `/local` (through the supervisor), the pick written
+│  │  │                     into the external section — and the embedder's while
+│  │  │                     it is not configured — by `handle_update_config`
+│  │  │                     (docs/research/local-servers.md, stage 2)
 │  │  ├─ llm_history.rs     the one-time seed of a profile's language-model
 │  │  │                     history (spec §9.14): at bootstrap, a history with
 │  │  │                     no records at all is filled from the model names the
@@ -399,6 +405,7 @@ src/
 │  │                        `set_show_model_name` → CacheKey, spec §11.3);
 │  │                        drawn bordered or bare (`FeedFrame`, spec §11.1.1)
 │  ├─ chat_link_picker.rs   the Ctrl+L overlay over a chat's `chat://` references
+│  ├─ local_server_picker.rs the *Local servers* list: a row per server and model, Enter picks, Esc closes
 │  │                        (spec §11.3) — the profile-picker shape: snapshot in,
 │  │                        ChatLinkAction out
 │  ├─ input_box.rs          our own multiline input (ADR 0001): cursor, wrap, spellcheck,
@@ -688,7 +695,7 @@ src/
    │  │                     clouds only). See spec §6.8, §9.3
    │  ├─ managed.rs         ServerHandle (managed llama-server process), ManagedConfig, wait_until_ready, ChildExit, PortLedger
    │  ├─ llama_args.rs      the user's raw server arguments: which are refused per ManagedRole
-   │  ├─ local_servers.rs   Ollama and LM Studio as the app reads them: what tells each apart, LM Studio's per-instance window
+   │  ├─ local_servers.rs   Ollama and LM Studio as the app reads them: what tells each apart, LM Studio's per-instance window, the look on this machine's ports and the list's rows
    │  │                     (a field's flag, the connection, an agent, a fetch) and which LLAMA_*
    │  │                     variables the child loses — a table read from llama.cpp's --help
    │  ├─ thoughts.rs        streaming <think> parser (falls back to reasoning_content)
@@ -2098,6 +2105,11 @@ its own — or named by `api_key_env`, resolved through the same
 The supervisor lives in `app` (composition glue that knows about both
 `shared/config` and `shared/api`). It's behind a trait for `MockSupervisor` in
 tests (returns `Ready` synchronously, so tests don't depend on a status race).
+The look for a local Ollama or LM Studio is the supervisor's too
+(`find_local_servers`, no default): `LlamaSupervisor` asks this machine's ports
+(`shared::api::local_servers::find`), `DemoSupervisor` finds nothing, and
+`MockSupervisor` answers what a test gives it — a unit test never reaches a
+server the developer happens to run (docs/research/local-servers.md).
 
 On the orchestrator side, server lifecycle is encapsulated in
 **`EngineManager`** (`app/orchestrator/engines.rs`, Phase 3): it owns the
