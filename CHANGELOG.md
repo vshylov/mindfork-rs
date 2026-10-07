@@ -21,6 +21,14 @@ split by subsystem.
   the lines show what your terminal sent instead; paste them into a report. It
   was made for checking terminals on a Mac, and works in any terminal.
 
+### Fixed
+
+- **The full colour mode is readable in Terminal.app before macOS 26.** That
+  Terminal has no 24-bit colour and misread the themes' colours: the dark
+  background was never painted, its light text sat on white, and a row came out
+  bright green. mindfork now draws there in the 256 colours it has, chosen
+  nearest to the theme's; every other terminal is unchanged.
+
 ## [0.17.0] — 2026-10-06
 
 **Ollama and LM Studio, found and offered.** Start mindfork with no model set up

@@ -353,6 +353,17 @@ fn launch_tui(
     crate::shared::config::set_environment_mode(crate::shared::config::ThemeMode::for_environment(
         std::env::var_os("NO_COLOR").as_deref(),
     ));
+    // How many colours the terminal draws (spec §11.6, *Colour depth*):
+    // Terminal.app before macOS 26 misreads 24-bit colour, so every frame goes
+    // out in its 256.
+    let depth = crate::shared::colour_depth::ColourDepth::for_environment(
+        std::env::var_os("TERM_PROGRAM").as_deref(),
+        std::env::var_os("COLORTERM").as_deref(),
+    );
+    if depth != crate::shared::colour_depth::ColourDepth::TrueColour {
+        tracing::info!("colour depth: {depth:?} (TERM_PROGRAM, COLORTERM)");
+    }
+    crate::shared::colour_depth::set(depth);
     // The user's themes, before the first palette is built — `interface.
     // full_theme` may name one. The log is up by now, so what a theme file
     // has to say goes straight into it.

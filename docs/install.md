@@ -198,8 +198,8 @@ Opened"*; choose **Done**, not *Move to Trash*. Then *System Settings → Privac
   keybind = super+arrow_right=unbind
   keybind = super+backspace=unbind
   ```
-- **Terminal.app before macOS 26** has no 24-bit colour: keep the colour mode
-  at `system`, the default — `full` is unreadable there.
+- **Terminal.app before macOS 26** has no 24-bit colour, so mindfork draws
+  there in its 256: the themes look a little coarser than elsewhere.
 - **A preview**: built and tested on GitHub's Apple Silicon runners, and on a
   rented Mac mini (M4) with macOS 26 and 15 on 2026-10-07 — what it found is
   [docs/research/macos.md](research/macos.md) §14; reports are welcome. For a

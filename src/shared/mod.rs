@@ -4,6 +4,7 @@
 pub mod api;
 pub mod child_env;
 pub mod cmdline;
+pub mod colour_depth;
 pub mod config;
 pub mod console;
 pub mod credits;
