@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (48)
+## Entries (49)
 
 - Post-M9: mouse-wheel feed scrolling (done)
 - Post-M9: own markdown renderer (tables + LaTeX + theme) (done)
@@ -60,6 +60,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: colour modes — themes of the user's own (done)
 - Post-M9: a window too small for the frame says so (done)
 - Post-M9: the chat sheds its chrome one piece at a time (done)
+- Post-M9: the colour modes on a real Mac (done)
 
 ### Post-M9: mouse-wheel feed scrolling (done)
 - **The mouse wheel scrolls the feed** on par with `PageUp/PageDown`. `ratatui::init()`
@@ -3012,3 +3013,28 @@ nine rows no longer standing over it. `full-mode`, `mono` and `first-frame` re-r
 pass. Pure UI — no engine, no storage.
 
 **Tests**: 3781 unit tests green, 236 ignored (+9).
+
+### Post-M9: the colour modes on a real Mac (done)
+
+**Why.** Terminal.app has 24-bit colour only since macOS 26 (docs/research/macos.md
+§4.5); how the RGB themes look on an older one was the question the rented day
+kept for its last hour (§14.4).
+
+**Measured.**
+- **Terminal.app 470.2 on macOS 26** sets `COLORTERM=truecolor` and draws
+  everything:
+  - `full` in the dark and the light theme, the canvas painted, applied at once;
+  - `mono`, and `NO_COLOR=1` starting in `mono`;
+  - the box drawing, the diagram and `Mₖᵥ` clean.
+- **Terminal.app 455.1 on macOS 15** sets no `COLORTERM`:
+  - **`full` is unreadable.** The canvas is not painted, so the dark theme's
+    light text sits on white, and the bottom row comes out bright green, an
+    RGB sequence's numbers read as attributes.
+  - `system`, the default, is fine.
+- **Small windows:** 24×6 keeps the feed, the input and the status row. At
+  20×2 (Terminal.app narrows no further than 20 columns) the notice reads *needs
+  20×3*, and Ctrl+Q quits.
+
+**Next.** Defect D2: the 256-colour pass §4.5 named, taken where
+`TERM_PROGRAM=Apple_Terminal` comes without `COLORTERM=truecolor`. Until then
+install.md says to keep `system` there.

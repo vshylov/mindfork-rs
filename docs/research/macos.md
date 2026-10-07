@@ -2,14 +2,15 @@
 
 Status: **MVP probe GO; every fork as recommended (the owner, 2026-10-04);
 stages 1 and 2 built (§10–§12), shipped in 0.15.0; stage 3, a day on a
-rented Mac, planned (§13)**. Part of the promotion plan's stage 1, the
+rented Mac, done on 2026-10-07 (§13), measured in §14**. Part of the promotion plan's stage 1, the
 friction of a first try ([promotion.md §5](promotion.md)): until 0.15.0 a Mac
 user had no download at all.
 
 The owner has no Mac. Everything below was measured on GitHub's Apple Silicon
 runners (§3) or read from the code (§4) and from Apple's, GitHub's and
 Homebrew's own documents (§5–§6); what only a real Mac with a real screen can
-answer is listed as such (§6.2) and is not guessed.
+answer is listed as such (§6.2) and is not guessed; a rented Mac answered it
+on 2026-10-07 (§14).
 
 ## 1. Scope
 
@@ -172,9 +173,9 @@ Fork F5.
 
 The themes are 24-bit RGB with no colour-depth detection (`shared/theme.rs`;
 the colour passes are `full` and `mono`). **Terminal.app has 24-bit colour only
-since macOS 26**; before it, how it draws an RGB sequence is to be seen (§6.2) —
-the likely remedy is a third pass that maps each RGB colour to the nearest of
-the 256, taken where `TERM_PROGRAM=Apple_Terminal` on a macOS before 26.
+since macOS 26**; before it, `full` is unreadable (measured, §14.4). The
+remedy is a third pass that maps each RGB colour to the nearest of the 256,
+taken where `TERM_PROGRAM=Apple_Terminal` comes without `COLORTERM=truecolor`.
 iTerm2, Ghostty, WezTerm and kitty have had 24-bit colour for years.
 
 ### 4.6 Smaller things
@@ -746,3 +747,197 @@ back what had been measured by hand:
 So the classifier tells the two answers apart. On the Mac the same step asks
 the same of the MLX build, which 0.17.0 was never measured on.
 
+## 14. Stage 3 — the rented day, measured (2026-10-07)
+
+One AWS `mac-m4.metal` (Mac mini, M4, 10-core GPU, 24 GiB), macOS **26.7**
+(25G229) for the day and **15.8** (24H23) for its last hour, a 200 GiB root
+volume. Every item of §13.5 and §13.6 was run. The defects are §14.7; each gets
+its own branch and pull request (§13.7).
+
+### 14.1 The machine and the access
+
+- **Times.** The host was allocated at 18:32 UTC and SSH answered at 18:50.
+  The headless run (M0–M4) took 1 h 40 min, 1 h 32 min of it the live gate.
+  The screen half took the evening.
+- **macOS 26 → 15 without a scrub.** `create-replace-root-volume-task` with the
+  15.8 AMI swapped the root volume of the running instance in 6 minutes, and
+  SSH answered 21 minutes later. The host, the address and the 200 GiB stayed;
+  the host key, the password and every privacy grant went with the old volume.
+  This is quicker than stopping the instance (a scrub of up to 4.5 hours, §13.1).
+- **VNC from Windows, three traps:**
+  - **RealVNC Viewer cannot log in.** macOS 26 offers security types 30, 33, 36
+    (Apple's) and, with the legacy password on, 2. RealVNC picks 30 and
+    refuses its key: *"Protocol error: key length too large"*. The key is 512
+    bytes (4096 bits), measured. **TigerVNC 1.16.2** takes keys up to 1024
+    bytes: `vncviewer SecurityTypes=DH localhost::PORT` logs into the user's
+    own session.
+  - **The legacy VNC password is the wrong road.** It logs into a new login
+    window, not the user's session, and that window froze. Type 30 (DH) does
+    not.
+  - **Ports 5868–5967 are reserved on this Windows** (Hyper-V's excluded
+    range), so `ssh -L 5900:…` fails with *Permission denied*. Any port outside
+    the range works (15900).
+- **No Option key through VNC.** Apple's server maps both Alt keys and the
+  Windows key to Command (Win+A selected all; Alt+←/→ moved to the line's ends).
+  Option is `ISO_Level3_Shift`, which a US or a Russian layout on Windows does
+  not have; US-International's right Alt did not give it either. So the keys
+  were sent on the Mac itself, through System Events (Accessibility for
+  `sshd-keygen-wrapper`). The mouse was sent through CoreGraphics. Screenshots
+  were taken through Terminal.app, which holds Screen Recording. These are the
+  events the Mac's own keyboard and mouse post, minus the hardware.
+
+### 14.2 Headless (M0–M5)
+
+| Step | Measured |
+|---|---|
+| `install.sh` (the README's line) | 2 s, checksum ok, `mindfork 0.17.0`. `/usr/local/bin` is root's on AWS's image, so the link went through `sudo -n`, as designed. |
+| `brew install vshylov/tap/mindfork` | 9 s; `defaults.json` `{"mode":"system"}`, 3 dictionaries beside the binary, data in `~/Library/Application Support/mindfork-rs` |
+| `cargo install --locked mindfork` | 3 min 8 s → 0.17.0 |
+| `setup --sandbox --llama metal … --ctx 16384 --verify` | 40 s with the sandbox. llama.cpp b11476 `metal` (11 MB), `MTL0: Apple M4 (18186 MiB)`; the chat server *ready in 5 s — context 16384, takes images, slots 4*; the embedder 5 s |
+| `llama-bench`, Gemma 4 E4B Q4_1 | **pp512 402 t/s, tg128 29.7 t/s** |
+| `main` (83cde2d5): `cargo build`, `cargo test` | 58 s, 56 s; **3977 passed, 0 failed, 250 ignored** |
+| the live gate (`--ignored`, two llama-servers, the speech stub) | 232 passed, 18 failed, 5499 s |
+| Ollama 0.40.0 (`brew`) | `gemma4:e4b` loaded in 11 s, window **4096** — the same as on the 4090: Ollama's default does not follow memory |
+| LM Studio (the Mac app is **Bionic** 1.1.7+7, `ai.elementlabs.bionic`; `lms` says LM Studio) | GGUF (Q4_0 QAT) at 4096: one message over the window refused (400, 6148 of 4096); a conversation over it **cut**, 1924 of ~6256. **MLX** (4-bit) at 4096: `/api/v1/models` reports `format: mlx` and the loaded window as llama.cpp's engine does; one message over the window refused with **another text** (§14.7 D3); a conversation over it **cut**, 2038 of ~6250 |
+
+The 18 failures, by cause. None is a macOS defect:
+
+| Cause | Tests |
+|---|---|
+| The model (E4B, smaller than the gate's usual one) did not call the tool or say the answer | `fetch_url_address_policy`, `history_read_back…`, `local_mode_files_round_trip`, `rag_en`, `a_withheld_chart…`, `control_tools_are_callable` |
+| The answer was right, in Russian (the default profile's language), and the test looks for an English word | `image_attachment` (*blue*), `image_url_attachment` (*green*) |
+| The slow-prefill note fired on a host the tests take for fast: 295–374 t/s, a slot held 5.5–6.9 s against the 5 s limit (§14.7 D5) | `impersonation_prefill`, `loop_prefill`, `roll_prefill`, `slow_prefill`, `title_prefill` |
+| No `node`/`npx` on the host | the three `mcp` tests |
+| llama.cpp publishes only `metal` for macOS/arm64, and two tests expect a `cpu` build | `live_install_cpu_into_a_tempdir`, `live_the_newest_build_still_names_a_cpu_backend` |
+
+### 14.3 The keys
+
+`mindfork keys` from `main`. Each chord sent as the Mac's keyboard sends it;
+the cell is what the app was handed.
+
+| | Terminal.app 470.2 (26) and 455.1 (15)¹ | iTerm2 3.7.3 | Ghostty 1.3.1 |
+|---|---|---|---|
+| kitty protocol | not answered | answered, on | answered, on |
+| `COLORTERM` | `truecolor` on 26, **none on 15** | `truecolor` | `truecolor` |
+| Shift+Enter, Option+Enter | **Enter** (a send) | line break | line break |
+| Ctrl+J | line break | line break | line break |
+| Option+←/→ | Alt+b / Alt+f (words) | Alt+←/→ (words) | Alt+b / Alt+f (words) |
+| Option+Backspace | **Backspace** | Alt+Backspace (a word) | Alt+Backspace (a word) |
+| Option+Fwd Delete | nothing | Alt+Delete | Alt+Delete |
+| Ctrl+←/→ | nothing (Spaces) | nothing | nothing |
+| Cmd+←/→ | nothing | nothing | **Ctrl+A / Ctrl+E** (§14.7 D1) |
+| Home, End, Page Up/Down | **nothing** (scroll Terminal's buffer) | arrive | arrive |
+| Shift+Home/End/Page | arrive **without Shift** | Home/End with Shift; Page **nothing** | arrive with Shift |
+| F1 | F1 | F1 | F1 |
+| Option+X | `≈` | `≈` | Alt+X |
+| Cmd+V of two lines | one paste | one paste | one paste |
+
+¹ The Shift rows and Option+Fwd Delete were sent on 26 only; every other row
+is the same on both.
+
+The footer names the line break each terminal has: *Ctrl+J* in Terminal.app,
+*Shift+Enter* in iTerm2 and Ghostty.
+
+**The Russian layout**, switched with Ctrl+Space. Letters arrive Cyrillic in
+all three terminals. A `Ctrl`+letter arrives as the Latin letter in
+Terminal.app and as the Cyrillic one in iTerm2 and Ghostty. Either way the app
+read every one by its physical key: Ctrl+N, P, F, U, E, Q, W, and Ctrl+J as a
+line break (`shared/keys.rs`'s table, unverified on a Mac until now). Option+R
+gives `®`. The spellcheck underlined the misspelt Russian words and left the
+right ones alone.
+
+### 14.4 Colour and small windows
+
+- **Terminal.app on macOS 26** draws everything: `full` in the dark and the
+  light theme (the canvas painted, applied at once), `mono`, and `NO_COLOR=1`
+  starting in `mono`.
+- **Terminal.app on macOS 15 (455.1) cannot draw `full`.** The canvas is not
+  painted, so the dark theme's light text sits on white, barely visible, and
+  the bottom row comes out bright green: an RGB sequence's numbers read as
+  plain attributes. `system`, the default, is fine: the text colours over the
+  terminal's own background. This terminal sets no `COLORTERM`, and Terminal
+  on 26 sets `truecolor`, so the two can be told apart (§14.7 D2, §4.5).
+- **Small windows.** At 24×6 the chat keeps the feed, the input and the status
+  row. Terminal.app narrows no further than 20 columns, and at 20×2 the
+  notice says *Window too small 20×2 — needs 20×3*; Ctrl+Q quits from it.
+
+### 14.5 The app at the screen (Terminal.app, macOS 26)
+
+- **`mindfork demo`** starts with nothing set up.
+- **The local servers.** The Homebrew build's first run with Ollama serving
+  offered it; Enter, and a turn with its thoughts. `/local` listed Ollama's and
+  LM Studio's models, the MLX one included. For an overlong turn on the MLX
+  model see §14.7 D3.
+- **The managed chat of §14.2:**
+  - a turn with its thoughts;
+  - `python_exec` in the sandbox (338 350);
+  - a note saved, and found by meaning in a new chat (`note_recall`);
+  - `/file folder` opening Finder on the chat's folder.
+
+  The model wrote its file into the working directory instead of the output
+  folder, twice. The app then said *this chat has saved no files yet* (right),
+  and the model claimed it had saved the file.
+- **Finder's `.DS_Store`**, copied into `data/`, `chats/` and a chat's files
+  folder. After a restart the list showed the same two chats, and the log had
+  no error.
+- **A made-up OpenAI key** shows as *set (this computer)*. `settings.json`
+  holds it under `platform-uuid-v1`, with no plain text. It was still set
+  after a restart, and Del removed it.
+- **`/tts` through `tools/tts_stub.py`** (`external`): two WAV requests of 190
+  and 165 characters, *♪ speaking* in the status row, ended with no error.
+- **A second `mindfork`** (the portable one while the Homebrew one ran) is
+  refused: *mindfork is already running on this machine*.
+- **The clipboard.** A PNG put on the clipboard and pasted with Ctrl+V
+  became an attachment (256×256, ~100 tokens), which the model described. A
+  feed line selected natively and copied with Cmd+C came out as the line's
+  text, no frame characters.
+- **The mouse.** The wheel scrolls the feed after Ctrl+W. A URL in the feed
+  opens with **Cmd+double-click**, which is Terminal.app's own; a single
+  Cmd+click did not. The app draws no OSC 8 links of its own.
+
+**iTerm2 after Gatekeeper's question.** iTerm2 came from `brew install
+--cask`, so it carried a quarantine. After *Open* it sat stopped (state `T`)
+with no window, and clicking its icon did nothing. Killed and opened again, it
+ran. Ghostty, from the same cask run, opened at once.
+
+### 14.6 The browser's road
+
+1. **Safari unpacks the `.gz` by itself.** Its default *Open "safe" files* left
+   `mindfork-rs-v0.17.0-aarch64-macos.tar`, not `.tar.gz`, in Downloads, with
+   the quarantine mark.
+2. **A double click in Finder** (Archive Utility) unpacks the `.tar`, and
+   **all 43 files carry the mark**. Opening the archive with `open` from a
+   shell did nothing visible.
+3. **The first start, in Terminal, is refused:** *"“mindfork” Not Opened —
+   Apple could not verify “mindfork” is free of malware that may harm your Mac
+   or compromise your privacy."* The buttons are **Move to Trash** (the
+   default) and Done.
+4. **System Settings → Privacy & Security → Open Anyway** asks no password.
+5. **The next start asks again:** *"Open “mindfork”? Apple is not able to
+   verify…"*, now with **Open Anyway**. After it the binary runs (`mindfork
+   0.17.0`, exit 0), and later starts ask nothing, SSH included. The mark stays,
+   its flags go from `0081` to `00c1`, and `spctl` still says *rejected*.
+6. **`xattr -dr com.apple.quarantine <folder>`** works at once, as install.md
+   says.
+7. **`install.sh --from ~/Downloads`** finds nothing: it looks for the
+   `.tar.gz` Safari no longer left. Fed a quarantined `.tar.gz`, it prints its
+   quarantine note and then checks the binary by starting it. That start
+   raises Gatekeeper's dialog and **waits on it**. Answered with Done, the start
+   is killed (`Killed: 9`) and the script says *the installed binary does not
+   start* (§14.7 D4).
+
+### 14.7 What follows
+
+| | Defect | Weight | Next |
+|---|---|---|---|
+| D1 | **Ghostty sends Cmd+→ as Ctrl+E, which deletes the last exchange without a question** (the confirmation is off by default). Cmd+← is Ctrl+A, select all. Measured on the demo: one keypress, and the answer was gone. | high | an owner's fork: Ctrl+E/Ctrl+A as the line's ends, and the deletion on another key, or a confirmation on by default |
+| D2 | **`full` is unreadable in Terminal.app before macOS 26** | high | the 256-colour pass of §4.5, chosen where `TERM_PROGRAM=Apple_Terminal` comes without `COLORTERM=truecolor` |
+| D3 | **LM Studio's MLX refusal is not taken for an overflow.** It arrives as a 200 whose stream is an `event: error` reading *"The number of tokens to keep from the initial prompt is greater than the context length…"*, which no marker of `features/compaction.rs` matches. So the user gets the raw text, not *the conversation no longer fits… /compact*. | medium | a marker, and its unit test |
+| D4 | **`install.sh --from` and a browser download:** a `.tar` is not found, and the start check waits on Gatekeeper | medium | take a `.tar`; skip the start check, or name the remedy, while the mark is on |
+| D5 | **The slow-prefill note fires on an M4 with E4B**, after every turn: 295–374 t/s measured by the app (`llama-bench`: 402), so a cancelled request would hold the slot 5.5–6.9 s at the default batch, and the limit is 5 s | question | whether -b 256 is the right advice on Apple silicon — measure before changing |
+| D6 | **The documents:** Terminal.app's Home/End/Page need Shift; Option+Backspace is a character there; Shift+Page does not reach the app in iTerm2; URLs open with Cmd+double-click; the browser's road takes two *Open Anyway*s | low | install.md and the manual |
+| D7 | **Tests:** the two image tests look only for English words; two `llama_setup` tests expect a `cpu` build that macOS does not have | low | language-free assertions; the backend list per platform |
+| — | The probe: it unlinked a root-owned link without `sudo`, and found no failed names under `--nocapture` | fixed | in this change |
+
+The call for testers (§13.7) waits on D1 and D2: a tester in Ghostty or in
+Terminal.app on macOS 15 would meet them first.

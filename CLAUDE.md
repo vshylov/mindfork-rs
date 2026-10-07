@@ -178,7 +178,7 @@ Backend selection: `MINDFORK_ENGINE_URL` (external, any OpenAI server) OR
 rented instead of hosted — `python tools/e2e_hf.py run`, see
 `docs/history/remote-e2e-hf.md`.
 
-## Status (2026-10-06, version 0.17.0)
+## Status (2026-10-07, version 0.17.0)
 
 The **M0–M9** plan is done, plus extensive post-M9 work — **3936 unit tests
 green, 257 `#[ignore]`** (live smokes + a real-clipboard round trip + the
@@ -216,8 +216,8 @@ being recent is dropped, not shortened.
   ([docs/research/demo-reel.md](docs/research/demo-reel.md),
   [docs/journal/release.md](docs/journal/release.md)). macOS: researched, probe
   GO on Apple Silicon runners, forks decided; stages 1–2 built — secrets, the lock,
-  the keys, CI on macOS, the release's `aarch64-macos` archive, `install.sh` and a
-  Homebrew tap ([docs/research/macos.md](docs/research/macos.md)).
+  the keys, CI on macOS, the `aarch64-macos` archive, `install.sh`, a Homebrew tap;
+  stage 3, a rented Mac day, done — defects in §14.7 ([docs/research/macos.md](docs/research/macos.md)).
 - **A pod's failures say what they are** — a managed server that dies shows the
   error it logged (a CUDA build newer than the driver names `cuda-12`), a port
   another program holds is refused, one death is one relaunch. Live **GO**

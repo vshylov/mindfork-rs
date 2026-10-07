@@ -325,8 +325,21 @@ def install_script(probe: Probe, portable: Path) -> None:
             target = os.readlink(link)
             probe.say(f"link: {link} -> {target}")
             if target.startswith(str(portable)):
-                link.unlink()
-                probe.say("   removed, so that Homebrew's formula can take the name")
+                remove_link(probe, link)
+
+
+def remove_link(probe: Probe, link: Path) -> None:
+    """Removes install.sh's link. Where the directory is root's, as
+    `/usr/local/bin` is on AWS's images, install.sh linked through `sudo -n`,
+    so the link is removed the same way (measured on the day)."""
+    try:
+        link.unlink()
+    except PermissionError:
+        probe.run("unlink", ["sudo", "-n", "rm", "-f", str(link)], tail=1)
+    if link.is_symlink():
+        probe.say("   NOT removed: Homebrew's formula will not take the name")
+    else:
+        probe.say("   removed, so that Homebrew's formula can take the name")
 
 
 def install_tap(probe: Probe) -> None:
@@ -401,7 +414,12 @@ def test_summary(output: str) -> tuple[dict[str, int], list[str]]:
     for found in re.finditer(r"test result: \w+\. (\d+) passed; (\d+) failed; (\d+) ignored", output):
         for key, value in zip(totals, found.groups()):
             totals[key] += int(value)
-    failed = re.findall(r"^test (\S+) \.\.\. FAILED$", output, flags=re.MULTILINE)
+    # The names come from the `failures:` list each binary ends with: under
+    # `--nocapture` a test's own output sits between its name and `FAILED`, so
+    # the `test … FAILED` line does not exist (measured on the day).
+    failed = []
+    for block in re.findall(r"^failures:\n((?:\n|    \S+\n)+)", output, flags=re.MULTILINE):
+        failed += [name for name in block.split() if name not in failed]
     return totals, failed
 
 
@@ -690,13 +708,22 @@ def self_test() -> int:
     check(platform_uuid("nothing here") is None, "no UUID is no UUID")
 
     cargo = (
-        "test keys::echo_works ... ok\ntest keys::echo_fails ... FAILED\n"
+        "test keys::echo_works ... ok\ntest keys::echo_fails ... FAILED\n\n"
+        "failures:\n\n---- keys::echo_fails stdout ----\nboom\n\n"
+        "failures:\n    keys::echo_fails\n\n"
         "test result: FAILED. 10 passed; 1 failed; 2 ignored; 0 measured\n"
         "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured\n"
     )
     totals, failed = test_summary(cargo)
     check(totals == {"passed": 13, "failed": 1, "ignored": 2}, "test results are summed")
     check(failed == ["keys::echo_fails"], "the failed tests are named")
+    nocapture = (
+        "test live::a ... the model said things\nmore\nFAILED\ntest live::b ... ok\n\n"
+        "failures:\n    live::a\n    live::c\n\n"
+        "test result: FAILED. 1 passed; 2 failed; 0 ignored; 0 measured\n"
+    )
+    check(test_summary(nocapture)[1] == ["live::a", "live::c"],
+          "under --nocapture the names come from the failures list")
 
     ps = {"models": [{"name": OLLAMA_MODEL, "context_length": 4096}, "junk"]}
     check(ollama_windows(ps) == [(OLLAMA_MODEL, 4096)], "Ollama's window is read from /api/ps")

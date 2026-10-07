@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (68)
+## Entries (69)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -80,6 +80,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Release 0.16.1 (prepared)
 - Release 0.17.0 (prepared)
 - Post-M9: macOS stage 3 — the rented day's tools (done)
+- Post-M9: macOS stage 3 — the rented day (done)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -4175,3 +4176,69 @@ the rest.
 
 **Not done.** Nothing ran on a Mac. The AWS quota for the host is still open
 (a support case).
+
+### Post-M9: macOS stage 3 — the rented day (done)
+
+**Why.** Stages 1–2 shipped macOS as a preview tested on GitHub's runners, which
+have no screen and a paravirtual GPU. What only a real Mac answers was listed
+(docs/research/macos.md §6.2) and planned as one rented day (§13). It ran on
+2026-10-07 on an AWS `mac-m4.metal` (M4, 24 GiB), macOS 26.7, with the last hour
+on 15.8. The measurements are §14 of the research document; this entry is the
+day's shape and what it changed.
+
+**What.**
+- **The headless half (`tools/mac_probe.py` M0–M5)** ran as one SSH command in
+  1 h 40 min:
+  - `install.sh` took 2 s; the tap 9 s; `cargo install` 3 min 8 s.
+  - `setup --llama metal --verify` took 40 s; the chat server was *ready in 5 s*.
+  - `llama-bench` on Gemma 4 E4B Q4_1 gave pp512 402 t/s and tg128 29.7 t/s.
+  - `main`: 3977 unit tests green.
+  - The live gate: 232 of 250, every failure explained and none a macOS defect
+    (§14.2).
+  - Ollama's window: 4096.
+  - LM Studio (Bionic on a Mac): GGUF and MLX both cut a conversation over the
+    window.
+- **The screen half** covered everything §13.6 lists:
+  - the keys in Terminal.app, iTerm2 and Ghostty, in both layouts;
+  - colour and small windows;
+  - the managed chat with the sandbox, the notes and Finder;
+  - `.DS_Store`, the stored key, speech through the stub;
+  - the single-instance lock, the clipboard, the mouse;
+  - the browser's road through Gatekeeper.
+- **macOS 15 without a scrub.** A root-volume replacement with the 15.8 AMI took
+  6 minutes plus a boot, against up to 4.5 hours for a scrub.
+- **The probe's two defects, fixed here:**
+  - it unlinked `install.sh`'s link without `sudo`, although `install.sh` had
+    made it with `sudo -n`, `/usr/local/bin` being root's on AWS's image;
+  - under `--nocapture` it found no failed test names, which now come from
+    each binary's `failures:` list (+1 self-test check).
+- **The documents:**
+  - install.md's macOS section now gives the browser's two *Open Anyway*s, the
+    Terminal.app keys, Ghostty's Cmd+→ and the colour before macOS 26;
+  - the manual's Mac note has the same keys;
+  - the roadmap's macOS item says stage 3 is done.
+
+**What was hard, and how it was done.** The owner's keyboard was a PC's,
+through VNC from Windows. RealVNC Viewer cannot log into macOS 26: Apple's DH
+key is 512 bytes, so it reports *key length too large*. TigerVNC can, with
+`SecurityTypes=DH`. The legacy VNC password led into a frozen login window.
+Windows reserves 5868–5967, so the tunnel went to 15900. Apple's server gives
+no Option key from a PC, so every chord was posted on the Mac itself through
+System Events (Accessibility for `sshd-keygen-wrapper`). The mouse went
+through a small CoreGraphics program, and screenshots through Terminal.app,
+which holds Screen Recording. Each grant was the owner's click, and each went
+with the host. Real-keyboard checks of `fn` and of Option through hardware are
+left to testers.
+
+**Found** (§14.7, each to its own branch):
+- **D1:** Ghostty's Cmd+→ arrives as Ctrl+E and deletes the last exchange
+  without a question.
+- **D2:** `full` is unreadable in Terminal.app before macOS 26, which sets no
+  `COLORTERM`.
+- **D3:** LM Studio's MLX refusal is not recognised as an overflow.
+- **D4:** `install.sh --from` misses Safari's `.tar` and waits on Gatekeeper.
+- **D5:** the slow-prefill note fires after every turn on an M4.
+- **D6, D7:** the documents and two tests.
+
+**Not done.** Real-keyboard checks (`fn`, Option through hardware) are left to
+testers. The call for testers waits on D1 and D2.
