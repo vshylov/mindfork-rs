@@ -1718,6 +1718,18 @@ mod stream_error_tests {
         assert!(crate::features::compaction::is_context_overflow(&e.message));
     }
 
+    /// LM Studio's MLX engine refuses an overlong prompt inside a `200` stream,
+    /// with no type and the message twice — the payload as measured on a Mac
+    /// (docs/research/macos.md §14.2). It must reach the user as an overflow,
+    /// not as the raw text, and must not be retried.
+    #[test]
+    fn lm_studio_mlx_refusal_is_an_overflow() {
+        let data = r#"{"error":{"message":"The number of tokens to keep from the initial prompt is greater than the context length. Try to load the model with a larger context length, or provide a shorter input"},"message":"The number of tokens to keep from the initial prompt is greater than the context length. Try to load the model with a larger context length, or provide a shorter input"}"#;
+        let e = parse_stream_error(data).expect("the envelope is an error");
+        assert!(!e.transient, "an overflow can never fit on a retry");
+        assert!(crate::features::compaction::is_context_overflow(&e.message));
+    }
+
     #[test]
     fn a_string_code_does_not_read_as_a_status() {
         let data = r#"{"error":{"code":"context_length_exceeded","message":"too long","type":"invalid_request_error"}}"#;

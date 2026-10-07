@@ -28,6 +28,10 @@ split by subsystem.
   background was never painted, its light text sat on white, and a row came out
   bright green. mindfork now draws there in the 256 colours it has, chosen
   nearest to the theme's; every other terminal is unchanged.
+- **LM Studio's MLX models: a message too long for the window says so.** Their
+  refusal was shown as a bare generation error; it now reads as the
+  conversation no longer fitting, with the way out (`/compact`, or a new chat)
+  and the server's own words, as on every other server.
 
 ## [0.17.0] — 2026-10-06
 
