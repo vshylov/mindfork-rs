@@ -930,7 +930,7 @@ ran. Ghostty, from the same cask run, opened at once.
 
 | | Defect | Weight | Next |
 |---|---|---|---|
-| D1 | **Ghostty sends Cmd+→ as Ctrl+E, which deletes the last exchange without a question** (the confirmation is off by default). Cmd+← is Ctrl+A, select all. Measured on the demo: one keypress, and the answer was gone. | high | an owner's fork: Ctrl+E/Ctrl+A as the line's ends, and the deletion on another key, or a confirmation on by default |
+| D1 | **Ghostty sends Cmd+→ as Ctrl+E, which deletes the last exchange without a question** (the confirmation is off by default). Its macOS-only *natural text editing* binds also send Cmd+← as Ctrl+A (select all) and Cmd+Backspace as Ctrl+U (writes a message as the user); over SSH they reach any build. Measured on the demo: one keypress, and the answer was gone from the feed — the user's message returns to the input, and the reply stays in the chat file (spec §11.7). | medium | **documented, the keys kept** (the owner, 2026-10-08): a short message and the deletion matter more than moving in the input box. install.md names the confirmation and Ghostty's three `unbind` lines |
 | D2 | **`full` is unreadable in Terminal.app before macOS 26** | high | the 256-colour pass of §4.5, chosen where `TERM_PROGRAM=Apple_Terminal` comes without `COLORTERM=truecolor` |
 | D3 | **LM Studio's MLX refusal is not taken for an overflow.** It arrives as a 200 whose stream is an `event: error` reading *"The number of tokens to keep from the initial prompt is greater than the context length…"*, which no marker of `features/compaction.rs` matches. So the user gets the raw text, not *the conversation no longer fits… /compact*. | medium | a marker, and its unit test |
 | D4 | **`install.sh --from` and a browser download:** a `.tar` is not found, and the start check waits on Gatekeeper | medium | take a `.tar`; skip the start check, or name the remedy, while the mark is on |
@@ -939,5 +939,5 @@ ran. Ghostty, from the same cask run, opened at once.
 | D7 | **Tests:** the two image tests look only for English words; two `llama_setup` tests expect a `cpu` build that macOS does not have | low | language-free assertions; the backend list per platform |
 | — | The probe: it unlinked a root-owned link without `sudo`, and found no failed names under `--nocapture` | fixed | in this change |
 
-The call for testers (§13.7) waits on D1 and D2: a tester in Ghostty or in
-Terminal.app on macOS 15 would meet them first.
+The call for testers (§13.7) waits on D2: a tester in Terminal.app on macOS
+15 would meet it first.

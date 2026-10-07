@@ -187,9 +187,17 @@ Opened"*; choose **Done**, not *Move to Trash*. Then *System Settings → Privac
   `Ctrl+J`, erases a character (not a word) with Option+Backspace, and keeps
   Home, End and Page Up/Down for its own scrolling: add `Shift` to reach the
   app.
-- **Ghostty**: Cmd+→ arrives as `Ctrl+E`, which deletes the last exchange, and
-  Cmd+← as `Ctrl+A`. Turn on *Settings → Interface → Confirm regenerate /
-  delete* there.
+- **Ghostty** sends Cmd+→ as `Ctrl+E`, which deletes the last exchange (your
+  message returns to the input), Cmd+← as `Ctrl+A` (select all) and
+  Cmd+Backspace as `Ctrl+U` (write a message as you). Either turn on *Settings
+  → Interface → Confirm regenerate / delete*, or turn those keys off in
+  `~/.config/ghostty/config` — the shell then loses them too:
+
+  ```
+  keybind = super+arrow_left=unbind
+  keybind = super+arrow_right=unbind
+  keybind = super+backspace=unbind
+  ```
 - **Terminal.app before macOS 26** has no 24-bit colour: keep the colour mode
   at `system`, the default — `full` is unreadable there.
 - **A preview**: built and tested on GitHub's Apple Silicon runners, and on a

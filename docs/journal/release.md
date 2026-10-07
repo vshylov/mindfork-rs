@@ -4232,7 +4232,7 @@ left to testers.
 
 **Found** (§14.7, each to its own branch):
 - **D1:** Ghostty's Cmd+→ arrives as Ctrl+E and deletes the last exchange
-  without a question.
+  without a question. Documented; the keys are kept (the owner).
 - **D2:** `full` is unreadable in Terminal.app before macOS 26, which sets no
   `COLORTERM`.
 - **D3:** LM Studio's MLX refusal is not recognised as an overflow.
@@ -4241,4 +4241,4 @@ left to testers.
 - **D6, D7:** the documents and two tests.
 
 **Not done.** Real-keyboard checks (`fn`, Option through hardware) are left to
-testers. The call for testers waits on D1 and D2.
+testers. The call for testers waits on D2.

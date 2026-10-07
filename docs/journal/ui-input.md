@@ -1937,8 +1937,10 @@ Option key.
     the Shift.
 - **iTerm2:** everything arrives except Shift+Page Up/Down, which it keeps.
 - **Ghostty** sends Option as Alt, so Option+X is Alt+X, not `≈`. It also sends
-  Cmd+→ as **Ctrl+E**, which deletes the last exchange without a question:
-  defect D1, an owner's fork.
+  Cmd+→ as **Ctrl+E**, which deletes the last exchange without a question,
+  and Cmd+Backspace as Ctrl+U. Defect D1: the owner kept the keys, since a
+  short message and the deletion matter more than moving in the input box;
+  install.md names the confirmation and Ghostty's `unbind` lines.
 - **The Russian layout:** letters arrive Cyrillic. A Ctrl+letter arrives as
   the Latin letter in Terminal.app and as the Cyrillic one in iTerm2 and
   Ghostty, and the app read each by its physical key: the static table holds

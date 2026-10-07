@@ -521,7 +521,8 @@ things on different screens. The highlights:
 > on (Settings → Profiles → Keyboard) `Alt+Enter` and the other `Alt` chords work too.
 > iTerm2 and Ghostty take `Shift+Enter`. In Ghostty, Cmd+→ arrives as `Ctrl+E`, which
 > deletes the last exchange: turn on *Confirm regenerate / delete* (Settings →
-> Interface). The `F` keys need `fn`.
+> Interface), or Ghostty's keys off ([install.md](install.md#macos-apple-silicon--a-preview)).
+> The `F` keys need `fn`.
 
 > **When a key does nothing.** `mindfork keys` shows each key you press as the app
 > receives it, and what the input box does with it; `Ctrl+Q` quits. When a terminal
